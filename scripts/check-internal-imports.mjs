@@ -30,7 +30,7 @@ const CORE_INTERNAL_IMPORT_PATTERN =
 const violations = [];
 
 for (const file of walk(root)) {
-  const relative = path.relative(root, file);
+  const relative = path.relative(root, file).split(path.sep).join("/");
   if (
     relative.startsWith("node_modules/") ||
     relative.includes("/node_modules/") ||
