@@ -70,6 +70,8 @@ try {
       "README.md",
       "--trace-level",
       "minimal",
+      "--model",
+      "deterministic",
     ],
     installDir,
   );
