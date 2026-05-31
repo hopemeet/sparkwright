@@ -98,10 +98,18 @@ function getPublicWorkspacePackages() {
 function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
+    shell: process.platform === "win32",
     stdio: "inherit",
   });
 
+  if (result.error) {
+    console.error(
+      `Failed to run ${command} ${args.join(" ")}: ${result.error.message}`,
+    );
+    process.exit(1);
+  }
   if (result.status !== 0) {
+    console.error(`Command failed: ${command} ${args.join(" ")}`);
     process.exit(result.status ?? 1);
   }
 }
