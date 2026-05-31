@@ -106,11 +106,15 @@ async function attachAssets(
     const files = await collectFiles(subdir);
     if (files.length > 0) {
       assets[category] = files
-        .map((f) => relative(dir, f))
+        .map((f) => normalizePath(relative(dir, f)))
         .sort((a, b) => a.localeCompare(b));
     }
   }
   if (Object.keys(assets).length > 0) manifest.assets = assets;
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
 async function collectFiles(dir: string): Promise<string[]> {

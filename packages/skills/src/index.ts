@@ -502,8 +502,12 @@ export async function listSkillResourceFiles(
   return files
     .filter((path) => basename(path) !== SKILL_FILE_NAME)
     .slice(0, limit)
-    .map((path) => relative(root, path))
+    .map((path) => normalizePath(relative(root, path)))
     .sort((left, right) => left.localeCompare(right));
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
 function parseSkillMarkdown(content: string): {
