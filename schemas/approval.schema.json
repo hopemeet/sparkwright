@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/approval.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Approval Request",
+  "type": "object",
+  "required": [
+    "id",
+    "runId",
+    "action",
+    "summary",
+    "details",
+    "createdAt",
+    "status"
+  ],
+  "properties": {
+    "id": { "type": "string" },
+    "runId": { "type": "string" },
+    "action": { "type": "string" },
+    "summary": { "type": "string" },
+    "details": { "type": "object" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "approved", "denied", "expired"]
+    }
+  },
+  "additionalProperties": false
+}

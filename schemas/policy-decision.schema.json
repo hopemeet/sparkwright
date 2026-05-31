@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/policy-decision.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Policy Decision",
+  "type": "object",
+  "required": ["action", "decision", "reason", "metadata"],
+  "properties": {
+    "action": { "type": "string" },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "requires_approval"]
+    },
+    "reason": { "type": "string" },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

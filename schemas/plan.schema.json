@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/plan.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Plan",
+  "type": "object",
+  "required": ["id", "goal", "steps", "metadata"],
+  "properties": {
+    "id": { "type": "string" },
+    "goal": { "type": "string" },
+    "steps": {
+      "type": "array",
+      "items": { "$ref": "plan-step.schema.json" }
+    },
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "maxSteps": { "type": "integer", "minimum": 1 },
+        "maxDurationMs": { "type": "integer", "minimum": 1 },
+        "maxToolCalls": { "type": "integer", "minimum": 1 },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "allowedAgents": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowedTools": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

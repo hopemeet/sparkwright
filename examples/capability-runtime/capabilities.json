@@ -1,0 +1,45 @@
+{
+  "$schema": "../../schemas/capability-runtime-config.schema.json",
+  "goal": "Review the code change and report concrete risks.",
+  "skills": {
+    "roots": ["skills"],
+    "allowedSkills": ["code-reviewer"],
+    "includeLoaderTool": false,
+    "loadSelectedSkills": true,
+    "maxSelectedSkills": 1
+  },
+  "mcp": {
+    "servers": [
+      {
+        "type": "stdio",
+        "name": "disabled-demo",
+        "command": "node",
+        "enabled": false
+      }
+    ],
+    "defaultPolicy": {
+      "risk": "risky",
+      "requiresApproval": true
+    }
+  },
+  "agent": {
+    "id": "reviewer",
+    "allowedTools": ["inspect_diff", "skill.load", "mcp_*"],
+    "maxSteps": 4,
+    "runBudget": {
+      "maxToolCalls": 4,
+      "maxModelCalls": 4
+    },
+    "policy": [
+      {
+        "action": "workspace.write",
+        "resource": "*",
+        "effect": "deny",
+        "reason": "The reviewer example is read-only."
+      }
+    ]
+  },
+  "metadata": {
+    "example": "capability-runtime"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/tool-call.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Tool Call",
+  "type": "object",
+  "required": ["id", "runId", "toolName", "arguments"],
+  "properties": {
+    "id": { "type": "string" },
+    "runId": { "type": "string" },
+    "toolName": { "type": "string" },
+    "arguments": {}
+  },
+  "additionalProperties": false
+}

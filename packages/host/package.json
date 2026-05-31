@@ -1,0 +1,65 @@
+{
+  "name": "@sparkwright/host",
+  "version": "0.1.0",
+  "description": "Sparkwright host process. Owns the agent runtime; speaks the wire protocol over stdio or WebSocket. See docs/HOST_PROTOCOL.md.",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git",
+    "directory": "packages/host"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./dist/bin.js": "./dist/bin.js"
+  },
+  "bin": {
+    "sparkwright-host": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/bin.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.81",
+    "@ai-sdk/google": "^3.0.80",
+    "@ai-sdk/openai": "^3.0.64",
+    "@sparkwright/coding-tools": "0.1.0",
+    "@sparkwright/core": "0.1.0",
+    "@sparkwright/cron": "0.1.0",
+    "@sparkwright/project-context": "0.1.0",
+    "@sparkwright/protocol": "0.1.0",
+    "@sparkwright/provider-ai-sdk": "0.1.0",
+    "@sparkwright/provider-registry": "0.1.0",
+    "@sparkwright/shell-tool": "0.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "keywords": [
+    "sparkwright",
+    "host",
+    "agent",
+    "runtime"
+  ]
+}

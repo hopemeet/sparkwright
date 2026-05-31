@@ -1,0 +1,54 @@
+{
+  "name": "@sparkwright/tui",
+  "version": "0.1.0",
+  "description": "Interactive terminal UI for the Sparkwright agent harness.",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git",
+    "directory": "packages/tui"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sparkwright/host": "0.1.0",
+    "@sparkwright/sdk-node": "0.1.0",
+    "ink": "^5.0.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "keywords": [
+    "agents",
+    "tui",
+    "ink",
+    "sparkwright"
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/capability-runtime-config.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Capability Runtime Config",
+  "type": "object",
+  "required": ["goal", "agent"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "goal": { "type": "string", "minLength": 1 },
+    "skills": {
+      "type": "object",
+      "properties": {
+        "roots": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "includeLoaderTool": { "type": "boolean" },
+        "loadSelectedSkills": { "type": "boolean" },
+        "maxSelectedSkills": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "resourceFileLimit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowedSkills": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "deniedSkills": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "servers": {
+          "type": "array",
+          "items": {
+            "$ref": "mcp-server-config.schema.json"
+          }
+        },
+        "defaultTimeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "namePrefix": { "type": "string" },
+        "defaultPolicy": {
+          "type": "object",
+          "properties": {
+            "risk": {
+              "type": "string",
+              "enum": ["safe", "risky", "denied"]
+            },
+            "requiresApproval": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent": {
+      "$ref": "agent-profile.schema.json"
+    },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

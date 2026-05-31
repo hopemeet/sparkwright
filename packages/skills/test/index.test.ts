@@ -1,0 +1,461 @@
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { describe, expect, it } from "vitest";
+import { createRunId } from "@sparkwright/core";
+import {
+  createSkillLockfile,
+  createSkillLoaderTool,
+  createLoadedSkillContext,
+  filterSkillsForAgent,
+  listSkillResourceFiles,
+  lockSkills,
+  loadSkills,
+  parseSkill,
+  prepareSkillsForRun,
+  selectSkills,
+} from "../src/index.js";
+
+describe("skills", () => {
+  it("parses SKILL.md frontmatter and body", () => {
+    const skill = parseSkill(`---
+name: dingtalk-notifier
+description: Sends DingTalk group notifications.
+metadata:
+  version: 1.0.0
+license: MIT
+compatibility: generic
+allowed-tools: read shell
+---
+# DingTalk
+
+Use the DingTalk webhook only when asked.
+`);
+
+    expect(skill.name).toBe("dingtalk-notifier");
+    expect(skill.description).toBe("Sends DingTalk group notifications.");
+    expect(skill.license).toBe("MIT");
+    expect(skill.compatibility).toEqual(["generic"]);
+    expect(skill.allowedTools).toEqual(["read", "shell"]);
+    expect(skill.metadata.version).toBe("1.0.0");
+    expect(skill.body).toContain("Use the DingTalk webhook");
+    expect(skill.contentHash).toHaveLength(64);
+  });
+
+  it("rejects missing required frontmatter", () => {
+    expect(() =>
+      parseSkill(`---
+description: Missing a name.
+---
+Body
+`),
+    ).toThrow(/name/);
+  });
+
+  it("accepts unknown frontmatter keys without throwing", () => {
+    // Schema declares additionalProperties: true, so unknown top-level
+    // frontmatter keys must be tolerated by the parser as well.
+    const skill = parseSkill(`---
+name: lenient-skill
+description: Has a future field the parser does not know.
+futureExperimentalField: someValue
+anotherUnknownKey: 42
+---
+body
+`);
+    expect(skill.name).toBe("lenient-skill");
+  });
+
+  it("rejects invalid skill names", () => {
+    expect(() =>
+      parseSkill(`---
+name: Bad Skill
+description: Invalid names are rejected.
+---
+Body
+`),
+    ).toThrow(/lowercase letters/);
+  });
+
+  it("loads skill directories from a root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "reviewer"));
+    await writeFile(
+      join(root, "reviewer", "SKILL.md"),
+      `---
+name: reviewer
+description: Reviews code changes.
+---
+Review carefully.
+`,
+    );
+
+    const skills = await loadSkills([root]);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]?.sourcePath).toBe(join(root, "reviewer", "SKILL.md"));
+  });
+
+  it("selects skills deterministically from the goal", () => {
+    const dingtalk = parseSkill(`---
+name: dingtalk-notifier
+description: Sends DingTalk group notifications.
+---
+Notify safely.
+`);
+    const reviewer = parseSkill(`---
+name: code-reviewer
+description: Reviews code changes.
+---
+Review safely.
+`);
+
+    const selected = selectSkills({
+      goal: "send a dingtalk notification to the group",
+      skills: [reviewer, dingtalk],
+    });
+
+    expect(selected.map((entry) => entry.skill.name)).toEqual([
+      "dingtalk-notifier",
+    ]);
+  });
+
+  it("prepares skill index and selected skill context for a run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "dingtalk"));
+    await writeFile(
+      join(root, "dingtalk", "SKILL.md"),
+      `---
+name: dingtalk-notifier
+description: Sends DingTalk group notifications.
+metadata:
+  version: 1.2.3
+---
+Use DingTalk only when notification is requested.
+`,
+    );
+
+    const prepared = await prepareSkillsForRun({
+      goal: "send a DingTalk notification",
+      skillRoots: [root],
+    });
+
+    expect(prepared.tools).toEqual([]);
+    expect(prepared.indexedSkills).toHaveLength(1);
+    expect(prepared.loadedSkills).toMatchObject([
+      {
+        name: "dingtalk-notifier",
+        version: "1.2.3",
+      },
+    ]);
+    expect(prepared.context).toHaveLength(2);
+    expect(prepared.context[0]?.metadata.layer).toBe("skill_index");
+    expect(prepared.context[1]?.metadata).toMatchObject({
+      layer: "resident",
+      skillName: "dingtalk-notifier",
+      skillVersion: "1.2.3",
+    });
+  });
+
+  it("can prepare only the skill index and a loader tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "dingtalk"));
+    await writeFile(
+      join(root, "dingtalk", "SKILL.md"),
+      `---
+name: dingtalk-notifier
+description: Sends DingTalk group notifications.
+---
+Use DingTalk only when notification is requested.
+`,
+    );
+
+    const prepared = await prepareSkillsForRun({
+      goal: "send a DingTalk notification",
+      skillRoots: [root],
+      includeLoaderTool: true,
+      loadSelectedSkills: false,
+    });
+
+    expect(prepared.context).toHaveLength(1);
+    expect(prepared.loadedSkills).toEqual([]);
+    expect(prepared.tools.map((tool) => tool.name)).toEqual(["skill.load"]);
+  });
+
+  it("emits skill.indexed and skill.loaded when an emitter is provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-emit-"));
+    await mkdir(join(root, "reviewer"));
+    await writeFile(
+      join(root, "reviewer", "SKILL.md"),
+      `---
+name: code-reviewer
+description: Reviews source code changes.
+metadata:
+  version: 1.0.0
+---
+Body
+`,
+    );
+
+    const captured: Array<{
+      type: string;
+      payload: unknown;
+      metadata: Record<string, unknown>;
+    }> = [];
+    const emitter = {
+      emit(
+        type: string,
+        payload: unknown,
+        metadata: Record<string, unknown> = {},
+      ) {
+        captured.push({ type, payload, metadata });
+        return {
+          id: "evt_test",
+          runId: "",
+          type: type as never,
+          timestamp: new Date().toISOString(),
+          sequence: 0,
+          payload,
+          metadata,
+        } as never;
+      },
+    };
+
+    await prepareSkillsForRun({
+      goal: "review code",
+      skillRoots: [root],
+      emitter: emitter as never,
+      agentId: "reviewer",
+    });
+
+    const types = captured.map((entry) => entry.type);
+    expect(types).toContain("skill.indexed");
+    expect(types).toContain("skill.loaded");
+    const indexed = captured.find((e) => e.type === "skill.indexed")!;
+    expect((indexed.payload as { count: number }).count).toBeGreaterThan(0);
+    expect(indexed.metadata.sourcePackage).toBe("@sparkwright/skills");
+  });
+
+  it("filters skills by agent access policy", () => {
+    const notifier = parseSkill(`---
+name: dingtalk-notifier
+description: Sends DingTalk group notifications.
+---
+Notify safely.
+`);
+    const reviewer = parseSkill(`---
+name: code-reviewer
+description: Reviews code changes.
+---
+Review safely.
+`);
+
+    expect(
+      filterSkillsForAgent([notifier, reviewer], {
+        allowedSkills: ["*"],
+        deniedSkills: ["dingtalk-notifier"],
+      }).map((skill) => skill.name),
+    ).toEqual(["code-reviewer"]);
+
+    expect(
+      filterSkillsForAgent([notifier, reviewer], {
+        allowedSkills: ["code-reviewer"],
+      }).map((skill) => skill.name),
+    ).toEqual(["code-reviewer"]);
+  });
+
+  it("creates a deterministic serializable skill lockfile", () => {
+    const dingtalk = parseSkill(
+      `---
+name: dingtalk-notifier
+description: Sends DingTalk group notifications.
+metadata:
+  version: 1.2.3
+---
+Notify safely.
+`,
+      "/skills/dingtalk/SKILL.md",
+    );
+    const reviewer = parseSkill(
+      `---
+name: code-reviewer
+description: Reviews code changes.
+metadata:
+  owner: platform
+---
+Review safely.
+`,
+      "/skills/reviewer/SKILL.md",
+    );
+
+    const lockfile = createSkillLockfile([dingtalk, reviewer], {
+      generatedAt: new Date("2026-01-02T03:04:05.000Z"),
+    });
+
+    expect(lockfile).toEqual({
+      schemaVersion: "skill-lockfile.v0.1",
+      generatedAt: "2026-01-02T03:04:05.000Z",
+      skills: [
+        {
+          name: "code-reviewer",
+          sourcePath: "/skills/reviewer/SKILL.md",
+          contentHash: reviewer.contentHash,
+          metadata: {
+            owner: "platform",
+          },
+        },
+        {
+          name: "dingtalk-notifier",
+          sourcePath: "/skills/dingtalk/SKILL.md",
+          contentHash: dingtalk.contentHash,
+          version: "1.2.3",
+          metadata: {
+            version: "1.2.3",
+          },
+        },
+      ],
+    });
+    expect(JSON.parse(JSON.stringify(lockfile))).toEqual(lockfile);
+  });
+
+  it("locks indexed skills without recomputing version metadata", () => {
+    const lockfile = lockSkills([
+      {
+        name: "code-reviewer",
+        description: "Reviews code changes.",
+        sourcePath: "/skills/reviewer/SKILL.md",
+        contentHash: "abc123",
+        version: "indexed-version",
+        metadata: {
+          version: "metadata-version",
+        },
+      },
+    ]);
+
+    expect(lockfile.skills).toEqual([
+      {
+        name: "code-reviewer",
+        sourcePath: "/skills/reviewer/SKILL.md",
+        contentHash: "abc123",
+        version: "indexed-version",
+        metadata: {
+          version: "metadata-version",
+        },
+      },
+    ]);
+  });
+
+  it("loads a skill body through the skill loader tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "reviewer", "references"), { recursive: true });
+    await writeFile(
+      join(root, "reviewer", "SKILL.md"),
+      `---
+name: code-reviewer
+description: Reviews code changes.
+metadata:
+  version: 1.0.0
+---
+Review only the requested change.
+`,
+    );
+    await writeFile(join(root, "reviewer", "references", "rules.md"), "Rules");
+
+    const [skill] = await loadSkills([root]);
+    expect(skill).toBeDefined();
+
+    const tool = createSkillLoaderTool([skill!]);
+    const output = await tool.execute(
+      { name: "code-reviewer" },
+      {
+        run: {
+          id: createRunId(),
+          goal: "review",
+          state: "running",
+          createdAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+          metadata: {},
+        },
+      },
+    );
+
+    expect(output).toMatchObject({
+      status: "loaded",
+      name: "code-reviewer",
+      version: "1.0.0",
+      resourceFiles: ["references/rules.md"],
+    });
+    expect(JSON.stringify(output)).toContain(
+      "Review only the requested change",
+    );
+  });
+
+  it("lists skill resource files without SKILL.md", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "writer", "assets"), { recursive: true });
+    await writeFile(
+      join(root, "writer", "SKILL.md"),
+      `---
+name: writer
+description: Writes docs.
+---
+Write clearly.
+`,
+    );
+    await writeFile(join(root, "writer", "assets", "style.md"), "Style");
+
+    const [skill] = await loadSkills([root]);
+
+    await expect(listSkillResourceFiles(skill!)).resolves.toEqual([
+      "assets/style.md",
+    ]);
+  });
+
+  it("does not let SKILL.md consume the resource file limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "writer", "assets"), { recursive: true });
+    await writeFile(
+      join(root, "writer", "SKILL.md"),
+      `---
+name: writer
+description: Writes docs.
+---
+Write clearly.
+`,
+    );
+    await writeFile(join(root, "writer", "assets", "style.md"), "Style");
+
+    const [skill] = await loadSkills([root]);
+
+    await expect(listSkillResourceFiles(skill!, 1)).resolves.toEqual([
+      "assets/style.md",
+    ]);
+  });
+
+  it("creates traceable loaded skill context", () => {
+    const skill = parseSkill(`---
+name: code-reviewer
+description: Reviews code changes.
+metadata:
+  version: 2
+---
+Review only the requested change.
+`);
+
+    const context = createLoadedSkillContext(skill, "Matched goal.");
+
+    expect(context.type).toBe("system");
+    expect(context.source).toEqual({
+      kind: "skill",
+      path: "SKILL.md",
+    });
+    expect(context.content).toContain("Review only the requested change.");
+    expect(context.metadata).toMatchObject({
+      layer: "resident",
+      stability: "session",
+      skillName: "code-reviewer",
+      skillVersion: "2",
+      selectionReason: "Matched goal.",
+    });
+  });
+});

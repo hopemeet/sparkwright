@@ -1,0 +1,50 @@
+{
+  "name": "sparkwright-monorepo",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "node scripts/build-workspaces.mjs",
+    "tui": "npm run build && node packages/cli/dist/index.js tui",
+    "cli": "npm run build && node packages/cli/dist/index.js",
+    "typecheck": "npm run build && npm run typecheck --workspaces",
+    "test": "npm run build && npm run test --workspaces",
+    "lint": "eslint .",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "schema:check": "node scripts/validate-schemas.mjs",
+    "check:internal-imports": "node scripts/check-internal-imports.mjs",
+    "check:reserved": "node scripts/check-reserved-fields.mjs",
+    "check:reserved:strict": "node scripts/check-reserved-fields.mjs --strict",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
+    "check": "npm run build && npm run typecheck --workspaces && npm run typecheck:test && npm run lint && npm run format:check && npm run schema:check && npm run check:internal-imports && npm run check:reserved:strict && npm run test --workspaces",
+    "release:check": "npm run check && npm exec sparkwright -- run \"inspect this repo\" --workspace examples/repo-pilot --target README.md --trace-level minimal && npm run release:install-smoke",
+    "release:install-smoke": "node scripts/release-install-smoke.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^22.10.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "eslint": "^9.39.4",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.59.3",
+    "vitest": "^3.2.4"
+  }
+}

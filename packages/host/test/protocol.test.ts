@@ -1,0 +1,484 @@
+import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
+import type { Connection } from "../src/connection.js";
+import { serveConnection } from "../src/server.js";
+import { HostRuntime } from "../src/runtime.js";
+
+/**
+ * Tiny in-process Connection pair: two ends sharing two queues. Lets the
+ * test play "client" while serveConnection plays "host" without touching
+ * stdio or sockets.
+ */
+function createConnectionPair(): {
+  hostSide: Connection;
+  clientSend: (msg: HostMessage) => void;
+  clientMessages: () => HostMessage[];
+  waitFor: (match: (m: HostMessage) => boolean) => Promise<HostMessage>;
+  close: () => void;
+} {
+  const fromClient: ((m: HostMessage) => void)[] = [];
+  let onClose: ((reason?: string) => void) | null = null;
+  const messages: HostMessage[] = [];
+  const watchers: {
+    match: (m: HostMessage) => boolean;
+    resolve: (m: HostMessage) => void;
+  }[] = [];
+
+  const hostSide: Connection = {
+    id: "test_host",
+    send(m) {
+      messages.push(m);
+      // notify watchers
+      for (let i = watchers.length - 1; i >= 0; i -= 1) {
+        if (watchers[i].match(m)) {
+          watchers[i].resolve(m);
+          watchers.splice(i, 1);
+        }
+      }
+    },
+    onMessage(handler) {
+      fromClient.push(handler);
+    },
+    onClose(handler) {
+      onClose = handler;
+    },
+    close() {
+      onClose?.("test close");
+    },
+  };
+
+  return {
+    hostSide,
+    clientSend: (msg) => {
+      for (const h of fromClient) h(msg);
+    },
+    clientMessages: () => messages,
+    waitFor: (match) =>
+      new Promise((resolve) => {
+        const found = messages.find(match);
+        if (found) return resolve(found);
+        watchers.push({ match, resolve });
+      }),
+    close: () => onClose?.("test close"),
+  };
+}
+
+const TIMESTAMP = "2026-05-24T12:00:00.000Z";
+
+describe("host protocol", () => {
+  it("rejects requests before handshake", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "req_1",
+      kind: "run.start",
+      timestamp: TIMESTAMP,
+      payload: { goal: "early goal" },
+    });
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "req_1",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "protocol_version_mismatch" },
+    });
+  });
+
+  it("rejects mismatched major version", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: "99.0",
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "h",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "protocol_version_mismatch" },
+    });
+  });
+
+  it("rejects request payloads with unexpected fields", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+    pair.clientSend({
+      envelope: "request",
+      id: "bad",
+      kind: "session.list",
+      timestamp: TIMESTAMP,
+      payload: { limit: 1, extra: true },
+    } as unknown as HostMessage);
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "bad",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "invalid_payload" },
+    });
+  });
+
+  it("rejects malformed approval decisions before runtime dispatch", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+    pair.clientSend({
+      envelope: "request",
+      id: "approval",
+      kind: "approval.resolve",
+      timestamp: TIMESTAMP,
+      payload: { approvalId: "approval_x", decision: "maybe" },
+    } as unknown as HostMessage);
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "approval",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "invalid_payload" },
+    });
+  });
+
+  it("runs a deterministic goal end-to-end", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+
+    // 1) handshake
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    const handshakeResp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "h",
+    );
+    expect(handshakeResp).toMatchObject({ ok: true });
+    const ready = await pair.waitFor(
+      (m) => m.envelope === "event" && m.kind === "host.ready",
+    );
+    expect(ready).toMatchObject({
+      kind: "host.ready",
+      payload: { protocolVersion: PROTOCOL_VERSION },
+    });
+
+    // 2) start a run
+    pair.clientSend({
+      envelope: "request",
+      id: "s",
+      kind: "run.start",
+      timestamp: TIMESTAMP,
+      payload: { goal: "inspect this repo" },
+    });
+    const startResp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "s",
+    );
+    expect(startResp).toMatchObject({ ok: true });
+    if (startResp.envelope !== "response" || !startResp.ok) {
+      throw new Error("run.start did not return an ok response");
+    }
+    expect(startResp.result.runId).toMatch(/^run_/);
+
+    // 3) wait for terminal event
+    const terminal = await pair.waitFor(
+      (m) =>
+        m.envelope === "event" &&
+        (m.kind === "run.completed" || m.kind === "run.failed"),
+    );
+    expect(terminal.envelope).toBe("event");
+    if (terminal.envelope !== "event") return;
+    if (terminal.kind === "run.failed") {
+      throw new Error(
+        `run failed: ${JSON.stringify(terminal.payload, null, 2)}`,
+      );
+    }
+    expect(terminal.kind).toBe("run.completed");
+
+    // 4) we should have seen at least one run.event in between
+    const runEvents = pair
+      .clientMessages()
+      .filter((m) => m.envelope === "event" && m.kind === "run.event");
+    expect(runEvents.length).toBeGreaterThan(0);
+  });
+
+  it("accepts run.inject_message for an active run", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+    pair.clientSend({
+      envelope: "request",
+      id: "s",
+      kind: "run.start",
+      timestamp: TIMESTAMP,
+      payload: { goal: "inspect this repo" },
+    });
+    const startResp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "s",
+    );
+    if (startResp.envelope !== "response" || !startResp.ok) {
+      throw new Error("run.start did not return an ok response");
+    }
+    const runId = String(startResp.result.runId);
+
+    pair.clientSend({
+      envelope: "request",
+      id: "inject",
+      kind: "run.inject_message",
+      timestamp: TIMESTAMP,
+      payload: {
+        runId,
+        content: "also inspect package.json",
+        metadata: { source: "test" },
+      },
+    });
+
+    const injectResp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "inject",
+    );
+    expect(injectResp).toMatchObject({ ok: true });
+
+    const enqueued = await pair.waitFor(
+      (m) =>
+        m.envelope === "event" &&
+        m.kind === "run.event" &&
+        (m.payload.event as { type?: string }).type === "run.command.enqueued",
+    );
+    expect(enqueued).toMatchObject({ kind: "run.event" });
+  });
+
+  it("inspects persisted session diagnostics", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      const pair = createConnectionPair();
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "s",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "inspect this repo" },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "s");
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      pair.clientSend({
+        envelope: "request",
+        id: "list",
+        kind: "session.list",
+        timestamp: TIMESTAMP,
+        payload: { limit: 1 },
+      });
+      const listResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "list",
+      );
+      if (listResp.envelope !== "response" || !listResp.ok) {
+        throw new Error("session.list did not return an ok response");
+      }
+      const sessions = listResp.result.sessions as Array<{ id: string }>;
+      const sessionId = sessions[0]?.id;
+      expect(sessionId).toBeTruthy();
+
+      pair.clientSend({
+        envelope: "request",
+        id: "inspect",
+        kind: "session.inspect",
+        timestamp: TIMESTAMP,
+        payload: { sessionId },
+      });
+      const inspectResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "inspect",
+      );
+
+      expect(inspectResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          sessionId,
+          consistency: { ok: true },
+          timeline: { phases: expect.any(Array) },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsafe session ids instead of using them as paths", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      const pair = createConnectionPair();
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "start_bad",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "inspect this repo", sessionId: "../escape" },
+      });
+      const startResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "start_bad",
+      );
+      expect(startResp).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "inspect_bad",
+        kind: "session.inspect",
+        timestamp: TIMESTAMP,
+        payload: { sessionId: "../escape" },
+      });
+      const inspectResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "inspect_bad",
+      );
+      expect(inspectResp).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a concurrent run.start while another is still spinning up", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    try {
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      // Fire two startRun calls back-to-back without awaiting. The first
+      // takes the `startingRun` reservation synchronously inside its async
+      // body; the second observes the reservation and is rejected before its
+      // own `await createModel(...)` runs.
+      const first = runtime.startRun({ goal: "inspect repo" });
+      const second = runtime.startRun({ goal: "another goal" });
+      const [r1, r2] = await Promise.all([first, second]);
+      // Exactly one wins.
+      const oks = [r1, r2].filter((r) => r.ok);
+      const errs = [r1, r2].filter((r) => !r.ok);
+      expect(oks).toHaveLength(1);
+      expect(errs).toHaveLength(1);
+      expect(errs[0]!.ok).toBe(false);
+      if (!errs[0]!.ok) {
+        expect(errs[0]!.error.message).toMatch(/already active/);
+      }
+      // Let the winning run drain its async work so the test exits cleanly.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      runtime.cleanup();
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});

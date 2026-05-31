@@ -1,0 +1,10 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "workspace": "./examples/repo-pilot",
+  "providers": {
+    "openai": {
+      "baseURL": "https://api.openai.com/v1",
+      "apiKey": "replace-me"
+    }
+  }
+}

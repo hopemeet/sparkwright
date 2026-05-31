@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/agent-profile.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Agent Profile",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "mode": {
+      "type": "string",
+      "enum": ["primary", "child", "all"]
+    },
+    "model": {},
+    "prompt": { "type": "string" },
+    "allowedTools": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "deniedTools": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "policy": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capabilityRule"
+      }
+    },
+    "maxSteps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "runBudget": {
+      "type": "object",
+      "properties": {
+        "maxDurationMs": { "type": "integer", "minimum": 1 },
+        "maxModelCalls": { "type": "integer", "minimum": 1 },
+        "maxToolCalls": { "type": "integer", "minimum": 1 },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "maxCostUsd": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "capabilityRule": {
+      "type": "object",
+      "required": ["action", "effect"],
+      "properties": {
+        "action": { "type": "string" },
+        "resource": { "type": "string" },
+        "effect": {
+          "type": "string",
+          "enum": ["allow", "deny", "requires_approval"]
+        },
+        "reason": { "type": "string" },
+        "metadata": { "type": "object" },
+        "source": {
+          "type": "string",
+          "enum": ["parent_agent", "parent_run", "child_agent", "runtime"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

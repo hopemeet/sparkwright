@@ -1,0 +1,194 @@
+import React, { useEffect, useState } from "react";
+import { Box, Text, useInput, useStdout } from "ink";
+import type { PendingApproval } from "../state/event-store.js";
+import { DiffView } from "./diff-view.js";
+import { useTheme } from "../lib/theme-context.js";
+import type { Theme } from "../lib/theme.js";
+
+/**
+ * Kind-aware approval panel. Shows a renderable body matching the action:
+ *  - workspace.write  → unified diff with scroll keys
+ *  - tool.execute     → tool name + truncated args
+ *  - shell.execute    → command (one-line) + reason
+ *  - other            → summary + raw details
+ *
+ * Keys: y/Enter approve · n/Esc deny · j/k or arrows scroll · g/G top/bottom.
+ * Esc-to-deny is risk-averse on purpose: cancelling the *prompt* without
+ * a decision would leave the run blocked forever, so we treat it as deny.
+ */
+export function ApprovalPrompt(props: {
+  pending: PendingApproval;
+  onDecision: (decision: "approved" | "denied") => void;
+}): React.ReactElement {
+  const { stdout } = useStdout();
+  const theme = useTheme();
+  const [scroll, setScroll] = useState(0);
+  // Reset scroll when the approval target changes — we keep this component
+  // mounted across approvals when possible.
+  useEffect(() => {
+    setScroll(0);
+  }, [props.pending.id]);
+
+  // Reserve some rows for header / footer / surrounding chrome. The remainder
+  // is the diff viewport. Floor at 6 to stay useful on tiny terminals.
+  const viewportRows = Math.max(6, (stdout?.rows ?? 30) - 18);
+  const viewportCols = Math.max(40, (stdout?.columns ?? 100) - 4);
+
+  useInput((input, key) => {
+    if (input === "y" || input === "Y" || key.return) {
+      props.onDecision("approved");
+      return;
+    }
+    if (input === "n" || input === "N" || key.escape) {
+      props.onDecision("denied");
+      return;
+    }
+    if (!props.pending.diff) return;
+    if (key.downArrow || input === "j") setScroll((s) => s + 1);
+    else if (key.upArrow || input === "k") setScroll((s) => Math.max(0, s - 1));
+    else if (key.pageDown || input === "d") setScroll((s) => s + viewportRows);
+    else if (key.pageUp || input === "u")
+      setScroll((s) => Math.max(0, s - viewportRows));
+    else if (input === "g") setScroll(0);
+    else if (input === "G") setScroll(1_000_000);
+  });
+
+  const borderColor = riskColor(props.pending.policy?.risk, theme);
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={borderColor}
+      paddingX={1}
+    >
+      <Header pending={props.pending} theme={theme} />
+      <Body
+        pending={props.pending}
+        theme={theme}
+        scroll={scroll}
+        viewportRows={viewportRows}
+        viewportCols={viewportCols}
+      />
+      <Footer hasDiff={!!props.pending.diff} theme={theme} />
+    </Box>
+  );
+}
+
+function Header(props: {
+  pending: PendingApproval;
+  theme: Theme;
+}): React.ReactElement {
+  const { pending, theme } = props;
+  const risk = pending.policy?.risk;
+  return (
+    <Box flexDirection="column">
+      <Box>
+        <Text color={theme.warning} bold>
+          ⚠ approval required
+        </Text>
+        <Text dimColor> {pending.action}</Text>
+        {risk ? (
+          <Text color={riskColor(risk, theme)}> · risk:{risk}</Text>
+        ) : null}
+      </Box>
+      <Text>{pending.summary}</Text>
+      {pending.reason ? (
+        <Text>
+          <Text dimColor>reason: </Text>
+          {pending.reason}
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function Body(props: {
+  pending: PendingApproval;
+  theme: Theme;
+  scroll: number;
+  viewportRows: number;
+  viewportCols: number;
+}): React.ReactElement | null {
+  const { pending, theme } = props;
+
+  if (pending.kind === "workspace.write" && pending.diff) {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text dimColor>file: </Text>
+          <Text color={theme.accent2}>{pending.path ?? "?"}</Text>
+        </Text>
+        <DiffView
+          diff={pending.diff}
+          scrollOffset={props.scroll}
+          viewportRows={props.viewportRows}
+          width={props.viewportCols}
+        />
+      </Box>
+    );
+  }
+
+  if (pending.kind === "tool.execute") {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text dimColor>tool: </Text>
+          <Text color={theme.accent}>{pending.toolName ?? "?"}</Text>
+        </Text>
+        {pending.toolArgs ? (
+          <Text>
+            <Text dimColor>args: </Text>
+            <Text>{truncateJson(pending.toolArgs, props.viewportCols)}</Text>
+          </Text>
+        ) : null}
+      </Box>
+    );
+  }
+
+  if (pending.kind === "shell.execute" && pending.command) {
+    return (
+      <Box marginTop={1}>
+        <Text dimColor>$ </Text>
+        <Text color={theme.accent2}>{pending.command}</Text>
+      </Box>
+    );
+  }
+
+  return pending.path ? (
+    <Box marginTop={1}>
+      <Text dimColor>path: </Text>
+      <Text>{pending.path}</Text>
+    </Box>
+  ) : null;
+}
+
+function Footer(props: { hasDiff: boolean; theme: Theme }): React.ReactElement {
+  return (
+    <Box marginTop={1}>
+      <Text color={props.theme.success}>y</Text>
+      <Text dimColor>/enter approve </Text>
+      <Text color={props.theme.error}>n</Text>
+      <Text dimColor>/esc deny</Text>
+      {props.hasDiff ? (
+        <Text dimColor> ↑/↓ j/k scroll · u/d page · g/G top/bottom</Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function riskColor(risk: string | undefined, theme: Theme): string {
+  if (risk === "risky" || risk === "high") return theme.error;
+  return theme.warning;
+}
+
+function truncateJson(value: unknown, maxCols: number): string {
+  let text: string;
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  if (text.length <= maxCols) return text;
+  return text.slice(0, Math.max(0, maxCols - 1)) + "…";
+}

@@ -1,0 +1,49 @@
+{
+  "name": "@sparkwright/im-gateway",
+  "version": "0.1.0",
+  "description": "IM gateway for Sparkwright, with Telegram as the first platform adapter.",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git",
+    "directory": "packages/im-gateway"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "sparkwright-im-gateway": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/bin.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sparkwright/sdk-node": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "keywords": [
+    "sparkwright",
+    "gateway",
+    "telegram",
+    "agent"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "envelope": "event",
+  "id": "evt_001",
+  "kind": "host.ready",
+  "timestamp": "2026-05-24T12:00:00.100Z",
+  "payload": {
+    "protocolVersion": "1.0",
+    "host": { "name": "sparkwright-host", "version": "0.1.0" },
+    "capabilities": ["streaming", "approvals", "sessions"]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/run.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Run",
+  "type": "object",
+  "required": ["id", "goal", "state", "createdAt", "updatedAt", "metadata"],
+  "properties": {
+    "id": { "type": "string" },
+    "goal": { "type": "string" },
+    "state": {
+      "type": "string",
+      "enum": [
+        "created",
+        "running",
+        "waiting_approval",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "stopReason": {
+      "type": "string",
+      "enum": [
+        "no_model_configured",
+        "final_answer",
+        "max_steps_exceeded",
+        "model_completion_failed",
+        "model_auth_failed",
+        "model_quota_exhausted",
+        "model_provider_unavailable",
+        "model_retry_exhausted",
+        "model_output_invalid",
+        "tool_doom_loop",
+        "max_duration_exceeded",
+        "max_model_calls_exceeded",
+        "max_tool_calls_exceeded",
+        "token_budget_exceeded",
+        "cost_budget_exceeded",
+        "blocking_limit",
+        "validation_failed",
+        "hook_stopped",
+        "stop_hook_prevented",
+        "aborted_streaming",
+        "aborted_tools",
+        "manual_cancelled",
+        "state_transition_invalid"
+      ]
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

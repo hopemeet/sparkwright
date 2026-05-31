@@ -1,0 +1,49 @@
+{
+  "name": "@sparkwright/shell-tool",
+  "version": "0.1.0",
+  "description": "Opt-in shell tool with strict safety defaults for Sparkwright agents.",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git",
+    "directory": "packages/shell-tool"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@sparkwright/core": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "sideEffects": false,
+  "keywords": [
+    "agents",
+    "shell",
+    "tools",
+    "safety",
+    "policy"
+  ]
+}

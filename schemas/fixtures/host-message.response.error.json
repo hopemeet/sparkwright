@@ -1,0 +1,11 @@
+{
+  "envelope": "response",
+  "id": "req_99",
+  "ok": false,
+  "timestamp": "2026-05-24T12:00:02.000Z",
+  "error": {
+    "code": "run_not_found",
+    "message": "no active run with id run_missing",
+    "details": { "runId": "run_missing" }
+  }
+}

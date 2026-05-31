@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Config",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. model/providers/permissionMode/workspace apply to both surfaces; theme/keybindings/mouse are TUI-only. The `providers` map is merged by key across files (a later file adds or overrides individual providers without dropping the rest); all other fields are wholesale-overridden.",
+  "type": "object",
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]+(/.+)?$",
+      "description": "Active model in the form \"provider/model\", e.g. \"openai/gpt-example\". The provider segment names an entry in `providers`. The reserved provider \"deterministic\" selects the built-in offline demo model and needs no `providers` entry."
+    },
+    "providers": {
+      "type": "object",
+      "description": "Named model providers. The key (e.g. \"openai\", \"local\") is referenced by `model`. The reserved name \"deterministic\" is built in and must not be declared here.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "npm": {
+            "type": "string",
+            "minLength": 1,
+            "description": "AI SDK package used to construct the client. Defaults to \"@ai-sdk/openai\". Only \"@ai-sdk/openai\" is wired today (covers any OpenAI-compatible endpoint via baseURL); other values are reserved for future use and rejected at runtime."
+          },
+          "baseURL": {
+            "type": "string",
+            "format": "uri",
+            "description": "OpenAI-compatible base URL. Overridden by the OPENAI_BASE_URL env var when set."
+          },
+          "apiKey": {
+            "type": "string",
+            "minLength": 1,
+            "description": "API key for this provider. Overridden by the OPENAI_API_KEY env var when set. Stored in plaintext — keep this file private (chmod 600)."
+          },
+          "models": {
+            "type": "object",
+            "description": "Optional per-model metadata. Models not listed here still work; the metadata only attaches cost reporting.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "cost": {
+                  "type": "object",
+                  "description": "Per-million-token pricing used to attach costUsd to usage.",
+                  "properties": {
+                    "input": { "type": "number" },
+                    "output": { "type": "number" },
+                    "cacheRead": { "type": "number" },
+                    "cacheWrite": { "type": "number" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "permissionMode": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "default",
+        "accept_edits",
+        "dont_ask",
+        "bypass_permissions"
+      ],
+      "description": "Permission policy mode for runs started from the TUI."
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Workspace root for runs. Relative paths resolve from the directory of the config file that defined them."
+    },
+    "theme": {
+      "type": "string",
+      "enum": ["dark", "light", "mono"],
+      "description": "Visual theme. 'dark' (default) uses bold ANSI accents; 'light' adapts for light terminals; 'mono' is grayscale-only."
+    },
+    "mouse": {
+      "type": "boolean",
+      "description": "Enable mouse reporting so the scroll wheel scrolls the event log. Default true. Disable if it conflicts with your terminal's text selection."
+    },
+    "keybindings": {
+      "type": "object",
+      "description": "Override default key chords for named TUI actions. Set to '' or [] to clear a default (unbind). Chord syntax: 'ctrl+k', 'shift+tab', '?', 'esc'. Known names: palette.open, help.open, cancel.run, quit.app.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "array", "items": { "type": "string" } },
+          { "type": "null" }
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

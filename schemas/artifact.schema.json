@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/artifact.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Artifact",
+  "type": "object",
+  "required": ["id", "runId", "type", "name", "metadata"],
+  "properties": {
+    "id": { "type": "string" },
+    "runId": { "type": "string" },
+    "type": {
+      "type": "string",
+      "enum": ["text", "json", "diff", "patch", "file", "log"]
+    },
+    "name": { "type": "string" },
+    "path": { "type": "string" },
+    "content": {},
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

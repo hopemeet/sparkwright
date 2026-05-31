@@ -1,0 +1,9 @@
+{
+  "signal": "completed",
+  "state": "completed",
+  "stopReason": "final_answer",
+  "message": "Run completed with a final answer.",
+  "metadata": {
+    "traceLevel": "minimal"
+  }
+}

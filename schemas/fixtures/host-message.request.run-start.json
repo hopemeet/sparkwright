@@ -1,0 +1,12 @@
+{
+  "envelope": "request",
+  "id": "req_02",
+  "kind": "run.start",
+  "timestamp": "2026-05-24T12:00:01.000Z",
+  "payload": {
+    "goal": "inspect this repo",
+    "sessionId": "session_abc123",
+    "provider": "openai",
+    "model": "gpt-4o-mini"
+  }
+}

@@ -1,0 +1,25 @@
+export { ImGateway } from "./gateway.js";
+export { GatewayStore } from "./store.js";
+export { SparkwrightBridge } from "./sparkwright-bridge.js";
+export { TelegramAdapter } from "./adapters/telegram.js";
+export {
+  defaultConfigPath,
+  defaultDataDir,
+  loadConfig,
+  writeConfig,
+  type ImGatewayConfig,
+  type TelegramGatewayConfig,
+} from "./config.js";
+export {
+  buildSessionKey,
+  type SessionRoutingOptions,
+} from "./session-router.js";
+export type {
+  ApprovalPrompt,
+  GatewayLogger,
+  InboundMessage,
+  OutboundMessage,
+  OutboundTarget,
+  PlatformAdapter,
+  PlatformHandlers,
+} from "./types.js";

@@ -1,0 +1,19 @@
+{
+  "toolCallId": "tool_call_01",
+  "status": "completed",
+  "output": {
+    "ok": true
+  },
+  "artifacts": [
+    {
+      "id": "artifact_01",
+      "runId": "run_01",
+      "type": "json",
+      "name": "result.json",
+      "content": {
+        "ok": true
+      },
+      "metadata": {}
+    }
+  ]
+}

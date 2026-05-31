@@ -1,0 +1,732 @@
+// AI maintenance note: Tools are LLM-invoked actions (gated by policy +
+// approval). User-typed slash commands live in commands.ts (CommandRegistry).
+// Wire via `defineTool` + `createRun({ tools })`.
+import { createToolCallId } from "./ids.js";
+import type { RunId } from "./ids.js";
+import type {
+  RuntimeContext,
+  SparkwrightError,
+  ToolCall,
+  ToolResult,
+} from "./types.js";
+
+export type ToolRisk = "safe" | "risky" | "denied";
+export type ToolSideEffect = "none" | "read" | "write" | "network" | "external";
+export type ToolIdempotency = "idempotent" | "conditional" | "non_idempotent";
+export type ToolDataSensitivity =
+  | "public"
+  | "internal"
+  | "confidential"
+  | "secret";
+
+export interface ToolRateLimit {
+  maxCalls: number;
+  windowMs: number;
+}
+
+export interface ToolAuditPolicy {
+  level: "none" | "metadata" | "payload";
+  retentionDays?: number;
+  viewers?: string[];
+}
+
+export interface ToolCostEstimate {
+  tier?: "free" | "low" | "medium" | "high";
+  estimatedTokens?: number;
+  estimatedUsd?: number;
+}
+
+export type ToolInterruptBehavior = "cancel" | "block";
+
+export interface ToolResultSizePolicy {
+  /**
+   * Maximum serialized result size before an embedder should materialize the
+   * full output as an artifact and return a preview to the model.
+   */
+  maxChars?: number;
+  /**
+   * When true, the runtime should never spill this tool's result to an
+   * artifact automatically. Use for tools whose output already has a bounded,
+   * replay-safe shape.
+   *
+   * @reserved Public descriptor field consumed by artifact stores and UIs.
+   */
+  neverPersist?: boolean;
+}
+
+export type ToolResultPresentationKind =
+  | "file_discovery"
+  | "file_read"
+  | "shell_output"
+  | "diagnostic"
+  | "generic";
+
+export interface ToolResultPresentation {
+  /**
+   * Semantic result class used by observation formatters and UIs when deciding
+   * what must stay visible to the model.
+   */
+  kind: ToolResultPresentationKind;
+  /**
+   * Top-level result fields that should be kept intact when they fit the
+   * observation budget. Examples: paths, matches, errors, exitCode.
+   *
+   * @reserved Public presentation field consumed by observation formatters.
+   */
+  preserveFields?: string[];
+  /**
+   * Names of pagination / recovery fields emitted by this tool.
+   *
+   * @reserved Public presentation field consumed by observation formatters.
+   */
+  paginationFields?: string[];
+  /**
+   * Hint for large raw output handling. Concrete materialization is still owned
+   * by the tool or embedding runtime.
+   *
+   * @reserved Public presentation field consumed by artifact-aware UIs.
+   */
+  artifactPolicy?: "when_large" | "on_failure" | "never";
+}
+
+export interface ToolProgressUpdate {
+  /** @reserved Public progress payload field consumed by streaming UIs. */
+  label?: string;
+  message?: string;
+  /** @reserved Public progress payload field consumed by streaming UIs. */
+  completedUnits?: number;
+  /** @reserved Public progress payload field consumed by streaming UIs. */
+  totalUnits?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ToolOrigin {
+  kind: "local" | "script" | "mcp" | "hosted" | "unknown";
+  name?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ToolGovernance {
+  allowedAgents?: string[];
+  allowedRoles?: string[];
+  origin?: ToolOrigin;
+  rateLimit?: ToolRateLimit;
+  dataSensitivity?: ToolDataSensitivity;
+  sideEffects?: ToolSideEffect[];
+  idempotency?: ToolIdempotency;
+  audit?: ToolAuditPolicy;
+  costEstimate?: ToolCostEstimate;
+}
+
+export type ToolInputSchema = {
+  type?:
+    | "object"
+    | "array"
+    | "string"
+    | "number"
+    | "integer"
+    | "boolean"
+    | "null";
+  properties?: Record<string, ToolInputSchema>;
+  required?: string[];
+  additionalProperties?: boolean;
+  items?: ToolInputSchema;
+  enum?: unknown[];
+};
+
+export interface ToolDescriptor {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  outputSchema?: unknown;
+  timeoutMs?: number;
+  /**
+   * @reserved Public descriptor field consumed by tool schedulers and UIs.
+   */
+  concurrency?: {
+    safe?: boolean;
+  };
+  /**
+   * @reserved Public descriptor field consumed by streaming UIs and run
+   * controllers when a new user command arrives during tool execution.
+   */
+  interrupt?: {
+    behavior?: ToolInterruptBehavior;
+  };
+  /**
+   * @reserved Public descriptor field consumed by prompt/tool loaders. Deferred
+   * tools can be omitted from the initial model request and discovered later.
+   */
+  loading?: {
+    defer?: boolean;
+    alwaysLoad?: boolean;
+  };
+  /**
+   * @reserved Public descriptor field consumed by artifact stores and UIs.
+   */
+  resultSize?: ToolResultSizePolicy;
+  resultPresentation?: ToolResultPresentation;
+  policy?: {
+    risk?: ToolRisk;
+    requiresApproval?: boolean;
+  };
+  governance?: ToolGovernance;
+}
+
+export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  outputSchema?: unknown;
+  timeoutMs?: number;
+  interruptBehavior?: ToolInterruptBehavior | (() => ToolInterruptBehavior);
+  /**
+   * Hint for embedders that need to keep model observations compact. The core
+   * descriptor exposes this policy; concrete artifact materialization remains
+   * owned by the embedding runtime until the storage contract is promoted.
+   */
+  resultSize?: ToolResultSizePolicy;
+  resultPresentation?: ToolResultPresentation;
+  /**
+   * When true, a tool loader may hide this tool from the initial provider
+   * request and expose it through a discovery/search surface.
+   */
+  deferLoading?: boolean;
+  /**
+   * Forces eager loading even when a product shell enables deferred tools.
+   */
+  alwaysLoad?: boolean;
+  policy?: {
+    risk?: ToolRisk;
+    requiresApproval?: boolean;
+  };
+  governance?: ToolGovernance;
+  isConcurrencySafe?(args: TArgs): boolean;
+  /**
+   * Whether re-invoking this tool with the same args after a transient
+   * failure is safe (no double-spend, no duplicated mutation).
+   *
+   * - `undefined` (default): unknown — runtime treats as safe to preserve
+   *   backward compatibility with existing tools.
+   * - `true`: idempotent or read-only — runtime / model may freely retry.
+   * - `false`: caller-visible side effect (HTTP POST, payment, IM send,
+   *   external API mutation). On a network-class failure the runtime
+   *   emits a `tool.replay_risk` event and annotates the ToolResult so
+   *   the model and host can choose to pause for confirmation instead of
+   *   silently re-running.
+   */
+  isReplaySafe?: boolean;
+  /** @reserved Public tool-governance hint consumed by policy adapters. */
+  isReadOnly?(args: TArgs): boolean;
+  /** @reserved Public tool-governance hint consumed by policy adapters. */
+  isDestructive?(args: TArgs): boolean;
+  /** @reserved Public permission matcher hook consumed by policy adapters. */
+  preparePermissionMatcher?(args: TArgs): Promise<(pattern: string) => boolean>;
+  execute(args: TArgs, ctx: RuntimeContext): Promise<TResult> | TResult;
+}
+
+export function defineTool<TArgs = unknown, TResult = unknown>(
+  tool: ToolDefinition<TArgs, TResult>,
+): ToolDefinition<TArgs, TResult> {
+  return tool;
+}
+
+export class ToolRegistry {
+  private readonly tools = new Map<string, ToolDefinition>();
+  private generation = 0;
+
+  register(tool: ToolDefinition): void {
+    if (this.tools.has(tool.name)) {
+      throw new Error(`Tool already registered: ${tool.name}`);
+    }
+
+    this.tools.set(tool.name, tool);
+    this.generation += 1;
+  }
+
+  unregister(name: string): boolean {
+    const removed = this.tools.delete(name);
+    if (removed) this.generation += 1;
+    return removed;
+  }
+
+  replace(tool: ToolDefinition): void {
+    this.tools.set(tool.name, tool);
+    this.generation += 1;
+  }
+
+  getGeneration(): number {
+    return this.generation;
+  }
+
+  snapshot(): { generation: number; tools: ToolDefinition[] } {
+    return {
+      generation: this.generation,
+      tools: this.list(),
+    };
+  }
+
+  get(name: string): ToolDefinition | undefined {
+    return this.tools.get(name);
+  }
+
+  list(): ToolDefinition[] {
+    return [...this.tools.values()];
+  }
+
+  listDescriptors(): ToolDescriptor[] {
+    return this.list().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      outputSchema: tool.outputSchema,
+      timeoutMs: tool.timeoutMs,
+      concurrency: {
+        safe: isToolConcurrencySafe(tool),
+      },
+      interrupt: {
+        behavior: getToolInterruptBehavior(tool),
+      },
+      loading: {
+        defer: tool.deferLoading,
+        alwaysLoad: tool.alwaysLoad,
+      },
+      resultSize: tool.resultSize,
+      resultPresentation: tool.resultPresentation,
+      policy: tool.policy,
+      governance: tool.governance,
+    }));
+  }
+}
+
+export function getToolInterruptBehavior(
+  tool: ToolDefinition | ToolDescriptor | undefined,
+): ToolInterruptBehavior | undefined {
+  if (!tool || !("interruptBehavior" in tool)) return undefined;
+  const behavior = tool.interruptBehavior;
+  return typeof behavior === "function" ? behavior() : behavior;
+}
+
+export function isToolConcurrencySafe(
+  tool: ToolDefinition | ToolDescriptor | undefined,
+  args?: unknown,
+): boolean {
+  if (!tool) return false;
+  if (
+    "isConcurrencySafe" in tool &&
+    typeof tool.isConcurrencySafe === "function"
+  ) {
+    return tool.isConcurrencySafe(args as never);
+  }
+  if (tool.policy?.risk === "risky" || tool.policy?.risk === "denied") {
+    return false;
+  }
+  if (tool.policy?.requiresApproval === true) return false;
+
+  const sideEffects = tool.governance?.sideEffects ?? ["none"];
+  const readOnly = sideEffects.every(
+    (sideEffect) => sideEffect === "none" || sideEffect === "read",
+  );
+  if (!readOnly) return false;
+
+  return tool.governance?.idempotency !== "non_idempotent";
+}
+
+export function validateToolArguments(
+  schema: unknown,
+  value: unknown,
+): SparkwrightError | undefined {
+  const message = validateJsonSchema(schema, value, "$");
+
+  if (!message) return undefined;
+
+  return {
+    code: "TOOL_ARGUMENTS_INVALID",
+    message,
+  };
+}
+
+export function validateToolOutput(
+  schema: unknown,
+  value: unknown,
+): SparkwrightError | undefined {
+  const message = validateJsonSchema(schema, value, "$");
+
+  if (!message) return undefined;
+
+  return {
+    code: "TOOL_OUTPUT_INVALID",
+    message,
+  };
+}
+
+export function createToolCall(
+  runId: RunId,
+  toolName: string,
+  args: unknown,
+): ToolCall {
+  return {
+    id: createToolCallId(),
+    runId,
+    toolName,
+    arguments: args,
+  };
+}
+
+export async function executeTool(
+  registry: ToolRegistry,
+  call: ToolCall,
+  ctx: RuntimeContext,
+  options: { timeoutMs?: number; abortSignal?: AbortSignal } = {},
+): Promise<ToolResult> {
+  const tool = registry.get(call.toolName);
+
+  if (!tool) {
+    return {
+      toolCallId: call.id,
+      status: "failed",
+      error: {
+        code: "TOOL_NOT_FOUND",
+        message: `Tool not found: ${call.toolName}`,
+      },
+      artifacts: [],
+    };
+  }
+
+  const signal = options.abortSignal ?? ctx.abortSignal;
+  if (signal?.aborted) {
+    return {
+      toolCallId: call.id,
+      status: "cancelled",
+      error: {
+        code: "TOOL_ABORTED",
+        message: `Tool aborted before execution: ${call.toolName}`,
+        metadata: { toolName: call.toolName },
+      },
+      artifacts: [],
+    };
+  }
+
+  try {
+    const validationError = validateToolArguments(
+      tool.inputSchema,
+      call.arguments,
+    );
+
+    if (validationError) {
+      return {
+        toolCallId: call.id,
+        status: "failed",
+        error: validationError,
+        artifacts: [],
+      };
+    }
+
+    const timeoutMs = tool.timeoutMs ?? options.timeoutMs;
+    const timeoutError = validateToolTimeout(timeoutMs, call.toolName);
+
+    if (timeoutError) {
+      return {
+        toolCallId: call.id,
+        status: "failed",
+        error: timeoutError,
+        artifacts: [],
+      };
+    }
+
+    // Forward the abort signal into the runtime context so tools that honor it
+    // can wire their inner I/O (fetch, child_process, ...) to the run-level
+    // cancellation. Tools which ignore the signal still get torn down at the
+    // race below.
+    const artifacts: ToolResult["artifacts"] = [];
+    const ctxWithSignal: RuntimeContext = {
+      ...ctx,
+      abortSignal: signal,
+      reportToolArtifact: (artifact) => {
+        artifacts.push(artifact);
+        ctx.reportToolArtifact?.(artifact);
+      },
+    };
+
+    const output = await executeWithTimeout(
+      () => tool.execute(call.arguments, ctxWithSignal),
+      timeoutMs,
+      call.toolName,
+      signal,
+    );
+
+    const outputValidationError = validateToolOutput(tool.outputSchema, output);
+
+    if (outputValidationError) {
+      return {
+        toolCallId: call.id,
+        status: "failed",
+        error: outputValidationError,
+        artifacts: [],
+      };
+    }
+
+    return {
+      toolCallId: call.id,
+      status: "completed",
+      output,
+      artifacts,
+    };
+  } catch (cause) {
+    if (cause instanceof ToolTimeoutError) {
+      return {
+        toolCallId: call.id,
+        status: "failed",
+        error: {
+          code: "TOOL_TIMEOUT",
+          message: cause.message,
+          cause,
+          metadata: cause.metadata,
+        },
+        artifacts: [],
+      };
+    }
+
+    if (isAbortError(cause) || signal?.aborted) {
+      return {
+        toolCallId: call.id,
+        status: "cancelled",
+        error: {
+          code: "TOOL_ABORTED",
+          message: `Tool aborted: ${call.toolName}`,
+          metadata: { toolName: call.toolName },
+        },
+        artifacts: [],
+      };
+    }
+
+    return {
+      toolCallId: call.id,
+      status: "failed",
+      error: normalizeExecutionError(cause),
+      artifacts: [],
+    };
+  }
+}
+
+function isAbortError(cause: unknown): boolean {
+  if (cause instanceof Error) {
+    if (cause.name === "AbortError") return true;
+    const code = (cause as { code?: string }).code;
+    if (code === "ABORT_ERR" || code === "ERR_ABORTED") return true;
+  }
+  return false;
+}
+
+function normalizeExecutionError(cause: unknown): SparkwrightError {
+  if (isRecord(cause) && typeof cause.code === "string") {
+    return {
+      code: cause.code,
+      message:
+        typeof cause.message === "string"
+          ? cause.message
+          : "Tool execution failed.",
+      cause,
+      metadata: isRecord(cause.metadata) ? cause.metadata : undefined,
+    };
+  }
+
+  return {
+    code: "TOOL_EXECUTION_FAILED",
+    message: cause instanceof Error ? cause.message : "Tool execution failed.",
+    cause,
+  };
+}
+
+function validateToolTimeout(
+  timeoutMs: number | undefined,
+  toolName: string,
+): SparkwrightError | undefined {
+  if (timeoutMs === undefined) return undefined;
+
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    return {
+      code: "TOOL_TIMEOUT_INVALID",
+      message: `Tool timeout must be a positive integer in milliseconds for tool: ${toolName}`,
+      metadata: { toolName, timeoutMs },
+    };
+  }
+
+  return undefined;
+}
+
+async function executeWithTimeout<TResult>(
+  execute: () => Promise<TResult> | TResult,
+  timeoutMs: number | undefined,
+  toolName: string,
+  signal?: AbortSignal,
+): Promise<TResult> {
+  if (timeoutMs === undefined && !signal) return execute();
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+
+  try {
+    const racers: Array<Promise<TResult>> = [Promise.resolve().then(execute)];
+    if (timeoutMs !== undefined) {
+      racers.push(
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            reject(new ToolTimeoutError(toolName, timeoutMs));
+          }, timeoutMs);
+        }),
+      );
+    }
+    if (signal) {
+      racers.push(
+        new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            reject(createAbortError());
+            return;
+          }
+          onAbort = () => reject(createAbortError());
+          signal.addEventListener("abort", onAbort, { once: true });
+        }),
+      );
+    }
+    return await Promise.race(racers);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function createAbortError(): Error {
+  const err = new Error("Tool operation aborted.");
+  err.name = "AbortError";
+  return err;
+}
+
+class ToolTimeoutError extends Error {
+  readonly metadata: Record<string, unknown>;
+
+  constructor(toolName: string, timeoutMs: number) {
+    super(`Tool timed out after ${timeoutMs}ms: ${toolName}`);
+    this.name = "ToolTimeoutError";
+    this.metadata = { toolName, timeoutMs };
+  }
+}
+
+function validateJsonSchema(
+  schema: unknown,
+  value: unknown,
+  path: string,
+): string | undefined {
+  if (!isRecord(schema)) return undefined;
+
+  const type = schema.type;
+  if (typeof type === "string") {
+    const typeError = validateType(type, value, path);
+    if (typeError) return typeError;
+  }
+
+  if (schema.enum !== undefined) {
+    if (!Array.isArray(schema.enum))
+      return `${path}: enum must be an array in schema.`;
+    if (!schema.enum.includes(value))
+      return `${path}: value is not one of the allowed enum values.`;
+  }
+
+  if (
+    type === "object" ||
+    schema.properties ||
+    schema.required ||
+    schema.additionalProperties !== undefined
+  ) {
+    if (!isRecord(value)) return `${path}: expected object.`;
+
+    const required = schema.required;
+    if (required !== undefined) {
+      if (!Array.isArray(required))
+        return `${path}: required must be an array in schema.`;
+
+      for (const key of required) {
+        if (typeof key !== "string")
+          return `${path}: required entries must be strings in schema.`;
+        if (!(key in value))
+          return `${path}.${key}: required property is missing.`;
+      }
+    }
+
+    const properties = schema.properties;
+    if (properties !== undefined) {
+      if (!isRecord(properties))
+        return `${path}: properties must be an object in schema.`;
+
+      for (const [key, propertySchema] of Object.entries(properties)) {
+        if (key in value) {
+          const nestedError = validateJsonSchema(
+            propertySchema,
+            value[key],
+            `${path}.${key}`,
+          );
+          if (nestedError) return nestedError;
+        }
+      }
+    }
+
+    if (schema.additionalProperties === false && isRecord(properties)) {
+      for (const key of Object.keys(value)) {
+        if (!(key in properties))
+          return `${path}.${key}: additional property is not allowed.`;
+      }
+    }
+  }
+
+  if (type === "array" || schema.items) {
+    if (!Array.isArray(value)) return `${path}: expected array.`;
+
+    if (schema.items !== undefined) {
+      for (let index = 0; index < value.length; index += 1) {
+        const nestedError = validateJsonSchema(
+          schema.items,
+          value[index],
+          `${path}[${index}]`,
+        );
+        if (nestedError) return nestedError;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function validateType(
+  type: string,
+  value: unknown,
+  path: string,
+): string | undefined {
+  switch (type) {
+    case "array":
+      return Array.isArray(value) ? undefined : `${path}: expected array.`;
+    case "boolean":
+      return typeof value === "boolean"
+        ? undefined
+        : `${path}: expected boolean.`;
+    case "integer":
+      return Number.isInteger(value) ? undefined : `${path}: expected integer.`;
+    case "number":
+      return typeof value === "number" && Number.isFinite(value)
+        ? undefined
+        : `${path}: expected number.`;
+    case "object":
+      return isRecord(value) ? undefined : `${path}: expected object.`;
+    case "string":
+      return typeof value === "string"
+        ? undefined
+        : `${path}: expected string.`;
+    case "null":
+      return value === null ? undefined : `${path}: expected null.`;
+    default:
+      return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

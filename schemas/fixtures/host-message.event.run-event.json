@@ -1,0 +1,16 @@
+{
+  "envelope": "event",
+  "id": "evt_042",
+  "kind": "run.event",
+  "timestamp": "2026-05-24T12:00:03.000Z",
+  "payload": {
+    "runId": "run_xyz789",
+    "event": {
+      "id": "event_001",
+      "type": "tool.requested",
+      "sequence": 5,
+      "occurredAt": "2026-05-24T12:00:03.000Z",
+      "payload": { "toolName": "read_file" }
+    }
+  }
+}

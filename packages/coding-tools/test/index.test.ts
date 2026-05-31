@@ -1,0 +1,346 @@
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { describe, expect, it } from "vitest";
+import {
+  createRunId,
+  LocalWorkspace,
+  type RuntimeContext,
+  type ToolDefinition,
+} from "@sparkwright/core";
+import {
+  createCodingTools,
+  type DirectoryEntry,
+  type EditAnchoredTextInput,
+  type EditAnchoredTextResult,
+  type GlobPathsInput,
+  type GlobPathsResult,
+  type GrepTextInput,
+  type GrepTextResult,
+  type ListDirInput,
+  type ListDirResult,
+  type ReadAnchoredTextInput,
+  type ReadAnchoredTextResult,
+  type ReadTextInput,
+  type ReadTextResult,
+} from "../src/index.js";
+
+describe("coding tools", () => {
+  it("creates the official coding tool set", () => {
+    expect(createCodingTools().map((tool) => tool.name)).toEqual([
+      "read_text",
+      "read_anchored_text",
+      "edit_anchored_text",
+      "list_dir",
+      "grep_text",
+      "glob_paths",
+    ]);
+  });
+
+  it("reads bounded text through the runtime workspace", async () => {
+    const { ctx } = await createWorkspace({
+      "README.md": "# Title\nfirst\nsecond\nthird\n",
+    });
+    const tool = getTool<ReadTextInput, ReadTextResult>(
+      createCodingTools(),
+      "read_text",
+    );
+
+    const result = await tool.execute(
+      { path: "README.md", startLine: 2, endLine: 3 },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      path: "README.md",
+      content: "first\nsecond",
+      startLine: 2,
+      endLine: 3,
+      lineCount: 4,
+      truncated: true,
+    });
+  });
+
+  it("reads anchors and applies anchored edits through the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "README.md": "alpha\nbeta\ngamma\n",
+    });
+    const tools = createCodingTools({ workspaceRoot: root });
+    const readAnchored = getTool<ReadAnchoredTextInput, ReadAnchoredTextResult>(
+      tools,
+      "read_anchored_text",
+    );
+    const editAnchored = getTool<EditAnchoredTextInput, EditAnchoredTextResult>(
+      tools,
+      "edit_anchored_text",
+    );
+
+    const anchored = await readAnchored.execute({ path: "README.md" }, ctx);
+    const beta = anchored.lines.find((line) => line.content === "beta");
+
+    expect(beta?.anchor).toMatch(/2#[A-Z0-9]{4}/);
+
+    const result = await editAnchored.execute(
+      {
+        path: "README.md",
+        reason: "replace beta",
+        edits: [
+          {
+            op: "replace",
+            anchor: beta!.anchor,
+            lines: ["bravo"],
+          },
+        ],
+      },
+      ctx,
+    );
+
+    expect(result.changed).toBe(true);
+    expect(result.anchors).toEqual([
+      {
+        anchor: beta!.anchor,
+        line: 2,
+        op: "replace",
+      },
+    ]);
+    await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
+      "alpha\nbravo\ngamma\n",
+    );
+  });
+
+  it("lists workspace directories with hidden files excluded by default", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+      ".secret": "hidden\n",
+      "README.md": "# Demo\n",
+    });
+    const tool = getTool<ListDirInput, ListDirResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "list_dir",
+    );
+
+    const result = await tool.execute({ path: ".", recursive: true }, ctx);
+    const entries = result.entries.map((entry) => pickEntry(entry));
+
+    expect(entries).toEqual([
+      { path: "src", type: "directory" },
+      { path: "README.md", type: "file" },
+      { path: "src/index.ts", type: "file" },
+    ]);
+  });
+
+  it("greps text files using workspace reads", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const answer = 42;\n",
+      "src/other.ts": "const label = 'Answer';\n",
+      "README.md": "no match here\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+
+    const result = await tool.execute(
+      {
+        pattern: "answer",
+        path: "src",
+        caseSensitive: false,
+        include: ["**/*.ts"],
+      },
+      ctx,
+    );
+
+    expect(result.matches).toEqual([
+      {
+        path: "src/index.ts",
+        line: 1,
+        column: 14,
+        text: "export const answer = 42;",
+      },
+      {
+        path: "src/other.ts",
+        line: 1,
+        column: 16,
+        text: "const label = 'Answer';",
+      },
+    ]);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("matches workspace-relative glob paths", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+      "src/index.test.ts": "import { value } from './index.js';\n",
+      "README.md": "# Demo\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    const result = await tool.execute(
+      { patterns: ["src/**/*.ts"], exclude: ["**/*.test.ts"] },
+      ctx,
+    );
+
+    expect(result).toEqual({
+      patterns: ["src/**/*.ts"],
+      paths: ["src/index.ts"],
+      truncated: false,
+      offset: 0,
+      totalPaths: 1,
+      hasMore: false,
+    });
+  });
+
+  it("paginates glob path results with nextOffset", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/a.ts": "a\n",
+      "src/b.ts": "b\n",
+      "src/c.ts": "c\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    const first = await tool.execute(
+      { patterns: "src/*.ts", maxPaths: 2 },
+      ctx,
+    );
+    const second = await tool.execute(
+      { patterns: "src/*.ts", maxPaths: 2, offset: first.nextOffset },
+      ctx,
+    );
+
+    expect(first).toMatchObject({
+      paths: ["src/a.ts", "src/b.ts"],
+      offset: 0,
+      nextOffset: 2,
+      totalPaths: 3,
+      hasMore: true,
+      truncated: true,
+    });
+    expect(second).toMatchObject({
+      paths: ["src/c.ts"],
+      offset: 2,
+      totalPaths: 3,
+      hasMore: false,
+      truncated: false,
+    });
+  });
+
+  it("does not recurse through a symlink that escapes the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "inside/keep.txt": "ok\n",
+    });
+    // Create a symlink inside the workspace that points at the system /etc.
+    // The walker should report it as a `symlink` and refuse to recurse into
+    // it (both because dirent type is not "directory", and because the
+    // realpath defence would reject the escape).
+    await symlink("/etc", join(root, "escape"));
+    const tool = getTool<ListDirInput, ListDirResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "list_dir",
+    );
+
+    const result = await tool.execute({ path: ".", recursive: true }, ctx);
+    const paths = result.entries.map((entry) => entry.path);
+    // The symlink itself is visible at the root, but no /etc descendants are.
+    expect(paths).toContain("escape");
+    expect(paths.some((p) => p.startsWith("escape/"))).toBe(false);
+    expect(paths).toContain("inside/keep.txt");
+  });
+
+  it("rejects oversized regex patterns in grep_text", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "value = 1\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+    const huge = "a".repeat(2000);
+    await expect(
+      tool.execute({ pattern: huge, regex: true, path: "src" }, ctx),
+    ).rejects.toThrow(/ReDoS|exceeds/);
+  });
+
+  it("sorts list_dir entries with directories first, then by stable type order", async () => {
+    const { root, ctx } = await createWorkspace({
+      "a-dir/keep.txt": "x\n",
+      "b-file.txt": "y\n",
+    });
+    // Add a symlink so the type-order branch is exercised.
+    await symlink("a-dir/keep.txt", join(root, "c-link"));
+    const tool = getTool<ListDirInput, ListDirResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "list_dir",
+    );
+
+    const result = await tool.execute({ path: "." }, ctx);
+    const order = result.entries.map((entry) => ({
+      path: entry.path,
+      type: entry.type,
+    }));
+    // directory (0) < file (1) < symlink (2)
+    expect(order).toEqual([
+      { path: "a-dir", type: "directory" },
+      { path: "b-file.txt", type: "file" },
+      { path: "c-link", type: "symlink" },
+    ]);
+  });
+
+  it("rejects discovery paths that escape the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "README.md": "# Demo\n",
+    });
+    const tool = getTool<ListDirInput, ListDirResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "list_dir",
+    );
+
+    await expect(tool.execute({ path: "../" }, ctx)).rejects.toThrow(
+      "Path escapes workspace root",
+    );
+  });
+});
+
+async function createWorkspace(files: Record<string, string>) {
+  const root = await mkdtemp(join(tmpdir(), "sparkwright-coding-tools-"));
+  for (const [path, content] of Object.entries(files)) {
+    const fullPath = join(root, path);
+    await mkdir(join(fullPath, ".."), { recursive: true });
+    await writeFile(fullPath, content, "utf8");
+  }
+
+  const ctx: RuntimeContext = {
+    run: {
+      id: createRunId(),
+      goal: "test",
+      state: "running",
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      metadata: {},
+    },
+    workspace: new LocalWorkspace(root),
+  };
+
+  return { root, ctx };
+}
+
+function getTool<TArgs, TResult>(
+  tools: ToolDefinition[],
+  name: string,
+): ToolDefinition<TArgs, TResult> {
+  const tool = tools.find((candidate) => candidate.name === name);
+  if (!tool) throw new Error(`Missing tool: ${name}`);
+  return tool as ToolDefinition<TArgs, TResult>;
+}
+
+function pickEntry(entry: DirectoryEntry) {
+  return {
+    path: entry.path,
+    type: entry.type,
+  };
+}

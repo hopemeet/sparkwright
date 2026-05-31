@@ -1,0 +1,11 @@
+{
+  "envelope": "request",
+  "id": "req_01",
+  "kind": "handshake",
+  "timestamp": "2026-05-24T12:00:00.000Z",
+  "payload": {
+    "protocolVersion": "1.0",
+    "client": { "name": "sparkwright-tui", "version": "0.1.0" },
+    "capabilities": ["streaming"]
+  }
+}

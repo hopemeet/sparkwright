@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/plan-step.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Plan Step",
+  "type": "object",
+  "required": ["id", "intent", "input"],
+  "properties": {
+    "id": { "type": "string" },
+    "intent": { "type": "string" },
+    "input": {},
+    "suggestedAgent": { "type": "string" },
+    "toolHints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "dependsOn": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "expectedOutput": { "type": "string" },
+    "risk": {
+      "type": "string",
+      "enum": ["safe", "risky", "denied"]
+    },
+    "budgetEstimate": {
+      "type": "object",
+      "properties": {
+        "tokens": { "type": "integer", "minimum": 0 },
+        "toolCalls": { "type": "integer", "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "costUsd": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "ready", "blocked", "skipped", "completed", "failed"]
+    },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

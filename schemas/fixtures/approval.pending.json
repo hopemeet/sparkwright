@@ -1,0 +1,12 @@
+{
+  "id": "approval_01",
+  "runId": "run_01",
+  "action": "workspace.write",
+  "summary": "Append generated notes to README.md",
+  "details": {
+    "path": "README.md",
+    "operation": "append"
+  },
+  "createdAt": "2026-05-22T00:00:00.000Z",
+  "status": "pending"
+}

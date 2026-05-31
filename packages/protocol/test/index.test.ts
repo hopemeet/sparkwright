@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest";
+import {
+  PROTOCOL_VERSION,
+  isEvent,
+  isRequest,
+  isResponse,
+  type HostMessage,
+} from "../src/index.js";
+
+describe("@sparkwright/protocol", () => {
+  it("exports the current host protocol version", () => {
+    expect(PROTOCOL_VERSION).toBe("1.1");
+  });
+
+  it("narrows host message envelopes", () => {
+    const messages: HostMessage[] = [
+      {
+        envelope: "request",
+        id: "req_1",
+        kind: "handshake",
+        timestamp: "2026-05-24T00:00:00.000Z",
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      },
+      {
+        envelope: "response",
+        id: "req_1",
+        timestamp: "2026-05-24T00:00:01.000Z",
+        ok: true,
+        result: {},
+      },
+      {
+        envelope: "event",
+        id: "evt_1",
+        kind: "host.ready",
+        timestamp: "2026-05-24T00:00:02.000Z",
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          host: { name: "sparkwright-host", version: "0.1.0" },
+        },
+      },
+    ];
+
+    expect(messages.map(isRequest)).toEqual([true, false, false]);
+    expect(messages.map(isResponse)).toEqual([false, true, false]);
+    expect(messages.map(isEvent)).toEqual([false, false, true]);
+  });
+});

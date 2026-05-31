@@ -1,0 +1,13 @@
+{
+  "envelope": "request",
+  "id": "req_inject_1",
+  "kind": "run.inject_message",
+  "timestamp": "2026-05-24T12:00:00.000Z",
+  "payload": {
+    "runId": "run_01h",
+    "content": "Please include the migration files too.",
+    "metadata": {
+      "source": "telegram"
+    }
+  }
+}

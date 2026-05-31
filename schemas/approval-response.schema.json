@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/approval-response.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Approval Response",
+  "type": "object",
+  "required": ["approvalId", "decision"],
+  "properties": {
+    "approvalId": { "type": "string" },
+    "decision": {
+      "type": "string",
+      "enum": ["approved", "denied"]
+    },
+    "message": { "type": "string" }
+  },
+  "additionalProperties": false
+}

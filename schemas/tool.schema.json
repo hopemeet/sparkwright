@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/tool.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Tool",
+  "type": "object",
+  "required": ["name", "description", "inputSchema"],
+  "properties": {
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "inputSchema": { "type": "object" },
+    "outputSchema": { "type": "object" },
+    "timeoutMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "interrupt": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "type": "string",
+          "enum": ["cancel", "block"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "loading": {
+      "type": "object",
+      "properties": {
+        "defer": { "type": "boolean" },
+        "alwaysLoad": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "resultSize": {
+      "type": "object",
+      "properties": {
+        "maxChars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "neverPersist": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "risk": {
+          "type": "string",
+          "enum": ["safe", "risky", "denied"]
+        },
+        "requiresApproval": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "governance": {
+      "type": "object",
+      "properties": {
+        "allowedAgents": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowedRoles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "origin": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["local", "script", "mcp", "hosted", "unknown"]
+            },
+            "name": { "type": "string" },
+            "metadata": { "type": "object" }
+          },
+          "additionalProperties": false
+        },
+        "rateLimit": {
+          "type": "object",
+          "required": ["maxCalls", "windowMs"],
+          "properties": {
+            "maxCalls": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "windowMs": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "dataSensitivity": {
+          "type": "string",
+          "enum": ["public", "internal", "confidential", "secret"]
+        },
+        "sideEffects": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["none", "read", "write", "network", "external"]
+          }
+        },
+        "idempotency": {
+          "type": "string",
+          "enum": ["idempotent", "conditional", "non_idempotent"]
+        },
+        "audit": {
+          "type": "object",
+          "required": ["level"],
+          "properties": {
+            "level": {
+              "type": "string",
+              "enum": ["none", "metadata", "payload"]
+            },
+            "retentionDays": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "viewers": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "costEstimate": {
+          "type": "object",
+          "properties": {
+            "tier": {
+              "type": "string",
+              "enum": ["free", "low", "medium", "high"]
+            },
+            "estimatedTokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "estimatedUsd": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

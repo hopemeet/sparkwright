@@ -1,0 +1,9 @@
+{
+  "envelope": "response",
+  "id": "req_02",
+  "ok": true,
+  "timestamp": "2026-05-24T12:00:01.050Z",
+  "result": {
+    "runId": "run_xyz789"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/mcp-server-config.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright MCP Server Config",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["type", "name", "command"],
+      "properties": {
+        "type": { "const": "stdio" },
+        "name": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "cwd": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["type", "name", "url"],
+      "properties": {
+        "type": { "const": "http" },
+        "name": { "type": "string", "minLength": 1 },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@sparkwright/example-promote-shell-to-task",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/promote.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck && node dist/promote.js"
+  },
+  "dependencies": {
+    "@sparkwright/agent-runtime": "0.1.0",
+    "@sparkwright/core": "0.1.0",
+    "@sparkwright/shell-tool": "0.1.0"
+  }
+}

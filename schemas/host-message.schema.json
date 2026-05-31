@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/host-message.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Host Message",
+  "description": "Wire envelope for all messages exchanged between a Sparkwright host (server-runtime + transport) and a client (TUI, web SDK, etc). Newline-delimited JSON over stdio or one message per WebSocket frame. Every message is one of: request (client→host, expects response), response (host→client, paired with a request by id), or event (host→client, fire-and-forget). The host protocol is versioned via the top-level `protocolVersion` field on the handshake; v1.x is backwards compatible (fields may be added but never removed or repurposed). See docs/HOST_PROTOCOL.md.",
+  "oneOf": [
+    { "$ref": "#/$defs/Request" },
+    { "$ref": "#/$defs/Response" },
+    { "$ref": "#/$defs/Event" }
+  ],
+  "$defs": {
+    "MessageId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier the sender chose. For requests, the response echoes the same id."
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp at which the sender produced the message."
+    },
+    "Request": {
+      "type": "object",
+      "required": ["envelope", "id", "kind", "timestamp", "payload"],
+      "properties": {
+        "envelope": { "const": "request" },
+        "id": { "$ref": "#/$defs/MessageId" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "handshake",
+            "run.start",
+            "run.inject_message",
+            "run.cancel",
+            "approval.resolve",
+            "session.list",
+            "session.inspect"
+          ]
+        },
+        "timestamp": { "$ref": "#/$defs/Timestamp" },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "handshake" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/HandshakeRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.start" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunStartRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.cancel" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunCancelRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "run.inject_message" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunInjectMessageRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "approval.resolve" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ApprovalResolveRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "session.list" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/SessionListRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "session.inspect" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/SessionInspectRequestPayload" }
+            }
+          }
+        }
+      ]
+    },
+    "Response": {
+      "type": "object",
+      "required": ["envelope", "id", "ok", "timestamp"],
+      "properties": {
+        "envelope": { "const": "response" },
+        "id": {
+          "$ref": "#/$defs/MessageId",
+          "description": "Echoes the originating request id."
+        },
+        "ok": { "type": "boolean" },
+        "timestamp": { "$ref": "#/$defs/Timestamp" },
+        "result": {
+          "type": "object",
+          "description": "Present when ok is true."
+        },
+        "error": {
+          "$ref": "#/$defs/ProtocolError",
+          "description": "Present when ok is false."
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "ok": { "const": true } },
+            "required": ["ok"]
+          },
+          "then": {
+            "required": ["result"],
+            "properties": { "result": { "type": "object" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "ok": { "const": false } },
+            "required": ["ok"]
+          },
+          "then": {
+            "required": ["error"],
+            "properties": { "error": { "$ref": "#/$defs/ProtocolError" } }
+          }
+        }
+      ]
+    },
+    "Event": {
+      "type": "object",
+      "required": ["envelope", "id", "kind", "timestamp", "payload"],
+      "properties": {
+        "envelope": { "const": "event" },
+        "id": { "$ref": "#/$defs/MessageId" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "host.ready",
+            "host.log",
+            "run.event",
+            "approval.requested",
+            "run.completed",
+            "run.failed"
+          ]
+        },
+        "timestamp": { "$ref": "#/$defs/Timestamp" },
+        "payload": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "host.ready" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/HostReadyEventPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "host.log" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/HostLogEventPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.event" } } },
+          "then": {
+            "properties": { "payload": { "$ref": "#/$defs/RunEventPayload" } }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "approval.requested" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/ApprovalRequestedEventPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.completed" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunCompletedEventPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.failed" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunFailedEventPayload" }
+            }
+          }
+        }
+      ]
+    },
+    "ProtocolError": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "protocol_version_mismatch",
+            "unknown_kind",
+            "invalid_payload",
+            "run_not_found",
+            "approval_not_found",
+            "session_not_found",
+            "internal_error"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "HandshakeRequestPayload": {
+      "type": "object",
+      "required": ["protocolVersion", "client"],
+      "properties": {
+        "protocolVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$",
+          "description": "Client's spoken protocol version (major.minor). Host rejects with protocol_version_mismatch when major differs from its own."
+        },
+        "client": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional list of optional features the client supports. Hosts ignore unknown entries."
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunStartRequestPayload": {
+      "type": "object",
+      "required": ["goal"],
+      "properties": {
+        "goal": { "type": "string", "minLength": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "enum": ["deterministic", "openai"] },
+        "model": { "type": "string", "minLength": 1 },
+        "permissionMode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "default",
+            "accept_edits",
+            "dont_ask",
+            "bypass_permissions"
+          ]
+        },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "RunCancelRequestPayload": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "RunInjectMessageRequestPayload": {
+      "type": "object",
+      "required": ["runId", "content"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "content": { "type": "string", "minLength": 1 },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "ApprovalResolveRequestPayload": {
+      "type": "object",
+      "required": ["approvalId", "decision"],
+      "properties": {
+        "approvalId": { "type": "string", "minLength": 1 },
+        "decision": { "type": "string", "enum": ["approved", "denied"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "SessionListRequestPayload": {
+      "type": "object",
+      "properties": {
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      },
+      "additionalProperties": false
+    },
+    "SessionInspectRequestPayload": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "HostReadyEventPayload": {
+      "type": "object",
+      "required": ["protocolVersion", "host"],
+      "properties": {
+        "protocolVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$",
+          "description": "Host's spoken protocol version. Always sent immediately after a successful handshake."
+        },
+        "host": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostLogEventPayload": {
+      "type": "object",
+      "required": ["level", "line"],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["stdout", "stderr", "info", "warn", "error"]
+        },
+        "line": { "type": "string" },
+        "source": {
+          "type": "string",
+          "description": "Optional logical source (e.g. 'host', 'tool:bash', 'model')."
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunEventPayload": {
+      "type": "object",
+      "required": ["runId", "event"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "event": {
+          "type": "object",
+          "description": "A SparkwrightEvent as defined by schemas/event.schema.json. Passed through verbatim; clients can re-validate against that schema if they need to."
+        }
+      },
+      "additionalProperties": false
+    },
+    "ApprovalRequestedEventPayload": {
+      "type": "object",
+      "required": ["runId", "approvalId", "action", "summary"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "approvalId": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string" },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "RunCompletedEventPayload": {
+      "type": "object",
+      "required": ["runId", "state"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "state": { "type": "string" },
+        "stopReason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "RunFailedEventPayload": {
+      "type": "object",
+      "required": ["runId", "error"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "error": { "$ref": "#/$defs/ProtocolError" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

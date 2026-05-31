@@ -1,0 +1,13 @@
+{
+  "envelope": "event",
+  "id": "evt_077",
+  "kind": "approval.requested",
+  "timestamp": "2026-05-24T12:00:04.000Z",
+  "payload": {
+    "runId": "run_xyz789",
+    "approvalId": "approval_001",
+    "action": "workspace.write",
+    "summary": "Append a section to README.md",
+    "details": { "path": "README.md" }
+  }
+}

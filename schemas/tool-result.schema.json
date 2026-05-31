@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/tool-result.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Tool Result",
+  "type": "object",
+  "required": ["toolCallId", "status", "artifacts"],
+  "properties": {
+    "toolCallId": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "cancelled"]
+    },
+    "output": {},
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "cause": {},
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "artifact.schema.json" }
+    }
+  },
+  "additionalProperties": false
+}

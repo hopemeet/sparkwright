@@ -1,0 +1,25 @@
+node_modules/
+dist/
+coverage/
+.sparkwright/
+.DS_Store
+npm-debug.log*
+.claude/
+
+__pycache__/
+*.pyc
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.vscode/
+.idea/
+.cursor/
+*.swp
+
+# Internal docs and dashboards (local-only, not for public repo)
+docs/_internal/
+README.internal.md

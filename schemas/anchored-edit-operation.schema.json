@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sparkwright.dev/schemas/v0/anchored-edit-operation.schema.json",
+  "x-sparkwrightProtocolVersion": "0.2",
+  "title": "Sparkwright Anchored Edit Operation",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["op", "anchor", "lines"],
+      "properties": {
+        "op": { "const": "replace" },
+        "anchor": { "type": "string" },
+        "lines": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["op", "anchor"],
+      "properties": {
+        "op": { "const": "delete" },
+        "anchor": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["op", "anchor", "lines"],
+      "properties": {
+        "op": { "const": "append" },
+        "anchor": { "type": "string" },
+        "lines": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["op", "anchor", "lines"],
+      "properties": {
+        "op": { "const": "prepend" },
+        "anchor": { "type": "string" },
+        "lines": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  ]
+}
