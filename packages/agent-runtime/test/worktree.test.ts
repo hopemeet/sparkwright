@@ -19,6 +19,10 @@ function git(cwd: string, args: string[]): { code: number; out: string } {
   return { code: r.status ?? -1, out: `${r.stdout}\n${r.stderr}` };
 }
 
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n/g, "\n");
+}
+
 async function makeRepo(): Promise<{ repoRoot: string; sessionDir: string }> {
   const root = await mkdtemp(join(tmpdir(), "sparkwright-wt-"));
   tempRoots.push(root);
@@ -48,9 +52,9 @@ describe("acquireWorktree", () => {
     const s = await stat(handle.path);
     expect(s.isDirectory()).toBe(true);
     // README.md inherited.
-    expect(await readFile(join(handle.path, "README.md"), "utf8")).toBe(
-      "hello\n",
-    );
+    expect(
+      normalizeNewlines(await readFile(join(handle.path, "README.md"), "utf8")),
+    ).toBe("hello\n");
     // git worktree list mentions the path.
     const list = git(repoRoot, ["worktree", "list", "--porcelain"]).out;
     expect(list).toContain(handle.path);
@@ -84,7 +88,7 @@ describe("acquireWorktree", () => {
     expect(r.status).toBe("merged");
     // Parent repo now has feature.txt.
     const merged = await readFile(join(repoRoot, "feature.txt"), "utf8");
-    expect(merged).toBe("feature\n");
+    expect(normalizeNewlines(merged)).toBe("feature\n");
     await handle.release();
   });
 

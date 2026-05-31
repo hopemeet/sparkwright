@@ -370,9 +370,11 @@ describe("runCli", () => {
     };
     expect(parsed.model).toBe("openai/gpt-5.4-mini");
     expect(parsed.providers?.openai?.apiKey).toBe("REPLACE_WITH_YOUR_API_KEY");
-    // Secret-bearing file must not be group/world readable.
-    const mode = (await stat(configPath)).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== "win32") {
+      // Secret-bearing file must not be group/world readable on POSIX.
+      const mode = (await stat(configPath)).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
 
     const second = createOutputCapture();
     const again = await runCli(["init"], {
