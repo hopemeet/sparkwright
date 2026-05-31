@@ -25,9 +25,16 @@ for (const workspace of ordered) {
     ["run", "build", "--workspace", workspace.packageJson.name],
     {
       cwd: root,
+      shell: process.platform === "win32",
       stdio: "inherit",
     },
   );
+  if (result.error) {
+    console.error(
+      `Failed to run build for ${workspace.packageJson.name}: ${result.error.message}`,
+    );
+    process.exit(1);
+  }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }

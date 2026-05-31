@@ -66,11 +66,17 @@ describe("CronStore", () => {
   it("skips tick when the file lock is held", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-lock-test-"));
     let release!: () => void;
+    let locked!: () => void;
+    const lockReady = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
     const held = withFileLock(join(root, "tick.lock"), async () => {
+      locked();
       await new Promise<void>((resolve) => {
         release = resolve;
       });
     });
+    await lockReady;
     const result = await tickCron({
       rootDir: root,
       model: {
