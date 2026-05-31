@@ -55,9 +55,10 @@ describe("acquireWorktree", () => {
     expect(
       normalizeNewlines(await readFile(join(handle.path, "README.md"), "utf8")),
     ).toBe("hello\n");
-    // git worktree list mentions the path.
+    // git worktree list mentions the branch. Windows may report the same
+    // temp directory through a long path while Node returns a short path.
     const list = git(repoRoot, ["worktree", "list", "--porcelain"]).out;
-    expect(list).toContain(handle.path);
+    expect(list).toContain("branch refs/heads/sw/task-1");
     await handle.release();
   });
 
