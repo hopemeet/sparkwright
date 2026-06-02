@@ -4,6 +4,7 @@ import { createRunId } from "@sparkwright/core";
 import {
   createMcpSamplingHandler,
   McpSamplingError,
+  type McpSamplingRequest,
   createReconnectingMcpClient,
   createSerializedMcpClient,
   inspectMcpToolDescription,
@@ -369,8 +370,13 @@ describe("mcp-adapter", () => {
   });
 
   it("flattens array sampling content into text", async () => {
-    const complete = vi.fn(async () => ({ model: "m", text: "ok" }));
-    const handler = createMcpSamplingHandler("srv", { complete });
+    let seenText: string | undefined;
+    const handler = createMcpSamplingHandler("srv", {
+      complete: async (request: McpSamplingRequest) => {
+        seenText = request.messages[0]?.text;
+        return { model: "m", text: "ok" };
+      },
+    });
 
     await handler({
       messages: [
@@ -385,7 +391,7 @@ describe("mcp-adapter", () => {
       ],
     } as never);
 
-    expect(complete.mock.calls[0]![0].messages[0]!.text).toBe("part-1 part-2");
+    expect(seenText).toBe("part-1 part-2");
   });
 
   it("supports per-tool policy mapping", () => {

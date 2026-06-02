@@ -104,12 +104,15 @@ describe("host tools", () => {
     const ctx = await createWorkspace({});
     const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
 
-    const created = await tool.execute({
-      action: "create",
-      name: "repo-review",
-      description: "review repository changes",
-    });
-    const listed = await tool.execute({ action: "list" });
+    const created = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+      },
+      ctx,
+    );
+    const listed = await tool.execute({ action: "list" }, ctx);
 
     expect(created).toMatchObject({
       action: "create",
@@ -131,17 +134,20 @@ describe("host tools", () => {
     const ctx = await createWorkspace({});
     const tool = createAgentManagerTool(ctx.workspaceRoot);
 
-    const created = await tool.execute({
-      action: "create",
-      id: "reviewer",
-      name: "Reviewer",
-      mode: "child",
-      prompt: "Review changes and report concrete risks.",
-      allowedTools: ["read_file"],
-      maxSteps: 2,
-      delegateToolName: "delegate_reviewer",
-    });
-    const listed = await tool.execute({ action: "list" });
+    const created = await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Reviewer",
+        mode: "child",
+        prompt: "Review changes and report concrete risks.",
+        allowedTools: ["read_file"],
+        maxSteps: 2,
+        delegateToolName: "delegate_reviewer",
+      },
+      ctx,
+    );
+    const listed = await tool.execute({ action: "list" }, ctx);
 
     expect(created).toMatchObject({
       action: "create",
