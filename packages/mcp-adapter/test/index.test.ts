@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createRunId } from "@sparkwright/core";
 import {
+  createMcpSamplingHandler,
+  McpSamplingError,
   createReconnectingMcpClient,
   createSerializedMcpClient,
   inspectMcpToolDescription,
@@ -286,6 +288,104 @@ describe("mcp-adapter", () => {
     );
     expect(reconnect).toHaveBeenCalledTimes(3);
     expect(delays).toEqual([10, 20, 40]); // exponential, capped at maxDelayMs
+  });
+
+  it("delegates sampling to the host completion and maps the result", async () => {
+    const complete = vi.fn(async () => ({
+      model: "claude-opus-4-8",
+      text: "hello back",
+    }));
+    const handler = createMcpSamplingHandler("srv", { complete });
+
+    const result = await handler({
+      messages: [
+        { role: "user", content: { type: "text", text: "hello" } },
+      ],
+      maxTokens: 64,
+    } as never);
+
+    expect(complete).toHaveBeenCalledWith({
+      serverName: "srv",
+      messages: [{ role: "user", text: "hello" }],
+      systemPrompt: undefined,
+      maxTokens: 64,
+    });
+    expect(result).toMatchObject({
+      model: "claude-opus-4-8",
+      role: "assistant",
+      content: { type: "text", text: "hello back" },
+    });
+  });
+
+  it("rejects a sampling response whose model is not allowlisted", async () => {
+    const handler = createMcpSamplingHandler("srv", {
+      complete: async () => ({ model: "gpt-expensive", text: "x" }),
+      allowedModels: ["claude-opus-4-8"],
+    });
+
+    await expect(
+      handler({
+        messages: [{ role: "user", content: { type: "text", text: "hi" } }],
+      } as never),
+    ).rejects.toMatchObject({
+      name: "McpSamplingError",
+      code: "model_not_allowed",
+    });
+  });
+
+  it("enforces a per-minute sampling rate limit on a rolling window", async () => {
+    let clock = 0;
+    const handler = createMcpSamplingHandler("srv", {
+      complete: async () => ({ model: "m", text: "ok" }),
+      maxRequestsPerMinute: 2,
+      now: () => clock,
+    });
+    const call = () =>
+      handler({
+        messages: [{ role: "user", content: { type: "text", text: "hi" } }],
+      } as never);
+
+    await call();
+    await call();
+    await expect(call()).rejects.toBeInstanceOf(McpSamplingError);
+
+    // Advance past the rolling minute; the window clears and calls resume.
+    clock += 60_001;
+    await expect(call()).resolves.toMatchObject({ model: "m" });
+  });
+
+  it("enforces a lifetime sampling request cap", async () => {
+    const handler = createMcpSamplingHandler("srv", {
+      complete: async () => ({ model: "m", text: "ok" }),
+      maxRequests: 1,
+    });
+    const call = () =>
+      handler({
+        messages: [{ role: "user", content: { type: "text", text: "hi" } }],
+      } as never);
+
+    await call();
+    await expect(call()).rejects.toMatchObject({ code: "request_cap" });
+  });
+
+  it("flattens array sampling content into text", async () => {
+    const complete = vi.fn(async () => ({ model: "m", text: "ok" }));
+    const handler = createMcpSamplingHandler("srv", { complete });
+
+    await handler({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "part-1 " },
+            { type: "image", data: "...", mimeType: "image/png" },
+            { type: "text", text: "part-2" },
+          ],
+        },
+      ],
+    } as never);
+
+    expect(complete.mock.calls[0]![0].messages[0]!.text).toBe("part-1 part-2");
   });
 
   it("supports per-tool policy mapping", () => {

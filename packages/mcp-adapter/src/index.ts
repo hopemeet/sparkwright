@@ -6,6 +6,9 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
   CallToolResultSchema,
+  CreateMessageRequestSchema,
+  type CreateMessageRequest,
+  type CreateMessageResult,
   type Tool as McpTool,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -132,6 +135,13 @@ export interface PrepareMcpToolsForRunOptions {
   onToolDescriptionWarning?: (input: McpToolDescriptionWarning) => void;
   /** Override the content policy used to inspect MCP tool descriptions. */
   descriptionPolicy?: ContentPolicy;
+  /**
+   * Enable server-initiated sampling: the server may request a completion from
+   * the host LLM. When provided, the client advertises the sampling capability
+   * and routes requests through a guarded handler (rate limit, lifetime cap,
+   * model allowlist). Omit to leave sampling disabled.
+   */
+  sampling?: McpSamplingConfig;
 }
 
 type McpClientLike = Pick<Client, "callTool">;
@@ -200,6 +210,10 @@ export async function prepareMcpToolsForRun(
         namePrefix: options.namePrefix,
         policy: options.policy,
         serverPolicy: options.serverPolicy,
+        onStdioStderr: options.onStdioStderr,
+        onToolDescriptionWarning: options.onToolDescriptionWarning,
+        descriptionPolicy: options.descriptionPolicy,
+        sampling: options.sampling,
         usedNames,
       }),
     ),
@@ -290,10 +304,24 @@ export async function prepareMcpServer(
       };
     }
 
+    // One sampling handler instance, shared across reconnects so rate-limit and
+    // request-cap counters persist for the life of the prepared server.
+    const samplingHandler = options.sampling
+      ? createMcpSamplingHandler(name, options.sampling)
+      : undefined;
+
     // Build + connect a fresh client. Reused for the initial connection and,
     // when `reconnect` is configured, for each reconnection attempt.
     const connect = async (): Promise<Client> => {
-      const next = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
+      const next = new Client(
+        { name: CLIENT_NAME, version: CLIENT_VERSION },
+        samplingHandler ? { capabilities: { sampling: {} } } : undefined,
+      );
+      if (samplingHandler) {
+        next.setRequestHandler(CreateMessageRequestSchema, (request) =>
+          samplingHandler(request.params),
+        );
+      }
       const transport = buildMcpTransport(config, name, options.onStdioStderr);
       await next.connect(transport, { timeout: timeoutMs });
       return next;
@@ -613,6 +641,135 @@ function defaultIsConnectionError(cause: unknown): boolean {
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// --- MCP sampling (server -> host LLM completion) ----------------------------
+
+export interface McpSamplingMessage {
+  role: "user" | "assistant";
+  /** Concatenated text content; non-text blocks are dropped. */
+  text: string;
+}
+
+export interface McpSamplingRequest {
+  serverName: string;
+  messages: McpSamplingMessage[];
+  systemPrompt?: string;
+  maxTokens?: number;
+}
+
+export interface McpSamplingResponse {
+  /** The model that produced the completion; checked against `allowedModels`. */
+  model: string;
+  text: string;
+  stopReason?: string;
+}
+
+export interface McpSamplingConfig {
+  /**
+   * Performs a completion for a server-initiated sampling request. The host
+   * wires its own model adapter here; the adapter never picks a model itself.
+   */
+  complete: (request: McpSamplingRequest) => Promise<McpSamplingResponse>;
+  /**
+   * If set, the model named in the completion response must appear here, or the
+   * request is rejected. Use to stop a server from steering the host onto an
+   * unapproved (e.g. more expensive) model.
+   */
+  allowedModels?: string[];
+  /** Maximum sampling requests accepted per rolling minute. Default unlimited. */
+  maxRequestsPerMinute?: number;
+  /** Maximum sampling requests accepted over the server's lifetime. Default unlimited. */
+  maxRequests?: number;
+  /** Injectable clock for tests. */
+  now?: () => number;
+}
+
+export class McpSamplingError extends Error {
+  constructor(
+    message: string,
+    readonly code: "rate_limited" | "request_cap" | "model_not_allowed",
+  ) {
+    super(message);
+    this.name = "McpSamplingError";
+  }
+}
+
+/**
+ * Build a `sampling/createMessage` request handler that enforces a rate limit,
+ * a lifetime request cap, and a model allowlist before and after delegating to
+ * the host's completion function. State (counters) persists across reconnects
+ * because one handler instance is shared by every client the server uses.
+ */
+/** Concatenate the text blocks of a sampling message's content. */
+function extractSamplingText(content: unknown): string {
+  const blocks = Array.isArray(content) ? content : [content];
+  return blocks
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        isRecord(block) && block.type === "text" && typeof block.text === "string",
+    )
+    .map((block) => block.text)
+    .join("");
+}
+
+export function createMcpSamplingHandler(
+  serverName: string,
+  config: McpSamplingConfig,
+): (params: CreateMessageRequest["params"]) => Promise<CreateMessageResult> {
+  const now = config.now ?? Date.now;
+  const recent: number[] = [];
+  let total = 0;
+
+  return async (params) => {
+    const at = now();
+
+    if (config.maxRequestsPerMinute !== undefined) {
+      while (recent.length > 0 && recent[0] <= at - 60_000) recent.shift();
+      if (recent.length >= config.maxRequestsPerMinute) {
+        throw new McpSamplingError(
+          `MCP sampling rate limit exceeded for server "${serverName}".`,
+          "rate_limited",
+        );
+      }
+    }
+    if (config.maxRequests !== undefined && total >= config.maxRequests) {
+      throw new McpSamplingError(
+        `MCP sampling request cap reached for server "${serverName}".`,
+        "request_cap",
+      );
+    }
+
+    recent.push(at);
+    total += 1;
+
+    const response = await config.complete({
+      serverName,
+      messages: params.messages.map((message) => ({
+        role: message.role,
+        text: extractSamplingText(message.content),
+      })),
+      systemPrompt: params.systemPrompt,
+      maxTokens: params.maxTokens,
+    });
+
+    if (
+      config.allowedModels !== undefined &&
+      !config.allowedModels.includes(response.model)
+    ) {
+      throw new McpSamplingError(
+        `MCP sampling model "${response.model}" is not allowed for server "${serverName}".`,
+        "model_not_allowed",
+      );
+    }
+
+    return {
+      model: response.model,
+      role: "assistant",
+      content: { type: "text", text: response.text },
+      ...(response.stopReason ? { stopReason: response.stopReason } : {}),
+    };
+  };
 }
 
 export function createSerializedMcpClient(
