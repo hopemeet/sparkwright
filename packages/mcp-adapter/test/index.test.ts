@@ -385,6 +385,64 @@ describe("mcp-adapter", () => {
     });
   });
 
+  it("routes an SSE server through policy with its url and transport type", async () => {
+    const serverPolicy = {
+      decide: vi.fn(({ action, metadata = {} }) => ({
+        action,
+        decision: "deny" as const,
+        reason: "blocked",
+        metadata,
+      })),
+    };
+
+    await prepareMcpServer(
+      {
+        type: "sse",
+        name: "remote",
+        url: "https://example.test/sse",
+        headers: { "x-tenant": "acme" },
+      },
+      { serverPolicy },
+    );
+
+    expect(serverPolicy.decide).toHaveBeenCalledWith({
+      action: "mcp.server.prepare",
+      resource: {
+        kind: "mcp.server",
+        id: "remote",
+        name: "remote",
+        uri: "https://example.test/sse",
+      },
+      metadata: {
+        serverName: "remote",
+        serverType: "sse",
+        url: "https://example.test/sse",
+        headerKeys: ["x-tenant"],
+      },
+    });
+  });
+
+  it("redacts credentials from connection failure messages", async () => {
+    const serverPolicy = {
+      decide: vi.fn(() => {
+        throw new Error(
+          "connect failed with Authorization: Bearer sk-ant-abcdef0123456789abcdef0123456789",
+        );
+      }),
+    };
+
+    const prepared = await prepareMcpServer(
+      { type: "http", name: "secure", url: "https://example.test/mcp" },
+      { serverPolicy },
+    );
+
+    expect(prepared.status.status).toBe("failed");
+    const error =
+      prepared.status.status === "failed" ? prepared.status.error : "";
+    expect(error).not.toContain("sk-ant-abcdef0123456789");
+    expect(error).toContain("[REDACTED]");
+  });
+
   it("emits mcp.server.prepared when an emitter is provided", async () => {
     const captured: Array<{ type: string; payload: unknown }> = [];
     const emitter = {

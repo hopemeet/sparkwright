@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
   CallToolResultSchema,
   type Tool as McpTool,
@@ -25,25 +27,42 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const CLIENT_NAME = "sparkwright";
 const CLIENT_VERSION = "0.1.0";
 
+/**
+ * Fields shared by every server transport.
+ *
+ * `supportsParallelToolCalls` opts a server out of the default per-server call
+ * serialization: when true, tool calls to this server may run concurrently.
+ * Leave it unset for servers that are not known to be concurrency-safe.
+ */
+interface McpServerConfigBase {
+  name: string;
+  timeoutMs?: number;
+  enabled?: boolean;
+  supportsParallelToolCalls?: boolean;
+}
+
 export type McpServerConfig =
-  | {
+  | (McpServerConfigBase & {
       type: "stdio";
-      name: string;
       command: string;
       args?: string[];
       cwd?: string;
       env?: Record<string, string>;
-      timeoutMs?: number;
-      enabled?: boolean;
-    }
-  | {
+    })
+  | (McpServerConfigBase & {
       type: "http";
-      name: string;
       url: string;
       headers?: Record<string, string>;
-      timeoutMs?: number;
-      enabled?: boolean;
-    };
+      /** OAuth provider for remote authorization; the transport drives the flow. */
+      authProvider?: OAuthClientProvider;
+    })
+  | (McpServerConfigBase & {
+      type: "sse";
+      url: string;
+      headers?: Record<string, string>;
+      /** OAuth provider for remote authorization; the transport drives the flow. */
+      authProvider?: OAuthClientProvider;
+    });
 
 export type McpStatus =
   | { status: "connected" }
@@ -257,7 +276,10 @@ export async function prepareMcpServer(
     }
 
     client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
-    let transport: StdioClientTransport | StreamableHTTPClientTransport;
+    let transport:
+      | StdioClientTransport
+      | StreamableHTTPClientTransport
+      | SSEClientTransport;
     if (config.type === "stdio") {
       transport = new StdioClientTransport({
         command: config.command,
@@ -267,19 +289,25 @@ export async function prepareMcpServer(
         stderr: "pipe",
       });
       drainStdioStderr(transport, name, options.onStdioStderr);
+    } else if (config.type === "sse") {
+      transport = new SSEClientTransport(new URL(config.url), {
+        requestInit: config.headers ? { headers: config.headers } : undefined,
+        authProvider: config.authProvider,
+      });
     } else {
       transport = new StreamableHTTPClientTransport(new URL(config.url), {
-        requestInit: config.headers
-          ? {
-              headers: config.headers,
-            }
-          : undefined,
+        requestInit: config.headers ? { headers: config.headers } : undefined,
+        authProvider: config.authProvider,
       });
     }
 
     await client.connect(transport, { timeout: timeoutMs });
     const listed = await client.listTools(undefined, { timeout: timeoutMs });
-    const callClient = createSerializedMcpClient(client);
+    // Per-server calls are serialized by default; opt in to concurrency only
+    // when the server is declared parallel-safe.
+    const callClient = config.supportsParallelToolCalls
+      ? client
+      : createSerializedMcpClient(client);
     const usedNames = options.usedNames ?? new Set<string>();
     const toolNameMap: McpToolNameMapping[] = [];
     const tools = listed.tools.map((mcpTool) => {
@@ -317,7 +345,11 @@ export async function prepareMcpServer(
       name,
       status: {
         status: "failed",
-        error: cause instanceof Error ? cause.message : String(cause),
+        // Connection failures can echo back auth headers / tokens; strip them
+        // before the message reaches logs, traces, or the model.
+        error: redactSensitiveText(
+          cause instanceof Error ? cause.message : String(cause),
+        ),
       },
       tools: [],
       toolNameMap: [],
