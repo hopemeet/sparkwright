@@ -23,3 +23,6 @@ __pycache__/
 # Internal docs and dashboards (local-only, not for public repo)
 docs/_internal/
 README.internal.md
+
+# Personal, local-only dev notes (never committed; survives switching tools)
+*.local.md
