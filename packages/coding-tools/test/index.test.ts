@@ -194,9 +194,7 @@ describe("coding tools", () => {
     it("rejects a hunk that does not match instead of guessing", () => {
       const before = "one\ntwo\n";
       const patch = ["@@ -1,1 +1,1 @@", "-nonexistent", "+x", ""].join("\n");
-      expect(() => applyUnifiedDiff(before, patch)).toThrow(
-        /did not match/,
-      );
+      expect(() => applyUnifiedDiff(before, patch)).toThrow(/did not match/);
     });
 
     it("throws when the patch has no hunks", () => {

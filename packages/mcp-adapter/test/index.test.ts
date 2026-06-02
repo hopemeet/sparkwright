@@ -299,9 +299,7 @@ describe("mcp-adapter", () => {
     const handler = createMcpSamplingHandler("srv", { complete });
 
     const result = await handler({
-      messages: [
-        { role: "user", content: { type: "text", text: "hello" } },
-      ],
+      messages: [{ role: "user", content: { type: "text", text: "hello" } }],
       maxTokens: 64,
     } as never);
 

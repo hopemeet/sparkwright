@@ -376,8 +376,7 @@ function normalizeApplyPatchInput(args: ApplyPatchInput): ApplyPatchInput {
   const path = readString(args, "path");
   const patch = readString(args, "patch");
   if (patch.trim() === "") throw new Error("patch must be a non-empty string.");
-  const reason =
-    typeof args.reason === "string" ? args.reason : undefined;
+  const reason = typeof args.reason === "string" ? args.reason : undefined;
   return { path, patch, reason };
 }
 

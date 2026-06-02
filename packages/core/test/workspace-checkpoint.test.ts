@@ -35,10 +35,23 @@ describe("WorkspaceCheckpointStore", () => {
   it("captures only the first touch of a path per checkpoint", () => {
     const store = newStore();
     store.openCheckpoint("turn-1");
-    store.recordBeforeWrite({ path: "a.txt", existedBefore: true, content: "v1" });
-    store.recordBeforeWrite({ path: "a.txt", existedBefore: true, content: "v2" });
+    store.recordBeforeWrite({
+      path: "a.txt",
+      existedBefore: true,
+      content: "v1",
+    });
+    store.recordBeforeWrite({
+      path: "a.txt",
+      existedBefore: true,
+      content: "v2",
+    });
     expect(store.listCheckpoints()).toEqual([
-      { id: "cp-1", label: "turn-1", createdAt: expect.any(String), fileCount: 1 },
+      {
+        id: "cp-1",
+        label: "turn-1",
+        createdAt: expect.any(String),
+        fileCount: 1,
+      },
     ]);
   });
 
@@ -77,11 +90,19 @@ describe("WorkspaceCheckpointStore", () => {
     const { files, target } = memoryTarget({ "f.txt": "v0" });
 
     store.openCheckpoint("turn-1");
-    store.recordBeforeWrite({ path: "f.txt", existedBefore: true, content: "v0" });
+    store.recordBeforeWrite({
+      path: "f.txt",
+      existedBefore: true,
+      content: "v0",
+    });
     files.set("f.txt", "v1");
 
     store.openCheckpoint("turn-2");
-    store.recordBeforeWrite({ path: "f.txt", existedBefore: true, content: "v1" });
+    store.recordBeforeWrite({
+      path: "f.txt",
+      existedBefore: true,
+      content: "v1",
+    });
     files.set("f.txt", "v2");
 
     // Roll back to turn-1: the earliest pre-image (v0) must win.

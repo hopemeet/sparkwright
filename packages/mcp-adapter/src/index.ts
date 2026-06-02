@@ -590,10 +590,7 @@ export function createReconnectingMcpClient(
     reconnecting = (async () => {
       let lastError = cause;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const delay = Math.min(
-          maxDelayMs,
-          initialDelayMs * 2 ** (attempt - 1),
-        );
+        const delay = Math.min(maxDelayMs, initialDelayMs * 2 ** (attempt - 1));
         await sleep(delay);
         input.onReconnect?.({ attempt, error: lastError });
         try {
@@ -707,7 +704,9 @@ function extractSamplingText(content: unknown): string {
   return blocks
     .filter(
       (block): block is { type: "text"; text: string } =>
-        isRecord(block) && block.type === "text" && typeof block.text === "string",
+        isRecord(block) &&
+        block.type === "text" &&
+        typeof block.text === "string",
     )
     .map((block) => block.text)
     .join("");
