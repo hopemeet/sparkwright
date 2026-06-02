@@ -16,7 +16,10 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import {
+  applyUnifiedDiff,
   createCodingTools,
+  type ApplyPatchInput,
+  type ApplyPatchResult,
   type DirectoryEntry,
   type EditAnchoredTextInput,
   type EditAnchoredTextResult,
@@ -38,6 +41,7 @@ describe("coding tools", () => {
       "read_text",
       "read_anchored_text",
       "edit_anchored_text",
+      "apply_patch",
       "list_dir",
       "grep_text",
       "glob_paths",
@@ -113,6 +117,93 @@ describe("coding tools", () => {
     await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
       "alpha\nbravo\ngamma\n",
     );
+  });
+
+  it("applies a unified-diff patch through the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "app.ts": "one\ntwo\nthree\nfour\n",
+    });
+    const tool = getTool<ApplyPatchInput, ApplyPatchResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "apply_patch",
+    );
+
+    const result = await tool.execute(
+      {
+        path: "app.ts",
+        reason: "rename two",
+        patch: [
+          "--- a/app.ts",
+          "+++ b/app.ts",
+          "@@ -1,4 +1,4 @@",
+          " one",
+          "-two",
+          "+TWO",
+          " three",
+          " four",
+          "",
+        ].join("\n"),
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({ changed: true, hunksApplied: 1 });
+    await expect(readFile(join(root, "app.ts"), "utf8")).resolves.toBe(
+      "one\nTWO\nthree\nfour\n",
+    );
+  });
+
+  describe("applyUnifiedDiff", () => {
+    it("matches hunk context with trailing-whitespace tolerance", () => {
+      const before = "alpha   \nbeta\n";
+      const patch = [
+        "@@ -1,2 +1,2 @@",
+        " alpha", // file has trailing spaces; fuzzy match succeeds
+        "-beta",
+        "+BETA",
+        "",
+      ].join("\n");
+      const { content, hunksApplied } = applyUnifiedDiff(before, patch);
+      expect(content).toBe("alpha   \nBETA\n");
+      expect(hunksApplied).toBe(1);
+    });
+
+    it("applies multiple hunks in order via a running cursor", () => {
+      const before = "a\nb\nc\nd\ne\nf\n";
+      const patch = [
+        "@@ -1,1 +1,1 @@",
+        "-a",
+        "+A",
+        "@@ -5,1 +5,1 @@",
+        "-e",
+        "+E",
+        "",
+      ].join("\n");
+      const { content, hunksApplied } = applyUnifiedDiff(before, patch);
+      expect(content).toBe("A\nb\nc\nd\nE\nf\n");
+      expect(hunksApplied).toBe(2);
+    });
+
+    it("inserts pure-addition hunks at the hinted line", () => {
+      const before = "a\nb\n";
+      const patch = ["@@ -1,0 +2,1 @@", "+inserted", ""].join("\n");
+      const { content } = applyUnifiedDiff(before, patch);
+      expect(content).toBe("a\ninserted\nb\n");
+    });
+
+    it("rejects a hunk that does not match instead of guessing", () => {
+      const before = "one\ntwo\n";
+      const patch = ["@@ -1,1 +1,1 @@", "-nonexistent", "+x", ""].join("\n");
+      expect(() => applyUnifiedDiff(before, patch)).toThrow(
+        /did not match/,
+      );
+    });
+
+    it("throws when the patch has no hunks", () => {
+      expect(() => applyUnifiedDiff("a\n", "--- a\n+++ b\n")).toThrow(
+        /no hunks/,
+      );
+    });
   });
 
   it("lists workspace directories with hidden files excluded by default", async () => {
