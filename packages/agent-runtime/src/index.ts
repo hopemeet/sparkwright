@@ -650,28 +650,42 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     spanId,
     goal: input.goal,
   };
-  parent.events.emit("subagent.requested", subagentBase, {
+  // Carry the child's identity on EVERY phase. The terminal events bridge from
+  // the child's own EventLog, which has no knowledge of the parent-supplied
+  // profile, so without this each later emit would lose `agentName` and a UI
+  // would fall back to the opaque `childRunId` — making one sub-agent read as a
+  // different actor on `started`/`completed` than it did on `requested`.
+  const subagentMeta = {
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
-  });
+  };
+  parent.events.emit("subagent.requested", subagentBase, subagentMeta);
 
   const unsubscribeBridge = child.events.subscribe((event) => {
     if (event.type === "run.started") {
-      parent.events.emit("subagent.started", subagentBase);
+      parent.events.emit("subagent.started", subagentBase, subagentMeta);
     } else if (event.type === "run.completed") {
-      parent.events.emit("subagent.completed", {
-        ...subagentBase,
-        stopReason: (event.payload as { stopReason?: string } | undefined)
-          ?.stopReason,
-      });
+      parent.events.emit(
+        "subagent.completed",
+        {
+          ...subagentBase,
+          stopReason: (event.payload as { stopReason?: string } | undefined)
+            ?.stopReason,
+        },
+        subagentMeta,
+      );
       detach();
       unsubscribeBridge();
     } else if (event.type === "run.failed" || event.type === "run.cancelled") {
-      parent.events.emit("subagent.failed", {
-        ...subagentBase,
-        reason: event.type === "run.cancelled" ? "cancelled" : "failed",
-        error: (event.payload as { error?: unknown } | undefined)?.error,
-      });
+      parent.events.emit(
+        "subagent.failed",
+        {
+          ...subagentBase,
+          reason: event.type === "run.cancelled" ? "cancelled" : "failed",
+          error: (event.payload as { error?: unknown } | undefined)?.error,
+        },
+        subagentMeta,
+      );
       detach();
       unsubscribeBridge();
     }

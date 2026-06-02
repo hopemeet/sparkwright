@@ -268,6 +268,24 @@ function EventCard(props: {
           <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
         ) : null;
       }
+      // A sub-agent tool (delegate_* / spawn_agent) returns a structured
+      // envelope { childRunId, signal, stopReason, message, usage, … }. Dumping
+      // it via oneLine floods the transcript with raw JSON (spanId, token
+      // counts, promotionHint). The only part worth committing is the child's
+      // own answer (`message`); the `subagent.completed` line already marked the
+      // run done, and the rest stays inspectable via /events.
+      if (isAgentToolResult(result)) {
+        const message = str(rec(result).message).trim();
+        if (!message) return null;
+        return (
+          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
+            <Markdown text={message} />
+            {artifacts.length > 0 ? (
+              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
+            ) : null}
+          </Box>
+        );
+      }
       // Tool output (shell stdout especially) is the most likely carrier of
       // raw escape sequences — strip them so a `clear`/cursor-move in stdout
       // can't scramble the transcript.
@@ -417,7 +435,6 @@ function EventCard(props: {
     case "subagent.completed":
     case "subagent.failed": {
       const phase = ev.type.slice("subagent.".length);
-      const goal = str(p.goal);
       const meta = rec(ev.metadata);
       const name =
         str(meta.agentName) ||
@@ -425,6 +442,10 @@ function EventCard(props: {
         str(meta.agentProfileId) ||
         str(p.childRunId) ||
         "subagent";
+      // The goal doesn't change across phases, so showing it on started AND
+      // completed just reprints the same sentence twice more. Introduce it once
+      // on `requested`; later phases carry only their own news (the stop reason).
+      const goal = phase === "requested" ? str(p.goal) : "";
       const reason = str(p.reason) || str(p.stopReason);
       const color = phase === "failed" ? theme.error : theme.accent2;
       return (
@@ -597,6 +618,27 @@ export function isFileReadResult(value: unknown): boolean {
     typeof r.content === "string" &&
     typeof r.totalLines === "number" &&
     typeof r.bytes === "number"
+  );
+}
+
+/**
+ * Recognise a sub-agent tool result envelope by its shape: a record carrying a
+ * string `childRunId`, a string `signal`, and a `stopReason`. Both the stable
+ * delegate tool (`AgentToolResult`) and the dynamic `spawn_agent` output share
+ * this core. The committed renderer has no toolCallId correlation, so this
+ * structural check is how `tool.completed` knows to surface only the child's
+ * `message` instead of dumping the whole envelope as JSON. Returns true for a
+ * sub-agent result.
+ */
+export function isAgentToolResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.childRunId === "string" &&
+    typeof r.signal === "string" &&
+    "stopReason" in r
   );
 }
 

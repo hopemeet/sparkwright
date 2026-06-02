@@ -835,6 +835,50 @@ describe("createAgentTool / mountAgentTool", () => {
     });
   });
 
+  it("carries the child's agentName/agentProfileId on every subagent phase", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "child done" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+      maxSteps: 1,
+      childAgentProfile: {
+        id: "dynamic_project_scanner",
+        name: "project-scanner",
+        mode: "child",
+      },
+    });
+    await spawned.run.start();
+
+    // Without this, `started`/`completed` bridge from the child's own EventLog
+    // and drop the profile, so a UI falls back to the opaque childRunId.
+    for (const type of [
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]) {
+      const event = parent.events.all().find((e) => e.type === type);
+      expect(event?.metadata, type).toMatchObject({
+        agentName: "project-scanner",
+        agentProfileId: "dynamic_project_scanner",
+      });
+    }
+  });
+
   it("emits subagent.failed when the child fails", async () => {
     const parent = createRun({
       goal: "parent",
