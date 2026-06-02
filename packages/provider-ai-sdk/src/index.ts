@@ -7,15 +7,16 @@ import {
   type ModelMessage,
   type ToolSet,
 } from "ai";
-import type {
-  ModelAdapter,
-  ModelInput,
-  ModelOutput,
-  ModelOutputChunk,
-  ModelPricing,
-  ModelUsage,
-  PromptMessage,
-  ToolDescriptor,
+import {
+  sanitizeToolSchema,
+  type ModelAdapter,
+  type ModelInput,
+  type ModelOutput,
+  type ModelOutputChunk,
+  type ModelPricing,
+  type ModelUsage,
+  type PromptMessage,
+  type ToolDescriptor,
 } from "@sparkwright/core";
 import type {
   ModelInfo,
@@ -251,8 +252,15 @@ function fallbackPrompt(input: ModelInput): PromptMessage[] {
 }
 
 function asJsonSchema(schema: unknown): Parameters<typeof jsonSchema>[0] {
-  if (typeof schema === "object" && schema !== null && !Array.isArray(schema)) {
-    return schema as Parameters<typeof jsonSchema>[0];
+  // Sanitize before forwarding so a single tool schema is accepted by both
+  // cloud providers and strict local grammar backends.
+  const sanitized = sanitizeToolSchema(schema);
+  if (
+    typeof sanitized === "object" &&
+    sanitized !== null &&
+    !Array.isArray(sanitized)
+  ) {
+    return sanitized as Parameters<typeof jsonSchema>[0];
   }
 
   return {};

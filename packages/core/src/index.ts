@@ -354,6 +354,7 @@ export {
   sanitizeMemoryContext,
   StreamingContextScrubber,
 } from "./memory.js";
+export { sanitizeToolSchema } from "./schema-sanitize.js";
 export type {
   ContentSource,
   ContentRule,

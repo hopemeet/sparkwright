@@ -12,6 +12,7 @@ import {
   createDefaultContentPolicy,
   defineTool,
   redactSensitiveText,
+  sanitizeToolSchema,
   type ContextItem,
   type ContentPolicy,
   type ContentPolicyVerdict,
@@ -372,7 +373,9 @@ export function mcpToolToToolDefinition(input: {
   return defineTool({
     name: toolName,
     description: input.mcpTool.description ?? "",
-    inputSchema: normalizeMcpInputSchema(input.mcpTool.inputSchema),
+    inputSchema: sanitizeToolSchema(
+      normalizeMcpInputSchema(input.mcpTool.inputSchema),
+    ),
     outputSchema: input.mcpTool.outputSchema,
     timeoutMs: input.timeoutMs,
     policy: policy ?? {
