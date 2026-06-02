@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createRunId } from "@sparkwright/core";
 import {
+  createReconnectingMcpClient,
   createSerializedMcpClient,
   inspectMcpToolDescription,
   makeMcpToolName,
@@ -208,6 +209,83 @@ describe("mcp-adapter", () => {
       "start:second",
       "end:second",
     ]);
+  });
+
+  it("passes tool-level errors through without reconnecting", async () => {
+    const reconnect = vi.fn(async () => ({ callTool: vi.fn() }) as never);
+    const initial = {
+      callTool: vi.fn(async () => {
+        throw new Error("tool returned an application error");
+      }),
+    };
+    const client = createReconnectingMcpClient({
+      initial: initial as never,
+      reconnect,
+      sleep: async () => {},
+    });
+
+    await expect(client.callTool({ name: "x" } as never)).rejects.toThrow(
+      "application error",
+    );
+    expect(reconnect).not.toHaveBeenCalled();
+  });
+
+  it("reconnects on a connection error and retries the call once", async () => {
+    let fail = true;
+    const reconnected = {
+      callTool: vi.fn(async () => ({ content: [], reconnected: true })),
+      close: vi.fn(async () => {}),
+    };
+    const initial = {
+      callTool: vi.fn(async () => {
+        if (fail) throw new Error("connection closed");
+        return { content: [] };
+      }),
+      close: vi.fn(async () => {}),
+    };
+    const reconnect = vi.fn(async () => {
+      fail = false;
+      return reconnected as never;
+    });
+
+    const client = createReconnectingMcpClient({
+      initial: initial as never,
+      reconnect,
+      sleep: async () => {},
+    });
+
+    const result = await client.callTool({ name: "x" } as never);
+    expect(result).toMatchObject({ reconnected: true });
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(initial.close).toHaveBeenCalledTimes(1); // old client torn down
+  });
+
+  it("retries reconnection with backoff and gives up after maxAttempts", async () => {
+    const delays: number[] = [];
+    const initial = {
+      callTool: vi.fn(async () => {
+        throw new Error("ECONNRESET");
+      }),
+      close: vi.fn(async () => {}),
+    };
+    const reconnect = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+
+    const client = createReconnectingMcpClient({
+      initial: initial as never,
+      reconnect,
+      options: { maxAttempts: 3, initialDelayMs: 10, maxDelayMs: 40 },
+      sleep: async (ms) => {
+        delays.push(ms);
+      },
+    });
+
+    await expect(client.callTool({ name: "x" } as never)).rejects.toThrow(
+      "ECONNREFUSED",
+    );
+    expect(reconnect).toHaveBeenCalledTimes(3);
+    expect(delays).toEqual([10, 20, 40]); // exponential, capped at maxDelayMs
   });
 
   it("supports per-tool policy mapping", () => {

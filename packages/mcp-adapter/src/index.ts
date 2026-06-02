@@ -39,6 +39,21 @@ interface McpServerConfigBase {
   timeoutMs?: number;
   enabled?: boolean;
   supportsParallelToolCalls?: boolean;
+  /**
+   * Auto-reconnect on connection-class call failures. When set, a dropped
+   * connection is rebuilt with exponential backoff and the failed call is
+   * retried once. Omit to disable (a connection error surfaces immediately).
+   */
+  reconnect?: McpReconnectOptions;
+}
+
+export interface McpReconnectOptions {
+  /** Maximum reconnection attempts before giving up. Default 5. */
+  maxAttempts?: number;
+  /** Delay before the first retry, in ms. Default 200. */
+  initialDelayMs?: number;
+  /** Upper bound on the backoff delay, in ms. Default 5000. */
+  maxDelayMs?: number;
 }
 
 export type McpServerConfig =
@@ -275,39 +290,39 @@ export async function prepareMcpServer(
       };
     }
 
-    client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
-    let transport:
-      | StdioClientTransport
-      | StreamableHTTPClientTransport
-      | SSEClientTransport;
-    if (config.type === "stdio") {
-      transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        cwd: config.cwd,
-        env: config.env,
-        stderr: "pipe",
+    // Build + connect a fresh client. Reused for the initial connection and,
+    // when `reconnect` is configured, for each reconnection attempt.
+    const connect = async (): Promise<Client> => {
+      const next = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
+      const transport = buildMcpTransport(config, name, options.onStdioStderr);
+      await next.connect(transport, { timeout: timeoutMs });
+      return next;
+    };
+
+    client = await connect();
+    const listed = await client.listTools(undefined, { timeout: timeoutMs });
+
+    // A reconnecting wrapper owns the live client once enabled, so close() must
+    // route through it rather than the initial `client` reference.
+    let closeClient: () => Promise<void> = async () => {
+      await client?.close();
+    };
+    let liveClient: McpClientLike = client;
+    if (config.reconnect) {
+      const reconnecting = createReconnectingMcpClient({
+        initial: client,
+        reconnect: connect,
+        options: config.reconnect,
       });
-      drainStdioStderr(transport, name, options.onStdioStderr);
-    } else if (config.type === "sse") {
-      transport = new SSEClientTransport(new URL(config.url), {
-        requestInit: config.headers ? { headers: config.headers } : undefined,
-        authProvider: config.authProvider,
-      });
-    } else {
-      transport = new StreamableHTTPClientTransport(new URL(config.url), {
-        requestInit: config.headers ? { headers: config.headers } : undefined,
-        authProvider: config.authProvider,
-      });
+      liveClient = reconnecting;
+      closeClient = () => reconnecting.close();
     }
 
-    await client.connect(transport, { timeout: timeoutMs });
-    const listed = await client.listTools(undefined, { timeout: timeoutMs });
     // Per-server calls are serialized by default; opt in to concurrency only
     // when the server is declared parallel-safe.
     const callClient = config.supportsParallelToolCalls
-      ? client
-      : createSerializedMcpClient(client);
+      ? liveClient
+      : createSerializedMcpClient(liveClient);
     const usedNames = options.usedNames ?? new Set<string>();
     const toolNameMap: McpToolNameMapping[] = [];
     const tools = listed.tools.map((mcpTool) => {
@@ -335,9 +350,7 @@ export async function prepareMcpServer(
       status: { status: "connected" },
       tools,
       toolNameMap,
-      close: async () => {
-        await client?.close();
-      },
+      close: closeClient,
     };
   } catch (cause) {
     await client?.close().catch(() => {});
@@ -470,6 +483,136 @@ export function mcpToolToToolDefinition(input: {
       }
     },
   });
+}
+
+function buildMcpTransport(
+  config: McpServerConfig,
+  name: string,
+  onStdioStderr?: (input: McpStdioStderrChunk) => void,
+): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
+  if (config.type === "stdio") {
+    const transport = new StdioClientTransport({
+      command: config.command,
+      args: config.args,
+      cwd: config.cwd,
+      env: config.env,
+      stderr: "pipe",
+    });
+    drainStdioStderr(transport, name, onStdioStderr);
+    return transport;
+  }
+  if (config.type === "sse") {
+    return new SSEClientTransport(new URL(config.url), {
+      requestInit: config.headers ? { headers: config.headers } : undefined,
+      authProvider: config.authProvider,
+    });
+  }
+  return new StreamableHTTPClientTransport(new URL(config.url), {
+    requestInit: config.headers ? { headers: config.headers } : undefined,
+    authProvider: config.authProvider,
+  });
+}
+
+type ReconnectableClient = McpClientLike & { close?: () => Promise<void> };
+
+export interface CreateReconnectingMcpClientInput {
+  /** The already-connected client to use until the first connection failure. */
+  initial: ReconnectableClient;
+  /** Builds and connects a fresh client; invoked once per reconnection attempt. */
+  reconnect: () => Promise<ReconnectableClient>;
+  options?: McpReconnectOptions;
+  /**
+   * Classifies whether a thrown error is a connection-class failure worth
+   * reconnecting for (vs. a tool-level error that should surface as-is).
+   */
+  isConnectionError?: (cause: unknown) => boolean;
+  /** Observed on each reconnection attempt (for status/trace surfaces). */
+  onReconnect?: (info: { attempt: number; error: unknown }) => void;
+  /** Injectable delay, primarily for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_RECONNECT_MAX_ATTEMPTS = 5;
+const DEFAULT_RECONNECT_INITIAL_DELAY_MS = 200;
+const DEFAULT_RECONNECT_MAX_DELAY_MS = 5_000;
+
+/**
+ * Wrap a client so connection-class call failures trigger a rebuild with
+ * exponential backoff, after which the failed call is retried once. Tool-level
+ * errors pass through untouched. Concurrent reconnects collapse onto a single
+ * attempt.
+ */
+export function createReconnectingMcpClient(
+  input: CreateReconnectingMcpClientInput,
+): McpClientLike & { close: () => Promise<void> } {
+  const maxAttempts =
+    input.options?.maxAttempts ?? DEFAULT_RECONNECT_MAX_ATTEMPTS;
+  const initialDelayMs =
+    input.options?.initialDelayMs ?? DEFAULT_RECONNECT_INITIAL_DELAY_MS;
+  const maxDelayMs =
+    input.options?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;
+  const isConnectionError = input.isConnectionError ?? defaultIsConnectionError;
+  const sleep = input.sleep ?? defaultSleep;
+
+  let current = input.initial;
+  let reconnecting: Promise<void> | undefined;
+
+  const reestablish = async (cause: unknown): Promise<void> => {
+    if (reconnecting) return reconnecting;
+    reconnecting = (async () => {
+      let lastError = cause;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const delay = Math.min(
+          maxDelayMs,
+          initialDelayMs * 2 ** (attempt - 1),
+        );
+        await sleep(delay);
+        input.onReconnect?.({ attempt, error: lastError });
+        try {
+          const previous = current;
+          current = await input.reconnect();
+          await previous.close?.().catch(() => {});
+          return;
+        } catch (retryCause) {
+          lastError = retryCause;
+        }
+      }
+      throw lastError;
+    })();
+    try {
+      await reconnecting;
+    } finally {
+      reconnecting = undefined;
+    }
+  };
+
+  return {
+    async callTool(...args: Parameters<McpClientLike["callTool"]>) {
+      try {
+        return await current.callTool(...args);
+      } catch (cause) {
+        if (!isConnectionError(cause)) throw cause;
+        await reestablish(cause);
+        return current.callTool(...args);
+      }
+    },
+    async close() {
+      await current.close?.();
+    },
+  };
+}
+
+function defaultIsConnectionError(cause: unknown): boolean {
+  const message = (
+    cause instanceof Error ? cause.message : String(cause)
+  ).toLowerCase();
+  return /not connected|connection (closed|error|reset)|closed|econnreset|econnrefused|socket hang up|transport|terminated|disconnect/.test(
+    message,
+  );
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function createSerializedMcpClient(
