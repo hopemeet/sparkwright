@@ -38,6 +38,14 @@ export interface ToolCostEstimate {
 
 export type ToolInterruptBehavior = "cancel" | "block";
 
+/**
+ * Cheap environment probe deciding whether a tool is currently usable.
+ * Resolving false withholds the tool from model-facing descriptors; it never
+ * reaches the provider request. Must not depend on per-call arguments — results
+ * are TTL-cached and shared across calls.
+ */
+export type ToolAvailableProbe = () => boolean | Promise<boolean>;
+
 export interface ToolResultSizePolicy {
   /**
    * Maximum serialized result size before an embedder should materialize the
@@ -201,6 +209,17 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
     requiresApproval?: boolean;
   };
   governance?: ToolGovernance;
+  /**
+   * Optional runtime availability probe. When provided and it resolves false,
+   * the tool is withheld from model-facing descriptors (it never appears in the
+   * provider request) instead of failing at call time. Use for tools gated on
+   * live environment state: an OAuth token or credential present, a binary
+   * installed, a gateway reachable. Must be a cheap check that does not depend
+   * on per-call arguments — results are TTL-cached (default 30s) and shared
+   * across calls; call {@link ToolRegistry.invalidateAvailability} after config
+   * changes that affect it. A probe that throws is treated as unavailable.
+   */
+  available?: ToolAvailableProbe;
   isConcurrencySafe?(args: TArgs): boolean;
   /**
    * Whether re-invoking this tool with the same args after a transient
@@ -231,9 +250,35 @@ export function defineTool<TArgs = unknown, TResult = unknown>(
   return tool;
 }
 
+export interface ToolRegistryOptions {
+  /**
+   * How long a tool's {@link ToolDefinition.available} probe result is cached
+   * before re-evaluation. Defaults to 30 000ms.
+   */
+  availabilityTtlMs?: number;
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
   private generation = 0;
+  private readonly availabilityTtlMs: number;
+  // Keyed by the probe function reference so identical probes shared across
+  // tools (e.g. one OAuth check for every tool from a server) are evaluated
+  // once per TTL window.
+  private readonly availabilityCache = new Map<
+    ToolAvailableProbe,
+    { expiresAt: number; value: boolean }
+  >();
+  // In-flight evaluations, so concurrent callers (and multiple tools sharing a
+  // probe inside one `Promise.all` pass) collapse onto a single invocation.
+  private readonly availabilityInflight = new Map<
+    ToolAvailableProbe,
+    Promise<boolean>
+  >();
+
+  constructor(options: ToolRegistryOptions = {}) {
+    this.availabilityTtlMs = options.availabilityTtlMs ?? 30_000;
+  }
 
   register(tool: ToolDefinition): void {
     if (this.tools.has(tool.name)) {
@@ -245,12 +290,20 @@ export class ToolRegistry {
   }
 
   unregister(name: string): boolean {
+    const existing = this.tools.get(name);
     const removed = this.tools.delete(name);
-    if (removed) this.generation += 1;
+    if (removed) {
+      this.generation += 1;
+      this.dropAvailabilityEntry(existing);
+    }
     return removed;
   }
 
   replace(tool: ToolDefinition): void {
+    const existing = this.tools.get(tool.name);
+    if (existing && existing.available !== tool.available) {
+      this.dropAvailabilityEntry(existing);
+    }
     this.tools.set(tool.name, tool);
     this.generation += 1;
   }
@@ -274,29 +327,108 @@ export class ToolRegistry {
     return [...this.tools.values()];
   }
 
+  /**
+   * Descriptors for every registered tool, ignoring availability. Use for
+   * enumeration, auditing, and UIs. Model-facing code should prefer
+   * {@link ToolRegistry.listModelDescriptors}.
+   */
   listDescriptors(): ToolDescriptor[] {
-    return this.list().map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      outputSchema: tool.outputSchema,
-      timeoutMs: tool.timeoutMs,
-      concurrency: {
-        safe: isToolConcurrencySafe(tool),
-      },
-      interrupt: {
-        behavior: getToolInterruptBehavior(tool),
-      },
-      loading: {
-        defer: tool.deferLoading,
-        alwaysLoad: tool.alwaysLoad,
-      },
-      resultSize: tool.resultSize,
-      resultPresentation: tool.resultPresentation,
-      policy: tool.policy,
-      governance: tool.governance,
-    }));
+    return this.list().map((tool) => toToolDescriptor(tool));
   }
+
+  /**
+   * Evaluate a single tool's availability probe, TTL-cached. Tools without a
+   * probe are always available. A probe that throws is treated as unavailable
+   * (fail safe — a tool that cannot confirm its prerequisites is hidden rather
+   * than offered and failed at call time).
+   */
+  async isAvailable(tool: ToolDefinition): Promise<boolean> {
+    const probe = tool.available;
+    if (!probe) return true;
+
+    const cached = this.availabilityCache.get(probe);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+    const inflight = this.availabilityInflight.get(probe);
+    if (inflight) return inflight;
+
+    const pending = (async () => {
+      let value: boolean;
+      try {
+        value = await probe();
+      } catch {
+        value = false;
+      }
+      this.availabilityCache.set(probe, {
+        expiresAt: Date.now() + this.availabilityTtlMs,
+        value,
+      });
+      return value;
+    })();
+    this.availabilityInflight.set(probe, pending);
+    void pending.finally(() => {
+      if (this.availabilityInflight.get(probe) === pending) {
+        this.availabilityInflight.delete(probe);
+      }
+    });
+    return pending;
+  }
+
+  /** Registered tools whose availability probe currently resolves true. */
+  async listAvailableTools(): Promise<ToolDefinition[]> {
+    const tools = this.list();
+    const flags = await Promise.all(
+      tools.map((tool) => this.isAvailable(tool)),
+    );
+    return tools.filter((_, index) => flags[index]);
+  }
+
+  /**
+   * Descriptors for the tools that should be offered to the model right now:
+   * every registered tool minus those whose availability probe resolves false.
+   */
+  async listModelDescriptors(): Promise<ToolDescriptor[]> {
+    const available = await this.listAvailableTools();
+    return available.map((tool) => toToolDescriptor(tool));
+  }
+
+  /**
+   * Drop all cached availability results, forcing the next probe evaluation.
+   * Call after configuration changes that affect tool prerequisites (e.g. an
+   * OAuth flow completing, a credential being added).
+   */
+  invalidateAvailability(): void {
+    this.availabilityCache.clear();
+    this.availabilityInflight.clear();
+  }
+
+  private dropAvailabilityEntry(tool: ToolDefinition | undefined): void {
+    if (tool?.available) this.availabilityCache.delete(tool.available);
+  }
+}
+
+function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    outputSchema: tool.outputSchema,
+    timeoutMs: tool.timeoutMs,
+    concurrency: {
+      safe: isToolConcurrencySafe(tool),
+    },
+    interrupt: {
+      behavior: getToolInterruptBehavior(tool),
+    },
+    loading: {
+      defer: tool.deferLoading,
+      alwaysLoad: tool.alwaysLoad,
+    },
+    resultSize: tool.resultSize,
+    resultPresentation: tool.resultPresentation,
+    policy: tool.policy,
+    governance: tool.governance,
+  };
 }
 
 export function getToolInterruptBehavior(

@@ -74,6 +74,134 @@
       "minLength": 1,
       "description": "Workspace root for runs. Relative paths resolve from the directory of the config file that defined them."
     },
+    "capabilities": {
+      "type": "object",
+      "description": "Host-owned capability runtime settings. These settings decide what the host may prepare before createRun(); the TUI may inspect the resulting host facts but must not load capabilities itself.",
+      "properties": {
+        "tools": {
+          "type": "object",
+          "description": "Tool availability settings for host-created runs. These settings only affect which tools the host prepares before createRun(); execution still goes through policy and approval.",
+          "properties": {
+            "enabled": {
+              "type": "array",
+              "description": "Optional allowlist of tool-name patterns. Omit to allow all host-assembled tools before other filters apply. Supports '*' as a wildcard.",
+              "items": { "type": "string" }
+            },
+            "disabled": {
+              "type": "array",
+              "description": "Tool-name patterns removed from the prepared run tool set. Supports '*' as a wildcard.",
+              "items": { "type": "string" }
+            },
+            "defer": {
+              "type": "array",
+              "description": "Tool-name patterns prepared as deferred schemas when the tool does not force eager loading. Supports '*' as a wildcard.",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "skills": {
+          "type": "object",
+          "description": "Skill loading settings for host-created runs.",
+          "properties": {
+            "roots": {
+              "type": "array",
+              "description": "Skill root directories. Relative paths resolve from the config file that defined them.",
+              "items": { "type": "string" }
+            },
+            "includeLoaderTool": {
+              "type": "boolean",
+              "description": "Register the progressive skill.load tool in addition to resident selected-skill context."
+            },
+            "loadSelectedSkills": {
+              "type": "boolean",
+              "description": "Load matched Skill bodies into resident run context. Defaults to true in the skills package."
+            },
+            "maxSelectedSkills": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum matched Skill bodies to load for one run."
+            },
+            "resourceFileLimit": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum Skill resource files exposed by the skill.load tool."
+            },
+            "allowedSkills": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Optional allowlist of Skill names."
+            },
+            "deniedSkills": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Optional denylist of Skill names."
+            }
+          },
+          "additionalProperties": false
+        },
+        "mcp": {
+          "type": "object",
+          "description": "MCP server settings for host-created runs.",
+          "properties": {
+            "servers": {
+              "type": "array",
+              "items": {
+                "$ref": "mcp-server-config.schema.json"
+              }
+            },
+            "defaultTimeoutMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "namePrefix": { "type": "string" },
+            "defaultPolicy": {
+              "type": "object",
+              "properties": {
+                "risk": {
+                  "type": "string",
+                  "enum": ["safe", "risky", "denied"]
+                },
+                "requiresApproval": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "agents": {
+          "type": "object",
+          "description": "Agent profile run templates for host-created runs. Profiles define role guidance, tool boundaries, policy, and budget; callable delegation tools must be declared explicitly.",
+          "properties": {
+            "profiles": {
+              "type": "array",
+              "items": {
+                "$ref": "agent-profile.schema.json"
+              }
+            },
+            "delegateTools": {
+              "type": "array",
+              "description": "Explicit child-profile delegation tools exposed to the parent model. Omit to keep profiles inspectable only.",
+              "items": {
+                "type": "object",
+                "required": ["profileId"],
+                "properties": {
+                  "profileId": { "type": "string", "minLength": 1 },
+                  "toolName": { "type": "string", "minLength": 1 },
+                  "description": { "type": "string", "minLength": 1 },
+                  "requiresApproval": { "type": "boolean" },
+                  "forbidNesting": { "type": "boolean" },
+                  "maxSteps": { "type": "integer", "minimum": 1 }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "theme": {
       "type": "string",
       "enum": ["dark", "light", "mono"],

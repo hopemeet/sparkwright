@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
+import type { SparkwrightEvent } from "@sparkwright/core";
 import type { Connection } from "../src/connection.js";
 import { serveConnection } from "../src/server.js";
 import { HostRuntime } from "../src/runtime.js";
@@ -151,6 +152,285 @@ describe("host protocol", () => {
       ok: false,
       error: { code: "invalid_payload" },
     });
+  });
+
+  it("prepares configured skills for TUI/host runs", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-skill-"));
+    const pair = createConnectionPair();
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await mkdir(join(workspace, "skills", "reviewer"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            skills: {
+              roots: ["../skills"],
+              maxSelectedSkills: 1,
+            },
+            mcp: {
+              servers: [
+                {
+                  type: "stdio",
+                  name: "disabled",
+                  command: "ignored",
+                  enabled: false,
+                },
+              ],
+            },
+            agents: {
+              profiles: [
+                {
+                  id: "main",
+                  mode: "primary",
+                  allowedTools: ["read_file"],
+                },
+                {
+                  id: "reviewer",
+                  name: "Reviewer",
+                  mode: "child",
+                  allowedTools: ["read_file"],
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "reviewer",
+                  toolName: "delegate_reviewer",
+                },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+      await writeFile(
+        join(workspace, "skills", "reviewer", "SKILL.md"),
+        [
+          "---",
+          "name: reviewer",
+          "description: Review code and explain risks.",
+          "---",
+          "# Reviewer",
+          "",
+          "Always call out concrete risks.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "r",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "review code" },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const events = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      expect(events.some((event) => event.type === "skill.indexed")).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "skill.loaded" &&
+            (event.payload as { name?: string }).name === "reviewer",
+        ),
+      ).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "mcp.server.prepared" &&
+            (event.payload as { name?: string; status?: string }).name ===
+              "disabled" &&
+            (event.payload as { status?: string }).status === "disabled",
+        ),
+      ).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "agent.profile.derived" &&
+            (event.payload as { childAgentId?: string }).childAgentId ===
+              "reviewer",
+        ),
+      ).toBe(true);
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a host-authored capability snapshot", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-capability-"),
+    );
+    const pair = createConnectionPair();
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await mkdir(join(workspace, "skills", "reviewer"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            tools: {
+              disabled: ["shell"],
+              defer: ["delegate_*"],
+            },
+            skills: {
+              roots: ["../skills"],
+            },
+            mcp: {
+              servers: [
+                {
+                  type: "stdio",
+                  name: "disabled",
+                  command: "ignored",
+                  enabled: false,
+                },
+              ],
+            },
+            agents: {
+              profiles: [
+                { id: "main", mode: "primary" },
+                { id: "reviewer", name: "Reviewer", mode: "child" },
+              ],
+              delegateTools: [
+                {
+                  profileId: "reviewer",
+                  toolName: "delegate_reviewer",
+                },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+      await writeFile(
+        join(workspace, "skills", "reviewer", "SKILL.md"),
+        [
+          "---",
+          "name: reviewer",
+          "description: Review code and explain risks.",
+          "---",
+          "# Reviewer",
+          "",
+          "Always call out concrete risks.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "cap",
+        kind: "capability.inspect",
+        timestamp: TIMESTAMP,
+        payload: {},
+      });
+
+      const resp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "cap",
+      );
+      expect(resp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          skills: {
+            indexed: [{ name: "reviewer" }],
+            loaded: [],
+          },
+          mcp: {
+            statuses: [
+              { serverName: "disabled", status: "disabled", toolNames: [] },
+            ],
+          },
+          agents: {
+            profiles: [
+              { id: "main", mode: "primary" },
+              { id: "reviewer", name: "Reviewer", mode: "child" },
+            ],
+          },
+        },
+      });
+      if (resp.envelope === "response" && resp.ok) {
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "read_file",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "delegate_reviewer",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "spawn_agent",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "manage_skill",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "manage_agent",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "shell",
+          ),
+        ).toBe(false);
+      }
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("rejects malformed approval decisions before runtime dispatch", async () => {

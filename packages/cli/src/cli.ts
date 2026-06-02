@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   asSessionId,
   buildTraceTimelineFile,
@@ -43,11 +43,17 @@ import {
 } from "@sparkwright/cron";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import {
+  loadSkillsFromDirectory,
+  type SkillManifest,
+  type SkillLoadError,
+} from "@sparkwright/skills";
+import {
   loadHostConfig,
   userConfigPath,
   resolveModelSelection,
   buildConfiguredAdapter,
   DETERMINISTIC_PROVIDER,
+  applyToolConfig,
 } from "@sparkwright/host";
 
 export interface CliIO {
@@ -147,6 +153,18 @@ export async function runCli(
     return handleCronCommand(parsed.value, io, env);
   }
 
+  if (command === "tools") {
+    return handleToolsCommand(parsed.value, io, env);
+  }
+
+  if (command === "skills") {
+    return handleSkillsCommand(parsed.value, io, env);
+  }
+
+  if (command === "agents") {
+    return handleAgentsCommand(parsed.value, io);
+  }
+
   const { goal } = parsed.value;
   if (command !== "run" || !goal) {
     writeLine(io.stderr, usage());
@@ -200,8 +218,7 @@ async function startCliRun(
   const workspace = new LocalWorkspace(workspaceRoot);
   const approvalResolver = createCliApprovalResolver({ approveAll, io });
   const policy = createPermissionModePolicy({ mode: permissionMode });
-  const readFile = createReadFileTool();
-  const appendFile = createAppendFileTool();
+  const tools = await createConfiguredCliTools(workspaceRoot, env);
   const trace = new MemoryTrace();
   const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
@@ -221,7 +238,7 @@ async function startCliRun(
       appPrompt,
       platform: process.platform,
     }),
-    tools: [readFile, appendFile],
+    tools,
     model: model.adapter,
     context: parsed.contextItems ?? [],
     runStore: createSessionRunStoreFactory({
@@ -307,6 +324,17 @@ function summarizeWorkspaceMutations(input: {
   return `Workspace writes: ${parts.join(", ")}.`;
 }
 
+async function createConfiguredCliTools(
+  workspaceRoot: string,
+  env: Record<string, string | undefined>,
+) {
+  const cfg = await loadHostConfig(workspaceRoot, env);
+  return applyToolConfig(
+    [createReadFileTool(), createAppendFileTool()],
+    cfg.config.capabilities?.tools,
+  );
+}
+
 interface ConfigDefaults {
   model?: string;
   permissionMode?: PermissionMode;
@@ -319,12 +347,27 @@ function parseArgs(
   defaults: ConfigDefaults = {},
 ): { ok: true; value: ParsedArgs } | { ok: false; message: string } {
   const args = [...argv];
-  const knownCommands = new Set(["run", "trace", "session", "cron"]);
+  const knownCommands = new Set([
+    "run",
+    "trace",
+    "session",
+    "cron",
+    "tools",
+    "skills",
+    "agents",
+  ]);
   const command = knownCommands.has(args[0] ?? "")
     ? (args.shift() ?? "run")
     : "run";
   let subcommand: string | undefined;
-  if (command === "trace" || command === "session" || command === "cron") {
+  if (
+    command === "trace" ||
+    command === "session" ||
+    command === "cron" ||
+    command === "tools" ||
+    command === "skills" ||
+    command === "agents"
+  ) {
     subcommand = args.shift();
   } else if (command === "run" && args[0] === "resume") {
     // `sparkwright run resume <run-id>` — distinct from the freeform
@@ -602,6 +645,46 @@ function parseArgs(
     };
   }
 
+  if (
+    command === "tools" &&
+    subcommand !== "list" &&
+    subcommand !== "enable" &&
+    subcommand !== "disable" &&
+    subcommand !== "defer"
+  ) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright tools <list|enable|disable|defer> [tool-pattern ...]",
+    };
+  }
+
+  if (
+    command === "skills" &&
+    subcommand !== "list" &&
+    subcommand !== "create" &&
+    subcommand !== "validate"
+  ) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright skills <list|create|validate> [name] [--description text]",
+    };
+  }
+
+  if (
+    command === "agents" &&
+    subcommand !== "list" &&
+    subcommand !== "create" &&
+    subcommand !== "validate"
+  ) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright agents <list|create|validate> [id] [--prompt text]",
+    };
+  }
+
   const goal =
     command === "session" && subcommand === "resume"
       ? args.slice(1).join(" ").trim()
@@ -629,7 +712,9 @@ function parseArgs(
   const effectiveGoal =
     command === "cron"
       ? (cronRefCommand ? args.slice(1) : args).join("\0")
-      : goal;
+      : command === "tools" || command === "skills" || command === "agents"
+        ? args.join("\0")
+        : goal;
 
   return {
     ok: true,
@@ -729,6 +814,885 @@ async function createProxyFetch(
     } as RequestInit & { dispatcher: typeof dispatcher });
 }
 
+async function handleToolsCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "list" &&
+    subcommand !== "enable" &&
+    subcommand !== "disable" &&
+    subcommand !== "defer"
+  ) {
+    writeLine(io.stderr, toolsUsage());
+    return { exitCode: 1 };
+  }
+
+  const patterns = splitCliWords(parsed.goal);
+  if (subcommand !== "list" && patterns.length === 0) {
+    writeLine(io.stderr, `Usage: sparkwright tools ${subcommand} <pattern...>`);
+    return { exitCode: 1 };
+  }
+
+  try {
+    const path = userConfigPath(env);
+    const loaded = await readUserConfigObject(path);
+    const before = getToolsConfig(loaded.value);
+
+    if (subcommand === "list") {
+      writeLine(
+        io.stdout,
+        formatToolsConfig({
+          path,
+          exists: loaded.exists,
+          tools: before,
+          format: parsed.format,
+        }),
+      );
+      return { exitCode: 0 };
+    }
+
+    const next = updateToolsConfig(before, subcommand, patterns);
+    setToolsConfig(loaded.value, next);
+    await writeUserConfigObject(path, loaded.value);
+    writeLine(
+      io.stdout,
+      formatToolsConfig({
+        path,
+        exists: true,
+        tools: next,
+        format: parsed.format,
+      }),
+    );
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+type ToolConfigAction = "enable" | "disable" | "defer";
+
+interface ToolsConfigShape {
+  enabled?: string[];
+  disabled?: string[];
+  defer?: string[];
+}
+
+function updateToolsConfig(
+  current: ToolsConfigShape,
+  action: ToolConfigAction,
+  patterns: string[],
+): ToolsConfigShape {
+  const next: ToolsConfigShape = {
+    enabled: current.enabled ? [...current.enabled] : undefined,
+    disabled: current.disabled ? [...current.disabled] : undefined,
+    defer: current.defer ? [...current.defer] : undefined,
+  };
+  if (action === "enable") {
+    next.enabled = addUnique(next.enabled ?? [], patterns);
+    next.disabled = removeEntries(next.disabled, patterns);
+  } else if (action === "disable") {
+    next.disabled = addUnique(next.disabled ?? [], patterns);
+    next.enabled = removeEntries(next.enabled, patterns);
+  } else {
+    next.defer = addUnique(next.defer ?? [], patterns);
+  }
+  return pruneEmptyToolConfig(next);
+}
+
+function pruneEmptyToolConfig(config: ToolsConfigShape): ToolsConfigShape {
+  return {
+    ...(config.enabled && config.enabled.length > 0
+      ? { enabled: config.enabled }
+      : {}),
+    ...(config.disabled && config.disabled.length > 0
+      ? { disabled: config.disabled }
+      : {}),
+    ...(config.defer && config.defer.length > 0 ? { defer: config.defer } : {}),
+  };
+}
+
+function addUnique(current: string[], additions: string[]): string[] {
+  const seen = new Set(current);
+  for (const entry of additions) {
+    if (!seen.has(entry)) {
+      current.push(entry);
+      seen.add(entry);
+    }
+  }
+  return current;
+}
+
+function removeEntries(
+  current: string[] | undefined,
+  removals: string[],
+): string[] | undefined {
+  if (!current) return undefined;
+  const remove = new Set(removals);
+  return current.filter((entry) => !remove.has(entry));
+}
+
+async function readUserConfigObject(path: string): Promise<{
+  exists: boolean;
+  value: Record<string, unknown>;
+}> {
+  const { readFile } = await import("node:fs/promises");
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isPlainObject(parsed)) {
+      throw new Error(`${path} must contain a JSON object.`);
+    }
+    return { exists: true, value: parsed };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exists: false, value: {} };
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid JSON in ${path}: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+async function writeUserConfigObject(
+  path: string,
+  value: Record<string, unknown>,
+): Promise<void> {
+  const { mkdir, writeFile, chmod } = await import("node:fs/promises");
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  await chmod(path, 0o600);
+}
+
+function getToolsConfig(config: Record<string, unknown>): ToolsConfigShape {
+  const capabilities = config.capabilities;
+  if (!isPlainObject(capabilities)) return {};
+  const tools = capabilities.tools;
+  if (!isPlainObject(tools)) return {};
+  return {
+    enabled: stringArrayOrUndefined(tools.enabled),
+    disabled: stringArrayOrUndefined(tools.disabled),
+    defer: stringArrayOrUndefined(tools.defer),
+  };
+}
+
+function setToolsConfig(
+  config: Record<string, unknown>,
+  tools: ToolsConfigShape,
+): void {
+  const capabilities = isPlainObject(config.capabilities)
+    ? config.capabilities
+    : {};
+  capabilities.tools = tools;
+  config.capabilities = capabilities;
+}
+
+function formatToolsConfig(input: {
+  path: string;
+  exists: boolean;
+  tools: ToolsConfigShape;
+  format: "json" | "text";
+}): string {
+  if (input.format === "json") {
+    return JSON.stringify(
+      {
+        path: input.path,
+        exists: input.exists,
+        tools: input.tools,
+      },
+      null,
+      2,
+    );
+  }
+  return [
+    `config: ${input.path}${input.exists ? "" : " (not created yet)"}`,
+    `enabled: ${formatPatternList(input.tools.enabled, "(all)")}`,
+    `disabled: ${formatPatternList(input.tools.disabled, "(none)")}`,
+    `defer: ${formatPatternList(input.tools.defer, "(none)")}`,
+  ].join("\n");
+}
+
+function formatPatternList(
+  values: string[] | undefined,
+  emptyLabel: string,
+): string {
+  return values && values.length > 0 ? values.join(", ") : emptyLabel;
+}
+
+function stringArrayOrUndefined(value: unknown): string[] | undefined {
+  return Array.isArray(value) &&
+    value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function splitCliWords(input: string): string[] {
+  if (input.includes("\0")) {
+    return input
+      .split("\0")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+  }
+  return input
+    .split(/\s+/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+async function handleSkillsCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "list" &&
+    subcommand !== "create" &&
+    subcommand !== "validate"
+  ) {
+    writeLine(io.stderr, skillsUsage());
+    return { exitCode: 1 };
+  }
+
+  try {
+    const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
+    if (subcommand === "create") {
+      return handleSkillsCreate(parsed, io, roots);
+    }
+
+    const report = await loadSkillReport(roots, {
+      includeMissingRoots: subcommand === "validate",
+    });
+    if (parsed.format === "json") {
+      writeLine(io.stdout, JSON.stringify(report, null, 2));
+    } else {
+      writeLine(io.stdout, formatSkillReport(report));
+    }
+    return {
+      exitCode: subcommand === "validate" && report.errors.length > 0 ? 1 : 0,
+    };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+async function handleSkillsCreate(
+  parsed: ParsedArgs,
+  io: CliIO,
+  roots: string[],
+): Promise<CliRunResult> {
+  const input = parseSkillsCreateArgs(splitCliWords(parsed.goal));
+  if (!input.ok) {
+    writeLine(io.stderr, input.message);
+    return { exitCode: 1 };
+  }
+  const root = input.value.root
+    ? isAbsolute(input.value.root)
+      ? input.value.root
+      : resolve(parsed.workspaceRoot, input.value.root)
+    : (roots[0] ?? join(parsed.workspaceRoot, "skills"));
+  const skillDir = join(root, input.value.name);
+  const skillPath = join(skillDir, "SKILL.md");
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+
+  if (existsSync(skillPath) && !parsed.force) {
+    writeLine(
+      io.stderr,
+      `Skill already exists: ${skillPath}. Re-run with --force to overwrite.`,
+    );
+    return { exitCode: 1 };
+  }
+
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(
+    skillPath,
+    renderSkillTemplate(input.value.name, input.value.description),
+    "utf8",
+  );
+  // Display with forward slashes so output is stable across platforms
+  // (Windows would otherwise print backslashes).
+  writeLine(io.stdout, `Created ${skillPath.split(sep).join("/")}`);
+  return { exitCode: 0 };
+}
+
+interface SkillReport {
+  roots: string[];
+  skills: Array<{
+    name: string;
+    description: string;
+    version?: string;
+    source?: string;
+  }>;
+  errors: SkillLoadError[];
+}
+
+async function loadSkillReport(
+  roots: string[],
+  options: { includeMissingRoots: boolean },
+): Promise<SkillReport> {
+  const { stat } = await import("node:fs/promises");
+  const skills: SkillManifest[] = [];
+  const errors: SkillLoadError[] = [];
+
+  for (const root of roots) {
+    try {
+      const info = await stat(root);
+      if (!info.isDirectory()) {
+        errors.push({ source: root, message: "skill root is not a directory" });
+        continue;
+      }
+    } catch (error) {
+      if (options.includeMissingRoots) {
+        errors.push({
+          source: root,
+          message:
+            (error as NodeJS.ErrnoException).code === "ENOENT"
+              ? "skill root does not exist"
+              : error instanceof Error
+                ? error.message
+                : String(error),
+        });
+      }
+      continue;
+    }
+
+    const loaded = await loadSkillsFromDirectory(root);
+    skills.push(...loaded.skills);
+    errors.push(...loaded.loadErrors);
+  }
+
+  return {
+    roots,
+    skills: skills
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        version: skill.version,
+        source: skill.source,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    errors,
+  };
+}
+
+async function resolveSkillRootsForCli(
+  workspaceRoot: string,
+  env: Record<string, string | undefined>,
+): Promise<string[]> {
+  const cfg = await loadHostConfig(workspaceRoot, env);
+  const roots = cfg.config.capabilities?.skills?.roots;
+  return roots && roots.length > 0 ? roots : [join(workspaceRoot, "skills")];
+}
+
+function parseSkillsCreateArgs(
+  args: string[],
+):
+  | { ok: true; value: { name: string; description: string; root?: string } }
+  | { ok: false; message: string } {
+  const rest = [...args];
+  const name = rest.shift();
+  if (!name || !isSkillName(name)) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright skills create <name> --description <text> [--root path]",
+    };
+  }
+  let description: string | undefined;
+  let root: string | undefined;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === "--description") {
+      description = rest[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg === "--root") {
+      root = rest[i + 1];
+      i += 1;
+      continue;
+    }
+    return { ok: false, message: `Unknown skills create option: ${arg}` };
+  }
+  if (!description || description.trim().length === 0) {
+    return {
+      ok: false,
+      message: "Usage: skills create requires --description",
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      name,
+      description: description.trim(),
+      ...(root ? { root } : {}),
+    },
+  };
+}
+
+function isSkillName(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
+}
+
+function renderSkillTemplate(name: string, description: string): string {
+  return [
+    "---",
+    `name: ${name}`,
+    `description: ${description}`,
+    'version: "1.0.0"',
+    "metadata:",
+    '  version: "1.0.0"',
+    "---",
+    "",
+    `Use this skill when the user asks for ${description}`,
+    "",
+  ].join("\n");
+}
+
+function formatSkillReport(report: SkillReport): string {
+  const lines = [
+    `roots: ${report.roots.join(", ")}`,
+    `skills: ${report.skills.length}`,
+  ];
+  for (const skill of report.skills) {
+    lines.push(
+      `- ${skill.name}${skill.version ? `@${skill.version}` : ""}: ${skill.description}`,
+    );
+    if (skill.source) lines.push(`  source: ${skill.source}`);
+  }
+  if (report.errors.length > 0) {
+    lines.push(`errors: ${report.errors.length}`);
+    for (const error of report.errors) {
+      lines.push(`- ${error.source}: ${error.message}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+async function handleAgentsCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "list" &&
+    subcommand !== "create" &&
+    subcommand !== "validate"
+  ) {
+    writeLine(io.stderr, agentsUsage());
+    return { exitCode: 1 };
+  }
+
+  const configPath = projectConfigPathForWorkspace(parsed.workspaceRoot);
+  try {
+    const loaded = await readUserConfigObject(configPath);
+    const agents = getAgentsConfig(loaded.value);
+
+    if (subcommand === "create") {
+      const input = parseAgentsCreateArgs(splitCliWords(parsed.goal));
+      if (!input.ok) {
+        writeLine(io.stderr, input.message);
+        return { exitCode: 1 };
+      }
+      if (
+        agents.profiles.some((profile) => profile.id === input.value.profile.id)
+      ) {
+        if (!parsed.force) {
+          writeLine(
+            io.stderr,
+            `Agent already exists: ${input.value.profile.id}. Re-run with --force to overwrite.`,
+          );
+          return { exitCode: 1 };
+        }
+        agents.profiles = agents.profiles.filter(
+          (profile) => profile.id !== input.value.profile.id,
+        );
+      }
+      agents.profiles.push(input.value.profile);
+      if (input.value.delegateTool) {
+        agents.delegateTools = agents.delegateTools.filter(
+          (tool) => tool.profileId !== input.value.delegateTool?.profileId,
+        );
+        agents.delegateTools.push(input.value.delegateTool);
+      }
+      setAgentsConfig(loaded.value, agents);
+      await writeUserConfigObject(configPath, loaded.value);
+      writeLine(io.stdout, `Updated ${configPath}`);
+      return { exitCode: 0 };
+    }
+
+    const report = validateAgentConfig(agents);
+    if (parsed.format === "json") {
+      writeLine(
+        io.stdout,
+        JSON.stringify(
+          {
+            path: configPath,
+            exists: loaded.exists,
+            agents,
+            errors: report.errors,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      writeLine(
+        io.stdout,
+        formatAgentReport({
+          path: configPath,
+          exists: loaded.exists,
+          agents,
+          errors: report.errors,
+        }),
+      );
+    }
+    return {
+      exitCode: subcommand === "validate" && report.errors.length > 0 ? 1 : 0,
+    };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+interface AgentProfileConfigShape {
+  id: string;
+  name?: string;
+  description?: string;
+  mode?: "primary" | "child" | "all";
+  prompt?: string;
+  allowedTools?: string[];
+  deniedTools?: string[];
+  maxSteps?: number;
+  metadata?: Record<string, unknown>;
+}
+
+interface AgentDelegateToolConfigShape {
+  profileId: string;
+  toolName?: string;
+  description?: string;
+  requiresApproval?: boolean;
+  forbidNesting?: boolean;
+  maxSteps?: number;
+}
+
+interface AgentsConfigShape {
+  profiles: AgentProfileConfigShape[];
+  delegateTools: AgentDelegateToolConfigShape[];
+}
+
+function parseAgentsCreateArgs(args: string[]):
+  | {
+      ok: true;
+      value: {
+        profile: AgentProfileConfigShape;
+        delegateTool?: AgentDelegateToolConfigShape;
+      };
+    }
+  | { ok: false; message: string } {
+  const rest = [...args];
+  const id = rest.shift();
+  if (!id || !isAgentId(id)) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright agents create <id> --prompt <text> [--name text] [--allow tool] [--max-steps n] [--delegate tool_name]",
+    };
+  }
+
+  let name: string | undefined;
+  let description: string | undefined;
+  let mode: AgentProfileConfigShape["mode"] = "child";
+  let prompt: string | undefined;
+  const allowedTools: string[] = [];
+  const deniedTools: string[] = [];
+  let maxSteps: number | undefined;
+  let delegateToolName: string | undefined;
+
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === "--name") {
+      name = requireFollowingValue(rest, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--description") {
+      description = requireFollowingValue(rest, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--mode") {
+      const value = requireFollowingValue(rest, i, arg);
+      if (value !== "primary" && value !== "child" && value !== "all") {
+        return { ok: false, message: "--mode must be primary, child, or all" };
+      }
+      mode = value;
+      i += 1;
+      continue;
+    }
+    if (arg === "--prompt") {
+      prompt = requireFollowingValue(rest, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--allow") {
+      allowedTools.push(requireFollowingValue(rest, i, arg));
+      i += 1;
+      continue;
+    }
+    if (arg === "--deny") {
+      deniedTools.push(requireFollowingValue(rest, i, arg));
+      i += 1;
+      continue;
+    }
+    if (arg === "--max-steps") {
+      const raw = requireFollowingValue(rest, i, arg);
+      maxSteps = parsePositiveInteger(raw);
+      if (maxSteps === undefined) {
+        return {
+          ok: false,
+          message: "--max-steps requires a positive integer",
+        };
+      }
+      i += 1;
+      continue;
+    }
+    if (arg === "--delegate") {
+      delegateToolName = requireFollowingValue(rest, i, arg);
+      i += 1;
+      continue;
+    }
+    return { ok: false, message: `Unknown agents create option: ${arg}` };
+  }
+
+  if (!prompt || prompt.trim().length === 0) {
+    return { ok: false, message: "Usage: agents create requires --prompt" };
+  }
+
+  const profile: AgentProfileConfigShape = {
+    id,
+    name: name ?? id,
+    ...(description ? { description } : {}),
+    mode,
+    prompt: prompt.trim(),
+    ...(allowedTools.length > 0 ? { allowedTools } : {}),
+    ...(deniedTools.length > 0 ? { deniedTools } : {}),
+    ...(maxSteps !== undefined ? { maxSteps } : {}),
+  };
+
+  return {
+    ok: true,
+    value: {
+      profile,
+      ...(delegateToolName
+        ? {
+            delegateTool: {
+              profileId: id,
+              toolName: delegateToolName,
+              requiresApproval: true,
+              forbidNesting: true,
+              ...(maxSteps !== undefined ? { maxSteps } : {}),
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+function requireFollowingValue(
+  args: string[],
+  index: number,
+  flag: string,
+): string {
+  const value = args[index + 1];
+  if (!value) throw new Error(`${flag} requires a value`);
+  return value;
+}
+
+function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
+  const capabilities = config.capabilities;
+  if (!isPlainObject(capabilities)) return { profiles: [], delegateTools: [] };
+  const agents = capabilities.agents;
+  if (!isPlainObject(agents)) return { profiles: [], delegateTools: [] };
+  return {
+    profiles: Array.isArray(agents.profiles)
+      ? agents.profiles.filter(isPlainObject).map(recordToAgentProfile)
+      : [],
+    delegateTools: Array.isArray(agents.delegateTools)
+      ? agents.delegateTools.filter(isPlainObject).map(recordToDelegateTool)
+      : [],
+  };
+}
+
+function recordToAgentProfile(
+  record: Record<string, unknown>,
+): AgentProfileConfigShape {
+  return { ...(record as unknown as AgentProfileConfigShape) };
+}
+
+function recordToDelegateTool(
+  record: Record<string, unknown>,
+): AgentDelegateToolConfigShape {
+  return { ...(record as unknown as AgentDelegateToolConfigShape) };
+}
+
+function setAgentsConfig(
+  config: Record<string, unknown>,
+  agents: AgentsConfigShape,
+): void {
+  const capabilities = isPlainObject(config.capabilities)
+    ? config.capabilities
+    : {};
+  capabilities.agents = {
+    profiles: agents.profiles,
+    ...(agents.delegateTools.length > 0
+      ? { delegateTools: agents.delegateTools }
+      : {}),
+  };
+  config.capabilities = capabilities;
+}
+
+function validateAgentConfig(agents: AgentsConfigShape): {
+  errors: Array<{ field: string; message: string }>;
+} {
+  const errors: Array<{ field: string; message: string }> = [];
+  const ids = new Set<string>();
+  for (const [index, profile] of agents.profiles.entries()) {
+    const field = `profiles.${index}`;
+    if (!isAgentId(profile.id)) {
+      errors.push({
+        field: `${field}.id`,
+        message: "must be a valid agent id",
+      });
+    } else if (ids.has(profile.id)) {
+      errors.push({ field: `${field}.id`, message: "duplicate agent id" });
+    } else {
+      ids.add(profile.id);
+    }
+    if (
+      profile.mode !== undefined &&
+      profile.mode !== "primary" &&
+      profile.mode !== "child" &&
+      profile.mode !== "all"
+    ) {
+      errors.push({
+        field: `${field}.mode`,
+        message: "must be primary, child, or all",
+      });
+    }
+    if (
+      profile.allowedTools !== undefined &&
+      !isStringArray(profile.allowedTools)
+    ) {
+      errors.push({
+        field: `${field}.allowedTools`,
+        message: "must be an array of strings",
+      });
+    }
+    if (
+      profile.deniedTools !== undefined &&
+      !isStringArray(profile.deniedTools)
+    ) {
+      errors.push({
+        field: `${field}.deniedTools`,
+        message: "must be an array of strings",
+      });
+    }
+    if (
+      profile.maxSteps !== undefined &&
+      (!Number.isInteger(profile.maxSteps) || profile.maxSteps < 1)
+    ) {
+      errors.push({
+        field: `${field}.maxSteps`,
+        message: "must be a positive integer",
+      });
+    }
+  }
+  for (const [index, tool] of agents.delegateTools.entries()) {
+    if (!ids.has(tool.profileId)) {
+      errors.push({
+        field: `delegateTools.${index}.profileId`,
+        message: "must reference an existing profile id",
+      });
+    }
+  }
+  return { errors };
+}
+
+function formatAgentReport(input: {
+  path: string;
+  exists: boolean;
+  agents: AgentsConfigShape;
+  errors: Array<{ field: string; message: string }>;
+}): string {
+  const lines = [
+    `config: ${input.path}${input.exists ? "" : " (not created yet)"}`,
+    `agents: ${input.agents.profiles.length}`,
+  ];
+  for (const profile of input.agents.profiles) {
+    lines.push(
+      `- ${profile.id}${profile.name ? ` (${profile.name})` : ""}${profile.mode ? ` · ${profile.mode}` : ""}`,
+    );
+    if (profile.allowedTools?.length) {
+      lines.push(`  allow: ${profile.allowedTools.join(", ")}`);
+    }
+    if (profile.deniedTools?.length) {
+      lines.push(`  deny: ${profile.deniedTools.join(", ")}`);
+    }
+  }
+  if (input.agents.delegateTools.length > 0) {
+    lines.push(`delegateTools: ${input.agents.delegateTools.length}`);
+    for (const tool of input.agents.delegateTools) {
+      lines.push(
+        `- ${tool.toolName ?? `delegate_${tool.profileId}`} -> ${tool.profileId}`,
+      );
+    }
+  }
+  if (input.errors.length > 0) {
+    lines.push(`errors: ${input.errors.length}`);
+    for (const error of input.errors) {
+      lines.push(`- ${error.field}: ${error.message}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function isAgentId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
+}
+
+function projectConfigPathForWorkspace(workspaceRoot: string): string {
+  return join(workspaceRoot, ".sparkwright", "config.json");
+}
+
 async function handleCronCommand(
   parsed: ParsedArgs,
   io: CliIO,
@@ -819,7 +1783,7 @@ async function handleCronCommand(
         rootDir,
         store,
         model: model.adapter,
-        tools: [createReadFileTool(), createAppendFileTool()],
+        tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
         approvalResolver: createCliApprovalResolver({
           approveAll: parsed.approveAll,
           io,
@@ -850,7 +1814,7 @@ async function handleCronCommand(
       rootDir,
       store,
       model: model.adapter,
-      tools: [createReadFileTool(), createAppendFileTool()],
+      tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
       approvalResolver: createCliApprovalResolver({
         approveAll: parsed.approveAll,
         io,
@@ -1365,8 +2329,7 @@ async function handleRunResumeCommand(
     io,
   });
   const policy = createPermissionModePolicy({ mode: parsed.permissionMode });
-  const readFile = createReadFileTool();
-  const appendFile = createAppendFileTool();
+  const tools = await createConfiguredCliTools(parsed.workspaceRoot, env);
 
   // Wire a FileRunStore pointing at the same run dir so the resumed run's
   // new events append to the existing trace (keeps replay/inspection coherent).
@@ -1392,7 +2355,7 @@ async function handleRunResumeCommand(
       workspace,
       approvalResolver,
       policy,
-      tools: [readFile, appendFile],
+      tools,
       model: model.adapter,
       runStore: (record) => {
         store = runStoreFactory(record);
@@ -1949,6 +2912,12 @@ async function handleInitCommand(
 function usage(): string {
   return [
     "Usage: sparkwright init   # scaffold ~/.config/sparkwright/config.json",
+    "       sparkwright tools list [--format json|text]",
+    "       sparkwright tools enable|disable|defer <tool-pattern...>",
+    "       sparkwright skills list|validate [--workspace path] [--format json|text]",
+    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
+    "       sparkwright agents list|validate [--workspace path] [--format json|text]",
+    '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
     '       sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
@@ -1956,6 +2925,31 @@ function usage(): string {
     "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--format json|text] [--apply]",
     '       sparkwright session resume <session-id> "next goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace] [--model provider/model]",
+  ].join("\n");
+}
+
+function toolsUsage(): string {
+  return [
+    "Usage: sparkwright tools list [--format json|text]",
+    "       sparkwright tools enable <tool-pattern...>",
+    "       sparkwright tools disable <tool-pattern...>",
+    "       sparkwright tools defer <tool-pattern...>",
+  ].join("\n");
+}
+
+function skillsUsage(): string {
+  return [
+    "Usage: sparkwright skills list [--workspace path] [--format json|text]",
+    "       sparkwright skills validate [--workspace path] [--format json|text]",
+    '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
+  ].join("\n");
+}
+
+function agentsUsage(): string {
+  return [
+    "Usage: sparkwright agents list [--workspace path] [--format json|text]",
+    "       sparkwright agents validate [--workspace path] [--format json|text]",
+    '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
   ].join("\n");
 }
 

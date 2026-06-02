@@ -119,6 +119,7 @@ async function handleRequest(
             "approvals",
             "sessions",
             "session.inspect",
+            "capability.inspect",
             "run.inject_message",
           ],
         },
@@ -188,6 +189,17 @@ async function handleRequest(
       } else {
         respondError(conn, req.id, r.error);
       }
+      return false;
+    }
+    case "capability.inspect": {
+      const r = await runtime.inspectCapabilities();
+      if (r.ok)
+        respondOk(
+          conn,
+          req.id,
+          r.snapshot as unknown as Record<string, unknown>,
+        );
+      else respondError(conn, req.id, r.error);
       return false;
     }
     default: {
@@ -280,6 +292,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "forkAtSequence",
           Number.MAX_SAFE_INTEGER,
         )
+      );
+    case "capability.inspect":
+      return (
+        requireOnly(req.payload, ["sessionId"]) ??
+        optionalString(req.payload, "sessionId")
       );
   }
 }

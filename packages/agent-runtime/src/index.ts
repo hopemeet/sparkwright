@@ -86,8 +86,8 @@ export interface AgentProfile {
    */
   model?: unknown;
   /**
-   * @deprecated Not applied by agent-runtime. Use `experimental.prompt` when you
-   * need to carry this value for application-level orchestration.
+   * @deprecated Compatibility fallback for profile role guidance. New callers
+   * should use `experimental.prompt`.
    */
   prompt?: string;
   allowedTools?: string[];
@@ -125,8 +125,9 @@ export type AgentProfileRunOptions = Pick<
 >;
 
 /**
- * Compile a profile's application system prompt
- * (`experimental.prompt`) into a `PromptBuilder`. Returns `undefined` when the
+ * Compile a profile's application system prompt into a `PromptBuilder`.
+ * `experimental.prompt` is preferred; top-level `prompt` remains a
+ * compatibility fallback for existing configs. Returns `undefined` when the
  * profile carries no prompt, so callers can fall back to the run's default
  * builder (the harness resident contracts still apply either way — the app
  * prompt is layered on top via `additionalSections`).
@@ -134,7 +135,7 @@ export type AgentProfileRunOptions = Pick<
 export function promptBuilderForAgentProfile(
   profile: AgentProfile,
 ): PromptBuilder<PromptMessage[]> | undefined {
-  const prompt = profile.experimental?.prompt;
+  const prompt = profile.experimental?.prompt ?? profile.prompt;
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
     return undefined;
   }
@@ -529,9 +530,10 @@ export interface SpawnSubAgentInput {
   policy?: Policy;
   /**
    * Prompt builder for the child run. When omitted, the helper derives one
-   * from `childAgentProfile.experimental.prompt` (if set) so the child carries
-   * its own application system prompt; otherwise the child uses core's default
-   * builder. Pass an explicit builder to override.
+   * from the child profile prompt (`experimental.prompt`, then top-level
+   * `prompt` for compatibility) so the child carries its own application
+   * system prompt; otherwise the child uses core's default builder. Pass an
+   * explicit builder to override.
    */
   promptBuilder?: PromptBuilder<PromptMessage[]>;
   /**
@@ -606,7 +608,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       : undefined);
 
   // Build effective child prompt builder: explicit override > profile-derived
-  // (experimental.prompt) > core default (undefined).
+  // prompt > core default (undefined).
   const childPromptBuilder =
     input.promptBuilder ??
     (input.childAgentProfile
@@ -650,28 +652,42 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     spanId,
     goal: input.goal,
   };
-  parent.events.emit("subagent.requested", subagentBase, {
+  // Carry the child's identity on EVERY phase. The terminal events bridge from
+  // the child's own EventLog, which has no knowledge of the parent-supplied
+  // profile, so without this each later emit would lose `agentName` and a UI
+  // would fall back to the opaque `childRunId` — making one sub-agent read as a
+  // different actor on `started`/`completed` than it did on `requested`.
+  const subagentMeta = {
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
-  });
+  };
+  parent.events.emit("subagent.requested", subagentBase, subagentMeta);
 
   const unsubscribeBridge = child.events.subscribe((event) => {
     if (event.type === "run.started") {
-      parent.events.emit("subagent.started", subagentBase);
+      parent.events.emit("subagent.started", subagentBase, subagentMeta);
     } else if (event.type === "run.completed") {
-      parent.events.emit("subagent.completed", {
-        ...subagentBase,
-        stopReason: (event.payload as { stopReason?: string } | undefined)
-          ?.stopReason,
-      });
+      parent.events.emit(
+        "subagent.completed",
+        {
+          ...subagentBase,
+          stopReason: (event.payload as { stopReason?: string } | undefined)
+            ?.stopReason,
+        },
+        subagentMeta,
+      );
       detach();
       unsubscribeBridge();
     } else if (event.type === "run.failed" || event.type === "run.cancelled") {
-      parent.events.emit("subagent.failed", {
-        ...subagentBase,
-        reason: event.type === "run.cancelled" ? "cancelled" : "failed",
-        error: (event.payload as { error?: unknown } | undefined)?.error,
-      });
+      parent.events.emit(
+        "subagent.failed",
+        {
+          ...subagentBase,
+          reason: event.type === "run.cancelled" ? "cancelled" : "failed",
+          error: (event.payload as { error?: unknown } | undefined)?.error,
+        },
+        subagentMeta,
+      );
       detach();
       unsubscribeBridge();
     }
@@ -757,6 +773,26 @@ export interface AgentToolSummarizeInput {
   usage: UsageSnapshot;
 }
 
+export interface AgentToolResult {
+  childRunId: string;
+  spanId: string;
+  signal: RunResult["signal"];
+  stopReason: RunResult["stopReason"];
+  message?: string;
+  tokens: number;
+  costUsd: number;
+  toolCalls: number;
+  modelCalls: number;
+  /** @reserved Public delegate-tool output field consumed by parent agents and UIs. */
+  alreadyCompleted?: boolean;
+  note?: string;
+}
+
+interface AgentToolCompletedCacheEntry {
+  goal: string;
+  result: AgentToolResult;
+}
+
 export interface CreateAgentToolOptions {
   /** Tool name registered with the parent. Default: "delegate". */
   name?: string;
@@ -772,9 +808,9 @@ export interface CreateAgentToolOptions {
   ): Omit<SpawnSubAgentInput, "parent">;
   /**
    * Summarize the child's terminal state back into the parent-visible tool
-   * result. Default: a small JSON blob with id/result/usage.
+   * result. Default: a small structured object with id/result/usage.
    */
-  summarize?(input: AgentToolSummarizeInput): string;
+  summarize?(input: AgentToolSummarizeInput): unknown;
   /**
    * If true, refuse to spawn when the parent itself is a sub-agent (i.e.
    * already carries `metadata.parentRunId`). Default: false.
@@ -805,6 +841,10 @@ export function createAgentTool(
   const name = options.name ?? DEFAULT_AGENT_TOOL_NAME;
   const description = options.description ?? DEFAULT_AGENT_TOOL_DESCRIPTION;
   const summarize = options.summarize ?? defaultSummarize;
+  const successfulResultsByParent = new Map<
+    string,
+    AgentToolCompletedCacheEntry[]
+  >();
 
   return defineTool({
     name,
@@ -828,7 +868,7 @@ export function createAgentTool(
       risk: "safe",
       requiresApproval: options.requiresApproval === true,
     },
-    async execute(args: unknown, _ctx: RuntimeContext): Promise<string> {
+    async execute(args: unknown, _ctx: RuntimeContext): Promise<unknown> {
       const parent = getParent();
       if (!parent) {
         throw new Error(
@@ -844,16 +884,42 @@ export function createAgentTool(
         );
       }
       const parsed = parseAgentToolArgs(args);
+      const prior = findSimilarSuccessfulDelegation(
+        successfulResultsByParent.get(parent.record.id) ?? [],
+        parsed.goal,
+      );
+      if (prior) {
+        return {
+          ...prior.result,
+          alreadyCompleted: true,
+          note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
+        };
+      }
       const spawnOverrides = options.buildSpawnInput(parsed, parent);
       const spawned = spawnSubAgent({ ...spawnOverrides, parent });
       const result = await spawned.run.start();
       const usage = spawned.run.usage();
-      return summarize({
+      const output = summarize({
         childRunId: spawned.childRunId,
         spanId: spawned.spanId,
         result,
         usage,
       });
+      if (result.signal !== "completed") {
+        throw new AgentToolRunError(name, output, result);
+      }
+      const structured = isAgentToolResult(output)
+        ? output
+        : defaultSummarize({
+            childRunId: spawned.childRunId,
+            spanId: spawned.spanId,
+            result,
+            usage,
+          });
+      const results = successfulResultsByParent.get(parent.record.id) ?? [];
+      results.push({ goal: parsed.goal, result: structured });
+      successfulResultsByParent.set(parent.record.id, results.slice(-8));
+      return output;
     },
   });
 }
@@ -891,8 +957,8 @@ export * from "./tasks/index.js";
 export * from "./concurrency/index.js";
 export * from "./todo/index.js";
 
-function defaultSummarize(input: AgentToolSummarizeInput): string {
-  return JSON.stringify({
+function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
+  return {
     childRunId: input.childRunId,
     spanId: input.spanId,
     signal: input.result.signal,
@@ -902,5 +968,92 @@ function defaultSummarize(input: AgentToolSummarizeInput): string {
     costUsd: input.usage.costUsd,
     toolCalls: input.usage.toolCalls,
     modelCalls: input.usage.modelCalls,
-  });
+  };
+}
+
+class AgentToolRunError extends Error {
+  readonly code = "SUBAGENT_RUN_FAILED";
+  readonly metadata: Record<string, unknown>;
+
+  constructor(toolName: string, output: unknown, result: RunResult) {
+    super(
+      `AgentTool "${toolName}" child run ${result.signal}: ${result.stopReason}.`,
+    );
+    this.name = "AgentToolRunError";
+    this.metadata = {
+      toolName,
+      signal: result.signal,
+      stopReason: result.stopReason,
+      message: result.message,
+      output,
+    };
+  }
+}
+
+function isAgentToolResult(value: unknown): value is AgentToolResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { childRunId?: unknown }).childRunId === "string" &&
+    typeof (value as { spanId?: unknown }).spanId === "string" &&
+    typeof (value as { signal?: unknown }).signal === "string"
+  );
+}
+
+function findSimilarSuccessfulDelegation(
+  results: AgentToolCompletedCacheEntry[],
+  goal: string,
+): { result: AgentToolResult } | undefined {
+  for (let i = results.length - 1; i >= 0; i -= 1) {
+    const candidate = results[i];
+    if (!candidate) continue;
+    if (similarGoalScore(candidate.goal, goal) >= 0.35) {
+      return { result: candidate.result };
+    }
+  }
+  return undefined;
+}
+
+function similarGoalScore(a: string, b: string): number {
+  if (hasDirectoryListingIntent(a) && hasDirectoryListingIntent(b)) return 0.7;
+  const left = normalizeGoalForSimilarity(a);
+  const right = normalizeGoalForSimilarity(b);
+  if (left.length === 0 || right.length === 0) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.85;
+  const leftBigrams = charBigrams(left);
+  const rightBigrams = charBigrams(right);
+  if (leftBigrams.size === 0 || rightBigrams.size === 0) return 0;
+  let overlap = 0;
+  for (const item of leftBigrams) {
+    if (rightBigrams.has(item)) overlap += 1;
+  }
+  return (2 * overlap) / (leftBigrams.size + rightBigrams.size);
+}
+
+function hasDirectoryListingIntent(goal: string): boolean {
+  const normalized = goal.toLowerCase();
+  const asksToList = /列出|清单|有哪些|查看|list|show|inspect/.test(normalized);
+  const mentionsFiles =
+    /文件|目录|文件夹|条目|file|files|dir|directory|entries/.test(normalized);
+  const scopesWorkspace =
+    /当前|工作区|根目录|workspace|root|directory|cwd|\./.test(normalized);
+  return asksToList && mentionsFiles && scopesWorkspace;
+}
+
+function normalizeGoalForSimilarity(goal: string): string {
+  return goal
+    .toLowerCase()
+    .replace(/[`"'“”‘’（）()[\]{}，。；;：:、,.!?！？\s]+/g, "")
+    .replace(/\/applications\/xgw\/projects\/ai-native\/sparkwright/g, "")
+    .replace(/workspace|sparkwright|当前|目录|文件|文件夹|清单/g, "");
+}
+
+function charBigrams(value: string): Set<string> {
+  if (value.length < 2) return new Set(value ? [value] : []);
+  const out = new Set<string>();
+  for (let i = 0; i < value.length - 1; i += 1) {
+    out.add(value.slice(i, i + 2));
+  }
+  return out;
 }

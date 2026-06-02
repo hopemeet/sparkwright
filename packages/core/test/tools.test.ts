@@ -397,6 +397,97 @@ describe("tools", () => {
   });
 });
 
+describe("tool availability", () => {
+  const baseTool = (
+    name: string,
+    available?: () => boolean | Promise<boolean>,
+  ) =>
+    defineTool({
+      name,
+      description: name,
+      inputSchema: { type: "object", properties: {} },
+      ...(available ? { available } : {}),
+      execute: () => ({ ok: true }),
+    });
+
+  it("includes tools without a probe in model descriptors", async () => {
+    const registry = new ToolRegistry();
+    registry.register(baseTool("plain"));
+    const descriptors = await registry.listModelDescriptors();
+    expect(descriptors.map((d) => d.name)).toEqual(["plain"]);
+  });
+
+  it("withholds tools whose probe resolves false, but keeps them in full enumeration", async () => {
+    const registry = new ToolRegistry();
+    registry.register(baseTool("on", () => true));
+    registry.register(baseTool("off", () => false));
+
+    const model = await registry.listModelDescriptors();
+    expect(model.map((d) => d.name)).toEqual(["on"]);
+
+    // Full enumeration (audit/UI) ignores availability.
+    expect(registry.listDescriptors().map((d) => d.name)).toEqual([
+      "on",
+      "off",
+    ]);
+  });
+
+  it("respects async probes", async () => {
+    const registry = new ToolRegistry();
+    registry.register(baseTool("async", async () => false));
+    expect(await registry.listModelDescriptors()).toEqual([]);
+  });
+
+  it("treats a throwing probe as unavailable (fail safe)", async () => {
+    const registry = new ToolRegistry();
+    registry.register(
+      baseTool("boom", () => {
+        throw new Error("probe failed");
+      }),
+    );
+    expect(await registry.listModelDescriptors()).toEqual([]);
+  });
+
+  it("caches probe results within the TTL window and re-evaluates after invalidation", async () => {
+    const registry = new ToolRegistry({ availabilityTtlMs: 60_000 });
+    let calls = 0;
+    let allowed = false;
+    registry.register(
+      baseTool("gated", () => {
+        calls += 1;
+        return allowed;
+      }),
+    );
+
+    expect((await registry.listModelDescriptors()).length).toBe(0);
+    expect((await registry.listModelDescriptors()).length).toBe(0);
+    expect(calls).toBe(1); // second call served from cache
+
+    allowed = true;
+    expect((await registry.listModelDescriptors()).length).toBe(0); // still cached
+    expect(calls).toBe(1);
+
+    registry.invalidateAvailability();
+    expect((await registry.listModelDescriptors()).length).toBe(1);
+    expect(calls).toBe(2);
+  });
+
+  it("shares one cache entry across tools with the same probe reference", async () => {
+    const registry = new ToolRegistry({ availabilityTtlMs: 60_000 });
+    let calls = 0;
+    const probe = () => {
+      calls += 1;
+      return true;
+    };
+    registry.register(baseTool("a", probe));
+    registry.register(baseTool("b", probe));
+
+    const model = await registry.listModelDescriptors();
+    expect(model.map((d) => d.name)).toEqual(["a", "b"]);
+    expect(calls).toBe(1); // one evaluation for the shared probe
+  });
+});
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -36,6 +36,24 @@
       },
       "additionalProperties": false
     },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "disabled": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "defer": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
     "mcp": {
       "type": "object",
       "properties": {

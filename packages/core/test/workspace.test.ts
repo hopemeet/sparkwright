@@ -6,6 +6,7 @@ import { EventLog } from "../src/events.js";
 import { createRunId } from "../src/ids.js";
 import type { RunRecord } from "../src/types.js";
 import { ControlledWorkspace, LocalWorkspace } from "../src/workspace.js";
+import { WorkspaceCheckpointStore } from "../src/workspace-checkpoint.js";
 
 describe("LocalWorkspace", () => {
   let root: string;
@@ -496,6 +497,39 @@ describe("LocalWorkspace", () => {
       events.all().find((event) => event.type === "workspace.write.requested")
         ?.payload,
     ).toMatchObject({ path: "README.md" });
+  });
+  it("captures pre-images through the controlled write path and rolls back", async () => {
+    await writeFile(join(root, "README.md"), "before\n", "utf8");
+    const run = createRunRecord();
+    const events = new EventLog(run.id);
+    const local = new LocalWorkspace(root);
+    const checkpointStore = new WorkspaceCheckpointStore();
+    const workspace = new ControlledWorkspace({
+      run,
+      events,
+      workspace: local,
+      checkpointStore,
+      approvalResolver: (request) => ({
+        approvalId: request.id,
+        decision: "approved",
+      }),
+    });
+
+    const checkpointId = checkpointStore.openCheckpoint("turn-1");
+    await workspace.writeText("README.md", "after\n", { reason: "edit" });
+    await workspace.writeText("created.md", "fresh\n", { reason: "create" });
+
+    expect(checkpointStore.listCheckpoints()[0]).toMatchObject({
+      id: checkpointId,
+      fileCount: 2,
+    });
+
+    await checkpointStore.rollback(checkpointId, local);
+
+    await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
+      "before\n",
+    );
+    await expect(readFile(join(root, "created.md"), "utf8")).rejects.toThrow();
   });
 });
 

@@ -674,6 +674,117 @@ describe("createAgentTool / mountAgentTool", () => {
     expect(result.message).toBe("parent saw child summary");
   });
 
+  it("returns a structured child result from the delegate tool", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const tool = createAgentTool(() => parent, {
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        model: {
+          async complete() {
+            return { message: "child done" };
+          },
+        },
+        maxSteps: 1,
+      }),
+    });
+
+    const output = await tool.execute({ goal: "inspect files" }, {
+      run: parent.record,
+    } as never);
+
+    expect(output).toMatchObject({
+      signal: "completed",
+      stopReason: "final_answer",
+      message: "child done",
+      toolCalls: 0,
+      modelCalls: 1,
+    });
+    expect(typeof output).toBe("object");
+  });
+
+  it("fails the delegate tool when the child run fails", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const tool = createAgentTool(() => parent, {
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        model: {
+          async complete() {
+            throw new Error("child failed");
+          },
+        },
+        maxSteps: 1,
+      }),
+    });
+
+    await expect(
+      tool.execute({ goal: "doomed" }, { run: parent.record } as never),
+    ).rejects.toMatchObject({
+      code: "SUBAGENT_RUN_FAILED",
+      metadata: {
+        signal: "failed",
+        stopReason: "model_completion_failed",
+      },
+    });
+  });
+
+  it("short-circuits similar repeated delegate calls after success", async () => {
+    let childCalls = 0;
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const tool = createAgentTool(() => parent, {
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        model: {
+          async complete() {
+            childCalls += 1;
+            return { message: "root entries: README.md, packages/" };
+          },
+        },
+        maxSteps: 1,
+      }),
+    });
+
+    const first = await tool.execute(
+      { goal: "查看当前 workspace root 下有哪些文件和目录" },
+      { run: parent.record } as never,
+    );
+    const second = await tool.execute(
+      { goal: "查看当前工作区根目录有哪些文件/文件夹，并列出顶层条目" },
+      { run: parent.record } as never,
+    );
+
+    expect(first).toMatchObject({ signal: "completed" });
+    expect(second).toMatchObject({
+      signal: "completed",
+      alreadyCompleted: true,
+      message: "root entries: README.md, packages/",
+    });
+    expect(childCalls).toBe(1);
+  });
+
   it("emits subagent.requested → started → completed on the parent", async () => {
     const parent = createRun({
       goal: "parent",
@@ -722,6 +833,50 @@ describe("createAgentTool / mountAgentTool", () => {
       spanId: spawned.spanId,
       goal: "child task",
     });
+  });
+
+  it("carries the child's agentName/agentProfileId on every subagent phase", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "child done" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+      maxSteps: 1,
+      childAgentProfile: {
+        id: "dynamic_project_scanner",
+        name: "project-scanner",
+        mode: "child",
+      },
+    });
+    await spawned.run.start();
+
+    // Without this, `started`/`completed` bridge from the child's own EventLog
+    // and drop the profile, so a UI falls back to the opaque childRunId.
+    for (const type of [
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]) {
+      const event = parent.events.all().find((e) => e.type === type);
+      expect(event?.metadata, type).toMatchObject({
+        agentName: "project-scanner",
+        agentProfileId: "dynamic_project_scanner",
+      });
+    }
   });
 
   it("emits subagent.failed when the child fails", async () => {
@@ -840,6 +995,14 @@ describe("createAgentTool / mountAgentTool", () => {
 
     const noPrompt = promptBuilderForAgentProfile({ id: "bare" });
     expect(noPrompt).toBeUndefined();
+  });
+
+  it("uses top-level profile prompt as a compatibility fallback", () => {
+    const builder = promptBuilderForAgentProfile({
+      id: "legacy",
+      prompt: "Legacy profile prompt.",
+    });
+    expect(builder).toBeDefined();
   });
 
   it("includes a profile-derived prompt builder in compiled run options", () => {

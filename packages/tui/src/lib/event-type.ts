@@ -20,4 +20,6 @@ export interface RunEvent {
   occurredAt?: string;
   /** Payload; shape is event-type-specific. */
   payload?: unknown;
+  /** Event metadata; shape is event-type-specific and may be absent. */
+  metadata?: Record<string, unknown>;
 }

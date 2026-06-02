@@ -10,6 +10,7 @@ import {
   type RequestKind,
   type ResponseResults,
   type RunStartRequestPayload,
+  type CapabilityInspectRequestPayload,
 } from "@sparkwright/protocol";
 import { TypedEmitter } from "./emitter.js";
 import type { ClientTransport } from "./transport.js";
@@ -158,6 +159,15 @@ export class Client extends TypedEmitter<ClientEventMap> {
     return this.request("session.fork", payload) as Promise<
       ResponseResults["session.fork"]
     >;
+  }
+
+  inspectCapabilities(
+    payload: CapabilityInspectRequestPayload = {},
+  ): Promise<ResponseResults["capability.inspect"]> {
+    return this.request(
+      "capability.inspect",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["capability.inspect"]>;
   }
 
   close(): void {

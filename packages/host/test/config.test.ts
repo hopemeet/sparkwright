@@ -79,6 +79,254 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("loads capability skill config and resolves roots relative to the defining file", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          skills: {
+            roots: ["skills"],
+            includeLoaderTool: true,
+            loadSelectedSkills: false,
+            maxSelectedSkills: 2,
+            resourceFileLimit: 5,
+            allowedSkills: ["reviewer"],
+            deniedSkills: ["dangerous"],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.skills).toMatchObject({
+        roots: [join(xdg, "sparkwright", "skills")],
+        includeLoaderTool: true,
+        loadSelectedSkills: false,
+        maxSelectedSkills: 2,
+        resourceFileLimit: 5,
+        allowedSkills: ["reviewer"],
+        deniedSkills: ["dangerous"],
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads capability tool config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          tools: {
+            enabled: ["read_file", "mcp_*"],
+            disabled: ["shell"],
+            defer: ["mcp_*"],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.tools).toEqual({
+        enabled: ["read_file", "mcp_*"],
+        disabled: ["shell"],
+        defer: ["mcp_*"],
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("drops invalid capability tool fields with validation errors", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          tools: {
+            enabled: "read_file",
+            disabled: [false],
+            defer: ["mcp_*"],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.tools?.enabled).toBeUndefined();
+      expect(loaded.config.capabilities?.tools?.disabled).toBeUndefined();
+      expect(loaded.config.capabilities?.tools?.defer).toEqual(["mcp_*"]);
+      expect(
+        loaded.errors.some((e) => e.field === "capabilities.tools.enabled"),
+      ).toBe(true);
+      expect(
+        loaded.errors.some((e) => e.field === "capabilities.tools.disabled"),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("drops invalid capability skill fields with validation errors", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          skills: {
+            roots: "skills",
+            includeLoaderTool: "yes",
+            maxSelectedSkills: -1,
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.skills?.roots).toBeUndefined();
+      expect(
+        loaded.errors.some((e) => e.field === "capabilities.skills.roots"),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.includeLoaderTool",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.maxSelectedSkills",
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads capability MCP config and resolves stdio cwd relative to the defining file", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          mcp: {
+            defaultTimeoutMs: 5000,
+            namePrefix: "mcp",
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+            servers: [
+              {
+                type: "stdio",
+                name: "docs",
+                command: "node",
+                args: ["server.js"],
+                cwd: "mcp/docs",
+                env: { NODE_ENV: "test" },
+                enabled: false,
+              },
+              {
+                type: "http",
+                name: "remote",
+                url: "https://example.test/mcp",
+                headers: { Authorization: "Bearer test" },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.mcp?.defaultPolicy).toEqual({
+        risk: "safe",
+        requiresApproval: false,
+      });
+      expect(loaded.config.capabilities?.mcp?.servers?.[0]).toMatchObject({
+        type: "stdio",
+        name: "docs",
+        cwd: join(xdg, "sparkwright", "mcp", "docs"),
+        enabled: false,
+      });
+      expect(loaded.config.capabilities?.mcp?.servers?.[1]).toMatchObject({
+        type: "http",
+        name: "remote",
+        url: "https://example.test/mcp",
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads capability agent profiles", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "main",
+                mode: "primary",
+                allowedTools: ["read_file", "delegate_reviewer"],
+              },
+              {
+                id: "reviewer",
+                name: "Reviewer",
+                mode: "child",
+                experimental: {
+                  mode: "child",
+                  prompt: "Review the current run.",
+                },
+                allowedTools: ["read_file"],
+                policy: [
+                  {
+                    action: "workspace.write",
+                    resource: "*",
+                    effect: "deny",
+                  },
+                ],
+              },
+            ],
+            delegateTools: [
+              {
+                profileId: "reviewer",
+                toolName: "delegate_reviewer",
+                requiresApproval: true,
+                forbidNesting: true,
+                maxSteps: 2,
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.agents?.profiles).toMatchObject([
+        { id: "main", mode: "primary" },
+        {
+          id: "reviewer",
+          name: "Reviewer",
+          mode: "child",
+          experimental: {
+            mode: "child",
+            prompt: "Review the current run.",
+          },
+        },
+      ]);
+      expect(loaded.config.capabilities?.agents?.delegateTools).toEqual([
+        {
+          profileId: "reviewer",
+          toolName: "delegate_reviewer",
+          requiresApproval: true,
+          forbidNesting: true,
+          maxSteps: 2,
+        },
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reports a validation error for a bad field and drops it", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
@@ -88,6 +336,54 @@ describe("loadHostConfig", () => {
       expect(loaded.config.model).toBeUndefined();
       expect(loaded.errors.some((e) => e.field === "model")).toBe(true);
       expect(loaded.errors.some((e) => e.field === "providers")).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid experimental agent profile fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "reviewer",
+                owner: "runtime",
+                experimental: {
+                  mode: "other",
+                  prompt: 42,
+                  owner: "runtime",
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]).toMatchObject({
+        id: "reviewer",
+        experimental: {},
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.experimental.mode",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.experimental.prompt",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.experimental.owner",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.owner",
+          }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });

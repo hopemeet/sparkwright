@@ -23,7 +23,7 @@ import { EventDetailPanel } from "./components/event-detail.js";
 import { QuickSwitchDialog } from "./components/quick-switch-dialog.js";
 import { ToastView } from "./components/toast.js";
 import { loadSessionLabels, type SessionLabels } from "./lib/session-labels.js";
-import { ThemeProvider } from "./lib/theme-context.js";
+import { ThemeProvider, useTheme } from "./lib/theme-context.js";
 import { resolveTheme, THEMES, type Theme } from "./lib/theme.js";
 import { StashDialog } from "./components/stash-dialog.js";
 import { ModelDialog } from "./components/model-dialog.js";
@@ -34,6 +34,7 @@ import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
 import { StatusBar } from "./components/status-bar.js";
 import { Spinner } from "./components/spinner.js";
 import { QueuedMessages } from "./components/queued-messages.js";
+import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { copyToClipboard } from "./lib/clipboard.js";
 import { lastAssistantMessage } from "./lib/transcript.js";
 import { AttentionManager } from "./lib/attention.js";
@@ -81,6 +82,8 @@ interface Resolved {
   theme: Theme;
   mouse: boolean;
 }
+
+type CapabilityView = "all" | "tools" | "skills" | "agents" | "cron";
 
 function resolveConfig(
   loaded: LoadedTuiConfig,
@@ -218,6 +221,9 @@ function AppReady(
   const [loadingDiagnosticsFor, setLoadingDiagnosticsFor] = useState<
     string | null
   >(null);
+  const [capabilitySnapshot, setCapabilitySnapshot] =
+    useState<CapabilitySnapshot | null>(null);
+  const [loadingCapabilities, setLoadingCapabilities] = useState(false);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const labelsRef = useRef<SessionLabels | null>(null);
   // Double-Ctrl+C-to-exit: the first press (when idle) arms a brief window;
@@ -410,6 +416,14 @@ function AppReady(
     if (diagnostics) setSessionDiagnostics(diagnostics);
   }
 
+  async function openCapabilities(view: CapabilityView = "all"): Promise<void> {
+    setLoadingCapabilities(true);
+    layers.push("capabilities", { view });
+    const snapshot = await controller.inspectCapabilities();
+    setLoadingCapabilities(false);
+    if (snapshot) setCapabilitySnapshot(snapshot);
+  }
+
   // Build the command registry once per controller. App-level handlers are
   // closed over here; both the palette and `/foo` input share this list.
   const registry = useMemo(() => {
@@ -484,6 +498,42 @@ function AppReady(
       description: "Where each field came from.",
       category: "config",
       run: () => layers.toggle("config"),
+    });
+    reg.register({
+      name: "capabilities",
+      title: "Inspect host capabilities",
+      description: "Show host-reported tools, Skills, MCP, and agents.",
+      category: "view",
+      aliases: ["caps"],
+      run: () => void openCapabilities("all"),
+    });
+    reg.register({
+      name: "tools",
+      title: "Inspect tools",
+      description: "Show prepared tools, risk, and origin.",
+      category: "view",
+      run: () => void openCapabilities("tools"),
+    });
+    reg.register({
+      name: "skills",
+      title: "Inspect skills",
+      description: "Show indexed and loaded Skills.",
+      category: "view",
+      run: () => void openCapabilities("skills"),
+    });
+    reg.register({
+      name: "agents",
+      title: "Inspect agents",
+      description: "Show configured primary and child agent profiles.",
+      category: "view",
+      run: () => void openCapabilities("agents"),
+    });
+    reg.register({
+      name: "cron",
+      title: "Inspect cron capability",
+      description: "Show cron-related tools and capability status.",
+      category: "view",
+      run: () => void openCapabilities("cron"),
     });
     reg.register({
       name: "reload",
@@ -798,6 +848,8 @@ function AppReady(
             effModel={effModel}
             sessionDiagnostics={sessionDiagnostics}
             loadingDiagnosticsFor={loadingDiagnosticsFor}
+            capabilitySnapshot={capabilitySnapshot}
+            loadingCapabilities={loadingCapabilities}
             onPickStash={(text) => {
               inputHandleRef.current?.setValue(text);
               layers.pop("stash");
@@ -970,6 +1022,8 @@ function AppReady(
             effModel={effModel}
             sessionDiagnostics={sessionDiagnostics}
             loadingDiagnosticsFor={loadingDiagnosticsFor}
+            capabilitySnapshot={capabilitySnapshot}
+            loadingCapabilities={loadingCapabilities}
             onPickStash={(text) => {
               inputHandleRef.current?.setValue(text);
               layers.pop("stash");
@@ -1105,6 +1159,8 @@ function LayerRenderer(props: {
   effModel?: string;
   sessionDiagnostics: SessionDiagnostics | null;
   loadingDiagnosticsFor: string | null;
+  capabilitySnapshot: CapabilitySnapshot | null;
+  loadingCapabilities: boolean;
   onCloseTop: () => void;
   onInspectSession: (id: string) => void;
   onPickSession: (id: string) => void;
@@ -1203,6 +1259,15 @@ function LayerRenderer(props: {
       return (
         <ConfigPanel resolved={props.resolved} onClose={props.onCloseTop} />
       );
+    case "capabilities":
+      return (
+        <CapabilitiesPanel
+          snapshot={props.capabilitySnapshot}
+          loading={props.loadingCapabilities}
+          view={capabilityViewFromPayload(e.payload)}
+          onClose={props.onCloseTop}
+        />
+      );
     default:
       return null;
   }
@@ -1299,6 +1364,246 @@ function ConfigPanel(props: {
           <Text dimColor={!a.loaded}>{a.path}</Text>
         </Text>
       ))}
+    </Box>
+  );
+}
+
+function capabilityViewFromPayload(payload: unknown): CapabilityView {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "view" in payload &&
+    typeof payload.view === "string" &&
+    ["all", "tools", "skills", "agents", "cron"].includes(payload.view)
+  ) {
+    return payload.view as CapabilityView;
+  }
+  return "all";
+}
+
+function CapabilitiesPanel(props: {
+  snapshot: CapabilitySnapshot | null;
+  loading: boolean;
+  view: CapabilityView;
+  onClose: () => void;
+}): React.ReactElement {
+  const theme = useTheme();
+  useInput((_input, key) => {
+    if (key.escape || key.return) props.onClose();
+  });
+  const s = props.snapshot;
+  const tools = s?.tools ?? [];
+  const indexed = s?.skills.indexed ?? [];
+  const loaded = s?.skills.loaded ?? [];
+  const mcp = s?.mcp.statuses ?? [];
+  const agents = s?.agents.profiles ?? [];
+  const cronTools = tools.filter((tool) =>
+    tool.name.toLowerCase().includes("cron"),
+  );
+  const title = capabilityPanelTitle(props.view);
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={theme.accent}
+      paddingX={1}
+    >
+      <Text color={theme.accent} bold>
+        {title}
+        <Text color={theme.muted}> host snapshot · esc/enter close</Text>
+      </Text>
+      {props.loading ? <Text color={theme.muted}>loading…</Text> : null}
+      {!props.loading && !s ? (
+        <Text color={theme.muted}>no snapshot available</Text>
+      ) : null}
+      {s ? (
+        <>
+          {props.view === "all" || props.view === "tools" ? (
+            <ToolsCapabilitySection tools={tools} />
+          ) : null}
+
+          {props.view === "all" || props.view === "skills" ? (
+            <SkillsCapabilitySection indexed={indexed} loaded={loaded} />
+          ) : null}
+
+          {props.view === "all" || props.view === "agents" ? (
+            <AgentsCapabilitySection agents={agents} />
+          ) : null}
+
+          {props.view === "all" ? <McpCapabilitySection mcp={mcp} /> : null}
+
+          {props.view === "cron" ? (
+            <CronCapabilitySection tools={cronTools} />
+          ) : null}
+        </>
+      ) : null}
+    </Box>
+  );
+}
+
+function capabilityPanelTitle(view: CapabilityView): string {
+  switch (view) {
+    case "tools":
+      return "tools";
+    case "skills":
+      return "skills";
+    case "agents":
+      return "agents";
+    case "cron":
+      return "cron";
+    case "all":
+    default:
+      return "capabilities";
+  }
+}
+
+function ToolsCapabilitySection(props: {
+  tools: CapabilitySnapshot["tools"];
+}): React.ReactElement {
+  const theme = useTheme();
+  return (
+    <CapabilitySection
+      title={`tools (${props.tools.length})`}
+      empty="no tools reported"
+      count={props.tools.length}
+    >
+      {props.tools.slice(0, 24).map((tool) => (
+        <Text key={tool.name}>
+          <Text color={theme.success}>• </Text>
+          {tool.name}
+          {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+          {tool.origin ? (
+            <Text color={theme.muted}> · {tool.origin}</Text>
+          ) : null}
+        </Text>
+      ))}
+      {props.tools.length > 24 ? (
+        <Text color={theme.muted}>… {props.tools.length - 24} more</Text>
+      ) : null}
+    </CapabilitySection>
+  );
+}
+
+function SkillsCapabilitySection(props: {
+  indexed: CapabilitySnapshot["skills"]["indexed"];
+  loaded: CapabilitySnapshot["skills"]["loaded"];
+}): React.ReactElement {
+  const theme = useTheme();
+  return (
+    <CapabilitySection
+      title={`skills (${props.loaded.length} loaded / ${props.indexed.length} indexed)`}
+      empty="no skills reported"
+      count={props.loaded.length + props.indexed.length}
+    >
+      {props.loaded.map((skill) => (
+        <Text key={`loaded:${skill.name}`}>
+          <Text color={theme.success}>loaded </Text>
+          {skill.name}
+          {skill.selectionReason ? (
+            <Text color={theme.muted}> · {skill.selectionReason}</Text>
+          ) : null}
+        </Text>
+      ))}
+      {props.loaded.length === 0
+        ? props.indexed.slice(0, 16).map((skill) => (
+            <Text key={`indexed:${skill.name}`}>
+              <Text color={theme.muted}>indexed </Text>
+              {skill.name}
+              {skill.sourcePath ? (
+                <Text color={theme.muted}> · {skill.sourcePath}</Text>
+              ) : null}
+            </Text>
+          ))
+        : null}
+      {props.loaded.length === 0 && props.indexed.length > 16 ? (
+        <Text color={theme.muted}>… {props.indexed.length - 16} more</Text>
+      ) : null}
+    </CapabilitySection>
+  );
+}
+
+function AgentsCapabilitySection(props: {
+  agents: CapabilitySnapshot["agents"]["profiles"];
+}): React.ReactElement {
+  const theme = useTheme();
+  return (
+    <CapabilitySection
+      title={`agents (${props.agents.length})`}
+      empty="no agents reported"
+      count={props.agents.length}
+    >
+      {props.agents.map((agent) => (
+        <Text key={agent.id}>
+          <Text color={theme.success}>• </Text>
+          {agent.name ?? agent.id}
+          {agent.mode ? <Text color={theme.muted}> · {agent.mode}</Text> : null}
+        </Text>
+      ))}
+    </CapabilitySection>
+  );
+}
+
+function McpCapabilitySection(props: {
+  mcp: CapabilitySnapshot["mcp"]["statuses"];
+}): React.ReactElement {
+  const theme = useTheme();
+  return (
+    <CapabilitySection
+      title={`mcp (${props.mcp.length})`}
+      empty="no MCP servers reported"
+      count={props.mcp.length}
+    >
+      {props.mcp.map((server) => (
+        <Text key={server.serverName}>
+          <Text color={theme.success}>• </Text>
+          {server.serverName}
+          <Text color={theme.muted}>
+            {" "}
+            · {server.status} · {server.toolNames.length} tools
+          </Text>
+        </Text>
+      ))}
+    </CapabilitySection>
+  );
+}
+
+function CronCapabilitySection(props: {
+  tools: CapabilitySnapshot["tools"];
+}): React.ReactElement {
+  const theme = useTheme();
+  return (
+    <CapabilitySection
+      title={`cron tools (${props.tools.length})`}
+      empty="cron tool is not prepared for this host"
+      count={props.tools.length}
+    >
+      {props.tools.map((tool) => (
+        <Text key={tool.name}>
+          <Text color={theme.success}>• </Text>
+          {tool.name}
+          {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+          {tool.origin ? (
+            <Text color={theme.muted}> · {tool.origin}</Text>
+          ) : null}
+        </Text>
+      ))}
+      <Text color={theme.muted}>
+        schedule records are managed through the cron command surface
+      </Text>
+    </CapabilitySection>
+  );
+}
+
+function CapabilitySection(props: {
+  title: string;
+  empty: string;
+  count: number;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>{props.title}</Text>
+      {props.count > 0 ? props.children : <Text dimColor>{props.empty}</Text>}
     </Box>
   );
 }

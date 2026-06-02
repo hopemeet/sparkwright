@@ -35,7 +35,9 @@
             "run.cancel",
             "approval.resolve",
             "session.list",
-            "session.inspect"
+            "session.inspect",
+            "session.fork",
+            "capability.inspect"
           ]
         },
         "timestamp": { "$ref": "#/$defs/Timestamp" },
@@ -98,6 +100,24 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/SessionInspectRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "session.fork" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/SessionForkRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "capability.inspect" } }
+          },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/CapabilityInspectRequestPayload" }
             }
           }
         }
@@ -327,6 +347,26 @@
       "required": ["sessionId"],
       "properties": {
         "sessionId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "SessionForkRequestPayload": {
+      "type": "object",
+      "required": ["sourceSessionId"],
+      "properties": {
+        "sourceSessionId": { "type": "string", "minLength": 1 },
+        "forkAtSequence": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityInspectRequestPayload": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reserved for future scoped inspection. Omit to inspect this connection's current host capability state."
+        }
       },
       "additionalProperties": false
     },

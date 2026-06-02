@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
   CallToolResultSchema,
+  CreateMessageRequestSchema,
+  type CreateMessageRequest,
+  type CreateMessageResult,
   type Tool as McpTool,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -12,6 +17,7 @@ import {
   createDefaultContentPolicy,
   defineTool,
   redactSensitiveText,
+  sanitizeToolSchema,
   type ContextItem,
   type ContentPolicy,
   type ContentPolicyVerdict,
@@ -24,25 +30,57 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const CLIENT_NAME = "sparkwright";
 const CLIENT_VERSION = "0.1.0";
 
+/**
+ * Fields shared by every server transport.
+ *
+ * `supportsParallelToolCalls` opts a server out of the default per-server call
+ * serialization: when true, tool calls to this server may run concurrently.
+ * Leave it unset for servers that are not known to be concurrency-safe.
+ */
+interface McpServerConfigBase {
+  name: string;
+  timeoutMs?: number;
+  enabled?: boolean;
+  supportsParallelToolCalls?: boolean;
+  /**
+   * Auto-reconnect on connection-class call failures. When set, a dropped
+   * connection is rebuilt with exponential backoff and the failed call is
+   * retried once. Omit to disable (a connection error surfaces immediately).
+   */
+  reconnect?: McpReconnectOptions;
+}
+
+export interface McpReconnectOptions {
+  /** Maximum reconnection attempts before giving up. Default 5. */
+  maxAttempts?: number;
+  /** Delay before the first retry, in ms. Default 200. */
+  initialDelayMs?: number;
+  /** Upper bound on the backoff delay, in ms. Default 5000. */
+  maxDelayMs?: number;
+}
+
 export type McpServerConfig =
-  | {
+  | (McpServerConfigBase & {
       type: "stdio";
-      name: string;
       command: string;
       args?: string[];
       cwd?: string;
       env?: Record<string, string>;
-      timeoutMs?: number;
-      enabled?: boolean;
-    }
-  | {
+    })
+  | (McpServerConfigBase & {
       type: "http";
-      name: string;
       url: string;
       headers?: Record<string, string>;
-      timeoutMs?: number;
-      enabled?: boolean;
-    };
+      /** OAuth provider for remote authorization; the transport drives the flow. */
+      authProvider?: OAuthClientProvider;
+    })
+  | (McpServerConfigBase & {
+      type: "sse";
+      url: string;
+      headers?: Record<string, string>;
+      /** OAuth provider for remote authorization; the transport drives the flow. */
+      authProvider?: OAuthClientProvider;
+    });
 
 export type McpStatus =
   | { status: "connected" }
@@ -97,6 +135,13 @@ export interface PrepareMcpToolsForRunOptions {
   onToolDescriptionWarning?: (input: McpToolDescriptionWarning) => void;
   /** Override the content policy used to inspect MCP tool descriptions. */
   descriptionPolicy?: ContentPolicy;
+  /**
+   * Enable server-initiated sampling: the server may request a completion from
+   * the host LLM. When provided, the client advertises the sampling capability
+   * and routes requests through a guarded handler (rate limit, lifetime cap,
+   * model allowlist). Omit to leave sampling disabled.
+   */
+  sampling?: McpSamplingConfig;
 }
 
 type McpClientLike = Pick<Client, "callTool">;
@@ -165,6 +210,10 @@ export async function prepareMcpToolsForRun(
         namePrefix: options.namePrefix,
         policy: options.policy,
         serverPolicy: options.serverPolicy,
+        onStdioStderr: options.onStdioStderr,
+        onToolDescriptionWarning: options.onToolDescriptionWarning,
+        descriptionPolicy: options.descriptionPolicy,
+        sampling: options.sampling,
         usedNames,
       }),
     ),
@@ -255,30 +304,53 @@ export async function prepareMcpServer(
       };
     }
 
-    client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
-    let transport: StdioClientTransport | StreamableHTTPClientTransport;
-    if (config.type === "stdio") {
-      transport = new StdioClientTransport({
-        command: config.command,
-        args: config.args,
-        cwd: config.cwd,
-        env: config.env,
-        stderr: "pipe",
+    // One sampling handler instance, shared across reconnects so rate-limit and
+    // request-cap counters persist for the life of the prepared server.
+    const samplingHandler = options.sampling
+      ? createMcpSamplingHandler(name, options.sampling)
+      : undefined;
+
+    // Build + connect a fresh client. Reused for the initial connection and,
+    // when `reconnect` is configured, for each reconnection attempt.
+    const connect = async (): Promise<Client> => {
+      const next = new Client(
+        { name: CLIENT_NAME, version: CLIENT_VERSION },
+        samplingHandler ? { capabilities: { sampling: {} } } : undefined,
+      );
+      if (samplingHandler) {
+        next.setRequestHandler(CreateMessageRequestSchema, (request) =>
+          samplingHandler(request.params),
+        );
+      }
+      const transport = buildMcpTransport(config, name, options.onStdioStderr);
+      await next.connect(transport, { timeout: timeoutMs });
+      return next;
+    };
+
+    client = await connect();
+    const listed = await client.listTools(undefined, { timeout: timeoutMs });
+
+    // A reconnecting wrapper owns the live client once enabled, so close() must
+    // route through it rather than the initial `client` reference.
+    let closeClient: () => Promise<void> = async () => {
+      await client?.close();
+    };
+    let liveClient: McpClientLike = client;
+    if (config.reconnect) {
+      const reconnecting = createReconnectingMcpClient({
+        initial: client,
+        reconnect: connect,
+        options: config.reconnect,
       });
-      drainStdioStderr(transport, name, options.onStdioStderr);
-    } else {
-      transport = new StreamableHTTPClientTransport(new URL(config.url), {
-        requestInit: config.headers
-          ? {
-              headers: config.headers,
-            }
-          : undefined,
-      });
+      liveClient = reconnecting;
+      closeClient = () => reconnecting.close();
     }
 
-    await client.connect(transport, { timeout: timeoutMs });
-    const listed = await client.listTools(undefined, { timeout: timeoutMs });
-    const callClient = createSerializedMcpClient(client);
+    // Per-server calls are serialized by default; opt in to concurrency only
+    // when the server is declared parallel-safe.
+    const callClient = config.supportsParallelToolCalls
+      ? liveClient
+      : createSerializedMcpClient(liveClient);
     const usedNames = options.usedNames ?? new Set<string>();
     const toolNameMap: McpToolNameMapping[] = [];
     const tools = listed.tools.map((mcpTool) => {
@@ -306,9 +378,7 @@ export async function prepareMcpServer(
       status: { status: "connected" },
       tools,
       toolNameMap,
-      close: async () => {
-        await client?.close();
-      },
+      close: closeClient,
     };
   } catch (cause) {
     await client?.close().catch(() => {});
@@ -316,7 +386,11 @@ export async function prepareMcpServer(
       name,
       status: {
         status: "failed",
-        error: cause instanceof Error ? cause.message : String(cause),
+        // Connection failures can echo back auth headers / tokens; strip them
+        // before the message reaches logs, traces, or the model.
+        error: redactSensitiveText(
+          cause instanceof Error ? cause.message : String(cause),
+        ),
       },
       tools: [],
       toolNameMap: [],
@@ -372,7 +446,9 @@ export function mcpToolToToolDefinition(input: {
   return defineTool({
     name: toolName,
     description: input.mcpTool.description ?? "",
-    inputSchema: normalizeMcpInputSchema(input.mcpTool.inputSchema),
+    inputSchema: sanitizeToolSchema(
+      normalizeMcpInputSchema(input.mcpTool.inputSchema),
+    ),
     outputSchema: input.mcpTool.outputSchema,
     timeoutMs: input.timeoutMs,
     policy: policy ?? {
@@ -435,6 +511,264 @@ export function mcpToolToToolDefinition(input: {
       }
     },
   });
+}
+
+function buildMcpTransport(
+  config: McpServerConfig,
+  name: string,
+  onStdioStderr?: (input: McpStdioStderrChunk) => void,
+): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
+  if (config.type === "stdio") {
+    const transport = new StdioClientTransport({
+      command: config.command,
+      args: config.args,
+      cwd: config.cwd,
+      env: config.env,
+      stderr: "pipe",
+    });
+    drainStdioStderr(transport, name, onStdioStderr);
+    return transport;
+  }
+  if (config.type === "sse") {
+    return new SSEClientTransport(new URL(config.url), {
+      requestInit: config.headers ? { headers: config.headers } : undefined,
+      authProvider: config.authProvider,
+    });
+  }
+  return new StreamableHTTPClientTransport(new URL(config.url), {
+    requestInit: config.headers ? { headers: config.headers } : undefined,
+    authProvider: config.authProvider,
+  });
+}
+
+type ReconnectableClient = McpClientLike & { close?: () => Promise<void> };
+
+export interface CreateReconnectingMcpClientInput {
+  /** The already-connected client to use until the first connection failure. */
+  initial: ReconnectableClient;
+  /** Builds and connects a fresh client; invoked once per reconnection attempt. */
+  reconnect: () => Promise<ReconnectableClient>;
+  options?: McpReconnectOptions;
+  /**
+   * Classifies whether a thrown error is a connection-class failure worth
+   * reconnecting for (vs. a tool-level error that should surface as-is).
+   */
+  isConnectionError?: (cause: unknown) => boolean;
+  /** Observed on each reconnection attempt (for status/trace surfaces). */
+  onReconnect?: (info: { attempt: number; error: unknown }) => void;
+  /** Injectable delay, primarily for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_RECONNECT_MAX_ATTEMPTS = 5;
+const DEFAULT_RECONNECT_INITIAL_DELAY_MS = 200;
+const DEFAULT_RECONNECT_MAX_DELAY_MS = 5_000;
+
+/**
+ * Wrap a client so connection-class call failures trigger a rebuild with
+ * exponential backoff, after which the failed call is retried once. Tool-level
+ * errors pass through untouched. Concurrent reconnects collapse onto a single
+ * attempt.
+ */
+export function createReconnectingMcpClient(
+  input: CreateReconnectingMcpClientInput,
+): McpClientLike & { close: () => Promise<void> } {
+  const maxAttempts =
+    input.options?.maxAttempts ?? DEFAULT_RECONNECT_MAX_ATTEMPTS;
+  const initialDelayMs =
+    input.options?.initialDelayMs ?? DEFAULT_RECONNECT_INITIAL_DELAY_MS;
+  const maxDelayMs =
+    input.options?.maxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;
+  const isConnectionError = input.isConnectionError ?? defaultIsConnectionError;
+  const sleep = input.sleep ?? defaultSleep;
+
+  let current = input.initial;
+  let reconnecting: Promise<void> | undefined;
+
+  const reestablish = async (cause: unknown): Promise<void> => {
+    if (reconnecting) return reconnecting;
+    reconnecting = (async () => {
+      let lastError = cause;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const delay = Math.min(maxDelayMs, initialDelayMs * 2 ** (attempt - 1));
+        await sleep(delay);
+        input.onReconnect?.({ attempt, error: lastError });
+        try {
+          const previous = current;
+          current = await input.reconnect();
+          await previous.close?.().catch(() => {});
+          return;
+        } catch (retryCause) {
+          lastError = retryCause;
+        }
+      }
+      throw lastError;
+    })();
+    try {
+      await reconnecting;
+    } finally {
+      reconnecting = undefined;
+    }
+  };
+
+  return {
+    async callTool(...args: Parameters<McpClientLike["callTool"]>) {
+      try {
+        return await current.callTool(...args);
+      } catch (cause) {
+        if (!isConnectionError(cause)) throw cause;
+        await reestablish(cause);
+        return current.callTool(...args);
+      }
+    },
+    async close() {
+      await current.close?.();
+    },
+  };
+}
+
+function defaultIsConnectionError(cause: unknown): boolean {
+  const message = (
+    cause instanceof Error ? cause.message : String(cause)
+  ).toLowerCase();
+  return /not connected|connection (closed|error|reset)|closed|econnreset|econnrefused|socket hang up|transport|terminated|disconnect/.test(
+    message,
+  );
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// --- MCP sampling (server -> host LLM completion) ----------------------------
+
+export interface McpSamplingMessage {
+  role: "user" | "assistant";
+  /** Concatenated text content; non-text blocks are dropped. */
+  text: string;
+}
+
+export interface McpSamplingRequest {
+  serverName: string;
+  messages: McpSamplingMessage[];
+  systemPrompt?: string;
+  maxTokens?: number;
+}
+
+export interface McpSamplingResponse {
+  /** The model that produced the completion; checked against `allowedModels`. */
+  model: string;
+  text: string;
+  stopReason?: string;
+}
+
+export interface McpSamplingConfig {
+  /**
+   * Performs a completion for a server-initiated sampling request. The host
+   * wires its own model adapter here; the adapter never picks a model itself.
+   */
+  complete: (request: McpSamplingRequest) => Promise<McpSamplingResponse>;
+  /**
+   * If set, the model named in the completion response must appear here, or the
+   * request is rejected. Use to stop a server from steering the host onto an
+   * unapproved (e.g. more expensive) model.
+   */
+  allowedModels?: string[];
+  /** Maximum sampling requests accepted per rolling minute. Default unlimited. */
+  maxRequestsPerMinute?: number;
+  /** Maximum sampling requests accepted over the server's lifetime. Default unlimited. */
+  maxRequests?: number;
+  /** Injectable clock for tests. */
+  now?: () => number;
+}
+
+export class McpSamplingError extends Error {
+  constructor(
+    message: string,
+    readonly code: "rate_limited" | "request_cap" | "model_not_allowed",
+  ) {
+    super(message);
+    this.name = "McpSamplingError";
+  }
+}
+
+/**
+ * Build a `sampling/createMessage` request handler that enforces a rate limit,
+ * a lifetime request cap, and a model allowlist before and after delegating to
+ * the host's completion function. State (counters) persists across reconnects
+ * because one handler instance is shared by every client the server uses.
+ */
+/** Concatenate the text blocks of a sampling message's content. */
+function extractSamplingText(content: unknown): string {
+  const blocks = Array.isArray(content) ? content : [content];
+  return blocks
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        isRecord(block) &&
+        block.type === "text" &&
+        typeof block.text === "string",
+    )
+    .map((block) => block.text)
+    .join("");
+}
+
+export function createMcpSamplingHandler(
+  serverName: string,
+  config: McpSamplingConfig,
+): (params: CreateMessageRequest["params"]) => Promise<CreateMessageResult> {
+  const now = config.now ?? Date.now;
+  const recent: number[] = [];
+  let total = 0;
+
+  return async (params) => {
+    const at = now();
+
+    if (config.maxRequestsPerMinute !== undefined) {
+      while (recent.length > 0 && recent[0] <= at - 60_000) recent.shift();
+      if (recent.length >= config.maxRequestsPerMinute) {
+        throw new McpSamplingError(
+          `MCP sampling rate limit exceeded for server "${serverName}".`,
+          "rate_limited",
+        );
+      }
+    }
+    if (config.maxRequests !== undefined && total >= config.maxRequests) {
+      throw new McpSamplingError(
+        `MCP sampling request cap reached for server "${serverName}".`,
+        "request_cap",
+      );
+    }
+
+    recent.push(at);
+    total += 1;
+
+    const response = await config.complete({
+      serverName,
+      messages: params.messages.map((message) => ({
+        role: message.role,
+        text: extractSamplingText(message.content),
+      })),
+      systemPrompt: params.systemPrompt,
+      maxTokens: params.maxTokens,
+    });
+
+    if (
+      config.allowedModels !== undefined &&
+      !config.allowedModels.includes(response.model)
+    ) {
+      throw new McpSamplingError(
+        `MCP sampling model "${response.model}" is not allowed for server "${serverName}".`,
+        "model_not_allowed",
+      );
+    }
+
+    return {
+      model: response.model,
+      role: "assistant",
+      content: { type: "text", text: response.text },
+      ...(response.stopReason ? { stopReason: response.stopReason } : {}),
+    };
+  };
 }
 
 export function createSerializedMcpClient(

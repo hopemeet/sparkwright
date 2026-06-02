@@ -156,4 +156,39 @@ describe("@sparkwright/sdk-core Client", () => {
       summary: { eventCount: 1 },
     });
   });
+
+  it("sends capability.inspect requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const inspected = client.inspectCapabilities();
+    const request = transport.sent[0];
+
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "capability.inspect",
+      payload: {},
+    });
+
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: {
+        tools: [{ name: "read_file", risk: "safe" }],
+        skills: { indexed: [], loaded: [] },
+        mcp: { statuses: [] },
+        agents: { profiles: [{ id: "main", mode: "primary" }] },
+      },
+    });
+
+    await expect(inspected).resolves.toMatchObject({
+      tools: [{ name: "read_file" }],
+      agents: { profiles: [{ id: "main" }] },
+    });
+  });
 });

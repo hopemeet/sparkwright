@@ -20,16 +20,16 @@ MCP server, local script, hosted worker, or child agent.
 
 ## Decision Table
 
-| Need                                             | Use                                            |
-| ------------------------------------------------ | ---------------------------------------------- |
-| Teach the agent how to approach a recurring task | Skill                                          |
-| Add bounded reference material                   | Skill reference or context extension           |
-| Let the agent perform a typed action             | Tool                                           |
-| Bridge an external capability server             | MCP adapter normalized to tools/context        |
-| Restrict what one agent may do                   | Agent profile                                  |
-| Require human control for risky actions          | Policy and approval                            |
-| Run long work outside the foreground turn        | Background task                                |
-| Repeat work on a schedule                        | Host-owned scheduler that starts governed runs |
+| Need                                                 | Use                                            |
+| ---------------------------------------------------- | ---------------------------------------------- |
+| Teach the agent how to approach a recurring task     | Skill                                          |
+| Add bounded reference material                       | Skill reference or context extension           |
+| Let the agent perform a typed action                 | Tool                                           |
+| Bridge an external capability server                 | MCP adapter normalized to tools/context        |
+| Define a reusable agent role and capability boundary | Agent profile                                  |
+| Require human control for risky actions              | Policy and approval                            |
+| Run long work outside the foreground turn            | Background task                                |
+| Repeat work on a schedule                            | Host-owned scheduler that starts governed runs |
 
 ## Skills
 
@@ -85,11 +85,16 @@ Capability runtime config supports MCP server descriptors through
 
 ## Agent Profiles
 
-An agent profile describes the capability boundary for one agent:
+An agent profile is a reusable run template for one agent role. It describes
+role guidance, tool boundaries, policy, step limits, and budget for a main or
+child run. It does not own credentials, sessions, installed skills, cron state,
+logs, or workspace storage.
 
 ```json
 {
   "id": "reviewer",
+  "description": "Read-only code review helper.",
+  "prompt": "Inspect changes for correctness, risk, and missing tests.",
   "allowedTools": ["inspect_diff", "skill.load", "mcp_*"],
   "maxSteps": 4,
   "runBudget": {

@@ -84,6 +84,7 @@ import {
   type RequestedToolCall,
 } from "./tool-orchestration.js";
 import { ControlledWorkspace } from "./workspace.js";
+import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
   createToolCall,
   executeTool,
@@ -198,6 +199,12 @@ export interface CreateRunOptions {
    */
   usageTracker?: UsageTracker;
   workspace?: RuntimeContext["workspace"];
+  /**
+   * Optional transparent workspace checkpoint store. When provided, file writes
+   * capture pre-images so a turn's edits can be rolled back. Invisible to the
+   * model; open a checkpoint per turn via {@link WorkspaceCheckpointStore}.
+   */
+  workspaceCheckpointStore?: WorkspaceCheckpointStore;
   context?: ContextItem[];
   contextAssembler?: ContextAssembler;
   contextBudget?: ContextBudget;
@@ -596,6 +603,7 @@ export class SparkwrightRun implements RunHandle {
           approvalResolver: this.approvalResolver,
           validationHooks: options.validationHooks,
           setState: (state) => this.setState(state),
+          checkpointStore: options.workspaceCheckpointStore,
         })
       : undefined;
     this.context = [...(options.context ?? [])];
@@ -1352,7 +1360,7 @@ export class SparkwrightRun implements RunHandle {
       goal: this.record.goal,
       events: this.events.all(),
       priorContext,
-      tools: this.tools.listDescriptors(),
+      tools: await this.tools.listModelDescriptors(),
       model: this.activeModel().contextHints,
       budget: this.contextBudget,
     });
@@ -1382,7 +1390,7 @@ export class SparkwrightRun implements RunHandle {
     const prompt = await this.promptBuilder.build({
       run: this.record,
       step: state.step,
-      tools: this.tools.listDescriptors(),
+      tools: await this.tools.listModelDescriptors(),
       context: items,
     });
     const cacheBlocks = compilePromptCacheBlocks(prompt);
@@ -1430,7 +1438,7 @@ export class SparkwrightRun implements RunHandle {
       run: this.record,
       context: contextItems,
       prompt,
-      tools: this.tools.listDescriptors(),
+      tools: await this.tools.listModelDescriptors(),
       events: this.events.all(),
       step: state.step,
       abortSignal: this.abortController.signal,

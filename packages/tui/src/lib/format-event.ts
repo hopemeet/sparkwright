@@ -25,6 +25,10 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     color = "red";
   else if (t.startsWith("approval.")) color = "yellow";
   else if (t.startsWith("tool.")) color = "cyan";
+  else if (t.startsWith("skill.")) color = "blue";
+  else if (t.startsWith("mcp.")) color = "cyan";
+  else if (t.startsWith("agent.") || t.startsWith("subagent."))
+    color = t.endsWith(".failed") ? "red" : "magenta";
   else if (t.startsWith("workspace.write")) color = "magenta";
   else if (t === "run.completed") color = "green";
   else if (t.startsWith("run.")) color = "white";
@@ -41,6 +45,17 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     else if (t === "workspace.write.requested") detail = str(p.path);
     else if (t === "run.completed" || t === "run.failed")
       detail = str(p.reason ?? p.stopReason);
+    else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
+    else if (t === "skill.loaded") detail = str(p.name);
+    else if (t === "mcp.server.prepared")
+      detail = `${str(p.name)} ${str(p.status)}`.trim();
+    else if (t === "agent.profile.derived") {
+      detail = [str(p.parentAgentId), str(p.childAgentId)]
+        .filter(Boolean)
+        .join(" → ");
+    } else if (t.startsWith("subagent.")) {
+      detail = str(p.agentName) || str(p.goal) || str(p.childRunId);
+    }
   }
 
   return { color, label: t, detail };

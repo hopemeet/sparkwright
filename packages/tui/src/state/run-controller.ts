@@ -6,6 +6,7 @@ import {
   type Client,
   type SpawnHostOptions,
 } from "@sparkwright/sdk-node";
+import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
@@ -252,6 +253,16 @@ export class RunController {
       const client = await this.ensureClient();
       const result = await client.inspectSession({ sessionId });
       return result as SessionDiagnostics;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return null;
+    }
+  }
+
+  async inspectCapabilities(): Promise<CapabilitySnapshot | null> {
+    try {
+      const client = await this.ensureClient();
+      return await client.inspectCapabilities();
     } catch (err) {
       this.store.setError(formatError(err));
       return null;

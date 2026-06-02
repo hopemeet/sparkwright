@@ -1,9 +1,18 @@
-import { defineTool } from "@sparkwright/core";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { defineTool, type ToolDefinition } from "@sparkwright/core";
+import type { AgentProfile } from "@sparkwright/agent-runtime";
 import { createGlobPathsTool as createGlobPathsToolBase } from "@sparkwright/coding-tools";
 import {
   createCronTool as createCronToolBase,
   defaultCronRoot,
 } from "@sparkwright/cron";
+import {
+  loadSkillsFromDirectory,
+  type SkillLoadError,
+  type SkillManifest,
+} from "@sparkwright/skills";
+import type { CapabilityToolsConfig } from "./config.js";
 
 /**
  * Built-in tool: read a UTF-8 file from the workspace. Safe (no approval).
@@ -213,6 +222,655 @@ export function createCronTool() {
   return createCronToolBase({ rootDir: defaultCronRoot(process.env) });
 }
 
+export function createSkillManagerTool(
+  workspaceRoot: string,
+  configuredRoots: string[] | undefined,
+) {
+  return defineTool({
+    name: "manage_skill",
+    description:
+      "List, validate, or create workspace skills. Create writes a SKILL.md under an existing or default skill root.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "validate", "create"] },
+        name: {
+          type: "string",
+          description:
+            "Skill name for create. Use lowercase letters, numbers, and hyphens.",
+        },
+        description: {
+          type: "string",
+          description: "Skill description for create.",
+        },
+        root: {
+          type: "string",
+          description:
+            "Optional skill root for create. Relative paths resolve from the workspace.",
+        },
+        force: {
+          type: "boolean",
+          description: "Overwrite an existing SKILL.md when creating.",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    policy: { risk: "risky" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "conditional",
+    },
+    isReplaySafe: false,
+    async execute(args: unknown) {
+      const input = parseSkillManagerArgs(args);
+      const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
+      if (input.action === "list" || input.action === "validate") {
+        return loadSkillManagerReport(roots, {
+          includeMissingRoots: input.action === "validate",
+        });
+      }
+
+      if (!input.name || !isSkillName(input.name)) {
+        throw new Error(
+          "manage_skill create requires a valid lowercase skill name.",
+        );
+      }
+      if (!input.description || input.description.trim().length === 0) {
+        throw new Error("manage_skill create requires description.");
+      }
+      const root = input.root
+        ? resolveWorkspacePath(workspaceRoot, input.root)
+        : roots[0];
+      const skillDir = join(root, input.name);
+      const skillPath = join(skillDir, "SKILL.md");
+      if ((await pathExists(skillPath)) && !input.force) {
+        throw new Error(
+          `Skill already exists: ${skillPath}. Pass force=true to overwrite.`,
+        );
+      }
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        skillPath,
+        renderSkillTemplate(input.name, input.description),
+        "utf8",
+      );
+      return {
+        action: "create",
+        name: input.name,
+        path: skillPath,
+        changed: true,
+      };
+    },
+  });
+}
+
+export function createAgentManagerTool(workspaceRoot: string) {
+  return defineTool({
+    name: "manage_agent",
+    description:
+      "List, validate, create, or remove project agent profiles in .sparkwright/config.json.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "validate", "create", "remove"],
+        },
+        id: {
+          type: "string",
+          description: "Agent profile id for create/remove.",
+        },
+        name: { type: "string" },
+        description: { type: "string" },
+        mode: { type: "string", enum: ["primary", "child", "all"] },
+        prompt: {
+          type: "string",
+          description: "System prompt used when this profile is spawned.",
+        },
+        allowedTools: {
+          type: "array",
+          items: { type: "string" },
+        },
+        deniedTools: {
+          type: "array",
+          items: { type: "string" },
+        },
+        maxSteps: { type: "integer", minimum: 1 },
+        delegateToolName: {
+          type: "string",
+          description:
+            "Optional delegate tool name to expose this profile to the main agent.",
+        },
+        force: {
+          type: "boolean",
+          description: "Replace an existing profile with the same id.",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    policy: { risk: "risky" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "conditional",
+    },
+    isReplaySafe: false,
+    async execute(args: unknown) {
+      const input = parseAgentManagerArgs(args);
+      const config = await readProjectConfig(workspaceRoot);
+      const agents = getAgentConfigShape(config.data);
+
+      if (input.action === "list" || input.action === "validate") {
+        return {
+          action: input.action,
+          path: config.path,
+          exists: config.exists,
+          agents,
+          errors: validateAgentConfigShape(agents),
+        };
+      }
+
+      if (!input.id || !isAgentId(input.id)) {
+        throw new Error("manage_agent requires a valid agent id.");
+      }
+
+      if (input.action === "remove") {
+        const beforeProfiles = agents.profiles.length;
+        agents.profiles = agents.profiles.filter(
+          (profile) => profile.id !== input.id,
+        );
+        agents.delegateTools = agents.delegateTools.filter(
+          (tool) => tool.profileId !== input.id,
+        );
+        if (agents.profiles.length === beforeProfiles) {
+          throw new Error(`Agent profile not found: ${input.id}`);
+        }
+        setAgentConfigShape(config.data, agents);
+        await writeProjectConfig(config.path, config.data);
+        return {
+          action: "remove",
+          id: input.id,
+          path: config.path,
+          changed: true,
+          agents,
+          errors: validateAgentConfigShape(agents),
+        };
+      }
+
+      if (!input.prompt || input.prompt.trim().length === 0) {
+        throw new Error("manage_agent create requires prompt.");
+      }
+      const existingIndex = agents.profiles.findIndex(
+        (profile) => profile.id === input.id,
+      );
+      if (existingIndex >= 0 && !input.force) {
+        throw new Error(
+          `Agent profile already exists: ${input.id}. Pass force=true to replace it.`,
+        );
+      }
+      const mode = input.mode ?? "child";
+      const profile: AgentProfile = {
+        id: input.id,
+        name: input.name ?? input.id,
+        ...(input.description ? { description: input.description } : {}),
+        mode,
+        prompt: input.prompt.trim(),
+        experimental: {
+          mode,
+          prompt: input.prompt.trim(),
+        },
+        ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
+        ...(input.deniedTools ? { deniedTools: input.deniedTools } : {}),
+        ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
+      };
+      if (existingIndex >= 0) {
+        agents.profiles[existingIndex] = profile;
+      } else {
+        agents.profiles.push(profile);
+      }
+      if (input.delegateToolName) {
+        agents.delegateTools = agents.delegateTools.filter(
+          (tool) =>
+            tool.profileId !== input.id &&
+            tool.toolName !== input.delegateToolName,
+        );
+        agents.delegateTools.push({
+          profileId: input.id,
+          toolName: input.delegateToolName,
+          requiresApproval: true,
+          forbidNesting: true,
+          ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
+        });
+      }
+      const errors = validateAgentConfigShape(agents);
+      if (errors.length > 0) {
+        throw new Error(
+          `manage_agent create produced invalid config: ${JSON.stringify(errors)}`,
+        );
+      }
+      setAgentConfigShape(config.data, agents);
+      await writeProjectConfig(config.path, config.data);
+      return {
+        action: "create",
+        id: input.id,
+        path: config.path,
+        changed: true,
+        profile,
+        agents,
+        errors,
+      };
+    },
+  });
+}
+
+export function applyToolConfig<T extends ToolDefinition>(
+  tools: T[],
+  config: CapabilityToolsConfig | undefined,
+): T[] {
+  if (!config) return tools;
+  return tools
+    .filter((tool) => {
+      if (matchesAnyToolPattern(tool.name, config.disabled)) return false;
+      if (config.enabled !== undefined) {
+        return matchesAnyToolPattern(tool.name, config.enabled);
+      }
+      return true;
+    })
+    .map((tool) => {
+      if (
+        tool.alwaysLoad === true ||
+        !matchesAnyToolPattern(tool.name, config.defer)
+      ) {
+        return tool;
+      }
+      return { ...tool, deferLoading: true };
+    }) as T[];
+}
+
 function containsGlobPattern(path: string): boolean {
   return /[*?[]/.test(path);
+}
+
+function matchesAnyToolPattern(
+  toolName: string,
+  patterns: readonly string[] | undefined,
+): boolean {
+  return Boolean(
+    patterns?.some((pattern) => matchesToolPattern(toolName, pattern)),
+  );
+}
+
+function matchesToolPattern(toolName: string, pattern: string): boolean {
+  if (pattern === toolName) return true;
+  if (!pattern.includes("*")) return false;
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`).test(toolName);
+}
+
+function resolveSkillRoots(
+  workspaceRoot: string,
+  configuredRoots: string[] | undefined,
+): string[] {
+  const roots =
+    configuredRoots && configuredRoots.length > 0
+      ? configuredRoots
+      : [join(workspaceRoot, "skills")];
+  return roots.map((root) => resolveWorkspacePath(workspaceRoot, root));
+}
+
+function resolveWorkspacePath(workspaceRoot: string, path: string): string {
+  return isAbsolute(path) ? path : resolve(workspaceRoot, path);
+}
+
+async function loadSkillManagerReport(
+  roots: string[],
+  options: { includeMissingRoots: boolean },
+): Promise<{
+  roots: string[];
+  skills: Array<{
+    name: string;
+    description: string;
+    version?: string;
+    source?: string;
+  }>;
+  errors: SkillLoadError[];
+}> {
+  const skills: SkillManifest[] = [];
+  const errors: SkillLoadError[] = [];
+  for (const root of roots) {
+    try {
+      const info = await stat(root);
+      if (!info.isDirectory()) {
+        errors.push({ source: root, message: "skill root is not a directory" });
+        continue;
+      }
+    } catch (error) {
+      if (options.includeMissingRoots) {
+        errors.push({
+          source: root,
+          message:
+            (error as NodeJS.ErrnoException).code === "ENOENT"
+              ? "skill root does not exist"
+              : error instanceof Error
+                ? error.message
+                : String(error),
+        });
+      }
+      continue;
+    }
+    const loaded = await loadSkillsFromDirectory(root);
+    skills.push(...loaded.skills);
+    errors.push(...loaded.loadErrors);
+  }
+  return {
+    roots,
+    skills: skills
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        version: skill.version,
+        source: skill.source,
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    errors,
+  };
+}
+
+function parseSkillManagerArgs(args: unknown): {
+  action: "list" | "validate" | "create";
+  name?: string;
+  description?: string;
+  root?: string;
+  force?: boolean;
+} {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error("manage_skill expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const action = record.action;
+  if (action !== "list" && action !== "validate" && action !== "create") {
+    throw new Error("manage_skill action must be list, validate, or create.");
+  }
+  return {
+    action,
+    ...(typeof record.name === "string" ? { name: record.name.trim() } : {}),
+    ...(typeof record.description === "string"
+      ? { description: record.description.trim() }
+      : {}),
+    ...(typeof record.root === "string" ? { root: record.root } : {}),
+    ...(typeof record.force === "boolean" ? { force: record.force } : {}),
+  };
+}
+
+function renderSkillTemplate(name: string, description: string): string {
+  return [
+    "---",
+    `name: ${name}`,
+    `description: ${description}`,
+    'version: "1.0.0"',
+    "metadata:",
+    '  version: "1.0.0"',
+    "---",
+    "",
+    `Use this skill when the user asks for ${description}`,
+    "",
+  ].join("\n");
+}
+
+function isSkillName(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
+}
+
+type AgentConfigShape = {
+  profiles: AgentProfile[];
+  delegateTools: Array<{
+    profileId: string;
+    toolName?: string;
+    description?: string;
+    requiresApproval?: boolean;
+    forbidNesting?: boolean;
+    maxSteps?: number;
+  }>;
+};
+
+async function readProjectConfig(workspaceRoot: string): Promise<{
+  path: string;
+  exists: boolean;
+  data: Record<string, unknown>;
+}> {
+  const path = join(workspaceRoot, ".sparkwright", "config.json");
+  try {
+    return {
+      path,
+      exists: true,
+      data: JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { path, exists: false, data: {} };
+    }
+    throw error;
+  }
+}
+
+async function writeProjectConfig(
+  path: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+}
+
+function getAgentConfigShape(
+  config: Record<string, unknown>,
+): AgentConfigShape {
+  const capabilities = isPlainObject(config.capabilities)
+    ? config.capabilities
+    : {};
+  const agents = isPlainObject(capabilities.agents) ? capabilities.agents : {};
+  return {
+    profiles: Array.isArray(agents.profiles)
+      ? agents.profiles.filter(isPlainObject).map((profile) => ({
+          ...(profile as unknown as AgentProfile),
+        }))
+      : [],
+    delegateTools: Array.isArray(agents.delegateTools)
+      ? agents.delegateTools.filter(isPlainObject).map((tool) => ({
+          ...(tool as AgentConfigShape["delegateTools"][number]),
+        }))
+      : [],
+  };
+}
+
+function setAgentConfigShape(
+  config: Record<string, unknown>,
+  agents: AgentConfigShape,
+): void {
+  const capabilities = isPlainObject(config.capabilities)
+    ? config.capabilities
+    : {};
+  capabilities.agents = {
+    profiles: agents.profiles,
+    ...(agents.delegateTools.length > 0
+      ? { delegateTools: agents.delegateTools }
+      : {}),
+  };
+  config.capabilities = capabilities;
+}
+
+function validateAgentConfigShape(
+  agents: AgentConfigShape,
+): Array<{ field: string; message: string }> {
+  const errors: Array<{ field: string; message: string }> = [];
+  const ids = new Set<string>();
+  for (const [index, profile] of agents.profiles.entries()) {
+    const field = `profiles.${index}`;
+    if (!isAgentId(profile.id)) {
+      errors.push({
+        field: `${field}.id`,
+        message: "must be a valid agent id",
+      });
+    } else if (ids.has(profile.id)) {
+      errors.push({ field: `${field}.id`, message: "duplicate agent id" });
+    } else {
+      ids.add(profile.id);
+    }
+    const mode = profile.experimental?.mode ?? profile.mode;
+    if (
+      mode !== undefined &&
+      mode !== "primary" &&
+      mode !== "child" &&
+      mode !== "all"
+    ) {
+      errors.push({
+        field: `${field}.mode`,
+        message: "must be primary, child, or all",
+      });
+    }
+    if (
+      profile.allowedTools !== undefined &&
+      !isStringArray(profile.allowedTools)
+    ) {
+      errors.push({
+        field: `${field}.allowedTools`,
+        message: "must be an array of strings",
+      });
+    }
+    if (
+      profile.deniedTools !== undefined &&
+      !isStringArray(profile.deniedTools)
+    ) {
+      errors.push({
+        field: `${field}.deniedTools`,
+        message: "must be an array of strings",
+      });
+    }
+    if (
+      profile.maxSteps !== undefined &&
+      (!Number.isInteger(profile.maxSteps) || profile.maxSteps < 1)
+    ) {
+      errors.push({
+        field: `${field}.maxSteps`,
+        message: "must be a positive integer",
+      });
+    }
+  }
+  for (const [index, tool] of agents.delegateTools.entries()) {
+    if (!ids.has(tool.profileId)) {
+      errors.push({
+        field: `delegateTools.${index}.profileId`,
+        message: "must reference an existing profile id",
+      });
+    }
+  }
+  return errors;
+}
+
+function parseAgentManagerArgs(args: unknown): {
+  action: "list" | "validate" | "create" | "remove";
+  id?: string;
+  name?: string;
+  description?: string;
+  mode?: "primary" | "child" | "all";
+  prompt?: string;
+  allowedTools?: string[];
+  deniedTools?: string[];
+  maxSteps?: number;
+  delegateToolName?: string;
+  force?: boolean;
+} {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error("manage_agent expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const action = record.action;
+  if (
+    action !== "list" &&
+    action !== "validate" &&
+    action !== "create" &&
+    action !== "remove"
+  ) {
+    throw new Error(
+      "manage_agent action must be list, validate, create, or remove.",
+    );
+  }
+  const mode = record.mode;
+  if (
+    mode !== undefined &&
+    mode !== "primary" &&
+    mode !== "child" &&
+    mode !== "all"
+  ) {
+    throw new Error("manage_agent mode must be primary, child, or all.");
+  }
+  const maxSteps = record.maxSteps;
+  if (
+    maxSteps !== undefined &&
+    (!Number.isInteger(maxSteps) || (maxSteps as number) < 1)
+  ) {
+    throw new Error("manage_agent maxSteps must be a positive integer.");
+  }
+  return {
+    action,
+    ...(typeof record.id === "string" ? { id: record.id.trim() } : {}),
+    ...(typeof record.name === "string" ? { name: record.name.trim() } : {}),
+    ...(typeof record.description === "string"
+      ? { description: record.description.trim() }
+      : {}),
+    ...(mode !== undefined ? { mode } : {}),
+    ...(typeof record.prompt === "string"
+      ? { prompt: record.prompt.trim() }
+      : {}),
+    ...(record.allowedTools !== undefined
+      ? { allowedTools: stringArrayArg(record.allowedTools, "allowedTools") }
+      : {}),
+    ...(record.deniedTools !== undefined
+      ? { deniedTools: stringArrayArg(record.deniedTools, "deniedTools") }
+      : {}),
+    ...(maxSteps !== undefined ? { maxSteps: maxSteps as number } : {}),
+    ...(typeof record.delegateToolName === "string"
+      ? { delegateToolName: record.delegateToolName.trim() }
+      : {}),
+    ...(typeof record.force === "boolean" ? { force: record.force } : {}),
+  };
+}
+
+function stringArrayArg(value: unknown, field: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => typeof entry === "string")
+  ) {
+    throw new Error(`manage_agent ${field} must be an array of strings.`);
+  }
+  return value.map((entry) => entry.trim()).filter(Boolean);
+}
+
+function isAgentId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }

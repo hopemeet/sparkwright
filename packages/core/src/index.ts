@@ -88,6 +88,7 @@ export type {
   ToolAuditPolicy,
   ToolCostEstimate,
   ToolInterruptBehavior,
+  ToolAvailableProbe,
   ToolResultSizePolicy,
   ToolProgressUpdate,
   ToolOrigin,
@@ -95,6 +96,7 @@ export type {
   ToolInputSchema,
   ToolDescriptor,
   ToolDefinition,
+  ToolRegistryOptions,
 } from "./tools.js";
 export {
   defineTool,
@@ -354,6 +356,7 @@ export {
   sanitizeMemoryContext,
   StreamingContextScrubber,
 } from "./memory.js";
+export { sanitizeToolSchema } from "./schema-sanitize.js";
 export type {
   ContentSource,
   ContentRule,
@@ -573,6 +576,14 @@ export {
 } from "./trace.js";
 export { LocalWorkspace, ControlledWorkspace } from "./workspace.js";
 export type { ControlledWorkspaceOptions } from "./workspace.js";
+export { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
+export type {
+  WorkspaceCheckpointFile,
+  WorkspaceCheckpointMeta,
+  WorkspaceCheckpointRestoreTarget,
+  WorkspaceCheckpointStoreOptions,
+  WorkspaceRollbackResult,
+} from "./workspace-checkpoint.js";
 export {
   DefaultObservationFormatter,
   DefaultContextAssembler,
