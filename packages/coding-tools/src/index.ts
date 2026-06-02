@@ -110,6 +110,7 @@ export interface ApplyPatchResult {
   /** @reserved Public tool-output field consumed by coding UIs. */
   changed: boolean;
   content: string;
+  /** @reserved Public tool-output field consumed by coding UIs. */
   hunksApplied: number;
 }
 

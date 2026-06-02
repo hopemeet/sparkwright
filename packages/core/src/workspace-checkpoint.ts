@@ -25,7 +25,10 @@ export interface WorkspaceCheckpointMeta {
   id: string;
   label?: string;
   createdAt: string;
-  /** Distinct files captured so far in this checkpoint. */
+  /**
+   * Distinct files captured so far in this checkpoint.
+   * @reserved Public metadata field consumed by checkpoint UIs / hosts.
+   */
   fileCount: number;
 }
 
@@ -37,8 +40,11 @@ export interface WorkspaceCheckpointRestoreTarget {
 }
 
 export interface WorkspaceRollbackResult {
+  /** @reserved Public result field consumed by checkpoint UIs / hosts. */
   checkpointId: string;
+  /** @reserved Public result field consumed by checkpoint UIs / hosts. */
   restored: string[];
+  /** @reserved Public result field consumed by checkpoint UIs / hosts. */
   removed: string[];
 }
 
