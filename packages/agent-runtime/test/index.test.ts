@@ -997,6 +997,14 @@ describe("createAgentTool / mountAgentTool", () => {
     expect(noPrompt).toBeUndefined();
   });
 
+  it("uses top-level profile prompt as a compatibility fallback", () => {
+    const builder = promptBuilderForAgentProfile({
+      id: "legacy",
+      prompt: "Legacy profile prompt.",
+    });
+    expect(builder).toBeDefined();
+  });
+
   it("includes a profile-derived prompt builder in compiled run options", () => {
     const withPrompt = compileAgentProfileRunOptions({
       id: "specialist",

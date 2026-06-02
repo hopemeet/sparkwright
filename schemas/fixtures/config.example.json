@@ -44,13 +44,21 @@
           "id": "primary",
           "name": "Primary",
           "mode": "primary",
-          "prompt": "Coordinate the run and call delegate tools only when useful."
+          "prompt": "Coordinate the run and call delegate tools only when useful.",
+          "experimental": {
+            "mode": "primary",
+            "prompt": "Coordinate the run and call delegate tools only when useful."
+          }
         },
         {
           "id": "reviewer",
           "name": "Reviewer",
           "mode": "child",
           "prompt": "Inspect changes for correctness, risk, and missing tests.",
+          "experimental": {
+            "mode": "child",
+            "prompt": "Inspect changes for correctness, risk, and missing tests."
+          },
           "allowedTools": ["read_file", "glob_paths"],
           "maxSteps": 4
         }

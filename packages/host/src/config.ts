@@ -740,6 +740,30 @@ function validateAgentProfile(
     });
     return undefined;
   }
+  const allowed = new Set([
+    "id",
+    "name",
+    "description",
+    "experimental",
+    "mode",
+    "model",
+    "prompt",
+    "allowedTools",
+    "deniedTools",
+    "policy",
+    "maxSteps",
+    "runBudget",
+    "metadata",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
   const profile: AgentProfile = { id: raw.id };
   for (const key of ["name", "description", "prompt"] as const) {
     if (raw[key] !== undefined) {
@@ -764,7 +788,47 @@ function validateAgentProfile(
   }
   if (raw.experimental !== undefined) {
     if (isRecord(raw.experimental)) {
-      profile.experimental = raw.experimental as AgentProfile["experimental"];
+      const experimental: AgentProfile["experimental"] = {};
+      const allowedExperimental = new Set(["mode", "model", "prompt"]);
+      for (const key of Object.keys(raw.experimental)) {
+        if (!allowedExperimental.has(key)) {
+          errors.push({
+            file: filePath,
+            field: `${field}.experimental.${key}`,
+            message: "unknown field",
+          });
+        }
+      }
+      if (raw.experimental.mode !== undefined) {
+        if (
+          raw.experimental.mode === "primary" ||
+          raw.experimental.mode === "child" ||
+          raw.experimental.mode === "all"
+        ) {
+          experimental.mode = raw.experimental.mode;
+        } else {
+          errors.push({
+            file: filePath,
+            field: `${field}.experimental.mode`,
+            message: "must be primary, child, or all",
+          });
+        }
+      }
+      if (raw.experimental.model !== undefined) {
+        experimental.model = raw.experimental.model;
+      }
+      if (raw.experimental.prompt !== undefined) {
+        if (typeof raw.experimental.prompt === "string") {
+          experimental.prompt = raw.experimental.prompt;
+        } else {
+          errors.push({
+            file: filePath,
+            field: `${field}.experimental.prompt`,
+            message: "must be a string",
+          });
+        }
+      }
+      profile.experimental = experimental;
     } else {
       errors.push({
         file: filePath,

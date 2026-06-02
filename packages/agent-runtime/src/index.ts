@@ -86,8 +86,8 @@ export interface AgentProfile {
    */
   model?: unknown;
   /**
-   * @deprecated Not applied by agent-runtime. Use `experimental.prompt` when you
-   * need to carry this value for application-level orchestration.
+   * @deprecated Compatibility fallback for profile role guidance. New callers
+   * should use `experimental.prompt`.
    */
   prompt?: string;
   allowedTools?: string[];
@@ -125,8 +125,9 @@ export type AgentProfileRunOptions = Pick<
 >;
 
 /**
- * Compile a profile's application system prompt
- * (`experimental.prompt`) into a `PromptBuilder`. Returns `undefined` when the
+ * Compile a profile's application system prompt into a `PromptBuilder`.
+ * `experimental.prompt` is preferred; top-level `prompt` remains a
+ * compatibility fallback for existing configs. Returns `undefined` when the
  * profile carries no prompt, so callers can fall back to the run's default
  * builder (the harness resident contracts still apply either way — the app
  * prompt is layered on top via `additionalSections`).
@@ -134,7 +135,7 @@ export type AgentProfileRunOptions = Pick<
 export function promptBuilderForAgentProfile(
   profile: AgentProfile,
 ): PromptBuilder<PromptMessage[]> | undefined {
-  const prompt = profile.experimental?.prompt;
+  const prompt = profile.experimental?.prompt ?? profile.prompt;
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
     return undefined;
   }
@@ -529,9 +530,10 @@ export interface SpawnSubAgentInput {
   policy?: Policy;
   /**
    * Prompt builder for the child run. When omitted, the helper derives one
-   * from `childAgentProfile.experimental.prompt` (if set) so the child carries
-   * its own application system prompt; otherwise the child uses core's default
-   * builder. Pass an explicit builder to override.
+   * from the child profile prompt (`experimental.prompt`, then top-level
+   * `prompt` for compatibility) so the child carries its own application
+   * system prompt; otherwise the child uses core's default builder. Pass an
+   * explicit builder to override.
    */
   promptBuilder?: PromptBuilder<PromptMessage[]>;
   /**
@@ -606,7 +608,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       : undefined);
 
   // Build effective child prompt builder: explicit override > profile-derived
-  // (experimental.prompt) > core default (undefined).
+  // prompt > core default (undefined).
   const childPromptBuilder =
     input.promptBuilder ??
     (input.childAgentProfile

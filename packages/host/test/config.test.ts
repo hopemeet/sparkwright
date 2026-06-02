@@ -272,6 +272,10 @@ describe("loadHostConfig", () => {
                 id: "reviewer",
                 name: "Reviewer",
                 mode: "child",
+                experimental: {
+                  mode: "child",
+                  prompt: "Review the current run.",
+                },
                 allowedTools: ["read_file"],
                 policy: [
                   {
@@ -298,7 +302,15 @@ describe("loadHostConfig", () => {
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.capabilities?.agents?.profiles).toMatchObject([
         { id: "main", mode: "primary" },
-        { id: "reviewer", name: "Reviewer", mode: "child" },
+        {
+          id: "reviewer",
+          name: "Reviewer",
+          mode: "child",
+          experimental: {
+            mode: "child",
+            prompt: "Review the current run.",
+          },
+        },
       ]);
       expect(loaded.config.capabilities?.agents?.delegateTools).toEqual([
         {
@@ -324,6 +336,54 @@ describe("loadHostConfig", () => {
       expect(loaded.config.model).toBeUndefined();
       expect(loaded.errors.some((e) => e.field === "model")).toBe(true);
       expect(loaded.errors.some((e) => e.field === "providers")).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid experimental agent profile fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "reviewer",
+                owner: "runtime",
+                experimental: {
+                  mode: "other",
+                  prompt: 42,
+                  owner: "runtime",
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]).toMatchObject({
+        id: "reviewer",
+        experimental: {},
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.experimental.mode",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.experimental.prompt",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.experimental.owner",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.owner",
+          }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });

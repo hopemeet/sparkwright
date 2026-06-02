@@ -103,9 +103,14 @@ interface AgentProfile {
   id: string;
   name?: string;
   description?: string;
+  experimental?: {
+    mode?: "primary" | "child" | "all";
+    model?: unknown;
+    prompt?: string;
+  };
   mode?: "primary" | "child" | "all"; // @reserved v0.2
   model?: unknown; // @reserved v0.2
-  prompt?: string; // @reserved v0.2
+  prompt?: string; // compatibility fallback; prefer experimental.prompt
   allowedTools?: string[];
   deniedTools?: string[];
   policy?: CapabilityRule[];

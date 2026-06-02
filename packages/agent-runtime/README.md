@@ -2,9 +2,14 @@
 
 Experimental agent profile and policy helpers for Sparkwright.
 
-This package is not a multi-agent orchestrator. It provides lightweight profile
-composition and policy adaptation so applications can keep agent capability
-boundaries explicit while still using normal Sparkwright runs.
+An agent profile is a reusable run template for a specific agent role. It can
+carry role guidance, tool boundaries, policy, step limits, and run budget.
+Profiles do not own credentials, sessions, installed skills, cron state, logs,
+or workspace storage.
+
+This package provides lightweight profile composition, policy adaptation, and
+sub-agent helpers so applications can keep agent capability boundaries explicit
+while still using normal Sparkwright runs.
 
 ## API
 
@@ -36,8 +41,9 @@ const derived = deriveChildAgentProfile({
 const policy = createAgentProfilePolicy(derived.effectiveProfile);
 ```
 
-`mode`, `model`, and `prompt` are not applied by this package. If an
-application needs to carry those values while it owns orchestration, put them
+`experimental.prompt` is compiled into an application prompt section for runs
+spawned from the profile. Top-level `mode`, `model`, and `prompt` remain
+compatibility fields; new callers should put orchestration-specific values
 under `experimental`.
 
 ## Capability Rules
@@ -75,8 +81,18 @@ Child allow rules cannot override inherited denies.
 When no explicit profile rule matches, `createAgentProfilePolicy` falls back to
 the core default policy unless a caller supplies a custom fallback.
 
+## Delegation
+
+`spawnSubAgent` starts a child run from a child agent profile. The child run gets
+its own prompt, tools, budget, trace linkage, and cancellation path. Parent run
+restrictions remain constraining, so delegation cannot be used to bypass policy.
+
+`createAgentTool` and `mountAgentTool` expose a profile-backed child run through
+the normal tool path. The parent model receives the child result, not the
+child's entire intermediate context.
+
 ## Boundary
 
-This package deliberately avoids child run execution, scheduling, shared memory,
-or multi-agent session orchestration. Those can be layered later after parent
-and child trace, budget, cancellation, and artifact semantics are clear.
+This package deliberately avoids scheduling, shared memory, credential handling,
+or workspace storage ownership. Those remain host responsibilities. Agent
+profiles only shape runs.

@@ -3,6 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/agent-profile.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Agent Profile",
+  "description": "Reusable run template for an agent role. Defines role guidance, tool boundaries, policy, step limits, and budget; it does not own credentials, sessions, installed skills, cron state, logs, or workspace storage.",
   "type": "object",
   "required": ["id"],
   "properties": {
@@ -15,6 +16,19 @@
     },
     "model": {},
     "prompt": { "type": "string" },
+    "experimental": {
+      "type": "object",
+      "description": "Application-owned run-template fields. Prefer experimental.prompt for profile-specific role guidance used when spawning runs.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["primary", "child", "all"]
+        },
+        "model": {},
+        "prompt": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "allowedTools": {
       "type": "array",
       "items": { "type": "string" }
