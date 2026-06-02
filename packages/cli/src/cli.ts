@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   asSessionId,
   buildTraceTimelineFile,
@@ -1127,7 +1127,9 @@ async function handleSkillsCreate(
     renderSkillTemplate(input.value.name, input.value.description),
     "utf8",
   );
-  writeLine(io.stdout, `Created ${skillPath}`);
+  // Display with forward slashes so output is stable across platforms
+  // (Windows would otherwise print backslashes).
+  writeLine(io.stdout, `Created ${skillPath.split(sep).join("/")}`);
   return { exitCode: 0 };
 }
 
