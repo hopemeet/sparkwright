@@ -3,7 +3,14 @@
 // through `RuntimeContext.workspace`. Writes go through ControlledWorkspace,
 // which emits diff artifacts and gates via approval/policy.
 
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, basename, relative, resolve, sep } from "node:path";
 import { createArtifactId, createWorkspaceWriteId } from "./ids.js";
@@ -19,6 +26,7 @@ import {
   type ApplyAnchoredEditsResult,
 } from "./anchored-edit.js";
 import { createDefaultPolicy, type Policy } from "./policy.js";
+import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import type {
   Artifact,
   RunRecord,
@@ -79,6 +87,18 @@ export class LocalWorkspace {
   async diffText(path: string, nextContent: string): Promise<string> {
     const current = await this.readText(path).catch(() => "");
     return createSimpleTextDiff(path, current, nextContent);
+  }
+
+  /**
+   * Remove a file inside the root. Used by checkpoint rollback to undo the
+   * creation of files that did not exist when a checkpoint opened. Missing
+   * targets are a no-op. Subject to the same containment + symlink checks as
+   * writes.
+   */
+  async removeFile(path: string): Promise<void> {
+    const fullPath = await this.resolveInsideRoot(path);
+    await this.assertWritePathHasNoSymlinkSegments(fullPath, path);
+    await rm(fullPath, { force: true });
   }
 
   async resolveInsideRoot(path: string): Promise<string> {
@@ -175,6 +195,12 @@ export interface ControlledWorkspaceOptions {
    * mutation (kept for backward compatibility in standalone usage).
    */
   setState?: (state: RunState) => void;
+  /**
+   * Optional transparent checkpoint store. When provided, the prior content of
+   * each file is captured before it is written (after approval/policy pass),
+   * so a turn's writes can be rolled back. The model never sees it.
+   */
+  checkpointStore?: WorkspaceCheckpointStore;
 }
 
 /** @internal Reference `WorkspaceRuntime` with policy + approval + validation. */
@@ -388,6 +414,18 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     await this.assertWriteBaselineCurrent(proposal);
     const artifact = this.createDiffArtifact(proposal);
     this.options.events.emit("artifact.created", artifact);
+    if (this.options.checkpointStore) {
+      // Capture the pre-write image once per file per open checkpoint, so the
+      // write can be rolled back. Runs only after policy/approval succeed.
+      const prior = await this.options.workspace
+        .readText(workspacePath)
+        .catch(() => undefined);
+      this.options.checkpointStore.recordBeforeWrite({
+        path: workspacePath,
+        existedBefore: prior !== undefined,
+        content: prior,
+      });
+    }
     await this.options.workspace.writeText(workspacePath, content, options);
     const summary = summarizeWrittenContent(content);
     this.options.events.emit("workspace.write.completed", {

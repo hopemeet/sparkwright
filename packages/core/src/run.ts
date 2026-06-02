@@ -84,6 +84,7 @@ import {
   type RequestedToolCall,
 } from "./tool-orchestration.js";
 import { ControlledWorkspace } from "./workspace.js";
+import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
   createToolCall,
   executeTool,
@@ -198,6 +199,12 @@ export interface CreateRunOptions {
    */
   usageTracker?: UsageTracker;
   workspace?: RuntimeContext["workspace"];
+  /**
+   * Optional transparent workspace checkpoint store. When provided, file writes
+   * capture pre-images so a turn's edits can be rolled back. Invisible to the
+   * model; open a checkpoint per turn via {@link WorkspaceCheckpointStore}.
+   */
+  workspaceCheckpointStore?: WorkspaceCheckpointStore;
   context?: ContextItem[];
   contextAssembler?: ContextAssembler;
   contextBudget?: ContextBudget;
@@ -596,6 +603,7 @@ export class SparkwrightRun implements RunHandle {
           approvalResolver: this.approvalResolver,
           validationHooks: options.validationHooks,
           setState: (state) => this.setState(state),
+          checkpointStore: options.workspaceCheckpointStore,
         })
       : undefined;
     this.context = [...(options.context ?? [])];

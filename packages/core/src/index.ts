@@ -576,6 +576,14 @@ export {
 } from "./trace.js";
 export { LocalWorkspace, ControlledWorkspace } from "./workspace.js";
 export type { ControlledWorkspaceOptions } from "./workspace.js";
+export { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
+export type {
+  WorkspaceCheckpointFile,
+  WorkspaceCheckpointMeta,
+  WorkspaceCheckpointRestoreTarget,
+  WorkspaceCheckpointStoreOptions,
+  WorkspaceRollbackResult,
+} from "./workspace-checkpoint.js";
 export {
   DefaultObservationFormatter,
   DefaultContextAssembler,
