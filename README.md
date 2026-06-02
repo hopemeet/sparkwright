@@ -38,6 +38,10 @@ Use this path if you are new to the project:
 
 After that, read [Architecture](docs/ARCHITECTURE.md), [Extension Interfaces](docs/EXTENSION_INTERFACES.md), and [Protocol](docs/PROTOCOL.md) for deeper implementation contracts.
 
+Agent-facing operational guidance lives in
+[`skills/sparkwright-manual`](skills/sparkwright-manual). Update it whenever a
+user-visible capability changes.
+
 ## Where to extend
 
 The most common extension points. Each row links to the type or factory in
