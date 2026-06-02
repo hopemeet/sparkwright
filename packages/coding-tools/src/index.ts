@@ -440,8 +440,9 @@ export function createGlobPathsTool(
       artifactPolicy: "never",
     },
     async execute(args, ctx) {
-      const input = normalizeGlobPathsInput(args, options);
-      const walker = await createWorkspaceWalker(ctx, options);
+      const root = await resolveWorkspaceRoot(ctx, options);
+      const input = normalizeGlobPathsInput(args, options, root);
+      const walker = new WorkspaceWalker(root, ctx);
       const result = await walker.glob(input);
       return {
         patterns: input.patterns,
@@ -608,6 +609,7 @@ function normalizeGrepTextInput(
 function normalizeGlobPathsInput(
   args: GlobPathsInput,
   options: CodingToolsOptions,
+  workspaceRoot?: string,
 ): NormalizedGlobPathsInput {
   assertRecord(args, "glob_paths input");
   const patternsValue = args.patterns;
@@ -622,9 +624,14 @@ function normalizeGlobPathsInput(
     throw new Error("patterns must be a string or a non-empty string array.");
   }
   return {
-    patterns,
+    patterns: workspaceRoot
+      ? patterns.map((pattern) =>
+          normalizeWorkspacePath(pattern, workspaceRoot),
+        )
+      : patterns,
     path: normalizeWorkspacePath(
       typeof args.path === "string" && args.path.length > 0 ? args.path : ".",
+      workspaceRoot,
     ),
     includeHidden: args.includeHidden ?? options.includeHidden ?? false,
     exclude: [
@@ -870,7 +877,16 @@ class WorkspaceWalker {
   }
 }
 
-function normalizeWorkspacePath(path: string): string {
+function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
+  if (workspaceRoot && (isAbsolute(path) || /^[A-Za-z]:/.test(path))) {
+    const rel = relative(workspaceRoot, path);
+    if (
+      rel === "" ||
+      (!rel.startsWith("..") && rel !== ".." && !isAbsolute(rel))
+    ) {
+      return normalizeWorkspacePath(rel || ".");
+    }
+  }
   const normalized = path.replace(/\\/g, "/");
   if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) {
     throw new Error(`Path escapes workspace root: ${path}`);

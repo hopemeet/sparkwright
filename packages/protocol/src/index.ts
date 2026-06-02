@@ -51,7 +51,8 @@ export type RequestKind =
   | "approval.resolve"
   | "session.list"
   | "session.inspect"
-  | "session.fork";
+  | "session.fork"
+  | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
   envelope: "request";
@@ -116,6 +117,14 @@ export interface SessionForkRequestPayload {
   forkAtSequence?: number;
 }
 
+export interface CapabilityInspectRequestPayload {
+  /**
+   * Reserved for future scoped inspection. Omit to inspect the host/session
+   * capability state known to this connection.
+   */
+  sessionId?: string;
+}
+
 export type HostRequest =
   | HostRequestBase<"handshake", HandshakeRequestPayload>
   | HostRequestBase<"run.start", RunStartRequestPayload>
@@ -124,7 +133,8 @@ export type HostRequest =
   | HostRequestBase<"approval.resolve", ApprovalResolveRequestPayload>
   | HostRequestBase<"session.list", SessionListRequestPayload>
   | HostRequestBase<"session.inspect", SessionInspectRequestPayload>
-  | HostRequestBase<"session.fork", SessionForkRequestPayload>;
+  | HostRequestBase<"session.fork", SessionForkRequestPayload>
+  | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
 // Responses
@@ -168,6 +178,48 @@ export interface ResponseResults {
     forkedSessionId: string;
     copiedEventCount: number;
     truncatedAtSequence: number | null;
+  };
+  "capability.inspect": CapabilitySnapshot;
+}
+
+export interface CapabilityToolSummary {
+  name: string;
+  origin?: string;
+  risk?: string;
+}
+
+export interface CapabilitySkillSummary {
+  name: string;
+  description?: string;
+  sourcePath?: string;
+  contentHash?: string;
+  version?: string;
+  selectionReason?: string;
+}
+
+export interface CapabilityMcpStatus {
+  serverName: string;
+  status: string;
+  toolNames: string[];
+}
+
+export interface CapabilityAgentSummary {
+  id: string;
+  name?: string;
+  mode?: string;
+}
+
+export interface CapabilitySnapshot {
+  tools: CapabilityToolSummary[];
+  skills: {
+    indexed: CapabilitySkillSummary[];
+    loaded: CapabilitySkillSummary[];
+  };
+  mcp: {
+    statuses: CapabilityMcpStatus[];
+  };
+  agents: {
+    profiles: CapabilityAgentSummary[];
   };
 }
 

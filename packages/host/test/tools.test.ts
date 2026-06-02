@@ -3,11 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  defineTool,
   createRunId,
   LocalWorkspace,
   type RuntimeContext,
 } from "@sparkwright/core";
-import { createGlobPathsTool, createReadFileTool } from "../src/tools.js";
+import {
+  createAgentManagerTool,
+  applyToolConfig,
+  createGlobPathsTool,
+  createReadFileTool,
+  createSkillManagerTool,
+} from "../src/tools.js";
 
 describe("host tools", () => {
   it("rejects read_file glob paths with tool guidance", async () => {
@@ -41,6 +48,133 @@ describe("host tools", () => {
       offset: 0,
       totalPaths: 2,
       hasMore: false,
+    });
+  });
+
+  it("applies enabled, disabled, and deferred tool config", () => {
+    const read = defineTool({
+      name: "read_file",
+      description: "read",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const mcpSearch = defineTool({
+      name: "mcp_docs_search",
+      description: "search",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const shell = defineTool({
+      name: "shell",
+      description: "shell",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const eager = defineTool({
+      name: "mcp_required",
+      description: "required",
+      inputSchema: { type: "object" },
+      alwaysLoad: true,
+      execute: () => ({}),
+    });
+
+    const tools = applyToolConfig([read, mcpSearch, shell, eager], {
+      enabled: ["read_file", "mcp_*", "shell"],
+      disabled: ["shell"],
+      defer: ["mcp_*"],
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "mcp_docs_search",
+      "mcp_required",
+    ]);
+    expect(tools.find((tool) => tool.name === "mcp_docs_search")).toMatchObject(
+      { deferLoading: true },
+    );
+    expect(tools.find((tool) => tool.name === "mcp_required")).toMatchObject({
+      alwaysLoad: true,
+    });
+    expect(
+      tools.find((tool) => tool.name === "mcp_required")?.deferLoading,
+    ).toBeUndefined();
+  });
+
+  it("creates and lists workspace skills", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    const created = await tool.execute({
+      action: "create",
+      name: "repo-review",
+      description: "review repository changes",
+    });
+    const listed = await tool.execute({ action: "list" });
+
+    expect(created).toMatchObject({
+      action: "create",
+      name: "repo-review",
+      changed: true,
+    });
+    expect(listed).toMatchObject({
+      skills: [
+        {
+          name: "repo-review",
+          description: "review repository changes",
+        },
+      ],
+      errors: [],
+    });
+  });
+
+  it("creates project agent profiles and delegate tools", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+
+    const created = await tool.execute({
+      action: "create",
+      id: "reviewer",
+      name: "Reviewer",
+      mode: "child",
+      prompt: "Review changes and report concrete risks.",
+      allowedTools: ["read_file"],
+      maxSteps: 2,
+      delegateToolName: "delegate_reviewer",
+    });
+    const listed = await tool.execute({ action: "list" });
+
+    expect(created).toMatchObject({
+      action: "create",
+      id: "reviewer",
+      changed: true,
+      errors: [],
+    });
+    expect(listed).toMatchObject({
+      agents: {
+        profiles: [
+          {
+            id: "reviewer",
+            name: "Reviewer",
+            mode: "child",
+            experimental: {
+              mode: "child",
+              prompt: "Review changes and report concrete risks.",
+            },
+            allowedTools: ["read_file"],
+            maxSteps: 2,
+          },
+        ],
+        delegateTools: [
+          {
+            profileId: "reviewer",
+            toolName: "delegate_reviewer",
+            requiresApproval: true,
+            forbidNesting: true,
+            maxSteps: 2,
+          },
+        ],
+      },
+      errors: [],
     });
   });
 });

@@ -19,6 +19,8 @@ export interface TuiConfigFile {
   providers?: Record<string, ProviderConfig>;
   /** Path relative to the config file, or absolute. */
   workspace?: string;
+  /** Host-owned capability runtime settings. The TUI accepts but does not interpret these. */
+  capabilities?: Record<string, unknown>;
   /**
    * Per-action keybindings. Keys are binding names (e.g. "palette.open"),
    * values are chord strings or arrays. Empty string / [] clears the default.
@@ -65,6 +67,7 @@ const KNOWN_KEYS = new Set([
   "model",
   "providers",
   "workspace",
+  "capabilities",
   "keybindings",
   "theme",
   "mouse",
@@ -272,6 +275,21 @@ function validate(
       errors.push({
         file: filePath,
         field: "providers",
+        message: "must be a JSON object",
+      });
+    }
+  }
+  if (obj.capabilities !== undefined) {
+    if (
+      typeof obj.capabilities === "object" &&
+      obj.capabilities !== null &&
+      !Array.isArray(obj.capabilities)
+    ) {
+      config.capabilities = obj.capabilities as Record<string, unknown>;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities",
         message: "must be a JSON object",
       });
     }

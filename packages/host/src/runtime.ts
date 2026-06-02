@@ -3,19 +3,43 @@ import { join } from "node:path";
 import {
   buildTraceTimelineFile,
   asSessionId,
+  createBufferedEmitter,
   createSessionId,
   createSessionRunStoreFactory,
   createPermissionModePolicy,
   createRun,
+  defineTool,
   FileSessionStore,
   forkSessionFromEvent,
   summarizeTraceFile,
   validateSessionTraceConsistency,
   type ApprovalResolver,
   type ContextItem,
+  type EventEmitter,
+  type ModelAdapter,
   type PermissionMode,
   type SparkwrightEvent,
+  type ToolDefinition,
+  type ToolOrigin,
 } from "@sparkwright/core";
+import {
+  prepareSkillsForRun,
+  type LoadedSkill,
+  type SkillIndexEntry,
+} from "@sparkwright/skills";
+import {
+  prepareMcpToolsForRun,
+  type McpStatus,
+  type McpToolNameMapping,
+} from "@sparkwright/mcp-adapter";
+import {
+  createAgentTool,
+  deriveChildAgentProfile,
+  spawnSubAgent,
+  type AgentProfile,
+  type DerivedChildAgentProfile,
+} from "@sparkwright/agent-runtime";
+import type { CapabilityDelegateToolConfig } from "./config.js";
 import {
   createSessionFileRunStoreFactory,
   LocalWorkspace,
@@ -25,15 +49,20 @@ import type {
   HostEvent,
   ProtocolError,
   RunStartRequestPayload,
+  CapabilitySnapshot,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
+import { loadHostConfig } from "./config.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
 import {
   createAppendFileTool,
   createCronTool,
+  createAgentManagerTool,
   createGlobPathsTool,
+  applyToolConfig,
   createReadFileTool,
+  createSkillManagerTool,
 } from "./tools.js";
 import { createHostShellTool } from "./shell.js";
 
@@ -59,7 +88,10 @@ interface ActiveRun {
   run: ReturnType<typeof createRun>;
   trace: MemoryTrace;
   sessionId: string;
+  closeCapabilities?: () => Promise<void>;
 }
+
+const MAIN_AGENT_ID = "main";
 
 /**
  * Per-connection runtime. Maps protocol verbs onto core.createRun(),
@@ -78,6 +110,7 @@ export class HostRuntime {
   // (which only happens after `await createModel(...)`).
   private startingRun = false;
   private pendingApprovals = new Map<string, PendingApproval>();
+  private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
   constructor(opts: RuntimeOptions) {
     this.opts = opts;
@@ -85,6 +118,30 @@ export class HostRuntime {
 
   hasActiveRun(): boolean {
     return this.active !== null;
+  }
+
+  async inspectCapabilities(): Promise<
+    | { ok: true; snapshot: CapabilitySnapshot }
+    | { ok: false; error: ProtocolError }
+  > {
+    try {
+      const configured = await this.inspectConfiguredCapabilities();
+      return {
+        ok: true,
+        snapshot: mergeCapabilitySnapshots(
+          configured,
+          this.lastCapabilitySnapshot,
+        ),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
 
   /**
@@ -151,6 +208,7 @@ export class HostRuntime {
     const workspaceRoot = this.opts.workspaceRoot;
     const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
     const trace = new MemoryTrace();
+    const pendingExtensionEvents = createBufferedEmitter();
 
     // Captured by the approvalResolver closure so it always references the
     // run that created it, not whichever run happens to occupy `this.active`
@@ -201,21 +259,97 @@ export class HostRuntime {
       sessionRootDir,
       sessionId,
     );
-
-    const run = createRun({
-      goal: payload.goal,
-      context: priorContext,
-      workspace,
-      approvalResolver,
-      policy: createPermissionModePolicy({ mode: permissionMode }),
-      promptBuilder: buildAgentPromptBuilder({ cwd: workspaceRoot, sessionId }),
-      tools: [
+    const loadedConfig = await loadHostConfig(workspaceRoot);
+    const toolConfig = loadedConfig.config.capabilities?.tools;
+    const skillConfig = loadedConfig.config.capabilities?.skills;
+    const mcpConfig = loadedConfig.config.capabilities?.mcp;
+    const agentConfig = loadedConfig.config.capabilities?.agents;
+    const preparedSkills = skillConfig?.roots?.length
+      ? await prepareSkillsForRun({
+          goal: payload.goal,
+          skillRoots: skillConfig.roots,
+          agent: {
+            allowedSkills: skillConfig.allowedSkills,
+            deniedSkills: skillConfig.deniedSkills,
+          },
+          includeLoaderTool: skillConfig.includeLoaderTool,
+          loadSelectedSkills: skillConfig.loadSelectedSkills,
+          maxSelectedSkills: skillConfig.maxSelectedSkills,
+          resourceFileLimit: skillConfig.resourceFileLimit,
+          emitter: pendingExtensionEvents,
+          agentId: MAIN_AGENT_ID,
+        })
+      : null;
+    const preparedMcp = mcpConfig?.servers?.length
+      ? await prepareMcpToolsForRun({
+          servers: mcpConfig.servers,
+          defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
+          namePrefix: mcpConfig.namePrefix,
+          policy: mcpConfig.defaultPolicy,
+          emitter: pendingExtensionEvents,
+          agentId: MAIN_AGENT_ID,
+        })
+      : null;
+    const mainAgent = mainAgentProfile(agentConfig?.profiles);
+    const derivedAgents = deriveConfiguredAgents(
+      mainAgent,
+      agentConfig?.profiles ?? [],
+      pendingExtensionEvents,
+    );
+    const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
+    const baseChildTools = [
+      createReadFileTool(),
+      createGlobPathsTool(workspaceRoot),
+    ];
+    const childTools = applyToolConfig(baseChildTools, toolConfig);
+    const delegateTools = createConfiguredDelegateTools({
+      getParent: () => parentRunRef.current,
+      delegates: agentConfig?.delegateTools ?? [],
+      derivedAgents,
+      model: model.adapter,
+      childTools,
+    });
+    const dynamicSpawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parentRunRef.current,
+      model: model.adapter,
+      childTools,
+    });
+    const tools = applyToolConfig(
+      [
         createReadFileTool(),
         createGlobPathsTool(workspaceRoot),
         createAppendFileTool(),
         createCronTool(),
+        createSkillManagerTool(workspaceRoot, skillConfig?.roots),
+        createAgentManagerTool(workspaceRoot),
         createHostShellTool(workspaceRoot),
+        ...(preparedSkills?.tools ?? []),
+        ...(preparedMcp?.tools ?? []),
+        ...delegateTools,
+        dynamicSpawnTool,
       ],
+      toolConfig,
+    );
+    this.lastCapabilitySnapshot = buildCapabilitySnapshot({
+      tools,
+      indexedSkills: preparedSkills?.indexedSkills ?? [],
+      loadedSkills: preparedSkills?.loadedSkills ?? [],
+      mcpStatuses: preparedMcp?.statuses ?? {},
+      mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
+      agentProfiles: [
+        mainAgent,
+        ...derivedAgents.map((agent) => agent.effectiveProfile),
+      ],
+    });
+
+    const run = createRun({
+      goal: payload.goal,
+      context: [...priorContext, ...(preparedSkills?.context ?? [])],
+      workspace,
+      approvalResolver,
+      policy: createPermissionModePolicy({ mode: permissionMode }),
+      promptBuilder: buildAgentPromptBuilder({ cwd: workspaceRoot, sessionId }),
+      tools,
       model: model.adapter,
       runStore: createSessionRunStoreFactory({
         sessionStore: new FileSessionStore({ rootDir: sessionRootDir }),
@@ -228,13 +362,40 @@ export class HostRuntime {
         }),
         metadata: {
           source: "host",
+          ...(preparedSkills
+            ? {
+                indexedSkills: preparedSkills.indexedSkills,
+                loadedSkills: preparedSkills.loadedSkills,
+              }
+            : {}),
+          ...(preparedMcp
+            ? {
+                mcpStatuses: preparedMcp.statuses,
+                mcpToolNameMap: preparedMcp.toolNameMap,
+              }
+            : {}),
+          ...(agentConfig?.profiles?.length
+            ? {
+                agentProfiles: [
+                  mainAgent,
+                  ...derivedAgents.map((agent) => agent.effectiveProfile),
+                ],
+              }
+            : {}),
         },
       }),
     });
+    parentRunRef.current = run;
 
     const runId = run.record.id;
     runIdHolder.value = runId;
-    this.active = { runId, run, trace, sessionId };
+    this.active = {
+      runId,
+      run,
+      trace,
+      sessionId,
+      closeCapabilities: preparedMcp ? () => preparedMcp.close() : undefined,
+    };
 
     // Subscribe to event stream and rebroadcast as host events.
     run.events.subscribe((event: SparkwrightEvent) => {
@@ -247,6 +408,7 @@ export class HostRuntime {
         payload: { runId, event },
       });
     });
+    pendingExtensionEvents.flush(run.events);
 
     // Kick off the run lifecycle; do not await — the response goes back now,
     // events stream as they happen, terminal event lands later.
@@ -281,6 +443,7 @@ export class HostRuntime {
         });
       })
       .finally(() => {
+        void preparedMcp?.close().catch(() => {});
         this.active = null;
         // Deny only this run's orphan approvals. The current per-connection
         // `startingRun` lock makes cross-run pollution impossible today, but
@@ -348,6 +511,94 @@ export class HostRuntime {
       });
     }
     return items;
+  }
+
+  private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
+    const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
+    const toolConfig = loadedConfig.config.capabilities?.tools;
+    const skillConfig = loadedConfig.config.capabilities?.skills;
+    const mcpConfig = loadedConfig.config.capabilities?.mcp;
+    const agentConfig = loadedConfig.config.capabilities?.agents;
+    const preparedSkills =
+      skillConfig?.roots?.length && skillConfig.roots.length > 0
+        ? await prepareSkillsForRun({
+            goal: "",
+            skillRoots: skillConfig.roots,
+            agent: {
+              allowedSkills: skillConfig.allowedSkills,
+              deniedSkills: skillConfig.deniedSkills,
+            },
+            includeLoaderTool: skillConfig.includeLoaderTool,
+            loadSelectedSkills: false,
+            resourceFileLimit: skillConfig.resourceFileLimit,
+            agentId: MAIN_AGENT_ID,
+          })
+        : null;
+    return buildCapabilitySnapshot({
+      tools: applyToolConfig(
+        [
+          createReadFileTool(),
+          createGlobPathsTool(this.opts.workspaceRoot),
+          createAppendFileTool(),
+          createCronTool(),
+          createSkillManagerTool(this.opts.workspaceRoot, skillConfig?.roots),
+          createAgentManagerTool(this.opts.workspaceRoot),
+          createHostShellTool(this.opts.workspaceRoot),
+          ...(preparedSkills?.tools ?? []),
+          ...createConfiguredDelegateTools({
+            getParent: () => undefined,
+            delegates: agentConfig?.delegateTools ?? [],
+            derivedAgents: deriveConfiguredAgents(
+              mainAgentProfile(agentConfig?.profiles),
+              agentConfig?.profiles ?? [],
+            ),
+            model: {
+              async complete() {
+                return { message: "" };
+              },
+            },
+            childTools: [
+              createReadFileTool(),
+              createGlobPathsTool(this.opts.workspaceRoot),
+            ],
+          }),
+          createDynamicSpawnAgentTool({
+            getParent: () => undefined,
+            model: {
+              async complete() {
+                return { message: "" };
+              },
+            },
+            childTools: applyToolConfig(
+              [
+                createReadFileTool(),
+                createGlobPathsTool(this.opts.workspaceRoot),
+              ],
+              toolConfig,
+            ),
+          }),
+        ],
+        toolConfig,
+      ),
+      indexedSkills: preparedSkills?.indexedSkills ?? [],
+      loadedSkills: [],
+      mcpStatuses: Object.fromEntries(
+        (mcpConfig?.servers ?? []).map((server) => [
+          server.name,
+          server.enabled === false
+            ? ({ status: "disabled" } as const)
+            : ({ status: "configured" } as const),
+        ]),
+      ),
+      mcpToolNameMap: [],
+      agentProfiles: [
+        mainAgentProfile(agentConfig?.profiles),
+        ...deriveConfiguredAgents(
+          mainAgentProfile(agentConfig?.profiles),
+          agentConfig?.profiles ?? [],
+        ).map((agent) => agent.effectiveProfile),
+      ],
+    });
   }
 
   private async readJsonField(
@@ -441,6 +692,7 @@ export class HostRuntime {
     if (this.active) {
       try {
         this.active.run.cancel({ reason: "client_disconnected" });
+        void this.active.closeCapabilities?.().catch(() => {});
       } catch {
         // already cancelled
       }
@@ -634,4 +886,413 @@ export class HostRuntime {
       };
     }
   }
+}
+
+function buildCapabilitySnapshot(input: {
+  tools: ToolDefinition[];
+  indexedSkills: SkillIndexEntry[];
+  loadedSkills: LoadedSkill[];
+  mcpStatuses?: Record<string, McpStatus | { status: "configured" }>;
+  mcpToolNameMap?: McpToolNameMapping[];
+  agentProfiles?: AgentProfile[];
+}): CapabilitySnapshot {
+  return {
+    tools: input.tools.map((tool) => ({
+      name: tool.name,
+      origin: formatToolOrigin(tool.governance?.origin),
+      risk: tool.policy?.risk,
+    })),
+    skills: {
+      indexed: input.indexedSkills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        sourcePath: skill.sourcePath,
+        contentHash: skill.contentHash,
+        version: skill.version,
+      })),
+      loaded: input.loadedSkills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        sourcePath: skill.sourcePath,
+        contentHash: skill.contentHash,
+        version: skill.version,
+        selectionReason: skill.selectionReason,
+      })),
+    },
+    mcp: {
+      statuses: Object.entries(input.mcpStatuses ?? {}).map(
+        ([serverName, status]) => ({
+          serverName,
+          status: status.status,
+          toolNames: (input.mcpToolNameMap ?? [])
+            .filter((mapping) => mapping.serverName === serverName)
+            .map((mapping) => mapping.toolName),
+        }),
+      ),
+    },
+    agents: {
+      profiles: (
+        input.agentProfiles ?? [{ id: MAIN_AGENT_ID, mode: "primary" }]
+      ).map((profile) => ({
+        id: profile.id,
+        name: profile.name,
+        mode: profile.experimental?.mode ?? profile.mode,
+      })),
+    },
+  };
+}
+
+function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
+  return (
+    profiles?.find(
+      (profile) =>
+        profile.id === MAIN_AGENT_ID ||
+        profile.experimental?.mode === "primary" ||
+        profile.mode === "primary",
+    ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
+  );
+}
+
+function deriveConfiguredAgents(
+  parentAgent: AgentProfile,
+  profiles: AgentProfile[],
+  emitter?: EventEmitter,
+): DerivedChildAgentProfile[] {
+  return profiles
+    .filter((profile) => profile.id !== parentAgent.id)
+    .filter((profile) => {
+      const mode = profile.experimental?.mode ?? profile.mode;
+      return mode === undefined || mode === "child" || mode === "all";
+    })
+    .map((childAgent) =>
+      deriveChildAgentProfile({
+        parentAgent,
+        childAgent,
+        emitter,
+      }),
+    );
+}
+
+function createConfiguredDelegateTools(input: {
+  getParent: () => ReturnType<typeof createRun> | undefined;
+  delegates: CapabilityDelegateToolConfig[];
+  derivedAgents: DerivedChildAgentProfile[];
+  model: ModelAdapter;
+  childTools: ToolDefinition[];
+}): ToolDefinition[] {
+  const byProfile = new Map(
+    input.derivedAgents.map((derived) => [
+      derived.effectiveProfile.id,
+      derived.effectiveProfile,
+    ]),
+  );
+  const tools: ToolDefinition[] = [];
+  for (const delegate of input.delegates) {
+    const profile = byProfile.get(delegate.profileId);
+    if (!profile) continue;
+    const toolName =
+      delegate.toolName ??
+      `delegate_${sanitizeToolSegment(delegate.profileId)}`;
+    tools.push(
+      createAgentTool(input.getParent, {
+        name: toolName,
+        description:
+          delegate.description ??
+          `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+        requiresApproval: delegate.requiresApproval,
+        forbidNesting: delegate.forbidNesting ?? true,
+        buildSpawnInput: (args) => ({
+          goal: args.goal,
+          model: input.model,
+          tools: input.childTools,
+          childAgentProfile: profile,
+          maxSteps: delegate.maxSteps ?? profile.maxSteps,
+          runBudget: profile.runBudget,
+          metadata: {
+            ...(args.metadata ?? {}),
+            agentId: profile.id,
+            agentProfileId: profile.id,
+            agentName: profile.name,
+          },
+        }),
+      }),
+    );
+  }
+  return tools;
+}
+
+function createDynamicSpawnAgentTool(input: {
+  getParent: () => ReturnType<typeof createRun> | undefined;
+  model: ModelAdapter;
+  childTools: ToolDefinition[];
+}): ToolDefinition {
+  return defineTool({
+    name: "spawn_agent",
+    description:
+      "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files but cannot write, run shell commands, or spawn further agents. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with manage_agent and delegate to it through a delegate_* tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        goal: {
+          type: "string",
+          description: "The concrete sub-task the child agent should complete.",
+        },
+        role: {
+          type: "string",
+          description: "Short role name for the child agent.",
+        },
+        prompt: {
+          type: "string",
+          description:
+            "Focused instructions that define the child agent's scope and output.",
+        },
+        allowedTools: {
+          type: "array",
+          description:
+            "Optional subset of read-only tools to expose. Only read_file and glob_paths are supported.",
+          items: {
+            type: "string",
+            enum: ["read_file", "glob_paths"],
+          },
+        },
+        maxSteps: {
+          type: "integer",
+          minimum: 1,
+          maximum: 4,
+          description: "Optional child step limit. Values above 4 are capped.",
+        },
+        metadata: {
+          type: "object",
+          description: "Optional structured metadata for the child run.",
+        },
+      },
+      required: ["goal", "role", "prompt"],
+    },
+    policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read"],
+      idempotency: "conditional",
+    },
+    isReplaySafe: false,
+    async execute(args: unknown): Promise<unknown> {
+      const parent = input.getParent();
+      if (!parent) {
+        throw new Error(
+          'Tool "spawn_agent" was invoked but no parent RunHandle is available.',
+        );
+      }
+      if (typeof parent.record.metadata?.parentRunId === "string") {
+        throw new Error(
+          'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
+        );
+      }
+
+      const parsed = parseDynamicSpawnAgentArgs(args);
+      const supportedTools = new Set(["read_file", "glob_paths"]);
+      const requestedTools = parsed.allowedTools ?? ["read_file", "glob_paths"];
+      const availableTools = new Map(
+        input.childTools.map((tool) => [tool.name, tool]),
+      );
+      const invalidTools = requestedTools.filter(
+        (name) => !supportedTools.has(name) || !availableTools.has(name),
+      );
+      if (invalidTools.length > 0) {
+        throw new Error(
+          `spawn_agent only supports enabled read-only child tools: ${invalidTools.join(
+            ", ",
+          )}`,
+        );
+      }
+      const childTools = requestedTools
+        .map((name) => availableTools.get(name))
+        .filter((tool): tool is ToolDefinition => tool !== undefined);
+      if (childTools.length === 0) {
+        throw new Error(
+          "spawn_agent requires at least one enabled child tool.",
+        );
+      }
+
+      const agentId = `dynamic_${sanitizeToolSegment(parsed.role)}`;
+      const profile: AgentProfile = {
+        id: agentId,
+        name: parsed.role,
+        mode: "child",
+        allowedTools: childTools.map((tool) => tool.name),
+        maxSteps: parsed.maxSteps,
+        experimental: {
+          mode: "child",
+          prompt: parsed.prompt,
+        },
+        metadata: {
+          dynamic: true,
+        },
+      };
+      const spawned = spawnSubAgent({
+        parent,
+        goal: parsed.goal,
+        model: input.model,
+        tools: childTools,
+        childAgentProfile: profile,
+        maxSteps: parsed.maxSteps,
+        metadata: {
+          ...(parsed.metadata ?? {}),
+          dynamic: true,
+          agentId,
+          agentProfileId: agentId,
+          agentName: parsed.role,
+          allowedTools: childTools.map((tool) => tool.name),
+        },
+      });
+      const result = await spawned.run.start();
+      const usage = spawned.run.usage();
+      const output = {
+        childRunId: spawned.childRunId,
+        spanId: spawned.spanId,
+        agentId,
+        role: parsed.role,
+        signal: result.signal,
+        stopReason: result.stopReason,
+        message: result.message,
+        usage,
+        promotionHint: {
+          action: "manage_agent.create",
+          reason:
+            "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
+          suggestedProfile: {
+            id: sanitizeToolSegment(parsed.role),
+            name: parsed.role,
+            mode: "child",
+            prompt: parsed.prompt,
+            allowedTools: childTools.map((tool) => tool.name),
+            maxSteps: parsed.maxSteps,
+            delegateToolName: `delegate_${sanitizeToolSegment(parsed.role)}`,
+          },
+        },
+      };
+      if (result.signal !== "completed") {
+        throw new Error(
+          `spawn_agent child run did not complete: ${JSON.stringify(output)}`,
+        );
+      }
+      return output;
+    },
+  });
+}
+
+function parseDynamicSpawnAgentArgs(args: unknown): {
+  goal: string;
+  role: string;
+  prompt: string;
+  allowedTools?: string[];
+  maxSteps: number;
+  metadata?: Record<string, unknown>;
+} {
+  if (!args || typeof args !== "object") {
+    throw new Error("spawn_agent expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const goal = stringField(record, "goal");
+  const role = stringField(record, "role");
+  const prompt = stringField(record, "prompt");
+  const allowedTools = Array.isArray(record.allowedTools)
+    ? record.allowedTools.map((value) => {
+        if (typeof value !== "string" || !value.trim()) {
+          throw new Error("spawn_agent allowedTools must contain strings.");
+        }
+        return value.trim();
+      })
+    : undefined;
+  if (allowedTools && new Set(allowedTools).size !== allowedTools.length) {
+    throw new Error("spawn_agent allowedTools must not contain duplicates.");
+  }
+  const maxSteps =
+    record.maxSteps === undefined ? 4 : integerField(record, "maxSteps");
+  if (maxSteps < 1) {
+    throw new Error("spawn_agent maxSteps must be at least 1.");
+  }
+  const metadata =
+    record.metadata === undefined ? undefined : objectField(record, "metadata");
+  return {
+    goal,
+    role,
+    prompt,
+    allowedTools,
+    maxSteps: Math.min(maxSteps, 4),
+    metadata,
+  };
+}
+
+function stringField(record: Record<string, unknown>, field: string): string {
+  const value = record[field];
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`spawn_agent ${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function integerField(record: Record<string, unknown>, field: string): number {
+  const value = record[field];
+  if (!Number.isInteger(value)) {
+    throw new Error(`spawn_agent ${field} must be an integer.`);
+  }
+  return value as number;
+}
+
+function objectField(
+  record: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> {
+  const value = record[field];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`spawn_agent ${field} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function sanitizeToolSegment(value: string): string {
+  const clean = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  return clean.replace(/^_+|_+$/g, "") || "agent";
+}
+
+function mergeCapabilitySnapshots(
+  configured: CapabilitySnapshot,
+  last: CapabilitySnapshot | null,
+): CapabilitySnapshot {
+  if (!last) return configured;
+  return {
+    tools: mergeByName(configured.tools, last.tools),
+    skills: {
+      indexed: mergeByName(configured.skills.indexed, last.skills.indexed),
+      loaded: last.skills.loaded,
+    },
+    mcp: {
+      statuses: last.mcp.statuses.length
+        ? last.mcp.statuses
+        : configured.mcp.statuses,
+    },
+    agents: {
+      profiles: mergeById(configured.agents.profiles, last.agents.profiles),
+    },
+  };
+}
+
+function formatToolOrigin(origin: ToolOrigin | undefined): string | undefined {
+  if (!origin) return undefined;
+  const { kind, name } = origin;
+  return typeof name === "string" && name ? `${kind}:${name}` : kind;
+}
+
+function mergeByName<T extends { name: string }>(base: T[], next: T[]): T[] {
+  const byName = new Map<string, T>();
+  for (const entry of base) byName.set(entry.name, entry);
+  for (const entry of next) byName.set(entry.name, entry);
+  return [...byName.values()];
+}
+
+function mergeById<T extends { id: string }>(base: T[], next: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const entry of base) byId.set(entry.id, entry);
+  for (const entry of next) byId.set(entry.id, entry);
+  return [...byId.values()];
 }

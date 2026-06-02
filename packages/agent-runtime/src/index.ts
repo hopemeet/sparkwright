@@ -757,6 +757,26 @@ export interface AgentToolSummarizeInput {
   usage: UsageSnapshot;
 }
 
+export interface AgentToolResult {
+  childRunId: string;
+  spanId: string;
+  signal: RunResult["signal"];
+  stopReason: RunResult["stopReason"];
+  message?: string;
+  tokens: number;
+  costUsd: number;
+  toolCalls: number;
+  modelCalls: number;
+  /** @reserved Public delegate-tool output field consumed by parent agents and UIs. */
+  alreadyCompleted?: boolean;
+  note?: string;
+}
+
+interface AgentToolCompletedCacheEntry {
+  goal: string;
+  result: AgentToolResult;
+}
+
 export interface CreateAgentToolOptions {
   /** Tool name registered with the parent. Default: "delegate". */
   name?: string;
@@ -772,9 +792,9 @@ export interface CreateAgentToolOptions {
   ): Omit<SpawnSubAgentInput, "parent">;
   /**
    * Summarize the child's terminal state back into the parent-visible tool
-   * result. Default: a small JSON blob with id/result/usage.
+   * result. Default: a small structured object with id/result/usage.
    */
-  summarize?(input: AgentToolSummarizeInput): string;
+  summarize?(input: AgentToolSummarizeInput): unknown;
   /**
    * If true, refuse to spawn when the parent itself is a sub-agent (i.e.
    * already carries `metadata.parentRunId`). Default: false.
@@ -805,6 +825,10 @@ export function createAgentTool(
   const name = options.name ?? DEFAULT_AGENT_TOOL_NAME;
   const description = options.description ?? DEFAULT_AGENT_TOOL_DESCRIPTION;
   const summarize = options.summarize ?? defaultSummarize;
+  const successfulResultsByParent = new Map<
+    string,
+    AgentToolCompletedCacheEntry[]
+  >();
 
   return defineTool({
     name,
@@ -828,7 +852,7 @@ export function createAgentTool(
       risk: "safe",
       requiresApproval: options.requiresApproval === true,
     },
-    async execute(args: unknown, _ctx: RuntimeContext): Promise<string> {
+    async execute(args: unknown, _ctx: RuntimeContext): Promise<unknown> {
       const parent = getParent();
       if (!parent) {
         throw new Error(
@@ -844,16 +868,42 @@ export function createAgentTool(
         );
       }
       const parsed = parseAgentToolArgs(args);
+      const prior = findSimilarSuccessfulDelegation(
+        successfulResultsByParent.get(parent.record.id) ?? [],
+        parsed.goal,
+      );
+      if (prior) {
+        return {
+          ...prior.result,
+          alreadyCompleted: true,
+          note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
+        };
+      }
       const spawnOverrides = options.buildSpawnInput(parsed, parent);
       const spawned = spawnSubAgent({ ...spawnOverrides, parent });
       const result = await spawned.run.start();
       const usage = spawned.run.usage();
-      return summarize({
+      const output = summarize({
         childRunId: spawned.childRunId,
         spanId: spawned.spanId,
         result,
         usage,
       });
+      if (result.signal !== "completed") {
+        throw new AgentToolRunError(name, output, result);
+      }
+      const structured = isAgentToolResult(output)
+        ? output
+        : defaultSummarize({
+            childRunId: spawned.childRunId,
+            spanId: spawned.spanId,
+            result,
+            usage,
+          });
+      const results = successfulResultsByParent.get(parent.record.id) ?? [];
+      results.push({ goal: parsed.goal, result: structured });
+      successfulResultsByParent.set(parent.record.id, results.slice(-8));
+      return output;
     },
   });
 }
@@ -891,8 +941,8 @@ export * from "./tasks/index.js";
 export * from "./concurrency/index.js";
 export * from "./todo/index.js";
 
-function defaultSummarize(input: AgentToolSummarizeInput): string {
-  return JSON.stringify({
+function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
+  return {
     childRunId: input.childRunId,
     spanId: input.spanId,
     signal: input.result.signal,
@@ -902,5 +952,92 @@ function defaultSummarize(input: AgentToolSummarizeInput): string {
     costUsd: input.usage.costUsd,
     toolCalls: input.usage.toolCalls,
     modelCalls: input.usage.modelCalls,
-  });
+  };
+}
+
+class AgentToolRunError extends Error {
+  readonly code = "SUBAGENT_RUN_FAILED";
+  readonly metadata: Record<string, unknown>;
+
+  constructor(toolName: string, output: unknown, result: RunResult) {
+    super(
+      `AgentTool "${toolName}" child run ${result.signal}: ${result.stopReason}.`,
+    );
+    this.name = "AgentToolRunError";
+    this.metadata = {
+      toolName,
+      signal: result.signal,
+      stopReason: result.stopReason,
+      message: result.message,
+      output,
+    };
+  }
+}
+
+function isAgentToolResult(value: unknown): value is AgentToolResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { childRunId?: unknown }).childRunId === "string" &&
+    typeof (value as { spanId?: unknown }).spanId === "string" &&
+    typeof (value as { signal?: unknown }).signal === "string"
+  );
+}
+
+function findSimilarSuccessfulDelegation(
+  results: AgentToolCompletedCacheEntry[],
+  goal: string,
+): { result: AgentToolResult } | undefined {
+  for (let i = results.length - 1; i >= 0; i -= 1) {
+    const candidate = results[i];
+    if (!candidate) continue;
+    if (similarGoalScore(candidate.goal, goal) >= 0.35) {
+      return { result: candidate.result };
+    }
+  }
+  return undefined;
+}
+
+function similarGoalScore(a: string, b: string): number {
+  if (hasDirectoryListingIntent(a) && hasDirectoryListingIntent(b)) return 0.7;
+  const left = normalizeGoalForSimilarity(a);
+  const right = normalizeGoalForSimilarity(b);
+  if (left.length === 0 || right.length === 0) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.85;
+  const leftBigrams = charBigrams(left);
+  const rightBigrams = charBigrams(right);
+  if (leftBigrams.size === 0 || rightBigrams.size === 0) return 0;
+  let overlap = 0;
+  for (const item of leftBigrams) {
+    if (rightBigrams.has(item)) overlap += 1;
+  }
+  return (2 * overlap) / (leftBigrams.size + rightBigrams.size);
+}
+
+function hasDirectoryListingIntent(goal: string): boolean {
+  const normalized = goal.toLowerCase();
+  const asksToList = /列出|清单|有哪些|查看|list|show|inspect/.test(normalized);
+  const mentionsFiles =
+    /文件|目录|文件夹|条目|file|files|dir|directory|entries/.test(normalized);
+  const scopesWorkspace =
+    /当前|工作区|根目录|workspace|root|directory|cwd|\./.test(normalized);
+  return asksToList && mentionsFiles && scopesWorkspace;
+}
+
+function normalizeGoalForSimilarity(goal: string): string {
+  return goal
+    .toLowerCase()
+    .replace(/[`"'“”‘’（）()[\]{}，。；;：:、,.!?！？\s]+/g, "")
+    .replace(/\/applications\/xgw\/projects\/ai-native\/sparkwright/g, "")
+    .replace(/workspace|sparkwright|当前|目录|文件|文件夹|清单/g, "");
+}
+
+function charBigrams(value: string): Set<string> {
+  if (value.length < 2) return new Set(value ? [value] : []);
+  const out = new Set<string>();
+  for (let i = 0; i < value.length - 1; i += 1) {
+    out.add(value.slice(i, i + 2));
+  }
+  return out;
 }

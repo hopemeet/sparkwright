@@ -6,5 +6,64 @@
       "baseURL": "https://api.openai.com/v1",
       "apiKey": "replace-me"
     }
+  },
+  "capabilities": {
+    "tools": {
+      "enabled": ["read_file", "glob_paths", "append_file", "mcp_*"],
+      "disabled": ["shell"],
+      "defer": ["mcp_*"]
+    },
+    "skills": {
+      "roots": ["./skills"],
+      "includeLoaderTool": true,
+      "loadSelectedSkills": true,
+      "maxSelectedSkills": 4,
+      "resourceFileLimit": 8
+    },
+    "mcp": {
+      "servers": [
+        {
+          "type": "stdio",
+          "name": "workspace",
+          "command": "node",
+          "args": ["./tools/workspace-mcp.js"],
+          "cwd": ".",
+          "enabled": false
+        }
+      ],
+      "defaultTimeoutMs": 30000,
+      "namePrefix": "mcp",
+      "defaultPolicy": {
+        "risk": "risky",
+        "requiresApproval": true
+      }
+    },
+    "agents": {
+      "profiles": [
+        {
+          "id": "primary",
+          "name": "Primary",
+          "mode": "primary",
+          "prompt": "Coordinate the run and call delegate tools only when useful."
+        },
+        {
+          "id": "reviewer",
+          "name": "Reviewer",
+          "mode": "child",
+          "prompt": "Inspect changes for correctness, risk, and missing tests.",
+          "allowedTools": ["read_file", "glob_paths"],
+          "maxSteps": 4
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "reviewer",
+          "toolName": "delegate_reviewer",
+          "requiresApproval": true,
+          "forbidNesting": true,
+          "maxSteps": 4
+        }
+      ]
+    }
   }
 }

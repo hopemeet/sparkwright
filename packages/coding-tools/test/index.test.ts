@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -193,6 +200,52 @@ describe("coding tools", () => {
     });
   });
 
+  it("normalizes absolute glob paths inside the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+      "src/index.test.ts": "import { value } from './index.js';\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    const result = await tool.execute(
+      { patterns: [`${root}/src/**/*.ts`], exclude: ["**/*.test.ts"] },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      patterns: ["src/**/*.ts"],
+      paths: ["src/index.ts"],
+      totalPaths: 1,
+      hasMore: false,
+    });
+  });
+
+  it("normalizes an absolute discovery path inside the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+      "README.md": "# Demo\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    const result = await tool.execute(
+      { path: `${root}/src`, patterns: ["src/*.ts"] },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      patterns: ["src/*.ts"],
+      paths: ["src/index.ts"],
+      totalPaths: 1,
+      hasMore: false,
+    });
+  });
+
   it("paginates glob path results with nextOffset", async () => {
     const { root, ctx } = await createWorkspace({
       "src/a.ts": "a\n",
@@ -307,12 +360,13 @@ describe("coding tools", () => {
 });
 
 async function createWorkspace(files: Record<string, string>) {
-  const root = await mkdtemp(join(tmpdir(), "sparkwright-coding-tools-"));
+  const rawRoot = await mkdtemp(join(tmpdir(), "sparkwright-coding-tools-"));
   for (const [path, content] of Object.entries(files)) {
-    const fullPath = join(root, path);
+    const fullPath = join(rawRoot, path);
     await mkdir(join(fullPath, ".."), { recursive: true });
     await writeFile(fullPath, content, "utf8");
   }
+  const root = await realpath(rawRoot);
 
   const ctx: RuntimeContext = {
     run: {

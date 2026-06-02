@@ -53,6 +53,24 @@ Optional fields:
 
 The parser is deliberately small and dependency-free. Complex YAML features are not part of the supported surface yet.
 
+## CLI Management
+
+Use the CLI for basic workspace Skill management:
+
+```bash
+sparkwright skills list --workspace .
+sparkwright skills validate --workspace .
+sparkwright skills create code-reviewer \
+  --description "Reviews code changes for risk and missing tests." \
+  --workspace .
+```
+
+`list` and `validate` read `capabilities.skills.roots` from the resolved
+configuration. If no roots are configured, they use `<workspace>/skills`.
+`create` writes a new `<root>/<name>/SKILL.md` in the first configured root, or
+`<workspace>/skills` when none is configured. It refuses to overwrite an
+existing Skill unless `--force` is passed.
+
 ## Preparing Skills For A Run
 
 Use `prepareSkillsForRun` from `@sparkwright/skills` before calling `createRun`:

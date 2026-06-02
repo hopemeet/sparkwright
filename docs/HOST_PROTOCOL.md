@@ -286,6 +286,37 @@ the session directory; clients should treat it as read-only observability data.
 }
 ```
 
+### `capability.inspect`
+
+Return the host-authored capability snapshot known to this connection. This is
+read-only observability data for clients; it does not grant capabilities and
+does not replace run trace.
+
+The host is the source of truth. Clients should not reconstruct this response by
+scanning files or interpreting local config.
+
+**Payload**
+
+| Field       | Type   | Required | Notes                             |
+| ----------- | ------ | -------- | --------------------------------- |
+| `sessionId` | string | no       | Reserved for future scoped views. |
+
+**Response result**
+
+```json
+{
+  "tools": [{ "name": "read_file", "risk": "safe" }],
+  "skills": {
+    "indexed": [
+      { "name": "reviewer", "sourcePath": "skills/reviewer/SKILL.md" }
+    ],
+    "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }]
+  },
+  "mcp": { "statuses": [] },
+  "agents": { "profiles": [{ "id": "main", "mode": "primary" }] }
+}
+```
+
 ---
 
 ## Event kinds

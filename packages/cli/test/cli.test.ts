@@ -384,6 +384,290 @@ describe("runCli", () => {
     expect(second.stdoutText()).toContain("already exists");
   });
 
+  it("lists tool config without creating a user config", async () => {
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const output = createOutputCapture();
+
+    const result = await runCli(["tools", "list", "--format", "text"], {
+      io: { stdout: output.stdout, stderr: output.stderr },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      join(xdg, "sparkwright", "config.json"),
+    );
+    expect(output.stdoutText()).toContain("enabled: (all)");
+    expect(output.stdoutText()).toContain("disabled: (none)");
+    await expect(
+      stat(join(xdg, "sparkwright", "config.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("updates user tool config commands without dropping existing fields", async () => {
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const configPath = join(xdg, "sparkwright", "config.json");
+    await mkdir(join(xdg, "sparkwright"), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        model: "deterministic/demo",
+        capabilities: {
+          skills: { roots: ["./skills"] },
+          tools: { disabled: ["shell"] },
+        },
+      }),
+      "utf8",
+    );
+
+    for (const argv of [
+      ["tools", "enable", "read_file", "mcp_*"],
+      ["tools", "disable", "read_file"],
+      ["tools", "defer", "mcp_*"],
+    ]) {
+      const output = createOutputCapture();
+      const result = await runCli(argv, {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      });
+      expect(result.exitCode).toBe(0);
+    }
+
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+      model?: string;
+      capabilities?: {
+        skills?: { roots?: string[] };
+        tools?: {
+          enabled?: string[];
+          disabled?: string[];
+          defer?: string[];
+        };
+      };
+    };
+    expect(parsed.model).toBe("deterministic/demo");
+    expect(parsed.capabilities?.skills?.roots).toEqual(["./skills"]);
+    expect(parsed.capabilities?.tools).toEqual({
+      enabled: ["mcp_*"],
+      disabled: ["shell", "read_file"],
+      defer: ["mcp_*"],
+    });
+    if (process.platform !== "win32") {
+      const mode = (await stat(configPath)).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
+  });
+
+  it("creates, lists, and validates workspace skills", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const createOutput = createOutputCapture();
+
+    const created = await runCli(
+      [
+        "skills",
+        "create",
+        "code-reviewer",
+        "--description",
+        "Reviews code changes for risk and missing tests.",
+        "--workspace",
+        workspace,
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+    expect(createOutput.stdoutText()).toContain("code-reviewer/SKILL.md");
+
+    const skillPath = join(workspace, "skills", "code-reviewer", "SKILL.md");
+    await expect(readFile(skillPath, "utf8")).resolves.toContain(
+      "name: code-reviewer",
+    );
+
+    const listOutput = createOutputCapture();
+    const listed = await runCli(
+      ["skills", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: listOutput.stdout, stderr: listOutput.stderr },
+      },
+    );
+    expect(listed.exitCode).toBe(0);
+    expect(listOutput.stdoutText()).toContain("code-reviewer@1.0.0");
+
+    const validateOutput = createOutputCapture();
+    const validated = await runCli(
+      ["skills", "validate", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: validateOutput.stdout, stderr: validateOutput.stderr },
+      },
+    );
+    expect(validated.exitCode).toBe(0);
+    const report = JSON.parse(validateOutput.stdoutText()) as {
+      skills: Array<{ name: string }>;
+      errors: unknown[];
+    };
+    expect(report.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "code-reviewer" }),
+      ]),
+    );
+    expect(report.errors).toEqual([]);
+  });
+
+  it("reports skill validation errors", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, "skills", "bad"), { recursive: true });
+    await writeFile(
+      join(workspace, "skills", "bad", "SKILL.md"),
+      [
+        "---",
+        "name: Bad Name",
+        "description: Invalid name.",
+        "---",
+        "Broken.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["skills", "validate", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stdoutText()).toContain("errors: 1");
+    expect(output.stdoutText()).toContain("Skill name must use lowercase");
+  });
+
+  it("creates, lists, and validates workspace agents", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const createOutput = createOutputCapture();
+
+    const created = await runCli(
+      [
+        "agents",
+        "create",
+        "reviewer",
+        "--name",
+        "Reviewer",
+        "--prompt",
+        "Inspect changes for correctness and risk.",
+        "--allow",
+        "read_file",
+        "--allow",
+        "glob_paths",
+        "--max-steps",
+        "4",
+        "--delegate",
+        "delegate_reviewer",
+        "--workspace",
+        workspace,
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+    expect(createOutput.stdoutText()).toContain(
+      join(workspace, ".sparkwright", "config.json"),
+    );
+
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+      capabilities?: {
+        agents?: {
+          profiles?: Array<{
+            id: string;
+            name?: string;
+            prompt?: string;
+            allowedTools?: string[];
+            maxSteps?: number;
+          }>;
+          delegateTools?: Array<{
+            profileId: string;
+            toolName?: string;
+            requiresApproval?: boolean;
+            forbidNesting?: boolean;
+          }>;
+        };
+      };
+    };
+    expect(parsed.capabilities?.agents?.profiles).toEqual([
+      expect.objectContaining({
+        id: "reviewer",
+        name: "Reviewer",
+        prompt: "Inspect changes for correctness and risk.",
+        allowedTools: ["read_file", "glob_paths"],
+        maxSteps: 4,
+      }),
+    ]);
+    expect(parsed.capabilities?.agents?.delegateTools).toEqual([
+      {
+        profileId: "reviewer",
+        toolName: "delegate_reviewer",
+        requiresApproval: true,
+        forbidNesting: true,
+        maxSteps: 4,
+      },
+    ]);
+
+    const listOutput = createOutputCapture();
+    const listed = await runCli(
+      ["agents", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: listOutput.stdout, stderr: listOutput.stderr },
+      },
+    );
+    expect(listed.exitCode).toBe(0);
+    expect(listOutput.stdoutText()).toContain("reviewer (Reviewer)");
+    expect(listOutput.stdoutText()).toContain("delegate_reviewer -> reviewer");
+
+    const validateOutput = createOutputCapture();
+    const validated = await runCli(
+      ["agents", "validate", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: validateOutput.stdout, stderr: validateOutput.stderr },
+      },
+    );
+    expect(validated.exitCode).toBe(0);
+    const report = JSON.parse(validateOutput.stdoutText()) as {
+      errors: unknown[];
+    };
+    expect(report.errors).toEqual([]);
+  });
+
+  it("reports agent validation errors", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            profiles: [{ id: "main", mode: "primary" }],
+            delegateTools: [{ profileId: "missing", toolName: "delegate_bad" }],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["agents", "validate", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stdoutText()).toContain("errors: 1");
+    expect(output.stdoutText()).toContain(
+      "delegateTools.0.profileId: must reference an existing profile id",
+    );
+  });
+
   it("seeds the model ref from the shared config file", async () => {
     const xdg = process.env.XDG_CONFIG_HOME as string;
     await mkdir(join(xdg, "sparkwright"), { recursive: true });

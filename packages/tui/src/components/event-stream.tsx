@@ -346,6 +346,98 @@ function EventCard(props: {
       );
     }
 
+    case "skill.loaded": {
+      const name = str(p.name) || "skill";
+      const meta = rec(ev.metadata);
+      const reason = str(meta.selectionReason) || str(p.selectionReason);
+      return (
+        <Box paddingX={1} marginTop={1}>
+          <Text color={theme.accent}>skill </Text>
+          <Text bold>{name}</Text>
+          <Text color={theme.muted}> loaded</Text>
+          {reason ? <Text color={theme.muted}> · {reason}</Text> : null}
+        </Box>
+      );
+    }
+
+    case "mcp.server.prepared": {
+      const name = str(p.name) || str(p.serverName) || "mcp";
+      const status = str(p.status) || "prepared";
+      const toolCount =
+        typeof p.toolCount === "number"
+          ? p.toolCount
+          : Array.isArray(p.toolNames)
+            ? p.toolNames.length
+            : undefined;
+      return (
+        <Box paddingX={1} marginTop={1}>
+          <Text color={theme.accent}>mcp </Text>
+          <Text bold>{name}</Text>
+          <Text color={theme.muted}> {status}</Text>
+          {toolCount !== undefined ? (
+            <Text color={theme.muted}>
+              {" "}
+              · {toolCount} tool{toolCount === 1 ? "" : "s"}
+            </Text>
+          ) : null}
+        </Box>
+      );
+    }
+
+    case "agent.profile.derived": {
+      const parent = str(p.parentAgentId);
+      const child = str(p.childAgentId) || str(p.agentId) || "agent";
+      const count =
+        typeof p.effectiveToolCount === "number"
+          ? p.effectiveToolCount
+          : undefined;
+      return (
+        <Box paddingX={1} marginTop={1}>
+          <Text color={theme.accent2}>agent </Text>
+          {parent ? (
+            <>
+              <Text>{parent}</Text>
+              <Text color={theme.muted}> → </Text>
+            </>
+          ) : null}
+          <Text bold>{child}</Text>
+          <Text color={theme.muted}> profile</Text>
+          {count !== undefined ? (
+            <Text color={theme.muted}>
+              {" "}
+              · {count} tool{count === 1 ? "" : "s"}
+            </Text>
+          ) : null}
+        </Box>
+      );
+    }
+
+    case "subagent.requested":
+    case "subagent.started":
+    case "subagent.completed":
+    case "subagent.failed": {
+      const phase = ev.type.slice("subagent.".length);
+      const goal = str(p.goal);
+      const meta = rec(ev.metadata);
+      const name =
+        str(meta.agentName) ||
+        str(p.agentName) ||
+        str(meta.agentProfileId) ||
+        str(p.childRunId) ||
+        "subagent";
+      const reason = str(p.reason) || str(p.stopReason);
+      const color = phase === "failed" ? theme.error : theme.accent2;
+      return (
+        <Box paddingX={1} marginTop={phase === "requested" ? 1 : 0}>
+          <Text color={color}>subagent </Text>
+          <Text bold>{name}</Text>
+          <Text color={theme.muted}> {phase}</Text>
+          {goal ? <Text color={theme.muted}> · {goal}</Text> : null}
+          {reason ? <Text color={theme.muted}> · {reason}</Text> : null}
+        </Box>
+      );
+    }
+
     case "run.completed": {
       // `final_answer` is the normal happy path — the assistant card above
       // already ended the turn, so show only a subtle separator. Surface the
@@ -389,6 +481,7 @@ function EventCard(props: {
     case "context.compaction.started":
     case "context.compaction.completed":
     case "context.compaction.failed":
+    case "skill.indexed":
     case "prompt.built":
     case "model.turn.started":
     case "model.turn.completed":

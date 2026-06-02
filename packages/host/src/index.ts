@@ -15,6 +15,7 @@ export { installCrashLog } from "./crash-log.js";
 export { runHostMain } from "./main.js";
 export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
+export { applyToolConfig } from "./tools.js";
 export {
   loadHostConfig,
   configResolutionOrder,
@@ -34,6 +35,9 @@ export type {
   SharedConfigSourceMap,
   SharedConfigError,
   LoadedSharedConfig,
+  CapabilityConfig,
+  CapabilityToolsConfig,
+  CapabilitySkillsConfig,
   ProviderConfig,
   ProviderModelConfig,
   ModelCost,

@@ -127,7 +127,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 
 - **Entry point**: `packages/skills/` (extension package, not core)
 - **Interface to implement**: skill manifest matching `schemas/skill-manifest.schema.json`; adapter normalizes manifest into `ContextItem[]` + `ToolDefinition[]`
-- **Must read**: `docs/SKILLS.md`, `docs/SKILL_MCP_AGENT_CAPABILITY_MODEL.md`, `docs/EXTENSION_INTERFACES.md` (Skill Extensions)
+- **Must read**: `docs/SKILLS.md`, `docs/SKILL_MCP_AGENT_CAPABILITY_MODEL.md`, `docs/CAPABILITY_HOST_TUI_PLAN.md`, `docs/EXTENSION_INTERFACES.md` (Skill Extensions)
 - **Must update on change**: `schemas/skill-manifest.schema.json` if the manifest shape grows; trace should carry skill `name` + `contentHash`
 - **Wire in via**: `prepareSkillsForRun({ skillRoots })` then `createRun({ context: prepared.context, tools: prepared.tools })`
 - **Notes**: Skill scripts must enter as governed tools; reading a `SKILL.md` must not have side effects.
@@ -136,10 +136,19 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 
 - **Entry point**: `packages/mcp-adapter/`
 - **Interface to implement**: MCP client wrapper mapping tools to `ToolDefinition` and resources to `ContextItem`
-- **Must read**: `docs/EXTENSION_INTERFACES.md` (MCP Extensions), `docs/SKILL_MCP_AGENT_CAPABILITY_MODEL.md`, `schemas/mcp-server-config.schema.json`
+- **Must read**: `docs/EXTENSION_INTERFACES.md` (MCP Extensions), `docs/SKILL_MCP_AGENT_CAPABILITY_MODEL.md`, `docs/CAPABILITY_HOST_TUI_PLAN.md`, `schemas/mcp-server-config.schema.json`
 - **Must update on change**: `schemas/mcp-server-config.schema.json` for config-shape changes; carry `mcp:<server>` origin in tool/context metadata
 - **Wire in via**: register adapter output through `createRun({ tools, context })`
 - **Notes**: Core must not depend on MCP protocol details. Connection lifecycle and protocol translation live in the adapter.
+
+### Task: Productize host/TUI capability runtime
+
+- **Entry point**: `packages/host/src/runtime.ts` for run assembly, `packages/host/src/config.ts` for config loading, `packages/tui/src/state/run-controller.ts` and `packages/tui/src/state/event-store.ts` for TUI projection
+- **Interface to implement**: host-owned capability assembly from config into `ContextItem[]`, `ToolDefinition[]`, policy, run metadata, and extension events; optional protocol request for capability inspection
+- **Must read**: `docs/CAPABILITY_HOST_TUI_PLAN.md`, `docs/CAPABILITY_DESIGN_GUIDE.md`, `docs/SKILL_MCP_AGENT_CAPABILITY_MODEL.md`, `docs/HOST_PROTOCOL.md`
+- **Must update on change**: `schemas/config.schema.json` for config shape; `schemas/host-message.schema.json` and `packages/protocol/src/index.ts` if adding capability inspection RPC; TUI tests for capability projections and panels
+- **Wire in via**: host prepares Skills/MCP/agents before `createRun()`, flushes buffered extension events onto `run.events`, and exposes host-authored snapshots to the TUI
+- **Notes**: The TUI must not load Skills, discover MCP servers, or interpret agent profiles as runtime authority. It may inspect host facts and provide light controls only after those controls are backed by config, policy, and trace.
 
 ### Task: Implement a compaction strategy
 
