@@ -1352,7 +1352,7 @@ export class SparkwrightRun implements RunHandle {
       goal: this.record.goal,
       events: this.events.all(),
       priorContext,
-      tools: this.tools.listDescriptors(),
+      tools: await this.tools.listModelDescriptors(),
       model: this.activeModel().contextHints,
       budget: this.contextBudget,
     });
@@ -1382,7 +1382,7 @@ export class SparkwrightRun implements RunHandle {
     const prompt = await this.promptBuilder.build({
       run: this.record,
       step: state.step,
-      tools: this.tools.listDescriptors(),
+      tools: await this.tools.listModelDescriptors(),
       context: items,
     });
     const cacheBlocks = compilePromptCacheBlocks(prompt);
@@ -1430,7 +1430,7 @@ export class SparkwrightRun implements RunHandle {
       run: this.record,
       context: contextItems,
       prompt,
-      tools: this.tools.listDescriptors(),
+      tools: await this.tools.listModelDescriptors(),
       events: this.events.all(),
       step: state.step,
       abortSignal: this.abortController.signal,

@@ -88,6 +88,7 @@ export type {
   ToolAuditPolicy,
   ToolCostEstimate,
   ToolInterruptBehavior,
+  ToolAvailableProbe,
   ToolResultSizePolicy,
   ToolProgressUpdate,
   ToolOrigin,
@@ -95,6 +96,7 @@ export type {
   ToolInputSchema,
   ToolDescriptor,
   ToolDefinition,
+  ToolRegistryOptions,
 } from "./tools.js";
 export {
   defineTool,
