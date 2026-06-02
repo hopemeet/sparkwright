@@ -1,8 +1,9 @@
 # Automation And Background Tasks
 
 Sparkwright distinguishes foreground tool calls, background tasks, and scheduled
-automation. The first two have runtime primitives today. Scheduling is a host
-responsibility until the contract is proven.
+automation. Foreground calls and background tasks are runtime primitives.
+Scheduled jobs are implemented through `@sparkwright/cron` and host/CLI wiring,
+while the core run loop remains focused on governed runs.
 
 ## Foreground Tool Calls
 
@@ -48,8 +49,26 @@ completed or failed background task without busy polling.
 
 ## Scheduled Automation
 
-Sparkwright does not currently ship a cron scheduler as a core runtime feature.
-That is intentional. Scheduling should be owned by the host because hosts know:
+SparkWright ships `@sparkwright/cron` for scheduled jobs. Jobs are stored in a
+cron store, can be managed through the CLI, and run in fresh sessions. The cron
+tool is disabled inside scheduled runs so a scheduled job does not recursively
+create or run more scheduled jobs from inside its own agent session.
+
+Common CLI commands:
+
+```bash
+npm exec sparkwright -- cron create --schedule "every 1h" --prompt "task" [--name name] [--skill name] [--repeat n|forever]
+npm exec sparkwright -- cron list
+npm exec sparkwright -- cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text]
+npm exec sparkwright -- cron pause <job-id-or-name>
+npm exec sparkwright -- cron resume <job-id-or-name>
+npm exec sparkwright -- cron remove <job-id-or-name>
+npm exec sparkwright -- cron run <job-id-or-name> [--model provider/model] [--yes]
+npm exec sparkwright -- cron tick [--model provider/model] [--yes]
+```
+
+The core run loop still does not own scheduler wakeups. Scheduling remains
+host-owned because hosts know:
 
 - identity and authorization
 - deployment environment
@@ -58,7 +77,7 @@ That is intentional. Scheduling should be owned by the host because hosts know:
 - notification surface
 - whether a task should start a new run or resume an existing session
 
-A good scheduler integration should start a normal governed run:
+A good scheduler integration starts a normal governed run:
 
 ```txt
 cron / host scheduler
@@ -90,10 +109,10 @@ Implemented today:
 - task manager primitives
 - in-memory and file-backed task state patterns
 - notification sources for injecting terminal task events into later turns
+- cron store, schedule parsing, runner, scheduler helpers, and CLI commands
 
 Not implemented as a built-in core feature:
 
-- cron parser
 - durable schedule registry
 - recurring wakeup service
 - hosted retry orchestration

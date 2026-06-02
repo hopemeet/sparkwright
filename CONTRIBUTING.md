@@ -71,6 +71,15 @@ When changing core concepts, update the relevant docs:
 
 Significant changes should also be reflected in `CHANGELOG.md`.
 
+## Agent Skill Maintenance
+
+SparkWright ships agent-facing operational guidance in
+`skills/sparkwright-manual`. When changing user-visible commands, TUI behavior,
+config fields, provider/model behavior, tools, Skills, MCP, agent profiles,
+delegate tools, permission/policy semantics, trace/session behavior, cron,
+background tasks, or contributor workflow, update that skill or its references
+in the same change.
+
 ## Scope Control
 
 Keep contributions small and well-scoped. Prefer a working, reviewable slice over a broad refactor. New abstractions should be justified by at least two concrete in-tree call sites.
