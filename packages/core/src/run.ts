@@ -404,6 +404,15 @@ export interface RunHandle {
   /** Current usage snapshot (tokens / cost / wall time / per-tool / per-model). */
   usage(): ReturnType<UsageTracker["snapshot"]>;
   /**
+   * The run's live {@link UsageTracker}. Exposed so an orchestrator spawning a
+   * sub-agent can pass it as `parentUsageTracker`, folding the child's
+   * tool/model usage into this run's `usage()` snapshot (and `usage.updated`
+   * stream). Mutating it outside the rollup path is unsupported.
+   *
+   * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
+   */
+  getUsageTracker(): UsageTracker;
+  /**
    * Serializable best-effort snapshot for debugging, branch/fork, and resume.
    *
    * @reserved Public run-control helper consumed by stores and frontends.
@@ -1679,6 +1688,10 @@ export class SparkwrightRun implements RunHandle {
 
   usage() {
     return this.usageTracker.snapshot();
+  }
+
+  getUsageTracker(): UsageTracker {
+    return this.usageTracker;
   }
 
   addHook(hook: RunHook): string {
