@@ -110,9 +110,15 @@ describe("host spawn_agent wiring", () => {
           maxSteps: 3,
         },
         { run: parent.record } as never,
-      )) as { signal: string; childRunId: string };
+      )) as {
+        signal: string;
+        childRunId: string;
+        stepLimitReached?: boolean;
+      };
 
       expect(output.signal).toBe("completed");
+      // Child finished on step 2 of 3 — it had budget to spare.
+      expect(output.stepLimitReached).toBe(false);
 
       // (1) The child's own trace is persisted under its agent directory.
       const childTrace = await readFile(
@@ -142,7 +148,93 @@ describe("host spawn_agent wiring", () => {
       expect(usage.byTool.glob_paths?.calls).toBeGreaterThanOrEqual(1);
       expect(usage.modelCalls).toBeGreaterThanOrEqual(2);
     } finally {
-      await rm(root, { recursive: true, force: true });
+      // Child session-store writes can still be flushing as the run resolves;
+      // retry the cleanup rather than racing them into an ENOTEMPTY.
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
+
+  it("flags stepLimitReached when the child answers on its last allowed step", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-cap-"));
+    try {
+      const sessionId = "session_spawn_cap";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      // Child answers immediately (step 1) but maxSteps is 1, so it finishes
+      // with zero budget left: a final_answer that may have been cut short.
+      const childModel: ModelAdapter = {
+        async complete() {
+          return { message: "partial list: README.md, ... (more omitted)" };
+        },
+      };
+
+      const parent = createRun({
+        goal: "ask a child to list files under a tight budget",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        maxSteps: 1,
+        runStore: childRunStoreFactory("main"),
+      });
+
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [
+          defineTool({
+            name: "glob_paths",
+            description: "Fake glob.",
+            inputSchema: { type: "object", properties: {} },
+            async execute() {
+              return { paths: [] };
+            },
+          }),
+        ],
+        childRunStoreFactory,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "list files",
+          role: "inspector",
+          prompt: "List the files.",
+          allowedTools: ["glob_paths"],
+          maxSteps: 1,
+        },
+        { run: parent.record } as never,
+      )) as { signal: string; stopReason: string; stepLimitReached?: boolean };
+
+      expect(output.signal).toBe("completed");
+      expect(output.stopReason).toBe("final_answer");
+      expect(output.stepLimitReached).toBe(true);
+    } finally {
+      // Child session-store writes can still be flushing as the run resolves;
+      // retry the cleanup rather than racing them into an ENOTEMPTY.
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
     }
   });
 });

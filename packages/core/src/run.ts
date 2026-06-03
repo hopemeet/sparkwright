@@ -1252,7 +1252,17 @@ export class SparkwrightRun implements RunHandle {
           );
         }
 
-        return this.complete("final_answer", { message: output.message });
+        // Surface step-budget context on a natural finish. A model can answer
+        // on its *last* allowed step, which is a `final_answer` indistinguishable
+        // from a roomy finish unless we say so — callers (e.g. a parent agent
+        // summarizing a sub-agent) otherwise can't tell "done" from "ran out of
+        // room and wrapped up", and may over-trust a possibly-truncated answer.
+        return this.complete("final_answer", {
+          message: output.message,
+          stepsUsed: state.step,
+          maxSteps: this.maxSteps,
+          stepLimitReached: state.step >= this.maxSteps,
+        });
       }
 
       // --- Phase 7: tool batches ------------------------------------------

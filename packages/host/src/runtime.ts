@@ -1225,6 +1225,12 @@ export function createDynamicSpawnAgentTool(input: {
       });
       const result = await spawned.run.start();
       const usage = spawned.run.usage();
+      // A child that answered on its last allowed step may have wrapped up early
+      // under the step budget; tell the parent so it can caveat rather than
+      // present a possibly-truncated child answer as exhaustive.
+      const stepLimitReached =
+        (result.metadata as { stepLimitReached?: unknown } | undefined)
+          ?.stepLimitReached === true;
       const output = {
         childRunId: spawned.childRunId,
         spanId: spawned.spanId,
@@ -1232,6 +1238,7 @@ export function createDynamicSpawnAgentTool(input: {
         role: parsed.role,
         signal: result.signal,
         stopReason: result.stopReason,
+        stepLimitReached,
         message: result.message,
         usage,
         promotionHint: {
