@@ -4,6 +4,7 @@ description: Test skill for Sparkwright TUI. Use when the user mentions spark te
 allowed-tools: shell
 metadata:
   version: 0.1.0
+  devOnly: true
 ---
 
 # Spark Tester

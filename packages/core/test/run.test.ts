@@ -452,7 +452,19 @@ describe("SparkwrightRun", () => {
     const failed = run.events
       .all()
       .find((event) => event.type === "run.failed");
-    expect(executed).toBe(2);
+    // Only the first call executes: the second identical call (one step before
+    // the limit) is replaced by the corrective nudge, and the third trips the
+    // hard stop. See "nudges the model one step before the doom-loop stop".
+    expect(executed).toBe(1);
+    const nudge = run.events
+      .all()
+      .find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload as { error?: { code?: string } }).error?.code ===
+            "REPEATED_TOOL_CALL_SKIPPED",
+      );
+    expect(nudge).toBeDefined();
     expect(run.record.state).toBe("failed");
     expect(run.record.stopReason).toBe("tool_doom_loop");
     expect(result).toMatchObject({
@@ -516,13 +528,72 @@ describe("SparkwrightRun", () => {
     const failed = run.events
       .all()
       .find((event) => event.type === "run.failed");
-    expect(executed).toBe(2);
+    // First call executes; the second is replaced by the corrective nudge.
+    expect(executed).toBe(1);
     expect(failed?.payload).toMatchObject({
       code: "TOOL_DOOM_LOOP",
       metadata: {
         arguments: { nested: { value: "same" }, list: [1, 2, 3] },
       },
     });
+  });
+
+  it("nudges the model one step before the doom-loop stop and lets it recover", async () => {
+    let executed = 0;
+    let modelCalls = 0;
+
+    const echo = defineTool({
+      name: "echo",
+      description: "Echo text.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      execute() {
+        executed += 1;
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "repeat then recover",
+      tools: [echo],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          // First two turns repeat the identical call. The second one is one
+          // step before the limit and comes back as the corrective nudge; a
+          // resilient model then changes course and answers directly.
+          if (modelCalls <= 2) {
+            return {
+              toolCalls: [{ toolName: "echo", arguments: { text: "same" } }],
+            };
+          }
+          return { message: "done after the nudge" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    // The run completes instead of failing: the nudge replaced the redundant
+    // second execution and the model recovered before the hard stop.
+    expect(result.stopReason).not.toBe("tool_doom_loop");
+    expect(run.record.state).toBe("completed");
+    // Only the first identical call actually executed.
+    expect(executed).toBe(1);
+    // Exactly one corrective nudge was surfaced.
+    const nudges = run.events
+      .all()
+      .filter(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload as { error?: { code?: string } }).error?.code ===
+            "REPEATED_TOOL_CALL_SKIPPED",
+      );
+    expect(nudges).toHaveLength(1);
   });
 
   it("blocks denied tools before the handler runs", async () => {

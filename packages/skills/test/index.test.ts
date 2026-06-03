@@ -8,6 +8,7 @@ import {
   createSkillLoaderTool,
   createLoadedSkillContext,
   filterSkillsForAgent,
+  isDevSkill,
   listSkillResourceFiles,
   lockSkills,
   loadSkills,
@@ -155,6 +156,62 @@ Use DingTalk only when notification is requested.
       skillName: "dingtalk-notifier",
       skillVersion: "1.2.3",
     });
+  });
+
+  it("excludes devOnly skills from a run unless explicitly included", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-dev-"));
+    await mkdir(join(root, "real"));
+    await writeFile(
+      join(root, "real", "SKILL.md"),
+      `---
+name: real-skill
+description: A production skill that should always load.
+---
+Body.
+`,
+    );
+    await mkdir(join(root, "tester"));
+    await writeFile(
+      join(root, "tester", "SKILL.md"),
+      `---
+name: spark-tester
+description: Test skill. Use for skill smoke tests and verifying skills load.
+metadata:
+  devOnly: true
+---
+Body.
+`,
+    );
+
+    // loadSkills stays unfiltered so inspect_skills / CLI listing still see it.
+    const all = await loadSkills([root]);
+    expect(all.map((s) => s.name).sort()).toEqual([
+      "real-skill",
+      "spark-tester",
+    ]);
+    expect(isDevSkill(all.find((s) => s.name === "spark-tester")!)).toBe(true);
+    expect(isDevSkill(all.find((s) => s.name === "real-skill")!)).toBe(false);
+
+    // By default the run candidate set hides the devOnly skill.
+    const prepared = await prepareSkillsForRun({
+      goal: "run a spark tester skill smoke test",
+      skillRoots: [root],
+    });
+    expect(prepared.indexedSkills.map((s) => s.name)).toEqual(["real-skill"]);
+    expect(prepared.loadedSkills.map((s) => s.name)).not.toContain(
+      "spark-tester",
+    );
+
+    // Opt-in restores it (dev/test environments).
+    const withDev = await prepareSkillsForRun({
+      goal: "run a spark tester skill smoke test",
+      skillRoots: [root],
+      includeDevSkills: true,
+    });
+    expect(withDev.indexedSkills.map((s) => s.name).sort()).toEqual([
+      "real-skill",
+      "spark-tester",
+    ]);
   });
 
   it("can prepare only the skill index and a loader tool", async () => {

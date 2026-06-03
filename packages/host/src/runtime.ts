@@ -58,13 +58,25 @@ import { createModel } from "./model-factory.js";
 import {
   createAppendFileTool,
   createCronTool,
+  createAgentInspectorTool,
   createAgentManagerTool,
   createGlobPathsTool,
   applyToolConfig,
   createReadFileTool,
+  createSkillInspectorTool,
   createSkillManagerTool,
 } from "./tools.js";
 import { createHostShellTool } from "./shell.js";
+
+/**
+ * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
+ * out of run candidate sets unless `SPARKWRIGHT_DEV_SKILLS` is explicitly
+ * enabled. This stops smoke-test skills from mis-triggering in real sessions.
+ */
+function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.SPARKWRIGHT_DEV_SKILLS;
+  return value === "1" || value === "true";
+}
 
 export interface RuntimeOptions {
   /** Workspace root for all runs spawned through this runtime. */
@@ -276,6 +288,7 @@ export class HostRuntime {
           loadSelectedSkills: skillConfig.loadSelectedSkills,
           maxSelectedSkills: skillConfig.maxSelectedSkills,
           resourceFileLimit: skillConfig.resourceFileLimit,
+          includeDevSkills: devSkillsEnabled(),
           emitter: pendingExtensionEvents,
           agentId: MAIN_AGENT_ID,
         })
@@ -320,7 +333,9 @@ export class HostRuntime {
         createGlobPathsTool(workspaceRoot),
         createAppendFileTool(),
         createCronTool(),
+        createSkillInspectorTool(workspaceRoot, skillConfig?.roots),
         createSkillManagerTool(workspaceRoot, skillConfig?.roots),
+        createAgentInspectorTool(workspaceRoot),
         createAgentManagerTool(workspaceRoot),
         createHostShellTool(workspaceRoot),
         ...(preparedSkills?.tools ?? []),
@@ -531,6 +546,7 @@ export class HostRuntime {
             includeLoaderTool: skillConfig.includeLoaderTool,
             loadSelectedSkills: false,
             resourceFileLimit: skillConfig.resourceFileLimit,
+            includeDevSkills: devSkillsEnabled(),
             agentId: MAIN_AGENT_ID,
           })
         : null;
@@ -541,7 +557,9 @@ export class HostRuntime {
           createGlobPathsTool(this.opts.workspaceRoot),
           createAppendFileTool(),
           createCronTool(),
+          createSkillInspectorTool(this.opts.workspaceRoot, skillConfig?.roots),
           createSkillManagerTool(this.opts.workspaceRoot, skillConfig?.roots),
+          createAgentInspectorTool(this.opts.workspaceRoot),
           createAgentManagerTool(this.opts.workspaceRoot),
           createHostShellTool(this.opts.workspaceRoot),
           ...(preparedSkills?.tools ?? []),
