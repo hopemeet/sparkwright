@@ -423,6 +423,16 @@ describe("host protocol", () => {
         ).toBe(true);
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "inspect_skills",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "inspect_agents",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
             (tool) => tool.name === "shell",
           ),
         ).toBe(false);

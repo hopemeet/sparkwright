@@ -783,6 +783,15 @@ export interface AgentToolResult {
   costUsd: number;
   toolCalls: number;
   modelCalls: number;
+  /**
+   * True when the child answered on its last allowed step (`stepLimitReached`
+   * in the run result metadata). A `final_answer` produced under an exhausted
+   * step budget may be truncated; the parent should caveat rather than treat it
+   * as exhaustive.
+   *
+   * @reserved Public delegate-tool output field consumed by parent agents and UIs.
+   */
+  stepLimitReached?: boolean;
   /** @reserved Public delegate-tool output field consumed by parent agents and UIs. */
   alreadyCompleted?: boolean;
   note?: string;
@@ -958,6 +967,9 @@ export * from "./concurrency/index.js";
 export * from "./todo/index.js";
 
 function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
+  const stepLimitReached =
+    (input.result.metadata as { stepLimitReached?: unknown } | undefined)
+      ?.stepLimitReached === true;
   return {
     childRunId: input.childRunId,
     spanId: input.spanId,
@@ -968,6 +980,7 @@ function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
     costUsd: input.usage.costUsd,
     toolCalls: input.usage.toolCalls,
     modelCalls: input.usage.modelCalls,
+    ...(stepLimitReached ? { stepLimitReached: true } : {}),
   };
 }
 

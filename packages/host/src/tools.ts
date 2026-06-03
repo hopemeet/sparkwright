@@ -222,6 +222,40 @@ export function createCronTool() {
   return createCronToolBase({ rootDir: defaultCronRoot(process.env) });
 }
 
+export function createSkillInspectorTool(
+  workspaceRoot: string,
+  configuredRoots: string[] | undefined,
+) {
+  return defineTool({
+    name: "inspect_skills",
+    description:
+      "List or validate workspace skills. Read-only: never writes. Use this " +
+      "to discover skills or check skill health; use manage_skill to create one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "validate"] },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read"],
+      idempotency: "idempotent",
+    },
+    isReplaySafe: true,
+    async execute(args: unknown) {
+      const action = parseInspectAction(args, "inspect_skills");
+      const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
+      return loadSkillManagerReport(roots, {
+        includeMissingRoots: action === "validate",
+      });
+    },
+  });
+}
+
 export function createSkillManagerTool(
   workspaceRoot: string,
   configuredRoots: string[] | undefined,
@@ -229,11 +263,12 @@ export function createSkillManagerTool(
   return defineTool({
     name: "manage_skill",
     description:
-      "List, validate, or create workspace skills. Create writes a SKILL.md under an existing or default skill root.",
+      "Create a workspace skill. Writes a SKILL.md under an existing or " +
+      "default skill root. Use inspect_skills to list or validate skills.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "validate", "create"] },
+        action: { type: "string", enum: ["create"] },
         name: {
           type: "string",
           description:
@@ -266,12 +301,6 @@ export function createSkillManagerTool(
     async execute(args: unknown) {
       const input = parseSkillManagerArgs(args);
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
-      if (input.action === "list" || input.action === "validate") {
-        return loadSkillManagerReport(roots, {
-          includeMissingRoots: input.action === "validate",
-        });
-      }
-
       if (!input.name || !isSkillName(input.name)) {
         throw new Error(
           "manage_skill create requires a valid lowercase skill name.",
@@ -306,17 +335,48 @@ export function createSkillManagerTool(
   });
 }
 
+export function createAgentInspectorTool(workspaceRoot: string) {
+  return defineTool({
+    name: "inspect_agents",
+    description:
+      "List or validate project agent profiles in .sparkwright/config.json. " +
+      "Read-only: never writes. Use manage_agent to create or remove a profile.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "validate"] },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read"],
+      idempotency: "idempotent",
+    },
+    isReplaySafe: true,
+    async execute(args: unknown) {
+      const action = parseInspectAction(args, "inspect_agents");
+      return loadAgentReport(workspaceRoot, action);
+    },
+  });
+}
+
 export function createAgentManagerTool(workspaceRoot: string) {
   return defineTool({
     name: "manage_agent",
     description:
-      "List, validate, create, or remove project agent profiles in .sparkwright/config.json.",
+      "Create or remove project agent profiles in .sparkwright/config.json. " +
+      "To create, pass action='create' with a unique id and a prompt (the " +
+      "system prompt used when the profile is spawned). Use inspect_agents to " +
+      "list or validate profiles.",
     inputSchema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list", "validate", "create", "remove"],
+          enum: ["create", "remove"],
         },
         id: {
           type: "string",
@@ -362,16 +422,6 @@ export function createAgentManagerTool(workspaceRoot: string) {
       const input = parseAgentManagerArgs(args);
       const config = await readProjectConfig(workspaceRoot);
       const agents = getAgentConfigShape(config.data);
-
-      if (input.action === "list" || input.action === "validate") {
-        return {
-          action: input.action,
-          path: config.path,
-          exists: config.exists,
-          agents,
-          errors: validateAgentConfigShape(agents),
-        };
-      }
 
       if (!input.id || !isAgentId(input.id)) {
         throw new Error("manage_agent requires a valid agent id.");
@@ -582,8 +632,27 @@ async function loadSkillManagerReport(
   };
 }
 
+/**
+ * Shared parser for the read-only inspector tools (`inspect_skills`,
+ * `inspect_agents`). They only accept `list`/`validate`, which carry no write
+ * side effects, so policy can allow them without an approval prompt.
+ */
+function parseInspectAction(
+  args: unknown,
+  toolName: string,
+): "list" | "validate" {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error(`${toolName} expects an object argument.`);
+  }
+  const action = (args as Record<string, unknown>).action;
+  if (action !== "list" && action !== "validate") {
+    throw new Error(`${toolName} action must be list or validate.`);
+  }
+  return action;
+}
+
 function parseSkillManagerArgs(args: unknown): {
-  action: "list" | "validate" | "create";
+  action: "create";
   name?: string;
   description?: string;
   root?: string;
@@ -594,8 +663,8 @@ function parseSkillManagerArgs(args: unknown): {
   }
   const record = args as Record<string, unknown>;
   const action = record.action;
-  if (action !== "list" && action !== "validate" && action !== "create") {
-    throw new Error("manage_skill action must be list, validate, or create.");
+  if (action !== "create") {
+    throw new Error("manage_skill action must be create.");
   }
   return {
     action,
@@ -772,8 +841,24 @@ function validateAgentConfigShape(
   return errors;
 }
 
+/** Read-only agent profile report shared by `inspect_agents`. */
+async function loadAgentReport(
+  workspaceRoot: string,
+  action: "list" | "validate",
+) {
+  const config = await readProjectConfig(workspaceRoot);
+  const agents = getAgentConfigShape(config.data);
+  return {
+    action,
+    path: config.path,
+    exists: config.exists,
+    agents,
+    errors: validateAgentConfigShape(agents),
+  };
+}
+
 function parseAgentManagerArgs(args: unknown): {
-  action: "list" | "validate" | "create" | "remove";
+  action: "create" | "remove";
   id?: string;
   name?: string;
   description?: string;
@@ -790,15 +875,8 @@ function parseAgentManagerArgs(args: unknown): {
   }
   const record = args as Record<string, unknown>;
   const action = record.action;
-  if (
-    action !== "list" &&
-    action !== "validate" &&
-    action !== "create" &&
-    action !== "remove"
-  ) {
-    throw new Error(
-      "manage_agent action must be list, validate, create, or remove.",
-    );
+  if (action !== "create" && action !== "remove") {
+    throw new Error("manage_agent action must be create or remove.");
   }
   const mode = record.mode;
   if (

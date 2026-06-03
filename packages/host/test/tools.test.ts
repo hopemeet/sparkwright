@@ -9,10 +9,12 @@ import {
   type RuntimeContext,
 } from "@sparkwright/core";
 import {
+  createAgentInspectorTool,
   createAgentManagerTool,
   applyToolConfig,
   createGlobPathsTool,
   createReadFileTool,
+  createSkillInspectorTool,
   createSkillManagerTool,
 } from "../src/tools.js";
 
@@ -103,6 +105,7 @@ describe("host tools", () => {
   it("creates and lists workspace skills", async () => {
     const ctx = await createWorkspace({});
     const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const inspector = createSkillInspectorTool(ctx.workspaceRoot, undefined);
 
     const created = await tool.execute(
       {
@@ -112,7 +115,7 @@ describe("host tools", () => {
       },
       ctx,
     );
-    const listed = await tool.execute({ action: "list" }, ctx);
+    const listed = await inspector.execute({ action: "list" }, ctx);
 
     expect(created).toMatchObject({
       action: "create",
@@ -133,6 +136,7 @@ describe("host tools", () => {
   it("creates project agent profiles and delegate tools", async () => {
     const ctx = await createWorkspace({});
     const tool = createAgentManagerTool(ctx.workspaceRoot);
+    const inspector = createAgentInspectorTool(ctx.workspaceRoot);
 
     const created = await tool.execute(
       {
@@ -147,7 +151,7 @@ describe("host tools", () => {
       },
       ctx,
     );
-    const listed = await tool.execute({ action: "list" }, ctx);
+    const listed = await inspector.execute({ action: "list" }, ctx);
 
     expect(created).toMatchObject({
       action: "create",
@@ -182,6 +186,43 @@ describe("host tools", () => {
       },
       errors: [],
     });
+  });
+
+  it("keeps inspector tools read-only and managers write-scoped", () => {
+    const skillInspector = createSkillInspectorTool("/tmp/ws", undefined);
+    const agentInspector = createAgentInspectorTool("/tmp/ws");
+    const skillManager = createSkillManagerTool("/tmp/ws", undefined);
+    const agentManager = createAgentManagerTool("/tmp/ws");
+
+    // Read-only inspectors declare no write side effect, so the governance
+    // policy allows them without an approval prompt.
+    for (const tool of [skillInspector, agentInspector]) {
+      expect(tool.governance?.sideEffects).toEqual(["read"]);
+      expect(tool.policy?.risk).toBe("safe");
+      expect(tool.isReplaySafe).toBe(true);
+    }
+
+    // Managers still carry the write side effect that triggers approval.
+    for (const tool of [skillManager, agentManager]) {
+      expect(tool.governance?.sideEffects).toContain("write");
+      expect(tool.policy?.risk).toBe("risky");
+    }
+
+    // The read-only actions are no longer accepted by the managers.
+    expect(
+      (
+        skillManager.inputSchema as {
+          properties: { action: { enum: string[] } };
+        }
+      ).properties.action.enum,
+    ).toEqual(["create"]);
+    expect(
+      (
+        agentManager.inputSchema as {
+          properties: { action: { enum: string[] } };
+        }
+      ).properties.action.enum,
+    ).toEqual(["create", "remove"]);
   });
 });
 

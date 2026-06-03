@@ -193,6 +193,20 @@ const FILE_TOOL_GUIDANCE = [
   "  workspace files (use the read/append file tools for that).",
 ].join("\n");
 
+const DELEGATION_GUIDANCE = [
+  "Reporting a sub-agent's result:",
+  "- A spawned/delegated child returns a `message` that is already its final,",
+  "  often-structured answer. When the user's request was essentially to obtain",
+  "  that result, relay it faithfully — do NOT re-summarize it into a shorter",
+  "  paraphrase that silently drops list items, rows, or paths. Reformat only;",
+  "  preserve every concrete entry the child reported.",
+  "- If the child result carries `stepLimitReached: true`, it stopped on its",
+  "  last allowed step and may be truncated — say so plainly instead of",
+  "  presenting it as exhaustive, and offer to continue with a larger budget.",
+  "- Do not spend an extra model turn rewriting a complete child answer when",
+  "  forwarding it verbatim (lightly reframed) already satisfies the request.",
+].join("\n");
+
 /**
  * Compose a `PromptBuilder` that layers the application system prompt, project
  * instruction files, and a tail env block on top of core's resident harness
@@ -228,6 +242,17 @@ export function buildAgentPromptBuilder(
       guidance: FILE_TOOL_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "append_file" || tool.name === "write_file",
+    }),
+  );
+
+  // Guidance for relaying a sub-agent's result without lossy re-summarization;
+  // appears only when a spawn/delegate tool is in the live inventory.
+  sections.push(
+    createToolGuidanceSection({
+      name: "delegation_relay",
+      guidance: DELEGATION_GUIDANCE,
+      whenTool: (tool) =>
+        tool.name === "spawn_agent" || tool.name.startsWith("delegate_"),
     }),
   );
 

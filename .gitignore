@@ -6,6 +6,9 @@ coverage/
 npm-debug.log*
 .claude/
 
+# TypeScript incremental build cache (tsc -b / "incremental": true)
+*.tsbuildinfo
+
 __pycache__/
 *.pyc
 

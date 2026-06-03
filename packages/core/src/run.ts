@@ -404,6 +404,15 @@ export interface RunHandle {
   /** Current usage snapshot (tokens / cost / wall time / per-tool / per-model). */
   usage(): ReturnType<UsageTracker["snapshot"]>;
   /**
+   * The run's live {@link UsageTracker}. Exposed so an orchestrator spawning a
+   * sub-agent can pass it as `parentUsageTracker`, folding the child's
+   * tool/model usage into this run's `usage()` snapshot (and `usage.updated`
+   * stream). Mutating it outside the rollup path is unsupported.
+   *
+   * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
+   */
+  getUsageTracker(): UsageTracker;
+  /**
    * Serializable best-effort snapshot for debugging, branch/fork, and resume.
    *
    * @reserved Public run-control helper consumed by stores and frontends.
@@ -1243,7 +1252,17 @@ export class SparkwrightRun implements RunHandle {
           );
         }
 
-        return this.complete("final_answer", { message: output.message });
+        // Surface step-budget context on a natural finish. A model can answer
+        // on its *last* allowed step, which is a `final_answer` indistinguishable
+        // from a roomy finish unless we say so — callers (e.g. a parent agent
+        // summarizing a sub-agent) otherwise can't tell "done" from "ran out of
+        // room and wrapped up", and may over-trust a possibly-truncated answer.
+        return this.complete("final_answer", {
+          message: output.message,
+          stepsUsed: state.step,
+          maxSteps: this.maxSteps,
+          stepLimitReached: state.step >= this.maxSteps,
+        });
       }
 
       // --- Phase 7: tool batches ------------------------------------------
@@ -1681,6 +1700,10 @@ export class SparkwrightRun implements RunHandle {
     return this.usageTracker.snapshot();
   }
 
+  getUsageTracker(): UsageTracker {
+    return this.usageTracker;
+  }
+
   addHook(hook: RunHook): string {
     const id = hook.id ?? `hook-dyn-${++this.dynamicHookCounter}`;
     if (this.dynamicHooks.some((existing) => existing.id === id)) {
@@ -1981,9 +2004,74 @@ export class SparkwrightRun implements RunHandle {
       startType: "tool.requested",
       payload: call,
     });
+
+    // One step before the hard doom-loop stop, skip the (redundant) execution
+    // and feed back a corrective tool result instead. A repeated identical call
+    // cannot produce new information, so re-running it wastes a step; weaker
+    // models in particular loop silently because nothing tells them they are
+    // repeating. This gives the model exactly one chance to course-correct
+    // before `repeatedToolCallCount >= doomLoopRepeatLimit` ends the run above.
+    // The condition `=== limit - 1` is reached at most once per identical
+    // streak, so the nudge fires exactly once (and never on a first call, since
+    // it also requires the count to be a genuine repeat, `>= 2`).
+    if (
+      state.repeatedToolCallCount >= 2 &&
+      state.repeatedToolCallCount === this.doomLoopRepeatLimit - 1
+    ) {
+      return runWithSpan(span.frame, () =>
+        this.emitRepeatedToolCallNudge(
+          call,
+          requestedCall,
+          state,
+          batchResults,
+          span,
+        ),
+      );
+    }
+
     return runWithSpan(span.frame, () =>
       this.runToolCallInSpan(call, requestedCall, state, batchResults, span),
     );
+  }
+
+  /**
+   * Skip a repeated identical tool call and surface a corrective failed result
+   * instead of executing it. Mirrors the synthesized-failure path used by the
+   * `beforeToolCall` skip hook (close span → record usage → append result to
+   * context → after-hook → push to batch) so the model sees the feedback on its
+   * next turn. Returns `undefined` so the run continues; the hard doom-loop stop
+   * in `processToolCall` still fires if the model repeats the call again.
+   */
+  private async emitRepeatedToolCallNudge(
+    call: ReturnType<typeof createToolCall>,
+    requestedCall: RequestedToolCall,
+    state: RunLoopState,
+    batchResults: ToolResult[] | undefined,
+    span: ReturnType<typeof openSpan>,
+  ): Promise<RunResult | undefined> {
+    const nudged: ToolResult = {
+      toolCallId: call.id,
+      status: "failed",
+      error: {
+        code: "REPEATED_TOOL_CALL_SKIPPED",
+        message:
+          `Skipped: \`${requestedCall.toolName}\` was already called with ` +
+          `identical arguments and returned the same result. Repeating it ` +
+          `cannot produce new information. Choose a different action or set ` +
+          `of arguments, or stop calling tools and answer the user directly. ` +
+          `Repeating this exact call again will end the run.`,
+      },
+      artifacts: [],
+    };
+    span.close("tool.failed", nudged);
+    this.usageTracker.recordToolUsage({
+      toolName: requestedCall.toolName,
+      status: nudged.status,
+    });
+    this.appendToolResultContext(state.context, requestedCall.toolName, nudged);
+    await this.runAfterToolCallHook(state.step, requestedCall, nudged);
+    batchResults?.push(nudged);
+    return undefined;
   }
 
   /**

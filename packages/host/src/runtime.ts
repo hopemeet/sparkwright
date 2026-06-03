@@ -58,13 +58,25 @@ import { createModel } from "./model-factory.js";
 import {
   createAppendFileTool,
   createCronTool,
+  createAgentInspectorTool,
   createAgentManagerTool,
   createGlobPathsTool,
   applyToolConfig,
   createReadFileTool,
+  createSkillInspectorTool,
   createSkillManagerTool,
 } from "./tools.js";
 import { createHostShellTool } from "./shell.js";
+
+/**
+ * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
+ * out of run candidate sets unless `SPARKWRIGHT_DEV_SKILLS` is explicitly
+ * enabled. This stops smoke-test skills from mis-triggering in real sessions.
+ */
+function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.SPARKWRIGHT_DEV_SKILLS;
+  return value === "1" || value === "true";
+}
 
 export interface RuntimeOptions {
   /** Workspace root for all runs spawned through this runtime. */
@@ -276,6 +288,7 @@ export class HostRuntime {
           loadSelectedSkills: skillConfig.loadSelectedSkills,
           maxSelectedSkills: skillConfig.maxSelectedSkills,
           resourceFileLimit: skillConfig.resourceFileLimit,
+          includeDevSkills: devSkillsEnabled(),
           emitter: pendingExtensionEvents,
           agentId: MAIN_AGENT_ID,
         })
@@ -297,6 +310,22 @@ export class HostRuntime {
       pendingExtensionEvents,
     );
     const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
+    // Shared across the parent run and every spawned sub-agent so child runs
+    // persist into the SAME session (registering under `session.json.agents`)
+    // instead of vanishing, and so writes to session.json don't race.
+    const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
+    const childRunStoreFactory = (childAgentId: string) =>
+      createSessionRunStoreFactory({
+        sessionStore,
+        sessionId,
+        runStoreFactory: createSessionFileRunStoreFactory({
+          sessionRootDir,
+          sessionId,
+          agentId: childAgentId,
+          traceLevel: "standard",
+        }),
+        metadata: { source: "host" },
+      });
     const baseChildTools = [
       createReadFileTool(),
       createGlobPathsTool(workspaceRoot),
@@ -308,11 +337,13 @@ export class HostRuntime {
       derivedAgents,
       model: model.adapter,
       childTools,
+      childRunStoreFactory,
     });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
       model: model.adapter,
       childTools,
+      childRunStoreFactory,
     });
     const tools = applyToolConfig(
       [
@@ -320,7 +351,9 @@ export class HostRuntime {
         createGlobPathsTool(workspaceRoot),
         createAppendFileTool(),
         createCronTool(),
+        createSkillInspectorTool(workspaceRoot, skillConfig?.roots),
         createSkillManagerTool(workspaceRoot, skillConfig?.roots),
+        createAgentInspectorTool(workspaceRoot),
         createAgentManagerTool(workspaceRoot),
         createHostShellTool(workspaceRoot),
         ...(preparedSkills?.tools ?? []),
@@ -352,7 +385,7 @@ export class HostRuntime {
       tools,
       model: model.adapter,
       runStore: createSessionRunStoreFactory({
-        sessionStore: new FileSessionStore({ rootDir: sessionRootDir }),
+        sessionStore,
         sessionId,
         runStoreFactory: createSessionFileRunStoreFactory({
           sessionRootDir,
@@ -531,6 +564,7 @@ export class HostRuntime {
             includeLoaderTool: skillConfig.includeLoaderTool,
             loadSelectedSkills: false,
             resourceFileLimit: skillConfig.resourceFileLimit,
+            includeDevSkills: devSkillsEnabled(),
             agentId: MAIN_AGENT_ID,
           })
         : null;
@@ -541,7 +575,9 @@ export class HostRuntime {
           createGlobPathsTool(this.opts.workspaceRoot),
           createAppendFileTool(),
           createCronTool(),
+          createSkillInspectorTool(this.opts.workspaceRoot, skillConfig?.roots),
           createSkillManagerTool(this.opts.workspaceRoot, skillConfig?.roots),
+          createAgentInspectorTool(this.opts.workspaceRoot),
           createAgentManagerTool(this.opts.workspaceRoot),
           createHostShellTool(this.opts.workspaceRoot),
           ...(preparedSkills?.tools ?? []),
@@ -561,6 +597,9 @@ export class HostRuntime {
               createReadFileTool(),
               createGlobPathsTool(this.opts.workspaceRoot),
             ],
+            // Snapshot only describes the tool; its body never runs here
+            // (getParent returns undefined and the tool throws first).
+            childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
           }),
           createDynamicSpawnAgentTool({
             getParent: () => undefined,
@@ -576,6 +615,7 @@ export class HostRuntime {
               ],
               toolConfig,
             ),
+            childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
           }),
         ],
         toolConfig,
@@ -973,12 +1013,30 @@ function deriveConfiguredAgents(
     );
 }
 
+/**
+ * Placeholder `childRunStoreFactory` for the capability-snapshot path, where
+ * tools are only described (never invoked). If a snapshot-built spawn tool were
+ * ever executed it would throw on missing parent first; this guards the
+ * unreachable case loudly rather than silently dropping a child trace.
+ */
+const snapshotOnlyChildRunStoreFactory = (): ReturnType<
+  typeof createSessionRunStoreFactory
+> => {
+  throw new Error(
+    "spawn tool built for a capability snapshot cannot be executed.",
+  );
+};
+
 function createConfiguredDelegateTools(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   delegates: CapabilityDelegateToolConfig[];
   derivedAgents: DerivedChildAgentProfile[];
   model: ModelAdapter;
   childTools: ToolDefinition[];
+  /** Builds a session-scoped run store for the child, keyed by its agent id. */
+  childRunStoreFactory: (
+    childAgentId: string,
+  ) => ReturnType<typeof createSessionRunStoreFactory>;
 }): ToolDefinition[] {
   const byProfile = new Map(
     input.derivedAgents.map((derived) => [
@@ -1001,13 +1059,17 @@ function createConfiguredDelegateTools(input: {
           `Delegate a bounded task to ${profile.name ?? profile.id}.`,
         requiresApproval: delegate.requiresApproval,
         forbidNesting: delegate.forbidNesting ?? true,
-        buildSpawnInput: (args) => ({
+        buildSpawnInput: (args, parent) => ({
           goal: args.goal,
           model: input.model,
           tools: input.childTools,
           childAgentProfile: profile,
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
+          // Persist the child's trace under its own agent dir + register it in
+          // session.json, and roll its usage up into the parent run's tracker.
+          runStore: input.childRunStoreFactory(profile.id),
+          parentUsageTracker: parent.getUsageTracker(),
           metadata: {
             ...(args.metadata ?? {}),
             agentId: profile.id,
@@ -1021,10 +1083,19 @@ function createConfiguredDelegateTools(input: {
   return tools;
 }
 
-function createDynamicSpawnAgentTool(input: {
+/**
+ * @internal Exported for host regression tests that assert the spawn path
+ * threads `runStore` + `parentUsageTracker` into the child run. Not part of the
+ * public host API.
+ */
+export function createDynamicSpawnAgentTool(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   model: ModelAdapter;
   childTools: ToolDefinition[];
+  /** Builds a session-scoped run store for the child, keyed by its agent id. */
+  childRunStoreFactory: (
+    childAgentId: string,
+  ) => ReturnType<typeof createSessionRunStoreFactory>;
 }): ToolDefinition {
   return defineTool({
     name: "spawn_agent",
@@ -1135,6 +1206,14 @@ function createDynamicSpawnAgentTool(input: {
         tools: childTools,
         childAgentProfile: profile,
         maxSteps: parsed.maxSteps,
+        // Persist the child's own trace/transcript under
+        // `sessions/<id>/agents/<agentId>/` and register it in session.json,
+        // instead of letting its steps disappear once the tool returns.
+        runStore: input.childRunStoreFactory(agentId),
+        // Fold the child's tool/model usage into the parent run's tracker so
+        // session usage totals (and the live `usage.updated` stream) reflect
+        // sub-agent spend rather than under-reporting it.
+        parentUsageTracker: parent.getUsageTracker(),
         metadata: {
           ...(parsed.metadata ?? {}),
           dynamic: true,
@@ -1146,6 +1225,12 @@ function createDynamicSpawnAgentTool(input: {
       });
       const result = await spawned.run.start();
       const usage = spawned.run.usage();
+      // A child that answered on its last allowed step may have wrapped up early
+      // under the step budget; tell the parent so it can caveat rather than
+      // present a possibly-truncated child answer as exhaustive.
+      const stepLimitReached =
+        (result.metadata as { stepLimitReached?: unknown } | undefined)
+          ?.stepLimitReached === true;
       const output = {
         childRunId: spawned.childRunId,
         spanId: spawned.spanId,
@@ -1153,6 +1238,7 @@ function createDynamicSpawnAgentTool(input: {
         role: parsed.role,
         signal: result.signal,
         stopReason: result.stopReason,
+        stepLimitReached,
         message: result.message,
         usage,
         promotionHint: {

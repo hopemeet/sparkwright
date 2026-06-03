@@ -129,14 +129,20 @@ export interface PrepareSkillsForRunOptions {
   emitter?: EventEmitter;
   /** Optional agent id, attached as event metadata when emitting. */
   agentId?: string;
+  /**
+   * Include skills flagged `metadata.devOnly: true`. Off by default so test or
+   * development skills never reach a production run's candidate set. The host
+   * enables this from an opt-in env flag.
+   */
+  includeDevSkills?: boolean;
 }
 
 export async function prepareSkillsForRun(
   options: PrepareSkillsForRunOptions,
 ): Promise<PreparedSkills> {
-  const skills = filterSkillsForAgent(
-    await loadSkills(options.skillRoots),
-    options.agent,
+  const skills = excludeDevSkills(
+    filterSkillsForAgent(await loadSkills(options.skillRoots), options.agent),
+    options.includeDevSkills ?? false,
   );
   const indexedSkills = skills.map(toSkillIndexEntry);
   const loadSelectedSkills = options.loadSelectedSkills ?? true;
@@ -320,6 +326,24 @@ export function filterSkillsForAgent(
     if (allowed.length === 0) return true;
     return matchesPatternSet(skill.name, allowed);
   });
+}
+
+/**
+ * A skill flagged `metadata.devOnly: true` is a development/test fixture (for
+ * example a smoke-test skill). It must not enter a production run's candidate
+ * set, where it wastes context and can mis-trigger. `loadSkills` itself stays
+ * unfiltered so `inspect_skills`/CLI listing can still see it.
+ */
+export function isDevSkill(skill: Pick<SkillDefinition, "metadata">): boolean {
+  return skill.metadata?.devOnly === true;
+}
+
+export function excludeDevSkills(
+  skills: SkillDefinition[],
+  includeDevSkills: boolean,
+): SkillDefinition[] {
+  if (includeDevSkills) return skills;
+  return skills.filter((skill) => !isDevSkill(skill));
 }
 
 export function createSkillLockfile(

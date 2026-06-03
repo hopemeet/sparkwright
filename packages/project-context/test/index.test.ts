@@ -256,4 +256,26 @@ describe("buildAgentPromptBuilder", () => {
       "append_file",
     );
   });
+
+  it("injects delegation-relay guidance only when a spawn/delegate tool is present", async () => {
+    const builder = buildAgentPromptBuilder({
+      cwd: await tempDir(),
+      ignoreProjectInstructions: true,
+    });
+    const guidanceOf = async (tools: { name: string }[]) => {
+      const messages = await builder.build(buildInput(tools));
+      return messages.find(
+        (m) => m.metadata?.sectionName === "delegation_relay",
+      )?.content;
+    };
+
+    expect(await guidanceOf([])).toBeUndefined();
+    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
+    expect(await guidanceOf([{ name: "spawn_agent" }])).toContain(
+      "stepLimitReached",
+    );
+    expect(await guidanceOf([{ name: "delegate_inspector" }])).toContain(
+      "relay it faithfully",
+    );
+  });
 });
