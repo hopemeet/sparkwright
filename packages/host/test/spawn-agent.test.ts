@@ -14,6 +14,38 @@ import {
 import { createDynamicSpawnAgentTool } from "../src/runtime.js";
 
 /**
+ * The session run store flushes to disk asynchronously, so a trace/session file
+ * may not be fully written the instant `spawn_agent` resolves. Reading it
+ * immediately races that flush — fine on fast Linux/macOS CI, but it
+ * intermittently ENOENTs on the slower Windows runner. Poll until the file
+ * exists AND contains the marker we are about to assert on, rather than reading
+ * once and hoping the flush already landed.
+ */
+async function readFileWhenReady(
+  path: string,
+  contains: string,
+  timeoutMs = 5000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const content = await readFile(path, "utf8");
+      if (content.includes(contains)) {
+        return content;
+      }
+    } catch {
+      // File not created yet — keep waiting.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for ${path} to contain "${contains}"`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
  * Regression guard for the host spawn_agent wiring. Two bugs were observed in a
  * real TUI trace: the spawned child agent's trace was never persisted (only
  * `agents/main/` existed on disk), and the child's token/tool usage was not
@@ -121,7 +153,7 @@ describe("host spawn_agent wiring", () => {
       expect(output.stepLimitReached).toBe(false);
 
       // (1) The child's own trace is persisted under its agent directory.
-      const childTrace = await readFile(
+      const childTrace = await readFileWhenReady(
         join(
           sessionRootDir,
           sessionId,
@@ -129,7 +161,7 @@ describe("host spawn_agent wiring", () => {
           "dynamic_inspector",
           "trace.jsonl",
         ),
-        "utf8",
+        output.childRunId,
       );
       expect(childTrace.length).toBeGreaterThan(0);
       expect(childTrace).toContain(output.childRunId);
@@ -137,7 +169,10 @@ describe("host spawn_agent wiring", () => {
 
       // (2) The child agent is registered in session.json (not just "main").
       const sessionJson = JSON.parse(
-        await readFile(join(sessionRootDir, sessionId, "session.json"), "utf8"),
+        await readFileWhenReady(
+          join(sessionRootDir, sessionId, "session.json"),
+          "dynamic_inspector",
+        ),
       ) as { agents: string[] };
       expect(sessionJson.agents).toContain("dynamic_inspector");
 
