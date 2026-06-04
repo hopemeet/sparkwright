@@ -24,7 +24,7 @@ import { createDynamicSpawnAgentTool } from "../src/runtime.js";
 async function readFileWhenReady(
   path: string,
   contains: string,
-  timeoutMs = 5000,
+  timeoutMs = 12000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -193,9 +193,9 @@ describe("host spawn_agent wiring", () => {
       });
     }
     // Generous timeout: the session-store flush is async, so readFileWhenReady
-    // may poll for a beat on a loaded CI runner. The default 5s collides with
-    // that poll's own deadline; 15s gives the flush room to land.
-  }, 15000);
+    // may poll for a while on a loaded CI runner (windows-latest has been seen
+    // taking >5s). The test budget must exceed the helper's own 12s deadline.
+  }, 20000);
 
   it("flags stepLimitReached when the child answers on its last allowed step", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-cap-"));
