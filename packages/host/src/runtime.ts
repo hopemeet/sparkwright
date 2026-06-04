@@ -61,6 +61,7 @@ import {
   createAgentInspectorTool,
   createAgentManagerTool,
   createGlobPathsTool,
+  createGrepTextTool,
   applyToolConfig,
   createReadFileTool,
   createSkillInspectorTool,
@@ -329,6 +330,7 @@ export class HostRuntime {
     const baseChildTools = [
       createReadFileTool(),
       createGlobPathsTool(workspaceRoot),
+      createGrepTextTool(workspaceRoot),
     ];
     const childTools = applyToolConfig(baseChildTools, toolConfig);
     const delegateTools = createConfiguredDelegateTools({
@@ -349,6 +351,7 @@ export class HostRuntime {
       [
         createReadFileTool(),
         createGlobPathsTool(workspaceRoot),
+        createGrepTextTool(workspaceRoot),
         createAppendFileTool(),
         createCronTool(),
         createSkillInspectorTool(workspaceRoot, skillConfig?.roots),
@@ -573,6 +576,7 @@ export class HostRuntime {
         [
           createReadFileTool(),
           createGlobPathsTool(this.opts.workspaceRoot),
+          createGrepTextTool(this.opts.workspaceRoot),
           createAppendFileTool(),
           createCronTool(),
           createSkillInspectorTool(this.opts.workspaceRoot, skillConfig?.roots),
@@ -596,6 +600,7 @@ export class HostRuntime {
             childTools: [
               createReadFileTool(),
               createGlobPathsTool(this.opts.workspaceRoot),
+              createGrepTextTool(this.opts.workspaceRoot),
             ],
             // Snapshot only describes the tool; its body never runs here
             // (getParent returns undefined and the tool throws first).
@@ -612,6 +617,7 @@ export class HostRuntime {
               [
                 createReadFileTool(),
                 createGlobPathsTool(this.opts.workspaceRoot),
+                createGrepTextTool(this.opts.workspaceRoot),
               ],
               toolConfig,
             ),
@@ -1120,17 +1126,18 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Only read_file and glob_paths are supported.",
+            "Optional subset of read-only tools to expose. Supported: read_file, glob_paths, grep_text. Defaults to all three. Use grep_text to find a symbol by name (glob_paths only matches paths, not contents).",
           items: {
             type: "string",
-            enum: ["read_file", "glob_paths"],
+            enum: ["read_file", "glob_paths", "grep_text"],
           },
         },
         maxSteps: {
           type: "integer",
           minimum: 1,
-          maximum: 4,
-          description: "Optional child step limit. Values above 4 are capped.",
+          maximum: 16,
+          description:
+            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to 8 when omitted, capped at 16. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
         },
         metadata: {
           type: "object",
@@ -1160,8 +1167,12 @@ export function createDynamicSpawnAgentTool(input: {
       }
 
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set(["read_file", "glob_paths"]);
-      const requestedTools = parsed.allowedTools ?? ["read_file", "glob_paths"];
+      const supportedTools = new Set(["read_file", "glob_paths", "grep_text"]);
+      const requestedTools = parsed.allowedTools ?? [
+        "read_file",
+        "glob_paths",
+        "grep_text",
+      ];
       const availableTools = new Map(
         input.childTools.map((tool) => [tool.name, tool]),
       );
@@ -1293,7 +1304,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     throw new Error("spawn_agent allowedTools must not contain duplicates.");
   }
   const maxSteps =
-    record.maxSteps === undefined ? 4 : integerField(record, "maxSteps");
+    record.maxSteps === undefined ? 8 : integerField(record, "maxSteps");
   if (maxSteps < 1) {
     throw new Error("spawn_agent maxSteps must be at least 1.");
   }
@@ -1304,7 +1315,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     role,
     prompt,
     allowedTools,
-    maxSteps: Math.min(maxSteps, 4),
+    maxSteps: Math.min(maxSteps, 16),
     metadata,
   };
 }

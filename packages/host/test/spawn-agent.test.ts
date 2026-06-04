@@ -237,4 +237,187 @@ describe("host spawn_agent wiring", () => {
       });
     }
   });
+
+  // The parent allocates the child's step budget via `maxSteps`. It must be
+  // honored up to a ceiling (16) with a sane default (8) when omitted — a real
+  // trace showed a search child strangled by the former hard cap of 4. The
+  // clamped value is observable through the promotion hint's suggested profile.
+  it("clamps a parent-allocated maxSteps to 16 and defaults to 8", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-budget-"),
+    );
+    try {
+      const sessionId = "session_spawn_budget";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      const makeParent = () =>
+        createRun({
+          goal: "allocate a child budget",
+          model: {
+            async complete() {
+              return { message: "parent done" };
+            },
+          },
+          maxSteps: 1,
+          runStore: childRunStoreFactory("main"),
+        });
+
+      const childModel: ModelAdapter = {
+        async complete() {
+          return { message: "done" };
+        },
+      };
+      const childTools = [
+        defineTool({
+          name: "glob_paths",
+          description: "Fake glob.",
+          inputSchema: { type: "object", properties: {} },
+          async execute() {
+            return { paths: [] };
+          },
+        }),
+      ];
+
+      type Output = {
+        promotionHint: { suggestedProfile: { maxSteps: number } };
+      };
+      const allocate = async (maxSteps?: number): Promise<number> => {
+        const parent = makeParent();
+        const spawnTool = createDynamicSpawnAgentTool({
+          getParent: () => parent,
+          model: childModel,
+          childTools,
+          childRunStoreFactory,
+        });
+        const output = (await spawnTool.execute(
+          {
+            goal: "list files",
+            role: "inspector",
+            prompt: "List the files.",
+            allowedTools: ["glob_paths"],
+            ...(maxSteps === undefined ? {} : { maxSteps }),
+          },
+          { run: parent.record } as never,
+        )) as Output;
+        return output.promotionHint.suggestedProfile.maxSteps;
+      };
+
+      expect(await allocate(100)).toBe(16);
+      expect(await allocate()).toBe(8);
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
+
+  // A real trace showed a search child burn its whole step budget on filename
+  // globs and never find a *function named* frobnicate — because glob_paths
+  // only matches paths and the child had no content search. grep_text must be
+  // an allowed, executable child tool so "find symbol X" is one call.
+  it("lets a spawned child request and run grep_text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-grep-"));
+    try {
+      const sessionId = "session_spawn_grep";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      let grepCalls = 0;
+      const grepTool = defineTool({
+        name: "grep_text",
+        description: "Fake content search.",
+        inputSchema: {
+          type: "object",
+          properties: { pattern: { type: "string" } },
+        },
+        async execute() {
+          grepCalls += 1;
+          return { matches: [] };
+        },
+      });
+
+      // Child uses grep_text once, then concludes.
+      const childModel: ModelAdapter = {
+        async complete(input) {
+          const used = input.context.some((item) =>
+            item.content.includes("grep_text"),
+          );
+          return used
+            ? { message: "no symbol named frobnicate found" }
+            : {
+                toolCalls: [
+                  {
+                    toolName: "grep_text",
+                    arguments: { pattern: "frobnicate" },
+                  },
+                ],
+              };
+        },
+      };
+
+      const parent = createRun({
+        goal: "find a symbol by name",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        maxSteps: 1,
+        runStore: childRunStoreFactory("main"),
+      });
+
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [grepTool],
+        childRunStoreFactory,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "find frobnicate",
+          role: "scout",
+          prompt: "Find a function named frobnicate.",
+          allowedTools: ["grep_text"],
+        },
+        { run: parent.record } as never,
+      )) as { signal: string };
+
+      expect(output.signal).toBe("completed");
+      expect(grepCalls).toBeGreaterThanOrEqual(1);
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
 });

@@ -2,7 +2,10 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
-import { createGlobPathsTool as createGlobPathsToolBase } from "@sparkwright/coding-tools";
+import {
+  createGlobPathsTool as createGlobPathsToolBase,
+  createGrepTextTool as createGrepTextToolBase,
+} from "@sparkwright/coding-tools";
 import {
   createCronTool as createCronToolBase,
   defaultCronRoot,
@@ -146,6 +149,17 @@ export function createReadFileTool() {
 
 export function createGlobPathsTool(workspaceRoot: string) {
   return createGlobPathsToolBase({ workspaceRoot });
+}
+
+/**
+ * Built-in read-only tool: search file *contents* for a string or regex.
+ * `glob_paths` only matches paths, so finding a symbol by name (e.g. "a
+ * function named frobnicate") is impossible by globbing alone — it degenerates
+ * into reading every file. grep_text answers that in one call, and belongs in
+ * the same read-only discovery set as read_file + glob_paths.
+ */
+export function createGrepTextTool(workspaceRoot: string) {
+  return createGrepTextToolBase({ workspaceRoot });
 }
 
 /**
