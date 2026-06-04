@@ -35,7 +35,22 @@ const DEFAULT_STOP_WORDS = new Set([
   "it",
   "on",
   "in",
+  // High-frequency CJK filler bigrams. CJK is tokenized as overlapping
+  // bigrams (see defaultTokenize), so stop entries are bigrams, not chars.
+  "帮我",
+  "一下",
+  "帮忙",
+  "怎么",
+  "如何",
+  "可以",
+  "我想",
+  "请问",
 ]);
+
+// Matches a run of CJK Unified Ideographs (incl. common extensions). Used to
+// split CJK segments out for bigram tokenization, since they carry no spaces.
+const CJK_RUN = /[㐀-鿿豈-﫿]+/g;
+const LATIN_RUN = /[a-z0-9]+/g;
 
 /**
  * Options for {@link matchSkills}.
@@ -155,11 +170,29 @@ export function defaultTokenize(
   input: string,
   stopWords: ReadonlySet<string> = DEFAULT_STOP_WORDS,
 ): string[] {
-  return input
-    .toLowerCase()
-    .split(/[^a-z0-9]+/g)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 1 && !stopWords.has(token));
+  const lower = input.toLowerCase();
+  const tokens: string[] = [];
+
+  // Latin/digit runs become whole-word tokens.
+  for (const word of lower.match(LATIN_RUN) ?? []) {
+    if (word.length > 1 && !stopWords.has(word)) tokens.push(word);
+  }
+
+  // CJK runs carry no spaces, so a per-character split over-matches ("测"
+  // alone hits far too much). Emit overlapping bigrams instead; a single-char
+  // run degrades to that char so it is never silently dropped.
+  for (const run of lower.match(CJK_RUN) ?? []) {
+    if (run.length === 1) {
+      if (!stopWords.has(run)) tokens.push(run);
+      continue;
+    }
+    for (let i = 0; i < run.length - 1; i += 1) {
+      const bigram = run.slice(i, i + 2);
+      if (!stopWords.has(bigram)) tokens.push(bigram);
+    }
+  }
+
+  return tokens;
 }
 
 function makeDefaultTokenizer(

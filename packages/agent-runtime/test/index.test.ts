@@ -18,6 +18,7 @@ import {
   createUsageTracker,
   defineTool,
   FileRunStore,
+  LocalWorkspace,
   type ModelAdapter,
 } from "@sparkwright/core";
 
@@ -491,7 +492,8 @@ describe("spawnSubAgent", () => {
       },
     });
     let childCalls = 0;
-    const childModel: ModelAdapter = {
+    const childModel: ModelAdapter & { id: string } = {
+      id: "child-model",
       async complete() {
         childCalls += 1;
         if (childCalls === 1) {
@@ -523,6 +525,92 @@ describe("spawnSubAgent", () => {
     expect(snap.modelCalls).toBe(2);
     expect(snap.byTool["echo"]?.calls).toBe(1);
     expect(snap.tokens.total).toBe(22);
+    // Child spend buckets under the model that incurred it, not the child's
+    // spanId — so `byModel` stays a real per-model breakdown.
+    expect(snap.byModel["child-model"]?.totalTokens).toBe(22);
+    expect(snap.byModel["child-model"]?.calls).toBe(2);
+    expect(Object.keys(snap.byModel).some((k) => k.startsWith("spn_"))).toBe(
+      false,
+    );
+  });
+
+  it("inherits the parent's workspace so child tools can resolve it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-child-ws-"));
+    tempDirs.push(root);
+    const workspace = new LocalWorkspace(root);
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      workspace,
+      maxSteps: 1,
+    });
+
+    // A child tool that captures whether `ctx.workspace` was populated at
+    // execution time — the exact thing that was undefined before inheritance,
+    // making `read_file` throw "Workspace is not configured" in sub-agents.
+    let childCtxHadWorkspace: boolean | undefined;
+    const probe = defineTool({
+      name: "probe",
+      description: "probe",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "safe" },
+      execute(_args, ctx) {
+        childCtxHadWorkspace = ctx.workspace !== undefined;
+        return "ok";
+      },
+    });
+    let childCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childCalls += 1;
+        if (childCalls === 1) {
+          return { toolCalls: [{ toolName: "probe", arguments: {} }] };
+        }
+        return { message: "child done" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child",
+      model: childModel,
+      tools: [probe],
+      maxSteps: 3,
+    });
+    // Child inherits the parent's workspace without the caller threading it.
+    expect(spawned.run.getWorkspace()).toBe(workspace);
+    await spawned.run.start();
+    expect(childCtxHadWorkspace).toBe(true);
+  });
+
+  it("runs the child without a workspace when explicitly opted out", () => {
+    const root = "/tmp/sparkwright-optout";
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      workspace: new LocalWorkspace(root),
+      maxSteps: 1,
+    });
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child",
+      model: {
+        async complete() {
+          return { message: "child done" };
+        },
+      },
+      workspace: null,
+      maxSteps: 1,
+    });
+    expect(spawned.run.getWorkspace()).toBeUndefined();
   });
 
   it("detaches usage rollup on terminal child events", async () => {

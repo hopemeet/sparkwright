@@ -574,6 +574,34 @@ commands.register({
 await commands.dispatch("/compact aggressive");
 ```
 
+### File-authored commands and the `start_run` intent
+
+`.sparkwright/command/*.md` files become commands without code via
+[`@sparkwright/project-commands`](../packages/project-commands). A command that
+should begin a run does **not** start one itself; per
+[PROJECT_CONFIG_SURFACE.md](./PROJECT_CONFIG_SURFACE.md) Decision 3 it yields a
+front-end-agnostic intent the embedder dispatches:
+
+```ts
+interface StartRunIntent {
+  kind: "start_run";
+  prompt: string; // body with $ARGUMENTS / $1 and !`shell` already interpolated
+  model?: string; // optional per-command model override
+  subtask: boolean; // spawn a child run rather than the main run
+}
+```
+
+Embedder responsibilities:
+
+- Pass the rest-of-line to the command so `$ARGUMENTS` / `$1..$9` resolve. (The
+  TUI threads it through `onCommand(cmd, rest)` → `Command.runRaw`.)
+- Supply a **safety-gated** shell runner for `` !`shell` `` segments via
+  `createSafetyGatedShellRunner` — file-command shell rides the same
+  `evaluateShellSafety` floor as model-invoked shell; `deny`/unknown commands are
+  blocked, never executed.
+- Decide how `prompt` / `model` / `subtask` map onto its run-start path. Explicit
+  `config.json` declarations shadow same-named files (config wins).
+
 ## Sub-agents
 
 Sub-agents (one run delegating a bounded sub-task to another) are layered

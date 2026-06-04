@@ -53,6 +53,7 @@ import type {
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "./config.js";
+import { resolveAgentProfiles } from "./agent-profiles.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
 import {
@@ -285,8 +286,13 @@ export class HostRuntime {
             allowedSkills: skillConfig.allowedSkills,
             deniedSkills: skillConfig.deniedSkills,
           },
-          includeLoaderTool: skillConfig.includeLoaderTool,
-          loadSelectedSkills: skillConfig.loadSelectedSkills,
+          // Default to on-demand loading: expose the skill.load tool and let
+          // the model pull bodies it judges relevant, rather than auto-residing
+          // matcher-selected skills (which both pollutes context and double-
+          // injects when the loader tool is also on). A config can opt back into
+          // auto-resident by setting loadSelectedSkills: true.
+          includeLoaderTool: skillConfig.includeLoaderTool ?? true,
+          loadSelectedSkills: skillConfig.loadSelectedSkills ?? false,
           maxSelectedSkills: skillConfig.maxSelectedSkills,
           resourceFileLimit: skillConfig.resourceFileLimit,
           includeDevSkills: devSkillsEnabled(),
@@ -304,10 +310,16 @@ export class HostRuntime {
           agentId: MAIN_AGENT_ID,
         })
       : null;
-    const mainAgent = mainAgentProfile(agentConfig?.profiles);
+    // Fold markdown-authored agents under config profiles (config wins by id),
+    // so .sparkwright/agents/*.md and config.json describe the same agent set.
+    const resolvedProfiles = await resolveAgentProfiles(
+      workspaceRoot,
+      agentConfig?.profiles,
+    );
+    const mainAgent = mainAgentProfile(resolvedProfiles);
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
-      agentConfig?.profiles ?? [],
+      resolvedProfiles,
       pendingExtensionEvents,
     );
     const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
@@ -410,7 +422,7 @@ export class HostRuntime {
                 mcpToolNameMap: preparedMcp.toolNameMap,
               }
             : {}),
-          ...(agentConfig?.profiles?.length
+          ...(resolvedProfiles.length
             ? {
                 agentProfiles: [
                   mainAgent,
@@ -555,6 +567,10 @@ export class HostRuntime {
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
+    const resolvedProfiles = await resolveAgentProfiles(
+      this.opts.workspaceRoot,
+      agentConfig?.profiles,
+    );
     const preparedSkills =
       skillConfig?.roots?.length && skillConfig.roots.length > 0
         ? await prepareSkillsForRun({
@@ -564,7 +580,7 @@ export class HostRuntime {
               allowedSkills: skillConfig.allowedSkills,
               deniedSkills: skillConfig.deniedSkills,
             },
-            includeLoaderTool: skillConfig.includeLoaderTool,
+            includeLoaderTool: skillConfig.includeLoaderTool ?? true,
             loadSelectedSkills: false,
             resourceFileLimit: skillConfig.resourceFileLimit,
             includeDevSkills: devSkillsEnabled(),
@@ -589,8 +605,8 @@ export class HostRuntime {
             getParent: () => undefined,
             delegates: agentConfig?.delegateTools ?? [],
             derivedAgents: deriveConfiguredAgents(
-              mainAgentProfile(agentConfig?.profiles),
-              agentConfig?.profiles ?? [],
+              mainAgentProfile(resolvedProfiles),
+              resolvedProfiles,
             ),
             model: {
               async complete() {
@@ -638,10 +654,10 @@ export class HostRuntime {
       ),
       mcpToolNameMap: [],
       agentProfiles: [
-        mainAgentProfile(agentConfig?.profiles),
+        mainAgentProfile(resolvedProfiles),
         ...deriveConfiguredAgents(
-          mainAgentProfile(agentConfig?.profiles),
-          agentConfig?.profiles ?? [],
+          mainAgentProfile(resolvedProfiles),
+          resolvedProfiles,
         ).map((agent) => agent.effectiveProfile),
       ],
     });

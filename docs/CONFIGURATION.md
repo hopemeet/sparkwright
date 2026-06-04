@@ -16,6 +16,27 @@ ones:
 The `providers` map is merged by provider key. Most other fields are replaced
 wholesale by the later source.
 
+## Project Config Surface
+
+`<workspace>/.sparkwright/config.json` is meant to **travel with the
+repository**. Only runtime state under `.sparkwright/` (`sessions/`, `runs/`,
+`tui-history.jsonl`, `tui-stash.json`) is gitignored; the config file and the
+`command/` + `agents/` convention directories are committable. See
+[PROJECT_CONFIG_SURFACE.md](./PROJECT_CONFIG_SURFACE.md).
+
+Scaffold the two layers separately:
+
+```bash
+sparkwright init             # ~/.config/sparkwright/config.json (holds secrets, chmod 600)
+sparkwright init --project   # <workspace>/.sparkwright/config.json (no secrets, safe to commit)
+```
+
+Keep provider API keys in the user-level file; the project template carries
+none. The config schema permits a top-level `"$schema"` (which the loader
+ignores) so editors can offer completion and validation, but the scaffolds do
+**not** emit one yet — pointing at an unhosted schema URL would only make editors
+fail to fetch it. Add `"$schema"` yourself once the schema is published.
+
 ## Minimal Config
 
 ```json
@@ -203,7 +224,10 @@ Skill roots and MCP `cwd` values resolve from the config file that declares
 them. `allowedSkills` and `deniedSkills` filter Skill names before run context
 is assembled. `includeLoaderTool` exposes progressive loading as a governed
 tool; `loadSelectedSkills` controls whether matched Skill bodies are placed in
-resident run context.
+resident run context. The host defaults to **on-demand** loading
+(`includeLoaderTool: true`, `loadSelectedSkills: false`): only a Skill index is
+resident up front, and the model pulls bodies it judges relevant via `skill.load`.
+Set `loadSelectedSkills: true` to opt into auto-resident matched-Skill bodies.
 
 MCP servers are prepared by the host when a run starts. Disabled servers remain
 inspectable but are not connected. Use `defaultPolicy` for tools that do not

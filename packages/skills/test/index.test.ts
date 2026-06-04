@@ -14,7 +14,9 @@ import {
   loadSkills,
   parseSkill,
   prepareSkillsForRun,
+  rankIndexedSkillsByGoal,
   selectSkills,
+  type SkillIndexEntry,
 } from "../src/index.js";
 
 describe("skills", () => {
@@ -445,6 +447,54 @@ Review only the requested change.
     expect(JSON.stringify(output)).toContain(
       "Review only the requested change",
     );
+    // The model reads `content`, not the structured `resourceFiles`. List
+    // each file there as a full path so a weak model can pass it straight to
+    // a file-reading tool instead of joining it against the wrong base.
+    const loaded = output as { content: string };
+    expect(loaded.content).toContain(
+      `<file>${join(root, "reviewer", "references", "rules.md")}</file>`,
+    );
+    expect(loaded.content).not.toContain("<file>references/rules.md</file>");
+  });
+
+  it("short-circuits a repeated skill load as already_loaded", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "reviewer"), { recursive: true });
+    await writeFile(
+      join(root, "reviewer", "SKILL.md"),
+      `---
+name: code-reviewer
+description: Reviews code changes.
+---
+Review only the requested change.
+`,
+    );
+
+    const [skill] = await loadSkills([root]);
+    const tool = createSkillLoaderTool([skill!]);
+    const ctx = {
+      run: {
+        id: createRunId(),
+        goal: "review",
+        state: "running" as const,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+        metadata: {},
+      },
+    };
+
+    const first = await tool.execute({ name: "code-reviewer" }, ctx);
+    expect(first).toMatchObject({ status: "loaded" });
+
+    const second = await tool.execute({ name: "code-reviewer" }, ctx);
+    expect(second).toMatchObject({
+      status: "already_loaded",
+      name: "code-reviewer",
+    });
+    // The body is not re-sent on the repeat.
+    expect(JSON.stringify(second)).not.toContain(
+      "Review only the requested change",
+    );
   });
 
   it("lists skill resource files without SKILL.md", async () => {
@@ -514,5 +564,66 @@ Review only the requested change.
       skillVersion: "2",
       selectionReason: "Matched goal.",
     });
+  });
+});
+
+describe("rankIndexedSkillsByGoal", () => {
+  const entry = (overrides: Partial<SkillIndexEntry>): SkillIndexEntry => ({
+    name: "skill",
+    description: "",
+    sourcePath: `/skills/${overrides.name ?? "skill"}/SKILL.md`,
+    contentHash: "hash",
+    metadata: {},
+    ...overrides,
+  });
+
+  const index: SkillIndexEntry[] = [
+    entry({
+      name: "manual",
+      description: "Operational manual for SparkWright.",
+    }),
+    entry({
+      name: "login-tester",
+      description: "测试用户登录与认证流程",
+    }),
+  ];
+
+  it("orders relevant skills first and tags relevance for a CJK goal", () => {
+    const ranked = rankIndexedSkillsByGoal(index, "帮我测试登录功能");
+    expect(ranked[0]?.name).toBe("login-tester");
+    expect(ranked[0]?.relevance).toBe("relevant");
+    expect(ranked.find((s) => s.name === "manual")?.relevance).toBe("low");
+  });
+
+  it("drops nothing — every indexed skill survives ranking", () => {
+    const ranked = rankIndexedSkillsByGoal(index, "帮我测试登录功能");
+    expect(ranked.map((s) => s.name).sort()).toEqual([
+      "login-tester",
+      "manual",
+    ]);
+  });
+
+  it("tags all skills low and orders by name when the goal has no tokens", () => {
+    const ranked = rankIndexedSkillsByGoal(index, "!!! ???");
+    expect(ranked.map((s) => s.name)).toEqual(["login-tester", "manual"]);
+    expect(ranked.every((s) => s.relevance === "low")).toBe(true);
+  });
+
+  it("scores triggers so a description-only miss still ranks relevant", () => {
+    const withTriggers: SkillIndexEntry[] = [
+      entry({
+        name: "manual",
+        // Description deliberately omits the concrete nouns the user types.
+        description: "Operational manual for running SparkWright.",
+        triggers: ["trace", "session", "resume"],
+      }),
+      entry({ name: "login-tester", description: "测试用户登录与认证流程" }),
+    ];
+    const ranked = rankIndexedSkillsByGoal(
+      withTriggers,
+      "trace 文件坏了怎么修复、怎么 resume session？",
+    );
+    expect(ranked[0]?.name).toBe("manual");
+    expect(ranked[0]?.relevance).toBe("relevant");
   });
 });

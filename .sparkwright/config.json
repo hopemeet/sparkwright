@@ -1,0 +1,10 @@
+{
+  "capabilities": {
+    "skills": {
+      "roots": ["../skills"],
+      "includeLoaderTool": true,
+      "loadSelectedSkills": false,
+      "resourceFileLimit": 8
+    }
+  }
+}

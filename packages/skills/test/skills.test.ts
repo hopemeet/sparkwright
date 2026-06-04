@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  defaultTokenize,
   loadSkillsFromDirectory,
   matchSkills,
   parseSkillManifest,
@@ -164,6 +165,57 @@ describe("matchSkills", () => {
       tokenize: (input) => input.split(/\s+/),
     });
     expect(matches[0]?.matchedKeywords).toContain("FOO");
+  });
+
+  it("scores CJK queries via bigram overlap", () => {
+    const skills: SkillManifest[] = [
+      sample({
+        name: "login-tester",
+        description: "测试用户登录与认证流程",
+        triggers: ["登录", "认证"],
+        instructions: "Test login.",
+      }),
+      sample({
+        name: "doc-writer",
+        description: "撰写产品文档",
+        triggers: ["文档"],
+        instructions: "Write docs.",
+      }),
+    ];
+
+    const matches = matchSkills("帮我测试登录功能", skills);
+    expect(matches[0]?.skill.name).toBe("login-tester");
+    expect(matches[0]?.score).toBeGreaterThan(0);
+    // The unrelated doc skill shares no bigram with the query.
+    expect(matches.find((m) => m.skill.name === "doc-writer")).toBeUndefined();
+  });
+});
+
+describe("defaultTokenize", () => {
+  it("keeps Latin words and drops short/stop tokens", () => {
+    expect(defaultTokenize("please Review the DIFF")).toEqual([
+      "please",
+      "review",
+      "diff",
+    ]);
+  });
+
+  it("emits overlapping bigrams for CJK runs", () => {
+    expect(defaultTokenize("登录功能")).toEqual(["登录", "录功", "功能"]);
+  });
+
+  it("mixes Latin words and CJK bigrams in one input", () => {
+    expect(defaultTokenize("测试login")).toEqual(["login", "测试"]);
+  });
+
+  it("drops high-frequency CJK filler bigrams", () => {
+    // "帮我" is a stop bigram; "测试" survives.
+    expect(defaultTokenize("帮我测试")).not.toContain("帮我");
+    expect(defaultTokenize("帮我测试")).toContain("测试");
+  });
+
+  it("degrades a single CJK char to that char rather than dropping it", () => {
+    expect(defaultTokenize("测")).toEqual(["测"]);
   });
 });
 

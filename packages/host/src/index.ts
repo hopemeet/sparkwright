@@ -17,6 +17,12 @@ export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
 export { applyToolConfig } from "./tools.js";
 export {
+  resolveAgentProfiles,
+  discoverProjectAgentProfiles,
+  mergeAgentProfilesById,
+  parseAgentProfileFile,
+} from "./agent-profiles.js";
+export {
   loadHostConfig,
   configResolutionOrder,
   userConfigPath,
