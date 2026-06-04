@@ -192,7 +192,10 @@ describe("host spawn_agent wiring", () => {
         retryDelay: 50,
       });
     }
-  });
+    // Generous timeout: the session-store flush is async, so readFileWhenReady
+    // may poll for a beat on a loaded CI runner. The default 5s collides with
+    // that poll's own deadline; 15s gives the flush room to land.
+  }, 15000);
 
   it("flags stepLimitReached when the child answers on its last allowed step", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-cap-"));

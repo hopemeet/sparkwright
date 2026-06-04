@@ -451,9 +451,16 @@ Review only the requested change.
     // each file there as a full path so a weak model can pass it straight to
     // a file-reading tool instead of joining it against the wrong base.
     const loaded = output as { content: string };
-    expect(loaded.content).toContain(
-      `<file>${join(root, "reviewer", "references", "rules.md")}</file>`,
-    );
+    // The loader emits forward-slash paths (normalizePath) for cross-platform
+    // consistency, so build the expected path the same way rather than with the
+    // OS-native separator join() would produce (backslashes on Windows).
+    const expectedFile = join(
+      root,
+      "reviewer",
+      "references",
+      "rules.md",
+    ).replace(/\\/g, "/");
+    expect(loaded.content).toContain(`<file>${expectedFile}</file>`);
     expect(loaded.content).not.toContain("<file>references/rules.md</file>");
   });
 
