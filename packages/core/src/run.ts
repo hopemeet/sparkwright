@@ -2068,7 +2068,10 @@ export class SparkwrightRun implements RunHandle {
       state.lastFailedToolTarget?.key === targetKey
         ? state.lastFailedToolTarget
         : undefined;
-    if (isRepeatedToolCall(state.previousToolCall, requestedCall) || priorFailure) {
+    if (
+      isRepeatedToolCall(state.previousToolCall, requestedCall) ||
+      priorFailure
+    ) {
       state.repeatedToolCallCount += 1;
     } else {
       state.previousToolCall = requestedCall;
@@ -2081,8 +2084,8 @@ export class SparkwrightRun implements RunHandle {
         "TOOL_DOOM_LOOP",
         priorFailure
           ? `Run stopped after ${state.repeatedToolCallCount} attempts at ` +
-            `\`${requestedCall.toolName}\` on the same target, which kept ` +
-            `failing (${priorFailure.code}: ${priorFailure.message}).`
+              `\`${requestedCall.toolName}\` on the same target, which kept ` +
+              `failing (${priorFailure.code}: ${priorFailure.message}).`
           : `Run stopped after ${state.repeatedToolCallCount} repeated identical tool calls.`,
         {
           toolName: requestedCall.toolName,
@@ -2460,7 +2463,10 @@ export class SparkwrightRun implements RunHandle {
     // forget it on any success so legitimate progress resets the guard.
     if (result.status === "failed") {
       state.lastFailedToolTarget = {
-        key: semanticToolTarget(requestedCall.toolName, requestedCall.arguments),
+        key: semanticToolTarget(
+          requestedCall.toolName,
+          requestedCall.arguments,
+        ),
         code: result.error?.code ?? "TOOL_FAILED",
         message: result.error?.message ?? "Tool call failed.",
       };

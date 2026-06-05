@@ -399,6 +399,12 @@ export class HostRuntime {
       promptBuilder: buildAgentPromptBuilder({ cwd: workspaceRoot, sessionId }),
       tools,
       model: model.adapter,
+      // Bind the main agent on resources, not a leaked step count of 8: honor
+      // the profile's RunBudget when set and derive the step ceiling from it.
+      maxSteps: resolveMainAgentMaxSteps(mainAgent),
+      ...(mainAgent.runBudget !== undefined
+        ? { runBudget: mainAgent.runBudget }
+        : {}),
       runStore: createSessionRunStoreFactory({
         sessionStore,
         sessionId,
@@ -1013,6 +1019,32 @@ function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
         profile.mode === "primary",
     ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
   );
+}
+
+/**
+ * Pure safety floor for the interactive main agent's step count, used only when
+ * neither an explicit `maxSteps` nor a model-call budget is configured. It is a
+ * backstop against a runaway loop the progress guard misses (the human can also
+ * Ctrl-C), NOT a task budget — long-horizon work (auto-research, broad sweeps)
+ * must not bind on it. See `docs/adr/0009-step-cap-unfit-for-long-horizon-agents.md`.
+ */
+const MAIN_AGENT_MAX_STEPS_BACKSTOP = 100;
+
+/**
+ * Resolve the main agent's step ceiling. An explicit profile `maxSteps` wins;
+ * otherwise it is derived from the resource budget — a step consumes at least
+ * one model call, so `runBudget.maxModelCalls` is the tightest natural step
+ * bound and `RunBudget` enforces it precisely regardless. Only when neither is
+ * configured does the high backstop apply. This keeps the binding limit on the
+ * resource axis rather than a leaked step count of 8.
+ */
+function resolveMainAgentMaxSteps(profile: AgentProfile): number {
+  if (profile.maxSteps !== undefined) return profile.maxSteps;
+  const modelCallBudget = profile.runBudget?.maxModelCalls;
+  if (modelCallBudget !== undefined && modelCallBudget >= 1) {
+    return modelCallBudget;
+  }
+  return MAIN_AGENT_MAX_STEPS_BACKSTOP;
 }
 
 function deriveConfiguredAgents(

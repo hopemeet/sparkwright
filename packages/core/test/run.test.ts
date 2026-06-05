@@ -411,9 +411,9 @@ describe("SparkwrightRun", () => {
       .all()
       .find((event) => event.type === "run.completed");
     expect(completed?.payload).toMatchObject({ truncated: true });
-    expect(
-      run.events.all().some((event) => event.type === "run.failed"),
-    ).toBe(false);
+    expect(run.events.all().some((event) => event.type === "run.failed")).toBe(
+      false,
+    );
   });
 
   it("falls back to max_steps_exceeded when the wrap-up turn cannot produce output", async () => {
@@ -582,6 +582,59 @@ describe("SparkwrightRun", () => {
         arguments: { nested: { value: "same" }, list: [1, 2, 3] },
       },
     });
+  });
+
+  it("stops a model retrying the same failing target with varied arguments", async () => {
+    let executed = 0;
+
+    // Fails for any call — like reading a path that is actually a directory.
+    const read = defineTool({
+      name: "read",
+      description: "Read a path.",
+      inputSchema: { type: "object" },
+      execute() {
+        executed += 1;
+        throw new Error("EISDIR: illegal operation on a directory");
+      },
+    });
+
+    // Same path, different offset each turn: NOT an exact repeat, so the old
+    // arg-equality guard never tripped — the run used to burn every step. The
+    // semantic-target guard recognizes the repeated failing target.
+    let step = 0;
+    const run = createRun({
+      goal: "hammer a broken path",
+      tools: [read],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          step += 1;
+          return {
+            toolCalls: [
+              {
+                toolName: "read",
+                arguments: { path: "docs/adr", offset: step },
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    // Stopped on the loop guard well before maxSteps (8), not run to exhaustion.
+    expect(run.record.state).toBe("failed");
+    expect(result).toMatchObject({
+      signal: "failed",
+      state: "failed",
+      stopReason: "tool_doom_loop",
+      failure: { category: "tool", code: "TOOL_DOOM_LOOP" },
+    });
+    // First attempt executes and fails; the retry (varied offset) is caught as
+    // a repeat and replaced by the corrective nudge, so the tool runs only once.
+    expect(executed).toBe(1);
+    expect(step).toBeLessThan(8);
   });
 
   it("nudges the model one step before the doom-loop stop and lets it recover", async () => {
