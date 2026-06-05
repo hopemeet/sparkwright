@@ -91,7 +91,7 @@ describe("SparkwrightRun", () => {
     expect(
       events.find((event) => event.type === "prompt.built")?.payload,
     ).toMatchObject({
-      messageCount: 8,
+      messageCount: 7,
       stableMessageCount: 5,
       stablePrefixBlockCount: 1,
       sections: [
@@ -145,18 +145,10 @@ describe("SparkwrightRun", () => {
         },
         {
           index: 6,
-          name: "runtime_state",
+          name: "current_request",
           layer: "runtime",
           stability: "turn",
           cachePolicy: "turn",
-          chars: expect.any(Number),
-        },
-        {
-          index: 7,
-          name: "runtime_progress",
-          layer: "runtime",
-          stability: "turn",
-          cachePolicy: "volatile",
           chars: expect.any(Number),
         },
       ],
@@ -253,10 +245,7 @@ describe("SparkwrightRun", () => {
         async complete(input) {
           expect(input.context).toHaveLength(1);
           expect(input.context[0]?.content).toBe("selected context");
-          // selected_context is now the append-only tail followed by the
-          // volatile per-step counter, so it is the second-to-last message.
-          expect(input.prompt?.at(-2)?.content).toContain("selected context");
-          expect(input.prompt?.at(-1)?.content).toMatch(/^Step: \d+ \/ \d+$/);
+          expect(input.prompt?.at(-1)?.content).toContain("selected context");
           return { message: "done" };
         },
       },

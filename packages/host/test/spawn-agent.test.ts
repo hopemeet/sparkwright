@@ -166,6 +166,30 @@ describe("host spawn_agent wiring", () => {
       expect(childTrace.length).toBeGreaterThan(0);
       expect(childTrace).toContain(output.childRunId);
       expect(childTrace).toContain("glob_paths");
+      const promptBuilt = childTrace
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .find((event) => event.type === "prompt.built") as
+        | {
+            payload?: {
+              systemPrefixRef?: string;
+            };
+          }
+        | undefined;
+      const systemRef = promptBuilt?.payload?.systemPrefixRef;
+      expect(systemRef).toBeTypeOf("string");
+      const childSystemPrefix = await readFileWhenReady(
+        join(
+          sessionRootDir,
+          sessionId,
+          "blobs",
+          `${systemRef}.json`,
+        ),
+        "Delegated agent contract:",
+      );
+      expect(childSystemPrefix).toContain("Do not ask the user directly");
+      expect(childSystemPrefix).toContain("needs_clarification");
 
       // (2) The child agent is registered in session.json (not just "main").
       const sessionJson = JSON.parse(

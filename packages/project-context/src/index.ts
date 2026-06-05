@@ -160,6 +160,10 @@ export interface BuildAgentPromptBuilderOptions {
   cwd?: string;
   /** Application/domain system prompt (agent identity, capabilities, workflow). */
   appPrompt?: string;
+  /** Include the run goal in the prompt. Default false. */
+  includeGoal?: boolean;
+  /** Include the per-step runtime progress section. Default false. */
+  includeRuntimeProgress?: boolean;
   /** Platform string for the env section (e.g. process.platform). */
   platform?: string;
   /**
@@ -209,7 +213,7 @@ const DELEGATION_GUIDANCE = [
 
 /**
  * Compose a `PromptBuilder` that layers the application system prompt, project
- * instruction files, and a tail env block on top of core's resident harness
+ * instruction files, and a session-cached env block on top of core's resident harness
  * contracts. This is the single place embedders (host, cli, ...) wire the
  * "what the agent is / what it knows about this project" prompt, so cache
  * placement stays consistent across entry points.
@@ -266,7 +270,11 @@ export function buildAgentPromptBuilder(
     );
   }
 
-  return new DefaultPromptBuilder({ additionalSections: sections });
+  return new DefaultPromptBuilder({
+    includeGoal: options.includeGoal,
+    includeRuntimeProgress: options.includeRuntimeProgress,
+    additionalSections: sections,
+  });
 }
 
 function renderProjectInstructions(items: ContextItem[]): string {

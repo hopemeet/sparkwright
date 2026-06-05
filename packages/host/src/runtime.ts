@@ -107,6 +107,14 @@ interface ActiveRun {
 
 const MAIN_AGENT_ID = "main";
 
+const DELEGATED_AGENT_CONTRACT = [
+  "Delegated agent contract:",
+  "- Do not ask the user directly. Your parent agent owns all user interaction.",
+  "- If a safe read-only next step can make progress, take it instead of asking for confirmation.",
+  "- If you are blocked by ambiguity, required approval, or missing capability, return a concise final message with status: needs_clarification, needs_approval, or blocked; include the question or requested action, a reasonable default when one exists, and any safe alternative.",
+  "- For clear delegated goals, complete the task and return the result to the parent.",
+].join("\n");
+
 /**
  * Per-connection runtime. Maps protocol verbs onto core.createRun(),
  * threading events back out through `emit` as host events.
@@ -1081,6 +1089,24 @@ const snapshotOnlyChildRunStoreFactory = (): ReturnType<
   );
 };
 
+function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
+  const experimental = profile.experimental ?? {};
+  return {
+    ...profile,
+    experimental: {
+      ...experimental,
+      prompt: withDelegatedAgentPrompt(experimental.prompt ?? profile.prompt),
+    },
+  };
+}
+
+function withDelegatedAgentPrompt(prompt?: string): string {
+  const trimmed = prompt?.trim();
+  return trimmed
+    ? [trimmed, DELEGATED_AGENT_CONTRACT].join("\n\n")
+    : DELEGATED_AGENT_CONTRACT;
+}
+
 function createConfiguredDelegateTools(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   delegates: CapabilityDelegateToolConfig[];
@@ -1117,9 +1143,10 @@ function createConfiguredDelegateTools(input: {
           goal: args.goal,
           model: input.model,
           tools: input.childTools,
-          childAgentProfile: profile,
+          childAgentProfile: withDelegatedAgentContract(profile),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
+          interactionChannel: null,
           // Persist the child's trace under its own agent dir + register it in
           // session.json, and roll its usage up into the parent run's tracker.
           runStore: input.childRunStoreFactory(profile.id),
@@ -1259,7 +1286,7 @@ export function createDynamicSpawnAgentTool(input: {
         maxSteps: parsed.maxSteps,
         experimental: {
           mode: "child",
-          prompt: parsed.prompt,
+          prompt: withDelegatedAgentPrompt(parsed.prompt),
         },
         metadata: {
           dynamic: true,
@@ -1272,6 +1299,7 @@ export function createDynamicSpawnAgentTool(input: {
         tools: childTools,
         childAgentProfile: profile,
         maxSteps: parsed.maxSteps,
+        interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
         // instead of letting its steps disappear once the tool returns.
