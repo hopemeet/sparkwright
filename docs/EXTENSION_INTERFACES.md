@@ -778,12 +778,15 @@ sibling branches (ff-only is only correct for chained workflows); conflict
 outcomes are preserved for the rare cases where declarations drift. Paths follow
 `<sessionDir>/worktrees/<taskId>`, branches follow `sw/<taskId>`.
 
-### Todo (Leader single-writer)
+### Todo Ledger (Leader single-writer)
 
 ```ts
 import {
   createTodoTools,
   createAgentProfilePolicy,
+  readTodoLedger,
+  renderTodoLedgerContext,
+  runTodoSupervised,
 } from "@sparkwright/agent-runtime";
 
 const { todoRead, todoWrite } = createTodoTools({
@@ -805,10 +808,45 @@ const childPolicy = createAgentProfilePolicy({
 });
 ```
 
-The on-disk format is GFM-compatible Markdown with a 5-state alphabet:
-`[ ]` pending, `[ ] 🔄` in-progress, `[x]` completed, `[ ] ❌` failed,
-`[~]` skipped. `todo_write` rewrites the file whole; the Leader keeps the
-ordering / depth / notes the model produces.
+The on-disk format is GFM-compatible Markdown backed by the structured
+`TodoLedger` API. Its status alphabet is `[ ]` pending, `[ ] 🔄` in-progress,
+`[x]` completed, `[ ] ⛔` blocked, `[ ] ❌` failed, and `[~]` skipped.
+`todo_write` rewrites the file whole; the Leader keeps the ordering, depth,
+notes, optional `priority`, `doneWhen`, `owner`, and `evidence` fields the
+model produces.
+
+`evidence` is the important guardrail: todo status changes are self-reporting,
+not proof of progress. Supervisors should treat external trace/workspace
+signals (`workspace.write.completed`, `tool.completed`, `artifact.created`) and
+item evidence (`file_changed`, `command`, `test`, `artifact`, `trace_event`) as
+the progress source of truth.
+
+For long-running or background agentic work, wrap ordinary runs with
+`runTodoSupervised` rather than putting todo behavior into core or
+`spawnSubAgent`:
+
+```ts
+await runTodoSupervised({
+  todoPath: `${sessionDir}/todo.md`,
+  maxContinuations: 3,
+  maxStalledContinuations: 1,
+  async runOnce(input) {
+    const ledger = await readTodoLedger(`${sessionDir}/todo.md`);
+    const context = [
+      renderTodoLedgerContext(ledger, { sessionId }),
+      ...(input.continuation ? [input.continuation.context] : []),
+    ];
+    // Create a normal run/session turn here. If input.continuation is present,
+    // pass its prompt as a synthetic continuation message, not as user text.
+    return { result, events };
+  },
+});
+```
+
+The supervisor audits terminal runs after they end. If the ledger is unfinished
+and continuation is safe, it emits a synthetic continuation request:
+`source="todo_supervisor"`, `reason="unfinished_todo"`. Hooks/plugins may veto
+that continuation, but should not directly recurse into the model loop.
 
 ### Sub-agent result protocol
 

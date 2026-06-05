@@ -3,13 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  auditTodoAfterTerminal,
   createAgentProfilePolicy,
   createTodoReadTool,
   createTodoTools,
   createTodoWriteTool,
+  hasUnfinishedTodo,
   itemsOnly,
   parseTodoMarkdown,
+  readTodoLedger,
+  renderTodoLedgerContext,
+  runTodoSupervised,
   serializeTodoMarkdown,
+  summarizeTodoLedger,
   type TodoItem,
 } from "../src/index.js";
 
@@ -49,6 +55,35 @@ describe("parseTodoMarkdown", () => {
     expect(items[4]!.note).toBe("reason");
   });
 
+  it("parses metadata and evidence blocks", () => {
+    const md = [
+      "- [ ] ⛔ fix flaky test (needs logs)",
+      "  id: t1",
+      "  priority: high",
+      "  done-when: regression passes",
+      "  owner: primary",
+      "  evidence:",
+      "    - file_changed: packages/core/src/run.ts",
+      "    - command: npm test (exit 0)",
+      "    - test: npm test -- todo (passed)",
+    ].join("\n");
+    const [item] = itemsOnly(parseTodoMarkdown(md));
+    expect(item).toMatchObject({
+      id: "t1",
+      title: "fix flaky test",
+      status: "blocked",
+      priority: "high",
+      doneWhen: "regression passes",
+      owner: "primary",
+      note: "needs logs",
+    });
+    expect(item?.evidence).toEqual([
+      { kind: "file_changed", path: "packages/core/src/run.ts" },
+      { kind: "command", command: "npm test", exitCode: 0 },
+      { kind: "test", command: "npm test -- todo", passed: true },
+    ]);
+  });
+
   it("captures depth from indentation", () => {
     const md = ["- [ ] top", "  - [x] nested", "    - [ ] deeper"].join("\n");
     const items = itemsOnly(parseTodoMarkdown(md));
@@ -69,6 +104,7 @@ describe("serializeTodoMarkdown", () => {
       { title: "a", status: "pending", depth: 0 },
       { title: "b", status: "in_progress", depth: 0 },
       { title: "c", status: "completed", depth: 0 },
+      { title: "blocked", status: "blocked", depth: 0 },
       { title: "d", status: "failed", depth: 0, note: "reason" },
       { title: "e", status: "skipped", depth: 1 },
     ];
@@ -80,11 +116,35 @@ describe("serializeTodoMarkdown", () => {
         "- [ ] a",
         "- [ ] 🔄 b",
         "- [x] c",
+        "- [ ] ⛔ blocked",
         "- [ ] ❌ d (reason)",
         "  - [~] e",
         "",
       ].join("\n"),
     );
+  });
+
+  it("round-trips new metadata fields", () => {
+    const items: TodoItem[] = [
+      {
+        id: "todo-1",
+        title: "run tests",
+        status: "pending",
+        depth: 0,
+        priority: "high",
+        doneWhen: "tests pass",
+        owner: "supervisor",
+        evidence: [
+          { kind: "artifact", artifactId: "artifact_1" },
+          { kind: "trace_event", eventId: "event_1" },
+        ],
+      },
+    ];
+    const out = serializeTodoMarkdown(
+      items.map((i) => ({ kind: "item", ...i })),
+    );
+    const parsed = itemsOnly(parseTodoMarkdown(out));
+    expect(parsed).toEqual(items);
   });
 });
 
@@ -117,6 +177,40 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
       "completed",
       "in_progress",
       "pending",
+    ]);
+  });
+
+  it("write accepts OpenCode-style content plus evidence", async () => {
+    const path = await tempPath();
+    const write = createTodoWriteTool({ getTodoPath: () => path });
+    const read = createTodoReadTool({ getTodoPath: () => path });
+    await write.execute(
+      {
+        items: [
+          {
+            id: "oc-1",
+            content: "implement ledger",
+            status: "blocked",
+            priority: "medium",
+            doneWhen: "agent-runtime tests pass",
+            evidence: [{ kind: "command", command: "npm test", exitCode: 0 }],
+          },
+        ],
+      },
+      {} as never,
+    );
+    const out = (await read.execute({}, {} as never)) as {
+      items: TodoItem[];
+    };
+    expect(out.items[0]).toMatchObject({
+      id: "oc-1",
+      title: "implement ledger",
+      status: "blocked",
+      priority: "medium",
+      doneWhen: "agent-runtime tests pass",
+    });
+    expect(out.items[0]?.evidence).toEqual([
+      { kind: "command", command: "npm test", exitCode: 0 },
     ]);
   });
 
@@ -156,6 +250,116 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
       items: TodoItem[];
     };
     expect(out.items).toHaveLength(1);
+  });
+});
+
+describe("TodoLedger helpers", () => {
+  it("reads, summarizes, and renders todo context", async () => {
+    const path = await tempPath();
+    const write = createTodoWriteTool({ getTodoPath: () => path });
+    await write.execute(
+      {
+        items: [
+          { title: "done", status: "completed" },
+          { title: "next", status: "pending", priority: "high" },
+          { title: "blocked", status: "blocked", note: "needs input" },
+        ],
+      },
+      {} as never,
+    );
+    const ledger = await readTodoLedger(path);
+    const summary = summarizeTodoLedger(ledger);
+    expect(summary).toMatchObject({
+      total: 3,
+      completed: 1,
+      pending: 1,
+      blocked: 1,
+      unfinished: 2,
+      hasUnfinished: true,
+    });
+    expect(hasUnfinishedTodo(ledger)).toBe(true);
+    const context = renderTodoLedgerContext(ledger, { sessionId: "s1" });
+    expect(context.source).toEqual({ kind: "todo_ledger", uri: "s1" });
+    expect(context.content).toContain("pending: next");
+    expect(context.metadata.todoLedger).toBe(true);
+  });
+
+  it("audits terminal runs and recommends continuation only when safe", async () => {
+    const ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      metadata: {},
+      items: [{ title: "next", status: "pending" as const, depth: 0 }],
+    };
+    const decision = auditTodoAfterTerminal(ledger, {
+      result: {
+        signal: "completed",
+        state: "completed",
+        stopReason: "final_answer",
+        metadata: {},
+      },
+      events: [{ type: "tool.completed" } as never],
+      maxContinuations: 3,
+      continuationCount: 0,
+    });
+    expect(decision.kind).toBe("continue");
+    expect(decision.kind === "continue" ? decision.prompt : "").toContain(
+      "Continue from the todo ledger.",
+    );
+
+    const denied = auditTodoAfterTerminal(ledger, {
+      result: {
+        signal: "cancelled",
+        state: "cancelled",
+        stopReason: "manual_cancelled",
+        metadata: {},
+      },
+    });
+    expect(denied).toMatchObject({
+      kind: "handoff",
+      reason: "non_resumable_stop_reason",
+    });
+  });
+});
+
+describe("runTodoSupervised", () => {
+  it("creates synthetic continuation requests until the ledger is complete", async () => {
+    let ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      metadata: {},
+      items: [{ title: "finish work", status: "pending" as const, depth: 0 }],
+    };
+    const continuationPrompts: string[] = [];
+    const result = await runTodoSupervised({
+      readLedger: () => ledger,
+      maxContinuations: 2,
+      runOnce(input) {
+        if (input.continuation) {
+          continuationPrompts.push(input.continuation.prompt);
+          expect(input.continuation.metadata.synthetic).toBe(true);
+          expect(input.continuation.context.source?.kind).toBe("todo_ledger");
+          ledger = {
+            ...ledger,
+            items: [
+              { title: "finish work", status: "completed" as const, depth: 0 },
+            ],
+          };
+        }
+        return {
+          result: {
+            signal: "completed",
+            state: "completed",
+            stopReason: "final_answer",
+            metadata: {},
+          },
+          events: [{ type: "tool.completed" } as never],
+        };
+      },
+    });
+
+    expect(continuationPrompts).toHaveLength(1);
+    expect(continuationPrompts[0]).toContain("Continue from the todo ledger.");
+    expect(result.decision.kind).toBe("complete");
+    expect(result.continuationCount).toBe(1);
   });
 });
 

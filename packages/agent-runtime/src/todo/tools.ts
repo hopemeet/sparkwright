@@ -18,14 +18,25 @@ import {
   serializeTodoMarkdown,
   type TodoEntry,
 } from "./markdown.js";
-import type { TodoItem, TodoStatus } from "./types.js";
+import type {
+  TodoEvidence,
+  TodoItem,
+  TodoPriority,
+  TodoStatus,
+} from "./types.js";
 
 const VALID_STATUSES: ReadonlySet<TodoStatus> = new Set([
   "pending",
   "in_progress",
   "completed",
+  "blocked",
   "failed",
   "skipped",
+]);
+const VALID_PRIORITIES: ReadonlySet<TodoPriority> = new Set([
+  "high",
+  "medium",
+  "low",
 ]);
 
 /**
@@ -65,7 +76,7 @@ export function createTodoReadTool(
   return defineTool({
     name: "todo_read",
     description:
-      "Read the run's todo list. Returns the parsed items (status, depth, title, optional note).",
+      "Read the run's todo ledger. Returns parsed items with status, depth, title, evidence, and optional metadata.",
     inputSchema: { type: "object", properties: {} },
     deferLoading: false,
     policy: { risk: "safe", requiresApproval: false },
@@ -85,7 +96,7 @@ export function createTodoWriteTool(
   return defineTool({
     name: "todo_write",
     description:
-      "Replace the run's todo list. Pass `items` (array of {title, status, depth, note?}). Child agents are denied this tool by policy.",
+      "Replace the run's todo ledger. Pass `items` (array of {title/content, status, depth?, priority?, doneWhen?, evidence?, owner?, note?}). Child agents are denied this tool by policy.",
     inputSchema: {
       type: "object",
       properties: {
@@ -95,11 +106,32 @@ export function createTodoWriteTool(
             type: "object",
             properties: {
               title: { type: "string" },
+              content: { type: "string" },
               status: { type: "string" },
               depth: { type: "integer" },
+              id: { type: "string" },
+              priority: { type: "string" },
+              doneWhen: { type: "string" },
+              evidence: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string" },
+                    path: { type: "string" },
+                    command: { type: "string" },
+                    exitCode: { type: "integer" },
+                    passed: { type: "boolean" },
+                    artifactId: { type: "string" },
+                    eventId: { type: "string" },
+                  },
+                  required: ["kind"],
+                },
+              },
+              owner: { type: "string" },
               note: { type: "string" },
             },
-            required: ["title", "status"],
+            required: ["status"],
           },
         },
       },
@@ -156,9 +188,15 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
     throw new Error(`todo_write: items[${index}] must be an object.`);
   }
   const r = raw as Record<string, unknown>;
-  if (typeof r.title !== "string" || r.title.length === 0) {
+  const title =
+    typeof r.title === "string" && r.title.trim().length > 0
+      ? r.title.trim()
+      : typeof r.content === "string" && r.content.trim().length > 0
+        ? r.content.trim()
+        : undefined;
+  if (!title) {
     throw new Error(
-      `todo_write: items[${index}].title must be a non-empty string.`,
+      `todo_write: items[${index}] must include non-empty title or content.`,
     );
   }
   if (
@@ -173,11 +211,65 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
     typeof r.depth === "number" && Number.isInteger(r.depth) && r.depth >= 0
       ? r.depth
       : 0;
+  const id =
+    typeof r.id === "string" && r.id.trim().length > 0
+      ? r.id.trim()
+      : undefined;
+  const priority =
+    typeof r.priority === "string" &&
+    VALID_PRIORITIES.has(r.priority as TodoPriority)
+      ? (r.priority as TodoPriority)
+      : undefined;
+  const doneWhen =
+    typeof r.doneWhen === "string" && r.doneWhen.trim().length > 0
+      ? r.doneWhen.trim()
+      : undefined;
+  const evidence = Array.isArray(r.evidence)
+    ? r.evidence.map(normalizeEvidence).filter((e): e is TodoEvidence => !!e)
+    : undefined;
+  const owner =
+    typeof r.owner === "string" && r.owner.trim().length > 0
+      ? r.owner.trim()
+      : undefined;
   const note = typeof r.note === "string" ? r.note : undefined;
   return {
-    title: r.title,
+    ...(id ? { id } : {}),
+    title,
+    ...(typeof r.content === "string" ? { content: r.content } : {}),
     status: r.status as TodoStatus,
     depth,
+    ...(priority ? { priority } : {}),
+    ...(doneWhen ? { doneWhen } : {}),
+    ...(evidence && evidence.length > 0 ? { evidence } : {}),
+    ...(owner ? { owner } : {}),
     ...(note ? { note } : {}),
   };
+}
+
+function normalizeEvidence(raw: unknown): TodoEvidence | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  switch (r.kind) {
+    case "file_changed":
+      return typeof r.path === "string" && r.path.length > 0
+        ? { kind: "file_changed", path: r.path }
+        : undefined;
+    case "command":
+      return typeof r.command === "string" && typeof r.exitCode === "number"
+        ? { kind: "command", command: r.command, exitCode: r.exitCode }
+        : undefined;
+    case "test":
+      return typeof r.command === "string" && typeof r.passed === "boolean"
+        ? { kind: "test", command: r.command, passed: r.passed }
+        : undefined;
+    case "artifact":
+      return typeof r.artifactId === "string" && r.artifactId.length > 0
+        ? { kind: "artifact", artifactId: r.artifactId }
+        : undefined;
+    case "trace_event":
+      return typeof r.eventId === "string" && r.eventId.length > 0
+        ? { kind: "trace_event", eventId: r.eventId }
+        : undefined;
+  }
+  return undefined;
 }
