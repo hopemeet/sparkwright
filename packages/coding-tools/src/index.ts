@@ -1234,6 +1234,11 @@ function matchesAny(path: string, matchers: Array<(path: string) => boolean>) {
 function globToRegExp(pattern: string): RegExp {
   let source = "^";
   const normalized = pattern.replace(/\\/g, "/");
+  // Brace alternation (e.g. `*.{ts,js}`) is only translated when the braces are
+  // balanced; otherwise a stray `{` is treated literally so we never emit an
+  // invalid regex (which would silently match nothing).
+  const expandBraces = hasBalancedBraces(normalized);
+  let braceDepth = 0;
   for (let index = 0; index < normalized.length; index += 1) {
     const char = normalized[index];
     const next = normalized[index + 1];
@@ -1256,10 +1261,41 @@ function globToRegExp(pattern: string): RegExp {
       source += "[^/]";
       continue;
     }
+    if (expandBraces) {
+      if (char === "{") {
+        braceDepth += 1;
+        source += "(?:";
+        continue;
+      }
+      if (char === "}" && braceDepth > 0) {
+        braceDepth -= 1;
+        source += ")";
+        continue;
+      }
+      if (char === "," && braceDepth > 0) {
+        source += "|";
+        continue;
+      }
+    }
     source += escapeRegExp(char ?? "");
   }
   source += "$";
   return new RegExp(source);
+}
+
+function hasBalancedBraces(pattern: string): boolean {
+  let depth = 0;
+  for (const char of pattern) {
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth < 0) {
+        return false;
+      }
+    }
+  }
+  return depth === 0;
 }
 
 function escapeRegExp(value: string): string {

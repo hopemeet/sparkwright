@@ -1,6 +1,7 @@
 ---
 name: sparkwright-manual
-description: Operational manual for helping users run, configure, debug, and extend SparkWright.
+description: Operational manual for running, configuring, debugging, and extending SparkWright itself. Do NOT use for testing or debugging the user's own application code (e.g. their login, auth, or business features) — that is outside SparkWright's scope.
+triggers: trace session resume cron artifacts background task troubleshoot replay repair config provider model workspace permission tool skill MCP agent profile CLI TUI command flag
 allowed-tools: shell
 metadata:
   version: 0.1.0
@@ -11,26 +12,29 @@ metadata:
 Use this skill when the user asks for practical help with SparkWright commands,
 configuration, capabilities, operations, troubleshooting, or contributor work.
 
-This skill is an operational index. Load only the reference file needed for the
-current task. Do not load every reference by default.
+This skill is an operational index. Its references are plain files: open the one
+you need with a file-reading tool (e.g. read_file) using the full paths listed
+under `<skill_files>` in the skill.load result. Do NOT call skill.load again —
+this skill's body is already in context. Read only the reference needed for the
+current task, not every reference by default.
 
 ## Routing
 
 - For a single CLI syntax question, prefer running the local CLI help or reading
-  the relevant CLI source before loading references. Use
+  the relevant CLI source before opening references. Read
   `references/cli-and-tui.md` when the task spans multiple commands or needs
   workflow guidance.
-- For TUI startup, sessions, or interactive workflow questions, use
+- For TUI startup, sessions, or interactive workflow questions, read
   `references/cli-and-tui.md`.
 - For config paths, providers, models, workspace selection, permission modes,
-  tool enable/disable/defer settings, or API key behavior, use
+  tool enable/disable/defer settings, or API key behavior, read
   `references/configuration.md`.
 - For tools, skills, MCP, agent profiles, delegate tools, policy, approval, or
-  capability-runtime wiring, use `references/capabilities.md`.
+  capability-runtime wiring, read `references/capabilities.md`.
 - For trace, artifacts, session repair/resume, cron, background tasks, durable
-  task behavior, or troubleshooting, use `references/operations.md`.
+  task behavior, or troubleshooting, read `references/operations.md`.
 - For repository layout, adding commands/tools/events/schemas, tests, release
-  checks, or maintenance expectations, use `references/contributor.md`.
+  checks, or maintenance expectations, read `references/contributor.md`.
 
 ## Operating Rules
 

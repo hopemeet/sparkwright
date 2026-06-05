@@ -39,6 +39,12 @@ import { copyToClipboard } from "./lib/clipboard.js";
 import { lastAssistantMessage } from "./lib/transcript.js";
 import { AttentionManager } from "./lib/attention.js";
 import { CommandRegistry } from "./lib/commands.js";
+import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
+import {
+  loadProjectCommands,
+  resolveProjectCommandIntent,
+  toTuiProjectCommands,
+} from "./lib/project-commands.js";
 import {
   chordMatches,
   formatBinding,
@@ -370,6 +376,11 @@ function AppReady(
       controller.updatePermissionMode(r.permissionMode);
     }
     props.setResolved(r);
+    // Re-discover file-authored commands so newly added .sparkwright/command/*.md
+    // files appear without a restart (mirrors config reload).
+    void loadProjectCommands(r.workspaceRoot)
+      .then(setProjectCommands)
+      .catch(() => setProjectCommands([]));
     if (verbose) {
       if (r.errors.length > 0)
         toasts.push({
@@ -422,6 +433,47 @@ function AppReady(
     const snapshot = await controller.inspectCapabilities();
     setLoadingCapabilities(false);
     if (snapshot) setCapabilitySnapshot(snapshot);
+  }
+
+  // File-authored slash commands discovered from .sparkwright/command/*.md.
+  // Loaded async after mount; the registry memo below folds them in.
+  const [projectCommands, setProjectCommands] = useState<
+    ProjectCommandDescriptor[]
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    void loadProjectCommands(resolved.workspaceRoot)
+      .then((cmds) => {
+        if (!cancelled) setProjectCommands(cmds);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectCommands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolved.workspaceRoot]);
+
+  // Keep a live ref to handleSubmit so project commands (captured in the memo)
+  // always submit through the current render's queue/run state, not a stale one.
+  const submitRef = useRef<(value: string) => void>(() => {});
+  useEffect(() => {
+    submitRef.current = handleSubmit;
+  });
+
+  function runProjectCommand(
+    descriptor: ProjectCommandDescriptor,
+    rest: string,
+  ): void {
+    void resolveProjectCommandIntent(descriptor, rest, resolved.workspaceRoot)
+      .then((intent) => submitRef.current(intent.prompt))
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: `/${descriptor.name} failed`,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   // Build the command registry once per controller. App-level handlers are
@@ -691,6 +743,14 @@ function AppReady(
       aliases: ["exit", "q"],
       run: () => exit(),
     });
+    // File-authored commands last: a built-in of the same name wins because
+    // CommandRegistry.register overwrites, and built-ins are the precise layer.
+    for (const cmd of toTuiProjectCommands(
+      projectCommands,
+      runProjectCommand,
+    )) {
+      if (!reg.resolve(cmd.name)) reg.register(cmd);
+    }
     return reg;
     // Re-build when state.status changes so `available()` updates the
     // palette grey-out, and when bindings change so hint strings refresh.
@@ -703,6 +763,7 @@ function AppReady(
     resolved.bindings,
     resolved.theme,
     themeOverride,
+    projectCommands,
   ]);
 
   function handleSubmit(value: string): void {
@@ -1099,7 +1160,9 @@ function AppReady(
             workspaceRoot={resolved.workspaceRoot}
             registry={registry}
             onSubmit={handleSubmit}
-            onCommand={(cmd) => void cmd.run()}
+            onCommand={(cmd, rest) =>
+              void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
+            }
             onEscape={() => {
               // Esc cancels an in-flight run (the placeholder promises this). The
               // App-level hotkey loop also binds cancel.run→esc, but it lives in a

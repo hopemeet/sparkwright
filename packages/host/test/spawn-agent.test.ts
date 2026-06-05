@@ -14,6 +14,38 @@ import {
 import { createDynamicSpawnAgentTool } from "../src/runtime.js";
 
 /**
+ * The session run store flushes to disk asynchronously, so a trace/session file
+ * may not be fully written the instant `spawn_agent` resolves. Reading it
+ * immediately races that flush — fine on fast Linux/macOS CI, but it
+ * intermittently ENOENTs on the slower Windows runner. Poll until the file
+ * exists AND contains the marker we are about to assert on, rather than reading
+ * once and hoping the flush already landed.
+ */
+async function readFileWhenReady(
+  path: string,
+  contains: string,
+  timeoutMs = 12000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const content = await readFile(path, "utf8");
+      if (content.includes(contains)) {
+        return content;
+      }
+    } catch {
+      // File not created yet — keep waiting.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for ${path} to contain "${contains}"`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
  * Regression guard for the host spawn_agent wiring. Two bugs were observed in a
  * real TUI trace: the spawned child agent's trace was never persisted (only
  * `agents/main/` existed on disk), and the child's token/tool usage was not
@@ -121,7 +153,7 @@ describe("host spawn_agent wiring", () => {
       expect(output.stepLimitReached).toBe(false);
 
       // (1) The child's own trace is persisted under its agent directory.
-      const childTrace = await readFile(
+      const childTrace = await readFileWhenReady(
         join(
           sessionRootDir,
           sessionId,
@@ -129,7 +161,7 @@ describe("host spawn_agent wiring", () => {
           "dynamic_inspector",
           "trace.jsonl",
         ),
-        "utf8",
+        output.childRunId,
       );
       expect(childTrace.length).toBeGreaterThan(0);
       expect(childTrace).toContain(output.childRunId);
@@ -137,7 +169,10 @@ describe("host spawn_agent wiring", () => {
 
       // (2) The child agent is registered in session.json (not just "main").
       const sessionJson = JSON.parse(
-        await readFile(join(sessionRootDir, sessionId, "session.json"), "utf8"),
+        await readFileWhenReady(
+          join(sessionRootDir, sessionId, "session.json"),
+          "dynamic_inspector",
+        ),
       ) as { agents: string[] };
       expect(sessionJson.agents).toContain("dynamic_inspector");
 
@@ -157,7 +192,10 @@ describe("host spawn_agent wiring", () => {
         retryDelay: 50,
       });
     }
-  });
+    // Generous timeout: the session-store flush is async, so readFileWhenReady
+    // may poll for a while on a loaded CI runner (windows-latest has been seen
+    // taking >5s). The test budget must exceed the helper's own 12s deadline.
+  }, 20000);
 
   it("flags stepLimitReached when the child answers on its last allowed step", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-cap-"));
@@ -229,6 +267,189 @@ describe("host spawn_agent wiring", () => {
     } finally {
       // Child session-store writes can still be flushing as the run resolves;
       // retry the cleanup rather than racing them into an ENOTEMPTY.
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
+
+  // The parent allocates the child's step budget via `maxSteps`. It must be
+  // honored up to a ceiling (16) with a sane default (8) when omitted — a real
+  // trace showed a search child strangled by the former hard cap of 4. The
+  // clamped value is observable through the promotion hint's suggested profile.
+  it("clamps a parent-allocated maxSteps to 16 and defaults to 8", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-budget-"),
+    );
+    try {
+      const sessionId = "session_spawn_budget";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      const makeParent = () =>
+        createRun({
+          goal: "allocate a child budget",
+          model: {
+            async complete() {
+              return { message: "parent done" };
+            },
+          },
+          maxSteps: 1,
+          runStore: childRunStoreFactory("main"),
+        });
+
+      const childModel: ModelAdapter = {
+        async complete() {
+          return { message: "done" };
+        },
+      };
+      const childTools = [
+        defineTool({
+          name: "glob_paths",
+          description: "Fake glob.",
+          inputSchema: { type: "object", properties: {} },
+          async execute() {
+            return { paths: [] };
+          },
+        }),
+      ];
+
+      type Output = {
+        promotionHint: { suggestedProfile: { maxSteps: number } };
+      };
+      const allocate = async (maxSteps?: number): Promise<number> => {
+        const parent = makeParent();
+        const spawnTool = createDynamicSpawnAgentTool({
+          getParent: () => parent,
+          model: childModel,
+          childTools,
+          childRunStoreFactory,
+        });
+        const output = (await spawnTool.execute(
+          {
+            goal: "list files",
+            role: "inspector",
+            prompt: "List the files.",
+            allowedTools: ["glob_paths"],
+            ...(maxSteps === undefined ? {} : { maxSteps }),
+          },
+          { run: parent.record } as never,
+        )) as Output;
+        return output.promotionHint.suggestedProfile.maxSteps;
+      };
+
+      expect(await allocate(100)).toBe(16);
+      expect(await allocate()).toBe(8);
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
+
+  // A real trace showed a search child burn its whole step budget on filename
+  // globs and never find a *function named* frobnicate — because glob_paths
+  // only matches paths and the child had no content search. grep_text must be
+  // an allowed, executable child tool so "find symbol X" is one call.
+  it("lets a spawned child request and run grep_text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-grep-"));
+    try {
+      const sessionId = "session_spawn_grep";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      let grepCalls = 0;
+      const grepTool = defineTool({
+        name: "grep_text",
+        description: "Fake content search.",
+        inputSchema: {
+          type: "object",
+          properties: { pattern: { type: "string" } },
+        },
+        async execute() {
+          grepCalls += 1;
+          return { matches: [] };
+        },
+      });
+
+      // Child uses grep_text once, then concludes.
+      const childModel: ModelAdapter = {
+        async complete(input) {
+          const used = input.context.some((item) =>
+            item.content.includes("grep_text"),
+          );
+          return used
+            ? { message: "no symbol named frobnicate found" }
+            : {
+                toolCalls: [
+                  {
+                    toolName: "grep_text",
+                    arguments: { pattern: "frobnicate" },
+                  },
+                ],
+              };
+        },
+      };
+
+      const parent = createRun({
+        goal: "find a symbol by name",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        maxSteps: 1,
+        runStore: childRunStoreFactory("main"),
+      });
+
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [grepTool],
+        childRunStoreFactory,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "find frobnicate",
+          role: "scout",
+          prompt: "Find a function named frobnicate.",
+          allowedTools: ["grep_text"],
+        },
+        { run: parent.record } as never,
+      )) as { signal: string };
+
+      expect(output.signal).toBe("completed");
+      expect(grepCalls).toBeGreaterThanOrEqual(1);
+    } finally {
       await rm(root, {
         recursive: true,
         force: true,

@@ -1,7 +1,6 @@
 node_modules/
 dist/
 coverage/
-.sparkwright/
 .DS_Store
 npm-debug.log*
 .claude/
@@ -26,6 +25,16 @@ __pycache__/
 # Internal docs and dashboards (local-only, not for public repo)
 docs/_internal/
 README.internal.md
+
+# SparkWright local runtime state. The committed project config surface
+# (.sparkwright/config.json and the command/ + agents/ convention dirs) is
+# intentionally NOT ignored so it travels with the repo; only runtime state is.
+# `**/` so nested workspaces (e.g. examples/*/.sparkwright) are covered too.
+**/.sparkwright/sessions/
+**/.sparkwright/runs/
+**/.sparkwright/test-iface-runs/
+**/.sparkwright/tui-history.jsonl
+**/.sparkwright/tui-stash.json
 
 # Personal, local-only dev notes (never committed; survives switching tools)
 *.local.md

@@ -60,6 +60,13 @@ npm exec sparkwright -- session repair <session-id> --workspace . --dry-run
 npm exec sparkwright -- session resume <session-id> "continue" --workspace .
 ```
 
+`session repair` defaults to a dry-run preview (no changes written). To actually
+write the repair, pass `--apply`:
+
+```bash
+npm exec sparkwright -- session repair <session-id> --workspace . --apply
+```
+
 Use `run resume` for a stored run checkpoint:
 
 ```bash

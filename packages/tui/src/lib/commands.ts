@@ -26,8 +26,17 @@ export interface Command {
   hint?: string;
   /** Whether the command is currently selectable. */
   available?: () => boolean;
-  /** Called when the user picks the command. */
+  /** Called when the user picks the command (palette, or `/name` with no args). */
   run: () => void | Promise<void>;
+  /**
+   * Optional arg-aware entry point. When present, the `/name <rest>` slash input
+   * dispatches here with the rest-of-line (everything after the command name);
+   * the palette and bare `/name` still use `run`. File-authored project
+   * commands set this so `$ARGUMENTS` can be filled.
+   *
+   * @reserved Public command field consumed by the TUI slash dispatch in app.tsx.
+   */
+  runRaw?: (rest: string) => void | Promise<void>;
 }
 
 export class CommandRegistry {

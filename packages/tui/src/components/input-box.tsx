@@ -56,7 +56,7 @@ export function InputBox(props: {
   workspaceRoot: string;
   registry: CommandRegistry;
   onSubmit: (value: string) => void;
-  onCommand: (cmd: Command) => void;
+  onCommand: (cmd: Command, rest: string) => void;
   /**
    * Pressed Esc with nothing else to dismiss (no dropdown / overlay open).
    * The parent uses this to cancel an in-flight run. Wired here — rather than
@@ -261,7 +261,13 @@ export function InputBox(props: {
   }
 
   function applySlashPick(cmd: Command): void {
-    props.onCommand(cmd);
+    // Recover the rest-of-line (everything after the command name) so arg-aware
+    // commands like `/commit fix the bug` can fill `$ARGUMENTS`. The query is
+    // the value after the leading slash; the first token is the command name.
+    const query = detectSlash(value)?.query ?? "";
+    const space = query.indexOf(" ");
+    const rest = space === -1 ? "" : query.slice(space + 1).trim();
+    props.onCommand(cmd, rest);
     setValue("");
     setCursor(0);
   }

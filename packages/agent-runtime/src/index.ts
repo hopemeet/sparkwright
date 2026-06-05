@@ -508,6 +508,14 @@ export interface SpawnSubAgentInput {
   tools?: ToolDefinition[];
   /** Seed context items injected into the child run. */
   context?: ContextItem[];
+  /**
+   * Workspace for the child's {@link RuntimeContext}. Defaults to the parent's
+   * workspace (`parent.getWorkspace()`) so workspace-backed child tools like
+   * `read_file` resolve against the same root the parent uses, instead of
+   * throwing "Workspace is not configured". Pass an explicit value to override,
+   * or `null` to deliberately run the child without a workspace.
+   */
+  workspace?: CreateRunOptions["workspace"] | null;
   maxSteps?: number;
   runBudget?: RunBudget;
   hooks?: RunHook[];
@@ -621,6 +629,13 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     models: input.models,
     tools: input.tools ?? [],
     context: input.context,
+    // Inherit the parent's workspace unless the caller overrides it (or opts
+    // out with `null`), so workspace-backed child tools resolve against the
+    // same root instead of throwing "Workspace is not configured".
+    workspace:
+      input.workspace === null
+        ? undefined
+        : (input.workspace ?? parent.getWorkspace?.()),
     policy: childPolicy,
     promptBuilder: childPromptBuilder,
     interactionChannel:
@@ -740,9 +755,16 @@ export function attachUsageRollup(
           totalTokens?: number;
           costUsd?: number;
         };
+        trace?: { adapterId?: string };
       };
+      // Bucket child spend by the model that actually incurred it so the
+      // parent's `byModel` stays a real per-model breakdown (child and parent
+      // calls on the same model collapse into one slot). Fall back to the
+      // child's spanId only if the model.completed payload omits adapterId.
       parentTracker.recordModelUsage({
-        adapterId: stringOrUndefined(child.record.metadata?.spanId),
+        adapterId:
+          stringOrUndefined(output.trace?.adapterId) ??
+          stringOrUndefined(child.record.metadata?.spanId),
         usage: output.usage,
       });
     }

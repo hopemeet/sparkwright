@@ -111,7 +111,7 @@ export async function runCli(
   const cwd = options.cwd ?? process.cwd();
 
   if (argv[0] === "init") {
-    return handleInitCommand(io, env);
+    return handleInitCommand(io, env, argv.slice(1), cwd);
   }
 
   // Shared config (model/providers/etc.) is read once here so the CLI and the
@@ -2831,6 +2831,10 @@ function previewText(value: string, max = 120): string {
     : normalized;
 }
 
+// NOTE: templates intentionally omit a top-level "$schema" until the schema is
+// published at a stable URL; pointing at an unhosted URL would make editors fail
+// to fetch it. The config schema still *allows* "$schema" (see
+// schemas/config.schema.json) so users can opt in once it is hosted.
 const CONFIG_TEMPLATE = {
   model: "openai/gpt-5.4-mini",
   providers: {
@@ -2864,10 +2868,37 @@ const CONFIG_TEMPLATE = {
 };
 
 /**
+ * Scaffold for `<workspace>/.sparkwright/config.json`. Unlike the user template
+ * this carries NO secrets — provider keys stay in the user-level file — so it is
+ * safe to commit and travel with the repository. Seeds the project skills root
+ * and the convention command/agents dirs as the project config surface.
+ */
+const PROJECT_CONFIG_TEMPLATE = {
+  permissionMode: "default",
+  capabilities: {
+    skills: {
+      roots: ["../skills"],
+    },
+  },
+};
+
+/**
  * Scaffold the shared user config so first-time setup is "edit one file" rather
- * than "export a wall of env vars". Never overwrites an existing file.
+ * than "export a wall of env vars". With `--project`, scaffold the committable
+ * project config surface at `<workspace>/.sparkwright/config.json` instead.
+ * Never overwrites an existing file.
  */
 async function handleInitCommand(
+  io: CliIO,
+  env: Record<string, string | undefined>,
+  argv: readonly string[],
+  cwd: string,
+): Promise<CliRunResult> {
+  const project = argv.includes("--project");
+  return project ? scaffoldProjectConfig(io, cwd) : scaffoldUserConfig(io, env);
+}
+
+async function scaffoldUserConfig(
   io: CliIO,
   env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
@@ -2909,9 +2940,52 @@ async function handleInitCommand(
   return { exitCode: 0 };
 }
 
+async function scaffoldProjectConfig(
+  io: CliIO,
+  cwd: string,
+): Promise<CliRunResult> {
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const { dirname } = await import("node:path");
+  const path = projectConfigPathForWorkspace(cwd);
+
+  if (existsSync(path)) {
+    writeLine(io.stdout, `Project config already exists: ${path}`);
+    writeLine(io.stdout, "Edit it directly, or delete it and re-run init.");
+    return { exitCode: 0 };
+  }
+
+  try {
+    // No secret here, so no forced 600: this file is meant to be committed.
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      `${JSON.stringify(PROJECT_CONFIG_TEMPLATE, null, 2)}\n`,
+    );
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      `Failed to write ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { exitCode: 1 };
+  }
+
+  writeLine(io.stdout, `Created ${path}`);
+  writeLine(
+    io.stdout,
+    "This file is safe to commit — it holds no secrets. Provider keys stay in your user config (`sparkwright init`).",
+  );
+  writeLine(
+    io.stdout,
+    "Add file-authored commands under .sparkwright/command/*.md and agent profiles under .sparkwright/agents/*.md.",
+  );
+  return { exitCode: 0 };
+}
+
 function usage(): string {
   return [
-    "Usage: sparkwright init   # scaffold ~/.config/sparkwright/config.json",
+    "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
+    "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
     "       sparkwright skills list|validate [--workspace path] [--format json|text]",

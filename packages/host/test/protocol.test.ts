@@ -169,6 +169,10 @@ describe("host protocol", () => {
           capabilities: {
             skills: {
               roots: ["../skills"],
+              // This test exercises the auto-resident path (skill.loaded fires
+              // for matcher-selected skills). The host now defaults to on-demand
+              // loading, so opt back in explicitly.
+              loadSelectedSkills: true,
               maxSelectedSkills: 1,
             },
             mcp: {

@@ -289,6 +289,49 @@ describe("coding tools", () => {
     });
   });
 
+  it("expands brace alternation in glob patterns", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+      "src/index.js": "module.exports = 1;\n",
+      "src/types.d.ts": "export declare const value: number;\n",
+      "README.md": "# Demo\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    const result = await tool.execute(
+      { patterns: ["src/**/*.{ts,js,d.ts}"] },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      paths: ["src/index.js", "src/index.ts", "src/types.d.ts"],
+      totalPaths: 3,
+      hasMore: false,
+    });
+  });
+
+  it("treats unbalanced braces as literal characters", async () => {
+    const { root, ctx } = await createWorkspace({
+      "weird{name.ts": "export const value = 1;\n",
+      "src/index.ts": "export const value = 1;\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    const result = await tool.execute({ patterns: ["weird{name.ts"] }, ctx);
+
+    expect(result).toMatchObject({
+      paths: ["weird{name.ts"],
+      totalPaths: 1,
+      hasMore: false,
+    });
+  });
+
   it("normalizes absolute glob paths inside the workspace", async () => {
     const { root, ctx } = await createWorkspace({
       "src/index.ts": "export const value = 1;\n",

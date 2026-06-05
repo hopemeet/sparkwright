@@ -286,6 +286,44 @@ function EventCard(props: {
           </Box>
         );
       }
+      // A `skill.load` result carries the whole skill body in `content`, which
+      // oneLine would truncate to a meaningless ~200-char JSON stub (hiding the
+      // one fact that matters: did the body actually come back?). Render a
+      // proof-of-load summary — status + body length + resource count — and
+      // leave the full envelope inspectable via /events.
+      if (isSkillLoadResult(result)) {
+        const r = rec(result);
+        if (r.status === "not_found") {
+          const avail = Array.isArray(r.availableSkills)
+            ? r.availableSkills.join(", ")
+            : "";
+          return (
+            <Box paddingLeft={childPad} paddingRight={1}>
+              <Text color={theme.error}>
+                {`skill.load ${str(r.requestedName)} → not found`}
+              </Text>
+              {avail ? <Text dimColor>{"  available: " + avail}</Text> : null}
+            </Box>
+          );
+        }
+        const bodyChars = str(r.content).length;
+        const resources = Array.isArray(r.resourceFiles)
+          ? r.resourceFiles.length
+          : 0;
+        const version = str(r.version);
+        return (
+          <Box paddingLeft={childPad} paddingRight={1}>
+            <Text color={theme.success}>
+              {`skill.load ${str(r.name)} → loaded`}
+            </Text>
+            <Text dimColor>
+              {`  body ${bodyChars} chars · ${resources} resource file${
+                resources === 1 ? "" : "s"
+              }${version ? " · v" + version : ""}`}
+            </Text>
+          </Box>
+        );
+      }
       // Tool output (shell stdout especially) is the most likely carrier of
       // raw escape sequences — strip them so a `clear`/cursor-move in stdout
       // can't scramble the transcript.
@@ -310,11 +348,23 @@ function EventCard(props: {
     }
 
     case "tool.failed": {
-      // `tool.failed` carries no toolName — the name lives on the paired
-      // `tool.requested` (correlated by toolCallId, which we don't track in
-      // the committed renderer). The useful bit is `error.message`.
+      // `tool.failed` usually omits toolName (the name lives on the paired
+      // `tool.requested`, correlated by toolCallId, which the committed
+      // renderer doesn't track) — fall back to "tool". The doom-loop repeat
+      // nudge does carry toolName so its skip can be named.
       const name = str(p.toolName) || "tool";
       const errObj = rec(p.error);
+      // A skipped repeated call isn't a real execution failure — it's the
+      // anti-thrashing nudge. Render it as a compact "skipped" line rather
+      // than dumping the full corrective message as an error.
+      if (str(errObj.code) === "REPEATED_TOOL_CALL_SKIPPED") {
+        return (
+          <Box paddingLeft={childPad} paddingRight={1}>
+            <Text color={theme.warning}>{`⤳ ${name} skipped`}</Text>
+            <Text dimColor>{"  repeated call · no new information"}</Text>
+          </Box>
+        );
+      }
       const err = sanitizeAnsiForRender(
         str(errObj.message) || oneLine(p.error, 120),
       );
@@ -640,6 +690,25 @@ export function isAgentToolResult(value: unknown): boolean {
     typeof r.signal === "string" &&
     "stopReason" in r
   );
+}
+
+/**
+ * Recognise a `skill.load` tool result by its shape: a record with a string
+ * `status` that is either a loaded skill (`name` + string `content` body) or a
+ * `not_found` miss (`requestedName`). The committed renderer has no toolCallId
+ * correlation, so this structural check is how `tool.completed` knows to render
+ * a proof-of-load summary instead of dumping/truncating the body-bearing
+ * envelope as JSON. Returns true for a skill.load result.
+ */
+export function isSkillLoadResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  if (r.status === "loaded") {
+    return typeof r.name === "string" && typeof r.content === "string";
+  }
+  return r.status === "not_found" && typeof r.requestedName === "string";
 }
 
 /** Best-effort one-line preview of a value (object → compact JSON). */

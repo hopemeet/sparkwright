@@ -413,6 +413,16 @@ export interface RunHandle {
    */
   getUsageTracker(): UsageTracker;
   /**
+   * The run's {@link RuntimeContext} workspace, if one was configured. Exposed
+   * so an orchestrator spawning a sub-agent can inherit it as the child's
+   * workspace — otherwise the child's `ctx.workspace` is undefined and any
+   * workspace-backed tool (e.g. `read_file`) throws "Workspace is not
+   * configured", even when factory-bound tools like `glob_paths` still work.
+   *
+   * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
+   */
+  getWorkspace(): RuntimeContext["workspace"] | undefined;
+  /**
    * Serializable best-effort snapshot for debugging, branch/fork, and resume.
    *
    * @reserved Public run-control helper consumed by stores and frontends.
@@ -1704,6 +1714,10 @@ export class SparkwrightRun implements RunHandle {
     return this.usageTracker;
   }
 
+  getWorkspace(): RuntimeContext["workspace"] | undefined {
+    return this.workspace;
+  }
+
   addHook(hook: RunHook): string {
     const id = hook.id ?? `hook-dyn-${++this.dynamicHookCounter}`;
     if (this.dynamicHooks.some((existing) => existing.id === id)) {
@@ -2063,7 +2077,9 @@ export class SparkwrightRun implements RunHandle {
       },
       artifacts: [],
     };
-    span.close("tool.failed", nudged);
+    // Carry `toolName` on the event payload (the `nudged` ToolResult omits it)
+    // so UIs can name the skipped call instead of rendering a generic "tool".
+    span.close("tool.failed", { ...nudged, toolName: requestedCall.toolName });
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
       status: nudged.status,

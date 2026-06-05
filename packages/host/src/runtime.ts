@@ -53,6 +53,7 @@ import type {
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "./config.js";
+import { resolveAgentProfiles } from "./agent-profiles.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
 import {
@@ -61,6 +62,7 @@ import {
   createAgentInspectorTool,
   createAgentManagerTool,
   createGlobPathsTool,
+  createGrepTextTool,
   applyToolConfig,
   createReadFileTool,
   createSkillInspectorTool,
@@ -284,8 +286,13 @@ export class HostRuntime {
             allowedSkills: skillConfig.allowedSkills,
             deniedSkills: skillConfig.deniedSkills,
           },
-          includeLoaderTool: skillConfig.includeLoaderTool,
-          loadSelectedSkills: skillConfig.loadSelectedSkills,
+          // Default to on-demand loading: expose the skill.load tool and let
+          // the model pull bodies it judges relevant, rather than auto-residing
+          // matcher-selected skills (which both pollutes context and double-
+          // injects when the loader tool is also on). A config can opt back into
+          // auto-resident by setting loadSelectedSkills: true.
+          includeLoaderTool: skillConfig.includeLoaderTool ?? true,
+          loadSelectedSkills: skillConfig.loadSelectedSkills ?? false,
           maxSelectedSkills: skillConfig.maxSelectedSkills,
           resourceFileLimit: skillConfig.resourceFileLimit,
           includeDevSkills: devSkillsEnabled(),
@@ -303,10 +310,16 @@ export class HostRuntime {
           agentId: MAIN_AGENT_ID,
         })
       : null;
-    const mainAgent = mainAgentProfile(agentConfig?.profiles);
+    // Fold markdown-authored agents under config profiles (config wins by id),
+    // so .sparkwright/agents/*.md and config.json describe the same agent set.
+    const resolvedProfiles = await resolveAgentProfiles(
+      workspaceRoot,
+      agentConfig?.profiles,
+    );
+    const mainAgent = mainAgentProfile(resolvedProfiles);
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
-      agentConfig?.profiles ?? [],
+      resolvedProfiles,
       pendingExtensionEvents,
     );
     const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
@@ -329,6 +342,7 @@ export class HostRuntime {
     const baseChildTools = [
       createReadFileTool(),
       createGlobPathsTool(workspaceRoot),
+      createGrepTextTool(workspaceRoot),
     ];
     const childTools = applyToolConfig(baseChildTools, toolConfig);
     const delegateTools = createConfiguredDelegateTools({
@@ -349,6 +363,7 @@ export class HostRuntime {
       [
         createReadFileTool(),
         createGlobPathsTool(workspaceRoot),
+        createGrepTextTool(workspaceRoot),
         createAppendFileTool(),
         createCronTool(),
         createSkillInspectorTool(workspaceRoot, skillConfig?.roots),
@@ -407,7 +422,7 @@ export class HostRuntime {
                 mcpToolNameMap: preparedMcp.toolNameMap,
               }
             : {}),
-          ...(agentConfig?.profiles?.length
+          ...(resolvedProfiles.length
             ? {
                 agentProfiles: [
                   mainAgent,
@@ -552,6 +567,10 @@ export class HostRuntime {
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
+    const resolvedProfiles = await resolveAgentProfiles(
+      this.opts.workspaceRoot,
+      agentConfig?.profiles,
+    );
     const preparedSkills =
       skillConfig?.roots?.length && skillConfig.roots.length > 0
         ? await prepareSkillsForRun({
@@ -561,7 +580,7 @@ export class HostRuntime {
               allowedSkills: skillConfig.allowedSkills,
               deniedSkills: skillConfig.deniedSkills,
             },
-            includeLoaderTool: skillConfig.includeLoaderTool,
+            includeLoaderTool: skillConfig.includeLoaderTool ?? true,
             loadSelectedSkills: false,
             resourceFileLimit: skillConfig.resourceFileLimit,
             includeDevSkills: devSkillsEnabled(),
@@ -573,6 +592,7 @@ export class HostRuntime {
         [
           createReadFileTool(),
           createGlobPathsTool(this.opts.workspaceRoot),
+          createGrepTextTool(this.opts.workspaceRoot),
           createAppendFileTool(),
           createCronTool(),
           createSkillInspectorTool(this.opts.workspaceRoot, skillConfig?.roots),
@@ -585,8 +605,8 @@ export class HostRuntime {
             getParent: () => undefined,
             delegates: agentConfig?.delegateTools ?? [],
             derivedAgents: deriveConfiguredAgents(
-              mainAgentProfile(agentConfig?.profiles),
-              agentConfig?.profiles ?? [],
+              mainAgentProfile(resolvedProfiles),
+              resolvedProfiles,
             ),
             model: {
               async complete() {
@@ -596,6 +616,7 @@ export class HostRuntime {
             childTools: [
               createReadFileTool(),
               createGlobPathsTool(this.opts.workspaceRoot),
+              createGrepTextTool(this.opts.workspaceRoot),
             ],
             // Snapshot only describes the tool; its body never runs here
             // (getParent returns undefined and the tool throws first).
@@ -612,6 +633,7 @@ export class HostRuntime {
               [
                 createReadFileTool(),
                 createGlobPathsTool(this.opts.workspaceRoot),
+                createGrepTextTool(this.opts.workspaceRoot),
               ],
               toolConfig,
             ),
@@ -632,10 +654,10 @@ export class HostRuntime {
       ),
       mcpToolNameMap: [],
       agentProfiles: [
-        mainAgentProfile(agentConfig?.profiles),
+        mainAgentProfile(resolvedProfiles),
         ...deriveConfiguredAgents(
-          mainAgentProfile(agentConfig?.profiles),
-          agentConfig?.profiles ?? [],
+          mainAgentProfile(resolvedProfiles),
+          resolvedProfiles,
         ).map((agent) => agent.effectiveProfile),
       ],
     });
@@ -1120,17 +1142,18 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Only read_file and glob_paths are supported.",
+            "Optional subset of read-only tools to expose. Supported: read_file, glob_paths, grep_text. Defaults to all three. Use grep_text to find a symbol by name (glob_paths only matches paths, not contents).",
           items: {
             type: "string",
-            enum: ["read_file", "glob_paths"],
+            enum: ["read_file", "glob_paths", "grep_text"],
           },
         },
         maxSteps: {
           type: "integer",
           minimum: 1,
-          maximum: 4,
-          description: "Optional child step limit. Values above 4 are capped.",
+          maximum: 16,
+          description:
+            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to 8 when omitted, capped at 16. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
         },
         metadata: {
           type: "object",
@@ -1160,8 +1183,12 @@ export function createDynamicSpawnAgentTool(input: {
       }
 
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set(["read_file", "glob_paths"]);
-      const requestedTools = parsed.allowedTools ?? ["read_file", "glob_paths"];
+      const supportedTools = new Set(["read_file", "glob_paths", "grep_text"]);
+      const requestedTools = parsed.allowedTools ?? [
+        "read_file",
+        "glob_paths",
+        "grep_text",
+      ];
       const availableTools = new Map(
         input.childTools.map((tool) => [tool.name, tool]),
       );
@@ -1293,7 +1320,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     throw new Error("spawn_agent allowedTools must not contain duplicates.");
   }
   const maxSteps =
-    record.maxSteps === undefined ? 4 : integerField(record, "maxSteps");
+    record.maxSteps === undefined ? 8 : integerField(record, "maxSteps");
   if (maxSteps < 1) {
     throw new Error("spawn_agent maxSteps must be at least 1.");
   }
@@ -1304,7 +1331,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     role,
     prompt,
     allowedTools,
-    maxSteps: Math.min(maxSteps, 4),
+    maxSteps: Math.min(maxSteps, 16),
     metadata,
   };
 }

@@ -18,26 +18,11 @@ import {
   type EventEmitter,
   type ToolDefinition,
 } from "@sparkwright/core";
+import { defaultTokenize } from "./matcher.js";
 
 const SKILL_FILE_NAME = "SKILL.md";
 const DEFAULT_MAX_SELECTED_SKILLS = 1;
 const DEFAULT_RESOURCE_FILE_LIMIT = 10;
-const COMMON_MATCH_WORDS = new Set([
-  "and",
-  "for",
-  "from",
-  "into",
-  "that",
-  "the",
-  "this",
-  "when",
-  "with",
-  "asks",
-  "skill",
-  "skills",
-  "agent",
-  "agents",
-]);
 
 export interface SkillFrontmatter {
   name: string;
@@ -54,6 +39,8 @@ export interface SkillDefinition {
   license?: string;
   compatibility?: string[];
   allowedTools?: string[];
+  /** Optional keyword hints that boost relevance scoring. */
+  triggers?: string[];
   body: string;
   sourcePath: string;
   contentHash: string;
@@ -66,6 +53,8 @@ export interface SkillIndexEntry {
   sourcePath: string;
   contentHash: string;
   version?: string;
+  /** Optional keyword hints that boost relevance scoring. */
+  triggers?: string[];
   metadata: Record<string, unknown>;
 }
 
@@ -146,11 +135,16 @@ export async function prepareSkillsForRun(
   );
   const indexedSkills = skills.map(toSkillIndexEntry);
   const loadSelectedSkills = options.loadSelectedSkills ?? true;
-  const selected = selectSkills({
-    goal: options.goal,
-    skills,
-    maxSelectedSkills: options.maxSelectedSkills ?? DEFAULT_MAX_SELECTED_SKILLS,
-  });
+  // Matching only feeds the resident-context path; skip it entirely under
+  // on-demand loading, where `selected` is never read.
+  const selected = loadSelectedSkills
+    ? selectSkills({
+        goal: options.goal,
+        skills,
+        maxSelectedSkills:
+          options.maxSelectedSkills ?? DEFAULT_MAX_SELECTED_SKILLS,
+      })
+    : [];
   const loadedSkills = loadSelectedSkills
     ? selected.map(({ skill, reason }) => ({
         ...toSkillIndexEntry(skill),
@@ -201,7 +195,9 @@ export async function prepareSkillsForRun(
 
   return {
     context: [
-      createSkillIndexContext(indexedSkills),
+      createSkillIndexContext(
+        rankIndexedSkillsByGoal(indexedSkills, options.goal),
+      ),
       ...(loadSelectedSkills
         ? selected.map(({ skill, reason }) =>
             createLoadedSkillContext(skill, reason),
@@ -253,6 +249,7 @@ export function parseSkill(
   const metadata = recordField(parsed.frontmatter.metadata);
   const compatibility = stringArrayField(parsed.frontmatter.compatibility);
   const allowedTools = stringArrayField(parsed.frontmatter["allowed-tools"]);
+  const triggers = stringArrayField(parsed.frontmatter.triggers);
 
   return {
     name,
@@ -260,6 +257,7 @@ export function parseSkill(
     license: optionalStringField(parsed.frontmatter.license),
     compatibility,
     allowedTools,
+    triggers,
     body: parsed.body.trim(),
     sourcePath,
     contentHash: sha256(content),
@@ -284,16 +282,13 @@ export function selectSkills(input: {
   const goalTokens = tokenize(input.goal);
   const scored = input.skills
     .map((skill) => {
-      const nameTokens = tokenize(skill.name);
-      const descriptionTokens = tokenize(skill.description);
-      const nameScore = countMatches(goalTokens, nameTokens) * 3;
-      const descriptionScore = countMatches(goalTokens, descriptionTokens);
-      const exactNameScore = input.goal
-        .toLowerCase()
-        .includes(skill.name.toLowerCase())
-        ? 5
-        : 0;
-      const score = nameScore + descriptionScore + exactNameScore;
+      const score = scoreSkillAgainstGoal(
+        goalTokens,
+        input.goal,
+        skill.name,
+        skill.description,
+        skill.triggers,
+      );
 
       return {
         skill,
@@ -312,6 +307,66 @@ export function selectSkills(input: {
     );
 
   return scored.slice(0, maxSelectedSkills);
+}
+
+/**
+ * Deterministic goal/skill relevance score shared by the resident-context
+ * selector and the on-demand index ranker. Name hits weigh more than
+ * description hits, with a bonus when the goal literally names the skill.
+ */
+function scoreSkillAgainstGoal(
+  goalTokens: Set<string>,
+  goal: string,
+  name: string,
+  description: string,
+  triggers: readonly string[] = [],
+): number {
+  const nameScore = countMatches(goalTokens, tokenize(name)) * 3;
+  // Triggers carry the concrete operational nouns users actually type (e.g.
+  // "trace", "resume") that the abstract description often omits. Weighted
+  // between name and description, mirroring the resident-path matcher.
+  const triggerTokens = new Set(triggers.flatMap((t) => [...tokenize(t)]));
+  const triggerScore = countMatches(goalTokens, triggerTokens) * 2;
+  const descriptionScore = countMatches(goalTokens, tokenize(description));
+  const exactNameScore = goal.toLowerCase().includes(name.toLowerCase())
+    ? 5
+    : 0;
+  return nameScore + triggerScore + descriptionScore + exactNameScore;
+}
+
+/**
+ * Order the on-demand skill index by deterministic relevance to the goal and
+ * tag each entry. Unlike {@link selectSkills} this drops nothing — the model
+ * still sees every skill — but it surfaces the likely-relevant ones first and
+ * flags the rest as `low` so a weak model is less prone to grabbing an
+ * out-of-domain skill. Falls back to a fully `low`-tagged list (name-ordered)
+ * when the goal yields no tokens (e.g. an unsupported script).
+ */
+export function rankIndexedSkillsByGoal(
+  skills: SkillIndexEntry[],
+  goal: string,
+): Array<SkillIndexEntry & { relevance: "relevant" | "low" }> {
+  const goalTokens = tokenize(goal);
+  return skills
+    .map((skill) => ({
+      skill,
+      score: scoreSkillAgainstGoal(
+        goalTokens,
+        goal,
+        skill.name,
+        skill.description,
+        skill.triggers,
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        left.skill.name.localeCompare(right.skill.name),
+    )
+    .map(({ skill, score }) => ({
+      ...skill,
+      relevance: score > 0 ? ("relevant" as const) : ("low" as const),
+    }));
 }
 
 export function filterSkillsForAgent(
@@ -384,6 +439,12 @@ export function createSkillLoaderTool(
   options: { resourceFileLimit?: number } = {},
 ): ToolDefinition<{ name: string }> {
   const byName = new Map(skills.map((skill) => [skill.name, skill]));
+  // Names whose body has already been loaded this run. A second load of the
+  // same skill cannot add information — the body is already resident in
+  // context — so we short-circuit it cheaply (no file I/O) and tell the model
+  // it already has it, on the FIRST repeat rather than waiting for the
+  // doom-loop nudge after a wasted round-trip.
+  const loadedNames = new Set<string>();
   const resourceFileLimit =
     options.resourceFileLimit ?? DEFAULT_RESOURCE_FILE_LIMIT;
 
@@ -394,7 +455,7 @@ export function createSkillLoaderTool(
   return defineTool<{ name: string }>({
     name: "skill.load",
     description:
-      "Load a Sparkwright skill body when the task matches one of the available skill descriptions.",
+      "Load a Sparkwright skill body ONLY when the current task clearly falls within a skill's stated scope. Match against the skill description, not just a shared keyword — do not load a skill for tasks outside its domain. Prefer answering directly when no skill clearly applies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -427,10 +488,21 @@ export function createSkillLoaderTool(
         };
       }
 
+      if (loadedNames.has(skill.name)) {
+        return {
+          status: "already_loaded",
+          name: skill.name,
+          message:
+            `Skill \`${skill.name}\` is already loaded; its body is in ` +
+            `context. Use it directly — do not load it again.`,
+        };
+      }
+
       const resourceFiles = await listSkillResourceFiles(
         skill,
         resourceFileLimit,
       );
+      loadedNames.add(skill.name);
 
       return {
         status: "loaded",
@@ -448,8 +520,9 @@ export function createSkillLoaderTool(
 }
 
 export function createSkillIndexContext(
-  skills: SkillIndexEntry[],
+  skills: Array<SkillIndexEntry & { relevance?: "relevant" | "low" }>,
 ): ContextItem {
+  const hasRelevance = skills.some((skill) => skill.relevance !== undefined);
   return {
     id: createContextItemId(),
     type: "system",
@@ -459,6 +532,16 @@ export function createSkillIndexContext(
     content: JSON.stringify(
       {
         kind: "skill_index",
+        ...(hasRelevance
+          ? {
+              // Ordering is a hint, never a gate: the keyword ranker is a weak
+              // lexical matcher and routinely misses skills the model would
+              // recognize as relevant. Load whenever the task plausibly falls
+              // in a skill's scope, and never answer about a skill's own
+              // subject from memory.
+              note: "Skills are listed most-relevant-first for the current goal, but this order is only a weak hint — do not skip a skill just because it appears lower. Load a skill via skill.load whenever the task plausibly falls within its described scope. Never answer questions about a skill's own subject (e.g. this tool's own commands, flags, config, or recovery steps) from memory: load the matching skill and verify against it first, and do not invent commands or flags.",
+            }
+          : {}),
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -665,6 +748,9 @@ function toSkillIndexEntry(skill: SkillDefinition): SkillIndexEntry {
     sourcePath: skill.sourcePath,
     contentHash: skill.contentHash,
     version: versionOf(skill.metadata),
+    ...(skill.triggers && skill.triggers.length > 0
+      ? { triggers: skill.triggers }
+      : {}),
     metadata: skill.metadata,
   };
 }
@@ -735,17 +821,25 @@ function createSkillToolOutput(
   skill: SkillDefinition,
   resourceFiles: string[],
 ): string {
+  const baseDirectory = dirname(skill.sourcePath);
   return [
     `<skill_content name="${skill.name}">`,
     `# Skill: ${skill.name}`,
     "",
     skill.body.trim(),
     "",
-    `Base directory for this skill: ${dirname(skill.sourcePath)}`,
-    "Relative paths in this skill are resolved from the base directory.",
+    `Base directory for this skill: ${baseDirectory}`,
+    "This skill's body is now loaded — do NOT call skill.load for it again. " +
+      "To use a reference file below, call a file-reading tool (e.g. " +
+      "read_file) on its full path; that is a different action from " +
+      "skill.load. Each <file> is a full path; pass it directly. Do not " +
+      "prepend the working directory. Any other relative path this skill " +
+      "mentions resolves from the base directory above.",
     "",
     "<skill_files>",
-    ...resourceFiles.map((file) => `<file>${file}</file>`),
+    ...resourceFiles.map(
+      (file) => `<file>${normalizePath(join(baseDirectory, file))}</file>`,
+    ),
     "</skill_files>",
     "</skill_content>",
   ].join("\n");
@@ -761,14 +855,11 @@ function matchesPatternSet(value: string, patterns: string[]): boolean {
   return patterns.some((pattern) => pattern === "*" || pattern === value);
 }
 
+// Single source of truth for tokenization: defer to the matcher's
+// Unicode-aware tokenizer (Latin words + CJK bigrams) and wrap in a Set for
+// the deterministic overlap scoring below.
 function tokenize(value: string): Set<string> {
-  return new Set(
-    value
-      .toLowerCase()
-      .split(/[^a-z0-9]+/g)
-      .map((token) => token.trim())
-      .filter((token) => token.length > 2 && !COMMON_MATCH_WORDS.has(token)),
-  );
+  return new Set(defaultTokenize(value));
 }
 
 function countMatches(left: Set<string>, right: Set<string>): number {
