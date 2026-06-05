@@ -8,6 +8,7 @@ import {
   createTodoReadTool,
   createTodoTools,
   createTodoWriteTool,
+  hasExternalProgressEvidence,
   hasUnfinishedTodo,
   itemsOnly,
   parseTodoMarkdown,
@@ -230,6 +231,30 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
     ).rejects.toThrow(/status must be one of/);
   });
 
+  it("write accepts common status synonyms (todo/done) case-insensitively", async () => {
+    const path = await tempPath();
+    const write = createTodoWriteTool({ getTodoPath: () => path });
+    const read = createTodoReadTool({ getTodoPath: () => path });
+    await write.execute(
+      {
+        items: [
+          { title: "a", status: "todo" },
+          { title: "b", status: "Done" },
+          { title: "c", status: "WIP" },
+          { title: "d", status: "cancelled" },
+        ],
+      },
+      {} as never,
+    );
+    const out = (await read.execute({}, {} as never)) as { items: TodoItem[] };
+    expect(out.items.map((i) => i.status)).toEqual([
+      "pending",
+      "completed",
+      "in_progress",
+      "skipped",
+    ]);
+  });
+
   it("createTodoTools returns both tools wired to the same path", async () => {
     const path = await tempPath();
     await writeFile(path.replace(/\/[^/]+$/, ""), "", { flag: "a" }).catch(
@@ -298,7 +323,7 @@ describe("TodoLedger helpers", () => {
         stopReason: "final_answer",
         metadata: {},
       },
-      events: [{ type: "tool.completed" } as never],
+      events: [{ type: "workspace.write.completed" } as never],
       maxContinuations: 3,
       continuationCount: 0,
     });
@@ -318,6 +343,48 @@ describe("TodoLedger helpers", () => {
     expect(denied).toMatchObject({
       kind: "handoff",
       reason: "non_resumable_stop_reason",
+    });
+  });
+
+  it("does not count reads or empty tool calls as external progress", () => {
+    // A tool.completed (e.g. an empty glob in a dead-end path) is NOT progress:
+    // counting it let a model thrash forever without the stall guard firing.
+    expect(
+      hasExternalProgressEvidence([
+        { type: "tool.completed" } as never,
+        { type: "workspace.read" } as never,
+      ]),
+    ).toBe(false);
+    expect(
+      hasExternalProgressEvidence([
+        { type: "workspace.write.completed" } as never,
+      ]),
+    ).toBe(true);
+  });
+
+  it("hands off a stalled continuation when only reads occur", () => {
+    const ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      metadata: {},
+      items: [{ title: "next", status: "pending" as const, depth: 0 }],
+    };
+    const decision = auditTodoAfterTerminal(ledger, {
+      result: {
+        signal: "completed",
+        state: "completed",
+        stopReason: "final_answer",
+        metadata: {},
+      },
+      // Only a read happened — no external side effect.
+      events: [{ type: "tool.completed" } as never],
+      maxContinuations: 5,
+      continuationCount: 1,
+      maxStalledContinuations: 2,
+      stalledContinuationCount: 2,
+    });
+    expect(decision).toMatchObject({
+      kind: "handoff",
+      reason: "stalled_without_progress",
     });
   });
 });
@@ -352,7 +419,7 @@ describe("runTodoSupervised", () => {
             stopReason: "final_answer",
             metadata: {},
           },
-          events: [{ type: "tool.completed" } as never],
+          events: [{ type: "workspace.write.completed" } as never],
         };
       },
     });

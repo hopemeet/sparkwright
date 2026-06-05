@@ -197,6 +197,26 @@ const FILE_TOOL_GUIDANCE = [
   "  workspace files (use the read/append file tools for that).",
 ].join("\n");
 
+/**
+ * Anchor workspace-tool paths to the workspace root. A goal phrased as
+ * "go into Foo/examples/bar and ..." led a model to prefix every read/glob
+ * path with the workspace folder's own name (`Foo/examples/bar/...`) when cwd
+ * was already that folder — so every call resolved to a non-existent path and
+ * the model thrashed dozens of empty globs hunting a file that was one prefix
+ * away. This states the resolution rule explicitly. Injected only when a path
+ * tool is present.
+ */
+const WORKSPACE_PATH_GUIDANCE = [
+  "Workspace path resolution:",
+  "- Paths for the workspace tools (read_file, glob_paths, grep_text,",
+  "  append_file) are relative to the workspace root shown as `cwd` in <env>.",
+  "- Do NOT prefix paths with the workspace folder's own name. If cwd ends in",
+  "  `/myrepo`, read `examples/x`, not `myrepo/examples/x` — the latter resolves",
+  "  under `myrepo/myrepo/...` and will not be found.",
+  "- If a path is not found, do not re-glob many prefixed variants. Reconsider",
+  "  it relative to cwd, or list the parent directory once to see what exists.",
+].join("\n");
+
 const DELEGATION_GUIDANCE = [
   "Reporting a sub-agent's result:",
   "- A spawned/delegated child returns a `message` that is already its final,",
@@ -246,6 +266,18 @@ export function buildAgentPromptBuilder(
       guidance: FILE_TOOL_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "append_file" || tool.name === "write_file",
+    }),
+  );
+
+  // Anchor workspace-tool paths to cwd; appears only when a path tool is live.
+  sections.push(
+    createToolGuidanceSection({
+      name: "workspace_path_resolution",
+      guidance: WORKSPACE_PATH_GUIDANCE,
+      whenTool: (tool) =>
+        tool.name === "read_file" ||
+        tool.name === "glob_paths" ||
+        tool.name === "grep_text",
     }),
   );
 

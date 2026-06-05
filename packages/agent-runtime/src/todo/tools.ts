@@ -33,6 +33,46 @@ const VALID_STATUSES: ReadonlySet<TodoStatus> = new Set([
   "failed",
   "skipped",
 ]);
+
+// Models routinely reach for status words from other todo systems (the very
+// first observed run failed `todo_write` with `status: "todo"`). Accept the
+// common synonyms case-insensitively and map them onto the canonical alphabet
+// instead of rejecting the whole write. Anything still unrecognized errors so
+// genuine typos are not silently coerced.
+const STATUS_ALIASES: ReadonlyMap<string, TodoStatus> = new Map([
+  ["todo", "pending"],
+  ["to_do", "pending"],
+  ["to-do", "pending"],
+  ["open", "pending"],
+  ["not_started", "pending"],
+  ["incomplete", "pending"],
+  ["doing", "in_progress"],
+  ["in-progress", "in_progress"],
+  ["inprogress", "in_progress"],
+  ["wip", "in_progress"],
+  ["active", "in_progress"],
+  ["done", "completed"],
+  ["complete", "completed"],
+  ["completed", "completed"],
+  ["finished", "completed"],
+  ["cancelled", "skipped"],
+  ["canceled", "skipped"],
+  ["skip", "skipped"],
+  ["error", "failed"],
+  ["blocked_on", "blocked"],
+]);
+
+/**
+ * Normalize a free-form status string to the canonical {@link TodoStatus}
+ * alphabet, accepting common synonyms case-insensitively. Returns `undefined`
+ * for anything still unrecognized.
+ */
+function normalizeStatus(raw: unknown): TodoStatus | undefined {
+  if (typeof raw !== "string") return undefined;
+  const key = raw.trim().toLowerCase();
+  if (VALID_STATUSES.has(key as TodoStatus)) return key as TodoStatus;
+  return STATUS_ALIASES.get(key);
+}
 const VALID_PRIORITIES: ReadonlySet<TodoPriority> = new Set([
   "high",
   "medium",
@@ -96,7 +136,7 @@ export function createTodoWriteTool(
   return defineTool({
     name: "todo_write",
     description:
-      "Replace the run's todo ledger. Pass `items` (array of {title/content, status, depth?, priority?, doneWhen?, evidence?, owner?, note?}). Child agents are denied this tool by policy.",
+      "Replace the run's todo ledger. Pass `items` (array of {title/content, status, depth?, priority?, doneWhen?, evidence?, owner?, note?}). `status` must be one of: pending, in_progress, completed, blocked, failed, skipped (common synonyms like 'todo'/'done' are accepted). Only mark an item completed when its done-when is actually satisfied — do not relax done-when to claim completion. Child agents are denied this tool by policy.",
     inputSchema: {
       type: "object",
       properties: {
@@ -199,10 +239,8 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
       `todo_write: items[${index}] must include non-empty title or content.`,
     );
   }
-  if (
-    typeof r.status !== "string" ||
-    !VALID_STATUSES.has(r.status as TodoStatus)
-  ) {
+  const status = normalizeStatus(r.status);
+  if (!status) {
     throw new Error(
       `todo_write: items[${index}].status must be one of: ${[...VALID_STATUSES].join(", ")}`,
     );
@@ -236,7 +274,7 @@ function normalizeItem(raw: unknown, index: number): TodoItem {
     ...(id ? { id } : {}),
     title,
     ...(typeof r.content === "string" ? { content: r.content } : {}),
-    status: r.status as TodoStatus,
+    status,
     depth,
     ...(priority ? { priority } : {}),
     ...(doneWhen ? { doneWhen } : {}),

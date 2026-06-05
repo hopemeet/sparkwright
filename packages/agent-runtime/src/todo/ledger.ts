@@ -287,16 +287,34 @@ export function buildTodoContinuationPrompt(ledger: TodoLedger): string {
   ].join("\n");
 }
 
+/**
+ * Strong, externally-observable side effects from a run. Used by the stall
+ * guard to decide whether a continuation is making real forward progress or
+ * just spinning.
+ *
+ * Deliberately does NOT include `tool.completed`: that event fires for every
+ * tool call — including a read that returned nothing or an empty glob — so
+ * counting it as "progress" let a model thrash in a dead end (e.g. globbing a
+ * non-existent path) forever without the stall guard ever firing. Matching the
+ * function's name, only genuine *external* changes count: a workspace write, a
+ * verified anchored edit, or a created artifact. Reads and no-ops are internal
+ * information-gathering, not progress. A read-only run that produces no such
+ * side effect across `maxStalledContinuations` rounds is intended to hand off
+ * to the human rather than auto-continue indefinitely.
+ *
+ * @public @stability experimental v0.1
+ */
+const EXTERNAL_PROGRESS_EVENTS: ReadonlySet<SparkwrightEvent["type"]> = new Set([
+  "workspace.write.completed",
+  "workspace.anchored_edit.verified",
+  "artifact.created",
+]);
+
 /** @public @stability experimental v0.1 */
 export function hasExternalProgressEvidence(
   events: readonly SparkwrightEvent[],
 ): boolean {
-  return events.some((event) => {
-    if (event.type === "workspace.write.completed") return true;
-    if (event.type === "artifact.created") return true;
-    if (event.type === "tool.completed") return true;
-    return false;
-  });
+  return events.some((event) => EXTERNAL_PROGRESS_EVENTS.has(event.type));
 }
 
 function renderTodoLine(item: TodoItem): string {
