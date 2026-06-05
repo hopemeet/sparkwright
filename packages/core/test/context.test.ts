@@ -411,6 +411,23 @@ describe("DefaultPromptBuilder", () => {
     expect(messages[7]?.content).toBe("Step: 1");
   });
 
+  it("renders the step ceiling in runtime_progress when maxSteps is supplied", async () => {
+    const builder = new DefaultPromptBuilder();
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 5,
+      maxSteps: 8,
+      tools: [],
+      context: [],
+    });
+
+    const progress = messages.at(-1);
+    expect(progress?.metadata?.sectionName).toBe("runtime_progress");
+    // Surfacing the ceiling lets the model see remaining budget instead of
+    // guessing it has run out — the cause of premature give-ups.
+    expect(progress?.content).toBe("Step: 5 / 8");
+  });
+
   it("returns synchronously when all sections are synchronous", () => {
     const builder = new DefaultPromptBuilder();
     const messages = builder.build({

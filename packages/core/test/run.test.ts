@@ -256,7 +256,7 @@ describe("SparkwrightRun", () => {
           // selected_context is now the append-only tail followed by the
           // volatile per-step counter, so it is the second-to-last message.
           expect(input.prompt?.at(-2)?.content).toContain("selected context");
-          expect(input.prompt?.at(-1)?.content).toMatch(/^Step: \d+$/);
+          expect(input.prompt?.at(-1)?.content).toMatch(/^Step: \d+ \/ \d+$/);
           return { message: "done" };
         },
       },
@@ -364,7 +364,7 @@ describe("SparkwrightRun", () => {
     expect(run.record.state).toBe("completed");
   });
 
-  it("fails when max steps are exceeded", async () => {
+  it("wraps up with a best-effort partial when max steps are exceeded", async () => {
     const echo = defineTool({
       name: "echo",
       description: "Echo text.",
@@ -374,19 +374,19 @@ describe("SparkwrightRun", () => {
       },
     });
 
+    // Keeps calling tools until the budget runs out; on the forced wrap-up turn
+    // (tools stripped) it hands back a partial summary instead.
     const run = createRun({
       goal: "never finish",
       tools: [echo],
       maxSteps: 2,
       model: {
-        async complete() {
+        async complete(input) {
+          if (input.tools.length === 0) {
+            return { message: "Partial summary of what I gathered." };
+          }
           return {
-            toolCalls: [
-              {
-                toolName: "echo",
-                arguments: {},
-              },
-            ],
+            toolCalls: [{ toolName: "echo", arguments: { n: input.step } }],
           };
         },
       },
@@ -394,20 +394,66 @@ describe("SparkwrightRun", () => {
 
     const result = await run.start();
 
-    const failed = run.events
+    expect(run.record.state).toBe("completed");
+    expect(result).toMatchObject({
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      message: "Partial summary of what I gathered.",
+      metadata: {
+        stepLimitReached: true,
+        truncated: true,
+        maxSteps: 2,
+        stepsUsed: 2,
+      },
+    });
+    const completed = run.events
       .all()
-      .find((event) => event.type === "run.failed");
+      .find((event) => event.type === "run.completed");
+    expect(completed?.payload).toMatchObject({ truncated: true });
+    expect(
+      run.events.all().some((event) => event.type === "run.failed"),
+    ).toBe(false);
+  });
+
+  it("falls back to max_steps_exceeded when the wrap-up turn cannot produce output", async () => {
+    const echo = defineTool({
+      name: "echo",
+      description: "Echo text.",
+      inputSchema: { type: "object" },
+      execute(args: unknown) {
+        return args;
+      },
+    });
+
+    // The wrap-up turn (tools stripped) errors, so there is nothing to hand
+    // back — the run must surface the original hard failure rather than a
+    // spuriously "completed" empty answer.
+    const run = createRun({
+      goal: "never finish",
+      tools: [echo],
+      maxSteps: 2,
+      model: {
+        async complete(input) {
+          if (input.tools.length === 0) {
+            throw new Error("wrap-up unavailable");
+          }
+          return {
+            toolCalls: [{ toolName: "echo", arguments: { n: input.step } }],
+          };
+        },
+      },
+    });
+
+    const result = await run.start();
+
     expect(run.record.state).toBe("failed");
     expect(result).toMatchObject({
       signal: "failed",
       state: "failed",
       stopReason: "max_steps_exceeded",
-      failure: {
-        category: "runtime",
-        code: "MAX_STEPS_EXCEEDED",
-      },
+      failure: { category: "runtime", code: "MAX_STEPS_EXCEEDED" },
     });
-    expect(failed?.payload).toMatchObject({ code: "MAX_STEPS_EXCEEDED" });
   });
 
   it("fails early when the model repeats an identical tool call", async () => {

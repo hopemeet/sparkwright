@@ -15,6 +15,7 @@ Read these before proposing structural changes. If a change conflicts with an ex
 | 0005 | [Deterministic Default Model For The Golden Path](./0005-deterministic-default-model-for-golden-path.md) | Accepted |
 | 0006 | [JSONL Traces With Tiered Detail](./0006-jsonl-traces-with-tiered-detail.md)                             | Accepted |
 | 0007 | [Buffered Emitter For Pre-Run Extension Events](./0007-buffered-emitter-for-extension-events.md)         | Accepted |
+| 0009 | [Step Count Is Not A Task Budget For Long-Horizon Agents](./0009-step-cap-unfit-for-long-horizon-agents.md) | Proposed |
 
 ## Format
 

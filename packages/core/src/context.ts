@@ -157,6 +157,12 @@ export interface PromptMessage {
 export interface PromptBuildInput {
   run: RunRecord;
   step: number;
+  /**
+   * The run's step ceiling, if bounded. Surfaced so the model can see how much
+   * budget remains (rendered in `runtime_progress`) instead of guessing — a
+   * blind step counter invites premature "I can't finish in one reply" give-ups.
+   */
+  maxSteps?: number;
   tools: ToolDescriptor[];
   context: ContextItem[];
 }
@@ -833,7 +839,9 @@ export function createDefaultPromptSections(
       volatileReason:
         "per-step counter changes every step; kept at the tail so it never shifts the cache-stable prefix",
       build(input) {
-        return `Step: ${input.step}`;
+        return input.maxSteps !== undefined
+          ? `Step: ${input.step} / ${input.maxSteps}`
+          : `Step: ${input.step}`;
       },
     },
   ];
