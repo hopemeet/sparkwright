@@ -5,6 +5,7 @@ import type {
 } from "@sparkwright/core";
 import {
   auditTodoAfterTerminal,
+  hasExternalProgressEvidence,
   readTodoLedger,
   renderTodoLedgerContext,
   type TodoTerminalAuditDecision,
@@ -96,13 +97,7 @@ export async function runTodoSupervised(
       };
     }
 
-    const progressed =
-      output.events?.some(
-        (event) =>
-          event.type === "workspace.write.completed" ||
-          event.type === "artifact.created" ||
-          event.type === "tool.completed",
-      ) ?? false;
+    const progressed = hasExternalProgressEvidence(output.events ?? []);
     stalledContinuationCount = progressed ? 0 : stalledContinuationCount + 1;
     continuationCount += 1;
     continuation = {

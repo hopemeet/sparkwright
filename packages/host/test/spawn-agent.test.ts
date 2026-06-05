@@ -180,12 +180,7 @@ describe("host spawn_agent wiring", () => {
       const systemRef = promptBuilt?.payload?.systemPrefixRef;
       expect(systemRef).toBeTypeOf("string");
       const childSystemPrefix = await readFileWhenReady(
-        join(
-          sessionRootDir,
-          sessionId,
-          "blobs",
-          `${systemRef}.json`,
-        ),
+        join(sessionRootDir, sessionId, "blobs", `${systemRef}.json`),
         "Delegated agent contract:",
       );
       expect(childSystemPrefix).toContain("Do not ask the user directly");

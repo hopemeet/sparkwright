@@ -17,6 +17,7 @@ import {
   serializeTodoMarkdown,
   summarizeTodoLedger,
   type TodoItem,
+  type TodoLedger,
 } from "../src/index.js";
 
 const tempDirs: string[] = [];
@@ -323,10 +324,10 @@ describe("TodoLedger helpers", () => {
 
 describe("runTodoSupervised", () => {
   it("creates synthetic continuation requests until the ledger is complete", async () => {
-    let ledger = {
-      schemaVersion: "todo-ledger.v1" as const,
+    let ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
       metadata: {},
-      items: [{ title: "finish work", status: "pending" as const, depth: 0 }],
+      items: [{ title: "finish work", status: "pending", depth: 0 }],
     };
     const continuationPrompts: string[] = [];
     const result = await runTodoSupervised({

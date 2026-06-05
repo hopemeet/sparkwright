@@ -34,6 +34,7 @@ import {
 } from "@sparkwright/mcp-adapter";
 import {
   createAgentTool,
+  createTodoTools,
   deriveChildAgentProfile,
   spawnSubAgent,
   type AgentProfile,
@@ -379,6 +380,15 @@ export class HostRuntime {
         createAgentInspectorTool(workspaceRoot),
         createAgentManagerTool(workspaceRoot),
         createHostShellTool(workspaceRoot),
+        // Todo ledger tools (P0): main agent only. The ledger lives in the
+        // session dir as a human-readable markdown file. Child agents do not
+        // receive these (they get `childTools`), preserving the single-writer
+        // model without a policy rule. The terminal-audit supervisor that
+        // auto-continues on unfinished todos is NOT wired here yet — these
+        // tools just let the model maintain the ledger.
+        ...createTodoTools({
+          getTodoPath: () => join(sessionRootDir, sessionId, "todo.md"),
+        }).all(),
         ...(preparedSkills?.tools ?? []),
         ...(preparedMcp?.tools ?? []),
         ...delegateTools,
