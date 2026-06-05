@@ -42,6 +42,7 @@ export type ClientEventMap = {
   "host.log": [HostEvent & { kind: "host.log" }];
   "run.event": [HostEvent & { kind: "run.event" }];
   "approval.requested": [HostEvent & { kind: "approval.requested" }];
+  "run.continuation": [HostEvent & { kind: "run.continuation" }];
   "run.completed": [HostEvent & { kind: "run.completed" }];
   "run.failed": [HostEvent & { kind: "run.failed" }];
   disconnect: [string | undefined];

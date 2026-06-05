@@ -36,6 +36,7 @@ import {
   createAgentTool,
   createTodoTools,
   deriveChildAgentProfile,
+  runTodoSupervised,
   spawnSubAgent,
   type AgentProfile,
   type DerivedChildAgentProfile,
@@ -107,6 +108,14 @@ interface ActiveRun {
 }
 
 const MAIN_AGENT_ID = "main";
+
+// Todo-supervisor continuation budget for the main agent. Conservative, fixed
+// bounds: after MAIN_TODO_MAX_CONTINUATIONS auto-continuations — or 2 in a row
+// that produced no external progress — the run chain hands back to the human
+// rather than spinning. Only runs whose model left unfinished todos continue
+// at all; a run with an empty/finished ledger audits once and stops.
+const MAIN_TODO_MAX_CONTINUATIONS = 4;
+const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 2;
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -408,105 +417,189 @@ export class HostRuntime {
       ],
     });
 
-    const run = createRun({
-      goal: payload.goal,
-      context: [...priorContext, ...(preparedSkills?.context ?? [])],
-      workspace,
-      approvalResolver,
-      policy: createPermissionModePolicy({ mode: permissionMode }),
-      promptBuilder: buildAgentPromptBuilder({ cwd: workspaceRoot, sessionId }),
-      tools,
-      model: model.adapter,
-      // Bind the main agent on resources, not a leaked step count of 8: honor
-      // the profile's RunBudget when set and derive the step ceiling from it.
-      maxSteps: resolveMainAgentMaxSteps(mainAgent),
-      ...(mainAgent.runBudget !== undefined
-        ? { runBudget: mainAgent.runBudget }
+    const runStoreMetadata: Record<string, unknown> = {
+      source: "host",
+      ...(preparedSkills
+        ? {
+            indexedSkills: preparedSkills.indexedSkills,
+            loadedSkills: preparedSkills.loadedSkills,
+          }
         : {}),
-      runStore: createSessionRunStoreFactory({
-        sessionStore,
-        sessionId,
-        runStoreFactory: createSessionFileRunStoreFactory({
-          sessionRootDir,
-          sessionId,
-          agentId: "main",
-          traceLevel: "standard",
-        }),
-        metadata: {
-          source: "host",
-          ...(preparedSkills
-            ? {
-                indexedSkills: preparedSkills.indexedSkills,
-                loadedSkills: preparedSkills.loadedSkills,
-              }
-            : {}),
-          ...(preparedMcp
-            ? {
-                mcpStatuses: preparedMcp.statuses,
-                mcpToolNameMap: preparedMcp.toolNameMap,
-              }
-            : {}),
-          ...(resolvedProfiles.length
-            ? {
-                agentProfiles: [
-                  mainAgent,
-                  ...derivedAgents.map((agent) => agent.effectiveProfile),
-                ],
-              }
-            : {}),
-        },
-      }),
-    });
-    parentRunRef.current = run;
-
-    const runId = run.record.id;
-    runIdHolder.value = runId;
-    this.active = {
-      runId,
-      run,
-      trace,
-      sessionId,
-      closeCapabilities: preparedMcp ? () => preparedMcp.close() : undefined,
+      ...(preparedMcp
+        ? {
+            mcpStatuses: preparedMcp.statuses,
+            mcpToolNameMap: preparedMcp.toolNameMap,
+          }
+        : {}),
+      ...(resolvedProfiles.length
+        ? {
+            agentProfiles: [
+              mainAgent,
+              ...derivedAgents.map((agent) => agent.effectiveProfile),
+            ],
+          }
+        : {}),
     };
 
-    // Subscribe to event stream and rebroadcast as host events.
-    run.events.subscribe((event: SparkwrightEvent) => {
-      trace.append(event);
-      this.opts.emit({
-        envelope: "event",
-        id: nextMessageId("evt"),
-        kind: "run.event",
-        timestamp: nowIso(),
-        payload: { runId, event },
+    // Build (but do not start) a main-agent run for `goal`, appending
+    // `extraContext` after the skills context. Each call mints a fresh runId
+    // and run dir; the todo supervisor calls this once per (re)try, so a
+    // continuation is a new run that carries the prior run's todo ledger.
+    const buildRun = (goal: string, extraContext: ContextItem[]) =>
+      createRun({
+        goal,
+        context: [
+          ...priorContext,
+          ...(preparedSkills?.context ?? []),
+          ...extraContext,
+        ],
+        workspace,
+        approvalResolver,
+        policy: createPermissionModePolicy({ mode: permissionMode }),
+        promptBuilder: buildAgentPromptBuilder({
+          cwd: workspaceRoot,
+          sessionId,
+        }),
+        tools,
+        model: model.adapter,
+        // Bind the main agent on resources, not a leaked step count of 8: honor
+        // the profile's RunBudget when set and derive the step ceiling from it.
+        maxSteps: resolveMainAgentMaxSteps(mainAgent),
+        ...(mainAgent.runBudget !== undefined
+          ? { runBudget: mainAgent.runBudget }
+          : {}),
+        runStore: createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir,
+            sessionId,
+            agentId: "main",
+            traceLevel: "standard",
+          }),
+          metadata: runStoreMetadata,
+        }),
       });
-    });
-    pendingExtensionEvents.flush(run.events);
 
-    // Kick off the run lifecycle; do not await — the response goes back now,
-    // events stream as they happen, terminal event lands later.
-    void run
-      .start()
-      .then((result) => {
+    // Register a freshly-built run as the connection's active run: wire its
+    // event stream out as host events and collect them for the supervisor's
+    // stall check. Returns the per-run event collector.
+    const registerActiveRun = (
+      run: ReturnType<typeof createRun>,
+      runId: string,
+    ): SparkwrightEvent[] => {
+      parentRunRef.current = run;
+      runIdHolder.value = runId;
+      this.active = {
+        runId,
+        run,
+        trace,
+        sessionId,
+        closeCapabilities: preparedMcp ? () => preparedMcp.close() : undefined,
+      };
+      const collected: SparkwrightEvent[] = [];
+      run.events.subscribe((event: SparkwrightEvent) => {
+        trace.append(event);
+        collected.push(event);
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.event",
+          timestamp: nowIso(),
+          payload: { runId, event },
+        });
+      });
+      pendingExtensionEvents.flush(run.events);
+      return collected;
+    };
+
+    // The first run's id must go back in the startRun response synchronously,
+    // but the supervisor mints it inside its first `runOnce`. Bridge with a
+    // deferred the loop resolves on its first iteration.
+    let resolveFirstRunId!: (id: string) => void;
+    let rejectFirstRunId!: (err: unknown) => void;
+    const firstRunId = new Promise<string>((resolve, reject) => {
+      resolveFirstRunId = resolve;
+      rejectFirstRunId = reject;
+    });
+    let firstRunStarted = false;
+    let previousRunId: string | undefined;
+    let lastRunId = "";
+
+    const supervised = runTodoSupervised({
+      todoPath: join(sessionRootDir, sessionId, "todo.md"),
+      sessionId,
+      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
+      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
+      runOnce: async (input) => {
+        const goal = input.continuation?.prompt ?? payload.goal;
+        const extraContext = input.continuation
+          ? [input.continuation.context]
+          : [];
+        const run = buildRun(goal, extraContext);
+        const runId = run.record.id;
+        lastRunId = runId;
+        const collected = registerActiveRun(run, runId);
+        if (!firstRunStarted) {
+          firstRunStarted = true;
+          resolveFirstRunId(runId);
+        } else if (input.continuation) {
+          // A continuation: the previous run reached terminal with todos still
+          // open. Tell the client the turn is still live and re-point at runId
+          // instead of treating the prior run.completed as the end (we suppress
+          // that terminal — only the final run of the chain completes).
+          this.opts.emit({
+            envelope: "event",
+            id: nextMessageId("evt"),
+            kind: "run.continuation",
+            timestamp: nowIso(),
+            payload: {
+              runId,
+              previousRunId: previousRunId ?? runId,
+              continuationCount: input.continuation.metadata.continuationCount,
+              reason: input.continuation.metadata.reason,
+            },
+          });
+        }
+        const result = await run.start();
+        previousRunId = runId;
+        return { result, events: collected };
+      },
+    });
+
+    supervised
+      .then((outcome) => {
+        const handoff =
+          outcome.decision.kind === "handoff"
+            ? {
+                reason: outcome.decision.reason,
+                message: outcome.decision.message,
+              }
+            : undefined;
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
           kind: "run.completed",
           timestamp: nowIso(),
           payload: {
-            runId,
-            state: result.state,
-            stopReason: result.stopReason,
+            runId: lastRunId,
+            state: outcome.result.state,
+            stopReason: outcome.result.stopReason,
+            ...(handoff ? { todoHandoff: handoff } : {}),
           },
         });
       })
       .catch((err: unknown) => {
+        // A failure before the first run even started must surface to the
+        // caller as an error response, not a fire-and-forget event.
+        if (!firstRunStarted) rejectFirstRunId(err);
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
           kind: "run.failed",
           timestamp: nowIso(),
           payload: {
-            runId,
+            runId: lastRunId,
             error: {
               code: "internal_error",
               message: err instanceof Error ? err.message : String(err),
@@ -517,18 +610,27 @@ export class HostRuntime {
       .finally(() => {
         void preparedMcp?.close().catch(() => {});
         this.active = null;
-        // Deny only this run's orphan approvals. The current per-connection
-        // `startingRun` lock makes cross-run pollution impossible today, but
-        // a future v1.1 with parallel runs per connection would silently
-        // cancel siblings' pending decisions if we cleared the whole map.
+        // The whole supervised chain is done. The per-connection `startingRun`
+        // lock guarantees no other run's approvals coexist, so deny any orphans
+        // from this chain (across all of its runIds).
         for (const [id, p] of this.pendingApprovals) {
-          if (p.runId === runId) {
-            p.resolve("denied");
-            this.pendingApprovals.delete(id);
-          }
+          p.resolve("denied");
+          this.pendingApprovals.delete(id);
         }
       });
 
+    let runId: string;
+    try {
+      runId = await firstRunId;
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
     return { ok: true, runId };
   }
 

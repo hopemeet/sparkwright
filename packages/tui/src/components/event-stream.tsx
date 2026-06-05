@@ -180,6 +180,19 @@ function EventCard(props: {
       );
     }
 
+    // A TUI-local divider (todo-supervisor continuation banner). Calm muted
+    // cue so a superseded-and-resumed boundary reads as system bookkeeping, not
+    // user input or an error.
+    case "tui.notice": {
+      const text = str(p.text).trim();
+      if (!text) return null;
+      return (
+        <Box paddingX={1} marginTop={1}>
+          <Text color={theme.muted}>{`↻ ${text}`}</Text>
+        </Box>
+      );
+    }
+
     // The assistant's answer (and any mid-run commentary). `model.completed`
     // is emitted by every provider (deterministic and streaming) and its
     // payload spreads the model output, so the text is at `payload.message`.
