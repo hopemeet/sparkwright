@@ -304,11 +304,13 @@ export function buildTodoContinuationPrompt(ledger: TodoLedger): string {
  *
  * @public @stability experimental v0.1
  */
-const EXTERNAL_PROGRESS_EVENTS: ReadonlySet<SparkwrightEvent["type"]> = new Set([
-  "workspace.write.completed",
-  "workspace.anchored_edit.verified",
-  "artifact.created",
-]);
+const EXTERNAL_PROGRESS_EVENTS: ReadonlySet<SparkwrightEvent["type"]> = new Set(
+  [
+    "workspace.write.completed",
+    "workspace.anchored_edit.verified",
+    "artifact.created",
+  ],
+);
 
 /** @public @stability experimental v0.1 */
 export function hasExternalProgressEvidence(
