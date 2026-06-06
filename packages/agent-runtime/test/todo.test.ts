@@ -1,11 +1,10 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   auditTodoAfterTerminal,
   createAgentProfilePolicy,
-  createTodoReadTool,
   createTodoTools,
   createTodoWriteTool,
   hasExternalProgressEvidence,
@@ -19,6 +18,7 @@ import {
   summarizeTodoLedger,
   type TodoItem,
   type TodoLedger,
+  type TodoWriteResult,
 } from "../src/index.js";
 
 const tempDirs: string[] = [];
@@ -150,42 +150,40 @@ describe("serializeTodoMarkdown", () => {
   });
 });
 
-describe("createTodoReadTool / createTodoWriteTool", () => {
-  it("write creates the file, read returns the items", async () => {
+describe("createTodoWriteTool", () => {
+  it("write creates the file and echoes the resulting state", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
-    const read = createTodoReadTool({ getTodoPath: () => path });
     const items: TodoItem[] = [
       { title: "stage 0", status: "completed", depth: 0 },
       { title: "stage 1", status: "in_progress", depth: 0 },
       { title: "substep", status: "pending", depth: 1 },
     ];
-    const writeRes = (await write.execute({ items }, {} as never)) as {
-      written: number;
-      path: string;
-    };
-    expect(writeRes.written).toBe(3);
-    expect(writeRes.path).toBe(path);
+    const writeRes = (await write.execute(
+      { items },
+      {} as never,
+    )) as TodoWriteResult;
+    expect(writeRes.saved).toBe(true);
+    expect(writeRes.total).toBe(3);
+    expect(writeRes.completed).toBe(1);
+    expect(writeRes.remaining).toBe(2);
+    expect(writeRes.todos).toEqual([
+      { title: "stage 0", status: "completed" },
+      { title: "stage 1", status: "in_progress" },
+      { title: "substep", status: "pending" },
+    ]);
+    expect(writeRes.summary).toContain("1/3 done");
+    expect(writeRes.summary).toContain("stage 1");
 
     const onDisk = await readFile(path, "utf8");
     expect(onDisk).toContain("- [x] stage 0");
     expect(onDisk).toContain("- [ ] 🔄 stage 1");
     expect(onDisk).toContain("  - [ ] substep");
-
-    const readRes = (await read.execute({}, {} as never)) as {
-      items: TodoItem[];
-    };
-    expect(readRes.items.map((i) => i.status)).toEqual([
-      "completed",
-      "in_progress",
-      "pending",
-    ]);
   });
 
-  it("write accepts OpenCode-style content plus evidence", async () => {
+  it("write still accepts (but no longer advertises) rich item fields", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
-    const read = createTodoReadTool({ getTodoPath: () => path });
     await write.execute(
       {
         items: [
@@ -201,26 +199,17 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
       },
       {} as never,
     );
-    const out = (await read.execute({}, {} as never)) as {
-      items: TodoItem[];
-    };
-    expect(out.items[0]).toMatchObject({
+    const ledger = await readTodoLedger(path);
+    expect(ledger.items[0]).toMatchObject({
       id: "oc-1",
       title: "implement ledger",
       status: "blocked",
       priority: "medium",
       doneWhen: "agent-runtime tests pass",
     });
-    expect(out.items[0]?.evidence).toEqual([
+    expect(ledger.items[0]?.evidence).toEqual([
       { kind: "command", command: "npm test", exitCode: 0 },
     ]);
-  });
-
-  it("read returns empty when the file does not exist", async () => {
-    const path = await tempPath();
-    const read = createTodoReadTool({ getTodoPath: () => path });
-    const res = (await read.execute({}, {} as never)) as { items: TodoItem[] };
-    expect(res.items).toEqual([]);
   });
 
   it("write rejects invalid status values", async () => {
@@ -241,15 +230,17 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
     const items = [{ title: "a", status: "pending", depth: 0 }];
-    const first = (await write.execute({ items }, {} as never)) as {
-      noop?: boolean;
-    };
-    expect(first.noop).toBeUndefined();
+    const first = (await write.execute(
+      { items },
+      {} as never,
+    )) as TodoWriteResult;
+    expect(first.saved).toBe(true);
     const mtime1 = (await stat(path)).mtimeMs;
-    const second = (await write.execute({ items }, {} as never)) as {
-      noop?: boolean;
-    };
-    expect(second.noop).toBe(true);
+    const second = (await write.execute(
+      { items },
+      {} as never,
+    )) as TodoWriteResult;
+    expect(second.saved).toBe(false);
     // The file was not rewritten.
     expect((await stat(path)).mtimeMs).toBe(mtime1);
   });
@@ -258,33 +249,28 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
     const items = [{ title: "a", status: "pending", depth: 0 }];
-    type R = { noop?: boolean; hint?: string };
+    const run = (todoItems: unknown[]) =>
+      write.execute(
+        { items: todoItems },
+        {} as never,
+      ) as Promise<TodoWriteResult>;
     // First write changes the file — no nudge.
-    expect(
-      ((await write.execute({ items }, {} as never)) as R).hint,
-    ).toBeUndefined();
+    expect((await run(items)).hint).toBeUndefined();
     // 1st no-op: below threshold, no nudge yet.
-    expect(
-      ((await write.execute({ items }, {} as never)) as R).hint,
-    ).toBeUndefined();
+    expect((await run(items)).hint).toBeUndefined();
     // 2nd consecutive no-op: nudge.
-    const nudged = (await write.execute({ items }, {} as never)) as R;
-    expect(nudged.noop).toBe(true);
-    expect(nudged.hint).toMatch(/Stop calling todo_write/);
+    const nudged = await run(items);
+    expect(nudged.saved).toBe(false);
+    expect(nudged.hint).toMatch(/calling todo_write again/);
     // A real change resets the counter.
     const changed = [{ title: "a", status: "completed", depth: 0 }];
-    expect(
-      ((await write.execute({ items: changed }, {} as never)) as R).hint,
-    ).toBeUndefined();
-    expect(
-      ((await write.execute({ items: changed }, {} as never)) as R).hint,
-    ).toBeUndefined();
+    expect((await run(changed)).hint).toBeUndefined();
+    expect((await run(changed)).hint).toBeUndefined();
   });
 
   it("write accepts common status synonyms (todo/done) case-insensitively", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
-    const read = createTodoReadTool({ getTodoPath: () => path });
     await write.execute(
       {
         items: [
@@ -296,8 +282,8 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
       },
       {} as never,
     );
-    const out = (await read.execute({}, {} as never)) as { items: TodoItem[] };
-    expect(out.items.map((i) => i.status)).toEqual([
+    const ledger = await readTodoLedger(path);
+    expect(ledger.items.map((i) => i.status)).toEqual([
       "pending",
       "completed",
       "in_progress",
@@ -305,27 +291,18 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
     ]);
   });
 
-  it("createTodoTools returns both tools wired to the same path", async () => {
+  it("createTodoTools exposes only the write tool to the model", async () => {
     const path = await tempPath();
-    await writeFile(path.replace(/\/[^/]+$/, ""), "", { flag: "a" }).catch(
-      () => undefined,
-    );
-    const { todoRead, todoWrite, all } = createTodoTools({
+    const { todoWrite, all } = createTodoTools({
       getTodoPath: () => path,
     });
-    expect(
-      all()
-        .map((t) => t.name)
-        .sort(),
-    ).toEqual(["todo_read", "todo_write"]);
+    expect(all().map((t) => t.name)).toEqual(["todo_write"]);
     await todoWrite.execute(
       { items: [{ title: "x", status: "pending", depth: 0 }] },
       {} as never,
     );
-    const out = (await todoRead.execute({}, {} as never)) as {
-      items: TodoItem[];
-    };
-    expect(out.items).toHaveLength(1);
+    const ledger = await readTodoLedger(path);
+    expect(ledger.items).toHaveLength(1);
   });
 });
 
@@ -379,7 +356,7 @@ describe("TodoLedger helpers", () => {
     });
     expect(decision.kind).toBe("continue");
     expect(decision.kind === "continue" ? decision.prompt : "").toContain(
-      "Continue from the todo ledger.",
+      "First reconcile the list",
     );
 
     const denied = auditTodoAfterTerminal(ledger, {
@@ -475,9 +452,66 @@ describe("runTodoSupervised", () => {
     });
 
     expect(continuationPrompts).toHaveLength(1);
-    expect(continuationPrompts[0]).toContain("Continue from the todo ledger.");
+    expect(continuationPrompts[0]).toContain("First reconcile the list");
     expect(result.decision.kind).toBe("complete");
     expect(result.continuationCount).toBe(1);
+  });
+
+  it("does not stall a read-only run that completes items without write events", async () => {
+    // A multi-step investigation: each round completes one more item but emits
+    // no workspace.write/artifact events (pure reads). The event-only progress
+    // signal never fires, yet the newly-completed item must count as progress
+    // so the supervisor keeps continuing instead of handing off as "stalled".
+    const titles = ["step-1", "step-2", "step-3"];
+    let completedCount = 0;
+    let ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
+      metadata: {},
+      items: titles.map((title) => ({
+        title,
+        status: "pending" as const,
+        depth: 0,
+      })),
+    };
+    let handoffs = 0;
+    const result = await runTodoSupervised({
+      readLedger: () => ledger,
+      maxContinuations: 10,
+      // Tight stall budget: without the completed-item progress signal this
+      // would hand off after 2 read-only rounds.
+      maxStalledContinuations: 2,
+      onDecision(decision) {
+        if (decision.kind === "handoff") handoffs += 1;
+      },
+      runOnce() {
+        completedCount = Math.min(completedCount + 1, titles.length);
+        ledger = {
+          ...ledger,
+          items: titles.map((title, i) => ({
+            title,
+            status:
+              i < completedCount
+                ? ("completed" as const)
+                : ("pending" as const),
+            depth: 0,
+          })),
+        };
+        return {
+          result: {
+            signal: "completed",
+            state: "completed",
+            stopReason: "final_answer",
+            metadata: {},
+          },
+          // Read-only: no workspace.write/anchored_edit/artifact events.
+          events: [{ type: "workspace.read" } as never],
+        };
+      },
+    });
+
+    expect(handoffs).toBe(0);
+    expect(result.decision.kind).toBe("complete");
+    expect(result.stalledContinuationCount).toBe(0);
   });
 });
 
@@ -486,7 +520,7 @@ describe("policy denies todo_write for child agents", () => {
     // Recipe: deny on action="tool.execute" with resource="todo_write".
     const childPolicy = createAgentProfilePolicy({
       id: "worker",
-      allowedTools: ["todo_read", "todo_write"],
+      allowedTools: ["read_file", "todo_write"],
       policy: [
         {
           action: "tool.execute",
@@ -505,7 +539,7 @@ describe("policy denies todo_write for child agents", () => {
     await expect(
       childPolicy.decide({
         action: "tool.execute",
-        resource: { kind: "tool", name: "todo_read" },
+        resource: { kind: "tool", name: "read_file" },
       }),
     ).resolves.toMatchObject({ decision: "allow" });
   });

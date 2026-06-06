@@ -27,11 +27,18 @@ const TODO_GLYPH: Record<string, string> = {
 };
 
 const MAX_ACTIVE_ROWS = 8;
+const MAX_EXPANDED_ROWS = 16;
 
 export function TodoBand(props: {
   todos: TodoPanelItem[];
   width: number;
   compact: boolean;
+  /**
+   * When true, completed items are listed (with their titles) so the user can
+   * see *what* was done; when false, completed items collapse to a one-line
+   * count hint and only active items are listed. Toggled with ctrl+t.
+   */
+  expanded: boolean;
 }): React.ReactElement | null {
   const theme = useTheme();
   const { todos } = props;
@@ -70,37 +77,46 @@ export function TodoBand(props: {
     );
   }
 
+  // Expanded lists every item in ledger order (so completed work is visible);
+  // collapsed lists only the active items and folds completed ones into a
+  // one-line, actionable hint.
   const active = todos.filter((t) => t.status !== "completed");
-  const visible = active.slice(0, MAX_ACTIVE_ROWS);
-  const overflow = active.length - visible.length;
+  const shown = props.expanded ? todos : active;
+  const cap = props.expanded ? MAX_EXPANDED_ROWS : MAX_ACTIVE_ROWS;
+  const visible = shown.slice(0, cap);
+  const overflow = shown.length - visible.length;
+
+  const renderRow = (t: TodoPanelItem, i: number): React.ReactElement => {
+    const glyph = TODO_GLYPH[t.status] ?? "☐";
+    const isCurrent = t === current;
+    const indent = "  ".repeat(Math.min(t.depth, 3));
+    const title = truncateToWidth(t.title, titleWidth - indent.length);
+    return (
+      <Text key={i} color={colorFor(t.status)} bold={isCurrent}>
+        {"  "}
+        {indent}
+        {glyph} {title}
+      </Text>
+    );
+  };
 
   return (
     <Box flexDirection="column" paddingX={1} marginTop={1}>
       <Text bold color={theme.muted}>
         todo {done}/{total}
       </Text>
-      {done > 0 ? (
-        <Text color={theme.success}>
-          {"  "}
-          {TODO_GLYPH.completed} {done} done
-        </Text>
-      ) : null}
-      {visible.map((t, i) => {
-        const glyph = TODO_GLYPH[t.status] ?? "☐";
-        const isCurrent = t === current;
-        const indent = "  ".repeat(Math.min(t.depth, 3));
-        const title = truncateToWidth(t.title, titleWidth - indent.length);
-        return (
-          <Text key={i} color={colorFor(t.status)} bold={isCurrent}>
-            {"  "}
-            {indent}
-            {glyph} {title}
-          </Text>
-        );
-      })}
+      {visible.map(renderRow)}
       {overflow > 0 ? (
         <Text color={theme.muted}>
           {"  "}… +{overflow} more
+        </Text>
+      ) : null}
+      {props.expanded ? (
+        <Text color={theme.muted}>{"  "}ctrl+t 收起已完成</Text>
+      ) : done > 0 ? (
+        <Text color={theme.muted}>
+          {"  "}
+          {TODO_GLYPH.completed} {done} done · ctrl+t 展开
         </Text>
       ) : null}
     </Box>

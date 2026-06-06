@@ -278,4 +278,26 @@ describe("buildAgentPromptBuilder", () => {
       "relay it faithfully",
     );
   });
+
+  it("injects todo-planning guidance only when todo_write is present", async () => {
+    const builder = buildAgentPromptBuilder({
+      cwd: await tempDir(),
+      ignoreProjectInstructions: true,
+    });
+    const guidanceOf = async (tools: { name: string }[]) => {
+      const messages = await builder.build(buildInput(tools));
+      return messages.find((m) => m.metadata?.sectionName === "todo_planning")
+        ?.content;
+    };
+
+    // Absent for runs without the write tool (e.g. child agents denied
+    // todo_write by policy, or read-only tool inventories).
+    expect(await guidanceOf([])).toBeUndefined();
+    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
+    const guidance = await guidanceOf([{ name: "todo_write" }]);
+    expect(guidance).toContain("todo list");
+    // The anti-churn cadence must be stated: list already in context + the
+    // write echoes state, so no need to read it back or rewrite unchanged.
+    expect(guidance).toContain("never need to read it back");
+  });
 });

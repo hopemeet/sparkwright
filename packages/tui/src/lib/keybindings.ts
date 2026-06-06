@@ -22,6 +22,7 @@ export type BindingName =
   | "quit.app"
   | "events.open"
   | "quick.switch"
+  | "todo.toggle"
   | "history.search";
 
 export interface Chord {
@@ -58,6 +59,8 @@ export const DEFAULTS: Bindings = {
   "quit.app": [parseChord("ctrl+c")!],
   "events.open": [parseChord("ctrl+o")!],
   "quick.switch": [parseChord("ctrl+s")!],
+  // Expand/collapse the todo band's completed items. ctrl+t = "todo".
+  "todo.toggle": [parseChord("ctrl+t")!],
   // history.search is handled inside InputBox (ctrl+r is bash-standard);
   // exposed here so /help and /config can show + override it.
   "history.search": [parseChord("ctrl+r")!],

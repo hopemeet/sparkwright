@@ -110,12 +110,16 @@ interface ActiveRun {
 const MAIN_AGENT_ID = "main";
 
 // Todo-supervisor continuation budget for the main agent. Conservative, fixed
-// bounds: after MAIN_TODO_MAX_CONTINUATIONS auto-continuations — or 2 in a row
-// that produced no external progress — the run chain hands back to the human
-// rather than spinning. Only runs whose model left unfinished todos continue
-// at all; a run with an empty/finished ledger audits once and stops.
+// bounds: after MAIN_TODO_MAX_CONTINUATIONS auto-continuations — or a single
+// continuation that produced no progress (no external write and no newly
+// completed item) — the run chain hands back to the human rather than spinning.
+// The stall bound is deliberately tight: once a continuation makes zero
+// progress, the model has typically converged on its answer and further rounds
+// just re-emit it, so one empty round is enough to stop. Only runs whose model
+// left unfinished todos continue at all; a run with an empty/finished ledger
+// audits once and stops.
 const MAIN_TODO_MAX_CONTINUATIONS = 4;
-const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 2;
+const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -532,15 +536,37 @@ export class HostRuntime {
     let lastRunId = "";
     this.runChainCancelled = false;
 
+    // Conversation turns accumulated across this supervised chain. A
+    // continuation is an in-context *resume*, not a cold restart: every turn so
+    // far rides along as conversation history so the model keeps the scope and
+    // findings it already had. Sizing this is the Compactor's concern, not the
+    // continuation's — we always pass the full chain forward. See runOnce.
+    const chainTurns: ContextItem[] = [];
+    const chainTurn = (
+      role: "user" | "assistant",
+      content: string,
+      idSuffix: string,
+    ): ContextItem => ({
+      id: `ctx_chain_${idSuffix}` as ContextItem["id"],
+      type: role,
+      content: content.trim(),
+      metadata: { layer: "conversation", stability: "session" },
+    });
+
     const supervised = runTodoSupervised({
       todoPath: join(sessionRootDir, sessionId, "todo.md"),
       sessionId,
       maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
       maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
       runOnce: async (input) => {
+        // The nudge stays the final user turn (current_request via `goal`); the
+        // original goal and every prior turn ride along as conversation history
+        // (chainTurns), so the continuation resumes with full context instead
+        // of re-deriving from only the ledger. The ledger context item still
+        // comes last as the durable, compaction-proof backstop.
         const goal = input.continuation?.prompt ?? payload.goal;
         const extraContext = input.continuation
-          ? [input.continuation.context]
+          ? [...chainTurns, input.continuation.context]
           : [];
         const run = buildRun(goal, extraContext);
         const runId = run.record.id;
@@ -569,6 +595,17 @@ export class HostRuntime {
         }
         const result = await run.start();
         previousRunId = runId;
+        // Accumulate this chain's conversation for the next continuation's
+        // resume context: seed the original user goal once as the opening turn,
+        // then append each run's final answer as an assistant turn.
+        if (chainTurns.length === 0) {
+          chainTurns.push(chainTurn("user", payload.goal, `${runId}_goal`));
+        }
+        if (result.message && result.message.trim().length > 0) {
+          chainTurns.push(
+            chainTurn("assistant", result.message, `${runId}_answer`),
+          );
+        }
         if (this.runChainCancelled) {
           // The client cancelled this turn. The individual run.cancel may have
           // raced and let this run resolve as a resumable terminal (e.g. the

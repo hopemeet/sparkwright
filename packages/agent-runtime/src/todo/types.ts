@@ -63,8 +63,9 @@ export interface TodoItem {
    */
   title: string;
   /**
-   * Alias accepted by tools and ledger helpers for OpenCode-style clients.
-   * Normalizers copy it into `title`; serializers emit `title`.
+   * Alternative task-text field accepted from clients that send `content`
+   * instead of `title`. Normalizers copy it into `title`; serializers emit
+   * `title`.
    */
   content?: string;
   status: TodoStatus;

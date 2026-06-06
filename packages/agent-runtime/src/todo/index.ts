@@ -20,12 +20,8 @@ export {
   serializeTodoMarkdown,
 } from "./markdown.js";
 
-export type { CreateTodoToolsOptions } from "./tools.js";
-export {
-  createTodoReadTool,
-  createTodoTools,
-  createTodoWriteTool,
-} from "./tools.js";
+export type { CreateTodoToolsOptions, TodoWriteResult } from "./tools.js";
+export { createTodoTools, createTodoWriteTool } from "./tools.js";
 
 export type {
   TodoTerminalAuditDecision,

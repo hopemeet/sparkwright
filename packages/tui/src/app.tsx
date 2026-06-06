@@ -242,6 +242,9 @@ function AppReady(
   // Runtime theme override from /theme; falls back to the configured theme.
   const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
   const theme = themeOverride ?? resolved.theme;
+  // Todo band: collapsed by default (active items only); ctrl+o expands to show
+  // completed items too.
+  const [todoExpanded, setTodoExpanded] = useState(false);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const [stashList, setStashList] = useState<StashFile["list"]>([]);
@@ -860,6 +863,14 @@ function AppReady(
       }
       if (
         !top &&
+        state.todoItems.length > 0 &&
+        b["todo.toggle"].some((c) => chordMatches(c, key, input))
+      ) {
+        setTodoExpanded((v) => !v);
+        return;
+      }
+      if (
+        !top &&
         state.status === "running" &&
         b["cancel.run"].some((c) => chordMatches(c, key, input))
       ) {
@@ -1026,15 +1037,21 @@ function AppReady(
           ) : null}
         </Box>
 
-        {/* Todo ledger as a full-width band, pinned above the input. Only while
-          a run is active; collapses to a single line while the model streams a
-          long answer so it does not dominate the frame. */}
+        {/* Todo ledger as a full-width band, pinned above the input. Shown
+          while a run is active, and also kept after it ends when items remain
+          unfinished — so a handoff's residual pending/in_progress stays visible
+          instead of vanishing the moment the run stops. Collapses to a single
+          line while the model streams a long answer so it does not dominate the
+          frame. */}
         {state.todoItems.length > 0 &&
-        (state.status === "running" || state.status === "awaiting-approval") ? (
+        (state.status === "running" ||
+          state.status === "awaiting-approval" ||
+          state.todoItems.some((t) => t.status !== "completed")) ? (
           <TodoBand
             todos={state.todoItems}
             width={cols}
             compact={Boolean(state.streamingText)}
+            expanded={todoExpanded}
           />
         ) : null}
 

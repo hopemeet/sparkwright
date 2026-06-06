@@ -232,6 +232,36 @@ const DELEGATION_GUIDANCE = [
 ].join("\n");
 
 /**
+ * When and how to drive the todo ledger. The doctrine lives here — a durable,
+ * tool-gated contract the model always carries when `todo_write` is in its
+ * inventory — rather than in the supervisor's reactive continuation prompt,
+ * which previously was the *only* place the model heard about todo cadence and
+ * so re-imposed a "read-then-write-around-every-step" rhythm on each retry.
+ *
+ * The cadence is deliberately restrained: an observed failure had a weak model
+ * spend ~70% of its tool calls spinning the ledger (re-reading state already in
+ * context, rewriting unchanged items). The rule is therefore "touch the ledger
+ * only on a real state change", not "touch it constantly". Schema-level rules
+ * (status alphabet, depth, evidence-to-complete) stay in the todo_write tool
+ * description; this is purely about *when* the model should reach for the
+ * ledger.
+ */
+const TODO_PLANNING_GUIDANCE = [
+  "Using the todo list:",
+  "- For a genuinely multi-step or multi-session task, open by writing the plan",
+  "  with todo_write so the steps are tracked and visible. Skip it for a",
+  "  single-step, trivial, or purely explanatory request — just do the work and",
+  "  answer.",
+  "- The current list is already in your context, and each todo_write returns",
+  "  the updated list and what remains, so you never need to read it back.",
+  "- Touch the list only on a real status change, or to add, split, or remove",
+  "  items when the plan itself changes. Rewriting it with no change accomplishes",
+  "  nothing. Between updates, take the next concrete action toward the current",
+  "  item (read a file, run a command, produce output) — that, not bookkeeping,",
+  "  is what moves the task forward.",
+].join("\n");
+
+/**
  * Compose a `PromptBuilder` that layers the application system prompt, project
  * instruction files, and a session-cached env block on top of core's resident harness
  * contracts. This is the single place embedders (host, cli, ...) wire the
@@ -278,6 +308,17 @@ export function buildAgentPromptBuilder(
         tool.name === "read_file" ||
         tool.name === "glob_paths" ||
         tool.name === "grep_text",
+    }),
+  );
+
+  // When/how to drive the todo ledger; appears only when the write tool is in
+  // the live inventory (the main agent — child agents are denied todo_write by
+  // policy, so they never see this section).
+  sections.push(
+    createToolGuidanceSection({
+      name: "todo_planning",
+      guidance: TODO_PLANNING_GUIDANCE,
+      whenTool: (tool) => tool.name === "todo_write",
     }),
   );
 
