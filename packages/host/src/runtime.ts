@@ -1265,6 +1265,14 @@ export function createDynamicSpawnAgentTool(input: {
       const stepLimitReached =
         (result.metadata as { stepLimitReached?: unknown } | undefined)
           ?.stepLimitReached === true;
+      // A child that failed (doom-loop, step-limit, error) never emitted a final
+      // answer, so salvage its most recent successful tool results — otherwise
+      // the parent only sees an error string and must re-spawn to rediscover the
+      // same data. Success carries the answer in `message`, so skip it there.
+      const partialObservations =
+        result.signal === "completed"
+          ? undefined
+          : extractPartialObservations(spawned.run.events.all(), 3);
       const output = {
         childRunId: spawned.childRunId,
         spanId: spawned.spanId,
@@ -1274,6 +1282,9 @@ export function createDynamicSpawnAgentTool(input: {
         stopReason: result.stopReason,
         stepLimitReached,
         message: result.message,
+        ...(partialObservations && partialObservations.length > 0
+          ? { partialObservations }
+          : {}),
         usage,
         promotionHint: {
           action: "manage_agent.create",
@@ -1373,6 +1384,74 @@ function objectField(
 function sanitizeToolSegment(value: string): string {
   const clean = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
   return clean.replace(/^_+|_+$/g, "") || "agent";
+}
+
+/** A summarized successful tool result salvaged from a child run's events. */
+interface PartialObservation {
+  toolName: string;
+  output: string;
+}
+
+const PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT = 600;
+
+/**
+ * Salvage the child's most recent successful tool results from its event log so
+ * a parent can still use the work even when the child run *failed* (doom-loop,
+ * step-limit, error) without ever emitting a final answer. Without this, a child
+ * that discovered everything it needed but tripped a guard on the last step
+ * returns only an error string, forcing the parent to re-spawn and rediscover
+ * the same data from scratch.
+ *
+ * Pairs `tool.requested` (carries `toolName`) with `tool.completed` (carries the
+ * `output`, keyed by `toolCallId`) and returns the last `maxObservations`
+ * successful results, each truncated so a large listing cannot blow up the
+ * parent's context.
+ */
+function extractPartialObservations(
+  events: readonly SparkwrightEvent[],
+  maxObservations: number,
+): PartialObservation[] {
+  const toolNameByCallId = new Map<string, string>();
+  for (const event of events) {
+    if (event.type !== "tool.requested") continue;
+    const payload = event.payload as
+      | { id?: unknown; toolName?: unknown }
+      | undefined;
+    if (
+      typeof payload?.id === "string" &&
+      typeof payload.toolName === "string"
+    ) {
+      toolNameByCallId.set(payload.id, payload.toolName);
+    }
+  }
+
+  const observations: PartialObservation[] = [];
+  for (const event of events) {
+    if (event.type !== "tool.completed") continue;
+    const payload = event.payload as
+      | { toolCallId?: unknown; output?: unknown }
+      | undefined;
+    if (payload?.output === undefined) continue;
+    const toolName =
+      (typeof payload.toolCallId === "string"
+        ? toolNameByCallId.get(payload.toolCallId)
+        : undefined) ?? "tool";
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload.output);
+    } catch {
+      serialized = String(payload.output);
+    }
+    if (serialized.length > PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT) {
+      serialized = `${serialized.slice(
+        0,
+        PARTIAL_OBSERVATION_OUTPUT_CHAR_LIMIT,
+      )}… (truncated)`;
+    }
+    observations.push({ toolName, output: serialized });
+  }
+
+  return observations.slice(-maxObservations);
 }
 
 function mergeCapabilitySnapshots(
