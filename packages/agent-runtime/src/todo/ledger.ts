@@ -301,7 +301,7 @@ export function buildTodoContinuationPrompt(ledger: TodoLedger): string {
     doneLine,
     openLine,
     "First reconcile the list with what the conversation above already shows you finished: in a single todo_write, mark every item whose work is actually done as completed, and add, split, or remove items only if the plan genuinely changed.",
-    "Then act on the first item that is still open. If, after reconciling, every item is actually done, give your final answer instead of calling any more tools.",
+    "Then act on the first item that is still open, and give your final answer once the work is genuinely complete. But if reconciling alone finished the list — every item was already done and shown in the conversation above, and you did no new work this turn — do not restate that answer: a one-line confirmation that the list is reconciled and all items are complete is enough.",
     "</system-reminder>",
   ].join("\n");
 }
