@@ -875,7 +875,8 @@ function AppReady(
   // Only reserve the sidebar rail when the terminal is wide AND there's
   // something to show — an empty "modified files (none yet)" box pinned at the
   // bottom is just clutter.
-  const hasSidebarContent = state.modifiedFiles.length > 0;
+  const hasSidebarContent =
+    state.modifiedFiles.length > 0 || state.todoItems.length > 0;
   const sidebarWidth = cols >= 100 && hasSidebarContent ? 32 : 0;
 
   // Cap the live stream panel so a long in-flight message can't push the input
@@ -1021,7 +1022,11 @@ function AppReady(
             ) : null}
           </Box>
           {sidebarWidth > 0 ? (
-            <Sidebar files={state.modifiedFiles} width={sidebarWidth} />
+            <Sidebar
+              files={state.modifiedFiles}
+              todos={state.todoItems}
+              width={sidebarWidth}
+            />
           ) : null}
         </Box>
 
