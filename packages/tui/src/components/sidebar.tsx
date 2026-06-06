@@ -1,20 +1,16 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type {
-  ModifiedFile,
-  TodoPanelItem,
-  UsageSummary,
-} from "../state/event-store.js";
+import type { ModifiedFile, UsageSummary } from "../state/event-store.js";
 import { useTheme } from "../lib/theme-context.js";
 
 /**
- * Right-rail sidebar. Shows the todo ledger (when present), the modified-files
- * list, and a usage summary; a vertical stack so future "slots" (lsp, mcp) can
- * be added without re-laying-out the app.
+ * Right-rail sidebar. Shows the modified-files list and a usage summary; a
+ * vertical stack so future "slots" (lsp, mcp) can be added without re-laying-out
+ * the app. The todo ledger lives in its own full-width band (TodoBand), not
+ * here — a narrow rail cannot fit CJK titles.
  */
 export function Sidebar(props: {
   files: ModifiedFile[];
-  todos: TodoPanelItem[];
   width: number;
 }): React.ReactElement {
   return (
@@ -25,69 +21,9 @@ export function Sidebar(props: {
       borderColor="gray"
       paddingX={1}
     >
-      {props.todos.length > 0 ? (
-        <Box flexDirection="column" marginBottom={1}>
-          <TodoPanel todos={props.todos} width={props.width - 4} />
-        </Box>
-      ) : null}
       <ModifiedFilesPanel files={props.files} width={props.width - 4} />
     </Box>
   );
-}
-
-/** Status → checkbox glyph for the todo panel. */
-const TODO_GLYPH: Record<string, string> = {
-  pending: "☐",
-  in_progress: "◐",
-  completed: "☑",
-  blocked: "⊘",
-  failed: "✗",
-  skipped: "⊝",
-};
-
-function TodoPanel(props: {
-  todos: TodoPanelItem[];
-  width: number;
-}): React.ReactElement {
-  const theme = useTheme();
-  const done = props.todos.filter((t) => t.status === "completed").length;
-  // Cap the rendered rows so a long ledger can't push the rest of the rail off.
-  const visible = props.todos.slice(0, 12);
-  const overflow = props.todos.length - visible.length;
-  const colorFor = (status: string): string | undefined => {
-    if (status === "completed") return theme.success;
-    if (status === "in_progress") return theme.accent;
-    if (status === "blocked" || status === "failed") return theme.error;
-    if (status === "skipped") return theme.muted;
-    return undefined;
-  };
-  return (
-    <Box flexDirection="column">
-      <Text bold>
-        todo ({done}/{props.todos.length})
-      </Text>
-      {visible.map((t, i) => {
-        const glyph = TODO_GLYPH[t.status] ?? "☐";
-        const indent = "  ".repeat(Math.min(t.depth, 3));
-        const text = truncate(
-          t.title,
-          Math.max(8, props.width - indent.length - 2),
-        );
-        return (
-          <Text key={i} color={colorFor(t.status)}>
-            {indent}
-            {glyph} {text}
-          </Text>
-        );
-      })}
-      {overflow > 0 ? <Text dimColor>… +{overflow} more</Text> : null}
-    </Box>
-  );
-}
-
-function truncate(text: string, max: number): string {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
 }
 
 function ModifiedFilesPanel(props: {

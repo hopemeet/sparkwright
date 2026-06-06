@@ -31,6 +31,7 @@ import { TimelineDialog } from "./components/timeline-dialog.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
+import { TodoBand } from "./components/todo-band.js";
 import { StatusBar } from "./components/status-bar.js";
 import { Spinner } from "./components/spinner.js";
 import { QueuedMessages } from "./components/queued-messages.js";
@@ -875,8 +876,7 @@ function AppReady(
   // Only reserve the sidebar rail when the terminal is wide AND there's
   // something to show — an empty "modified files (none yet)" box pinned at the
   // bottom is just clutter.
-  const hasSidebarContent =
-    state.modifiedFiles.length > 0 || state.todoItems.length > 0;
+  const hasSidebarContent = state.modifiedFiles.length > 0;
   const sidebarWidth = cols >= 100 && hasSidebarContent ? 32 : 0;
 
   // Cap the live stream panel so a long in-flight message can't push the input
@@ -1022,13 +1022,21 @@ function AppReady(
             ) : null}
           </Box>
           {sidebarWidth > 0 ? (
-            <Sidebar
-              files={state.modifiedFiles}
-              todos={state.todoItems}
-              width={sidebarWidth}
-            />
+            <Sidebar files={state.modifiedFiles} width={sidebarWidth} />
           ) : null}
         </Box>
+
+        {/* Todo ledger as a full-width band, pinned above the input. Only while
+          a run is active; collapses to a single line while the model streams a
+          long answer so it does not dominate the frame. */}
+        {state.todoItems.length > 0 &&
+        (state.status === "running" || state.status === "awaiting-approval") ? (
+          <TodoBand
+            todos={state.todoItems}
+            width={cols}
+            compact={Boolean(state.streamingText)}
+          />
+        ) : null}
 
         {state.status !== "running" &&
         state.status !== "awaiting-approval" &&
