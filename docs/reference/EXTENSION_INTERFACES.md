@@ -1,5 +1,8 @@
 # Extension Interfaces
 
+This is a reference contract. If you are new to Sparkwright, start with
+[the documentation map](../README.md) or the [Capability Design Guide](../guides/CAPABILITY_DESIGN_GUIDE.md).
+
 This document explains how applications and extension authors should connect optional capabilities to Sparkwright core.
 
 Sparkwright core is intentionally small. Extensions should make agents more capable without bypassing the runtime boundary that makes runs inspectable, controllable, and recoverable.
@@ -577,9 +580,9 @@ await commands.dispatch("/compact aggressive");
 ### File-authored commands and the `start_run` intent
 
 `.sparkwright/command/*.md` files become commands without code via
-[`@sparkwright/project-commands`](../packages/project-commands). A command that
+[`@sparkwright/project-commands`](../../packages/project-commands). A command that
 should begin a run does **not** start one itself; per
-[PROJECT_CONFIG_SURFACE.md](./PROJECT_CONFIG_SURFACE.md) Decision 3 it yields a
+[PROJECT_CONFIG_SURFACE.md](../archive/PROJECT_CONFIG_SURFACE.md) Decision 3 it yields a
 front-end-agnostic intent the embedder dispatches:
 
 ```ts

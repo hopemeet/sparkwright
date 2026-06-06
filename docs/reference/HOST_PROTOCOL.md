@@ -1,7 +1,10 @@
 # Sparkwright Host Protocol
 
+This is a reference contract. If you are new to Sparkwright, start with
+[the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
+
 **Version:** 1.1
-**Schema:** [`schemas/host-message.schema.json`](../schemas/host-message.schema.json)
+**Schema:** [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 **Changelog:** [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md)
 
 This document specifies the wire protocol spoken between a **Sparkwright
@@ -347,7 +350,7 @@ Clients should display these in a side panel, never as agent output.
 ### `run.event`
 
 Wraps a single `SparkwrightEvent` (see
-[`schemas/event.schema.json`](../schemas/event.schema.json)). Clients
+[`schemas/event.schema.json`](../../schemas/event.schema.json)). Clients
 that care about a strict event subset may filter on `event.type`.
 
 | Field   | Type   | Notes                        |
@@ -418,7 +421,7 @@ Terminal event for a run that ended in error.
 - **Across a major (v1 → v2)**: any breaking change. Hosts and clients
   on different majors refuse to connect.
 - Every change to the protocol must:
-  1. Update [`schemas/host-message.schema.json`](../schemas/host-message.schema.json).
+  1. Update [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json).
   2. Add or update a fixture under `schemas/fixtures/host-message.*.json`.
   3. Add an entry to [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md).
   4. Pass `npm run schema:check`.
@@ -427,20 +430,20 @@ Terminal event for a run that ended in error.
 
 ## Reference implementation
 
-- **Host:** [`@sparkwright/host`](../packages/host) — `sparkwright host` /
+- **Host:** [`@sparkwright/host`](../../packages/host) — `sparkwright host` /
   `sparkwright-host` bin. WS + stdio transports.
-- **Protocol types:** [`@sparkwright/protocol`](../packages/protocol) —
+- **Protocol types:** [`@sparkwright/protocol`](../../packages/protocol) —
   TypeScript types mirroring this schema. Zero runtime code; no
   dependency on the runtime.
-- **Isomorphic client:** [`@sparkwright/sdk-core`](../packages/sdk-core)
+- **Isomorphic client:** [`@sparkwright/sdk-core`](../../packages/sdk-core)
   — transport-agnostic `Client` class. Browser-safe (no Node imports).
-- **Node client:** [`@sparkwright/sdk-node`](../packages/sdk-node) —
+- **Node client:** [`@sparkwright/sdk-node`](../../packages/sdk-node) —
   adds spawn (stdio) and `ws` (WebSocket) transports plus a
   `createClient` factory that auto-resolves between them based on
   `SPARKWRIGHT_HOST_URL`.
-- **Browser client:** [`@sparkwright/sdk-browser`](../packages/sdk-browser)
+- **Browser client:** [`@sparkwright/sdk-browser`](../../packages/sdk-browser)
   — uses native `globalThis.WebSocket`. Pure ESM, `"sideEffects": false`.
-- **First client:** [`@sparkwright/tui`](../packages/tui) — drives runs
+- **First client:** [`@sparkwright/tui`](../../packages/tui) — drives runs
   through `@sparkwright/sdk-node`. Does not import core directly.
 
 ## Building a non-TypeScript client
@@ -458,5 +461,5 @@ the wire protocol. The minimal path:
 
 The wire format is plain JSON; no language-specific wrappers are
 needed. Validate messages against
-[`schemas/host-message.schema.json`](../schemas/host-message.schema.json)
+[`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 using your language's standard JSON Schema validator.

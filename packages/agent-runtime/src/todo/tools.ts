@@ -12,12 +12,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
-import {
-  itemsOnly,
-  parseTodoMarkdown,
-  serializeTodoMarkdown,
-  type TodoEntry,
-} from "./markdown.js";
+import { serializeTodoMarkdown, type TodoEntry } from "./markdown.js";
 import type {
   TodoEvidence,
   TodoItem,
@@ -80,7 +75,7 @@ const VALID_PRIORITIES: ReadonlySet<TodoPriority> = new Set([
 ]);
 
 /**
- * Options shared by {@link createTodoReadTool} and {@link createTodoWriteTool}.
+ * Options for {@link createTodoWriteTool}.
  *
  * @public
  * @stability experimental v0.1
@@ -94,49 +89,47 @@ export interface CreateTodoToolsOptions {
 }
 
 /**
- * Build the read + write tool pair backed by a single markdown file.
+ * Build the todo tool bundle backed by a single markdown file. Only the write
+ * tool is exposed to the model: every write returns the updated list and how
+ * many items remain, so there is no need for a separate read tool (which a weak
+ * model otherwise burns calls re-fetching state already in its context). The
+ * supervisor reads the ledger from disk through its own helper, not this tool.
  *
  * @public
  * @stability experimental v0.1
  */
 export function createTodoTools(options: CreateTodoToolsOptions): {
-  todoRead: ToolDefinition;
   todoWrite: ToolDefinition;
   all(): ToolDefinition[];
 } {
-  const todoRead = createTodoReadTool(options);
   const todoWrite = createTodoWriteTool(options);
-  return { todoRead, todoWrite, all: () => [todoRead, todoWrite] };
+  return { todoWrite, all: () => [todoWrite] };
 }
 
-/** @public @stability experimental v0.1 */
-export function createTodoReadTool(
-  options: CreateTodoToolsOptions,
-): ToolDefinition {
-  return defineTool({
-    name: "todo_read",
-    description:
-      "Read the run's todo ledger. Returns parsed items with status, depth, title, evidence, and optional metadata.",
-    inputSchema: { type: "object", properties: {} },
-    deferLoading: false,
-    policy: { risk: "safe", requiresApproval: false },
-    governance: { sideEffects: ["read"] },
-    async execute(): Promise<{ items: TodoItem[]; raw: string }> {
-      const raw = await safeRead(options.getTodoPath());
-      const entries = parseTodoMarkdown(raw);
-      return { items: itemsOnly(entries), raw };
-    },
-  });
-}
+/**
+ * After this many consecutive no-op writes (byte-identical ledger), the tool
+ * starts returning a nudge in its result. Weak models can get stuck rewriting
+ * the ledger instead of doing the next task; the no-op guard makes those cheap,
+ * and this tells the model to stop and act.
+ */
+const NOOP_CHURN_THRESHOLD = 2;
 
 /** @public @stability experimental v0.1 */
 export function createTodoWriteTool(
   options: CreateTodoToolsOptions,
 ): ToolDefinition {
+  // Per-tool-instance (per run-chain) counter of consecutive no-op writes,
+  // reset on any write that actually changes the ledger.
+  let consecutiveNoops = 0;
   return defineTool({
     name: "todo_write",
-    description:
-      "Replace the run's todo ledger. Pass `items` (array of {title/content, status, depth?, priority?, doneWhen?, evidence?, owner?, note?}). `status` must be one of: pending, in_progress, completed, blocked, failed, skipped (common synonyms like 'todo'/'done' are accepted). Only mark an item completed when its done-when is actually satisfied — do not relax done-when to claim completion. Child agents are denied this tool by policy.",
+    description: [
+      "Create and maintain the run's todo list — a short checklist that tracks multi-step work and shows progress. Each call replaces the whole list, so pass every task, in order, every time.",
+      "When to use: a task with several distinct steps, or when the user asks for a checklist. Skip it for a single trivial step or a plain question — just answer.",
+      "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked, failed, skipped; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
+      "Mark an item in_progress when you start it, and completed the moment its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Make one update per status change; do not save several completions in a single late rewrite.",
+      "The call returns the updated list and how many items remain, so you never need to read the list back. Child agents may not call this tool.",
+    ].join("\n"),
     inputSchema: {
       type: "object",
       properties: {
@@ -146,30 +139,8 @@ export function createTodoWriteTool(
             type: "object",
             properties: {
               title: { type: "string" },
-              content: { type: "string" },
               status: { type: "string" },
-              depth: { type: "integer" },
-              id: { type: "string" },
               priority: { type: "string" },
-              doneWhen: { type: "string" },
-              evidence: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    kind: { type: "string" },
-                    path: { type: "string" },
-                    command: { type: "string" },
-                    exitCode: { type: "integer" },
-                    passed: { type: "boolean" },
-                    artifactId: { type: "string" },
-                    eventId: { type: "string" },
-                  },
-                  required: ["kind"],
-                },
-              },
-              owner: { type: "string" },
-              note: { type: "string" },
             },
             required: ["status"],
           },
@@ -178,11 +149,16 @@ export function createTodoWriteTool(
       required: ["items"],
     },
     deferLoading: false,
-    // Write is a workspace mutation but not externally observable; the
-    // policy layer should additionally restrict callers by agent role.
-    policy: { risk: "risky", requiresApproval: false },
-    governance: { sideEffects: ["write"] },
-    async execute(args: unknown): Promise<{ written: number; path: string }> {
+    // The ledger is internal session bookkeeping (.sparkwright/sessions/<id>/
+    // todo.md), not a user-facing workspace mutation — like a trace write. It
+    // is therefore NOT approval-gated: declaring sideEffects:["write"] made the
+    // governance policy prompt on every call, so a model that rewrote the
+    // ledger N times produced N approval prompts. `sideEffects:["none"]` keeps
+    // it unprompted. Child agents are still denied todo_write by a separate
+    // CapabilityRule on the resource, preserving the single-writer model.
+    policy: { risk: "safe", requiresApproval: false },
+    governance: { sideEffects: ["none"] },
+    async execute(args: unknown): Promise<TodoWriteResult> {
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({
@@ -190,11 +166,92 @@ export function createTodoWriteTool(
         ...item,
       }));
       const text = serializeTodoMarkdown(entries);
+      const echo = renderWriteEcho(items);
+      // No-op guard: a rewrite that produces byte-identical content is wasted
+      // work (observed: a stuck model rewrote the same 3 items ~70 times). Skip
+      // the disk write and report it so the result reads as a no-op rather than
+      // progress.
+      const current = await safeRead(path);
+      if (current === text) {
+        consecutiveNoops += 1;
+        const result: TodoWriteResult = { ...echo, saved: false };
+        if (consecutiveNoops >= NOOP_CHURN_THRESHOLD) {
+          // Anti-churn nudge: stop rewriting the unchanged list and make real
+          // progress instead. Surfaced in the tool result the model observes.
+          result.hint =
+            "The list is unchanged from your last write — calling todo_write again accomplishes nothing. Take the next concrete action on the first unfinished item (read a file, run a command, produce output), or, if every item is genuinely done, give your final answer.";
+        }
+        return result;
+      }
+      consecutiveNoops = 0;
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, text, "utf8");
-      return { written: items.length, path };
+      return { ...echo, saved: true };
     },
   });
+}
+
+/**
+ * The result the model observes after a write. It echoes the resulting list and
+ * the remaining count so the model always sees current state without a separate
+ * read — the single biggest lever for getting a weak model to actually advance
+ * item statuses instead of re-deriving or spinning the list.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface TodoWriteResult {
+  /**
+   * Whether this write changed the list on disk (false = byte-identical no-op).
+   *
+   * @reserved Public tool-result field consumed by the model reading the
+   * serialized todo_write result, not by an in-process TS reader.
+   */
+  saved: boolean;
+  /** One-line progress summary, e.g. "1/3 done — remaining: List scripts, Pick test". */
+  summary: string;
+  total: number;
+  completed: number;
+  /**
+   * Count of items still open (not completed/skipped/failed).
+   *
+   * @reserved Public tool-result field consumed by the model reading the
+   * serialized todo_write result, not by an in-process TS reader.
+   */
+  remaining: number;
+  /**
+   * The resulting list, lean (title + status) so the model re-emits lean items.
+   *
+   * @reserved Public tool-result field consumed by the model reading the
+   * serialized todo_write result, not by an in-process TS reader.
+   */
+  todos: { title: string; status: TodoStatus }[];
+  /** Anti-churn nudge, present only after repeated no-op writes. */
+  hint?: string;
+}
+
+const DONE_STATUSES: ReadonlySet<TodoStatus> = new Set([
+  "completed",
+  "skipped",
+  "failed",
+]);
+
+function renderWriteEcho(
+  items: TodoItem[],
+): Omit<TodoWriteResult, "saved" | "hint"> {
+  const todos = items.map((item) => ({
+    title: item.title,
+    status: item.status,
+  }));
+  const total = items.length;
+  const completed = items.filter((item) => item.status === "completed").length;
+  const open = items.filter((item) => !DONE_STATUSES.has(item.status));
+  const remaining = open.length;
+  const summary =
+    remaining === 0
+      ? `All ${total} item(s) done.`
+      : `${completed}/${total} done — remaining: ${open.map((i) => i.title).join(", ")}`;
+  return { summary, total, completed, remaining, todos };
 }
 
 async function safeRead(path: string): Promise<string> {

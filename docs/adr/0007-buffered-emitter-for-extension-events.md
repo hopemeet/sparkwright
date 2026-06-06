@@ -52,4 +52,4 @@ Negative:
 
 ## Follow-Up
 
-Reference implementation: `EventEmitter`, `BufferedEmitter`, `createBufferedEmitter` in `packages/core/src/events.ts`. Canonical wiring example: `examples/capability-runtime/run.ts`. The four edge-lifecycle events that motivated this pattern are listed in `docs/TRACE_EXTENSION_EVENTS.md`. A future revision may attach an originating timestamp to buffered entries so that consumers can distinguish emit time from flush time when the gap is material.
+Reference implementation: `EventEmitter`, `BufferedEmitter`, `createBufferedEmitter` in `packages/core/src/events.ts`. Canonical wiring example: `examples/capability-runtime/run.ts`. The four edge-lifecycle events that motivated this pattern are listed in `docs/reference/TRACE_EXTENSION_EVENTS.md`. A future revision may attach an originating timestamp to buffered entries so that consumers can distinguish emit time from flush time when the gap is material.

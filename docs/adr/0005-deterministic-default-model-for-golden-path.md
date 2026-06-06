@@ -10,7 +10,7 @@ The Sparkwright CLI golden path is a protocol smoke test: it exercises run lifec
 
 1. **Tests** — unit and integration suites that must produce deterministic event sequences.
 2. **Demos** — `npm exec sparkwright -- run ...` invocations a new contributor runs in the first ten minutes.
-3. **Documentation** — expected trace sequences in `docs/PROTOCOL.md` and `docs/CLI_GOLDEN_PATH.md`.
+3. **Documentation** — expected trace sequences in `docs/reference/PROTOCOL.md` and `docs/maintainer/CLI_GOLDEN_PATH.md`.
 
 A real provider in any of these introduces nondeterminism (token sampling, provider outages, rate limits, billing, model version drift, network conditions) that has nothing to do with the kernel under test. It also gates contribution on having an API key.
 

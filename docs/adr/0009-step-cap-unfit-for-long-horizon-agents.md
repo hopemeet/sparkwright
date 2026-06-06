@@ -138,7 +138,7 @@ Remaining / not in this change: extending no-progress detection beyond
 consecutive same-target failures (A-B-A-B oscillation), and a true resumable
 checkpoint on wrap-up rather than just a partial answer.
 
-Related: `docs/AUTOMATION_AND_BACKGROUND_TASKS.md` (long-running and background
+Related: `docs/guides/AUTOMATION_AND_BACKGROUND_TASKS.md` (long-running and background
 work), and the sub-agent completeness marker from the
 `feat(runtime): flag final answers produced under an exhausted step budget`
 change — the wrap-up reuses its `stepLimitReached` signal and adds `truncated`,

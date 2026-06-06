@@ -68,7 +68,7 @@ Candidates:
 - protocol conformance tests
 - SQLite or database-backed trace store
 
-See [Streaming Loop Requirements](STREAMING_LOOP_REQUIREMENTS.md) for the v1 streaming boundary.
+See [Streaming Loop Requirements](../reference/STREAMING_LOOP_REQUIREMENTS.md) for the v1 streaming boundary.
 
 ## Deferred
 

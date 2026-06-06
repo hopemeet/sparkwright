@@ -1,5 +1,8 @@
 # Protocol Draft
 
+This is a reference contract. If you are new to Sparkwright, start with
+[the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
+
 This document describes Sparkwright Protocol v0.2. Schema files use `$id` `https://sparkwright.dev/schemas/v0/...` and tag `x-sparkwrightProtocolVersion: '0.2'`. See [PROTOCOL_CHANGELOG.md](./PROTOCOL_CHANGELOG.md) for evolution.
 
 This document defines the first portable shapes for Sparkwright runtime data. The TypeScript implementation may evolve, but these shapes should remain understandable outside TypeScript.
@@ -7,7 +10,7 @@ This document defines the first portable shapes for Sparkwright runtime data. Th
 The protocol is intentionally JSON-friendly.
 
 For the state ownership model behind these protocol shapes, see
-[State And Trace Model](STATE_AND_TRACE_MODEL.md).
+[State And Trace Model](./STATE_AND_TRACE_MODEL.md).
 
 ## Schema Index
 
@@ -154,7 +157,7 @@ Rules:
 
 ### Span Correlation (v0.2, optional)
 
-`traceId`, `spanId`, and `parentSpanId` are **optional** envelope fields added in protocol v0.2 (see [ADR 0008](./adr/0008-span-correlation-and-trace-sinks.md)). They let downstream consumers reconstruct a parent/child tree without pair-matching event names.
+`traceId`, `spanId`, and `parentSpanId` are **optional** envelope fields added in protocol v0.2 (see [ADR 0008](../adr/0008-span-correlation-and-trace-sinks.md)). They let downstream consumers reconstruct a parent/child tree without pair-matching event names.
 
 Semantics:
 

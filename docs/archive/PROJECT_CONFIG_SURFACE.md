@@ -1,14 +1,16 @@
 # Project Config Surface
 
+This is an archived implementation plan, not the current user guide. For the
+current behavior, read [Configuration](../guides/CONFIGURATION.md).
+
 Status: implemented (P0–P3). See "Implementation notes" at the end for what
 shipped and where it diverged from this plan.
 Owner-facing goal: make project-following configuration — commands, agent
 profiles, and the config file itself — **travel with the repository** the way
 project instruction files already do.
 
-This document is the source of truth for the "project config surface" work. It
-captures the motivation, four pinned design decisions, a phased plan
-(P0–P3), and the grounded integration points in the current code.
+This document preserves the motivation, four pinned design decisions, a phased
+plan (P0–P3), and the grounded integration points from the original work.
 
 ## Why
 
@@ -16,7 +18,7 @@ Today SparkWright already lets several things follow a project:
 
 - **Project instructions** — hierarchical discovery of `SPARKWRIGHT.md` /
   `AGENTS.md` / `CLAUDE.md`, walking up to the git root, with directory-scoped
-  injection. See [project-context](../packages/project-context/src/index.ts).
+  injection. See [project-context](../../packages/project-context/src/index.ts).
 - **Skills** — `capabilities.skills.roots` points at a committed `skills/`
   directory of `SKILL.md` packages.
 
@@ -68,10 +70,10 @@ These four were decided and are not re-open:
    `run()` returns `CommandResult.metadata = { kind: "start_run", prompt,
 model?, subtask? }`. The embedder decides how to start the run. This matches
    the existing "commands are the user-intent surface, they do not pass the tool
-   gate" definition in [commands.ts](../packages/core/src/commands.ts) and keeps
+   gate" definition in [commands.ts](../../packages/core/src/commands.ts) and keeps
    the loader independent of any specific front-end. This cross-front-end
    contract must be written into
-   [EXTENSION_INTERFACES.md](./EXTENSION_INTERFACES.md) "Commands".
+   [EXTENSION_INTERFACES.md](../reference/EXTENSION_INTERFACES.md) "Commands".
 
 4. **Gitignore uses an allowlist of runtime subpaths, not negation.** Do not
    ignore the whole directory and re-include `config.json` with `!`; nested `!`
@@ -105,15 +107,15 @@ files dropped under `.sparkwright/` would also be gitignored).
    example sessions.
 
 2. **`init --project`** — add a project mode to the scaffold. Reuse the existing
-   writer at [cli.ts:~2872](../packages/cli/src/cli.ts) but target
-   [projectConfigPath() (cli.ts:1691)](../packages/cli/src/cli.ts). The project
+   writer at [cli.ts:~2872](../../packages/cli/src/cli.ts) but target
+   [projectConfigPath() (cli.ts:1691)](../../packages/cli/src/cli.ts). The project
    template contains **no secrets** (only `model` / `permissionMode` /
    `capabilities`); provider keys stay in the user-level file. Because it holds
    no secret, the project template does **not** need the `chmod 600` that the
    user-level template forces.
 
 3. **`$schema` support (allowed, not emitted)** — add a top-level `"$schema"`
-   property to [schemas/config.schema.json](../schemas/config.schema.json) so
+   property to [schemas/config.schema.json](../../schemas/config.schema.json) so
    editors accept it, but do **not** emit it from the scaffolds until the schema
    is hosted at a stable URL — an unhosted URL just makes editors fail to fetch.
    Users can add `"$schema"` themselves once it is published.
@@ -127,7 +129,7 @@ files dropped under `.sparkwright/` would also be gitignored).
   suddenly enter git — but verify.
 
 **Risk:** low. Pure gitignore + scaffold. The config load/merge logic in
-[config.ts](../packages/host/src/config.ts) is untouched.
+[config.ts](../../packages/host/src/config.ts) is untouched.
 
 ## Phase P1 — File-loaded slash commands
 
@@ -135,7 +137,7 @@ files dropped under `.sparkwright/` would also be gitignored).
 `~/.config/sparkwright/command/*.md`) become live commands.
 
 New edge package — `@sparkwright/project-commands` — alongside
-[project-context](../packages/project-context/src/index.ts) (both are
+[project-context](../../packages/project-context/src/index.ts) (both are
 "local-convention discovery" and both need workspace-relative path resolution).
 **Core is not modified.**
 
@@ -160,13 +162,13 @@ New edge package — `@sparkwright/project-commands` — alongside
 3. **`run()` semantics (Decision 3)** — the command does not execute shell or
    start a run itself. It returns `CommandResult.metadata = { kind: "start_run",
 prompt, model?, subtask? }`; the embedder starts the run, reusing the existing
-   run-start path in [host/runtime.ts](../packages/host/src/runtime.ts).
+   run-start path in [host/runtime.ts](../../packages/host/src/runtime.ts).
 
 4. **Template interpolation — two distinct kinds:**
    - `$ARGUMENTS` / `$1 $2` ← `ctx.rest` / `ctx.args`. **Pure string
      substitution, never executes.**
    - `` !`<cmd>` `` ← runs through the **shell-tool gate**
-     ([packages/shell-tool](../packages/shell-tool/) — `safety`,
+     ([packages/shell-tool](../../packages/shell-tool/) — `safety`,
      `command-parser`, policy). The shell embedded in a command template and the
      shell a model runs mid-run go through the _same_ governed channel and the
      _same_ approval. No bypass.
@@ -184,13 +186,13 @@ project_command`) — this is a different authorization context from a model
 
 The repo currently has **two** command registries:
 
-- [packages/core/src/commands.ts](../packages/core/src/commands.ts) — the
+- [packages/core/src/commands.ts](../../packages/core/src/commands.ts) — the
   protocol-shaped `CommandRegistry` (`run(ctx): CommandResult`). Defined, but not
   what the TUI actually drives.
-- [packages/tui/src/lib/commands.ts](../packages/tui/src/lib/commands.ts) — the
+- [packages/tui/src/lib/commands.ts](../../packages/tui/src/lib/commands.ts) — the
   registry the TUI palette and `/foo` input actually use. Commands are `run: () =>
 void` thunks closed over App state, registered imperatively in
-  [app.tsx (~430)](../packages/tui/src/app.tsx).
+  [app.tsx (~430)](../../packages/tui/src/app.tsx).
 
 The loader must **not** couple to either front-end. It produces the
 front-end-agnostic descriptor (name / description / prompt / model / subtask /
@@ -215,9 +217,9 @@ nicer for long prompts.
 1. In the same edge loader, scan `agents/*.md`; map frontmatter (`mode` /
    `model` / `allowedTools` / `deniedTools` / `maxSteps` / `runBudget`) + body
    (→ `experimental.prompt`) onto the
-   [agent-profile schema](../schemas/agent-profile.schema.json). `id` = filename.
+   [agent-profile schema](../../schemas/agent-profile.schema.json). `id` = filename.
 2. Reuse the existing `recordToAgentProfile` validation
-   ([cli.ts:1539](../packages/cli/src/cli.ts)).
+   ([cli.ts:1539](../../packages/cli/src/cli.ts)).
 3. Merge per **Decision 1** (config wins) — see the normalization note below.
 
 **Risk:** low–medium. Pure data mapping onto the existing profile load/validate
@@ -228,7 +230,7 @@ path.
 Once P1 lands, `/learn` is just a `command/learn.md`: analyze the current
 session, distill non-obvious findings, and write them into the **nearest-level**
 `SPARKWRIGHT.md`, reusing the hierarchical target-file location logic in
-[project-context](../packages/project-context/src/index.ts). No new mechanism.
+[project-context](../../packages/project-context/src/index.ts). No new mechanism.
 
 ## Cross-cutting: normalize merge to "by key, last wins"
 
@@ -252,7 +254,7 @@ multi-layer merge test, since it changes existing profile-merge behavior.
 ## Grounded mount points (verified against current code)
 
 - Config + capability assembly happens in
-  [host/runtime.ts](../packages/host/src/runtime.ts): `loadHostConfig` at
+  [host/runtime.ts](../../packages/host/src/runtime.ts): `loadHostConfig` at
   **line 274**, then reads `capabilities.{tools,skills,mcp,agents}` (lines
   275–278), then computes `mainAgentProfile(agentConfig?.profiles)` at
   **line 306**. The loader's normalization belongs **between line 278 and 306**,
@@ -290,24 +292,24 @@ What shipped, and where it diverged from the plan above.
 - `.gitignore` now allowlists runtime subpaths with a `**/` prefix (see P0).
 - `sparkwright init --project` scaffolds `<workspace>/.sparkwright/config.json`
   from a secret-free template (no `chmod 600`). The config JSON schema gained a
-  `$schema` property ([schemas/config.schema.json](../schemas/config.schema.json))
+  `$schema` property ([schemas/config.schema.json](../../schemas/config.schema.json))
   so it is _allowed_, but the scaffolds do **not** emit one — the schema is not
   yet hosted, and an unhosted URL would only make editors fail to fetch. The
   loader already ignored unknown top-level keys, so no loader change was needed.
-- This repo dogfoods the surface: [.sparkwright/config.json](../.sparkwright/config.json)
-  and [.sparkwright/command/learn.md](../.sparkwright/command/learn.md) are committed.
+- This repo dogfoods the surface: [.sparkwright/config.json](../../.sparkwright/config.json)
+  and [.sparkwright/command/learn.md](../../.sparkwright/command/learn.md) are committed.
 
 ### P1 — file-loaded commands
 
-- New package [`@sparkwright/project-commands`](../packages/project-commands):
+- New package [`@sparkwright/project-commands`](../../packages/project-commands):
   discovery, frontmatter + template parsing, gated interpolation, and the
   `StartRunIntent` builder. Pure and execution-free.
 - `createSafetyGatedShellRunner` wraps `evaluateShellSafety`: `deny` and
   unapproved `require_approval` throw; only `allow` (or an explicitly approved
   command) executes. The TUI's default runner has no approver, so anything not
   `allow` is blocked — a safe floor. A future approval modal can inject `approve`.
-- TUI integration: [packages/tui/src/lib/project-commands.ts](../packages/tui/src/lib/project-commands.ts)
-  discovers + maps descriptors; [app.tsx](../packages/tui/src/app.tsx) folds them
+- TUI integration: [packages/tui/src/lib/project-commands.ts](../../packages/tui/src/lib/project-commands.ts)
+  discovers + maps descriptors; [app.tsx](../../packages/tui/src/app.tsx) folds them
   into the registry (built-ins win ties) and re-discovers them on `/reload`. The
   TUI `Command` type gained an additive `runRaw?(rest)`; `input-box.tsx` threads
   the rest-of-line so `$ARGUMENTS` resolves. The palette path stays arg-less.
@@ -322,7 +324,7 @@ What shipped, and where it diverged from the plan above.
 
 ### P2 — markdown agent profiles
 
-- [packages/host/src/agent-profiles.ts](../packages/host/src/agent-profiles.ts):
+- [packages/host/src/agent-profiles.ts](../../packages/host/src/agent-profiles.ts):
   `discoverProjectAgentProfiles`, `parseAgentProfileFile`, `mergeAgentProfilesById`
   (config wins by id), and `resolveAgentProfiles`. Frontmatter covers
   name/description/mode/model/allowedTools/deniedTools/maxSteps; body →
@@ -340,7 +342,7 @@ What shipped, and where it diverged from the plan above.
 
 ### P3 — /learn
 
-- Shipped as [.sparkwright/command/learn.md](../.sparkwright/command/learn.md),
+- Shipped as [.sparkwright/command/learn.md](../../.sparkwright/command/learn.md),
   a pure-prompt command (no shell) that distills session learnings into the
   nearest `SPARKWRIGHT.md`.
 

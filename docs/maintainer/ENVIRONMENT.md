@@ -46,7 +46,7 @@ can monitor completion via `task_get` / `task_output`.
 
 Pair the promotion bridge with `TaskNotificationSink`
 (`@sparkwright/agent-runtime`) so the agent's next turn observes terminal
-state instead of polling — see [`examples/promote-shell-to-task`](../examples/promote-shell-to-task).
+state instead of polling — see [`examples/promote-shell-to-task`](../../examples/promote-shell-to-task).
 
 ### Durable Background Task Wiring
 

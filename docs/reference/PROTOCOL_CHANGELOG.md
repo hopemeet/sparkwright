@@ -76,7 +76,7 @@ Conventions:
 
 - `event.schema.json`: additive — three new optional envelope fields for span
   correlation (proposed in
-  [ADR 0008](./adr/0008-span-correlation-and-trace-sinks.md)):
+  [ADR 0008](../adr/0008-span-correlation-and-trace-sinks.md)):
   - `traceId` — scopes a run-level trace tree; sinks may synthesize from
     `runId` when absent.
   - `spanId` — brackets a unit of work; paired `*.started` /

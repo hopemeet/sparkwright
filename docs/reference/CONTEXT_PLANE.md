@@ -1,5 +1,8 @@
 # Context Plane
 
+This is a reference contract. If you are new to Sparkwright, start with
+[the documentation map](../README.md) or the [Capability Design Guide](../guides/CAPABILITY_DESIGN_GUIDE.md).
+
 The Context Plane is the replaceable part of Sparkwright that decides what the model sees and how that material is packaged.
 
 It should be decoupled from the run loop, provider adapters, memory stores, and tool execution. Context technology changes quickly; the core should define protocols and lifecycle hooks, not hard-code one strategy.
@@ -333,7 +336,7 @@ The reference prompt builder is sectioned. Default section order:
 
 The stable prefix should keep deterministic ordering and formatting.
 
-`buildAgentPromptBuilder` (in `@sparkwright/project-context`) is the reference composition of slot 5 for product shells: an optional `app_identity` section (`createAppPromptSection`, rides the stable prefix), an auto-discovered `project_instructions` section (`session`-cached), and an `environment` section (`turn` tail). See `docs/AI_TASK_INDEX.md` → "Set or change the agent's system prompt / identity".
+`buildAgentPromptBuilder` (in `@sparkwright/project-context`) is the reference composition of slot 5 for product shells: an optional `app_identity` section (`createAppPromptSection`, rides the stable prefix), an auto-discovered `project_instructions` section (`session`-cached), and an `environment` section (`turn` tail). See `docs/maintainer/AI_TASK_INDEX.md` → "Set or change the agent's system prompt / identity".
 
 ## Section Cache Policy And Stability
 

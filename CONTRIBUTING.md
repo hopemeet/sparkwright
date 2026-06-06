@@ -63,11 +63,11 @@ The repository intentionally ignores local-only paths such as `.env*`, `.sparkwr
 When changing core concepts, update the relevant docs:
 
 - `PROJECT_CHARTER.md`
-- `docs/ARCHITECTURE.md`
-- `docs/PROTOCOL.md`
-- `docs/HOST_PROTOCOL.md`
-- `docs/EXTENSION_INTERFACES.md`
-- `docs/RUN_EVENTS.md`
+- `docs/reference/ARCHITECTURE.md`
+- `docs/reference/PROTOCOL.md`
+- `docs/reference/HOST_PROTOCOL.md`
+- `docs/reference/EXTENSION_INTERFACES.md`
+- `docs/reference/RUN_EVENTS.md`
 
 Significant changes should also be reflected in `CHANGELOG.md`.
 

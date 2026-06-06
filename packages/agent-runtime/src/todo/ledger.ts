@@ -36,10 +36,19 @@ export interface TodoTerminalAuditOptions {
    */
   result: RunResult;
   /**
-   * Events from the just-finished run. Used only to detect external progress;
-   * todo status changes alone never count as progress.
+   * Events from the just-finished run. Used to detect external progress when an
+   * explicit {@link hasProgress} signal is not supplied.
    */
   events?: readonly SparkwrightEvent[];
+  /**
+   * Whether the just-finished run made forward progress. When omitted, the
+   * audit falls back to {@link hasExternalProgressEvidence} over `events` — a
+   * write/edit/artifact signal. Read-only work produces none of those, so a
+   * supervisor that also counts newly-completed ledger items (a bounded,
+   * monotonic signal) should compute the combined verdict and pass it here so
+   * an honest read-only investigation is not mistaken for a stall.
+   */
+  hasProgress?: boolean;
   continuationCount?: number;
   maxContinuations?: number;
   stalledContinuationCount?: number;
@@ -240,7 +249,8 @@ export function auditTodoAfterTerminal(
     };
   }
 
-  const hasProgress = hasExternalProgressEvidence(options.events ?? []);
+  const hasProgress =
+    options.hasProgress ?? hasExternalProgressEvidence(options.events ?? []);
   if (
     !hasProgress &&
     options.maxStalledContinuations !== undefined &&
@@ -263,27 +273,36 @@ export function auditTodoAfterTerminal(
   };
 }
 
-/** @public @stability experimental v0.1 */
+/**
+ * The directive injected as the final turn of a continuation. It is a
+ * reconciliation checkpoint: the resumed run carries the full prior
+ * conversation, so the model is told to first bring the list into line with
+ * what it has already done, then either continue the next open item or — if
+ * reconciling shows everything is done — finish. Wrapped in a
+ * `<system-reminder>` block, whose authority is defined once in the resident
+ * harness contract, so the model treats it as a runtime directive rather than
+ * user input. Operating cadence ("when to use the list", "don't spin it") lives
+ * in the durable system contract and is not restated here.
+ *
+ * @public @stability experimental v0.1
+ */
 export function buildTodoContinuationPrompt(ledger: TodoLedger): string {
+  const completed = ledger.items.filter((item) => item.status === "completed");
   const unfinished = unfinishedTodoItems(ledger);
-  const preferred =
-    unfinished.find((item) => item.status === "in_progress") ??
-    unfinished.find((item) => item.priority === "high") ??
-    unfinished[0];
-  const nextLine = preferred
-    ? `Next preferred item: ${preferred.title}`
-    : "No unfinished item could be selected.";
+  const doneLine = completed.length
+    ? `Already completed: ${completed.map((i) => i.title).join("; ")}.`
+    : "Nothing is marked completed yet.";
+  const openLine = unfinished.length
+    ? `Still open: ${unfinished.map((i) => i.title).join("; ")}.`
+    : "No open items remain in the list.";
   return [
-    "Continue from the todo ledger.",
-    "",
-    "Do not restart from scratch.",
-    "Inspect unfinished todo items first.",
-    "Prefer the existing in_progress item; otherwise pick the highest-priority pending item.",
-    "Update the todo ledger before and after work.",
-    "Only mark an item completed when there is evidence.",
-    "If blocked, mark it blocked and explain the blocker.",
-    "",
-    nextLine,
+    "<system-reminder>",
+    "You are resuming an earlier turn because the todo list still has open items. The full conversation above is yours to build on — do not restart it.",
+    doneLine,
+    openLine,
+    "First reconcile the list with what the conversation above already shows you finished: in a single todo_write, mark every item whose work is actually done as completed, and add, split, or remove items only if the plan genuinely changed.",
+    "Then act on the first item that is still open, and give your final answer once the work is genuinely complete. But if reconciling alone finished the list — every item was already done and shown in the conversation above, and you did no new work this turn — do not restate that answer: a one-line confirmation that the list is reconciled and all items are complete is enough.",
+    "</system-reminder>",
   ].join("\n");
 }
 
@@ -319,18 +338,14 @@ export function hasExternalProgressEvidence(
   return events.some((event) => EXTERNAL_PROGRESS_EVENTS.has(event.type));
 }
 
+// Model-facing render is intentionally lean — just status + title. The model
+// re-emits whatever shape it sees, so showing fat items (id, owner, evidence,
+// done-when, note) led weak models to regenerate all of them every write,
+// which both drifted the free-text fields (defeating the no-op guard) and made
+// advancing a single status unreliable. The rich fields still live on disk.
 function renderTodoLine(item: TodoItem): string {
   const prefix = "  ".repeat(Math.max(0, item.depth));
-  const id = item.id ? ` id=${item.id}` : "";
-  const priority = item.priority ? ` priority=${item.priority}` : "";
-  const owner = item.owner ? ` owner=${item.owner}` : "";
-  const doneWhen = item.doneWhen ? ` done-when=${item.doneWhen}` : "";
-  const evidence =
-    item.evidence && item.evidence.length > 0
-      ? ` evidence=${item.evidence.length}`
-      : "";
-  const note = item.note ? ` note=${item.note}` : "";
-  return `${prefix}- ${item.status}: ${item.title}${id}${priority}${owner}${doneWhen}${evidence}${note}`;
+  return `${prefix}- ${item.status}: ${item.title}`;
 }
 
 async function safeRead(path: string): Promise<string> {

@@ -1,5 +1,8 @@
 # Architecture
 
+This is a reference overview. If you are new to Sparkwright, start with
+[the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
+
 Sparkwright is organized around a small runtime kernel and a set of replaceable edge modules.
 
 ```txt
@@ -45,7 +48,7 @@ The kernel should not own provider-specific model logic, UI prompts, workspace i
 ## State Model
 
 For the cross-cutting state map, identity boundaries, store responsibilities,
-and trace ownership rules, see [State And Trace Model](STATE_AND_TRACE_MODEL.md).
+and trace ownership rules, see [State And Trace Model](./STATE_AND_TRACE_MODEL.md).
 
 Initial v0 run states:
 
@@ -94,7 +97,7 @@ type LoopResult = "continue" | "completed" | "failed" | "cancelled" | "compact";
 
 This does not require a large session processor. It gives the small loop explicit control points for retries, compaction, cancellation, approval, and trace output.
 
-Streaming should be added through a separate contract rather than hidden inside the synchronous loop. See [Streaming Loop Requirements](STREAMING_LOOP_REQUIREMENTS.md).
+Streaming should be added through a separate contract rather than hidden inside the synchronous loop. See [Streaming Loop Requirements](./STREAMING_LOOP_REQUIREMENTS.md).
 
 ## Event Stream
 

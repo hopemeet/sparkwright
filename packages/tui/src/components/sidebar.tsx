@@ -4,9 +4,10 @@ import type { ModifiedFile, UsageSummary } from "../state/event-store.js";
 import { useTheme } from "../lib/theme-context.js";
 
 /**
- * Right-rail sidebar. Today it just shows the modified-files list and a
- * usage summary; designed as a vertical stack so future "slots" (todo, lsp,
- * mcp) can be added without re-laying-out the app.
+ * Right-rail sidebar. Shows the modified-files list and a usage summary; a
+ * vertical stack so future "slots" (lsp, mcp) can be added without re-laying-out
+ * the app. The todo ledger lives in its own full-width band (TodoBand), not
+ * here — a narrow rail cannot fit CJK titles.
  */
 export function Sidebar(props: {
   files: ModifiedFile[];

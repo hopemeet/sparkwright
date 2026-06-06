@@ -56,6 +56,17 @@ export interface ModifiedFile {
   lastSeq: number;
 }
 
+/**
+ * One row of the todo ledger, projected from `todo_write` tool requests for the
+ * sidebar panel. `todo_write` replaces the whole ledger, so the most recent
+ * request's items are the current ledger.
+ */
+export interface TodoPanelItem {
+  title: string;
+  status: string;
+  depth: number;
+}
+
 export interface UsageSummary {
   /**
    * Live context size = the most recent model call's input tokens. NOT summed
@@ -99,6 +110,8 @@ export interface StoreState {
   runEndedAt: number | null;
   /** Files modified within the current session (accumulated). Sidebar uses this. */
   modifiedFiles: ModifiedFile[];
+  /** Current todo ledger, projected from the latest todo_write. Sidebar uses this. */
+  todoItems: TodoPanelItem[];
   /** Latest usage snapshot, if the host emitted any usage event. */
   usage: UsageSummary | null;
   /**
@@ -131,6 +144,7 @@ export class EventStore {
     runStartedAt: null,
     runEndedAt: null,
     modifiedFiles: [],
+    todoItems: [],
     usage: null,
     activeTool: null,
     clearGeneration: 0,
@@ -244,6 +258,7 @@ export class EventStore {
     // Side-effect projections: keep specialised slices in sync so sidebar /
     // status bar can render off snapshot fields rather than re-scanning events.
     let modifiedFiles = this.state.modifiedFiles;
+    let todoItems = this.state.todoItems;
     let usage = this.state.usage;
     let activeTool = this.state.activeTool;
 
@@ -290,11 +305,45 @@ export class EventStore {
       }
     }
 
+    // todo ledger projection: todo_write replaces the whole ledger, so the
+    // request's items array is the authoritative current ledger. Read from the
+    // request (full args), not the completion (whose output may be summarized).
+    if (event.type === "tool.requested") {
+      const payload = rec(event.payload);
+      if (payload.toolName === "todo_write") {
+        const args = rec(payload.arguments ?? payload.input ?? payload.args);
+        if (Array.isArray(args.items)) {
+          todoItems = args.items.map((raw): TodoPanelItem => {
+            const it = rec(raw);
+            const title =
+              (typeof it.title === "string" && it.title.trim()) ||
+              (typeof it.content === "string" && it.content.trim()) ||
+              "(untitled)";
+            return {
+              title,
+              status: typeof it.status === "string" ? it.status : "pending",
+              depth:
+                typeof it.depth === "number" && it.depth > 0
+                  ? Math.floor(it.depth)
+                  : 0,
+            };
+          });
+        }
+      }
+    }
+
     if (event.type === "usage.updated") {
       usage = this.foldUsage(event.payload);
     }
 
-    this.state = { ...this.state, events, modifiedFiles, usage, activeTool };
+    this.state = {
+      ...this.state,
+      events,
+      modifiedFiles,
+      todoItems,
+      usage,
+      activeTool,
+    };
     this.schedule();
   }
 
@@ -352,6 +401,7 @@ export class EventStore {
       stopReason: null,
       status: this.state.status === "running" ? "running" : "idle",
       modifiedFiles: [],
+      todoItems: [],
       activeTool: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
@@ -374,6 +424,7 @@ export class EventStore {
       runStartedAt: null,
       runEndedAt: null,
       modifiedFiles: [],
+      todoItems: [],
       usage: null,
       activeTool: null,
       clearGeneration: this.state.clearGeneration + 1,

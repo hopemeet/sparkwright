@@ -43,6 +43,19 @@ npm exec sparkwright -- run "inspect this example" \
   --trace-level minimal
 ```
 
+## Scripts
+
+This package defines a few top-level scripts (see `package.json`):
+
+- `build` — compile `golden-path.ts` to `dist/` with `tsc`.
+- `typecheck` — type-check without emitting (`tsc --noEmit`).
+- `test` — alias for `typecheck` (this example has no runtime unit tests).
+- `golden-path` — run the README golden-path validator (`dist/golden-path.js`),
+  asserting the README still documents the full write path.
+- `smoke` — the read-only variant of the validator (`--readonly`), skipping the
+  write/approval token checks.
+- `clean` — remove the `dist/` build output.
+
 This example proves:
 
 - local workspace context

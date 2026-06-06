@@ -8,6 +8,7 @@ import {
   hasExternalProgressEvidence,
   readTodoLedger,
   renderTodoLedgerContext,
+  summarizeTodoLedger,
   type TodoTerminalAuditDecision,
 } from "./ledger.js";
 import type { TodoLedger } from "./types.js";
@@ -70,6 +71,16 @@ export async function runTodoSupervised(
   let continuation: TodoContinuationRequest | undefined;
   let continuationCount = 0;
   let stalledContinuationCount = 0;
+  // Baseline of completed items carried across rounds. A read-only run emits no
+  // workspace.write/artifact events, so the event-only progress signal can
+  // never fire for it — which previously meant every continuation looked
+  // "stalled" and an honest investigation got nagged to the handoff. Counting
+  // newly-completed ledger items is a safe complement: completions are
+  // monotonic and bounded by the item count, so a model cannot use them to
+  // spin the stall guard forever (at worst it completes every item, which ends
+  // the loop). Status churn that does not raise the completed count still
+  // counts as no progress.
+  let prevCompleted = 0;
 
   while (true) {
     const output = await options.runOnce({
@@ -77,9 +88,14 @@ export async function runTodoSupervised(
       continuationCount,
     });
     const ledger = output.ledger ?? (await readLedgerFn());
+    const completed = summarizeTodoLedger(ledger).completed;
+    const progressed =
+      hasExternalProgressEvidence(output.events ?? []) ||
+      completed > prevCompleted;
     const decision = auditTodoAfterTerminal(ledger, {
       result: output.result,
       events: output.events,
+      hasProgress: progressed,
       continuationCount,
       maxContinuations: options.maxContinuations,
       stalledContinuationCount,
@@ -97,8 +113,8 @@ export async function runTodoSupervised(
       };
     }
 
-    const progressed = hasExternalProgressEvidence(output.events ?? []);
     stalledContinuationCount = progressed ? 0 : stalledContinuationCount + 1;
+    prevCompleted = completed;
     continuationCount += 1;
     continuation = {
       prompt: decision.prompt,

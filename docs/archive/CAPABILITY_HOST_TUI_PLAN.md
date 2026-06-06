@@ -31,7 +31,7 @@ The repository already has the primitives:
 - `@sparkwright/agent-runtime` can derive profiles and mount child-agent tools.
 - `schemas/capability-runtime-config.schema.json` describes a composed
   capability runtime.
-- `docs/PROTOCOL.md` already reserves extension events such as `skill.loaded`
+- `docs/reference/PROTOCOL.md` already reserves extension events such as `skill.loaded`
   and `subagent.started`.
 
 The product host/TUI path does not yet compose these primitives. The TUI starts

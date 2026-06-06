@@ -48,7 +48,7 @@ curated references. A Skill is not permission to execute. Any script, tool,
 network call, or workspace write suggested by a Skill still goes through normal
 policy, approval, validation, execution, and trace.
 
-Read [Skills](SKILLS.md) for supported frontmatter and loading behavior.
+Read [Skills](../reference/SKILLS.md) for supported frontmatter and loading behavior.
 
 ## Tools
 
@@ -81,7 +81,7 @@ Do not let MCP bypass the harness boundary. A safe MCP integration records:
 - execution result and trace events
 
 Capability runtime config supports MCP server descriptors through
-[schemas/mcp-server-config.schema.json](../schemas/mcp-server-config.schema.json).
+[schemas/mcp-server-config.schema.json](../../schemas/mcp-server-config.schema.json).
 
 ## Agent Profiles
 
@@ -116,7 +116,7 @@ Use profiles to make delegation explicit. Parent restrictions should remain
 constraining for child agents; child allow rules must not override inherited
 denies.
 
-Read [packages/agent-runtime/README.md](../packages/agent-runtime/README.md)
+Read [packages/agent-runtime/README.md](../../packages/agent-runtime/README.md)
 for the current helper package.
 
 ## Capability Runtime Config
@@ -132,8 +132,8 @@ normal run starts:
 ```
 
 The config schema is
-[schemas/capability-runtime-config.schema.json](../schemas/capability-runtime-config.schema.json).
-The runnable example is [examples/capability-runtime](../examples/capability-runtime).
+[schemas/capability-runtime-config.schema.json](../../schemas/capability-runtime-config.schema.json).
+The runnable example is [examples/capability-runtime](../../examples/capability-runtime).
 
 ## Capability Chain In Trace
 

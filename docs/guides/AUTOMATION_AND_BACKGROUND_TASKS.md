@@ -31,7 +31,7 @@ Use a background task when work may outlive the foreground turn:
 the host provides `foregroundTimeoutMs` and `onPromote`. The task can then be
 observed with `task_get` and `task_output`.
 
-Read [Environment Notes](ENVIRONMENT.md) for the durable wiring example.
+Read [Environment Notes](../maintainer/ENVIRONMENT.md) for the durable wiring example.
 
 ## Durable Task Pattern
 

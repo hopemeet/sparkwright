@@ -41,7 +41,7 @@ A weak harness often makes a strong model look unstable because it loses state, 
 
 ## Production Harness Components
 
-Sparkwright uses the component map in [Harness Component Model](HARNESS_COMPONENT_MODEL.md) as its planning baseline.
+Sparkwright uses the component map in [Harness Component Model](./HARNESS_COMPONENT_MODEL.md) as its planning baseline.
 
 The most important production ideas for v0 are:
 
