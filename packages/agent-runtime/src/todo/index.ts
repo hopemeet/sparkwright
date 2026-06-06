@@ -24,12 +24,14 @@ export type { CreateTodoToolsOptions, TodoWriteResult } from "./tools.js";
 export { createTodoTools, createTodoWriteTool } from "./tools.js";
 
 export type {
+  TodoDirective,
   TodoTerminalAuditDecision,
   TodoTerminalAuditOptions,
 } from "./ledger.js";
 export {
   auditTodoAfterTerminal,
   buildTodoContinuationPrompt,
+  computeTodoDirective,
   hasExternalProgressEvidence,
   hasUnfinishedTodo,
   readTodoLedger,

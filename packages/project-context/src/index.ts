@@ -259,6 +259,10 @@ const TODO_PLANNING_GUIDANCE = [
   "  nothing. Between updates, take the next concrete action toward the current",
   "  item (read a file, run a command, produce output) — that, not bookkeeping,",
   "  is what moves the task forward.",
+  "- When a status does change, fold that todo_write into the same turn as the",
+  "  action that caused it — mark a finished item completed and the next one",
+  "  in_progress alongside your next tool call, rather than spending a separate",
+  "  turn on bookkeeping.",
 ].join("\n");
 
 /**

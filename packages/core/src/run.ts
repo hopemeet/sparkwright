@@ -2068,10 +2068,24 @@ export class SparkwrightRun implements RunHandle {
       state.lastFailedToolTarget?.key === targetKey
         ? state.lastFailedToolTarget
         : undefined;
-    if (
-      isRepeatedToolCall(state.previousToolCall, requestedCall) ||
-      priorFailure
-    ) {
+    const verbatimRepeat = isRepeatedToolCall(
+      state.previousToolCall,
+      requestedCall,
+    );
+    // An idempotent tool repeating verbatim is a harmless no-op — it returns the
+    // same result with no side effect (e.g. rewriting an unchanged todo ledger)
+    // — not the start of a doom loop. Such tools carry their own no-op handling
+    // that course-corrects the model, so the generic repeat guard must defer to
+    // them rather than burning a turn on REPEATED_TOOL_CALL_SKIPPED. A repeated
+    // *failure* on the same target still counts even for idempotent tools (a
+    // tool that keeps failing is a real loop), so the exemption requires
+    // `!priorFailure`.
+    const benignIdempotentRepeat =
+      verbatimRepeat &&
+      !priorFailure &&
+      this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
+        "idempotent";
+    if ((verbatimRepeat || priorFailure) && !benignIdempotentRepeat) {
       state.repeatedToolCallCount += 1;
     } else {
       state.previousToolCall = requestedCall;

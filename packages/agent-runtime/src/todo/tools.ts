@@ -125,10 +125,10 @@ export function createTodoWriteTool(
     name: "todo_write",
     description: [
       "Create and maintain the run's todo list — a short checklist that tracks multi-step work and shows progress. Each call replaces the whole list, so pass every task, in order, every time.",
-      "When to use: a task with several distinct steps, or when the user asks for a checklist. Skip it for a single trivial step or a plain question — just answer.",
       "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked, failed, skipped; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
-      "Mark an item in_progress when you start it, and completed the moment its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Make one update per status change; do not save several completions in a single late rewrite.",
-      "The call returns the updated list and how many items remain, so you never need to read the list back. Child agents may not call this tool.",
+      "Mark an item in_progress when you start it, and completed the moment its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Never mark an item completed before its result is in.",
+      "Update the ledger in the same message as the action that caused the change — mark a finished item completed and the next item in_progress alongside your next tool call, rather than spending a separate turn on bookkeeping.",
+      "Child agents may not call this tool.",
     ].join("\n"),
     inputSchema: {
       type: "object",
@@ -157,7 +157,12 @@ export function createTodoWriteTool(
     // it unprompted. Child agents are still denied todo_write by a separate
     // CapabilityRule on the resource, preserving the single-writer model.
     policy: { risk: "safe", requiresApproval: false },
-    governance: { sideEffects: ["none"] },
+    // `idempotency: "idempotent"` exempts todo_write from the generic doom-loop
+    // repeat guard in core's run loop: a byte-identical rewrite is a harmless
+    // no-op handled by this tool's own no-op guard (below), not the start of a
+    // doom loop. Without this, a benign duplicate ledger write (e.g. the model
+    // restating the plan) tripped REPEATED_TOOL_CALL_SKIPPED and burned a turn.
+    governance: { sideEffects: ["none"], idempotency: "idempotent" },
     async execute(args: unknown): Promise<TodoWriteResult> {
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();

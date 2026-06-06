@@ -66,6 +66,7 @@ export type TodoTerminalAuditDecision =
       kind: "continue";
       summary: TodoSummary;
       reason: "unfinished_todo";
+      directive: TodoDirective;
       prompt: string;
     }
   | {
@@ -78,6 +79,47 @@ export type TodoTerminalAuditDecision =
         | "stalled_without_progress";
       message: string;
     };
+
+/**
+ * A mechanically-derived "what to do next" instruction for a continuation run,
+ * computed from the ledger alone. It replaces the free-form prose that used to
+ * carry this branching, so the variable part of the continuation prompt is
+ * structured and unit-testable, and a new case is added as a union member
+ * rather than as another accreting sentence. What the directive deliberately
+ * does NOT decide — whether an open item's work is *actually* finished and just
+ * unmarked — stays the model's judgment, expressed once as a fixed reconcile
+ * instruction in {@link buildTodoContinuationPrompt}.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export type TodoDirective =
+  | { kind: "next_open_item"; title: string }
+  | { kind: "all_blocked"; titles: string[] };
+
+/**
+ * Derive the continuation directive from the ledger. Actionable items
+ * (pending/in_progress) yield `next_open_item` pointing at the first one. If
+ * every unfinished item is `blocked`, yield `all_blocked` instead — telling the
+ * model to clear the blockers rather than spin trying to "act on the next item"
+ * when none is actionable. Only meaningful when the ledger has unfinished items
+ * (the audit returns `complete` otherwise).
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export function computeTodoDirective(ledger: TodoLedger): TodoDirective {
+  const actionable = ledger.items.find(
+    (item) => item.status === "pending" || item.status === "in_progress",
+  );
+  if (actionable) {
+    return { kind: "next_open_item", title: actionable.title };
+  }
+  const titles = ledger.items
+    .filter((item) => item.status === "blocked")
+    .map((item) => item.title);
+  return { kind: "all_blocked", titles };
+}
 
 /**
  * Read a todo ledger from disk. Missing files return an empty v1 ledger.
@@ -265,11 +307,13 @@ export function auditTodoAfterTerminal(
     };
   }
 
+  const directive = computeTodoDirective(ledger);
   return {
     kind: "continue",
     summary,
     reason: "unfinished_todo",
-    prompt: buildTodoContinuationPrompt(ledger),
+    directive,
+    prompt: buildTodoContinuationPrompt(ledger, directive),
   };
 }
 
@@ -286,7 +330,10 @@ export function auditTodoAfterTerminal(
  *
  * @public @stability experimental v0.1
  */
-export function buildTodoContinuationPrompt(ledger: TodoLedger): string {
+export function buildTodoContinuationPrompt(
+  ledger: TodoLedger,
+  directive: TodoDirective = computeTodoDirective(ledger),
+): string {
   const completed = ledger.items.filter((item) => item.status === "completed");
   const unfinished = unfinishedTodoItems(ledger);
   const doneLine = completed.length
@@ -295,13 +342,24 @@ export function buildTodoContinuationPrompt(ledger: TodoLedger): string {
   const openLine = unfinished.length
     ? `Still open: ${unfinished.map((i) => i.title).join("; ")}.`
     : "No open items remain in the list.";
+  // The one irreducible model-judgment instruction: only the model knows whether
+  // an open item's work is actually done (and just unmarked) versus still
+  // pending. Stated once, here — cadence ("when to touch the list") lives in the
+  // durable todo_planning contract and is not restated.
+  const reconcileLine =
+    "First reconcile the list with what the conversation above already shows you finished: in a single todo_write, mark every item whose work is actually done as completed.";
+  // The variable "what next" branch, derived mechanically from the ledger.
+  const directiveLine =
+    directive.kind === "next_open_item"
+      ? `Next open item: ${directive.title}. Act on it, then give your final answer once the work is genuinely complete. If reconciling alone already finished the list — every item was done and you did no new work this turn — do not restate the prior answer; a one-line confirmation that all items are complete is enough.`
+      : `Every remaining item is blocked: ${directive.titles.join("; ")}. Resolve or surface the blockers — do not loop retrying them. If they cannot be cleared this turn, hand off with a one-line status.`;
   return [
     "<system-reminder>",
     "You are resuming an earlier turn because the todo list still has open items. The full conversation above is yours to build on — do not restart it.",
     doneLine,
     openLine,
-    "First reconcile the list with what the conversation above already shows you finished: in a single todo_write, mark every item whose work is actually done as completed, and add, split, or remove items only if the plan genuinely changed.",
-    "Then act on the first item that is still open, and give your final answer once the work is genuinely complete. But if reconciling alone finished the list — every item was already done and shown in the conversation above, and you did no new work this turn — do not restate that answer: a one-line confirmation that the list is reconciled and all items are complete is enough.",
+    reconcileLine,
+    directiveLine,
     "</system-reminder>",
   ].join("\n");
 }

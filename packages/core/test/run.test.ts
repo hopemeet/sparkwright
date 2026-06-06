@@ -527,6 +527,70 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("does not doom-loop on an idempotent tool repeated verbatim", async () => {
+    let executed = 0;
+
+    // An idempotent tool returns the same result with no side effect, so a
+    // verbatim repeat is a harmless no-op, not a doom loop. The generic repeat
+    // guard must defer to it: no REPEATED_TOOL_CALL_SKIPPED, no tool_doom_loop,
+    // and every call actually executes.
+    const ledger = defineTool({
+      name: "ledger",
+      description: "Idempotent no-op write.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      policy: { risk: "safe" },
+      governance: { idempotency: "idempotent" },
+      execute() {
+        executed += 1;
+        return { ok: true };
+      },
+    });
+
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "repeat an idempotent call several times",
+      tools: [ledger],
+      maxSteps: 12,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          // Repeat the identical call well past the doom-loop limit (3), then
+          // finish cleanly.
+          if (modelCalls <= 5) {
+            return {
+              toolCalls: [{ toolName: "ledger", arguments: { text: "same" } }],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    // Every repeat executed — none was skipped by the repeat guard.
+    expect(executed).toBe(5);
+    const skipped = run.events
+      .all()
+      .find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload as { error?: { code?: string } }).error?.code ===
+            "REPEATED_TOOL_CALL_SKIPPED",
+      );
+    expect(skipped).toBeUndefined();
+    expect(run.record.stopReason).not.toBe("tool_doom_loop");
+    expect(result).toMatchObject({
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+    });
+  });
+
   it("uses deep equality for repeated tool call arguments", async () => {
     let executed = 0;
 

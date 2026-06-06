@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   auditTodoAfterTerminal,
+  buildTodoContinuationPrompt,
+  computeTodoDirective,
   createAgentProfilePolicy,
   createTodoTools,
   createTodoWriteTool,
@@ -355,8 +357,13 @@ describe("TodoLedger helpers", () => {
       continuationCount: 0,
     });
     expect(decision.kind).toBe("continue");
+    // The "what next" branch is now a structured, testable directive rather than
+    // free-form prose.
+    expect(
+      decision.kind === "continue" ? decision.directive : undefined,
+    ).toEqual({ kind: "next_open_item", title: "next" });
     expect(decision.kind === "continue" ? decision.prompt : "").toContain(
-      "First reconcile the list",
+      "Next open item: next.",
     );
 
     const denied = auditTodoAfterTerminal(ledger, {
@@ -371,6 +378,46 @@ describe("TodoLedger helpers", () => {
       kind: "handoff",
       reason: "non_resumable_stop_reason",
     });
+  });
+
+  it("derives next_open_item from the first actionable item", () => {
+    const ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
+      metadata: {},
+      items: [
+        { title: "done one", status: "completed", depth: 0 },
+        { title: "do this", status: "in_progress", depth: 0 },
+        { title: "later", status: "pending", depth: 0 },
+      ],
+    };
+    expect(computeTodoDirective(ledger)).toEqual({
+      kind: "next_open_item",
+      title: "do this",
+    });
+    expect(buildTodoContinuationPrompt(ledger)).toContain(
+      "Next open item: do this.",
+    );
+  });
+
+  it("derives all_blocked when every unfinished item is blocked", () => {
+    const ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
+      metadata: {},
+      items: [
+        { title: "shipped", status: "completed", depth: 0 },
+        { title: "needs creds", status: "blocked", depth: 0 },
+        { title: "needs review", status: "blocked", depth: 0 },
+      ],
+    };
+    expect(computeTodoDirective(ledger)).toEqual({
+      kind: "all_blocked",
+      titles: ["needs creds", "needs review"],
+    });
+    const prompt = buildTodoContinuationPrompt(ledger);
+    expect(prompt).toContain("Every remaining item is blocked");
+    expect(prompt).toContain("needs creds; needs review");
+    // No actionable item, so it must NOT tell the model to act on a next item.
+    expect(prompt).not.toContain("Next open item:");
   });
 
   it("does not count reads or empty tool calls as external progress", () => {
@@ -452,7 +499,7 @@ describe("runTodoSupervised", () => {
     });
 
     expect(continuationPrompts).toHaveLength(1);
-    expect(continuationPrompts[0]).toContain("First reconcile the list");
+    expect(continuationPrompts[0]).toContain("Next open item: finish work.");
     expect(result.decision.kind).toBe("complete");
     expect(result.continuationCount).toBe(1);
   });
