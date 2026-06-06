@@ -136,7 +136,7 @@ export function createTodoWriteTool(
   return defineTool({
     name: "todo_write",
     description:
-      "Replace the run's todo ledger. Pass `items` (array of {title/content, status, depth?, priority?, doneWhen?, evidence?, owner?, note?}). `status` must be one of: pending, in_progress, completed, blocked, failed, skipped (common synonyms like 'todo'/'done' are accepted). Only mark an item completed when its done-when is actually satisfied — do not relax done-when to claim completion. Child agents are denied this tool by policy.",
+      "Replace the run's todo ledger. Pass `items` (array of {title/content, status, depth?, priority?, doneWhen?, evidence?, owner?, note?}). `status` must be one of: pending, in_progress, completed, blocked, failed, skipped (common synonyms like 'todo'/'done' are accepted). `depth` is 0 for a top-level item; use depth>0 ONLY for a genuine sub-task nested under the item above it — sequential steps of one plan are all depth 0, not 0/1/2/3. Only mark an item completed when its done-when is actually satisfied — do not relax done-when to claim completion. Child agents are denied this tool by policy.",
     inputSchema: {
       type: "object",
       properties: {
@@ -178,11 +178,18 @@ export function createTodoWriteTool(
       required: ["items"],
     },
     deferLoading: false,
-    // Write is a workspace mutation but not externally observable; the
-    // policy layer should additionally restrict callers by agent role.
-    policy: { risk: "risky", requiresApproval: false },
-    governance: { sideEffects: ["write"] },
-    async execute(args: unknown): Promise<{ written: number; path: string }> {
+    // The ledger is internal session bookkeeping (.sparkwright/sessions/<id>/
+    // todo.md), not a user-facing workspace mutation — like a trace write. It
+    // is therefore NOT approval-gated: declaring sideEffects:["write"] made the
+    // governance policy prompt on every call, so a model that rewrote the
+    // ledger N times produced N approval prompts. `sideEffects:["none"]` keeps
+    // it unprompted. Child agents are still denied todo_write by a separate
+    // CapabilityRule on the resource, preserving the single-writer model.
+    policy: { risk: "safe", requiresApproval: false },
+    governance: { sideEffects: ["none"] },
+    async execute(
+      args: unknown,
+    ): Promise<{ written: number; path: string; noop?: boolean }> {
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({
@@ -190,6 +197,14 @@ export function createTodoWriteTool(
         ...item,
       }));
       const text = serializeTodoMarkdown(entries);
+      // No-op guard: a rewrite that produces byte-identical content is wasted
+      // work (observed: a stuck model rewrote the same 3 items ~70 times). Skip
+      // the disk write and report it so the result reads as a no-op rather than
+      // progress.
+      const current = await safeRead(path);
+      if (current === text) {
+        return { written: items.length, path, noop: true };
+      }
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, text, "utf8");
       return { written: items.length, path };

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -229,6 +229,29 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
     await expect(
       write.execute({ items: [{ title: "bad", status: "wat" }] }, {} as never),
     ).rejects.toThrow(/status must be one of/);
+  });
+
+  it("write is not approval-gated (internal ledger, no write side effect)", () => {
+    const write = createTodoWriteTool({ getTodoPath: () => "/tmp/x/todo.md" });
+    expect(write.policy?.risk).toBe("safe");
+    expect(write.governance?.sideEffects ?? ["none"]).not.toContain("write");
+  });
+
+  it("write skips a byte-identical rewrite as a no-op", async () => {
+    const path = await tempPath();
+    const write = createTodoWriteTool({ getTodoPath: () => path });
+    const items = [{ title: "a", status: "pending", depth: 0 }];
+    const first = (await write.execute({ items }, {} as never)) as {
+      noop?: boolean;
+    };
+    expect(first.noop).toBeUndefined();
+    const mtime1 = (await stat(path)).mtimeMs;
+    const second = (await write.execute({ items }, {} as never)) as {
+      noop?: boolean;
+    };
+    expect(second.noop).toBe(true);
+    // The file was not rewritten.
+    expect((await stat(path)).mtimeMs).toBe(mtime1);
   });
 
   it("write accepts common status synonyms (todo/done) case-insensitively", async () => {
