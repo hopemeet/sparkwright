@@ -118,7 +118,7 @@ Durable hosts should wire:
 
 Reference files:
 
-- `docs/ENVIRONMENT.md`
+- `docs/maintainer/ENVIRONMENT.md`
 - `packages/agent-runtime/src/tasks/`
 - `examples/promote-shell-to-task`
 

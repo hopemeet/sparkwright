@@ -1,7 +1,7 @@
 # Configuration
 
 Sparkwright configuration is user-editable JSON shared by the CLI and TUI.
-The schema is [schemas/config.schema.json](../schemas/config.schema.json).
+The schema is [schemas/config.schema.json](../../schemas/config.schema.json).
 
 ## Load Order
 
@@ -21,8 +21,7 @@ wholesale by the later source.
 `<workspace>/.sparkwright/config.json` is meant to **travel with the
 repository**. Only runtime state under `.sparkwright/` (`sessions/`, `runs/`,
 `tui-history.jsonl`, `tui-stash.json`) is gitignored; the config file and the
-`command/` + `agents/` convention directories are committable. See
-[PROJECT_CONFIG_SURFACE.md](./PROJECT_CONFIG_SURFACE.md).
+`command/` + `agents/` convention directories are committable.
 
 Scaffold the two layers separately:
 
@@ -36,6 +35,86 @@ none. The config schema permits a top-level `"$schema"` (which the loader
 ignores) so editors can offer completion and validation, but the scaffolds do
 **not** emit one yet — pointing at an unhosted schema URL would only make editors
 fail to fetch it. Add `"$schema"` yourself once the schema is published.
+
+Precedence, weak to strong:
+
+```txt
+convention markdown files < user config < project config < $SPARKWRIGHT_CONFIG / CLI
+```
+
+That means markdown files are a team-default convenience layer, while
+`config.json` remains the precise-control layer.
+
+The historical design notes for this surface are archived in
+[Project Config Surface](../archive/PROJECT_CONFIG_SURFACE.md).
+
+## File-Authored Commands
+
+Project slash commands can be committed as markdown files under:
+
+```txt
+<workspace>/.sparkwright/command/<name>.md
+```
+
+Each file becomes a slash command named after the filename. The optional
+frontmatter fields are:
+
+```md
+---
+description: Explain what the command does
+model: deterministic/demo
+subtask: false
+---
+
+Prompt text sent when the command runs.
+
+Optional user input: $ARGUMENTS
+First positional argument: $1
+```
+
+Commands return a start-run intent; the embedder decides how to launch the run.
+They do not bypass the normal run boundary.
+
+Command bodies may include fixed shell interpolation with `` !`...` ``. Shell
+spans are classified by the same safety floor used for model-invoked shell:
+denied commands fail, commands that require approval need an approver, and only
+allowed or explicitly approved commands execute. User arguments are not spliced
+inside shell spans; `` !`grep $1 src` `` runs literally with `$1` untouched.
+Put user arguments in prompt text instead.
+
+## Markdown Agent Profiles
+
+Project agent profiles can be committed as markdown files under:
+
+```txt
+<workspace>/.sparkwright/agents/<id>.md
+```
+
+The filename is the profile id. Frontmatter covers the common fields; the body
+becomes the profile prompt:
+
+```md
+---
+name: Reviewer
+description: Inspect changes for correctness, risk, and missing tests.
+mode: child
+allowedTools: [read_file, glob_paths]
+deniedTools: [shell]
+maxSteps: 4
+---
+
+Review the proposed change. Focus on correctness, regressions, and missing
+tests. Report findings with file references.
+```
+
+Markdown profiles are folded under `capabilities.agents.profiles`; if the same
+id exists in `config.json`, the config entry wins. Advanced fields such as
+policy and run budget should stay in `config.json`.
+
+Profiles describe role guidance and constraints. They do not grant authority by
+themselves. Only entries listed in `capabilities.agents.delegateTools` become
+callable parent-run tools, and those tools still go through policy, approval,
+validation, and trace.
 
 ## Minimal Config
 

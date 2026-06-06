@@ -52,7 +52,7 @@ tools) to keep the moving parts focused on concurrency control. For the
 sub-agent dispatch surface (`spawnSubAgent`, `mountAgentTool`,
 `TaskNotificationSink`), see:
 
-- [`docs/EXTENSION_INTERFACES.md` § Sub-agents](../../docs/EXTENSION_INTERFACES.md#sub-agents)
+- [`docs/reference/EXTENSION_INTERFACES.md` § Sub-agents](../../docs/reference/EXTENSION_INTERFACES.md#sub-agents)
 - [`examples/promote-shell-to-task`](../promote-shell-to-task)
 
 In a production setup, the Leader would call `spawnSubAgent` (or a

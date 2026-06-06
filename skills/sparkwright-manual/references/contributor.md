@@ -69,8 +69,8 @@ Start in:
 
 Read:
 
-- `docs/CUSTOM_TOOL_EXAMPLE.md`
-- `docs/EXTENSION_INTERFACES.md`
+- `docs/guides/CUSTOM_TOOL_EXAMPLE.md`
+- `docs/reference/EXTENSION_INTERFACES.md`
 
 Update schemas only if the tool envelope changes. Normal new tools usually do
 not require schema changes.
@@ -80,7 +80,7 @@ not require schema changes.
 Start in:
 
 - `packages/skills/`
-- `docs/SKILLS.md`
+- `docs/reference/SKILLS.md`
 - `schemas/skill-manifest.schema.json` if manifest shape changes
 
 Skill scripts must not execute just because a skill was discovered. They must
@@ -122,8 +122,8 @@ Start in:
 - `packages/core/src/events.ts`
 - `packages/core/src/trace.ts`
 - `schemas/event.schema.json`
-- `docs/PROTOCOL.md`
-- `docs/RUN_EVENTS.md`
+- `docs/reference/PROTOCOL.md`
+- `docs/reference/RUN_EVENTS.md`
 
 Add tests for trace levels and redaction if payload shape changes.
 

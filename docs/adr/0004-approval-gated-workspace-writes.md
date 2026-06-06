@@ -42,4 +42,4 @@ Negative:
 
 ## Follow-Up
 
-The reference implementation lives in `packages/core/src/workspace.ts` (`ControlledWorkspace`). Approval channel adapters are described in `docs/EXTENSION_INTERFACES.md` (Approval Extensions). The broader principle is documented in `docs/HARNESS_PRINCIPLES.md` ("Workspace Writes Are Proposals Before Mutations"). The approval primitive will be extended to support external policy engines and async approval queues in later revisions.
+The reference implementation lives in `packages/core/src/workspace.ts` (`ControlledWorkspace`). Approval channel adapters are described in `docs/reference/EXTENSION_INTERFACES.md` (Approval Extensions). The broader principle is documented in `docs/archive/HARNESS_PRINCIPLES.md` ("Workspace Writes Are Proposals Before Mutations"). The approval primitive will be extended to support external policy engines and async approval queues in later revisions.

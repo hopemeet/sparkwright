@@ -31,8 +31,8 @@ Use a tool when the model needs a typed action. A good tool has:
 Reference implementation entry points:
 
 - `packages/core/src/tools.ts`
-- `docs/CUSTOM_TOOL_EXAMPLE.md`
-- `docs/EXTENSION_INTERFACES.md`
+- `docs/guides/CUSTOM_TOOL_EXAMPLE.md`
+- `docs/reference/EXTENSION_INTERFACES.md`
 
 Execution path:
 
@@ -65,7 +65,7 @@ npm exec sparkwright -- skills create <name> --description "what it does" --work
 Code and docs:
 
 - `packages/skills/`
-- `docs/SKILLS.md`
+- `docs/reference/SKILLS.md`
 - `schemas/skill-manifest.schema.json`
 
 ## MCP

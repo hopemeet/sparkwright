@@ -1,12 +1,15 @@
 # State And Trace Model
 
+This is a reference contract. If you are new to Sparkwright, start with
+[the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
+
 Sparkwright treats state as a set of narrow, layered contracts rather than one
 global application database. The runtime kernel owns the smallest possible
 execution state; embedders own product state, gateway routing, durable storage,
 and visualizations through replaceable stores and sinks.
 
 This document is the map for that boundary. It complements
-[Architecture](ARCHITECTURE.md), [Protocol](PROTOCOL.md), and the trace ADRs.
+[Architecture](./ARCHITECTURE.md), [Protocol](./PROTOCOL.md), and the trace ADRs.
 
 ## Design Posture
 

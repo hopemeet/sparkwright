@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Trace is positioned as the **primary interface** of the Sparkwright runtime, not as debug output (see `docs/HARNESS_PRINCIPLES.md`, "Trace Is The Primary Interface"). It must support:
+Trace is positioned as the **primary interface** of the Sparkwright runtime, not as debug output (see `docs/archive/HARNESS_PRINCIPLES.md`, "Trace Is The Primary Interface"). It must support:
 
 - audit of every meaningful runtime action,
 - approval review (the approver looks at the trace plus the diff artifact),
@@ -44,7 +44,7 @@ Positive:
 Negative:
 
 - JSONL files grow without bound; rotation and retention are an embedder responsibility.
-- Three levels mean three sets of filtering rules to maintain; adding a new event type (see `docs/AI_TASK_INDEX.md`) requires updating each level's summarizer.
+- Three levels mean three sets of filtering rules to maintain; adding a new event type (see `docs/maintainer/AI_TASK_INDEX.md`) requires updating each level's summarizer.
 - Filtering happens after serialization in the default store, so very large payloads briefly exist in memory before being trimmed — a streaming-summarize path may be needed if very large tool outputs become common.
 - The default redactor uses regex patterns; sophisticated secret detection (entropy-based, structured-credential-aware) is out of scope and pushed to downstream sinks.
 
@@ -52,9 +52,9 @@ Negative:
 
 - **Structured binary format (protobuf, msgpack)**: rejected because debuggability with standard Unix tools is a primary goal and the trace size advantage is not material at v0 scales.
 - **Single trace level with downstream filtering only**: rejected because storage cost and data-exposure trade-offs differ per deployment; the kernel must let the caller make the trade.
-- **Database-backed trace (sqlite per run)**: rejected as the default because it requires a query layer to inspect a run; JSONL keeps the floor low. A database-backed `RunStore` is a valid extension (see `docs/AI_TASK_INDEX.md`, "Add a new storage backend").
+- **Database-backed trace (sqlite per run)**: rejected as the default because it requires a query layer to inspect a run; JSONL keeps the floor low. A database-backed `RunStore` is a valid extension (see `docs/maintainer/AI_TASK_INDEX.md`, "Add a new storage backend").
 - **OpenTelemetry spans as the primary format**: rejected because the harness's event model is not span-shaped — events are facts in a sequence, not durations in a tree. OTel export remains a valid downstream `TraceSink`.
 
 ## Follow-Up
 
-The reference implementation is `FileRunStore` and the `MemoryTrace` sink in `packages/core/src/trace.ts`. The file layout and level semantics are specified in `docs/PROTOCOL.md`. Schema for the event envelope lives in `schemas/event.schema.json`. Future revisions may add per-event-type retention policies and a structured truncation manifest so consumers can detect when payloads were summarized.
+The reference implementation is `FileRunStore` and the `MemoryTrace` sink in `packages/core/src/trace.ts`. The file layout and level semantics are specified in `docs/reference/PROTOCOL.md`. Schema for the event envelope lives in `schemas/event.schema.json`. Future revisions may add per-event-type retention policies and a structured truncation manifest so consumers can detect when payloads were summarized.

@@ -47,4 +47,4 @@ Negative:
 
 ## Follow-Up
 
-The reference implementation lives in `packages/core/src/anchored-edit.ts` and is wired through `LocalWorkspace` and `ControlledWorkspace`. Event shapes are described in `docs/PROTOCOL.md`. Future revisions may add range operations once single-anchor edits prove stable across more tool surfaces.
+The reference implementation lives in `packages/core/src/anchored-edit.ts` and is wired through `LocalWorkspace` and `ControlledWorkspace`. Event shapes are described in `docs/reference/PROTOCOL.md`. Future revisions may add range operations once single-anchor edits prove stable across more tool surfaces.

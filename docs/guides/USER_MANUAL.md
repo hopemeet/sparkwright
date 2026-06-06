@@ -42,7 +42,42 @@ approval through `--yes`, writes a diff artifact, and stores trace data under:
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
 ```
 
-For more details, read [CLI Golden Path](CLI_GOLDEN_PATH.md).
+Omit `--yes` to review the approval prompt yourself. Omit `--write` for a
+read-only smoke test.
+
+## CLI Modes
+
+Read-only trace smoke test:
+
+```bash
+npm exec sparkwright -- run "inspect this repo" \
+  --workspace examples/repo-pilot \
+  --target README.md \
+  --trace-level minimal
+```
+
+Interactive approval:
+
+```bash
+npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
+  --workspace examples/repo-pilot \
+  --target README.md \
+  --write \
+  --trace-level debug
+```
+
+Non-interactive approval for demos and CI smoke checks:
+
+```bash
+npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
+  --workspace examples/repo-pilot \
+  --target README.md \
+  --write \
+  --yes
+```
+
+If `--write` is used without `--yes` in a non-interactive shell, the CLI denies
+the approval request and records `workspace.write.denied` in the trace.
 
 ## Provider-Backed Run
 
@@ -108,11 +143,14 @@ Trace levels are:
 - `standard`: useful debugging detail for normal runs.
 - `debug`: deeper event payloads for development.
 
+For maintainers checking expected event sequences and output files, see
+[CLI Golden Path](../maintainer/CLI_GOLDEN_PATH.md).
+
 ## Common Next Steps
 
-- Configure providers and local preferences: [Configuration](CONFIGURATION.md).
-- Add a custom action: [Custom Tool Example](CUSTOM_TOOL_EXAMPLE.md).
-- Add prompt/context packages: [Skills](SKILLS.md).
-- Compose Skills, MCP, and agent policy: [Capability Design Guide](CAPABILITY_DESIGN_GUIDE.md).
-- Run long commands safely: [Automation And Background Tasks](AUTOMATION_AND_BACKGROUND_TASKS.md).
-- Debug failures: [Troubleshooting](TROUBLESHOOTING.md).
+- Configure providers and local preferences: [Configuration](./CONFIGURATION.md).
+- Add a custom action: [Custom Tool Example](./CUSTOM_TOOL_EXAMPLE.md).
+- Add prompt/context packages: [Skills](../reference/SKILLS.md).
+- Compose Skills, MCP, and agent policy: [Capability Design Guide](./CAPABILITY_DESIGN_GUIDE.md).
+- Run long commands safely: [Automation And Background Tasks](./AUTOMATION_AND_BACKGROUND_TASKS.md).
+- Debug failures: [Troubleshooting](./TROUBLESHOOTING.md).

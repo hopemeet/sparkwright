@@ -83,16 +83,16 @@ All notable changes to Sparkwright will be documented in this file.
   to include `stop_hook_blocked`, `model_recovery`, `compaction_applied`,
   `fallback_model`.
 - **Docs.** `README.md` gains an "Extension Map" table mapping each
-  embedder intent to interface + file. `docs/CONTEXT_PLANE.md` gains a
+  embedder intent to interface + file. `docs/reference/CONTEXT_PLANE.md` gains a
   "Prompt-Cache Invariant" section listing the rules every extension that
   touches context must follow.
 - Extension protocol interfaces: `RunStore`, `TraceSink`, `MemoryStore`, `SessionStore`, `Compactor`, `ContextExtension`, `ToolExtension`. Reference implementations (`FileRunStore`, `MemoryTrace`) now `implements` the corresponding protocol.
 - `@sparkwright/core/internal` subpath entry — explicit opt-in for the reference implementation classes (`SparkwrightRun`, `EventLog`, `FileRunStore`, `MemoryTrace`, `LocalWorkspace`, `ControlledWorkspace`, `DefaultContextAssembler`, `DefaultPromptBuilder`, `DefaultObservationFormatter`).
 - Four extension events now actually emitted: `skill.indexed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`. Threaded through skills/mcp-adapter/agent-runtime via `EventEmitter` / `BufferedEmitter`.
 - Provider-neutral prompt section composition: `PromptSection`, `SectionedPromptBuilder`, `createDefaultPromptSections`, and `DefaultPromptBuilder({ additionalSections })` let embedders add named prompt layers with `stable` / `session` / `turn` / `volatile` cache policy metadata. `prompt.built` now reports section names, stability, cache policy, and character counts.
-- Protocol versioning: every JSON Schema now carries `$id` of `https://sparkwright.dev/schemas/v0/<name>` and `"x-sparkwrightProtocolVersion": "0.1"`. Evolution tracked in `docs/PROTOCOL_CHANGELOG.md`.
+- Protocol versioning: every JSON Schema now carries `$id` of `https://sparkwright.dev/schemas/v0/<name>` and `"x-sparkwrightProtocolVersion": "0.1"`. Evolution tracked in `docs/reference/PROTOCOL_CHANGELOG.md`.
 - Protocol consistency gate in `scripts/validate-schemas.mjs`: diffs `EventType` / `RunStopReason` against schema enums and round-trips PROTOCOL.md tokens.
-- `docs/AI_TASK_INDEX.md` for AI-agent–oriented task → entry-point lookup. ADR 0003-0006 (anchored edits, approval-gated writes, deterministic default model, JSONL trace tiers).
+- `docs/maintainer/AI_TASK_INDEX.md` for AI-agent–oriented task → entry-point lookup. ADR 0003-0006 (anchored edits, approval-gated writes, deterministic default model, JSONL trace tiers).
 - `@reserved` JSDoc convention + `scripts/check-reserved-fields.mjs` scanner. Run via `npm run check:reserved`.
 
 ### Fixed

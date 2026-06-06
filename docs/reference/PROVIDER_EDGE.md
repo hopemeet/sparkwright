@@ -46,7 +46,7 @@ Adding support for a provider that SparkWright does not yet allow takes three
 steps:
 
 1. **Register the package metadata.** Add an entry to
-   `SUPPORTED_PROVIDER_NPMS` in [`packages/host/src/config.ts`](../packages/host/src/config.ts).
+   `SUPPORTED_PROVIDER_NPMS` in [`packages/host/src/config.ts`](../../packages/host/src/config.ts).
    The key is the npm package name; the value records its factory export and
    the default API-key environment variable. For example, to add Mistral:
 

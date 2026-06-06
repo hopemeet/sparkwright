@@ -153,12 +153,12 @@ Negative:
   `EventId`. We must document precedence ("runId always wins for routing;
   spans are presentation/correlation only").
 - `withSpan` requires Node 16+ `AsyncLocalStorage`. Already a baseline
-  requirement, but worth restating in `docs/ENVIRONMENT.md`.
+  requirement, but worth restating in `docs/maintainer/ENVIRONMENT.md`.
 - Migrating every existing `*.started`/`*.completed` pair to `withSpan` is
   follow-up work; until it lands, sinks see a mixed world (some events with
   `spanId`, some without). Both reference sinks tolerate this.
 - Two more packages to release; we add them to
-  `docs/EXTENSION_RELEASE_CHECKLIST.md`.
+  `docs/maintainer/EXTENSION_RELEASE_CHECKLIST.md`.
 
 ## Alternatives considered
 
@@ -181,8 +181,8 @@ Negative:
 ## Follow-Up
 
 1. Schema PR: bump to `0.2`, add the three optional fields, update
-   `docs/PROTOCOL.md` ("Span correlation" section) and
-   `docs/PROTOCOL_CHANGELOG.md`.
+   `docs/reference/PROTOCOL.md` ("Span correlation" section) and
+   `docs/reference/PROTOCOL_CHANGELOG.md`.
 2. Implement `withSpan` + `currentSpan` in `packages/core/src/spans.ts`,
    export from `packages/core/src/index.ts`, cover with unit tests.
 3. Migrate `model.requested`/`model.completed`, `tool.*`, and `task.*`
@@ -190,5 +190,5 @@ Negative:
    migrate independently.
 4. New packages `packages/trace-perfetto`, `packages/trace-otel` with
    readmes pointing at `ui.perfetto.dev` and the relevant OTEL env vars.
-5. Update `docs/AI_TASK_INDEX.md` with "Add a trace sink" recipe so future
+5. Update `docs/maintainer/AI_TASK_INDEX.md` with "Add a trace sink" recipe so future
    AI-led work follows the same shape (subscribe + translate, never mutate).
