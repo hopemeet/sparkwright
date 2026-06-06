@@ -254,6 +254,33 @@ describe("createTodoReadTool / createTodoWriteTool", () => {
     expect((await stat(path)).mtimeMs).toBe(mtime1);
   });
 
+  it("nudges after repeated no-op writes, and resets on a real change", async () => {
+    const path = await tempPath();
+    const write = createTodoWriteTool({ getTodoPath: () => path });
+    const items = [{ title: "a", status: "pending", depth: 0 }];
+    type R = { noop?: boolean; hint?: string };
+    // First write changes the file — no nudge.
+    expect(
+      ((await write.execute({ items }, {} as never)) as R).hint,
+    ).toBeUndefined();
+    // 1st no-op: below threshold, no nudge yet.
+    expect(
+      ((await write.execute({ items }, {} as never)) as R).hint,
+    ).toBeUndefined();
+    // 2nd consecutive no-op: nudge.
+    const nudged = (await write.execute({ items }, {} as never)) as R;
+    expect(nudged.noop).toBe(true);
+    expect(nudged.hint).toMatch(/Stop calling todo_write/);
+    // A real change resets the counter.
+    const changed = [{ title: "a", status: "completed", depth: 0 }];
+    expect(
+      ((await write.execute({ items: changed }, {} as never)) as R).hint,
+    ).toBeUndefined();
+    expect(
+      ((await write.execute({ items: changed }, {} as never)) as R).hint,
+    ).toBeUndefined();
+  });
+
   it("write accepts common status synonyms (todo/done) case-insensitively", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });

@@ -129,10 +129,21 @@ export function createTodoReadTool(
   });
 }
 
+/**
+ * After this many consecutive no-op writes (byte-identical ledger), the tool
+ * starts returning a nudge in its result. Weak models can get stuck rewriting
+ * the ledger instead of doing the next task; the no-op guard makes those cheap,
+ * and this tells the model to stop and act.
+ */
+const NOOP_CHURN_THRESHOLD = 2;
+
 /** @public @stability experimental v0.1 */
 export function createTodoWriteTool(
   options: CreateTodoToolsOptions,
 ): ToolDefinition {
+  // Per-tool-instance (per run-chain) counter of consecutive no-op writes,
+  // reset on any write that actually changes the ledger.
+  let consecutiveNoops = 0;
   return defineTool({
     name: "todo_write",
     description:
@@ -187,9 +198,12 @@ export function createTodoWriteTool(
     // CapabilityRule on the resource, preserving the single-writer model.
     policy: { risk: "safe", requiresApproval: false },
     governance: { sideEffects: ["none"] },
-    async execute(
-      args: unknown,
-    ): Promise<{ written: number; path: string; noop?: boolean }> {
+    async execute(args: unknown): Promise<{
+      written: number;
+      path: string;
+      noop?: boolean;
+      hint?: string;
+    }> {
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({
@@ -203,8 +217,22 @@ export function createTodoWriteTool(
       // progress.
       const current = await safeRead(path);
       if (current === text) {
-        return { written: items.length, path, noop: true };
+        consecutiveNoops += 1;
+        const result: {
+          written: number;
+          path: string;
+          noop: true;
+          hint?: string;
+        } = { written: items.length, path, noop: true };
+        if (consecutiveNoops >= NOOP_CHURN_THRESHOLD) {
+          // Anti-churn nudge: stop rewriting the unchanged ledger and make real
+          // progress instead. Surfaced in the tool result the model observes.
+          result.hint =
+            "The todo ledger is unchanged from your last write(s). Stop calling todo_write and take the next concrete action toward the first unfinished item (read a file, run a command, or write output) — or, if every item is genuinely done, give your final answer.";
+        }
+        return result;
       }
+      consecutiveNoops = 0;
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, text, "utf8");
       return { written: items.length, path };
