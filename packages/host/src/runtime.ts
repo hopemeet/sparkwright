@@ -141,6 +141,11 @@ export class HostRuntime {
   // both pass the "is a run active?" guard before `this.active` is populated
   // (which only happens after `await createModel(...)`).
   private startingRun = false;
+  // Set when the client cancels the current turn. Unlike run.cancel (which
+  // targets one run and can lose a race against natural completion), this
+  // aborts the whole todo-supervised chain so a single cancel stops every
+  // continuation. Reset at the start of each new turn.
+  private runChainCancelled = false;
   private pendingApprovals = new Map<string, PendingApproval>();
   private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
@@ -525,6 +530,7 @@ export class HostRuntime {
     let firstRunStarted = false;
     let previousRunId: string | undefined;
     let lastRunId = "";
+    this.runChainCancelled = false;
 
     const supervised = runTodoSupervised({
       todoPath: join(sessionRootDir, sessionId, "todo.md"),
@@ -563,14 +569,32 @@ export class HostRuntime {
         }
         const result = await run.start();
         previousRunId = runId;
+        if (this.runChainCancelled) {
+          // The client cancelled this turn. The individual run.cancel may have
+          // raced and let this run resolve as a resumable terminal (e.g. the
+          // model's stream finished first); force a non-resumable terminal so
+          // the supervisor stops instead of spawning another continuation.
+          return {
+            result: {
+              ...result,
+              state: "cancelled",
+              stopReason: "manual_cancelled",
+            },
+            events: collected,
+          };
+        }
         return { result, events: collected };
       },
     });
 
     supervised
       .then((outcome) => {
+        // A user cancel ends the chain via the forced non-resumable terminal
+        // above; surface it as a plain cancellation, not a todo "handoff"
+        // (which would read as "I gave up on unfinished work" rather than
+        // "you stopped me").
         const handoff =
-          outcome.decision.kind === "handoff"
+          !this.runChainCancelled && outcome.decision.kind === "handoff"
             ? {
                 reason: outcome.decision.reason,
                 message: outcome.decision.message,
@@ -818,6 +842,9 @@ export class HostRuntime {
         },
       };
     }
+    // Stop the whole supervised chain, not just this run: a cancel that races
+    // a run's natural completion must still prevent further continuations.
+    this.runChainCancelled = true;
     this.active.run.cancel({ reason: reason ?? "client requested cancel" });
     return { ok: true };
   }
