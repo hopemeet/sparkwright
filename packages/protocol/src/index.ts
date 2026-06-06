@@ -232,6 +232,7 @@ export type EventKind =
   | "host.log"
   | "run.event"
   | "approval.requested"
+  | "run.continuation"
   | "run.completed"
   | "run.failed";
 
@@ -274,10 +275,43 @@ export interface ApprovalRequestedEventPayload {
   details?: Record<string, unknown>;
 }
 
+/**
+ * Emitted when a todo-aware supervisor auto-continues an unfinished run: the
+ * previous run reached a resumable terminal state with todos still open, so a
+ * fresh run is started to carry on. The logical turn is still in progress — a
+ * client should keep showing "running" (re-pointing at `runId`) rather than
+ * treating the previous run's terminal as the end of the turn. No `run.completed`
+ * is emitted for the superseded run; only the final run of the chain completes.
+ */
+export interface RunContinuationEventPayload {
+  /** The new run carrying the continuation. */
+  runId: string;
+  /**
+   * The run that just reached terminal and is being continued. Lets a client
+   * correlate / collapse the superseded run's card with its continuation.
+   *
+   * @reserved Public protocol field consumed by downstream clients (the TUI
+   * banner currently keys off `runId`/`continuationCount`); kept for run-chain
+   * correlation.
+   */
+  previousRunId: string;
+  /** 1 for the first continuation, incrementing thereafter. */
+  continuationCount: number;
+  /** Audit reason, currently always "unfinished_todo". */
+  reason: string;
+}
+
 export interface RunCompletedEventPayload {
   runId: string;
   state: string;
   stopReason?: string;
+  /**
+   * Present when the run chain ended by handing back to the human while todos
+   * were still unfinished (continuation limit reached, stalled without
+   * external progress, or a non-resumable stop). Clients should surface this
+   * distinctly from a clean completion.
+   */
+  todoHandoff?: { reason: string; message: string };
 }
 
 export interface RunFailedEventPayload {
@@ -290,6 +324,7 @@ export type HostEvent =
   | HostEventBase<"host.log", HostLogEventPayload>
   | HostEventBase<"run.event", RunEventPayload>
   | HostEventBase<"approval.requested", ApprovalRequestedEventPayload>
+  | HostEventBase<"run.continuation", RunContinuationEventPayload>
   | HostEventBase<"run.completed", RunCompletedEventPayload>
   | HostEventBase<"run.failed", RunFailedEventPayload>;
 

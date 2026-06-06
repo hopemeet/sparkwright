@@ -316,6 +316,22 @@ export class EventStore {
     this.schedule();
   }
 
+  /**
+   * Append a calm, TUI-local divider line (not a host event). Used for the
+   * todo-supervisor continuation banner ("↻ continuing …") so the user sees a
+   * superseded-and-resumed boundary without it looking like their own input.
+   */
+  appendNotice(text: string): void {
+    const event = {
+      type: "tui.notice",
+      sequence: this.syntheticSeq--,
+      id: `notice_${Date.now().toString(36)}_${(-this.syntheticSeq).toString(36)}`,
+      payload: { text },
+    } as RunEvent;
+    this.state = { ...this.state, events: this.state.events.concat(event) };
+    this.schedule();
+  }
+
   setPendingApproval(pending: PendingApproval | null): void {
     this.state = {
       ...this.state,

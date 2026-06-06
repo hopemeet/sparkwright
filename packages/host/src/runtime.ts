@@ -34,7 +34,9 @@ import {
 } from "@sparkwright/mcp-adapter";
 import {
   createAgentTool,
+  createTodoTools,
   deriveChildAgentProfile,
+  runTodoSupervised,
   spawnSubAgent,
   type AgentProfile,
   type DerivedChildAgentProfile,
@@ -106,6 +108,22 @@ interface ActiveRun {
 }
 
 const MAIN_AGENT_ID = "main";
+
+// Todo-supervisor continuation budget for the main agent. Conservative, fixed
+// bounds: after MAIN_TODO_MAX_CONTINUATIONS auto-continuations — or 2 in a row
+// that produced no external progress — the run chain hands back to the human
+// rather than spinning. Only runs whose model left unfinished todos continue
+// at all; a run with an empty/finished ledger audits once and stops.
+const MAIN_TODO_MAX_CONTINUATIONS = 4;
+const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 2;
+
+const DELEGATED_AGENT_CONTRACT = [
+  "Delegated agent contract:",
+  "- Do not ask the user directly. Your parent agent owns all user interaction.",
+  "- If a safe read-only next step can make progress, take it instead of asking for confirmation.",
+  "- If you are blocked by ambiguity, required approval, or missing capability, return a concise final message with status: needs_clarification, needs_approval, or blocked; include the question or requested action, a reasonable default when one exists, and any safe alternative.",
+  "- For clear delegated goals, complete the task and return the result to the parent.",
+].join("\n");
 
 /**
  * Per-connection runtime. Maps protocol verbs onto core.createRun(),
@@ -371,6 +389,15 @@ export class HostRuntime {
         createAgentInspectorTool(workspaceRoot),
         createAgentManagerTool(workspaceRoot),
         createHostShellTool(workspaceRoot),
+        // Todo ledger tools (P0): main agent only. The ledger lives in the
+        // session dir as a human-readable markdown file. Child agents do not
+        // receive these (they get `childTools`), preserving the single-writer
+        // model without a policy rule. The terminal-audit supervisor that
+        // auto-continues on unfinished todos is NOT wired here yet — these
+        // tools just let the model maintain the ledger.
+        ...createTodoTools({
+          getTodoPath: () => join(sessionRootDir, sessionId, "todo.md"),
+        }).all(),
         ...(preparedSkills?.tools ?? []),
         ...(preparedMcp?.tools ?? []),
         ...delegateTools,
@@ -390,99 +417,189 @@ export class HostRuntime {
       ],
     });
 
-    const run = createRun({
-      goal: payload.goal,
-      context: [...priorContext, ...(preparedSkills?.context ?? [])],
-      workspace,
-      approvalResolver,
-      policy: createPermissionModePolicy({ mode: permissionMode }),
-      promptBuilder: buildAgentPromptBuilder({ cwd: workspaceRoot, sessionId }),
-      tools,
-      model: model.adapter,
-      runStore: createSessionRunStoreFactory({
-        sessionStore,
-        sessionId,
-        runStoreFactory: createSessionFileRunStoreFactory({
-          sessionRootDir,
-          sessionId,
-          agentId: "main",
-          traceLevel: "standard",
-        }),
-        metadata: {
-          source: "host",
-          ...(preparedSkills
-            ? {
-                indexedSkills: preparedSkills.indexedSkills,
-                loadedSkills: preparedSkills.loadedSkills,
-              }
-            : {}),
-          ...(preparedMcp
-            ? {
-                mcpStatuses: preparedMcp.statuses,
-                mcpToolNameMap: preparedMcp.toolNameMap,
-              }
-            : {}),
-          ...(resolvedProfiles.length
-            ? {
-                agentProfiles: [
-                  mainAgent,
-                  ...derivedAgents.map((agent) => agent.effectiveProfile),
-                ],
-              }
-            : {}),
-        },
-      }),
-    });
-    parentRunRef.current = run;
-
-    const runId = run.record.id;
-    runIdHolder.value = runId;
-    this.active = {
-      runId,
-      run,
-      trace,
-      sessionId,
-      closeCapabilities: preparedMcp ? () => preparedMcp.close() : undefined,
+    const runStoreMetadata: Record<string, unknown> = {
+      source: "host",
+      ...(preparedSkills
+        ? {
+            indexedSkills: preparedSkills.indexedSkills,
+            loadedSkills: preparedSkills.loadedSkills,
+          }
+        : {}),
+      ...(preparedMcp
+        ? {
+            mcpStatuses: preparedMcp.statuses,
+            mcpToolNameMap: preparedMcp.toolNameMap,
+          }
+        : {}),
+      ...(resolvedProfiles.length
+        ? {
+            agentProfiles: [
+              mainAgent,
+              ...derivedAgents.map((agent) => agent.effectiveProfile),
+            ],
+          }
+        : {}),
     };
 
-    // Subscribe to event stream and rebroadcast as host events.
-    run.events.subscribe((event: SparkwrightEvent) => {
-      trace.append(event);
-      this.opts.emit({
-        envelope: "event",
-        id: nextMessageId("evt"),
-        kind: "run.event",
-        timestamp: nowIso(),
-        payload: { runId, event },
+    // Build (but do not start) a main-agent run for `goal`, appending
+    // `extraContext` after the skills context. Each call mints a fresh runId
+    // and run dir; the todo supervisor calls this once per (re)try, so a
+    // continuation is a new run that carries the prior run's todo ledger.
+    const buildRun = (goal: string, extraContext: ContextItem[]) =>
+      createRun({
+        goal,
+        context: [
+          ...priorContext,
+          ...(preparedSkills?.context ?? []),
+          ...extraContext,
+        ],
+        workspace,
+        approvalResolver,
+        policy: createPermissionModePolicy({ mode: permissionMode }),
+        promptBuilder: buildAgentPromptBuilder({
+          cwd: workspaceRoot,
+          sessionId,
+        }),
+        tools,
+        model: model.adapter,
+        // Bind the main agent on resources, not a leaked step count of 8: honor
+        // the profile's RunBudget when set and derive the step ceiling from it.
+        maxSteps: resolveMainAgentMaxSteps(mainAgent),
+        ...(mainAgent.runBudget !== undefined
+          ? { runBudget: mainAgent.runBudget }
+          : {}),
+        runStore: createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir,
+            sessionId,
+            agentId: "main",
+            traceLevel: "standard",
+          }),
+          metadata: runStoreMetadata,
+        }),
       });
-    });
-    pendingExtensionEvents.flush(run.events);
 
-    // Kick off the run lifecycle; do not await — the response goes back now,
-    // events stream as they happen, terminal event lands later.
-    void run
-      .start()
-      .then((result) => {
+    // Register a freshly-built run as the connection's active run: wire its
+    // event stream out as host events and collect them for the supervisor's
+    // stall check. Returns the per-run event collector.
+    const registerActiveRun = (
+      run: ReturnType<typeof createRun>,
+      runId: string,
+    ): SparkwrightEvent[] => {
+      parentRunRef.current = run;
+      runIdHolder.value = runId;
+      this.active = {
+        runId,
+        run,
+        trace,
+        sessionId,
+        closeCapabilities: preparedMcp ? () => preparedMcp.close() : undefined,
+      };
+      const collected: SparkwrightEvent[] = [];
+      run.events.subscribe((event: SparkwrightEvent) => {
+        trace.append(event);
+        collected.push(event);
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.event",
+          timestamp: nowIso(),
+          payload: { runId, event },
+        });
+      });
+      pendingExtensionEvents.flush(run.events);
+      return collected;
+    };
+
+    // The first run's id must go back in the startRun response synchronously,
+    // but the supervisor mints it inside its first `runOnce`. Bridge with a
+    // deferred the loop resolves on its first iteration.
+    let resolveFirstRunId!: (id: string) => void;
+    let rejectFirstRunId!: (err: unknown) => void;
+    const firstRunId = new Promise<string>((resolve, reject) => {
+      resolveFirstRunId = resolve;
+      rejectFirstRunId = reject;
+    });
+    let firstRunStarted = false;
+    let previousRunId: string | undefined;
+    let lastRunId = "";
+
+    const supervised = runTodoSupervised({
+      todoPath: join(sessionRootDir, sessionId, "todo.md"),
+      sessionId,
+      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
+      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
+      runOnce: async (input) => {
+        const goal = input.continuation?.prompt ?? payload.goal;
+        const extraContext = input.continuation
+          ? [input.continuation.context]
+          : [];
+        const run = buildRun(goal, extraContext);
+        const runId = run.record.id;
+        lastRunId = runId;
+        const collected = registerActiveRun(run, runId);
+        if (!firstRunStarted) {
+          firstRunStarted = true;
+          resolveFirstRunId(runId);
+        } else if (input.continuation) {
+          // A continuation: the previous run reached terminal with todos still
+          // open. Tell the client the turn is still live and re-point at runId
+          // instead of treating the prior run.completed as the end (we suppress
+          // that terminal — only the final run of the chain completes).
+          this.opts.emit({
+            envelope: "event",
+            id: nextMessageId("evt"),
+            kind: "run.continuation",
+            timestamp: nowIso(),
+            payload: {
+              runId,
+              previousRunId: previousRunId ?? runId,
+              continuationCount: input.continuation.metadata.continuationCount,
+              reason: input.continuation.metadata.reason,
+            },
+          });
+        }
+        const result = await run.start();
+        previousRunId = runId;
+        return { result, events: collected };
+      },
+    });
+
+    supervised
+      .then((outcome) => {
+        const handoff =
+          outcome.decision.kind === "handoff"
+            ? {
+                reason: outcome.decision.reason,
+                message: outcome.decision.message,
+              }
+            : undefined;
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
           kind: "run.completed",
           timestamp: nowIso(),
           payload: {
-            runId,
-            state: result.state,
-            stopReason: result.stopReason,
+            runId: lastRunId,
+            state: outcome.result.state,
+            stopReason: outcome.result.stopReason,
+            ...(handoff ? { todoHandoff: handoff } : {}),
           },
         });
       })
       .catch((err: unknown) => {
+        // A failure before the first run even started must surface to the
+        // caller as an error response, not a fire-and-forget event.
+        if (!firstRunStarted) rejectFirstRunId(err);
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
           kind: "run.failed",
           timestamp: nowIso(),
           payload: {
-            runId,
+            runId: lastRunId,
             error: {
               code: "internal_error",
               message: err instanceof Error ? err.message : String(err),
@@ -493,18 +610,27 @@ export class HostRuntime {
       .finally(() => {
         void preparedMcp?.close().catch(() => {});
         this.active = null;
-        // Deny only this run's orphan approvals. The current per-connection
-        // `startingRun` lock makes cross-run pollution impossible today, but
-        // a future v1.1 with parallel runs per connection would silently
-        // cancel siblings' pending decisions if we cleared the whole map.
+        // The whole supervised chain is done. The per-connection `startingRun`
+        // lock guarantees no other run's approvals coexist, so deny any orphans
+        // from this chain (across all of its runIds).
         for (const [id, p] of this.pendingApprovals) {
-          if (p.runId === runId) {
-            p.resolve("denied");
-            this.pendingApprovals.delete(id);
-          }
+          p.resolve("denied");
+          this.pendingApprovals.delete(id);
         }
       });
 
+    let runId: string;
+    try {
+      runId = await firstRunId;
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
     return { ok: true, runId };
   }
 
@@ -1015,6 +1141,32 @@ function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
   );
 }
 
+/**
+ * Pure safety floor for the interactive main agent's step count, used only when
+ * neither an explicit `maxSteps` nor a model-call budget is configured. It is a
+ * backstop against a runaway loop the progress guard misses (the human can also
+ * Ctrl-C), NOT a task budget — long-horizon work (auto-research, broad sweeps)
+ * must not bind on it. See `docs/adr/0009-step-cap-unfit-for-long-horizon-agents.md`.
+ */
+const MAIN_AGENT_MAX_STEPS_BACKSTOP = 100;
+
+/**
+ * Resolve the main agent's step ceiling. An explicit profile `maxSteps` wins;
+ * otherwise it is derived from the resource budget — a step consumes at least
+ * one model call, so `runBudget.maxModelCalls` is the tightest natural step
+ * bound and `RunBudget` enforces it precisely regardless. Only when neither is
+ * configured does the high backstop apply. This keeps the binding limit on the
+ * resource axis rather than a leaked step count of 8.
+ */
+function resolveMainAgentMaxSteps(profile: AgentProfile): number {
+  if (profile.maxSteps !== undefined) return profile.maxSteps;
+  const modelCallBudget = profile.runBudget?.maxModelCalls;
+  if (modelCallBudget !== undefined && modelCallBudget >= 1) {
+    return modelCallBudget;
+  }
+  return MAIN_AGENT_MAX_STEPS_BACKSTOP;
+}
+
 function deriveConfiguredAgents(
   parentAgent: AgentProfile,
   profiles: AgentProfile[],
@@ -1048,6 +1200,24 @@ const snapshotOnlyChildRunStoreFactory = (): ReturnType<
     "spawn tool built for a capability snapshot cannot be executed.",
   );
 };
+
+function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
+  const experimental = profile.experimental ?? {};
+  return {
+    ...profile,
+    experimental: {
+      ...experimental,
+      prompt: withDelegatedAgentPrompt(experimental.prompt ?? profile.prompt),
+    },
+  };
+}
+
+function withDelegatedAgentPrompt(prompt?: string): string {
+  const trimmed = prompt?.trim();
+  return trimmed
+    ? [trimmed, DELEGATED_AGENT_CONTRACT].join("\n\n")
+    : DELEGATED_AGENT_CONTRACT;
+}
 
 function createConfiguredDelegateTools(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
@@ -1085,9 +1255,10 @@ function createConfiguredDelegateTools(input: {
           goal: args.goal,
           model: input.model,
           tools: input.childTools,
-          childAgentProfile: profile,
+          childAgentProfile: withDelegatedAgentContract(profile),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
+          interactionChannel: null,
           // Persist the child's trace under its own agent dir + register it in
           // session.json, and roll its usage up into the parent run's tracker.
           runStore: input.childRunStoreFactory(profile.id),
@@ -1227,7 +1398,7 @@ export function createDynamicSpawnAgentTool(input: {
         maxSteps: parsed.maxSteps,
         experimental: {
           mode: "child",
-          prompt: parsed.prompt,
+          prompt: withDelegatedAgentPrompt(parsed.prompt),
         },
         metadata: {
           dynamic: true,
@@ -1240,6 +1411,7 @@ export function createDynamicSpawnAgentTool(input: {
         tools: childTools,
         childAgentProfile: profile,
         maxSteps: parsed.maxSteps,
+        interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
         // instead of letting its steps disappear once the tool returns.

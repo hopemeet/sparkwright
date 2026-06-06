@@ -160,6 +160,10 @@ export interface BuildAgentPromptBuilderOptions {
   cwd?: string;
   /** Application/domain system prompt (agent identity, capabilities, workflow). */
   appPrompt?: string;
+  /** Include the run goal in the prompt. Default false. */
+  includeGoal?: boolean;
+  /** Include the per-step runtime progress section. Default false. */
+  includeRuntimeProgress?: boolean;
   /** Platform string for the env section (e.g. process.platform). */
   platform?: string;
   /**
@@ -193,6 +197,26 @@ const FILE_TOOL_GUIDANCE = [
   "  workspace files (use the read/append file tools for that).",
 ].join("\n");
 
+/**
+ * Anchor workspace-tool paths to the workspace root. A goal phrased as
+ * "go into Foo/examples/bar and ..." led a model to prefix every read/glob
+ * path with the workspace folder's own name (`Foo/examples/bar/...`) when cwd
+ * was already that folder — so every call resolved to a non-existent path and
+ * the model thrashed dozens of empty globs hunting a file that was one prefix
+ * away. This states the resolution rule explicitly. Injected only when a path
+ * tool is present.
+ */
+const WORKSPACE_PATH_GUIDANCE = [
+  "Workspace path resolution:",
+  "- Paths for the workspace tools (read_file, glob_paths, grep_text,",
+  "  append_file) are relative to the workspace root shown as `cwd` in <env>.",
+  "- Do NOT prefix paths with the workspace folder's own name. If cwd ends in",
+  "  `/myrepo`, read `examples/x`, not `myrepo/examples/x` — the latter resolves",
+  "  under `myrepo/myrepo/...` and will not be found.",
+  "- If a path is not found, do not re-glob many prefixed variants. Reconsider",
+  "  it relative to cwd, or list the parent directory once to see what exists.",
+].join("\n");
+
 const DELEGATION_GUIDANCE = [
   "Reporting a sub-agent's result:",
   "- A spawned/delegated child returns a `message` that is already its final,",
@@ -209,7 +233,7 @@ const DELEGATION_GUIDANCE = [
 
 /**
  * Compose a `PromptBuilder` that layers the application system prompt, project
- * instruction files, and a tail env block on top of core's resident harness
+ * instruction files, and a session-cached env block on top of core's resident harness
  * contracts. This is the single place embedders (host, cli, ...) wire the
  * "what the agent is / what it knows about this project" prompt, so cache
  * placement stays consistent across entry points.
@@ -245,6 +269,18 @@ export function buildAgentPromptBuilder(
     }),
   );
 
+  // Anchor workspace-tool paths to cwd; appears only when a path tool is live.
+  sections.push(
+    createToolGuidanceSection({
+      name: "workspace_path_resolution",
+      guidance: WORKSPACE_PATH_GUIDANCE,
+      whenTool: (tool) =>
+        tool.name === "read_file" ||
+        tool.name === "glob_paths" ||
+        tool.name === "grep_text",
+    }),
+  );
+
   // Guidance for relaying a sub-agent's result without lossy re-summarization;
   // appears only when a spawn/delegate tool is in the live inventory.
   sections.push(
@@ -266,7 +302,11 @@ export function buildAgentPromptBuilder(
     );
   }
 
-  return new DefaultPromptBuilder({ additionalSections: sections });
+  return new DefaultPromptBuilder({
+    includeGoal: options.includeGoal,
+    includeRuntimeProgress: options.includeRuntimeProgress,
+    additionalSections: sections,
+  });
 }
 
 function renderProjectInstructions(items: ContextItem[]): string {

@@ -142,6 +142,19 @@ export interface RunLoopState {
     toolName: string;
     arguments: unknown;
   };
+  /**
+   * Semantic target (path/patterns, not raw arguments) of the most recent
+   * *failed* tool call, retained so the doom-loop guard can catch a model that
+   * retries the same failing target with cosmetically different arguments —
+   * e.g. re-reading a path with a different offset/limit when the path is
+   * actually a directory. Cleared on any successful tool result, so legitimate
+   * pagination (which succeeds) never accumulates toward the loop limit.
+   */
+  lastFailedToolTarget?: {
+    key: string;
+    code: string;
+    message: string;
+  };
   repeatedToolCallCount: number;
   transition: RunLoopTransition;
 }

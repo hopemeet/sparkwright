@@ -1337,14 +1337,85 @@ export class SparkwrightRun implements RunHandle {
       this.lastLoopState = cloneLoopState(state);
     }
 
-    return this.fail(
-      "max_steps_exceeded",
-      "MAX_STEPS_EXCEEDED",
-      `Run exceeded the maximum step count of ${this.maxSteps}.`,
-      {
+    // Budget exhausted mid-task. Rather than hard-failing and discarding every
+    // tool result the run gathered, force one final tool-less wrap-up turn so
+    // the model can hand back a labeled best-effort partial. Only if even that
+    // turn cannot run (e.g. the resource budget is also spent, or the model
+    // errors) do we fall back to the original hard failure.
+    return this.finishWithBudgetWrapUp(state);
+  }
+
+  /**
+   * Forced wrap-up turn after the step budget is exhausted. Reuses the normal
+   * context-shaping, prompt-building, and model-call machinery but with the
+   * tool list stripped and a budget directive injected, so the model must
+   * answer rather than start new tool work. Completes as a `final_answer`
+   * flagged `stepLimitReached`/`truncated` so callers (and the sub-agent caveat
+   * path) can tell it apart from a roomy finish. Falls back to the original
+   * `max_steps_exceeded` failure if the wrap-up turn itself cannot complete.
+   */
+  private async finishWithBudgetWrapUp(
+    state: RunLoopState,
+  ): Promise<RunResult> {
+    const hardFail = (): RunResult =>
+      this.fail(
+        "max_steps_exceeded",
+        "MAX_STEPS_EXCEEDED",
+        `Run exceeded the maximum step count of ${this.maxSteps}.`,
+        { maxSteps: this.maxSteps },
+      );
+
+    const wrapUpState: RunLoopState = {
+      ...state,
+      context: [
+        ...state.context,
+        makeBudgetWrapUpContextItem(state.step - 1, this.maxSteps),
+      ],
+    };
+
+    const modelTurn = openSpan(this.events, {
+      startType: "model.turn.started",
+      payload: { step: state.step, budgetWrapUp: true },
+    });
+    try {
+      const shaped = await this.shapeContext(wrapUpState, /* reactive */ false);
+      const prompt = await this.buildPromptPhase(wrapUpState, shaped);
+      const output = await runWithSpan(modelTurn.frame, () =>
+        this.completeModelWithRetries({
+          run: this.record,
+          context: shaped,
+          prompt,
+          // No tools on the wrap-up turn: the model must produce a text answer.
+          tools: [],
+          events: this.events.all(),
+          step: state.step,
+          abortSignal: this.abortController.signal,
+        }),
+      );
+      runWithSpan(modelTurn.frame, () =>
+        this.events.emit("model.completed", { step: state.step, ...output }),
+      );
+      modelTurn.close("model.turn.completed", { step: state.step });
+      this.recordModelUsage(output);
+
+      const message =
+        typeof output.message === "string" && output.message.trim().length > 0
+          ? output.message
+          : "Step budget exhausted before this task could be completed; no " +
+            "partial summary was produced. The work gathered so far remains " +
+            "in the trace.";
+      return this.complete("final_answer", {
+        message,
+        stepsUsed: state.step - 1,
         maxSteps: this.maxSteps,
-      },
-    );
+        stepLimitReached: true,
+        truncated: true,
+      });
+    } catch {
+      // Span may already be closed on the success path; close is idempotent.
+      modelTurn.close("model.turn.completed", { step: state.step });
+      return hardFail();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1419,6 +1490,7 @@ export class SparkwrightRun implements RunHandle {
     const prompt = await this.promptBuilder.build({
       run: this.record,
       step: state.step,
+      maxSteps: this.maxSteps,
       tools: await this.tools.listModelDescriptors(),
       context: items,
     });
@@ -1983,7 +2055,23 @@ export class SparkwrightRun implements RunHandle {
     });
     if (toolBudgetFailure) return toolBudgetFailure;
 
-    if (isRepeatedToolCall(state.previousToolCall, requestedCall)) {
+    // A repeat is either the *same* call verbatim, or a fresh attempt at a
+    // target that just failed — the latter catches a model that varies cosmetic
+    // arguments (e.g. read `offset`/`limit`) while hammering the same broken
+    // path. `lastFailedToolTarget` is cleared on any success, so legitimate
+    // pagination never lands here.
+    const targetKey = semanticToolTarget(
+      requestedCall.toolName,
+      requestedCall.arguments,
+    );
+    const priorFailure =
+      state.lastFailedToolTarget?.key === targetKey
+        ? state.lastFailedToolTarget
+        : undefined;
+    if (
+      isRepeatedToolCall(state.previousToolCall, requestedCall) ||
+      priorFailure
+    ) {
       state.repeatedToolCallCount += 1;
     } else {
       state.previousToolCall = requestedCall;
@@ -1994,12 +2082,17 @@ export class SparkwrightRun implements RunHandle {
       return this.fail(
         "tool_doom_loop",
         "TOOL_DOOM_LOOP",
-        `Run stopped after ${state.repeatedToolCallCount} repeated identical tool calls.`,
+        priorFailure
+          ? `Run stopped after ${state.repeatedToolCallCount} attempts at ` +
+              `\`${requestedCall.toolName}\` on the same target, which kept ` +
+              `failing (${priorFailure.code}: ${priorFailure.message}).`
+          : `Run stopped after ${state.repeatedToolCallCount} repeated identical tool calls.`,
         {
           toolName: requestedCall.toolName,
           arguments: requestedCall.arguments,
           repeatedToolCallCount: state.repeatedToolCallCount,
           repeatLimit: this.doomLoopRepeatLimit,
+          ...(priorFailure ? { repeatedFailureCode: priorFailure.code } : {}),
         },
       );
     }
@@ -2039,6 +2132,7 @@ export class SparkwrightRun implements RunHandle {
           state,
           batchResults,
           span,
+          priorFailure,
         ),
       );
     }
@@ -2062,18 +2156,25 @@ export class SparkwrightRun implements RunHandle {
     state: RunLoopState,
     batchResults: ToolResult[] | undefined,
     span: ReturnType<typeof openSpan>,
+    priorFailure?: RunLoopState["lastFailedToolTarget"],
   ): Promise<RunResult | undefined> {
     const nudged: ToolResult = {
       toolCallId: call.id,
       status: "failed",
       error: {
         code: "REPEATED_TOOL_CALL_SKIPPED",
-        message:
-          `Skipped: \`${requestedCall.toolName}\` was already called with ` +
-          `identical arguments and returned the same result. Repeating it ` +
-          `cannot produce new information. Choose a different action or set ` +
-          `of arguments, or stop calling tools and answer the user directly. ` +
-          `Repeating this exact call again will end the run.`,
+        message: priorFailure
+          ? `Skipped: \`${requestedCall.toolName}\` already failed on this ` +
+            `target (${priorFailure.code}: ${priorFailure.message}). Retrying ` +
+            `it with different arguments (e.g. a new offset/limit) cannot ` +
+            `succeed — the target may be a directory or otherwise invalid. Use ` +
+            `a listing tool (e.g. glob) or choose a different path. Repeating ` +
+            `this will end the run.`
+          : `Skipped: \`${requestedCall.toolName}\` was already called with ` +
+            `identical arguments and returned the same result. Repeating it ` +
+            `cannot produce new information. Choose a different action or set ` +
+            `of arguments, or stop calling tools and answer the user directly. ` +
+            `Repeating this exact call again will end the run.`,
       },
       artifacts: [],
     };
@@ -2085,7 +2186,7 @@ export class SparkwrightRun implements RunHandle {
       status: nudged.status,
     });
     this.appendToolResultContext(state.context, requestedCall.toolName, nudged);
-    await this.runAfterToolCallHook(state.step, requestedCall, nudged);
+    await this.runAfterToolCallHook(state, requestedCall, nudged);
     batchResults?.push(nudged);
     return undefined;
   }
@@ -2141,7 +2242,7 @@ export class SparkwrightRun implements RunHandle {
         requestedCall.toolName,
         skipped,
       );
-      await this.runAfterToolCallHook(state.step, requestedCall, skipped);
+      await this.runAfterToolCallHook(state, requestedCall, skipped);
       batchResults?.push(skipped);
       return undefined;
     }
@@ -2162,11 +2263,7 @@ export class SparkwrightRun implements RunHandle {
         requestedCall.toolName,
         validationResult,
       );
-      await this.runAfterToolCallHook(
-        state.step,
-        requestedCall,
-        validationResult,
-      );
+      await this.runAfterToolCallHook(state, requestedCall, validationResult);
       batchResults?.push(validationResult);
       return undefined;
     }
@@ -2186,7 +2283,7 @@ export class SparkwrightRun implements RunHandle {
         requestedCall.toolName,
         gatedResult,
       );
-      await this.runAfterToolCallHook(state.step, requestedCall, gatedResult);
+      await this.runAfterToolCallHook(state, requestedCall, gatedResult);
       batchResults?.push(gatedResult);
       return undefined;
     }
@@ -2211,7 +2308,7 @@ export class SparkwrightRun implements RunHandle {
         requestedCall.toolName,
         aborted,
       );
-      await this.runAfterToolCallHook(state.step, requestedCall, aborted);
+      await this.runAfterToolCallHook(state, requestedCall, aborted);
       batchResults?.push(aborted);
       return undefined;
     }
@@ -2256,7 +2353,7 @@ export class SparkwrightRun implements RunHandle {
       requestedCall.toolName,
       annotatedResult,
     );
-    await this.runAfterToolCallHook(state.step, requestedCall, annotatedResult);
+    await this.runAfterToolCallHook(state, requestedCall, annotatedResult);
     batchResults?.push(annotatedResult);
     return undefined;
   }
@@ -2357,14 +2454,29 @@ export class SparkwrightRun implements RunHandle {
   }
 
   private async runAfterToolCallHook(
-    step: number,
+    state: RunLoopState,
     requestedCall: RequestedToolCall,
     result: ToolResult,
   ): Promise<void> {
+    // Loop-guard bookkeeping: remember the semantic target of a failure so a
+    // retry with cosmetically different arguments still counts as a repeat, and
+    // forget it on any success so legitimate progress resets the guard.
+    if (result.status === "failed") {
+      state.lastFailedToolTarget = {
+        key: semanticToolTarget(
+          requestedCall.toolName,
+          requestedCall.arguments,
+        ),
+        code: result.error?.code ?? "TOOL_FAILED",
+        message: result.error?.message ?? "Tool call failed.",
+      };
+    } else if (result.status === "completed") {
+      state.lastFailedToolTarget = undefined;
+    }
     try {
       await this.hook.afterToolCall?.({
         runId: this.record.id,
-        step,
+        step: state.step,
         toolName: requestedCall.toolName,
         arguments: requestedCall.arguments,
         result,
@@ -3188,6 +3300,37 @@ function isRepeatedToolCall(
   );
 }
 
+/**
+ * A coarse "what does this call act on" key, used only by the doom-loop guard.
+ * It recognizes a model retrying the *same* target with cosmetically different
+ * arguments (e.g. re-reading a path with a different `offset`/`limit`) by keying
+ * on the path/patterns when present rather than the full argument object. Falls
+ * back to a stable stringify of the whole argument object for tools that carry
+ * no obvious target. This is a heuristic for loop detection only — it is never
+ * used to dedupe or cache real results.
+ */
+function semanticToolTarget(toolName: string, args: unknown): string {
+  if (args && typeof args === "object") {
+    const record = args as Record<string, unknown>;
+    if (typeof record.path === "string") {
+      return `${toolName}::path::${record.path}`;
+    }
+    if (Array.isArray(record.patterns)) {
+      return `${toolName}::patterns::${record.patterns.join(" ")}`;
+    }
+    if (typeof record.pattern === "string") {
+      return `${toolName}::pattern::${record.pattern}`;
+    }
+  }
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(args) ?? String(args);
+  } catch {
+    serialized = String(args);
+  }
+  return `${toolName}::args::${serialized}`;
+}
+
 function shouldRequestContextCompaction(
   omitted: Array<{ reason: string }>,
 ): boolean {
@@ -3876,6 +4019,36 @@ function makeContinuationContextItem(
       stability: "turn",
       injected: true,
       recovery: "extend_output",
+    },
+  };
+}
+
+/**
+ * Directive injected for the forced wrap-up turn when a run exhausts its step
+ * budget mid-task. It tells the model to stop gathering and deliver a labeled
+ * best-effort partial, so the run returns usable output instead of discarding
+ * all work in a hard `max_steps_exceeded` failure.
+ */
+function makeBudgetWrapUpContextItem(
+  stepsUsed: number,
+  maxSteps: number,
+): ContextItem {
+  return {
+    id: createContextItemId(),
+    type: "user",
+    source: { kind: "recovery", uri: "run.budget_wrap_up" },
+    content: [
+      `[Harness: step budget exhausted — used all ${stepsUsed} of ${maxSteps} allowed steps.]`,
+      "You cannot call any more tools. Produce your best-effort FINAL answer",
+      "now from what you have already gathered. State plainly that it is a",
+      "partial result produced under an exhausted step budget, and note what",
+      "remains undone. Do NOT call tools; do NOT apologize at length.",
+    ].join("\n"),
+    metadata: {
+      layer: "runtime",
+      stability: "turn",
+      injected: true,
+      recovery: "budget_wrap_up",
     },
   };
 }

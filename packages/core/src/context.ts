@@ -157,6 +157,11 @@ export interface PromptMessage {
 export interface PromptBuildInput {
   run: RunRecord;
   step: number;
+  /**
+   * The run's step ceiling, if bounded. Prompt builders may surface it only
+   * when explicitly configured to include runtime progress.
+   */
+  maxSteps?: number;
   tools: ToolDescriptor[];
   context: ContextItem[];
 }
@@ -535,6 +540,12 @@ export class CompactingContextAssembler implements ContextAssembler {
 
 export interface DefaultPromptBuilderOptions {
   residentInstructions?: string;
+  /** Include the current run request as a user prompt section. Default true. */
+  includeCurrentRequest?: boolean;
+  /** Include the run goal as a prompt section. Default false. */
+  includeGoal?: boolean;
+  /** Include the per-step runtime progress section. Default false. */
+  includeRuntimeProgress?: boolean;
   /**
    * Replace the default section list. Most embedders should prefer
    * `additionalSections` so the reference resident/runtime sections stay
@@ -642,7 +653,11 @@ export class DefaultPromptBuilder extends SectionedPromptBuilder {
   constructor(options: DefaultPromptBuilderOptions = {}) {
     const residentInstructions =
       options.residentInstructions ?? DEFAULT_RESIDENT_INSTRUCTIONS;
-    const defaultSections = createDefaultPromptSections(residentInstructions);
+    const defaultSections = createDefaultPromptSections(residentInstructions, {
+      includeCurrentRequest: options.includeCurrentRequest,
+      includeGoal: options.includeGoal,
+      includeRuntimeProgress: options.includeRuntimeProgress,
+    });
     super({
       sections: options.sections ?? [
         ...defaultSections,
@@ -652,10 +667,20 @@ export class DefaultPromptBuilder extends SectionedPromptBuilder {
   }
 }
 
+export interface DefaultPromptSectionsOptions {
+  /** Include the current run request as a user prompt section. Default true. */
+  includeCurrentRequest?: boolean;
+  /** Include the run goal as a prompt section. Default false. */
+  includeGoal?: boolean;
+  /** Include the per-step runtime progress section. Default false. */
+  includeRuntimeProgress?: boolean;
+}
+
 export function createDefaultPromptSections(
   residentInstructions = DEFAULT_RESIDENT_INSTRUCTIONS,
+  options: DefaultPromptSectionsOptions = {},
 ): PromptSection[] {
-  return [
+  const sections: PromptSection[] = [
     {
       name: "resident_identity",
       order: 0,
@@ -730,6 +755,26 @@ export function createDefaultPromptSections(
       },
     },
     {
+      name: "skill_index",
+      order: 21,
+      role: "system",
+      layer: "skill_index",
+      stability: "session",
+      cachePolicy: "session",
+      build(input) {
+        const items = input.context.filter(isSkillIndexContextItem);
+        if (items.length === 0) return null;
+        return {
+          role: "system",
+          content: formatSkillIndexItems(items),
+          stability: "session",
+          metadata: {
+            kind: "skill_index",
+          },
+        };
+      },
+    },
+    {
       name: "capability_delta",
       order: 30,
       role: "user",
@@ -749,26 +794,6 @@ export function createDefaultPromptSections(
             kind: "capability_delta",
           },
         };
-      },
-    },
-    {
-      // Run-scoped framing that does NOT change step-to-step: the goal is
-      // fixed for the run and `state` flips only on lifecycle transitions
-      // (running/paused/…). Keeping it here — BEFORE selected_context and
-      // WITHOUT the per-step counter — means everything up to and including
-      // selected_context stays byte-identical across steps on the normal
-      // (non-compaction) path, so it can sit inside the cache-stable prefix.
-      name: "runtime_state",
-      order: 100,
-      role: "user",
-      layer: "runtime",
-      stability: "turn",
-      cachePolicy: "turn",
-      build(input) {
-        return [
-          `Goal: ${input.run.goal}`,
-          `Run state: ${input.run.state}`,
-        ].join("\n");
       },
     },
     {
@@ -794,36 +819,75 @@ export function createDefaultPromptSections(
         }));
       },
     },
-    {
-      name: "selected_context",
-      order: 110,
+  ];
+
+  if (options.includeCurrentRequest !== false) {
+    sections.push({
+      name: "current_request",
+      order: 100,
       role: "user",
-      layer: "working",
+      layer: "runtime",
       stability: "turn",
       cachePolicy: "turn",
       build(input) {
-        // Conversation history is rendered as role-tagged messages by the
-        // `conversation_history` section, so keep it out of this flattened blob.
-        const items = input.context.filter(
-          (item) => item.metadata.layer !== "conversation",
-        );
-        if (items.length === 0) return null;
+        const goal = input.run.goal.trim();
+        if (goal.length === 0) return null;
         return {
           role: "user",
-          content: formatContextItems(items),
+          content: ["User request:", goal].join("\n"),
           stability: "turn",
           metadata: {
-            kind: "selected_context",
+            kind: "current_request",
           },
         };
       },
+    });
+  }
+
+  if (options.includeGoal === true) {
+    sections.push({
+      name: "run_goal",
+      order: 100,
+      role: "user",
+      layer: "runtime",
+      stability: "session",
+      cachePolicy: "session",
+      build(input) {
+        return ["Goal:", input.run.goal].join("\n");
+      },
+    });
+  }
+
+  sections.push({
+    name: "selected_context",
+    order: 110,
+    role: "user",
+    layer: "working",
+    stability: "turn",
+    cachePolicy: "turn",
+    build(input) {
+      // Conversation history is rendered as role-tagged messages by the
+      // `conversation_history` section, and skill indexes have their own
+      // session-cached capability section, so keep both out of this flattened blob.
+      const items = input.context.filter(
+        (item) =>
+          item.metadata.layer !== "conversation" &&
+          !isSkillIndexContextItem(item),
+      );
+      if (items.length === 0) return null;
+      return {
+        role: "user",
+        content: formatContextItems(items),
+        stability: "turn",
+        metadata: {
+          kind: "selected_context",
+        },
+      };
     },
-    {
-      // The per-step counter is the ONE thing that changes every single step,
-      // so it lives at the very tail — after the append-only selected_context.
-      // Placed earlier it would shift the byte offset of everything after it
-      // and bust the prefix cache on every step; here only this tiny trailing
-      // block is uncached. Marked volatile so traces explain the churn.
+  });
+
+  if (options.includeRuntimeProgress === true) {
+    sections.push({
       name: "runtime_progress",
       order: 120,
       role: "user",
@@ -831,12 +895,16 @@ export function createDefaultPromptSections(
       stability: "turn",
       cachePolicy: "volatile",
       volatileReason:
-        "per-step counter changes every step; kept at the tail so it never shifts the cache-stable prefix",
+        "per-step counter changes every step; included only when explicitly requested",
       build(input) {
-        return `Step: ${input.step}`;
+        return input.maxSteps !== undefined
+          ? `Step: ${input.step} / ${input.maxSteps}`
+          : `Step: ${input.step}`;
       },
-    },
-  ];
+    });
+  }
+
+  return sections;
 }
 
 export interface AppPromptSectionOptions {
@@ -900,29 +968,32 @@ export interface EnvironmentSectionInput {
 
 export interface EnvironmentSectionOptions {
   name?: string;
-  /** Default 120 — tail position, after the cache-stable prefix. */
+  /** Default 90 — before selected turn context so static env can be cached. */
   order?: number;
   role?: PromptMessage["role"];
+  /** Default "session" — env is expected to stay fixed within a run. */
+  cachePolicy?: PromptSectionCachePolicy;
 }
 
 /**
- * Build a tail-positioned `<env>` section (cwd, platform, date, extras). Uses
- * `cachePolicy: "turn"` and a high order so it sits AFTER the cache-stable
- * prefix — the expensive resident + tool-descriptor blocks stay cached even as
- * env values change. Mirror of the existing `runtime_state` section.
+ * Build a cache-friendly `<env>` section (cwd, platform, date, extras). The
+ * default cache policy is `session`: these values are expected to stay stable
+ * within a run, and long-running callers that need fresher time data should
+ * provide that as a separate volatile section or tool result.
  */
 export function createEnvironmentSection(
   env: EnvironmentSectionInput = {},
   options: EnvironmentSectionOptions = {},
 ): PromptSection {
   const includeDate = env.includeDate ?? true;
+  const cachePolicy = options.cachePolicy ?? "session";
   return {
     name: options.name ?? "environment",
-    order: options.order ?? 120,
+    order: options.order ?? 90,
     role: options.role ?? "user",
     layer: "runtime",
-    stability: "turn",
-    cachePolicy: "turn",
+    stability: cachePolicyToStability(cachePolicy),
+    cachePolicy,
     build() {
       const lines: string[] = [];
       if (env.cwd) lines.push(`cwd: ${env.cwd}`);
@@ -1304,25 +1375,11 @@ function deferredTools(tools: ToolDescriptor[]): ToolDescriptor[] {
 }
 
 function formatToolDescriptors(tools: ToolDescriptor[]): string {
-  if (tools.length === 0) return "Available eager tools: none.";
+  if (tools.length === 0) return "Available tools: none.";
 
   return [
-    "Available eager tools:",
-    ...tools.map((tool) => {
-      const governance = formatToolGovernance(tool);
-      return [
-        `- ${tool.name}: ${tool.description}`,
-        `  risk: ${tool.policy?.risk ?? "safe"}`,
-        `  requiresApproval: ${String(tool.policy?.requiresApproval ?? false)}`,
-        `  inputSchema: ${JSON.stringify(tool.inputSchema)}`,
-        tool.outputSchema
-          ? `  outputSchema: ${JSON.stringify(tool.outputSchema)}`
-          : undefined,
-        governance ? `  governance: ${governance}` : undefined,
-      ]
-        .filter((line): line is string => line !== undefined)
-        .join("\n");
-    }),
+    "Available tools:",
+    ...tools.map((tool) => `- ${formatToolDescriptorLine(tool)}`),
   ].join("\n");
 }
 
@@ -1342,10 +1399,127 @@ function promptMetadataString(
   return typeof value === "string" ? value : undefined;
 }
 
-function formatToolGovernance(tool: ToolDescriptor): string | undefined {
-  if (!tool.governance) return undefined;
+function formatToolDescriptorLine(tool: ToolDescriptor): string {
+  const details = [
+    formatToolInputSignature(tool.inputSchema),
+    formatToolPolicy(tool),
+    formatCompactGovernance(tool),
+  ].filter((item): item is string => item !== undefined && item.length > 0);
+  const description =
+    typeof tool.description === "string" ? tool.description.trim() : "";
+  return [
+    `${tool.name}${details.length > 0 ? ` ${details.join(" ")}` : ""}:`,
+    description,
+  ].join(" ");
+}
 
-  return JSON.stringify(tool.governance);
+function formatToolInputSignature(schema: unknown): string | undefined {
+  if (!isRecord(schema)) return undefined;
+  if (schema.type !== "object" || !isRecord(schema.properties)) {
+    return formatSchemaType(schema);
+  }
+
+  const required = Array.isArray(schema.required)
+    ? new Set(
+        schema.required.filter(
+          (value): value is string => typeof value === "string",
+        ),
+      )
+    : new Set<string>();
+  const params = Object.entries(schema.properties).map(([name, property]) => {
+    const suffix = required.has(name) ? "" : "?";
+    const detail = formatSchemaType(property);
+    return `${name}${suffix}${detail ? `:${detail}` : ""}`;
+  });
+  return `(${params.join(", ")})`;
+}
+
+function formatSchemaType(schema: unknown): string | undefined {
+  if (!isRecord(schema)) return undefined;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    return schema.enum
+      .map((value) =>
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean"
+          ? String(value)
+          : undefined,
+      )
+      .filter((value): value is string => value !== undefined)
+      .join("|");
+  }
+  if (typeof schema.type === "string") return schema.type;
+  return undefined;
+}
+
+function formatToolPolicy(tool: ToolDescriptor): string | undefined {
+  const risk = tool.policy?.risk;
+  const approval = tool.policy?.requiresApproval;
+  const parts: string[] = [];
+  if (risk && risk !== "safe") parts.push(`risk=${risk}`);
+  if (approval === true) parts.push("approval=true");
+  return parts.length > 0 ? `[${parts.join(" ")}]` : undefined;
+}
+
+function formatCompactGovernance(tool: ToolDescriptor): string | undefined {
+  const governance = tool.governance;
+  if (!governance) return undefined;
+  const parts: string[] = [];
+  if (governance.sideEffects?.some((effect) => effect !== "none")) {
+    parts.push(`effects=${governance.sideEffects.join("|")}`);
+  }
+  if (governance.dataSensitivity && governance.dataSensitivity !== "public") {
+    parts.push(`data=${governance.dataSensitivity}`);
+  }
+  if (governance.idempotency && governance.idempotency !== "idempotent") {
+    parts.push(`idempotency=${governance.idempotency}`);
+  }
+  return parts.length > 0 ? `[${parts.join(" ")}]` : undefined;
+}
+
+function isSkillIndexContextItem(item: ContextItem): boolean {
+  return item.metadata.layer === "skill_index";
+}
+
+function formatSkillIndexItems(items: ContextItem[]): string {
+  const lines = [
+    "Skill index:",
+    "Skills are available as on-demand instructions. Load a matching skill before relying on details about that skill's own workflow, commands, flags, or recovery steps.",
+  ];
+  for (const item of items) {
+    const rendered = renderSkillIndexItem(item);
+    if (rendered) lines.push(rendered);
+  }
+  return lines.join("\n");
+}
+
+function renderSkillIndexItem(item: ContextItem): string | undefined {
+  const parsed = safeParseJson(item.content);
+  if (!parsed) return item.content.trim();
+  const skills = Array.isArray(parsed.skills) ? parsed.skills : [];
+  if (skills.length === 0) return undefined;
+  return skills
+    .map((skill) => {
+      if (!isRecord(skill) || typeof skill.name !== "string") return undefined;
+      const description =
+        typeof skill.description === "string" && skill.description.trim()
+          ? `: ${skill.description.trim()}`
+          : "";
+      const relevance =
+        typeof skill.relevance === "string" ? ` [${skill.relevance}]` : "";
+      return `- ${skill.name}${relevance}${description}`;
+    })
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+function safeParseJson(text: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(text);
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function formatContextItems(items: ContextItem[]): string {

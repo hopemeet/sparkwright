@@ -45,6 +45,13 @@ export interface RunControllerOptions {
 type ApprovalDecision = "approved" | "denied";
 
 /**
+ * Preamble of the synthetic goal a todo-supervisor continuation run carries
+ * (see buildTodoContinuationPrompt in @sparkwright/agent-runtime). Used on
+ * replay to tell a continuation run apart from a real user turn.
+ */
+const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
+
+/**
  * Drives runs against a Sparkwright host. The host is launched lazily on
  * first run (spawned child by default, or attached to SPARKWRIGHT_HOST_URL
  * when set — see @sparkwright/sdk-node).
@@ -142,7 +149,15 @@ export class RunController {
         payload.goal.trim() &&
         !injectedForRun.has(runKey)
       ) {
-        this.store.appendUserMessage(payload.goal);
+        // A todo-supervisor continuation run carries a synthetic goal, not the
+        // user's input. run.continuation is a host event (not in the persisted
+        // trace), so on replay we detect the continuation by its goal preamble
+        // and render a divider instead of a fake user bubble.
+        if (payload.goal.startsWith(TODO_CONTINUATION_GOAL_PREFIX)) {
+          this.store.appendNotice("continuing — todos unfinished");
+        } else {
+          this.store.appendUserMessage(payload.goal);
+        }
         injectedForRun.add(runKey);
       }
       if (STREAM_ONLY.has(ev.type)) continue;
@@ -395,12 +410,34 @@ export class RunController {
       });
     });
 
+    client.on("run.continuation", (msg) => {
+      // The todo supervisor superseded the prior run with a fresh one because
+      // todos were still open. The turn is NOT over: re-point at the new runId
+      // and keep "running" (the host suppresses the intermediate run.completed,
+      // so no terminal arrives until the chain truly ends). Show a calm divider.
+      this.activeRunId = msg.payload.runId;
+      this.cancelRequested = false;
+      this.store.setStatus("running");
+      this.store.appendNotice(
+        `continuing (#${msg.payload.continuationCount}) — todos unfinished`,
+      );
+    });
+
     client.on("run.completed", (msg) => {
       this.activeRunId = null;
       this.store.setStopReason(msg.payload.stopReason ?? null);
-      this.store.setStatus(
-        msg.payload.stopReason === "manual_cancelled" ? "error" : "done",
-      );
+      const handoff = msg.payload.todoHandoff;
+      if (handoff) {
+        // The chain stopped with todos still open (limit/stalled/non-resumable).
+        // Surface it distinctly from a clean finish so the user knows work
+        // remains and why it was handed back.
+        this.store.appendNotice(`handed back: ${handoff.message}`);
+        this.store.setStatus("done");
+      } else {
+        this.store.setStatus(
+          msg.payload.stopReason === "manual_cancelled" ? "error" : "done",
+        );
+      }
     });
 
     client.on("run.failed", (msg) => {

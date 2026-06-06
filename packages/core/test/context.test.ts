@@ -300,7 +300,6 @@ describe("DefaultPromptBuilder", () => {
       "session",
       "turn",
       "turn",
-      "turn",
     ]);
     expect(messages.map((message) => message.role)).toEqual([
       "system",
@@ -311,7 +310,6 @@ describe("DefaultPromptBuilder", () => {
       "system",
       "user",
       "user",
-      "user",
     ]);
     expect(messages[0]?.metadata).toMatchObject({ layer: "resident" });
     expect(messages[5]?.metadata).toMatchObject({
@@ -320,29 +318,24 @@ describe("DefaultPromptBuilder", () => {
       sectionName: "tool_descriptors",
       cachePolicy: "session",
     });
-    expect(messages[6]?.metadata).toMatchObject({ layer: "runtime" });
+    expect(messages[6]?.metadata).toMatchObject({
+      layer: "runtime",
+      kind: "current_request",
+    });
     expect(messages[7]?.metadata).toMatchObject({
       layer: "working",
       kind: "selected_context",
     });
-    expect(messages[8]?.metadata).toMatchObject({
-      layer: "runtime",
-      sectionName: "runtime_progress",
-      cachePolicy: "volatile",
-    });
     expect(messages[0]?.content).toBe("Stable rules.");
     expect(messages[1]?.content).toContain("Tool use contract:");
-    expect(messages[5]?.content).toContain("Available eager tools:");
-    expect(messages[5]?.content).toContain("requiresApproval: false");
-    expect(messages[5]?.content).toContain("outputSchema:");
-    expect(messages[5]?.content).toContain("governance:");
-    // runtime_state no longer carries the per-step counter; the goal/run-state
-    // framing stays in the cache-stable prefix while Step: N trails the
-    // append-only selected_context as its own volatile block.
-    expect(messages[6]?.content).toContain("Goal:");
-    expect(messages[6]?.content).not.toContain("Step:");
+    expect(messages[5]?.content).toContain("Available tools:");
+    expect(messages[5]?.content).toContain("- echo (text?:string): Echo text.");
+    expect(messages[5]?.content).not.toContain("requiresApproval: false");
+    expect(messages[5]?.content).not.toContain("inputSchema:");
+    expect(messages[5]?.content).not.toContain("outputSchema:");
+    expect(messages[5]?.content).not.toContain("governance:");
+    expect(messages[6]?.content).toBe("User request:\ninspect repo");
     expect(messages[7]?.content).toContain("selected context");
-    expect(messages[8]?.content).toBe("Step: 3");
     expect(messages.map((message) => message.metadata)).toMatchObject([
       {
         layer: "resident",
@@ -376,18 +369,13 @@ describe("DefaultPromptBuilder", () => {
       },
       {
         layer: "runtime",
-        sectionName: "runtime_state",
+        sectionName: "current_request",
         cachePolicy: "turn",
       },
       {
         layer: "working",
         sectionName: "selected_context",
         cachePolicy: "turn",
-      },
-      {
-        layer: "runtime",
-        sectionName: "runtime_progress",
-        cachePolicy: "volatile",
       },
     ]);
   });
@@ -401,14 +389,123 @@ describe("DefaultPromptBuilder", () => {
       context: [],
     });
 
-    // resident(5) + tool_descriptors(1) + runtime_state(1) + runtime_progress(1);
+    // resident(5) + tool_descriptors(1) + current_request(1);
     // selected_context is omitted (no context), capability_delta omitted (no
-    // deferred tools).
-    expect(messages).toHaveLength(8);
-    expect(messages[5]?.content).toBe("Available eager tools: none.");
-    expect(messages[6]?.metadata?.sectionName).toBe("runtime_state");
-    expect(messages[7]?.metadata?.sectionName).toBe("runtime_progress");
-    expect(messages[7]?.content).toBe("Step: 1");
+    // deferred tools), and long-term goal/progress are opt-in.
+    expect(messages).toHaveLength(7);
+    expect(messages[5]?.content).toBe("Available tools: none.");
+    expect(messages[6]).toMatchObject({
+      role: "user",
+      content: "User request:\ninspect repo",
+      metadata: {
+        sectionName: "current_request",
+        cachePolicy: "turn",
+      },
+    });
+  });
+
+  it("can omit current_request when an embedder supplies the user turn elsewhere", async () => {
+    const builder = new DefaultPromptBuilder({ includeCurrentRequest: false });
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 1,
+      tools: [],
+      context: [],
+    });
+
+    expect(
+      messages.some(
+        (message) => message.metadata?.sectionName === "current_request",
+      ),
+    ).toBe(false);
+  });
+
+  it("renders skill_index as a session-cached section outside selected_context", async () => {
+    const builder = new DefaultPromptBuilder();
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 1,
+      tools: [],
+      context: [
+        skillIndexContext([
+          {
+            name: "spark-tester",
+            description: "Run focused SparkWright test workflows.",
+            sourcePath: "/repo/skills/spark-tester/SKILL.md",
+            contentHash: "hash-test",
+          },
+        ]),
+        userContext("current working note"),
+      ],
+    });
+
+    const skillIndex = messages.find(
+      (message) => message.metadata?.sectionName === "skill_index",
+    );
+    const selected = messages.find(
+      (message) => message.metadata?.sectionName === "selected_context",
+    );
+
+    expect(skillIndex).toMatchObject({
+      role: "system",
+      stability: "session",
+      metadata: {
+        layer: "skill_index",
+        kind: "skill_index",
+        cachePolicy: "session",
+      },
+    });
+    expect(skillIndex?.content).toContain("Skill index:");
+    expect(skillIndex?.content).toContain(
+      "- spark-tester: Run focused SparkWright test workflows.",
+    );
+    expect(skillIndex?.content).not.toContain("sourcePath");
+    expect(skillIndex?.content).not.toContain("contentHash");
+    expect(selected?.content).toContain("current working note");
+    expect(selected?.content).not.toContain("spark-tester");
+  });
+
+  it("renders the run goal only when explicitly enabled", async () => {
+    const builder = new DefaultPromptBuilder({ includeGoal: true });
+    const messages = await builder.build({
+      run: { ...createRunRecord(), goal: "ship the feature" },
+      step: 1,
+      tools: [],
+      context: [],
+    });
+
+    const goal = messages.find(
+      (message) => message.metadata?.sectionName === "run_goal",
+    );
+    expect(goal).toMatchObject({
+      role: "user",
+      content: "Goal:\nship the feature",
+      stability: "session",
+      metadata: {
+        layer: "runtime",
+        cachePolicy: "session",
+      },
+    });
+    expect(goal?.content).not.toContain("Run state:");
+  });
+
+  it("renders the step ceiling in runtime_progress only when explicitly enabled", async () => {
+    const builder = new DefaultPromptBuilder({ includeRuntimeProgress: true });
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 5,
+      maxSteps: 8,
+      tools: [],
+      context: [],
+    });
+
+    const progress = messages.find(
+      (message) => message.metadata?.sectionName === "runtime_progress",
+    );
+    expect(progress?.metadata?.sectionName).toBe("runtime_progress");
+    // Surfacing the ceiling lets the model see remaining budget instead of
+    // guessing it has run out — the cause of premature give-ups.
+    expect(progress?.content).toBe("Step: 5 / 8");
   });
 
   it("returns synchronously when all sections are synchronous", () => {
@@ -464,10 +561,9 @@ describe("DefaultPromptBuilder", () => {
       "output_contract",
       "tool_descriptors",
       "before_runtime",
-      "runtime_state",
+      "current_request",
       "selected_context",
       "after_context",
-      "runtime_progress",
     ]);
     expect(messages[6]).toMatchObject({
       role: "system",
@@ -570,7 +666,7 @@ describe("DefaultPromptBuilder", () => {
       ["memory_note"],
     ]);
     expect(compiled.turnBlocks.map((block) => block.sectionNames)).toEqual([
-      ["runtime_state", "selected_context"],
+      ["current_request", "selected_context"],
     ]);
   });
 
@@ -581,8 +677,8 @@ describe("DefaultPromptBuilder", () => {
     const run = createRunRecord();
     const tools = [toolDescriptor()];
 
-    // Append-only growth: step N's context is a prefix of step N+1's, the goal
-    // and run state are unchanged. This is the normal (non-compaction) path.
+    // Append-only growth: step N's context is a prefix of step N+1's. This is
+    // the normal (non-compaction) path.
     const buildStep = (step: number, context: ContextItem[]) =>
       builder.build({ run, step, tools, context });
 
@@ -614,18 +710,15 @@ describe("DefaultPromptBuilder", () => {
     expect(p2.startsWith(p1)).toBe(true);
     expect(p3.startsWith(p2)).toBe(true);
 
-    // The stable system prefix + runtime_state framing are byte-identical (the
-    // per-step counter is NOT in there — it trails as runtime_progress).
+    // The stable system prefix before selected_context is byte-identical.
     const beforeContext = (messages: typeof m1) =>
-      prefixThrough(messages, "runtime_state");
+      prefixThrough(messages, "tool_descriptors");
     expect(beforeContext(m1)).toBe(beforeContext(m2));
     expect(beforeContext(m2)).toBe(beforeContext(m3));
 
-    // The only per-step churn is the trailing volatile counter.
-    expect(m1.at(-1)?.content).toBe("Step: 1");
-    expect(m2.at(-1)?.content).toBe("Step: 2");
-    expect(m3.at(-1)?.content).toBe("Step: 3");
-    expect(m1.at(-1)?.metadata?.["sectionName"]).toBe("runtime_progress");
+    expect(
+      m1.some((msg) => msg.metadata?.["sectionName"] === "runtime_progress"),
+    ).toBe(false);
   });
 
   it("builds custom sections in order with cache metadata", async () => {
@@ -800,15 +893,15 @@ describe("createAppPromptSection", () => {
 });
 
 describe("createEnvironmentSection", () => {
-  it("renders an env block at the tail with turn cache policy", () => {
+  it("renders an env block as a session-cached runtime section", () => {
     const section = createEnvironmentSection({
       cwd: "/repo",
       platform: "darwin",
       extra: { shell: "zsh" },
     });
-    expect(section.cachePolicy).toBe("turn");
+    expect(section.cachePolicy).toBe("session");
     expect(section.role).toBe("user");
-    expect((section.order ?? 0) > 100).toBe(true);
+    expect(section.order).toBe(90);
 
     const content = section.build({
       run: createRunRecord(),
@@ -1065,6 +1158,24 @@ function summaryContext(content: string): ContextItem {
     },
     content,
     metadata: {},
+  };
+}
+
+function skillIndexContext(
+  skills: Array<Record<string, unknown>>,
+): ContextItem {
+  return {
+    id: createContextItemId(),
+    type: "summary",
+    source: {
+      kind: "system",
+      uri: "skill_index",
+    },
+    content: JSON.stringify({ skills }),
+    metadata: {
+      layer: "skill_index",
+      stability: "session",
+    },
   };
 }
 

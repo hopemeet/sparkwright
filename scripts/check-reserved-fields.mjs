@@ -59,6 +59,7 @@ const PROPERTY_IGNORE = new Set([
   "accent2",
   "allowed",
   "approval.requested",
+  "run.continuation",
   "argCount",
   "artifactRefs",
   "audit",

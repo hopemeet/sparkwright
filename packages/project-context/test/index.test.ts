@@ -220,11 +220,11 @@ describe("buildAgentPromptBuilder", () => {
       b.sectionNames.includes("project_instructions"),
     );
     expect(projectBlock?.cachePolicy).toBe("session");
-    // Env sits in a turn block at the tail.
+    // Env is session-cached; cwd/platform/session/date are stable within a run.
     const envBlock = blocks.blocks.find((b) =>
       b.sectionNames.includes("environment"),
     );
-    expect(envBlock?.cachePolicy).toBe("turn");
+    expect(envBlock?.cachePolicy).toBe("session");
   });
 
   it("surfaces the session id in the env block so the agent knows where it is", async () => {
