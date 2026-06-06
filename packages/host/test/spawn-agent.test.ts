@@ -458,4 +458,79 @@ describe("host spawn_agent wiring", () => {
       });
     }
   });
+
+  // Models sometimes feed a prior child's derived id (e.g. `dynamic_inspector`)
+  // back in as the new `role`. The id derivation must collapse the redundant
+  // prefix instead of compounding it into `dynamic_dynamic_inspector`.
+  it("does not double the dynamic_ prefix when role already carries it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-prefix-"));
+    try {
+      const sessionId = "session_spawn_prefix";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      const childModel: ModelAdapter = {
+        async complete() {
+          return { message: "done" };
+        },
+      };
+
+      const noopTool = defineTool({
+        name: "glob_paths",
+        description: "Fake glob for the test.",
+        inputSchema: { type: "object", properties: {} },
+        async execute() {
+          return { paths: [] };
+        },
+      });
+
+      const parent = createRun({
+        goal: "spawn with a pre-prefixed role",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        maxSteps: 1,
+        runStore: childRunStoreFactory("main"),
+      });
+
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [noopTool],
+        childRunStoreFactory,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "noop",
+          role: "dynamic_inspector",
+          prompt: "Answer immediately.",
+          allowedTools: ["glob_paths"],
+        },
+        { run: parent.record } as never,
+      )) as { agentId: string };
+
+      expect(output.agentId).toBe("dynamic_inspector");
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
 });

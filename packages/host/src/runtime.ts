@@ -1211,7 +1211,14 @@ export function createDynamicSpawnAgentTool(input: {
         );
       }
 
-      const agentId = `dynamic_${sanitizeToolSegment(parsed.role)}`;
+      // Strip any leading `dynamic_` the role already carries so a re-used
+      // agent id (models sometimes pass a prior child's `dynamic_<role>` id
+      // back in as the new role) does not compound into `dynamic_dynamic_*`.
+      const roleSegment = sanitizeToolSegment(parsed.role).replace(
+        /^(?:dynamic_)+/,
+        "",
+      );
+      const agentId = `dynamic_${roleSegment || "agent"}`;
       const profile: AgentProfile = {
         id: agentId,
         name: parsed.role,
