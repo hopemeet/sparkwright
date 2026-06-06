@@ -109,7 +109,7 @@ The helper uses progressive loading:
 2. Create one `skill_index` context item listing discovered Skills.
 3. Select matching Skills with a deterministic goal matcher.
 4. Load selected Skill bodies into additional context items.
-5. Optionally expose a governed `skill.load` tool for on-demand body loading.
+5. Optionally expose a governed `skill_load` tool for on-demand body loading.
 6. Return metadata for selected Skills so callers can store it on the run.
 
 This keeps Skill behavior outside the core run loop while still making loaded Skills visible to context assembly and trace metadata.

@@ -922,7 +922,7 @@ NODE
 Expected result:
 
 - `indexed`, `loaded`, `matched`, and `capabilities` include `code-reviewer`.
-- `toolNames` includes `skill.load`.
+- `toolNames` includes `skill_load`.
 - `discoveryErrors` is 0.
 
 ## MCP Adapter

@@ -313,7 +313,7 @@ export class HostRuntime {
             allowedSkills: skillConfig.allowedSkills,
             deniedSkills: skillConfig.deniedSkills,
           },
-          // Default to on-demand loading: expose the skill.load tool and let
+          // Default to on-demand loading: expose the skill_load tool and let
           // the model pull bodies it judges relevant, rather than auto-residing
           // matcher-selected skills (which both pollutes context and double-
           // injects when the loader tool is also on). A config can opt back into

@@ -26,7 +26,7 @@ into a release.
 - Skill manifests must include `name` and `description`.
 - Unknown frontmatter is allowed for portability.
 - Skill scripts must not execute as a side effect of discovery.
-- `skill.load` returns a tool observation; use selected resident context for
+- `skill_load` returns a tool observation; use selected resident context for
   instructions that must not be summarized away.
 
 ### `@sparkwright/mcp-adapter`

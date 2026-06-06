@@ -305,7 +305,7 @@ is assembled. `includeLoaderTool` exposes progressive loading as a governed
 tool; `loadSelectedSkills` controls whether matched Skill bodies are placed in
 resident run context. The host defaults to **on-demand** loading
 (`includeLoaderTool: true`, `loadSelectedSkills: false`): only a Skill index is
-resident up front, and the model pulls bodies it judges relevant via `skill.load`.
+resident up front, and the model pulls bodies it judges relevant via `skill_load`.
 Set `loadSelectedSkills: true` to opt into auto-resident matched-Skill bodies.
 
 MCP servers are prepared by the host when a run starts. Disabled servers remain

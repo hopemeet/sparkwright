@@ -61,7 +61,7 @@ await prepareSkillsForRun({
 });
 ```
 
-Index-only mode can expose a governed `skill.load` tool:
+Index-only mode can expose a governed `skill_load` tool:
 
 ```ts
 await prepareSkillsForRun({
@@ -72,7 +72,7 @@ await prepareSkillsForRun({
 });
 ```
 
-`skill.load` returns the Skill body as a normal tool observation. That is useful
+`skill_load` returns the Skill body as a normal tool observation. That is useful
 for on-demand progressive loading, but it is not identical to resident context:
 the observation formatter may summarize or truncate long output. Use default
 loading when the selected Skill must be stable, high-priority context.

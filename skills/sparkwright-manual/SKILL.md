@@ -14,7 +14,7 @@ configuration, capabilities, operations, troubleshooting, or contributor work.
 
 This skill is an operational index. Its references are plain files: open the one
 you need with a file-reading tool (e.g. read_file) using the full paths listed
-under `<skill_files>` in the skill.load result. Do NOT call skill.load again —
+under `<skill_files>` in the skill_load result. Do NOT call skill_load again —
 this skill's body is already in context. Read only the reference needed for the
 current task, not every reference by default.
 

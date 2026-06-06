@@ -115,11 +115,11 @@
             },
             "includeLoaderTool": {
               "type": "boolean",
-              "description": "Register the progressive skill.load tool so the model can load Skill bodies on demand. The host defaults this to true."
+              "description": "Register the progressive skill_load tool so the model can load Skill bodies on demand. The host defaults this to true."
             },
             "loadSelectedSkills": {
               "type": "boolean",
-              "description": "Load matcher-selected Skill bodies into resident run context up front. The host defaults this to false (on-demand loading via skill.load); set true for auto-resident bodies."
+              "description": "Load matcher-selected Skill bodies into resident run context up front. The host defaults this to false (on-demand loading via skill_load); set true for auto-resident bodies."
             },
             "maxSelectedSkills": {
               "type": "integer",
@@ -129,7 +129,7 @@
             "resourceFileLimit": {
               "type": "integer",
               "minimum": 0,
-              "description": "Maximum Skill resource files exposed by the skill.load tool."
+              "description": "Maximum Skill resource files exposed by the skill_load tool."
             },
             "allowedSkills": {
               "type": "array",

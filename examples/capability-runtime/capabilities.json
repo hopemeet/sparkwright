@@ -24,7 +24,7 @@
   },
   "agent": {
     "id": "reviewer",
-    "allowedTools": ["inspect_diff", "skill.load", "mcp_*"],
+    "allowedTools": ["inspect_diff", "skill_load", "mcp_*"],
     "maxSteps": 4,
     "runBudget": {
       "maxToolCalls": 4,

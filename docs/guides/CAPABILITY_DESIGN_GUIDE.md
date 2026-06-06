@@ -95,7 +95,7 @@ logs, or workspace storage.
   "id": "reviewer",
   "description": "Read-only code review helper.",
   "prompt": "Inspect changes for correctness, risk, and missing tests.",
-  "allowedTools": ["inspect_diff", "skill.load", "mcp_*"],
+  "allowedTools": ["inspect_diff", "skill_load", "mcp_*"],
   "maxSteps": 4,
   "runBudget": {
     "maxToolCalls": 4,

@@ -299,7 +299,7 @@ function EventCard(props: {
           </Box>
         );
       }
-      // A `skill.load` result carries the whole skill body in `content`, which
+      // A `skill_load` result carries the whole skill body in `content`, which
       // oneLine would truncate to a meaningless ~200-char JSON stub (hiding the
       // one fact that matters: did the body actually come back?). Render a
       // proof-of-load summary — status + body length + resource count — and
@@ -313,7 +313,7 @@ function EventCard(props: {
           return (
             <Box paddingLeft={childPad} paddingRight={1}>
               <Text color={theme.error}>
-                {`skill.load ${str(r.requestedName)} → not found`}
+                {`skill_load ${str(r.requestedName)} → not found`}
               </Text>
               {avail ? <Text dimColor>{"  available: " + avail}</Text> : null}
             </Box>
@@ -327,7 +327,7 @@ function EventCard(props: {
         return (
           <Box paddingLeft={childPad} paddingRight={1}>
             <Text color={theme.success}>
-              {`skill.load ${str(r.name)} → loaded`}
+              {`skill_load ${str(r.name)} → loaded`}
             </Text>
             <Text dimColor>
               {`  body ${bodyChars} chars · ${resources} resource file${
@@ -706,12 +706,12 @@ export function isAgentToolResult(value: unknown): boolean {
 }
 
 /**
- * Recognise a `skill.load` tool result by its shape: a record with a string
+ * Recognise a `skill_load` tool result by its shape: a record with a string
  * `status` that is either a loaded skill (`name` + string `content` body) or a
  * `not_found` miss (`requestedName`). The committed renderer has no toolCallId
  * correlation, so this structural check is how `tool.completed` knows to render
  * a proof-of-load summary instead of dumping/truncating the body-bearing
- * envelope as JSON. Returns true for a skill.load result.
+ * envelope as JSON. Returns true for a skill_load result.
  */
 export function isSkillLoadResult(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {

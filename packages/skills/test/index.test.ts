@@ -238,7 +238,7 @@ Use DingTalk only when notification is requested.
 
     expect(prepared.context).toHaveLength(1);
     expect(prepared.loadedSkills).toEqual([]);
-    expect(prepared.tools.map((tool) => tool.name)).toEqual(["skill.load"]);
+    expect(prepared.tools.map((tool) => tool.name)).toEqual(["skill_load"]);
   });
 
   it("emits skill.indexed and skill.loaded when an emitter is provided", async () => {

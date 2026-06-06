@@ -453,7 +453,7 @@ export function createSkillLoaderTool(
   }
 
   return defineTool<{ name: string }>({
-    name: "skill.load",
+    name: "skill_load",
     description:
       "Load a Sparkwright skill body ONLY when the current task clearly falls within a skill's stated scope. Match against the skill description, not just a shared keyword — do not load a skill for tasks outside its domain. Prefer answering directly when no skill clearly applies.",
     inputSchema: {
@@ -539,7 +539,7 @@ export function createSkillIndexContext(
               // recognize as relevant. Load whenever the task plausibly falls
               // in a skill's scope, and never answer about a skill's own
               // subject from memory.
-              note: "Skills are listed most-relevant-first for the current goal, but this order is only a weak hint — do not skip a skill just because it appears lower. Load a skill via skill.load whenever the task plausibly falls within its described scope. Never answer questions about a skill's own subject (e.g. this tool's own commands, flags, config, or recovery steps) from memory: load the matching skill and verify against it first, and do not invent commands or flags.",
+              note: "Skills are listed most-relevant-first for the current goal, but this order is only a weak hint — do not skip a skill just because it appears lower. Load a skill via skill_load whenever the task plausibly falls within its described scope. Never answer questions about a skill's own subject (e.g. this tool's own commands, flags, config, or recovery steps) from memory: load the matching skill and verify against it first, and do not invent commands or flags.",
             }
           : {}),
         skills: skills.map((skill) => ({
@@ -829,10 +829,10 @@ function createSkillToolOutput(
     skill.body.trim(),
     "",
     `Base directory for this skill: ${baseDirectory}`,
-    "This skill's body is now loaded — do NOT call skill.load for it again. " +
+    "This skill's body is now loaded — do NOT call skill_load for it again. " +
       "To use a reference file below, call a file-reading tool (e.g. " +
       "read_file) on its full path; that is a different action from " +
-      "skill.load. Each <file> is a full path; pass it directly. Do not " +
+      "skill_load. Each <file> is a full path; pass it directly. Do not " +
       "prepend the working directory. Any other relative path this skill " +
       "mentions resolves from the base directory above.",
     "",
