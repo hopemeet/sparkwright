@@ -1,0 +1,15 @@
+{
+  "name": "@sparkwright/example-repo-pilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/golden-path.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck",
+    "golden-path": "node dist/golden-path.js",
+    "smoke": "node dist/golden-path.js --readonly",
+    "clean": "rm -rf dist"
+  }
+}
