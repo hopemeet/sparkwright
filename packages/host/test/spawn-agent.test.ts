@@ -637,25 +637,31 @@ describe("host spawn_agent wiring", () => {
         thrown = error;
       }
 
-      // Failure is still surfaced as a thrown tool error...
+      // Failure is surfaced as a thrown tool error carrying a structured
+      // `code` + `metadata` (so `normalizeExecutionError` preserves it and the
+      // observation formatter renders metadata untruncated). The human message
+      // stays short — the salvaged data lives in metadata, not a JSON blob that
+      // the 500-char message truncation would cut off.
       expect(thrown).toBeInstanceOf(Error);
-      const message = (thrown as Error).message;
-      const json = message.slice(message.indexOf("{"));
-      const output = JSON.parse(json) as {
-        signal: string;
-        stopReason: string;
-        partialObservations?: { toolName: string; output: string }[];
+      const err = thrown as Error & {
+        code?: string;
+        metadata?: {
+          signal?: string;
+          stopReason?: string;
+          partialObservations?: { toolName: string; output: string }[];
+        };
       };
-      expect(output.signal).toBe("failed");
-      expect(output.stopReason).toBe("tool_doom_loop");
+      expect(err.code).toBe("SPAWN_AGENT_CHILD_INCOMPLETE");
+      expect(err.message).not.toContain("{");
+      expect(err.metadata?.signal).toBe("failed");
+      expect(err.metadata?.stopReason).toBe("tool_doom_loop");
 
-      // ...but the child's discovered data rides along for the parent to reuse.
-      expect(output.partialObservations).toBeDefined();
-      expect(output.partialObservations?.length).toBeGreaterThanOrEqual(1);
-      expect(output.partialObservations?.[0]?.toolName).toBe("glob_paths");
-      expect(output.partialObservations?.[0]?.output).toContain(
-        "packages/a/a.test.ts",
-      );
+      // The child's discovered data rides along in metadata for the parent.
+      const observations = err.metadata?.partialObservations;
+      expect(observations).toBeDefined();
+      expect(observations?.length).toBeGreaterThanOrEqual(1);
+      expect(observations?.[0]?.toolName).toBe("glob_paths");
+      expect(observations?.[0]?.output).toContain("packages/a/a.test.ts");
     } finally {
       await rm(root, {
         recursive: true,

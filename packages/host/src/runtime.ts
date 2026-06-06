@@ -1538,9 +1538,41 @@ export function createDynamicSpawnAgentTool(input: {
         },
       };
       if (result.signal !== "completed") {
-        throw new Error(
-          `spawn_agent child run did not complete: ${JSON.stringify(output)}`,
+        // Surface the failure as a *structured* tool error. The observation
+        // formatter truncates `error.message` to 500 chars but passes
+        // `error.metadata` through untruncated, so the salvaged data
+        // (partialObservations + why it stopped) must live in metadata — a
+        // JSON blob stuffed into the message would be cut off before the parent
+        // ever saw it. `normalizeExecutionError` preserves an attached
+        // `.code`/`.metadata` on the thrown error.
+        const childMessage =
+          typeof result.message === "string" ? result.message : undefined;
+        const failure = Object.assign(
+          new Error(
+            `spawn_agent child "${parsed.role}" did not complete (${
+              result.stopReason ?? result.signal
+            }).` +
+              (partialObservations && partialObservations.length > 0
+                ? ` ${partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
+                : ""),
+          ),
+          {
+            code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+            metadata: {
+              childRunId: spawned.childRunId,
+              agentId,
+              role: parsed.role,
+              signal: result.signal,
+              stopReason: result.stopReason,
+              stepLimitReached,
+              ...(childMessage ? { childMessage } : {}),
+              ...(partialObservations && partialObservations.length > 0
+                ? { partialObservations }
+                : {}),
+            },
+          },
         );
+        throw failure;
       }
       return output;
     },
