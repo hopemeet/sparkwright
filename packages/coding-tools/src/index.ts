@@ -23,6 +23,29 @@ const DEFAULT_EXCLUDE_GLOBS = [
   "**/node_modules/**",
 ];
 
+// Build output and tooling caches that almost always pollute file discovery
+// (a `glob_paths`/`grep_text` over source should not return the compiled
+// mirror of that source). Excluded by default; callers that genuinely need to
+// inspect generated output opt back in with `includeBuildOutput: true`.
+const DEFAULT_BUILD_OUTPUT_EXCLUDE_GLOBS = [
+  "dist/**",
+  "**/dist/**",
+  "build/**",
+  "**/build/**",
+  "coverage/**",
+  "**/coverage/**",
+];
+
+/**
+ * Compose the default exclude set. `.git`/`node_modules` are always excluded;
+ * build output is excluded unless the caller opts in with `includeBuildOutput`.
+ */
+function defaultExcludeGlobs(includeBuildOutput: boolean): string[] {
+  return includeBuildOutput
+    ? [...DEFAULT_EXCLUDE_GLOBS]
+    : [...DEFAULT_EXCLUDE_GLOBS, ...DEFAULT_BUILD_OUTPUT_EXCLUDE_GLOBS];
+}
+
 export interface CodingToolsOptions {
   /**
    * Workspace root used by discovery tools (`list_dir`, `grep_text`,
@@ -142,6 +165,8 @@ export interface GrepTextInput {
   includeHidden?: boolean;
   include?: string[];
   exclude?: string[];
+  /** Search build output (dist/build/coverage) too. Default false. */
+  includeBuildOutput?: boolean;
   maxMatches?: number;
   maxLineChars?: number;
 }
@@ -166,6 +191,8 @@ export interface GlobPathsInput {
   path?: string;
   includeHidden?: boolean;
   exclude?: string[];
+  /** Include build output (dist/build/coverage) in results. Default false. */
+  includeBuildOutput?: boolean;
   maxPaths?: number;
   offset?: number;
 }
@@ -582,7 +609,10 @@ export function createGrepTextTool(
 ): ToolDefinition<GrepTextInput, GrepTextResult> {
   return defineTool<GrepTextInput, GrepTextResult>({
     name: "grep_text",
-    description: "Search UTF-8 workspace text files for a string or regex.",
+    description:
+      "Search UTF-8 workspace text files for a string or regex. Skips .git, " +
+      "node_modules, and build output (dist/build/coverage) by default; pass " +
+      "includeBuildOutput: true to search generated files too.",
     inputSchema: {
       type: "object",
       properties: {
@@ -599,6 +629,7 @@ export function createGrepTextTool(
           type: "array",
           items: { type: "string" },
         },
+        includeBuildOutput: { type: "boolean" },
         maxMatches: { type: "integer" },
         maxLineChars: { type: "integer" },
       },
@@ -649,7 +680,10 @@ export function createGlobPathsTool(
 ): ToolDefinition<GlobPathsInput, GlobPathsResult> {
   return defineTool<GlobPathsInput, GlobPathsResult>({
     name: "glob_paths",
-    description: "Find workspace-relative paths matching glob patterns.",
+    description:
+      "Find workspace-relative paths matching glob patterns. Skips .git, " +
+      "node_modules, and build output (dist/build/coverage) by default; pass " +
+      "includeBuildOutput: true to include generated files too.",
     inputSchema: {
       type: "object",
       properties: {
@@ -665,6 +699,7 @@ export function createGlobPathsTool(
           type: "array",
           items: { type: "string" },
         },
+        includeBuildOutput: { type: "boolean" },
         maxPaths: { type: "integer" },
         offset: { type: "integer" },
       },
@@ -830,8 +865,9 @@ function normalizeGrepTextInput(
     caseSensitive: args.caseSensitive ?? true,
     includeHidden: args.includeHidden ?? options.includeHidden ?? false,
     include: readOptionalStringArray(args, "include") ?? ["**/*"],
+    includeBuildOutput: args.includeBuildOutput === true,
     exclude: [
-      ...DEFAULT_EXCLUDE_GLOBS,
+      ...defaultExcludeGlobs(args.includeBuildOutput === true),
       ...(options.exclude ?? []),
       ...(readOptionalStringArray(args, "exclude") ?? []),
     ],
@@ -874,8 +910,9 @@ function normalizeGlobPathsInput(
       workspaceRoot,
     ),
     includeHidden: args.includeHidden ?? options.includeHidden ?? false,
+    includeBuildOutput: args.includeBuildOutput === true,
     exclude: [
-      ...DEFAULT_EXCLUDE_GLOBS,
+      ...defaultExcludeGlobs(args.includeBuildOutput === true),
       ...(options.exclude ?? []),
       ...(readOptionalStringArray(args, "exclude") ?? []),
     ],

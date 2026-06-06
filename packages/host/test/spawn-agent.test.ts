@@ -458,4 +458,192 @@ describe("host spawn_agent wiring", () => {
       });
     }
   });
+
+  // Models sometimes feed a prior child's derived id (e.g. `dynamic_inspector`)
+  // back in as the new `role`. The id derivation must collapse the redundant
+  // prefix instead of compounding it into `dynamic_dynamic_inspector`.
+  it("does not double the dynamic_ prefix when role already carries it", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-prefix-"),
+    );
+    try {
+      const sessionId = "session_spawn_prefix";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      const childModel: ModelAdapter = {
+        async complete() {
+          return { message: "done" };
+        },
+      };
+
+      const noopTool = defineTool({
+        name: "glob_paths",
+        description: "Fake glob for the test.",
+        inputSchema: { type: "object", properties: {} },
+        async execute() {
+          return { paths: [] };
+        },
+      });
+
+      const parent = createRun({
+        goal: "spawn with a pre-prefixed role",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        maxSteps: 1,
+        runStore: childRunStoreFactory("main"),
+      });
+
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [noopTool],
+        childRunStoreFactory,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "noop",
+          role: "dynamic_inspector",
+          prompt: "Answer immediately.",
+          allowedTools: ["glob_paths"],
+        },
+        { run: parent.record } as never,
+      )) as { agentId: string };
+
+      expect(output.agentId).toBe("dynamic_inspector");
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
+
+  // A child that discovered data but then tripped the doom-loop guard must not
+  // hand the parent only an error string — its last successful tool results are
+  // salvaged into `partialObservations` so the parent can use the work instead
+  // of re-spawning to rediscover it.
+  it("surfaces the child's last successful tool results when the run fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-fail-"));
+    try {
+      const sessionId = "session_spawn_fail";
+      const sessionStore = new FileSessionStore({ rootDir: root });
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore,
+          sessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: root,
+            sessionId,
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "host" },
+        });
+
+      // The child glob succeeds once, then the model keeps re-issuing the exact
+      // same call until the doom-loop guard stops the run (failed, no answer).
+      const childModel: ModelAdapter = {
+        async complete() {
+          return {
+            toolCalls: [
+              { toolName: "glob_paths", arguments: { patterns: ["*"] } },
+            ],
+          };
+        },
+      };
+
+      const globTool: ToolDefinition = defineTool({
+        name: "glob_paths",
+        description: "Fake glob for the test.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            patterns: { type: "array", items: { type: "string" } },
+          },
+        },
+        async execute() {
+          return { paths: ["packages/a/a.test.ts"], totalPaths: 1 };
+        },
+      });
+
+      const parent = createRun({
+        goal: "spawn a child that will doom-loop",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        maxSteps: 1,
+        runStore: childRunStoreFactory("main"),
+      });
+
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [globTool],
+        childRunStoreFactory,
+      });
+
+      let thrown: unknown;
+      try {
+        await spawnTool.execute(
+          {
+            goal: "count test files",
+            role: "counter",
+            prompt: "Count test files with glob_paths.",
+            allowedTools: ["glob_paths"],
+            maxSteps: 5,
+          },
+          { run: parent.record } as never,
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      // Failure is still surfaced as a thrown tool error...
+      expect(thrown).toBeInstanceOf(Error);
+      const message = (thrown as Error).message;
+      const json = message.slice(message.indexOf("{"));
+      const output = JSON.parse(json) as {
+        signal: string;
+        stopReason: string;
+        partialObservations?: { toolName: string; output: string }[];
+      };
+      expect(output.signal).toBe("failed");
+      expect(output.stopReason).toBe("tool_doom_loop");
+
+      // ...but the child's discovered data rides along for the parent to reuse.
+      expect(output.partialObservations).toBeDefined();
+      expect(output.partialObservations?.length).toBeGreaterThanOrEqual(1);
+      expect(output.partialObservations?.[0]?.toolName).toBe("glob_paths");
+      expect(output.partialObservations?.[0]?.output).toContain(
+        "packages/a/a.test.ts",
+      );
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  });
 });

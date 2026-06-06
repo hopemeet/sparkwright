@@ -313,6 +313,43 @@ describe("coding tools", () => {
     });
   });
 
+  it("excludes build output by default and opts back in with includeBuildOutput", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+      "dist/index.js": "module.exports = 1;\n",
+      "packages/a/src/a.ts": "export const a = 1;\n",
+      "packages/a/dist/a.js": "module.exports = 1;\n",
+      "coverage/lcov.info": "TN:\n",
+    });
+    const tool = getTool<GlobPathsInput, GlobPathsResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "glob_paths",
+    );
+
+    // Default: dist/coverage mirrors are filtered out, leaving only source.
+    const defaultResult = await tool.execute(
+      { patterns: ["**/*.{ts,js}", "**/*.info"] },
+      ctx,
+    );
+    expect(defaultResult.paths).toEqual([
+      "packages/a/src/a.ts",
+      "src/index.ts",
+    ]);
+
+    // Opt-in: the generated mirror and coverage artifacts come back.
+    const withBuild = await tool.execute(
+      { patterns: ["**/*.{ts,js}", "**/*.info"], includeBuildOutput: true },
+      ctx,
+    );
+    expect(withBuild.paths).toEqual([
+      "coverage/lcov.info",
+      "dist/index.js",
+      "packages/a/dist/a.js",
+      "packages/a/src/a.ts",
+      "src/index.ts",
+    ]);
+  });
+
   it("treats unbalanced braces as literal characters", async () => {
     const { root, ctx } = await createWorkspace({
       "weird{name.ts": "export const value = 1;\n",
