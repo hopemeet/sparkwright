@@ -2326,8 +2326,17 @@ const CONFIG_TEMPLATE = {
 const PROJECT_CONFIG_TEMPLATE = {
   permissionMode: "default",
   capabilities: {
+    tools: {
+      disabled: ["shell"],
+      defer: ["mcp_*"],
+    },
     skills: {
-      roots: ["../skills"],
+      includeLoaderTool: true,
+      loadSelectedSkills: false,
+      resourceFileLimit: 8,
+    },
+    mcp: {
+      servers: [],
     },
   },
 };
