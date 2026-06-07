@@ -96,6 +96,10 @@ Current top-level CLI groups include:
 Use `npm run cli -- <command>` during development. Use
 `npm exec sparkwright -- <command>` for the local workspace package after build.
 
+`run resume <run-id>` uses the host by default (`cli -> sdk-node -> host`).
+Use `--direct-core` only for diagnostics or core regression coverage; it keeps
+checkpoint lookup and resume in the CLI process.
+
 ## Trace Commands
 
 ```bash

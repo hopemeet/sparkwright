@@ -249,6 +249,11 @@ If the prior run cannot be found, the host responds with `run_not_found`; if a
 specified session cannot be found or does not contain the run, it responds with
 `run_not_found`.
 
+Session-scoped runs resume into their existing session. Legacy
+`.sparkwright/runs/<runId>` directories do not carry session identity, so a
+host-owned resume attaches them to a newly-created session and returns that
+`sessionId`.
+
 ### `run.cancel`
 
 Cancel a running run.

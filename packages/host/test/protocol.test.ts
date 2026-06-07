@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
@@ -68,6 +68,50 @@ function createConnectionPair(): {
 }
 
 const TIMESTAMP = "2026-05-24T12:00:00.000Z";
+
+function checkpointJson(input: { runId: string; goal: string }) {
+  return JSON.stringify(
+    {
+      schemaVersion: "run-checkpoint.v1",
+      run: {
+        id: input.runId,
+        goal: input.goal,
+        state: "running",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:30.000Z",
+        metadata: { tag: "host-resume-test" },
+      },
+      loop: {
+        step: 1,
+        turnCount: 0,
+        context: [],
+        repeatedToolCallCount: 0,
+        transition: { reason: "next_turn" },
+      },
+      model: { activeIndex: 0, fallbackCount: 0 },
+      recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
+      budget: {
+        usage: {
+          elapsedMs: 0,
+          modelCalls: 0,
+          toolCalls: 0,
+          tokens: 0,
+          costUsd: 0,
+        },
+      },
+      queues: {
+        commandCount: 0,
+        pendingPrefetch: false,
+        pendingSummary: false,
+      },
+      resumability: { complete: true, reasons: [] },
+      createdAt: "2026-01-01T00:00:30.500Z",
+      metadata: { snapshotReason: "test" },
+    },
+    null,
+    2,
+  );
+}
 
 describe("host protocol", () => {
   it("rejects requests before handshake", async () => {
@@ -314,6 +358,91 @@ describe("host protocol", () => {
                 "run.resumed",
           ),
       ).toBe(true);
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes a legacy run directory into a new host-owned session", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-resume-legacy-"),
+    );
+    const runId = "run_resume_legacy_test";
+    const runDir = join(workspace, ".sparkwright", "runs", runId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await writeFile(
+      join(runDir, "checkpoint.json"),
+      checkpointJson({ runId, goal: "resume legacy checkpoint" }),
+      "utf8",
+    );
+
+    const pair = createConnectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "resume_legacy",
+        kind: "run.resume",
+        timestamp: TIMESTAMP,
+        payload: {
+          runId,
+          model: "deterministic",
+          permissionMode: "default",
+        },
+      });
+
+      const resp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "resume_legacy",
+      );
+      expect(resp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: { runId, resumedFromRunId: runId },
+      });
+      if (
+        resp.envelope !== "response" ||
+        !resp.ok ||
+        typeof resp.result.sessionId !== "string"
+      ) {
+        throw new Error("Expected run.resume to return a new sessionId.");
+      }
+      expect(resp.result.sessionId).toMatch(/^session_/);
+      expect(resp.result.sessionId).not.toBe(runId);
+
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      const sessionJson = await readFile(
+        join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          resp.result.sessionId,
+          "session.json",
+        ),
+        "utf8",
+      );
+      expect(JSON.parse(sessionJson)).toMatchObject({
+        id: resp.result.sessionId,
+        runIds: [runId],
+      });
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });

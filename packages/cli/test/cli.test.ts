@@ -14,20 +14,26 @@ import { runCli } from "../src/cli.js";
 describe("runCli", () => {
   let tempDirs: string[] = [];
   let prevXdg: string | undefined;
+  let prevHostSource: string | undefined;
 
   beforeEach(async () => {
     tempDirs = [];
     // Isolate the shared config loader from any real ~/.config/sparkwright so
     // tests that rely on process.env can't pick up the developer's own config.
     prevXdg = process.env.XDG_CONFIG_HOME;
+    prevHostSource = process.env.SPARKWRIGHT_HOST_SOURCE;
     const xdg = await mkdtemp(join(tmpdir(), "sparkwright-xdg-"));
     tempDirs.push(xdg);
     process.env.XDG_CONFIG_HOME = xdg;
+    process.env.SPARKWRIGHT_HOST_SOURCE = "1";
   });
 
   afterEach(async () => {
     if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = prevXdg;
+    if (prevHostSource === undefined)
+      delete process.env.SPARKWRIGHT_HOST_SOURCE;
+    else process.env.SPARKWRIGHT_HOST_SOURCE = prevHostSource;
     await Promise.all(
       tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
     );
@@ -1103,6 +1109,55 @@ describe("runCli", () => {
 
     expect(res.exitCode).toBe(1);
     expect(output.stderrText()).toContain("Could not find run directory");
+  });
+
+  it("run resume defaults to the host while --direct-core bypasses it", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const brokenHostEnv = {
+      ...process.env,
+      SPARKWRIGHT_HOST_BIN: join(workspace, "missing-host.js"),
+    };
+
+    const hostOutput = createOutputCapture();
+    const hostResume = await runCli(
+      ["run", "resume", "run_does_not_exist", "--workspace", workspace],
+      {
+        env: brokenHostEnv,
+        io: {
+          stdout: hostOutput.stdout,
+          stderr: hostOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(hostResume.exitCode).toBe(1);
+    expect(hostOutput.stderrText()).toMatch(
+      /Cannot find module|transport closed/,
+    );
+
+    const directOutput = createOutputCapture();
+    const directResume = await runCli(
+      [
+        "run",
+        "resume",
+        "run_does_not_exist",
+        "--direct-core",
+        "--workspace",
+        workspace,
+      ],
+      {
+        env: brokenHostEnv,
+        io: {
+          stdout: directOutput.stdout,
+          stderr: directOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(directResume.exitCode).toBe(1);
+    expect(directOutput.stderrText()).toContain("Could not find run directory");
   });
 
   it("run resume --from-trace reconstructs a checkpoint and rejects terminal runs", async () => {

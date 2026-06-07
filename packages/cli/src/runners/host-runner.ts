@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type {
   ApprovalResolver,
   PermissionMode,
@@ -106,9 +106,9 @@ async function runHostLifecycle(
     void (async () => {
       client = await createClient({
         spawn: {
-          command: process.execPath,
+          command: resolveHostCommand(env),
           args: [
-            resolveHostBin(),
+            ...resolveHostArgs(env),
             "--stdio",
             "--workspace",
             workspaceRoot,
@@ -282,8 +282,24 @@ function formatHostError(error: unknown): string {
   return String(error);
 }
 
+function resolveHostCommand(env: Record<string, string | undefined>): string {
+  return env.SPARKWRIGHT_HOST_COMMAND ?? process.execPath;
+}
+
+function resolveHostArgs(env: Record<string, string | undefined>): string[] {
+  if (env.SPARKWRIGHT_HOST_BIN) return [env.SPARKWRIGHT_HOST_BIN];
+  if (env.SPARKWRIGHT_HOST_SOURCE === "1") {
+    return [require.resolve("tsx/cli"), resolveHostSourceBin()];
+  }
+  return [resolveHostBin()];
+}
+
 function resolveHostBin(): string {
   return require.resolve("@sparkwright/host/dist/bin.js");
+}
+
+function resolveHostSourceBin(): string {
+  return join(dirname(dirname(resolveHostBin())), "src", "bin.ts");
 }
 
 function summarizeWorkspaceMutations(input: {
