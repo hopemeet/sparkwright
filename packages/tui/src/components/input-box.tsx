@@ -460,9 +460,12 @@ export function InputBox(props: {
         }
       }
       if (slash) {
-        const cmd = props.registry.resolve(trimmed.slice(1));
+        const parsed = parseSlashCommand(trimmed);
+        const cmd = props.registry.resolve(parsed.name);
         if (cmd) {
-          applySlashPick(cmd);
+          props.onCommand(cmd, parsed.rest);
+          setValue("");
+          setCursor(0);
           return;
         }
       }
@@ -786,11 +789,16 @@ function SlashDropdown(props: {
   suggestions: Command[];
   cursor: number;
 }): React.ReactElement {
-  const visible = props.suggestions.slice(0, 6);
+  const windowSize = 6;
+  const { start, visible } = suggestionWindow(
+    props.suggestions,
+    props.cursor,
+    windowSize,
+  );
   return (
     <Box flexDirection="column" paddingX={1}>
       {visible.map((cmd, i) => {
-        const selected = i === props.cursor;
+        const selected = start + i === props.cursor;
         return (
           <Box key={cmd.name}>
             <Text color={selected ? "magenta" : undefined}>
@@ -803,9 +811,32 @@ function SlashDropdown(props: {
           </Box>
         );
       })}
+      {props.suggestions.length > windowSize ? (
+        <Text dimColor>
+          {start + 1}-{Math.min(props.suggestions.length, start + windowSize)}{" "}
+          of {props.suggestions.length}
+        </Text>
+      ) : null}
       <Text dimColor>↑/↓ select · tab/→ complete · enter run</Text>
     </Box>
   );
+}
+
+export function suggestionWindow<T>(
+  items: readonly T[],
+  cursor: number,
+  windowSize: number,
+): { start: number; visible: readonly T[] } {
+  const size = Math.max(1, windowSize);
+  const safeCursor = Math.max(
+    0,
+    Math.min(cursor, Math.max(0, items.length - 1)),
+  );
+  const start = Math.max(
+    0,
+    Math.min(items.length - size, safeCursor - Math.floor(size / 2)),
+  );
+  return { start, visible: items.slice(start, start + size) };
 }
 
 function ReverseSearchOverlay(props: {
@@ -877,6 +908,16 @@ function MentionDropdown(props: {
 
 function detectSlash(value: string): { query: string } | null {
   return value.startsWith("/") ? { query: value.slice(1) } : null;
+}
+
+function parseSlashCommand(value: string): { name: string; rest: string } {
+  const query = value.trim().replace(/^\/+/u, "");
+  const space = query.search(/\s/u);
+  if (space === -1) return { name: query, rest: "" };
+  return {
+    name: query.slice(0, space),
+    rest: query.slice(space + 1).trim(),
+  };
 }
 
 /**

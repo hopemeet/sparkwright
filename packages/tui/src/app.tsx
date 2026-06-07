@@ -28,6 +28,7 @@ import { resolveTheme, THEMES, type Theme } from "./lib/theme.js";
 import { StashDialog } from "./components/stash-dialog.js";
 import { ModelDialog } from "./components/model-dialog.js";
 import { TimelineDialog } from "./components/timeline-dialog.js";
+import { CreateCapabilityDialog } from "./components/create-capability-dialog.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
@@ -40,6 +41,11 @@ import { copyToClipboard } from "./lib/clipboard.js";
 import { lastAssistantMessage } from "./lib/transcript.js";
 import { AttentionManager } from "./lib/attention.js";
 import { CommandRegistry } from "./lib/commands.js";
+import {
+  createCapability,
+  type CreateCapabilityDraft,
+  type CreateCapabilityKind,
+} from "./lib/create-capability.js";
 import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
 import {
   loadProjectCommands,
@@ -90,7 +96,7 @@ interface Resolved {
   mouse: boolean;
 }
 
-type CapabilityView = "all" | "tools" | "skills" | "agents" | "cron";
+type CapabilityView = "all" | "tools" | "skills" | "agents" | "mcp" | "cron";
 
 function resolveConfig(
   loaded: LoadedTuiConfig,
@@ -439,6 +445,43 @@ function AppReady(
     if (snapshot) setCapabilitySnapshot(snapshot);
   }
 
+  function openCreateCapability(rest = ""): void {
+    const kind = createKindFromRest(rest);
+    if (rest.trim() && !kind) {
+      toasts.push({
+        variant: "error",
+        title: "create",
+        message: "use /create skill|agent|cron|command|mcp",
+      });
+      return;
+    }
+    layers.push("create", { kind });
+  }
+
+  async function handleCreateCapability(
+    draft: CreateCapabilityDraft,
+  ): Promise<void> {
+    try {
+      const result = await createCapability(draft, resolved.workspaceRoot);
+      layers.pop("create");
+      toasts.push({
+        variant: "success",
+        title: "created",
+        message: result.path
+          ? `${result.message} · ${result.path}`
+          : result.message,
+      });
+      const snapshot = await controller.inspectCapabilities();
+      if (snapshot) setCapabilitySnapshot(snapshot);
+    } catch (error) {
+      toasts.push({
+        variant: "error",
+        title: "create failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // File-authored slash commands discovered from .sparkwright/command/*.md.
   // Loaded async after mount; the registry memo below folds them in.
   const [projectCommands, setProjectCommands] = useState<
@@ -557,36 +600,53 @@ function AppReady(
     });
     reg.register({
       name: "capabilities",
-      title: "Inspect host capabilities",
-      description: "Show host-reported tools, Skills, MCP, and agents.",
+      title: "Browse available capabilities",
+      description:
+        "Discover tools, Skills, MCP servers, agents, and cron support.",
       category: "view",
       aliases: ["caps"],
       run: () => void openCapabilities("all"),
     });
     reg.register({
+      name: "create",
+      title: "Create capability",
+      description:
+        "Create a Skill, agent, cron job, slash command, or MCP server.",
+      category: "capability",
+      run: () => openCreateCapability(),
+      runRaw: (rest) => openCreateCapability(rest),
+    });
+    reg.register({
       name: "tools",
-      title: "Inspect tools",
+      title: "Browse tools",
       description: "Show prepared tools, risk, and origin.",
       category: "view",
       run: () => void openCapabilities("tools"),
     });
     reg.register({
       name: "skills",
-      title: "Inspect skills",
-      description: "Show indexed and loaded Skills.",
+      title: "Browse Skills",
+      description: "Show Skills SparkWright can discover or load.",
       category: "view",
       run: () => void openCapabilities("skills"),
     });
     reg.register({
       name: "agents",
-      title: "Inspect agents",
-      description: "Show configured primary and child agent profiles.",
+      title: "Browse agents",
+      description: "Show configured agent profiles.",
       category: "view",
       run: () => void openCapabilities("agents"),
     });
     reg.register({
+      name: "mcp",
+      title: "Browse MCP servers",
+      description: "Show configured MCP servers and their exposed tools.",
+      category: "view",
+      run: () => void openCapabilities("mcp"),
+    });
+    reg.register({
       name: "cron",
-      title: "Inspect cron capability",
+      title: "Browse cron support",
       description: "Show cron-related tools and capability status.",
       category: "view",
       run: () => void openCapabilities("cron"),
@@ -979,6 +1039,7 @@ function AppReady(
               setRenameTarget(null);
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
+            onCreateCapability={(draft) => void handleCreateCapability(draft)}
           />
         </Box>
       </ThemeProvider>
@@ -1175,6 +1236,7 @@ function AppReady(
               setRenameTarget(null);
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
+            onCreateCapability={(draft) => void handleCreateCapability(draft)}
           />
         ) : isRawModeSupported ? (
           <InputBox
@@ -1185,7 +1247,7 @@ function AppReady(
             placeholder={
               state.status === "running" || state.status === "awaiting-approval"
                 ? "running — type to queue the next goal (esc cancels run)"
-                : 'type a goal, or "/" to browse commands'
+                : 'type a goal, /capabilities for available capabilities, or "/" for commands'
             }
             workspaceRoot={resolved.workspaceRoot}
             registry={registry}
@@ -1219,19 +1281,27 @@ function AppReady(
         )}
 
         <Box paddingX={1}>
-          <Text dimColor>
-            enter run · \↵ newline · / commands · @ files ·{" "}
-            {formatBinding(resolved.bindings["history.search"])} search ·{" "}
-            {formatBinding(resolved.bindings["palette.open"])} palette ·{" "}
-            {formatBinding(resolved.bindings["events.open"])} events ·{" "}
-            {formatBinding(resolved.bindings["quick.switch"])} switch ·{" "}
-            {formatBinding(resolved.bindings["cancel.run"])} cancel ·{" "}
-            {formatBinding(resolved.bindings["quit.app"])} quit
-          </Text>
+          <Text dimColor>{inputFooterText(resolved.bindings)}</Text>
         </Box>
       </Box>
     </ThemeProvider>
   );
+}
+
+function inputFooterText(bindings: Bindings): string {
+  const items = ["enter run", "\\↵ newline", "/ commands", "@ files"];
+  for (const [name, label] of [
+    ["history.search", "search"],
+    ["palette.open", "palette"],
+    ["events.open", "events"],
+    ["quick.switch", "switch"],
+    ["cancel.run", "cancel"],
+    ["quit.app", "quit"],
+  ] as const) {
+    const binding = formatBinding(bindings[name]);
+    if (binding) items.push(`${binding} ${label}`);
+  }
+  return items.join(" · ");
 }
 
 /**
@@ -1263,6 +1333,7 @@ function LayerRenderer(props: {
   onCommitModel: (model: string) => void;
   onFork: (forkAtSequence: number | undefined, label: string) => void;
   onApprovalDecision: (d: "approved" | "denied") => void;
+  onCreateCapability: (draft: CreateCapabilityDraft) => void;
 }): React.ReactElement | null {
   const e = props.entry as { name: string; payload?: unknown };
   switch (e.name) {
@@ -1361,8 +1432,48 @@ function LayerRenderer(props: {
           onClose={props.onCloseTop}
         />
       );
+    case "create":
+      return (
+        <CreateCapabilityDialog
+          initialKind={createKindFromPayload(e.payload)}
+          onCancel={props.onCloseTop}
+          onCommit={props.onCreateCapability}
+        />
+      );
     default:
       return null;
+  }
+}
+
+function createKindFromRest(rest: string): CreateCapabilityKind | undefined {
+  const value = rest.trim().toLowerCase().split(/\s+/u)[0];
+  return createKindFromString(value);
+}
+
+function createKindFromPayload(
+  payload: unknown,
+): CreateCapabilityKind | undefined {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "kind" in payload &&
+    typeof payload.kind === "string"
+  ) {
+    return createKindFromString(payload.kind);
+  }
+  return undefined;
+}
+
+function createKindFromString(value: string): CreateCapabilityKind | undefined {
+  switch (value) {
+    case "skill":
+    case "agent":
+    case "cron":
+    case "command":
+    case "mcp":
+      return value;
+    default:
+      return undefined;
   }
 }
 
@@ -1467,7 +1578,7 @@ function capabilityViewFromPayload(payload: unknown): CapabilityView {
     typeof payload === "object" &&
     "view" in payload &&
     typeof payload.view === "string" &&
-    ["all", "tools", "skills", "agents", "cron"].includes(payload.view)
+    ["all", "tools", "skills", "agents", "mcp", "cron"].includes(payload.view)
   ) {
     return payload.view as CapabilityView;
   }
@@ -1503,7 +1614,10 @@ function CapabilitiesPanel(props: {
     >
       <Text color={theme.accent} bold>
         {title}
-        <Text color={theme.muted}> host snapshot · esc/enter close</Text>
+        <Text color={theme.muted}>
+          {" "}
+          available to this run · esc/enter close
+        </Text>
       </Text>
       {props.loading ? <Text color={theme.muted}>loading…</Text> : null}
       {!props.loading && !s ? (
@@ -1511,6 +1625,15 @@ function CapabilitiesPanel(props: {
       ) : null}
       {s ? (
         <>
+          <CapabilityOverview
+            tools={tools}
+            indexedSkills={indexed}
+            loadedSkills={loaded}
+            agents={agents}
+            mcp={mcp}
+            cronTools={cronTools}
+          />
+
           {props.view === "all" || props.view === "tools" ? (
             <ToolsCapabilitySection tools={tools} />
           ) : null}
@@ -1523,7 +1646,9 @@ function CapabilitiesPanel(props: {
             <AgentsCapabilitySection agents={agents} />
           ) : null}
 
-          {props.view === "all" ? <McpCapabilitySection mcp={mcp} /> : null}
+          {props.view === "all" || props.view === "mcp" ? (
+            <McpCapabilitySection mcp={mcp} />
+          ) : null}
 
           {props.view === "cron" ? (
             <CronCapabilitySection tools={cronTools} />
@@ -1542,12 +1667,54 @@ function capabilityPanelTitle(view: CapabilityView): string {
       return "skills";
     case "agents":
       return "agents";
+    case "mcp":
+      return "mcp";
     case "cron":
       return "cron";
     case "all":
     default:
       return "capabilities";
   }
+}
+
+function CapabilityOverview(props: {
+  tools: CapabilitySnapshot["tools"];
+  indexedSkills: CapabilitySnapshot["skills"]["indexed"];
+  loadedSkills: CapabilitySnapshot["skills"]["loaded"];
+  agents: CapabilitySnapshot["agents"]["profiles"];
+  mcp: CapabilitySnapshot["mcp"]["statuses"];
+  cronTools: CapabilitySnapshot["tools"];
+}): React.ReactElement {
+  const theme = useTheme();
+  const unloadedSkills = Math.max(
+    0,
+    props.indexedSkills.length - props.loadedSkills.length,
+  );
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text color={theme.success}>Available now: </Text>
+        {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
+        {props.agents.length} agents, {props.mcp.length} MCP servers
+      </Text>
+      <Text color={theme.muted}>
+        Indexed Skills are discoverable examples; loaded Skills were selected
+        for the current run context.
+      </Text>
+      {unloadedSkills > 0 ? (
+        <Text color={theme.muted}>
+          {unloadedSkills} more Skill{unloadedSkills === 1 ? "" : "s"} can be
+          loaded when relevant.
+        </Text>
+      ) : null}
+      {props.cronTools.length > 0 ? (
+        <Text color={theme.muted}>
+          Cron support is present through {props.cronTools.length} prepared tool
+          {props.cronTools.length === 1 ? "" : "s"}.
+        </Text>
+      ) : null}
+    </Box>
+  );
 }
 
 function ToolsCapabilitySection(props: {

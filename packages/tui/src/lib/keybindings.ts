@@ -53,12 +53,12 @@ const SPECIAL_KEYS = new Set([
 ]);
 
 export const DEFAULTS: Bindings = {
-  "palette.open": [parseChord("ctrl+k")!],
+  "palette.open": [],
   "help.open": [parseChord("?")!],
   "cancel.run": [parseChord("esc")!],
   "quit.app": [parseChord("ctrl+c")!],
   "events.open": [parseChord("ctrl+o")!],
-  "quick.switch": [parseChord("ctrl+s")!],
+  "quick.switch": [],
   // Expand/collapse the todo band's completed items. ctrl+t = "todo".
   "todo.toggle": [parseChord("ctrl+t")!],
   // history.search is handled inside InputBox (ctrl+r is bash-standard);

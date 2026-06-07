@@ -117,7 +117,7 @@ function HeaderRow(props: {
     <Box flexDirection="column" paddingX={1} marginBottom={1}>
       <Text>
         <Text bold>SparkWright</Text>
-        <Text dimColor> · type a goal and press enter · /help</Text>
+        <Text dimColor> · type a goal · /capabilities · /help</Text>
       </Text>
       <Text>
         <Text dimColor>cwd </Text>

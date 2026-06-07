@@ -19,7 +19,7 @@ export interface Command {
   /** One-line description. */
   description: string;
   /** Category label (groups palette rows). */
-  category: "session" | "config" | "view" | "system";
+  category: "session" | "config" | "view" | "system" | "capability";
   /** Optional aliases for the slash input. */
   aliases?: string[];
   /** Keyboard hint shown on the right side of the palette row. */

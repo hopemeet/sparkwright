@@ -370,7 +370,7 @@ metadata.
   "theme": "dark",
   "mouse": true,
   "keybindings": {
-    "palette.open": "ctrl+k",
+    "palette.open": "ctrl+p",
     "help.open": "?",
     "cancel.run": "esc",
     "quit.app": "ctrl+c"
@@ -380,6 +380,8 @@ metadata.
 
 `theme`, `mouse`, and `keybindings` are TUI-only. Provider, model, permission,
 and workspace settings apply to both CLI and TUI surfaces.
+`palette.open` and `quick.switch` are unbound by default; use `/palette` and
+`/quick`, or add bindings here if you want direct shortcuts.
 
 ## Inspect And Troubleshoot
 
