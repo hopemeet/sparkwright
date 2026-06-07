@@ -1293,6 +1293,25 @@ async function handleAgentsCommand(
       setAgentsConfig(loaded.value, agents);
       await writeUserConfigObject(configPath, loaded.value);
       writeLine(io.stdout, `Updated ${configPath}`);
+      writeLine(
+        io.stdout,
+        `Agent profile "${input.value.profile.id}" is now defined.`,
+      );
+      if (input.value.delegateTool) {
+        writeLine(
+          io.stdout,
+          `Callable delegate tool: ${input.value.delegateTool.toolName ?? `delegate_${input.value.profile.id}`} -> ${input.value.profile.id}`,
+        );
+      } else {
+        writeLine(
+          io.stdout,
+          "This profile is inspectable but not callable by the main agent until you add --delegate or configure capabilities.agents.delegateTools.",
+        );
+      }
+      writeLine(
+        io.stdout,
+        "Next: sparkwright agents validate --workspace . && sparkwright capabilities inspect --workspace . --format text",
+      );
       return { exitCode: 0 };
     }
 

@@ -6,6 +6,7 @@ This directory is organized by reader intent. Start with guides, use reference d
 
 - [User Manual](./guides/USER_MANUAL.md) - run the CLI/TUI, inspect trace output, and understand the basic workflow.
 - [Configuration](./guides/CONFIGURATION.md) - configure providers, models, permission mode, workspace, TUI preferences, and capability runtime settings.
+- [Agent Profiles](./guides/AGENTS.md) - define project agents, expose delegate tools, restrict tools, and inspect effective agent configuration.
 - [Capability Design Guide](./guides/CAPABILITY_DESIGN_GUIDE.md) - decide when to use skills, tools, MCP, agent profiles, policy, approvals, and background tasks.
 - [Custom Tool Example](./guides/CUSTOM_TOOL_EXAMPLE.md) - add a tool with validation, policy, approval, and trace behavior.
 - [Automation And Background Tasks](./guides/AUTOMATION_AND_BACKGROUND_TASKS.md) - understand long-running commands and host-owned scheduling.

@@ -916,6 +916,15 @@ describe("runCli", () => {
     expect(createOutput.stdoutText()).toContain(
       join(workspace, ".sparkwright", "config.json"),
     );
+    expect(createOutput.stdoutText()).toContain(
+      'Agent profile "reviewer" is now defined.',
+    );
+    expect(createOutput.stdoutText()).toContain(
+      "Callable delegate tool: delegate_reviewer -> reviewer",
+    );
+    expect(createOutput.stdoutText()).toContain(
+      "sparkwright agents validate --workspace .",
+    );
 
     const configPath = join(workspace, ".sparkwright", "config.json");
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
