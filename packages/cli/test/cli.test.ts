@@ -1160,6 +1160,90 @@ describe("runCli", () => {
     expect(directOutput.stderrText()).toContain("Could not find run directory");
   });
 
+  it("run resume through the host preserves trace level and metadata", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionId = "sess_cli_resume_trace";
+    const runId = "run_cli_resume_trace";
+    const runDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "agents",
+      "main",
+      "runs",
+      runId,
+    );
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "checkpoint.json"),
+      checkpointJson({ runId, goal: "resume checkpoint" }),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const resumed = await runCli(
+      [
+        "run",
+        "resume",
+        runId,
+        "--session",
+        sessionId,
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+        "--trace-level",
+        "minimal",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.sessionId).toBe(sessionId);
+    expect(resumed.tracePath).toBe(
+      join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+    );
+    const runJson = JSON.parse(
+      await readFile(join(runDir, "run.json"), "utf8"),
+    ) as { metadata?: Record<string, unknown> };
+    expect(runJson.metadata).toMatchObject({
+      source: "cli",
+      shouldWrite: false,
+      traceLevel: "minimal",
+      resumedFromRunId: runId,
+    });
+
+    const traceEvents = (await readFile(resumed.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; payload?: unknown });
+    const modelCompleted = traceEvents.find(
+      (event) => event.type === "model.completed",
+    );
+    expect(modelCompleted?.payload).toMatchObject({
+      hasMessage: true,
+    });
+    expect(
+      (modelCompleted?.payload as Record<string, unknown> | undefined)
+        ?.toolCallCount,
+    ).toEqual(expect.any(Number));
+    expect(
+      (modelCompleted?.payload as Record<string, unknown> | undefined)?.message,
+    ).toBeUndefined();
+    expect(
+      (modelCompleted?.payload as Record<string, unknown> | undefined)
+        ?.toolCalls,
+    ).toBeUndefined();
+  });
+
   it("run resume --from-trace reconstructs a checkpoint and rejects terminal runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
     // Seed a completed run via the normal CLI golden path so a run.json +
@@ -1309,4 +1393,48 @@ async function readTrace(
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { type: string; runId?: string });
+}
+
+function checkpointJson(input: { runId: string; goal: string }) {
+  return JSON.stringify(
+    {
+      schemaVersion: "run-checkpoint.v1",
+      run: {
+        id: input.runId,
+        goal: input.goal,
+        state: "running",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:30.000Z",
+        metadata: { source: "seed" },
+      },
+      loop: {
+        step: 1,
+        turnCount: 0,
+        context: [],
+        repeatedToolCallCount: 0,
+        transition: { reason: "next_turn" },
+      },
+      model: { activeIndex: 0, fallbackCount: 0 },
+      recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
+      budget: {
+        usage: {
+          elapsedMs: 0,
+          modelCalls: 0,
+          toolCalls: 0,
+          tokens: 0,
+          costUsd: 0,
+        },
+      },
+      queues: {
+        commandCount: 0,
+        pendingPrefetch: false,
+        pendingSummary: false,
+      },
+      resumability: { complete: true, reasons: [] },
+      createdAt: "2026-01-01T00:00:30.500Z",
+      metadata: { snapshotReason: "test" },
+    },
+    null,
+    2,
+  );
 }

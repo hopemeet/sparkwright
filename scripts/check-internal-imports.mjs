@@ -11,6 +11,10 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
     "CLI owns the current local reference harness and file-backed trace store.",
   ],
   [
+    "packages/cli/src/runners/direct-core-runner.ts",
+    "CLI direct-core runner owns the current local reference harness and file-backed trace store.",
+  ],
+  [
     "packages/host/src/runtime.ts",
     "Host owns the current local reference harness and file-backed trace store.",
   ],
