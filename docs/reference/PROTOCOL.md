@@ -316,7 +316,7 @@ Common metadata:
       {
         "name": "code-reviewer",
         "version": "1.0.0",
-        "sourcePath": "skills/code-reviewer/SKILL.md",
+        "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
         "contentHash": "..."
       }
     ]
@@ -334,7 +334,7 @@ Common metadata:
     "schemaVersion": "edge-trace.v0.1",
     "sourcePackage": "@sparkwright/skills",
     "version": "1.0.0",
-    "sourcePath": "skills/code-reviewer/SKILL.md",
+    "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
     "contentHash": "...",
     "selectionReason": "Matched goal against skill name or description.",
     "mode": "resident_context"

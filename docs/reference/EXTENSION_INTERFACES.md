@@ -129,7 +129,7 @@ const context: ContextItem[] = [
     type: "system",
     source: {
       kind: "skill",
-      path: "skills/dingtalk-notifier/SKILL.md",
+      path: ".sparkwright/skills/dingtalk-notifier/SKILL.md",
     },
     content: skillBody,
     metadata: {
@@ -360,7 +360,7 @@ Near-term adapter shape:
 ```ts
 const prepared = await prepareSkillsForRun({
   goal,
-  skillRoots: ["./skills"],
+  skillRoots: [".sparkwright/skills"],
 });
 
 const run = createRun({

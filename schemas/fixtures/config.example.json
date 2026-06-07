@@ -14,7 +14,6 @@
       "defer": ["mcp_*"]
     },
     "skills": {
-      "roots": ["./skills"],
       "includeLoaderTool": true,
       "loadSelectedSkills": true,
       "maxSelectedSkills": 4,

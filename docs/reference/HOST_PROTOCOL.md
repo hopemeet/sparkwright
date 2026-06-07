@@ -355,7 +355,10 @@ scanning files or interpreting local config.
   "tools": [{ "name": "read_file", "risk": "safe" }],
   "skills": {
     "indexed": [
-      { "name": "reviewer", "sourcePath": "skills/reviewer/SKILL.md" }
+      {
+        "name": "reviewer",
+        "sourcePath": ".sparkwright/skills/reviewer/SKILL.md"
+      }
     ],
     "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }]
   },

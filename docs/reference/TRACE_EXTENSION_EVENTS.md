@@ -35,7 +35,7 @@ Emitted after a Skill source has been scanned and reduced to index metadata.
     {
       "name": "code-reviewer",
       "version": "1.0.0",
-      "sourcePath": "skills/code-reviewer/SKILL.md",
+      "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
       "contentHash": "..."
     }
   ]
@@ -51,7 +51,7 @@ loader tool.
 {
   "name": "code-reviewer",
   "version": "1.0.0",
-  "sourcePath": "skills/code-reviewer/SKILL.md",
+  "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
   "contentHash": "...",
   "selectionReason": "Matched goal against skill name or description.",
   "agentId": "reviewer",

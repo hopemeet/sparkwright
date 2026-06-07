@@ -65,11 +65,15 @@ sparkwright skills create code-reviewer \
   --workspace .
 ```
 
-`list` and `validate` read `capabilities.skills.roots` from the resolved
-configuration. If no roots are configured, they use `<workspace>/skills`.
-`create` writes a new `<root>/<name>/SKILL.md` in the first configured root, or
-`<workspace>/skills` when none is configured. It refuses to overwrite an
-existing Skill unless `--force` is passed.
+`list` and `validate` discover Skills across the builtin, user, and project
+layers. If `capabilities.skills.roots` is configured, those roots are loaded as
+legacy workspace roots after builtin/user roots. `create` writes
+`<workspace>/.sparkwright/skills/<name>/SKILL.md` unless `--root` is passed. It
+refuses to overwrite an existing Skill unless `--force` is passed.
+
+Reports include each Skill's `layer`, `root`, and filesystem `source`. When two
+layers declare the same Skill name, the stronger layer wins and `validate`
+returns a `shadows` entry showing which source was replaced.
 
 ## Preparing Skills For A Run
 
@@ -81,7 +85,7 @@ import { prepareSkillsForRun } from "@sparkwright/skills";
 
 const prepared = await prepareSkillsForRun({
   goal: "Send a dingtalk webhook notification",
-  skillRoots: ["./skills"],
+  skillRoots: [".sparkwright/skills"],
 });
 
 const run = createRun({
@@ -123,7 +127,7 @@ This keeps Skill behavior outside the core run loop while still making loaded Sk
   {
     name: "dingtalk-notifier",
     version: "1.0.0",
-    sourcePath: "./skills/dingtalk-notifier/SKILL.md",
+    sourcePath: ".sparkwright/skills/dingtalk-notifier/SKILL.md",
     contentHash: "...",
     selectionReason: "Matched goal against skill name or description.",
   },
@@ -139,7 +143,7 @@ For a serializable manifest index, use `createSkillLockfile` or its alias
 ```ts
 import { createSkillLockfile, loadSkills } from "@sparkwright/skills";
 
-const skills = await loadSkills(["./skills"]);
+const skills = await loadSkills([".sparkwright/skills"]);
 const lockfile = createSkillLockfile(skills);
 ```
 
