@@ -87,7 +87,7 @@ Use the built-in deterministic provider when you want an offline smoke test:
 
 ```json
 {
-  "model": "deterministic/demo",
+  "model": "deterministic",
   "permissionMode": "default",
   "workspace": "."
 }
@@ -102,12 +102,15 @@ Put this in `~/.config/sparkwright/config.json`:
 
 ```json
 {
-  "model": "openai/gpt-example",
+  "model": "openai/gpt-5.4-mini",
   "providers": {
     "openai": {
-      "npm": "@ai-sdk/openai",
       "baseURL": "https://api.openai.com/v1",
-      "apiKey": "replace-me"
+      "apiKey": "replace-me",
+      "models": {
+        "gpt-5.4-mini": {},
+        "gpt-5.4": {}
+      }
     }
   }
 }
@@ -223,7 +226,7 @@ frontmatter fields are:
 ```md
 ---
 description: Explain what the command does
-model: deterministic/demo
+model: deterministic
 subtask: false
 ---
 
@@ -343,7 +346,7 @@ Provider model entries can attach per-million-token pricing for usage reports:
     "openai": {
       "apiKey": "replace-me",
       "models": {
-        "gpt-example": {
+        "gpt-5.4-mini": {
           "cost": {
             "input": 1.25,
             "output": 10,

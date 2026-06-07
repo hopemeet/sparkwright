@@ -60,7 +60,7 @@ npm exec sparkwright -- capabilities inspect --workspace . --format text
 
 ```json
 {
-  "model": "deterministic/demo",
+  "model": "deterministic",
   "permissionMode": "default",
   "workspace": "."
 }
@@ -73,12 +73,15 @@ The reserved `deterministic` provider is built in and does not need a
 
 ```json
 {
-  "model": "openai/example-model",
+  "model": "openai/gpt-5.4-mini",
   "providers": {
     "openai": {
-      "npm": "@ai-sdk/openai",
       "baseURL": "https://api.openai.com/v1",
-      "apiKey": "replace-me"
+      "apiKey": "replace-me",
+      "models": {
+        "gpt-5.4-mini": {},
+        "gpt-5.4": {}
+      }
     }
   }
 }
@@ -221,7 +224,7 @@ Per-model cost metadata is optional and used for usage/cost reporting:
     "openai": {
       "apiKey": "replace-me",
       "models": {
-        "example-model": {
+        "gpt-5.4-mini": {
           "cost": {
             "input": 1.25,
             "output": 10,

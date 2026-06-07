@@ -27,17 +27,21 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
 
 ## OpenAI provider runs fail before starting
 
-Provider-backed CLI runs require both a provider and a model:
+Provider-backed CLI runs require a configured provider and a model reference in
+`provider/model` form:
 
 ```bash
 OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --provider openai \
-  --model <model-name>
+  --model openai/<model-name>
 ```
 
-If `OPENAI_API_KEY` is missing, the CLI exits before creating a run. Real provider behavior is intentionally outside the deterministic golden path, so v0 release checks use the deterministic model by default.
+If the selected provider has no API key in config and the corresponding
+environment variable is missing, the CLI exits non-zero with `host_start_failed`
+and records a failed trace. Real provider behavior is intentionally outside the
+deterministic golden path, so v0 release checks use the deterministic model by
+default.
 
 OpenAI-compatible providers can be tested with the same CLI path by setting `OPENAI_BASE_URL`. Set the base URL without the trailing `/responses` (the AI SDK appends it):
 
@@ -47,8 +51,7 @@ OPENAI_BASE_URL=https://your-openai-compatible-gateway.example.com/v1 \
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --provider openai \
-  --model <your-model>
+  --model openai/<your-model>
 ```
 
 If `curl` can reach OpenAI but provider-backed CLI runs time out, check Node's path separately:
@@ -65,8 +68,7 @@ HTTP_PROXY=http://127.0.0.1:7890 \
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --provider openai \
-  --model <model-name>
+  --model openai/<model-name>
 ```
 
 Use the port from your local proxy tool. The CLI explicitly passes these proxy variables to the OpenAI provider path.

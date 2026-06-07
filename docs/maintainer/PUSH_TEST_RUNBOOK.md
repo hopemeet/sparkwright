@@ -221,7 +221,7 @@ const client = await createClient({
       '--stdio',
       '--workspace',
       process.cwd(),
-      '--provider',
+      '--model',
       'deterministic',
     ],
     cwd: process.cwd(),
@@ -264,7 +264,7 @@ node packages/host/dist/bin.js \
   --port 17320 \
   --host 127.0.0.1 \
   --workspace "$PWD" \
-  --provider deterministic >"$tmpout" 2>&1 &
+  --model deterministic >"$tmpout" 2>&1 &
 pid=$!
 cleanup() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
 trap cleanup EXIT
@@ -324,7 +324,7 @@ const client = await createClient({
       '--stdio',
       '--workspace',
       process.cwd(),
-      '--provider',
+      '--model',
       'deterministic',
     ],
     cwd: process.cwd(),
@@ -1097,19 +1097,21 @@ key and a non-zero `costUsd`.
 ### Missing OpenAI Key
 
 ```bash
-env -u OPENAI_API_KEY npm exec sparkwright -- run "inspect this repo" \
+tmpcfg=$(mktemp)
+printf '%s\n' '{"model":"openai/smoke-model","providers":{"openai":{"baseURL":"https://api.openai.com/v1"}}}' >"$tmpcfg"
+env -u OPENAI_API_KEY SPARKWRIGHT_CONFIG="$tmpcfg" npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --provider openai \
-  --model smoke-model \
+  --model openai/smoke-model \
   --trace-level standard
+rm -f "$tmpcfg"
 ```
 
 Expected result:
 
 - Command exits non-zero.
-- Output says `OPENAI_API_KEY is required when using --provider openai.`
-- No provider-backed run is created.
+- Output says `No API key for provider "openai". Set OPENAI_API_KEY, or add an "apiKey" to that provider in your config.`
+- A failed trace is written with `host_start_failed`.
 
 Provider-backed live smoke is optional. Run it only when credentials are
 available and provider-edge behavior is in scope:
@@ -1120,8 +1122,7 @@ OPENAI_BASE_URL=https://your-openai-compatible-gateway.example.com/v1 \
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --provider openai \
-  --model <model-name> \
+  --model openai/<model-name> \
   --trace-level standard
 ```
 

@@ -86,8 +86,7 @@ Set an API key and select a provider/model:
 ```bash
 OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
-  --provider openai \
-  --model <model-name> \
+  --model openai/<model-name> \
   --trace-level standard
 ```
 

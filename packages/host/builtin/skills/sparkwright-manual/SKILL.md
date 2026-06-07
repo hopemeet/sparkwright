@@ -11,6 +11,8 @@ metadata:
 
 Use this skill when the user asks for practical help with SparkWright commands,
 configuration, capabilities, operations, troubleshooting, or contributor work.
+For requests to create, scaffold, wire, or configure project capabilities,
+prefer the `sparkwright-capability-builder` skill.
 
 This skill is an operational index. Its references are plain files: open the one
 you need with a file-reading tool (e.g. read_file) using the full paths listed

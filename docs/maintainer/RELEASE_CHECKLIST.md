@@ -42,8 +42,7 @@ Optionally verify the provider-backed path with a real key:
 OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --provider openai \
-  --model <model-name> \
+  --model openai/<model-name> \
   --trace-level standard
 ```
 

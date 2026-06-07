@@ -16,7 +16,7 @@ A real provider in any of these introduces nondeterminism (token sampling, provi
 
 ## Decision
 
-The CLI default model is a **deterministic in-process model**, not a real provider. The deterministic model produces a fixed, scripted sequence of tool calls and text completions that exercise the golden path. Provider-backed runs (OpenAI, AI SDK adapters) are opt-in via `--provider` plus an environment variable such as `OPENAI_API_KEY`.
+The CLI default model is a **deterministic in-process model**, not a real provider. The deterministic model produces a fixed, scripted sequence of tool calls and text completions that exercise the golden path. Provider-backed runs (OpenAI, AI SDK adapters) are opt-in via `--model provider/model` plus an environment variable such as `OPENAI_API_KEY`.
 
 The deterministic model is a `ModelAdapter` like any other; it has no privileged access to the run loop. The same kernel code path runs in deterministic and provider-backed mode — the provider is the only swapped component. This is what makes the deterministic run a valid smoke test for the provider-backed run.
 
