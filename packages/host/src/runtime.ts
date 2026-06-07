@@ -62,6 +62,10 @@ import type {
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "./config.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
+import {
+  existingSkillRoots,
+  resolveSkillRootsForRuntime,
+} from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
 import {
@@ -315,23 +319,28 @@ export class HostRuntime {
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
-    const preparedSkills = skillConfig?.roots?.length
+    const skillRoots = resolveSkillRootsForRuntime(
+      workspaceRoot,
+      skillConfig?.roots,
+    );
+    const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
+    const preparedSkills = existingPreparedSkillRoots.length
       ? await prepareSkillsForRun({
           goal: input.goal,
-          skillRoots: skillConfig.roots,
+          skillRoots: existingPreparedSkillRoots,
           agent: {
-            allowedSkills: skillConfig.allowedSkills,
-            deniedSkills: skillConfig.deniedSkills,
+            allowedSkills: skillConfig?.allowedSkills,
+            deniedSkills: skillConfig?.deniedSkills,
           },
           // Default to on-demand loading: expose the skill_load tool and let
           // the model pull bodies it judges relevant, rather than auto-residing
           // matcher-selected skills (which both pollutes context and double-
           // injects when the loader tool is also on). A config can opt back into
           // auto-resident by setting loadSelectedSkills: true.
-          includeLoaderTool: skillConfig.includeLoaderTool ?? true,
-          loadSelectedSkills: skillConfig.loadSelectedSkills ?? false,
-          maxSelectedSkills: skillConfig.maxSelectedSkills,
-          resourceFileLimit: skillConfig.resourceFileLimit,
+          includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
+          loadSelectedSkills: skillConfig?.loadSelectedSkills ?? false,
+          maxSelectedSkills: skillConfig?.maxSelectedSkills,
+          resourceFileLimit: skillConfig?.resourceFileLimit,
           includeDevSkills: devSkillsEnabled(),
           emitter: pendingExtensionEvents,
           agentId: MAIN_AGENT_ID,
@@ -399,8 +408,8 @@ export class HostRuntime {
         createGrepTextTool(workspaceRoot),
         createAppendFileTool(),
         createCronTool(),
-        createSkillInspectorTool(workspaceRoot, skillConfig?.roots),
-        createSkillManagerTool(workspaceRoot, skillConfig?.roots),
+        createSkillInspectorTool(workspaceRoot, skillRoots),
+        createSkillManagerTool(workspaceRoot, skillRoots),
         createAgentInspectorTool(workspaceRoot),
         createAgentManagerTool(workspaceRoot),
         createHostShellTool(workspaceRoot),
@@ -1159,96 +1168,116 @@ export class HostRuntime {
       this.opts.workspaceRoot,
       agentConfig?.profiles,
     );
+    const skillRoots = resolveSkillRootsForRuntime(
+      this.opts.workspaceRoot,
+      skillConfig?.roots,
+    );
+    const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     const preparedSkills =
-      skillConfig?.roots?.length && skillConfig.roots.length > 0
+      existingPreparedSkillRoots.length > 0
         ? await prepareSkillsForRun({
             goal: "",
-            skillRoots: skillConfig.roots,
+            skillRoots: existingPreparedSkillRoots,
             agent: {
-              allowedSkills: skillConfig.allowedSkills,
-              deniedSkills: skillConfig.deniedSkills,
+              allowedSkills: skillConfig?.allowedSkills,
+              deniedSkills: skillConfig?.deniedSkills,
             },
-            includeLoaderTool: skillConfig.includeLoaderTool ?? true,
+            includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
             loadSelectedSkills: false,
-            resourceFileLimit: skillConfig.resourceFileLimit,
+            resourceFileLimit: skillConfig?.resourceFileLimit,
             includeDevSkills: devSkillsEnabled(),
             agentId: MAIN_AGENT_ID,
           })
         : null;
-    return buildCapabilitySnapshot({
-      tools: applyToolConfig(
-        [
-          createReadFileTool(),
-          createGlobPathsTool(this.opts.workspaceRoot),
-          createGrepTextTool(this.opts.workspaceRoot),
-          createAppendFileTool(),
-          createCronTool(),
-          createSkillInspectorTool(this.opts.workspaceRoot, skillConfig?.roots),
-          createSkillManagerTool(this.opts.workspaceRoot, skillConfig?.roots),
-          createAgentInspectorTool(this.opts.workspaceRoot),
-          createAgentManagerTool(this.opts.workspaceRoot),
-          createHostShellTool(this.opts.workspaceRoot),
-          ...(preparedSkills?.tools ?? []),
-          ...createConfiguredDelegateTools({
-            getParent: () => undefined,
-            delegates: agentConfig?.delegateTools ?? [],
-            derivedAgents: deriveConfiguredAgents(
-              mainAgentProfile(resolvedProfiles),
-              resolvedProfiles,
-            ),
-            model: {
-              async complete() {
-                return { message: "" };
+    const preparedMcp = mcpConfig?.servers?.length
+      ? await prepareMcpToolsForRun({
+          servers: mcpConfig.servers,
+          defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
+          namePrefix: mcpConfig.namePrefix,
+          policy: mcpConfig.defaultPolicy,
+        })
+      : null;
+    try {
+      return buildCapabilitySnapshot({
+        tools: applyToolConfig(
+          [
+            createReadFileTool(),
+            createGlobPathsTool(this.opts.workspaceRoot),
+            createGrepTextTool(this.opts.workspaceRoot),
+            createAppendFileTool(),
+            createCronTool(),
+            createSkillInspectorTool(this.opts.workspaceRoot, skillRoots),
+            createSkillManagerTool(this.opts.workspaceRoot, skillRoots),
+            createAgentInspectorTool(this.opts.workspaceRoot),
+            createAgentManagerTool(this.opts.workspaceRoot),
+            createHostShellTool(this.opts.workspaceRoot),
+            ...(preparedSkills?.tools ?? []),
+            ...(preparedMcp?.tools ?? []),
+            ...createConfiguredDelegateTools({
+              getParent: () => undefined,
+              delegates: agentConfig?.delegateTools ?? [],
+              derivedAgents: deriveConfiguredAgents(
+                mainAgentProfile(resolvedProfiles),
+                resolvedProfiles,
+              ),
+              model: {
+                async complete() {
+                  return { message: "" };
+                },
               },
-            },
-            childTools: [
-              createReadFileTool(),
-              createGlobPathsTool(this.opts.workspaceRoot),
-              createGrepTextTool(this.opts.workspaceRoot),
-            ],
-            // Snapshot only describes the tool; its body never runs here
-            // (getParent returns undefined and the tool throws first).
-            childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-          }),
-          createDynamicSpawnAgentTool({
-            getParent: () => undefined,
-            model: {
-              async complete() {
-                return { message: "" };
-              },
-            },
-            childTools: applyToolConfig(
-              [
+              childTools: [
                 createReadFileTool(),
                 createGlobPathsTool(this.opts.workspaceRoot),
                 createGrepTextTool(this.opts.workspaceRoot),
               ],
-              toolConfig,
-            ),
-            childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-          }),
-        ],
-        toolConfig,
-      ),
-      indexedSkills: preparedSkills?.indexedSkills ?? [],
-      loadedSkills: [],
-      mcpStatuses: Object.fromEntries(
-        (mcpConfig?.servers ?? []).map((server) => [
-          server.name,
-          server.enabled === false
-            ? ({ status: "disabled" } as const)
-            : ({ status: "configured" } as const),
-        ]),
-      ),
-      mcpToolNameMap: [],
-      agentProfiles: [
-        mainAgentProfile(resolvedProfiles),
-        ...deriveConfiguredAgents(
+              // Snapshot only describes the tool; its body never runs here
+              // (getParent returns undefined and the tool throws first).
+              childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
+            }),
+            createDynamicSpawnAgentTool({
+              getParent: () => undefined,
+              model: {
+                async complete() {
+                  return { message: "" };
+                },
+              },
+              childTools: applyToolConfig(
+                [
+                  createReadFileTool(),
+                  createGlobPathsTool(this.opts.workspaceRoot),
+                  createGrepTextTool(this.opts.workspaceRoot),
+                ],
+                toolConfig,
+              ),
+              childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
+            }),
+          ],
+          toolConfig,
+        ),
+        indexedSkills: preparedSkills?.indexedSkills ?? [],
+        loadedSkills: [],
+        mcpStatuses:
+          preparedMcp?.statuses ??
+          Object.fromEntries(
+            (mcpConfig?.servers ?? []).map((server) => [
+              server.name,
+              server.enabled === false
+                ? ({ status: "disabled" } as const)
+                : ({ status: "configured" } as const),
+            ]),
+          ),
+        mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
+        agentProfiles: [
           mainAgentProfile(resolvedProfiles),
-          resolvedProfiles,
-        ).map((agent) => agent.effectiveProfile),
-      ],
-    });
+          ...deriveConfiguredAgents(
+            mainAgentProfile(resolvedProfiles),
+            resolvedProfiles,
+          ).map((agent) => agent.effectiveProfile),
+        ],
+      });
+    } finally {
+      await preparedMcp?.close();
+    }
   }
 
   private async readJsonField(

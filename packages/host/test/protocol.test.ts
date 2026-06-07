@@ -877,7 +877,6 @@ describe("host protocol", () => {
         ok: true,
         result: {
           skills: {
-            indexed: [{ name: "reviewer" }],
             loaded: [],
           },
           mcp: {
@@ -894,6 +893,11 @@ describe("host protocol", () => {
         },
       });
       if (resp.envelope === "response" && resp.ok) {
+        expect(
+          (
+            resp.result as { skills: { indexed: Array<{ name: string }> } }
+          ).skills.indexed.some((skill) => skill.name === "reviewer"),
+        ).toBe(true);
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
             (tool) => tool.name === "read_file",

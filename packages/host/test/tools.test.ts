@@ -127,8 +127,10 @@ describe("host tools", () => {
         {
           name: "repo-review",
           description: "review repository changes",
+          layer: "project",
         },
       ],
+      shadows: [],
       errors: [],
     });
   });

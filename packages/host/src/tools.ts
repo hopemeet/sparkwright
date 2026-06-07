@@ -10,12 +10,10 @@ import {
   createCronTool as createCronToolBase,
   defaultCronRoot,
 } from "@sparkwright/cron";
-import {
-  loadSkillsFromDirectory,
-  type SkillLoadError,
-  type SkillManifest,
-} from "@sparkwright/skills";
+import { type SkillRoot } from "@sparkwright/skills";
 import type { CapabilityToolsConfig } from "./config.js";
+import { projectSkillRoot } from "./skill-roots.js";
+import { loadLayeredSkillReport } from "./skill-report.js";
 
 /**
  * Built-in tool: read a UTF-8 file from the workspace. Safe (no approval).
@@ -238,7 +236,7 @@ export function createCronTool() {
 
 export function createSkillInspectorTool(
   workspaceRoot: string,
-  configuredRoots: string[] | undefined,
+  configuredRoots: SkillRoot[] | undefined,
 ) {
   return defineTool({
     name: "inspect_skills",
@@ -263,7 +261,7 @@ export function createSkillInspectorTool(
     async execute(args: unknown) {
       const action = parseInspectAction(args, "inspect_skills");
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
-      return loadSkillManagerReport(roots, {
+      return loadLayeredSkillReport(roots, {
         includeMissingRoots: action === "validate",
       });
     },
@@ -272,7 +270,7 @@ export function createSkillInspectorTool(
 
 export function createSkillManagerTool(
   workspaceRoot: string,
-  configuredRoots: string[] | undefined,
+  _configuredRoots: SkillRoot[] | undefined,
 ) {
   return defineTool({
     name: "manage_skill",
@@ -314,7 +312,6 @@ export function createSkillManagerTool(
     isReplaySafe: false,
     async execute(args: unknown) {
       const input = parseSkillManagerArgs(args);
-      const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
       if (!input.name || !isSkillName(input.name)) {
         throw new Error(
           "manage_skill create requires a valid lowercase skill name.",
@@ -325,7 +322,7 @@ export function createSkillManagerTool(
       }
       const root = input.root
         ? resolveWorkspacePath(workspaceRoot, input.root)
-        : roots[0];
+        : projectSkillRoot(workspaceRoot);
       const skillDir = join(root, input.name);
       const skillPath = join(skillDir, "SKILL.md");
       if ((await pathExists(skillPath)) && !input.force) {
@@ -579,71 +576,20 @@ function matchesToolPattern(toolName: string, pattern: string): boolean {
 
 function resolveSkillRoots(
   workspaceRoot: string,
-  configuredRoots: string[] | undefined,
-): string[] {
+  configuredRoots: SkillRoot[] | undefined,
+): SkillRoot[] {
   const roots =
     configuredRoots && configuredRoots.length > 0
       ? configuredRoots
-      : [join(workspaceRoot, "skills")];
-  return roots.map((root) => resolveWorkspacePath(workspaceRoot, root));
+      : [{ root: projectSkillRoot(workspaceRoot), layer: "project" as const }];
+  return roots.map((root) => ({
+    ...root,
+    root: resolveWorkspacePath(workspaceRoot, root.root),
+  }));
 }
 
 function resolveWorkspacePath(workspaceRoot: string, path: string): string {
   return isAbsolute(path) ? path : resolve(workspaceRoot, path);
-}
-
-async function loadSkillManagerReport(
-  roots: string[],
-  options: { includeMissingRoots: boolean },
-): Promise<{
-  roots: string[];
-  skills: Array<{
-    name: string;
-    description: string;
-    version?: string;
-    source?: string;
-  }>;
-  errors: SkillLoadError[];
-}> {
-  const skills: SkillManifest[] = [];
-  const errors: SkillLoadError[] = [];
-  for (const root of roots) {
-    try {
-      const info = await stat(root);
-      if (!info.isDirectory()) {
-        errors.push({ source: root, message: "skill root is not a directory" });
-        continue;
-      }
-    } catch (error) {
-      if (options.includeMissingRoots) {
-        errors.push({
-          source: root,
-          message:
-            (error as NodeJS.ErrnoException).code === "ENOENT"
-              ? "skill root does not exist"
-              : error instanceof Error
-                ? error.message
-                : String(error),
-        });
-      }
-      continue;
-    }
-    const loaded = await loadSkillsFromDirectory(root);
-    skills.push(...loaded.skills);
-    errors.push(...loaded.loadErrors);
-  }
-  return {
-    roots,
-    skills: skills
-      .map((skill) => ({
-        name: skill.name,
-        description: skill.description,
-        version: skill.version,
-        source: skill.source,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
-    errors,
-  };
 }
 
 /**
