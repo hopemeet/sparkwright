@@ -63,6 +63,11 @@ describe("chordMatches", () => {
 });
 
 describe("mergeBindings", () => {
+  it("leaves palette and quick switch unbound by default", () => {
+    expect(DEFAULTS["palette.open"]).toEqual([]);
+    expect(DEFAULTS["quick.switch"]).toEqual([]);
+  });
+
   it("returns defaults when user is undefined", () => {
     const { bindings, errors } = mergeBindings(undefined);
     expect(errors).toEqual([]);

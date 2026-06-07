@@ -20,23 +20,4 @@ server.registerTool(
   }),
 );
 
-server.registerTool(
-  "project_info",
-  {
-    description: "Return a tiny project identity payload for MCP smoke tests.",
-    inputSchema: {},
-  },
-  async () => ({
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          project: "SparkWright",
-          purpose: "local MCP smoke test",
-        }),
-      },
-    ],
-  }),
-);
-
 await server.connect(new StdioServerTransport());
