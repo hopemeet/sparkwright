@@ -27,7 +27,8 @@
     "sparkwright-host": "./dist/bin.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "builtin"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/chmod-bin.mjs dist/bin.js",

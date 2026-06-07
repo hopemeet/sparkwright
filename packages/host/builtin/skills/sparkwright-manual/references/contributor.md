@@ -139,8 +139,9 @@ Document load order, overrides, and security behavior.
 
 ## Agent Skill Maintenance
 
-When changing user-visible behavior, update `skills/sparkwright-manual` in the
-same change. This includes:
+When changing user-visible behavior, update the builtin manual skill under
+`packages/host/builtin/skills/sparkwright-manual` in the same change. This
+includes:
 
 - CLI commands or flags
 - TUI behavior
