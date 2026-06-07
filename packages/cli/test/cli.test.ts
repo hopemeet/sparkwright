@@ -448,6 +448,68 @@ describe("runCli", () => {
     expect(second.stdoutText()).toContain("already exists");
   });
 
+  it("init --project scaffolds project config and capability directories", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    const first = createOutputCapture();
+
+    const created = await runCli(["init", "--project"], {
+      cwd: workspace,
+      io: { stdout: first.stdout, stderr: first.stderr, stdinIsTTY: false },
+    });
+
+    expect(created.exitCode).toBe(0);
+    expect(first.stdoutText()).toContain(`Created ${configPath}`);
+    expect(first.stdoutText()).toContain(
+      "sparkwright capabilities inspect --workspace . --format text",
+    );
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+      permissionMode?: string;
+      capabilities?: {
+        tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
+        skills?: {
+          roots?: string[];
+          includeLoaderTool?: boolean;
+          loadSelectedSkills?: boolean;
+          resourceFileLimit?: number;
+        };
+        mcp?: { servers?: unknown[] };
+      };
+    };
+    expect(parsed.permissionMode).toBe("default");
+    expect(parsed.capabilities?.tools?.disabled).toEqual(["shell"]);
+    expect(parsed.capabilities?.tools?.defer).toEqual(["mcp_*"]);
+    expect(parsed.capabilities?.tools?.enabled).toBeUndefined();
+    expect(parsed.capabilities?.skills?.includeLoaderTool).toBe(true);
+    expect(parsed.capabilities?.skills?.loadSelectedSkills).toBe(false);
+    expect(parsed.capabilities?.skills?.resourceFileLimit).toBe(8);
+    expect(parsed.capabilities?.skills?.roots).toBeUndefined();
+    expect(parsed.capabilities?.mcp?.servers).toEqual([]);
+    for (const dir of ["skills", "agents", "command"]) {
+      expect(
+        (await stat(join(workspace, ".sparkwright", dir))).isDirectory(),
+      ).toBe(true);
+    }
+
+    await rm(join(workspace, ".sparkwright", "agents"), {
+      recursive: true,
+      force: true,
+    });
+    const originalConfig = await readFile(configPath, "utf8");
+    const second = createOutputCapture();
+    const rerun = await runCli(["init", "--project"], {
+      cwd: workspace,
+      io: { stdout: second.stdout, stderr: second.stderr, stdinIsTTY: false },
+    });
+
+    expect(rerun.exitCode).toBe(0);
+    expect(second.stdoutText()).toContain("Project config already exists");
+    expect(await readFile(configPath, "utf8")).toBe(originalConfig);
+    expect(
+      (await stat(join(workspace, ".sparkwright", "agents"))).isDirectory(),
+    ).toBe(true);
+  });
+
   it("lists tool config without creating a user config", async () => {
     const xdg = process.env.XDG_CONFIG_HOME as string;
     const output = createOutputCapture();
@@ -465,6 +527,141 @@ describe("runCli", () => {
     await expect(
       stat(join(xdg, "sparkwright", "config.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("inspects configured capability layers", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
+    tempDirs.push(stateHome);
+    await mkdir(join(workspace, ".sparkwright", "skills", "reviewer"), {
+      recursive: true,
+    });
+    await mkdir(join(workspace, ".sparkwright", "agents"), {
+      recursive: true,
+    });
+    await mkdir(join(workspace, ".sparkwright", "command"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "skills", "reviewer", "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: Reviews changes.",
+        "---",
+        "Review changes.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".sparkwright", "agents", "reviewer.md"),
+      [
+        "---",
+        "name: Reviewer",
+        "mode: child",
+        "---",
+        "Review changes.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          tools: { disabled: ["shell"], defer: ["mcp_*"] },
+          skills: { roots: ["skills"] },
+          agents: {
+            profiles: [{ id: "reviewer", name: "Config Reviewer" }],
+            delegateTools: [
+              { profileId: "reviewer", toolName: "delegate_reviewer" },
+            ],
+          },
+          mcp: {
+            namePrefix: "mcp_",
+            servers: [
+              { type: "http", name: "docs", url: "http://127.0.0.1/mcp" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const textOutput = createOutputCapture();
+    const text = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        env: { ...process.env, XDG_STATE_HOME: stateHome },
+        io: { stdout: textOutput.stdout, stderr: textOutput.stderr },
+      },
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain(
+      "tools: enabled=(all); disabled=shell; defer=mcp_*",
+    );
+    expect(textOutput.stdoutText()).toContain("skills:");
+    expect(textOutput.stdoutText()).toContain("reviewer (legacy)");
+    expect(textOutput.stdoutText()).toContain("agents: 1 effective");
+    expect(textOutput.stdoutText()).toContain("agent shadows: 1");
+    expect(textOutput.stdoutText()).toContain("mcp: 1 servers");
+    expect(textOutput.stdoutText()).toContain(
+      `cron state: ${join(stateHome, "sparkwright", "cron")}`,
+    );
+
+    const jsonOutput = createOutputCapture();
+    const json = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        env: { ...process.env, XDG_STATE_HOME: stateHome },
+        io: { stdout: jsonOutput.stdout, stderr: jsonOutput.stderr },
+      },
+    );
+
+    expect(json.exitCode).toBe(0);
+    const report = JSON.parse(jsonOutput.stdoutText()) as {
+      tools: { disabled?: string[]; defer?: string[] };
+      skills: { skills: Array<{ name: string; layer?: string }> };
+      agents: {
+        profiles: Array<{ id: string; layer: string }>;
+        shadows: Array<{
+          id: string;
+          shadowed: { layer: string };
+          shadowedBy: { layer: string };
+        }>;
+      };
+      mcp: { servers: Array<{ name: string; type: string; enabled: boolean }> };
+      cron: { stateRoot: string; legacyStateRoot: string };
+      command: { dirs: Array<{ layer: string; exists: boolean }> };
+    };
+    expect(report.tools.disabled).toEqual(["shell"]);
+    expect(report.tools.defer).toEqual(["mcp_*"]);
+    expect(report.skills.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "reviewer", layer: "legacy" }),
+      ]),
+    );
+    expect(report.agents.profiles).toEqual([
+      expect.objectContaining({ id: "reviewer", layer: "config" }),
+    ]);
+    expect(report.agents.shadows).toEqual([
+      expect.objectContaining({
+        id: "reviewer",
+        shadowed: expect.objectContaining({ layer: "project" }),
+        shadowedBy: expect.objectContaining({ layer: "config" }),
+      }),
+    ]);
+    expect(report.mcp.servers).toEqual([
+      { name: "docs", type: "http", enabled: true },
+    ]);
+    expect(report.cron.stateRoot).toBe(join(stateHome, "sparkwright", "cron"));
+    expect(report.command.dirs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ layer: "project", exists: true }),
+      ]),
+    );
   });
 
   it("updates user tool config commands without dropping existing fields", async () => {
@@ -540,7 +737,13 @@ describe("runCli", () => {
     expect(created.exitCode).toBe(0);
     expect(createOutput.stdoutText()).toContain("code-reviewer/SKILL.md");
 
-    const skillPath = join(workspace, "skills", "code-reviewer", "SKILL.md");
+    const skillPath = join(
+      workspace,
+      ".sparkwright",
+      "skills",
+      "code-reviewer",
+      "SKILL.md",
+    );
     await expect(readFile(skillPath, "utf8")).resolves.toContain(
       "name: code-reviewer",
     );
@@ -554,6 +757,7 @@ describe("runCli", () => {
     );
     expect(listed.exitCode).toBe(0);
     expect(listOutput.stdoutText()).toContain("code-reviewer@1.0.0");
+    expect(listOutput.stdoutText()).toContain("layer: project");
 
     const validateOutput = createOutputCapture();
     const validated = await runCli(
@@ -575,11 +779,87 @@ describe("runCli", () => {
     expect(report.errors).toEqual([]);
   });
 
+  it("reports skill source layers and shadowed skills", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const userSkillDir = join(xdg, "sparkwright", "skills", "reviewer");
+    const projectSkillDir = join(
+      workspace,
+      ".sparkwright",
+      "skills",
+      "reviewer",
+    );
+    await mkdir(userSkillDir, { recursive: true });
+    await mkdir(projectSkillDir, { recursive: true });
+    await writeFile(
+      join(userSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: User reviewer.",
+        "---",
+        "Use user reviewer.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(projectSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: Project reviewer.",
+        "---",
+        "Use project reviewer.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["skills", "validate", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      skills: Array<{ name: string; description: string; layer?: string }>;
+      shadows: Array<{
+        name: string;
+        shadowed: { layer?: string };
+        shadowedBy: { layer?: string };
+      }>;
+      errors: unknown[];
+    };
+    expect(report.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "reviewer",
+          description: "Project reviewer.",
+          layer: "project",
+        }),
+      ]),
+    );
+    expect(report.shadows).toEqual([
+      expect.objectContaining({
+        name: "reviewer",
+        shadowed: expect.objectContaining({ layer: "user" }),
+        shadowedBy: expect.objectContaining({ layer: "project" }),
+      }),
+    ]);
+    expect(report.errors).toEqual([]);
+  });
+
   it("reports skill validation errors", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await mkdir(join(workspace, "skills", "bad"), { recursive: true });
+    await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+      recursive: true,
+    });
     await writeFile(
-      join(workspace, "skills", "bad", "SKILL.md"),
+      join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
       [
         "---",
         "name: Bad Name",

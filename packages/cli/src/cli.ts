@@ -28,17 +28,25 @@ import {
 import {
   CronStore,
   defaultCronRoot,
+  legacyConfigCronRoot,
   runCronJobByRef,
   tickCron,
   type CreateJobInput,
   type UpdateJobPatch,
 } from "@sparkwright/cron";
+import { type SkillRoot } from "@sparkwright/skills";
 import {
-  loadSkillsFromDirectory,
-  type SkillManifest,
-  type SkillLoadError,
-} from "@sparkwright/skills";
-import { loadHostConfig, userConfigPath } from "@sparkwright/host";
+  loadLayeredSkillReport,
+  loadLayeredAgentReport,
+  loadHostConfig,
+  existingSkillRoots,
+  projectSkillRoot,
+  resolveCapabilityDirs,
+  resolveSkillRootsForRuntime,
+  userConfigPath,
+  type AgentReport,
+  type SkillReport,
+} from "@sparkwright/host";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
@@ -147,6 +155,10 @@ export async function runCli(
     return handleToolsCommand(parsed.value, io, env);
   }
 
+  if (command === "capabilities") {
+    return handleCapabilitiesCommand(parsed.value, io, env);
+  }
+
   if (command === "skills") {
     return handleSkillsCommand(parsed.value, io, env);
   }
@@ -199,6 +211,7 @@ function parseArgs(
     "session",
     "cron",
     "tools",
+    "capabilities",
     "skills",
     "agents",
   ]);
@@ -211,6 +224,7 @@ function parseArgs(
     command === "session" ||
     command === "cron" ||
     command === "tools" ||
+    command === "capabilities" ||
     command === "skills" ||
     command === "agents"
   ) {
@@ -513,6 +527,14 @@ function parseArgs(
     };
   }
 
+  if (command === "capabilities" && subcommand !== "inspect") {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]",
+    };
+  }
+
   if (
     command === "skills" &&
     subcommand !== "list" &&
@@ -566,7 +588,10 @@ function parseArgs(
   const effectiveGoal =
     command === "cron"
       ? (cronRefCommand ? args.slice(1) : args).join("\0")
-      : command === "tools" || command === "skills" || command === "agents"
+      : command === "tools" ||
+          command === "capabilities" ||
+          command === "skills" ||
+          command === "agents"
         ? args.join("\0")
         : goal;
 
@@ -815,6 +840,190 @@ function formatPatternList(
   return values && values.length > 0 ? values.join(", ") : emptyLabel;
 }
 
+interface CapabilityInspectReport {
+  workspace: string;
+  config: {
+    errors: Array<{ file: string; field: string; message: string }>;
+  };
+  tools: ToolsConfigShape;
+  skills: SkillReport;
+  agents: AgentReport & {
+    delegateTools: Array<{ profileId: string; toolName?: string }>;
+  };
+  mcp: {
+    servers: Array<{ name: string; type: string; enabled: boolean }>;
+    defaultTimeoutMs?: number;
+    namePrefix?: string;
+  };
+  cron: {
+    stateRoot: string;
+    legacyStateRoot: string;
+  };
+  command: {
+    dirs: Array<{ layer: string; path: string; exists: boolean }>;
+  };
+}
+
+async function handleCapabilitiesCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  if (parsed.subcommand !== "inspect") {
+    writeLine(io.stderr, capabilitiesUsage());
+    return { exitCode: 1 };
+  }
+
+  try {
+    const report = await loadCapabilityInspectReport(parsed.workspaceRoot, env);
+    writeLine(
+      io.stdout,
+      parsed.format === "json"
+        ? JSON.stringify(report, null, 2)
+        : formatCapabilityInspectReport(report),
+    );
+    return { exitCode: report.config.errors.length > 0 ? 1 : 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+async function loadCapabilityInspectReport(
+  workspaceRoot: string,
+  env: Record<string, string | undefined>,
+): Promise<CapabilityInspectReport> {
+  const loaded = await loadHostConfig(workspaceRoot, env);
+  const capabilities = loaded.config.capabilities;
+  const skillRoots = resolveSkillRootsForRuntime(
+    workspaceRoot,
+    capabilities?.skills?.roots,
+    env,
+  );
+  const skills = await loadLayeredSkillReport(skillRoots, {
+    includeMissingRoots: false,
+  });
+  const agents = await loadLayeredAgentReport(
+    workspaceRoot,
+    capabilities?.agents?.profiles,
+    env,
+  );
+
+  const commandDirs = await Promise.all(
+    resolveCapabilityDirs("command", { cwd: workspaceRoot, env }).map(
+      async (dir) => ({
+        layer: dir.layer,
+        path: dir.dir,
+        exists: await pathExists(dir.dir),
+      }),
+    ),
+  );
+
+  return {
+    workspace: workspaceRoot,
+    config: { errors: loaded.errors },
+    tools: capabilities?.tools ?? {},
+    skills,
+    agents: {
+      ...agents,
+      delegateTools: (capabilities?.agents?.delegateTools ?? []).map(
+        (tool) => ({
+          profileId: tool.profileId,
+          toolName: tool.toolName,
+        }),
+      ),
+    },
+    mcp: {
+      servers: (capabilities?.mcp?.servers ?? []).map((server) => ({
+        name: server.name,
+        type: server.type,
+        enabled: server.enabled !== false,
+      })),
+      defaultTimeoutMs: capabilities?.mcp?.defaultTimeoutMs,
+      namePrefix: capabilities?.mcp?.namePrefix,
+    },
+    cron: {
+      stateRoot: defaultCronRoot(env),
+      legacyStateRoot: legacyConfigCronRoot(env),
+    },
+    command: { dirs: commandDirs },
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  const { stat } = await import("node:fs/promises");
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatCapabilityInspectReport(
+  report: CapabilityInspectReport,
+): string {
+  const lines = [
+    `workspace: ${report.workspace}`,
+    `tools: enabled=${formatPatternList(report.tools.enabled, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
+  ];
+  for (const root of report.skills.roots) lines.push(`  root: ${root}`);
+  for (const skill of report.skills.skills) {
+    lines.push(`  - ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
+  }
+  lines.push(
+    `agents: ${report.agents.profiles.length} effective, ${report.agents.roots.length} roots, ${report.agents.shadows.length} shadows, ${report.agents.errors.length} errors, ${report.agents.delegateTools.length} delegate tools`,
+  );
+  for (const agent of report.agents.profiles) {
+    lines.push(
+      `  - ${agent.id}${agent.name ? ` (${agent.name})` : ""}: ${agent.layer}`,
+    );
+  }
+  if (report.agents.shadows.length > 0) {
+    lines.push(`agent shadows: ${report.agents.shadows.length}`);
+    for (const shadow of report.agents.shadows) {
+      lines.push(
+        `  - ${shadow.id}: ${formatAgentOrigin(
+          shadow.shadowed,
+        )} shadowed by ${formatAgentOrigin(shadow.shadowedBy)}`,
+      );
+    }
+  }
+  lines.push(`mcp: ${report.mcp.servers.length} servers`);
+  for (const server of report.mcp.servers) {
+    lines.push(
+      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"}`,
+    );
+  }
+  lines.push(`cron state: ${report.cron.stateRoot}`);
+  lines.push(`cron legacy state: ${report.cron.legacyStateRoot}`);
+  lines.push("command dirs:");
+  for (const dir of report.command.dirs) {
+    lines.push(
+      `  - ${dir.layer}: ${dir.path}${dir.exists ? "" : " (missing)"}`,
+    );
+  }
+  if (report.config.errors.length > 0) {
+    lines.push(`config errors: ${report.config.errors.length}`);
+    for (const error of report.config.errors) {
+      lines.push(`  - ${error.file}: ${error.field}: ${error.message}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatAgentOrigin(agent: {
+  layer?: string;
+  source?: string;
+  root?: string;
+}): string {
+  return `${agent.layer ?? "unknown"}:${agent.source ?? agent.root ?? "config"}`;
+}
+
 function stringArrayOrUndefined(value: unknown): string[] | undefined {
   return Array.isArray(value) &&
     value.every((entry) => typeof entry === "string")
@@ -855,12 +1064,12 @@ async function handleSkillsCommand(
   }
 
   try {
-    const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
     if (subcommand === "create") {
-      return handleSkillsCreate(parsed, io, roots);
+      return handleSkillsCreate(parsed, io);
     }
 
-    const report = await loadSkillReport(roots, {
+    const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
+    const report = await loadLayeredSkillReport(roots, {
       includeMissingRoots: subcommand === "validate",
     });
     if (parsed.format === "json") {
@@ -883,7 +1092,6 @@ async function handleSkillsCommand(
 async function handleSkillsCreate(
   parsed: ParsedArgs,
   io: CliIO,
-  roots: string[],
 ): Promise<CliRunResult> {
   const input = parseSkillsCreateArgs(splitCliWords(parsed.goal));
   if (!input.ok) {
@@ -894,7 +1102,7 @@ async function handleSkillsCreate(
     ? isAbsolute(input.value.root)
       ? input.value.root
       : resolve(parsed.workspaceRoot, input.value.root)
-    : (roots[0] ?? join(parsed.workspaceRoot, "skills"));
+    : projectSkillRoot(parsed.workspaceRoot);
   const skillDir = join(root, input.value.name);
   const skillPath = join(skillDir, "SKILL.md");
   const { mkdir, writeFile } = await import("node:fs/promises");
@@ -920,73 +1128,16 @@ async function handleSkillsCreate(
   return { exitCode: 0 };
 }
 
-interface SkillReport {
-  roots: string[];
-  skills: Array<{
-    name: string;
-    description: string;
-    version?: string;
-    source?: string;
-  }>;
-  errors: SkillLoadError[];
-}
-
-async function loadSkillReport(
-  roots: string[],
-  options: { includeMissingRoots: boolean },
-): Promise<SkillReport> {
-  const { stat } = await import("node:fs/promises");
-  const skills: SkillManifest[] = [];
-  const errors: SkillLoadError[] = [];
-
-  for (const root of roots) {
-    try {
-      const info = await stat(root);
-      if (!info.isDirectory()) {
-        errors.push({ source: root, message: "skill root is not a directory" });
-        continue;
-      }
-    } catch (error) {
-      if (options.includeMissingRoots) {
-        errors.push({
-          source: root,
-          message:
-            (error as NodeJS.ErrnoException).code === "ENOENT"
-              ? "skill root does not exist"
-              : error instanceof Error
-                ? error.message
-                : String(error),
-        });
-      }
-      continue;
-    }
-
-    const loaded = await loadSkillsFromDirectory(root);
-    skills.push(...loaded.skills);
-    errors.push(...loaded.loadErrors);
-  }
-
-  return {
-    roots,
-    skills: skills
-      .map((skill) => ({
-        name: skill.name,
-        description: skill.description,
-        version: skill.version,
-        source: skill.source,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name)),
-    errors,
-  };
-}
-
 async function resolveSkillRootsForCli(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
-): Promise<string[]> {
+): Promise<SkillRoot[]> {
   const cfg = await loadHostConfig(workspaceRoot, env);
   const roots = cfg.config.capabilities?.skills?.roots;
-  return roots && roots.length > 0 ? roots : [join(workspaceRoot, "skills")];
+  const resolved = resolveSkillRootsForRuntime(workspaceRoot, roots, env);
+  return roots && roots.length > 0
+    ? resolved
+    : await existingSkillRoots(resolved);
 }
 
 function parseSkillsCreateArgs(
@@ -1063,7 +1214,18 @@ function formatSkillReport(report: SkillReport): string {
     lines.push(
       `- ${skill.name}${skill.version ? `@${skill.version}` : ""}: ${skill.description}`,
     );
+    if (skill.layer) lines.push(`  layer: ${skill.layer}`);
     if (skill.source) lines.push(`  source: ${skill.source}`);
+  }
+  if (report.shadows.length > 0) {
+    lines.push(`shadows: ${report.shadows.length}`);
+    for (const shadow of report.shadows) {
+      lines.push(
+        `- ${shadow.name}: ${formatSkillOrigin(
+          shadow.shadowed,
+        )} shadowed by ${formatSkillOrigin(shadow.shadowedBy)}`,
+      );
+    }
   }
   if (report.errors.length > 0) {
     lines.push(`errors: ${report.errors.length}`);
@@ -1072,6 +1234,14 @@ function formatSkillReport(report: SkillReport): string {
     }
   }
   return lines.join("\n");
+}
+
+function formatSkillOrigin(skill: {
+  layer?: string;
+  source?: string;
+  root?: string;
+}): string {
+  return `${skill.layer ?? "unknown"}:${skill.source ?? skill.root ?? "unknown"}`;
 }
 
 async function handleAgentsCommand(
@@ -1498,7 +1668,10 @@ async function handleCronCommand(
   }
 
   const rootDir = cron.value.rootDir ?? defaultCronRoot(env);
-  const store = new CronStore({ rootDir });
+  const store = new CronStore({
+    rootDir,
+    legacyRootDir: legacyConfigCronRoot(env),
+  });
 
   try {
     if (subcommand === "list") {
@@ -2341,6 +2514,8 @@ const PROJECT_CONFIG_TEMPLATE = {
   },
 };
 
+const PROJECT_CAPABILITY_DIRS = ["skills", "agents", "command"] as const;
+
 /**
  * Scaffold the shared user config so first-time setup is "edit one file" rather
  * than "export a wall of env vars". With `--project`, scaffold the committable
@@ -2407,36 +2582,43 @@ async function scaffoldProjectConfig(
   const { existsSync } = await import("node:fs");
   const { dirname } = await import("node:path");
   const path = projectConfigPathForWorkspace(cwd);
-
-  if (existsSync(path)) {
-    writeLine(io.stdout, `Project config already exists: ${path}`);
-    writeLine(io.stdout, "Edit it directly, or delete it and re-run init.");
-    return { exitCode: 0 };
-  }
+  const configExists = existsSync(path);
 
   try {
     // No secret here, so no forced 600: this file is meant to be committed.
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(
-      path,
-      `${JSON.stringify(PROJECT_CONFIG_TEMPLATE, null, 2)}\n`,
-    );
+    if (!configExists) {
+      await writeFile(
+        path,
+        `${JSON.stringify(PROJECT_CONFIG_TEMPLATE, null, 2)}\n`,
+      );
+    }
+    for (const dir of PROJECT_CAPABILITY_DIRS) {
+      await mkdir(join(dirname(path), dir), { recursive: true });
+    }
   } catch (error) {
     writeLine(
       io.stderr,
-      `Failed to write ${path}: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to scaffold project config at ${dirname(path)}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return { exitCode: 1 };
   }
 
-  writeLine(io.stdout, `Created ${path}`);
+  writeLine(
+    io.stdout,
+    configExists ? `Project config already exists: ${path}` : `Created ${path}`,
+  );
   writeLine(
     io.stdout,
     "This file is safe to commit — it holds no secrets. Provider keys stay in your user config (`sparkwright init`).",
   );
   writeLine(
     io.stdout,
-    "Add file-authored commands under .sparkwright/command/*.md and agent profiles under .sparkwright/agents/*.md.",
+    "Created project capability directories: .sparkwright/skills, .sparkwright/agents, .sparkwright/command",
+  );
+  writeLine(
+    io.stdout,
+    "Next: sparkwright capabilities inspect --workspace . --format text",
   );
   return { exitCode: 0 };
 }
@@ -2445,6 +2627,7 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
+    "       sparkwright capabilities inspect [--workspace path] [--format json|text]",
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
     "       sparkwright skills list|validate [--workspace path] [--format json|text]",
@@ -2468,6 +2651,10 @@ function toolsUsage(): string {
     "       sparkwright tools disable <tool-pattern...>",
     "       sparkwright tools defer <tool-pattern...>",
   ].join("\n");
+}
+
+function capabilitiesUsage(): string {
+  return "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]";
 }
 
 function skillsUsage(): string {
