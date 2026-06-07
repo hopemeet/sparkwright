@@ -2,7 +2,7 @@
   "$schema": "../../schemas/capability-runtime-config.schema.json",
   "goal": "Review the code change and report concrete risks.",
   "skills": {
-    "roots": ["skills"],
+    "roots": [".sparkwright/skills"],
     "allowedSkills": ["code-reviewer"],
     "includeLoaderTool": false,
     "loadSelectedSkills": true,
