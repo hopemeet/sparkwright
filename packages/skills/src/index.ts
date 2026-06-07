@@ -104,7 +104,7 @@ export interface SkillAccessPolicy {
 
 export interface PrepareSkillsForRunOptions {
   goal: string;
-  skillRoots: string[];
+  skillRoots: SkillRootInput[];
   agent?: SkillAccessPolicy;
   includeLoaderTool?: boolean;
   loadSelectedSkills?: boolean;
@@ -125,6 +125,15 @@ export interface PrepareSkillsForRunOptions {
    */
   includeDevSkills?: boolean;
 }
+
+export type SkillRootLayer = "builtin" | "user" | "project" | "legacy";
+
+export interface SkillRoot {
+  root: string;
+  layer?: SkillRootLayer;
+}
+
+export type SkillRootInput = string | SkillRoot;
 
 export async function prepareSkillsForRun(
   options: PrepareSkillsForRunOptions,
@@ -217,21 +226,51 @@ export async function prepareSkillsForRun(
 }
 
 export async function loadSkills(
-  skillRoots: string[],
+  skillRoots: SkillRootInput[],
 ): Promise<SkillDefinition[]> {
-  const skillFiles = (
-    await Promise.all(skillRoots.map((root) => findSkillFiles(root)))
-  )
-    .flat()
-    .sort((left, right) => left.localeCompare(right));
+  const loadedByRoot = await Promise.all(
+    skillRoots.map(async (input, rootIndex) => {
+      const root = normalizeSkillRoot(input);
+      const skillFiles = (await findSkillFiles(root.root)).sort((left, right) =>
+        left.localeCompare(right),
+      );
+      const skills = await Promise.all(
+        skillFiles.map((path) => loadSkill(path, { layer: root.layer })),
+      );
+      return { rootIndex, skills };
+    }),
+  );
 
-  return Promise.all(skillFiles.map((path) => loadSkill(path)));
+  const byName = new Map<string, SkillDefinition>();
+  for (const { skills } of loadedByRoot.sort(
+    (left, right) => left.rootIndex - right.rootIndex,
+  )) {
+    for (const skill of skills) byName.set(skill.name, skill);
+  }
+
+  return [...byName.values()].sort((left, right) =>
+    left.sourcePath.localeCompare(right.sourcePath),
+  );
 }
 
-export async function loadSkill(path: string): Promise<SkillDefinition> {
+export async function loadSkill(
+  path: string,
+  options: { layer?: SkillRootLayer } = {},
+): Promise<SkillDefinition> {
   const sourcePath = resolve(path);
   const content = await readFile(sourcePath, "utf8");
-  return parseSkill(content, sourcePath);
+  const skill = parseSkill(content, sourcePath);
+  if (!options.layer) return skill;
+  skill.metadata = {
+    ...skill.metadata,
+    sparkwrightLayer: options.layer,
+    ...(options.layer === "builtin" ? { trust: "builtin" } : {}),
+  };
+  return skill;
+}
+
+function normalizeSkillRoot(input: SkillRootInput): SkillRoot {
+  return typeof input === "string" ? { root: input } : input;
 }
 
 export function parseSkill(

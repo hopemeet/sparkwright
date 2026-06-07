@@ -99,6 +99,43 @@ Review carefully.
     expect(skills[0]?.sourcePath).toBe(join(root, "reviewer", "SKILL.md"));
   });
 
+  it("lets stronger roots shadow weaker skills with the same name", async () => {
+    const weak = await mkdtemp(join(tmpdir(), "sparkwright-skills-weak-"));
+    const strong = await mkdtemp(join(tmpdir(), "sparkwright-skills-strong-"));
+    await mkdir(join(weak, "reviewer"));
+    await mkdir(join(strong, "reviewer"));
+    await writeFile(
+      join(weak, "reviewer", "SKILL.md"),
+      `---
+name: reviewer
+description: Weak reviewer.
+---
+Weak body.
+`,
+    );
+    await writeFile(
+      join(strong, "reviewer", "SKILL.md"),
+      `---
+name: reviewer
+description: Strong reviewer.
+---
+Strong body.
+`,
+    );
+
+    const skills = await loadSkills([
+      { root: weak, layer: "builtin" },
+      { root: strong, layer: "project" },
+    ]);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0]).toMatchObject({
+      description: "Strong reviewer.",
+      body: "Strong body.",
+      metadata: { sparkwrightLayer: "project" },
+    });
+  });
+
   it("selects skills deterministically from the goal", () => {
     const dingtalk = parseSkill(`---
 name: dingtalk-notifier

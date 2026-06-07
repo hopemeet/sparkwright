@@ -8,6 +8,7 @@ import {
   parseAgentProfileFile,
   resolveAgentProfiles,
 } from "../src/agent-profiles.js";
+import { loadLayeredAgentReport } from "../src/agent-report.js";
 
 async function tempWorkspace(): Promise<string> {
   return mkdtemp(join(tmpdir(), "sparkwright-agent-md-"));
@@ -96,5 +97,82 @@ describe("discovery + resolve", () => {
     const byId = Object.fromEntries(resolved.map((p) => [p.id, p]));
     expect(byId.triage?.name).toBe("config-triage"); // config wins
     expect(byId.mdonly?.name).toBe("only-md"); // md-only survives
+  });
+
+  it("layers user markdown under project markdown before config profiles", async () => {
+    const root = await tempWorkspace();
+    const xdg = await mkdtemp(join(tmpdir(), "sparkwright-agent-xdg-"));
+    await mkdir(join(xdg, "sparkwright", "agents"), { recursive: true });
+    await writeFile(
+      join(xdg, "sparkwright", "agents", "triage.md"),
+      "---\nname: user-triage\n---\nuser prompt",
+      "utf8",
+    );
+    await writeAgent(root, "triage", "---\nname: project-triage\n---\nprompt");
+
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdg;
+    try {
+      const markdownOnly = await resolveAgentProfiles(root, undefined);
+      expect(
+        markdownOnly.find((profile) => profile.id === "triage")?.name,
+      ).toBe("project-triage");
+
+      const resolved = await resolveAgentProfiles(root, [
+        { id: "triage", name: "config-triage" },
+      ]);
+      expect(resolved.find((profile) => profile.id === "triage")?.name).toBe(
+        "config-triage",
+      );
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previous;
+    }
+  });
+});
+
+describe("loadLayeredAgentReport", () => {
+  it("reports agent provenance and shadowed profiles", async () => {
+    const root = await tempWorkspace();
+    const xdg = await mkdtemp(join(tmpdir(), "sparkwright-agent-report-xdg-"));
+    await mkdir(join(xdg, "sparkwright", "agents"), { recursive: true });
+    await writeFile(
+      join(xdg, "sparkwright", "agents", "reviewer.md"),
+      "---\nname: user-reviewer\n---\nuser prompt",
+      "utf8",
+    );
+    await writeAgent(
+      root,
+      "reviewer",
+      "---\nname: project-reviewer\n---\nproject prompt",
+    );
+
+    const report = await loadLayeredAgentReport(
+      root,
+      [{ id: "reviewer", name: "config-reviewer", mode: "child" }],
+      { XDG_CONFIG_HOME: xdg },
+    );
+
+    expect(report.profiles).toEqual([
+      expect.objectContaining({
+        id: "reviewer",
+        name: "config-reviewer",
+        layer: "config",
+        mode: "child",
+      }),
+    ]);
+    expect(report.shadows).toEqual([
+      expect.objectContaining({
+        id: "reviewer",
+        shadowed: expect.objectContaining({ layer: "user" }),
+        shadowedBy: expect.objectContaining({ layer: "project" }),
+      }),
+      expect.objectContaining({
+        id: "reviewer",
+        shadowed: expect.objectContaining({ layer: "project" }),
+        shadowedBy: expect.objectContaining({ layer: "config" }),
+      }),
+    ]);
+    expect(report.errors).toEqual([]);
   });
 });

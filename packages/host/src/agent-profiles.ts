@@ -9,6 +9,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { AgentMode, AgentProfile } from "@sparkwright/agent-runtime";
+import { resolveCapabilityDirs } from "./layers.js";
 
 const AGENT_MODES = new Set<AgentMode>(["primary", "child", "all"]);
 
@@ -20,6 +21,28 @@ export async function discoverProjectAgentProfiles(
   workspaceRoot: string,
 ): Promise<AgentProfile[]> {
   const dir = join(workspaceRoot, ".sparkwright", "agents");
+  return discoverAgentProfilesInDir(dir);
+}
+
+export async function discoverLayeredAgentProfiles(
+  workspaceRoot: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<AgentProfile[]> {
+  const byId = new Map<string, AgentProfile>();
+  for (const dir of resolveCapabilityDirs("agents", {
+    cwd: workspaceRoot,
+    env,
+  })) {
+    for (const profile of await discoverAgentProfilesInDir(dir.dir)) {
+      byId.set(profile.id, profile);
+    }
+  }
+  return [...byId.values()];
+}
+
+async function discoverAgentProfilesInDir(
+  dir: string,
+): Promise<AgentProfile[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
@@ -58,7 +81,7 @@ export async function resolveAgentProfiles(
   workspaceRoot: string,
   configProfiles: readonly AgentProfile[] | undefined,
 ): Promise<AgentProfile[]> {
-  const markdown = await discoverProjectAgentProfiles(workspaceRoot);
+  const markdown = await discoverLayeredAgentProfiles(workspaceRoot);
   return mergeAgentProfilesById(markdown, configProfiles ?? []);
 }
 

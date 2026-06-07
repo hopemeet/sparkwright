@@ -17,7 +17,33 @@ export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
 export { applyToolConfig } from "./tools.js";
 export {
+  projectSkillRoot,
+  existingSkillRoots,
+  resolveSkillRootsForRuntime,
+  skillRootPaths,
+} from "./skill-roots.js";
+export { loadLayeredSkillReport } from "./skill-report.js";
+export type {
+  SkillReport,
+  SkillReportEntry,
+  SkillShadowDiagnostic,
+} from "./skill-report.js";
+export { loadLayeredAgentReport } from "./agent-report.js";
+export type {
+  AgentReport,
+  AgentReportEntry,
+  AgentReportLayer,
+  AgentShadowDiagnostic,
+} from "./agent-report.js";
+export { resolveCapabilityDirs, userConfigBase } from "./layers.js";
+export type {
+  CapabilityKind,
+  CapabilityLayer,
+  ResolvedCapabilityDir,
+} from "./layers.js";
+export {
   resolveAgentProfiles,
+  discoverLayeredAgentProfiles,
   discoverProjectAgentProfiles,
   mergeAgentProfilesById,
   parseAgentProfileFile,

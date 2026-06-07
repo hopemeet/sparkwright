@@ -137,7 +137,7 @@ const capabilities = skillsToCapabilities(registry.list());
 Example manifest set (three skills):
 
 ```yaml
-# skills/reviewer/SKILL.md
+# .sparkwright/skills/reviewer/SKILL.md
 ---
 name: code-reviewer
 description: Reviews source code changes for risk and test coverage.
@@ -148,7 +148,7 @@ Read the diff. Call out risky changes. Summarize test coverage.
 ```
 
 ```yaml
-# skills/notify.skill.md
+# .sparkwright/skills/notify.skill.md
 ---
 name: dingtalk-notifier
 description: Sends DingTalk group notifications when an alert is requested.
@@ -159,7 +159,7 @@ Send a single concise notification. Never spam the channel.
 ```
 
 ```json
-// skills/test-writer.skill.json
+// .sparkwright/skills/test-writer.skill.json
 {
   "name": "test-writer",
   "description": "Writes unit tests for new or untested code.",
