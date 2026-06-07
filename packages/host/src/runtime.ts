@@ -20,6 +20,7 @@ import {
   type EventEmitter,
   type ModelAdapter,
   type PermissionMode,
+  type RunResult,
   type SparkwrightEvent,
   type ToolDefinition,
   type ToolOrigin,
@@ -42,6 +43,7 @@ import {
   spawnSubAgent,
   type AgentProfile,
   type DerivedChildAgentProfile,
+  type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 import {
@@ -494,6 +496,169 @@ export class HostRuntime {
       });
   }
 
+  private async startSupervisedRunChain(input: {
+    env: PreparedHostRunEnvironment;
+    sessionId: string;
+    todoPath: string;
+    buildRun: (
+      supervisedInput: TodoSupervisedRunInput,
+    ) => ReturnType<typeof createRun>;
+    afterRun?: (
+      supervisedInput: TodoSupervisedRunInput,
+      run: ReturnType<typeof createRun>,
+      result: RunResult,
+    ) => void | Promise<void>;
+  }): Promise<
+    { ok: true; runId: string } | { ok: false; error: ProtocolError }
+  > {
+    const { env, sessionId, todoPath } = input;
+    const registerActiveRun = (
+      run: ReturnType<typeof createRun>,
+      runId: string,
+    ): SparkwrightEvent[] => {
+      env.parentRunRef.current = run;
+      env.runIdHolder.value = runId;
+      this.active = {
+        runId,
+        run,
+        trace: env.trace,
+        sessionId,
+        closeCapabilities: env.preparedMcp
+          ? () => env.preparedMcp!.close()
+          : undefined,
+      };
+      const collected: SparkwrightEvent[] = [];
+      run.events.subscribe((event: SparkwrightEvent) => {
+        env.trace.append(event);
+        collected.push(event);
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.event",
+          timestamp: nowIso(),
+          payload: { runId, event },
+        });
+      });
+      env.pendingExtensionEvents.flush(run.events);
+      return collected;
+    };
+
+    let resolveFirstRunId!: (id: string) => void;
+    let rejectFirstRunId!: (err: unknown) => void;
+    const firstRunId = new Promise<string>((resolve, reject) => {
+      resolveFirstRunId = resolve;
+      rejectFirstRunId = reject;
+    });
+    let firstRunStarted = false;
+    let previousRunId: string | undefined;
+    let lastRunId = "";
+    this.runChainCancelled = false;
+
+    const supervised = runTodoSupervised({
+      todoPath,
+      sessionId,
+      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
+      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
+      runOnce: async (supervisedInput) => {
+        const run = input.buildRun(supervisedInput);
+        const runId = run.record.id;
+        lastRunId = runId;
+        const collected = registerActiveRun(run, runId);
+        if (!firstRunStarted) {
+          firstRunStarted = true;
+          resolveFirstRunId(runId);
+        } else if (supervisedInput.continuation) {
+          this.opts.emit({
+            envelope: "event",
+            id: nextMessageId("evt"),
+            kind: "run.continuation",
+            timestamp: nowIso(),
+            payload: {
+              runId,
+              previousRunId: previousRunId ?? runId,
+              continuationCount:
+                supervisedInput.continuation.metadata.continuationCount,
+              reason: supervisedInput.continuation.metadata.reason,
+            },
+          });
+        }
+        const result = await run.start();
+        previousRunId = runId;
+        await input.afterRun?.(supervisedInput, run, result);
+        if (this.runChainCancelled) {
+          return {
+            result: {
+              ...result,
+              state: "cancelled",
+              stopReason: "manual_cancelled",
+            },
+            events: collected,
+          };
+        }
+        return { result, events: collected };
+      },
+    });
+
+    supervised
+      .then((outcome) => {
+        const handoff =
+          !this.runChainCancelled && outcome.decision.kind === "handoff"
+            ? {
+                reason: outcome.decision.reason,
+                message: outcome.decision.message,
+              }
+            : undefined;
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.completed",
+          timestamp: nowIso(),
+          payload: {
+            runId: lastRunId,
+            state: outcome.result.state,
+            stopReason: outcome.result.stopReason,
+            ...(handoff ? { todoHandoff: handoff } : {}),
+          },
+        });
+      })
+      .catch((err: unknown) => {
+        if (!firstRunStarted) rejectFirstRunId(err);
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.failed",
+          timestamp: nowIso(),
+          payload: {
+            runId: lastRunId,
+            error: {
+              code: "internal_error",
+              message: err instanceof Error ? err.message : String(err),
+            },
+          },
+        });
+      })
+      .finally(() => {
+        void env.preparedMcp?.close().catch(() => {});
+        this.active = null;
+        for (const [id, p] of this.pendingApprovals) {
+          p.resolve("denied");
+          this.pendingApprovals.delete(id);
+        }
+      });
+
+    try {
+      return { ok: true, runId: await firstRunId };
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+  }
+
   private async resumeRunInner(
     payload: RunResumeRequestPayload,
   ): Promise<
@@ -576,48 +741,6 @@ export class HostRuntime {
         }),
       });
 
-    const registerActiveRun = (
-      run: ReturnType<typeof createRun>,
-      runId: string,
-    ): SparkwrightEvent[] => {
-      env.parentRunRef.current = run;
-      env.runIdHolder.value = runId;
-      this.active = {
-        runId,
-        run,
-        trace: env.trace,
-        sessionId: resumeSessionId,
-        closeCapabilities: env.preparedMcp
-          ? () => env.preparedMcp!.close()
-          : undefined,
-      };
-      const collected: SparkwrightEvent[] = [];
-      run.events.subscribe((event: SparkwrightEvent) => {
-        env.trace.append(event);
-        collected.push(event);
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.event",
-          timestamp: nowIso(),
-          payload: { runId, event },
-        });
-      });
-      env.pendingExtensionEvents.flush(run.events);
-      return collected;
-    };
-
-    let resolveFirstRunId!: (id: string) => void;
-    let rejectFirstRunId!: (err: unknown) => void;
-    const firstRunId = new Promise<string>((resolve, reject) => {
-      resolveFirstRunId = resolve;
-      rejectFirstRunId = reject;
-    });
-    let firstRunStarted = false;
-    let previousRunId: string | undefined;
-    let lastRunId = "";
-    this.runChainCancelled = false;
-
     const chainTurns: ContextItem[] = [];
     const chainTurn = (
       role: "user" | "assistant",
@@ -630,16 +753,15 @@ export class HostRuntime {
       metadata: { layer: "conversation", stability: "session" },
     });
 
-    const supervised = runTodoSupervised({
+    const started = await this.startSupervisedRunChain({
+      env,
       todoPath: join(env.sessionRootDir, resumeSessionId, "todo.md"),
       sessionId: resumeSessionId,
-      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
-      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
-      runOnce: async (input) => {
-        const run = input.continuation
-          ? buildContinuationRun(input.continuation.prompt, [
+      buildRun: (supervisedInput) =>
+        supervisedInput.continuation
+          ? buildContinuationRun(supervisedInput.continuation.prompt, [
               ...chainTurns,
-              input.continuation.context,
+              supervisedInput.continuation.context,
             ])
           : resumeRunFromCheckpoint(checkpoint, {
               force: payload.force || !checkpoint.resumability.complete,
@@ -667,29 +789,9 @@ export class HostRuntime {
                 }),
                 metadata: env.runStoreMetadata,
               }),
-            });
+            }),
+      afterRun: (_supervisedInput, run, result) => {
         const runId = run.record.id;
-        lastRunId = runId;
-        const collected = registerActiveRun(run, runId);
-        if (!firstRunStarted) {
-          firstRunStarted = true;
-          resolveFirstRunId(runId);
-        } else if (input.continuation) {
-          this.opts.emit({
-            envelope: "event",
-            id: nextMessageId("evt"),
-            kind: "run.continuation",
-            timestamp: nowIso(),
-            payload: {
-              runId,
-              previousRunId: previousRunId ?? runId,
-              continuationCount: input.continuation.metadata.continuationCount,
-              reason: input.continuation.metadata.reason,
-            },
-          });
-        }
-        const result = await run.start();
-        previousRunId = runId;
         if (chainTurns.length === 0) {
           chainTurns.push(
             chainTurn("user", checkpoint.run.goal, `${runId}_goal`),
@@ -700,83 +802,13 @@ export class HostRuntime {
             chainTurn("assistant", result.message, `${runId}_answer`),
           );
         }
-        if (this.runChainCancelled) {
-          return {
-            result: {
-              ...result,
-              state: "cancelled",
-              stopReason: "manual_cancelled",
-            },
-            events: collected,
-          };
-        }
-        return { result, events: collected };
       },
     });
-
-    supervised
-      .then((outcome) => {
-        const handoff =
-          !this.runChainCancelled && outcome.decision.kind === "handoff"
-            ? {
-                reason: outcome.decision.reason,
-                message: outcome.decision.message,
-              }
-            : undefined;
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.completed",
-          timestamp: nowIso(),
-          payload: {
-            runId: lastRunId,
-            state: outcome.result.state,
-            stopReason: outcome.result.stopReason,
-            ...(handoff ? { todoHandoff: handoff } : {}),
-          },
-        });
-      })
-      .catch((err: unknown) => {
-        if (!firstRunStarted) rejectFirstRunId(err);
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.failed",
-          timestamp: nowIso(),
-          payload: {
-            runId: lastRunId,
-            error: {
-              code: "internal_error",
-              message: err instanceof Error ? err.message : String(err),
-            },
-          },
-        });
-      })
-      .finally(() => {
-        void env.preparedMcp?.close().catch(() => {});
-        this.active = null;
-        for (const [id, p] of this.pendingApprovals) {
-          p.resolve("denied");
-          this.pendingApprovals.delete(id);
-        }
-      });
-
-    let runId: string;
-    try {
-      runId = await firstRunId;
-    } catch (err) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: err instanceof Error ? err.message : String(err),
-        },
-      };
-    }
+    if (!started.ok) return started;
 
     return {
       ok: true,
-      runId,
+      runId: started.runId,
       resumedFromRunId: payload.runId,
       sessionId: resumeSessionId,
     };
@@ -862,54 +894,6 @@ export class HostRuntime {
         }),
       });
 
-    // Register a freshly-built run as the connection's active run: wire its
-    // event stream out as host events and collect them for the supervisor's
-    // stall check. Returns the per-run event collector.
-    const registerActiveRun = (
-      run: ReturnType<typeof createRun>,
-      runId: string,
-    ): SparkwrightEvent[] => {
-      env.parentRunRef.current = run;
-      env.runIdHolder.value = runId;
-      this.active = {
-        runId,
-        run,
-        trace: env.trace,
-        sessionId,
-        closeCapabilities: env.preparedMcp
-          ? () => env.preparedMcp!.close()
-          : undefined,
-      };
-      const collected: SparkwrightEvent[] = [];
-      run.events.subscribe((event: SparkwrightEvent) => {
-        env.trace.append(event);
-        collected.push(event);
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.event",
-          timestamp: nowIso(),
-          payload: { runId, event },
-        });
-      });
-      env.pendingExtensionEvents.flush(run.events);
-      return collected;
-    };
-
-    // The first run's id must go back in the startRun response synchronously,
-    // but the supervisor mints it inside its first `runOnce`. Bridge with a
-    // deferred the loop resolves on its first iteration.
-    let resolveFirstRunId!: (id: string) => void;
-    let rejectFirstRunId!: (err: unknown) => void;
-    const firstRunId = new Promise<string>((resolve, reject) => {
-      resolveFirstRunId = resolve;
-      rejectFirstRunId = reject;
-    });
-    let firstRunStarted = false;
-    let previousRunId: string | undefined;
-    let lastRunId = "";
-    this.runChainCancelled = false;
-
     // Conversation turns accumulated across this supervised chain. A
     // continuation is an in-context *resume*, not a cold restart: every turn so
     // far rides along as conversation history so the model keeps the scope and
@@ -927,48 +911,24 @@ export class HostRuntime {
       metadata: { layer: "conversation", stability: "session" },
     });
 
-    const supervised = runTodoSupervised({
+    return this.startSupervisedRunChain({
+      env,
       todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
-      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
-      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
-      runOnce: async (input) => {
+      buildRun: (supervisedInput) => {
         // The nudge stays the final user turn (current_request via `goal`); the
         // original goal and every prior turn ride along as conversation history
         // (chainTurns), so the continuation resumes with full context instead
         // of re-deriving from only the ledger. The ledger context item still
         // comes last as the durable, compaction-proof backstop.
-        const goal = input.continuation?.prompt ?? payload.goal;
-        const extraContext = input.continuation
-          ? [...chainTurns, input.continuation.context]
+        const goal = supervisedInput.continuation?.prompt ?? payload.goal;
+        const extraContext = supervisedInput.continuation
+          ? [...chainTurns, supervisedInput.continuation.context]
           : [];
-        const run = buildRun(goal, extraContext);
+        return buildRun(goal, extraContext);
+      },
+      afterRun: (_supervisedInput, run, result) => {
         const runId = run.record.id;
-        lastRunId = runId;
-        const collected = registerActiveRun(run, runId);
-        if (!firstRunStarted) {
-          firstRunStarted = true;
-          resolveFirstRunId(runId);
-        } else if (input.continuation) {
-          // A continuation: the previous run reached terminal with todos still
-          // open. Tell the client the turn is still live and re-point at runId
-          // instead of treating the prior run.completed as the end (we suppress
-          // that terminal — only the final run of the chain completes).
-          this.opts.emit({
-            envelope: "event",
-            id: nextMessageId("evt"),
-            kind: "run.continuation",
-            timestamp: nowIso(),
-            payload: {
-              runId,
-              previousRunId: previousRunId ?? runId,
-              continuationCount: input.continuation.metadata.continuationCount,
-              reason: input.continuation.metadata.reason,
-            },
-          });
-        }
-        const result = await run.start();
-        previousRunId = runId;
         // Accumulate this chain's conversation for the next continuation's
         // resume context: seed the original user goal once as the opening turn,
         // then append each run's final answer as an assistant turn.
@@ -980,93 +940,8 @@ export class HostRuntime {
             chainTurn("assistant", result.message, `${runId}_answer`),
           );
         }
-        if (this.runChainCancelled) {
-          // The client cancelled this turn. The individual run.cancel may have
-          // raced and let this run resolve as a resumable terminal (e.g. the
-          // model's stream finished first); force a non-resumable terminal so
-          // the supervisor stops instead of spawning another continuation.
-          return {
-            result: {
-              ...result,
-              state: "cancelled",
-              stopReason: "manual_cancelled",
-            },
-            events: collected,
-          };
-        }
-        return { result, events: collected };
       },
     });
-
-    supervised
-      .then((outcome) => {
-        // A user cancel ends the chain via the forced non-resumable terminal
-        // above; surface it as a plain cancellation, not a todo "handoff"
-        // (which would read as "I gave up on unfinished work" rather than
-        // "you stopped me").
-        const handoff =
-          !this.runChainCancelled && outcome.decision.kind === "handoff"
-            ? {
-                reason: outcome.decision.reason,
-                message: outcome.decision.message,
-              }
-            : undefined;
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.completed",
-          timestamp: nowIso(),
-          payload: {
-            runId: lastRunId,
-            state: outcome.result.state,
-            stopReason: outcome.result.stopReason,
-            ...(handoff ? { todoHandoff: handoff } : {}),
-          },
-        });
-      })
-      .catch((err: unknown) => {
-        // A failure before the first run even started must surface to the
-        // caller as an error response, not a fire-and-forget event.
-        if (!firstRunStarted) rejectFirstRunId(err);
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "run.failed",
-          timestamp: nowIso(),
-          payload: {
-            runId: lastRunId,
-            error: {
-              code: "internal_error",
-              message: err instanceof Error ? err.message : String(err),
-            },
-          },
-        });
-      })
-      .finally(() => {
-        void env.preparedMcp?.close().catch(() => {});
-        this.active = null;
-        // The whole supervised chain is done. The per-connection `startingRun`
-        // lock guarantees no other run's approvals coexist, so deny any orphans
-        // from this chain (across all of its runIds).
-        for (const [id, p] of this.pendingApprovals) {
-          p.resolve("denied");
-          this.pendingApprovals.delete(id);
-        }
-      });
-
-    let runId: string;
-    try {
-      runId = await firstRunId;
-    } catch (err) {
-      return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: err instanceof Error ? err.message : String(err),
-        },
-      };
-    }
-    return { ok: true, runId };
   }
 
   private async findRunDir(
