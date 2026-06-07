@@ -311,6 +311,10 @@
             "bypass_permissions"
           ]
         },
+        "traceLevel": {
+          "type": "string",
+          "enum": ["minimal", "standard", "debug"]
+        },
         "metadata": { "type": "object" }
       },
       "additionalProperties": false
@@ -356,6 +360,10 @@
             "dont_ask",
             "bypass_permissions"
           ]
+        },
+        "traceLevel": {
+          "type": "string",
+          "enum": ["minimal", "standard", "debug"]
         },
         "metadata": { "type": "object" }
       },

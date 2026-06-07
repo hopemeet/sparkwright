@@ -197,6 +197,7 @@ async function runHostLifecycle(
           sessionId,
           model: modelName,
           permissionMode,
+          traceLevel,
           metadata: {
             source: "cli",
             targetPath,
@@ -213,6 +214,7 @@ async function runHostLifecycle(
           force: input.force,
           model: modelName,
           permissionMode,
+          traceLevel,
           metadata: {
             source: "cli",
             targetPath,

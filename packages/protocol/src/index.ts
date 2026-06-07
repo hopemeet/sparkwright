@@ -80,6 +80,7 @@ export interface RunStartRequestPayload {
     | "accept_edits"
     | "dont_ask"
     | "bypass_permissions";
+  traceLevel?: "minimal" | "standard" | "debug";
   metadata?: Record<string, unknown>;
 }
 
@@ -100,6 +101,7 @@ export interface RunResumeRequestPayload {
     | "accept_edits"
     | "dont_ask"
     | "bypass_permissions";
+  traceLevel?: "minimal" | "standard" | "debug";
   metadata?: Record<string, unknown>;
 }
 

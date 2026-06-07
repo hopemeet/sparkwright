@@ -10,6 +10,7 @@
     "force": false,
     "model": "deterministic",
     "permissionMode": "default",
+    "traceLevel": "standard",
     "metadata": {
       "source": "fixture"
     }

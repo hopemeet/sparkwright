@@ -22,6 +22,7 @@ import {
   type PermissionMode,
   type RunResult,
   type SparkwrightEvent,
+  type TraceLevel,
   type ToolDefinition,
   type ToolOrigin,
 } from "@sparkwright/core";
@@ -130,10 +131,28 @@ interface PreparedHostRunEnvironment {
   tools: ToolDefinition[];
   sessionStore: FileSessionStore;
   parentRunRef: { current?: ReturnType<typeof createRun> };
+  traceLevel: TraceLevel;
+  runMetadata: Record<string, unknown>;
   runStoreMetadata: Record<string, unknown>;
 }
 
 const MAIN_AGENT_ID = "main";
+
+function isTraceLevel(value: unknown): value is TraceLevel {
+  return value === "minimal" || value === "standard" || value === "debug";
+}
+
+function resolveTraceLevel(input: {
+  traceLevel?: TraceLevel;
+  metadata?: Record<string, unknown>;
+}): TraceLevel {
+  return (
+    input.traceLevel ??
+    (isTraceLevel(input.metadata?.traceLevel)
+      ? input.metadata.traceLevel
+      : "standard")
+  );
+}
 
 // Todo-supervisor continuation budget for the main agent. Conservative, fixed
 // bounds: after MAIN_TODO_MAX_CONTINUATIONS auto-continuations — or a single
@@ -265,6 +284,8 @@ export class HostRuntime {
     modelRef?: string;
     permissionMode: PermissionMode;
     sessionId: string;
+    traceLevel?: TraceLevel;
+    runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
   }): Promise<
     | { ok: true; env: PreparedHostRunEnvironment }
@@ -330,6 +351,7 @@ export class HostRuntime {
       workspaceRoot,
       agentConfig?.profiles,
     );
+    const traceLevel = input.traceLevel ?? "standard";
     const mainAgent = mainAgentProfile(resolvedProfiles);
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
@@ -346,7 +368,7 @@ export class HostRuntime {
           sessionRootDir,
           sessionId: input.sessionId,
           agentId: childAgentId,
-          traceLevel: "standard",
+          traceLevel,
         }),
         metadata: { source: "host" },
       });
@@ -408,8 +430,12 @@ export class HostRuntime {
       ],
     });
 
-    const runStoreMetadata: Record<string, unknown> = {
+    const runMetadata: Record<string, unknown> = {
       source: "host",
+      ...(input.runMetadata ?? {}),
+    };
+    const runStoreMetadata: Record<string, unknown> = {
+      ...runMetadata,
       ...(input.runStoreMetadata ?? {}),
       ...(preparedSkills
         ? {
@@ -450,6 +476,8 @@ export class HostRuntime {
         tools,
         sessionStore,
         parentRunRef,
+        traceLevel,
+        runMetadata,
         runStoreMetadata,
       },
     };
@@ -703,8 +731,14 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       sessionId: resumeSessionId,
+      traceLevel: resolveTraceLevel(payload),
+      runMetadata: {
+        resumedFromRunId: payload.runId,
+        ...(payload.metadata ?? {}),
+      },
       runStoreMetadata: {
         resumedFromRunId: payload.runId,
+        ...(payload.metadata ?? {}),
         ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
       },
     });
@@ -728,6 +762,7 @@ export class HostRuntime {
         ...(env.mainAgent.runBudget !== undefined
           ? { runBudget: env.mainAgent.runBudget }
           : {}),
+        metadata: env.runMetadata,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
           sessionId: resumeSessionId,
@@ -735,7 +770,7 @@ export class HostRuntime {
             sessionRootDir: env.sessionRootDir,
             sessionId: resumeSessionId,
             agentId: located.agentId,
-            traceLevel: "standard",
+            traceLevel: env.traceLevel,
           }),
           metadata: env.runStoreMetadata,
         }),
@@ -778,6 +813,7 @@ export class HostRuntime {
               ...(env.mainAgent.runBudget !== undefined
                 ? { runBudget: env.mainAgent.runBudget }
                 : {}),
+              metadata: env.runMetadata,
               runStore: createSessionRunStoreFactory({
                 sessionStore: env.sessionStore,
                 sessionId: resumeSessionId,
@@ -785,7 +821,7 @@ export class HostRuntime {
                   sessionRootDir: env.sessionRootDir,
                   sessionId: resumeSessionId,
                   agentId: located.agentId,
-                  traceLevel: "standard",
+                  traceLevel: env.traceLevel,
                 }),
                 metadata: env.runStoreMetadata,
               }),
@@ -841,6 +877,9 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       sessionId,
+      traceLevel: resolveTraceLevel(payload),
+      runMetadata: payload.metadata,
+      runStoreMetadata: payload.metadata,
     });
     if (!prepared.ok) return prepared;
     const env = prepared.env;
@@ -881,6 +920,7 @@ export class HostRuntime {
         ...(env.mainAgent.runBudget !== undefined
           ? { runBudget: env.mainAgent.runBudget }
           : {}),
+        metadata: env.runMetadata,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
           sessionId,
@@ -888,7 +928,7 @@ export class HostRuntime {
             sessionRootDir: env.sessionRootDir,
             sessionId,
             agentId: "main",
-            traceLevel: "standard",
+            traceLevel: env.traceLevel,
           }),
           metadata: env.runStoreMetadata,
         }),

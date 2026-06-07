@@ -6,6 +6,8 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add optional `traceLevel` to `run.start` and `run.resume` payloads.
+
 ## 1.2 (2026-06-06)
 
 - Add `run.resume` request shape for host-owned checkpoint/trace resume.

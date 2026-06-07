@@ -175,13 +175,14 @@ Begin a new agent run.
 
 **Payload**
 
-| Field       | Type                            | Required | Notes                                                              |
-| ----------- | ------------------------------- | -------- | ------------------------------------------------------------------ |
-| `goal`      | string                          | yes      | User goal text.                                                    |
-| `sessionId` | string                          | no       | Existing session to write into; host creates a new one if omitted. |
-| `provider`  | `"deterministic"` \| `"openai"` | no       | Overrides host default.                                            |
-| `model`     | string                          | no       | Required when `provider` is `openai`.                              |
-| `metadata`  | object                          | no       | Free-form, propagated to runRecord.                                |
+| Field        | Type                                     | Required | Notes                                                              |
+| ------------ | ---------------------------------------- | -------- | ------------------------------------------------------------------ |
+| `goal`       | string                                   | yes      | User goal text.                                                    |
+| `sessionId`  | string                                   | no       | Existing session to write into; host creates a new one if omitted. |
+| `provider`   | `"deterministic"` \| `"openai"`          | no       | Overrides host default.                                            |
+| `model`      | string                                   | no       | Required when `provider` is `openai`.                              |
+| `traceLevel` | `"minimal"` \| `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.            |
+| `metadata`   | object                                   | no       | Free-form, propagated to runRecord.                                |
 
 **Response result**
 
@@ -233,6 +234,7 @@ prefer checking the host capability list before using it.
 | `force`          | boolean | no       | Allow resuming checkpoints that are terminal or normally refused.          |
 | `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
 | `permissionMode` | string  | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
+| `traceLevel`     | string  | no       | `minimal`, `standard`, or `debug`; defaults to `standard`.                 |
 | `metadata`       | object  | no       | Free-form metadata propagated to the resumed run record and trace context. |
 
 **Response result**

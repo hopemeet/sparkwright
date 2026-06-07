@@ -333,6 +333,8 @@ describe("host protocol", () => {
           sessionId,
           model: "deterministic",
           permissionMode: "default",
+          traceLevel: "minimal",
+          metadata: { source: "test", traceLevel: "minimal", ticket: "T-1" },
         },
       });
 
@@ -347,6 +349,38 @@ describe("host protocol", () => {
       await pair.waitFor(
         (m) => m.envelope === "event" && m.kind === "run.completed",
       );
+      const runJson = JSON.parse(
+        await readFile(join(runDir, "run.json"), "utf8"),
+      ) as { metadata?: Record<string, unknown> };
+      expect(runJson.metadata).toMatchObject({
+        source: "test",
+        traceLevel: "minimal",
+        ticket: "T-1",
+        resumedFromRunId: runId,
+      });
+      const traceEvents = (
+        await readFile(
+          join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      const modelCompleted = traceEvents.find(
+        (event) => event.runId === runId && event.type === "model.completed",
+      );
+      expect(modelCompleted?.payload).toMatchObject({
+        hasMessage: true,
+      });
+      expect(
+        (modelCompleted?.payload as Record<string, unknown> | undefined)
+          ?.toolCallCount,
+      ).toEqual(expect.any(Number));
+      expect(
+        (modelCompleted?.payload as Record<string, unknown> | undefined)
+          ?.message,
+      ).toBeUndefined();
       expect(
         pair
           .clientMessages()

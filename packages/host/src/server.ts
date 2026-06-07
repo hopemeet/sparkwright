@@ -252,6 +252,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "sessionId",
           "model",
           "permissionMode",
+          "traceLevel",
           "metadata",
         ]) ??
         requireString(req.payload, "goal") ??
@@ -264,6 +265,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "dont_ask",
           "bypass_permissions",
         ]) ??
+        optionalEnum(req.payload, "traceLevel", [
+          "minimal",
+          "standard",
+          "debug",
+        ]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.resume":
@@ -275,6 +281,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "force",
           "model",
           "permissionMode",
+          "traceLevel",
           "metadata",
         ]) ??
         requireString(req.payload, "runId") ??
@@ -288,6 +295,11 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "accept_edits",
           "dont_ask",
           "bypass_permissions",
+        ]) ??
+        optionalEnum(req.payload, "traceLevel", [
+          "minimal",
+          "standard",
+          "debug",
         ]) ??
         optionalRecord(req.payload, "metadata")
       );
