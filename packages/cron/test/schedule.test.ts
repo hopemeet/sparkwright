@@ -1,11 +1,13 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CronStore,
   computeNextRun,
+  defaultCronRoot,
   jobIsDue,
+  legacyConfigCronRoot,
   parseSchedule,
   scanAssembledPrompt,
   tickCron,
@@ -44,6 +46,44 @@ describe("cron schedule parsing", () => {
 });
 
 describe("CronStore", () => {
+  it("uses XDG state for the default root and keeps the legacy config root separate", () => {
+    const env = {
+      XDG_STATE_HOME: "/state",
+      XDG_CONFIG_HOME: "/config",
+    };
+
+    expect(defaultCronRoot(env)).toBe(join("/state", "sparkwright", "cron"));
+    expect(legacyConfigCronRoot(env)).toBe(
+      join("/config", "sparkwright", "cron"),
+    );
+  });
+
+  it("migrates jobs and output from a legacy config root without overwriting new state", async () => {
+    const base = await mkdtemp(join(tmpdir(), "sparkwright-cron-migrate-"));
+    const legacy = join(base, "config", "sparkwright", "cron");
+    const current = join(base, "state", "sparkwright", "cron");
+    await mkdir(join(legacy, "output", "job_old"), { recursive: true });
+    await writeFile(
+      join(legacy, "jobs.json"),
+      JSON.stringify({
+        schemaVersion: "sparkwright-cron.v1",
+        jobs: [],
+      }),
+      "utf8",
+    );
+    await writeFile(join(legacy, "output", "job_old", "run.txt"), "ok", "utf8");
+
+    const store = new CronStore({ rootDir: current, legacyRootDir: legacy });
+    await store.listJobs();
+
+    await expect(
+      readFile(join(current, "jobs.json"), "utf8"),
+    ).resolves.toContain("sparkwright-cron.v1");
+    await expect(
+      readFile(join(current, "output", "job_old", "run.txt"), "utf8"),
+    ).resolves.toBe("ok");
+  });
+
   it("creates due jobs and advances recurring jobs before execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-test-"));
     const store = new CronStore({ rootDir: root });

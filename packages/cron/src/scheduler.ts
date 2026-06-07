@@ -3,6 +3,7 @@ import type { CronJob } from "./model.js";
 import { withFileLock } from "./lock.js";
 import { runCronJob, type RunCronJobOptions } from "./runner.js";
 import { CronStore } from "./store.js";
+import { legacyConfigCronRoot } from "./paths.js";
 
 export interface CronSchedulerOptions extends Omit<
   RunCronJobOptions,
@@ -24,7 +25,12 @@ export async function tickCron(
 ): Promise<CronTickResult> {
   const lockPath = join(options.rootDir, "tick.lock");
   const result = await withFileLock(lockPath, async () => {
-    const store = options.store ?? new CronStore({ rootDir: options.rootDir });
+    const store =
+      options.store ??
+      new CronStore({
+        rootDir: options.rootDir,
+        legacyRootDir: legacyConfigCronRoot(),
+      });
     const now = options.now ?? new Date();
     const due = await store.getDueJobs(now);
     let completed = 0;
@@ -41,7 +47,12 @@ export async function runCronJobByRef(
   ref: string,
   options: CronSchedulerOptions,
 ): Promise<{ job: CronJob; result: Awaited<ReturnType<typeof runCronJob>> }> {
-  const store = options.store ?? new CronStore({ rootDir: options.rootDir });
+  const store =
+    options.store ??
+    new CronStore({
+      rootDir: options.rootDir,
+      legacyRootDir: legacyConfigCronRoot(),
+    });
   const job = await store.getJob(ref);
   const now = options.now ?? new Date();
   await store.advanceNextRun(job.id, now);
