@@ -31,6 +31,7 @@
           "enum": [
             "handshake",
             "run.start",
+            "run.resume",
             "run.inject_message",
             "run.cancel",
             "approval.resolve",
@@ -58,6 +59,14 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/RunStartRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "run.resume" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/RunResumeRequestPayload" }
             }
           }
         },
@@ -312,6 +321,43 @@
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "RunResumeRequestPayload": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Prior run to resume from a persisted checkpoint or reconstructed trace."
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional session scope used to disambiguate where the prior run lives."
+        },
+        "fromTrace": {
+          "type": "boolean",
+          "description": "Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Allow resuming checkpoints that are terminal or otherwise normally refused."
+        },
+        "model": { "type": "string", "minLength": 1 },
+        "permissionMode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "default",
+            "accept_edits",
+            "dont_ask",
+            "bypass_permissions"
+          ]
+        },
+        "metadata": { "type": "object" }
       },
       "additionalProperties": false
     },

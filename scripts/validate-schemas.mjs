@@ -123,6 +123,10 @@ const instanceChecks = [
   },
   {
     schema: "host-message.schema.json",
+    instance: "schemas/fixtures/host-message.request.run-resume.json",
+  },
+  {
+    schema: "host-message.schema.json",
     instance: "schemas/fixtures/host-message.request.run-inject-message.json",
   },
   {

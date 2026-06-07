@@ -12,7 +12,9 @@ npm install
 npm run build --workspaces
 ```
 
-The root scripts build before running the CLI/TUI:
+The root scripts build before running the CLI/TUI. The default `run` path uses
+the host/client architecture (`cli -> sdk-node -> host -> core`), matching the
+TUI runtime path:
 
 ```bash
 npm run cli -- run "inspect this repo"
@@ -24,10 +26,18 @@ If invoking compiled output directly, rebuild first. The CLI binary points at
 
 ## First Run
 
-Deterministic smoke test:
+Host-backed smoke test:
 
 ```bash
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
+  --workspace examples/repo-pilot \
+  --trace-level standard
+```
+
+Direct-core deterministic smoke test for development/diagnostics:
+
+```bash
+npm exec sparkwright -- run --direct-core "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
   --write \
@@ -65,6 +75,9 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
 - `--trace-level level`: one of `minimal`, `standard`, `debug`.
 - `--session-id id`: attach a run to a known session id.
 - `--model provider/model`: select a configured provider/model.
+- `--direct-core`: bypass the host and run the legacy in-process deterministic
+  harness. Keep this for core regression tests and diagnostics, not the default
+  product path.
 
 ## Command Groups
 

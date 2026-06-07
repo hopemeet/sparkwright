@@ -10,7 +10,7 @@
  * the full specification, lifecycle, and error semantics.
  */
 
-export const PROTOCOL_VERSION = "1.1" as const;
+export const PROTOCOL_VERSION = "1.2" as const;
 
 // ---------------------------------------------------------------------------
 // Envelope discriminator
@@ -46,6 +46,7 @@ export interface ProtocolError {
 export type RequestKind =
   | "handshake"
   | "run.start"
+  | "run.resume"
   | "run.inject_message"
   | "run.cancel"
   | "approval.resolve"
@@ -71,6 +72,26 @@ export interface HandshakeRequestPayload {
 export interface RunStartRequestPayload {
   goal: string;
   sessionId?: string;
+  /** Model reference in "provider/model" form, or the reserved "deterministic". */
+  model?: string;
+  permissionMode?:
+    | "plan"
+    | "default"
+    | "accept_edits"
+    | "dont_ask"
+    | "bypass_permissions";
+  metadata?: Record<string, unknown>;
+}
+
+export interface RunResumeRequestPayload {
+  /** Prior run to resume from a persisted checkpoint or reconstructed trace. */
+  runId: string;
+  /** Optional session scope used to disambiguate where the prior run lives. */
+  sessionId?: string;
+  /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
+  fromTrace?: boolean;
+  /** Allow resuming checkpoints that are terminal or otherwise normally refused. */
+  force?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
   permissionMode?:
@@ -128,6 +149,7 @@ export interface CapabilityInspectRequestPayload {
 export type HostRequest =
   | HostRequestBase<"handshake", HandshakeRequestPayload>
   | HostRequestBase<"run.start", RunStartRequestPayload>
+  | HostRequestBase<"run.resume", RunResumeRequestPayload>
   | HostRequestBase<"run.inject_message", RunInjectMessageRequestPayload>
   | HostRequestBase<"run.cancel", RunCancelRequestPayload>
   | HostRequestBase<"approval.resolve", ApprovalResolveRequestPayload>
@@ -162,6 +184,11 @@ export type HostResponse = HostResponseOk | HostResponseError;
 export interface ResponseResults {
   handshake: Record<string, never>;
   "run.start": { runId: string };
+  "run.resume": {
+    runId: string;
+    resumedFromRunId: string;
+    sessionId?: string;
+  };
   "run.inject_message": Record<string, never>;
   "run.cancel": Record<string, never>;
   "approval.resolve": Record<string, never>;

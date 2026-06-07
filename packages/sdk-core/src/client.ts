@@ -9,6 +9,7 @@ import {
   type ProtocolError,
   type RequestKind,
   type ResponseResults,
+  type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type CapabilityInspectRequestPayload,
 } from "@sparkwright/protocol";
@@ -106,6 +107,15 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "run.start",
       payload as unknown as Record<string, unknown>,
     ) as Promise<ResponseResults["run.start"]>;
+  }
+
+  resumeRun(
+    payload: RunResumeRequestPayload,
+  ): Promise<ResponseResults["run.resume"]> {
+    return this.request(
+      "run.resume",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["run.resume"]>;
   }
 
   cancelRun(payload: {

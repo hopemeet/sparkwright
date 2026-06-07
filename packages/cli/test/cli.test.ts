@@ -40,6 +40,7 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "run",
+        "--direct-core",
         "inspect temp",
         "--workspace",
         workspace,
@@ -125,6 +126,50 @@ describe("runCli", () => {
     );
   });
 
+  it("runs through the host by default", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["run", "inspect temp", "--workspace", workspace],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.runState).toBe("completed");
+    expect(result.tracePath).toBe(
+      join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        result.sessionId!,
+        "trace.jsonl",
+      ),
+    );
+    expect(output.stdoutText()).toContain("run.completed");
+
+    const sessionJson = JSON.parse(
+      await readFile(
+        join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          result.sessionId!,
+          "session.json",
+        ),
+        "utf8",
+      ),
+    ) as { id: string; runIds: string[] };
+    expect(sessionJson.id).toBe(result.sessionId);
+    expect(sessionJson.runIds).toHaveLength(1);
+  });
+
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -132,6 +177,7 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "run",
+        "--direct-core",
         "deny temp write",
         "--workspace",
         workspace,
@@ -177,6 +223,7 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "run",
+        "--direct-core",
         "approve temp write",
         "--workspace",
         workspace,
@@ -222,6 +269,7 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "run",
+        "--direct-core",
         "accept temp write",
         "--workspace",
         workspace,
@@ -261,6 +309,7 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "run",
+        "--direct-core",
         "dont ask temp write",
         "--workspace",
         workspace,
@@ -308,6 +357,7 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "run",
+        "--direct-core",
         "inspect temp",
         "--workspace",
         workspace,
@@ -336,7 +386,15 @@ describe("runCli", () => {
     const workspace = await createWorkspace("# Demo\n");
 
     const result = await runCli(
-      ["run", "inspect temp", "--workspace", workspace, "--model", "barename"],
+      [
+        "run",
+        "--direct-core",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--model",
+        "barename",
+      ],
       {
         env: { XDG_CONFIG_HOME: workspace, OPENAI_API_KEY: "sk-x" },
         io: {
@@ -686,7 +744,7 @@ describe("runCli", () => {
     // openai ref but no key, we reach the key check — proving the model was
     // seeded (otherwise it'd fail the "provider/model" form check).
     const result = await runCli(
-      ["run", "inspect temp", "--workspace", workspace],
+      ["run", "--direct-core", "inspect temp", "--workspace", workspace],
       {
         // Explicit env (no OPENAI_API_KEY) so a dev shell key can't leak in.
         env: { XDG_CONFIG_HOME: xdg },
@@ -701,9 +759,12 @@ describe("runCli", () => {
   it("summarizes a trace file", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
-    const run = await runCli(["run", "inspect", "--workspace", workspace], {
-      io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
-    });
+    const run = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
+      },
+    );
     const output = createOutputCapture();
 
     const result = await runCli(["trace", "summary", run.tracePath!], {
@@ -734,9 +795,12 @@ describe("runCli", () => {
   it("filters trace events", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
-    const run = await runCli(["run", "inspect", "--workspace", workspace], {
-      io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
-    });
+    const run = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
+      },
+    );
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -836,9 +900,12 @@ describe("runCli", () => {
   it("checks and summarizes a persisted session", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
-    const run = await runCli(["run", "inspect", "--workspace", workspace], {
-      io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
-    });
+    const run = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
+      },
+    );
 
     const checkOutput = createOutputCapture();
     const check = await runCli(
@@ -869,9 +936,12 @@ describe("runCli", () => {
   it("repairs derived session metadata on request", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
-    const run = await runCli(["run", "inspect", "--workspace", workspace], {
-      io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
-    });
+    const run = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
+      },
+    );
     const sessionPath = join(
       workspace,
       ".sparkwright",
@@ -929,8 +999,57 @@ describe("runCli", () => {
   it("resumes a session with replay-derived context", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const firstOutput = createOutputCapture();
+    const first = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: firstOutput.stdout, stderr: firstOutput.stderr },
+      },
+    );
+    const secondOutput = createOutputCapture();
+
+    const second = await runCli(
+      [
+        "session",
+        "resume",
+        first.sessionId!,
+        "continue inspection",
+        "--workspace",
+        workspace,
+        "--direct-core",
+      ],
+      {
+        io: { stdout: secondOutput.stdout, stderr: secondOutput.stderr },
+      },
+    );
+
+    const session = JSON.parse(
+      await readFile(
+        join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          first.sessionId!,
+          "session.json",
+        ),
+        "utf8",
+      ),
+    ) as { runIds: string[] };
+
+    expect(second.exitCode).toBe(0);
+    expect(second.sessionId).toBe(first.sessionId);
+    expect(session.runIds).toHaveLength(2);
+    expect(secondOutput.stdoutText()).toContain("run.completed");
+  });
+
+  it("resumes a session through the host by default", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const firstOutput = createOutputCapture();
     const first = await runCli(["run", "inspect", "--workspace", workspace], {
-      io: { stdout: firstOutput.stdout, stderr: firstOutput.stderr },
+      io: {
+        stdout: firstOutput.stdout,
+        stderr: firstOutput.stderr,
+        stdinIsTTY: false,
+      },
     });
     const secondOutput = createOutputCapture();
 
@@ -944,7 +1063,11 @@ describe("runCli", () => {
         workspace,
       ],
       {
-        io: { stdout: secondOutput.stdout, stderr: secondOutput.stderr },
+        io: {
+          stdout: secondOutput.stdout,
+          stderr: secondOutput.stderr,
+          stdinIsTTY: false,
+        },
       },
     );
 
@@ -988,7 +1111,15 @@ describe("runCli", () => {
     // trace.jsonl exist under .sparkwright/sessions/<sid>/agents/main/runs/<rid>/
     const seedOutput = createOutputCapture();
     const seed = await runCli(
-      ["run", "inspect", "--workspace", workspace, "--trace-level", "minimal"],
+      [
+        "run",
+        "--direct-core",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--trace-level",
+        "minimal",
+      ],
       {
         io: {
           stdout: seedOutput.stdout,
@@ -1058,7 +1189,15 @@ describe("runCli", () => {
     const output = createOutputCapture();
 
     const run = await runCli(
-      ["run", "inspect", "--workspace", workspace, "--session-id", "../escape"],
+      [
+        "run",
+        "--direct-core",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--session-id",
+        "../escape",
+      ],
       {
         io: { stdout: output.stdout, stderr: output.stderr },
       },

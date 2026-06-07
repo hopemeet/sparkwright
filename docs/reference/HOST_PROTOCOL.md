@@ -3,7 +3,7 @@
 This is a reference contract. If you are new to Sparkwright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-**Version:** 1.1
+**Version:** 1.2
 **Schema:** [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 **Changelog:** [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md)
 
@@ -210,6 +210,43 @@ IM gateways and other remote clients for mid-run steering/follow-up.
 `run.event`; there is no separate host event for injection.
 
 If the run is unknown or already terminal, the host responds with
+`run_not_found`.
+
+### `run.resume`
+
+Resume a prior run from a persisted checkpoint. This moves checkpoint lookup,
+checkpoint reconstruction, model/tool rehydration, trace append, and terminal
+event emission into the host so CLI, TUI, browser, and other clients can share
+one resume path.
+
+`run.resume` is part of protocol v1.2. Hosts advertise `run.resume` in
+`host.ready.capabilities` once runtime support is available; clients should
+prefer checking the host capability list before using it.
+
+**Payload**
+
+| Field            | Type    | Required | Notes                                                                      |
+| ---------------- | ------- | -------- | -------------------------------------------------------------------------- |
+| `runId`          | string  | yes      | Prior run id to resume.                                                    |
+| `sessionId`      | string  | no       | Session scope used to disambiguate where the prior run lives.              |
+| `fromTrace`      | boolean | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.         |
+| `force`          | boolean | no       | Allow resuming checkpoints that are terminal or normally refused.          |
+| `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
+| `permissionMode` | string  | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
+| `metadata`       | object  | no       | Free-form metadata propagated to the resumed run record and trace context. |
+
+**Response result**
+
+| Field              | Type   | Notes                                                                                       |
+| ------------------ | ------ | ------------------------------------------------------------------------------------------- |
+| `runId`            | string | Active run id for the resumed execution. Core checkpoint resume preserves the prior run id. |
+| `resumedFromRunId` | string | Prior run id from the request.                                                              |
+| `sessionId`        | string | Present when the resumed run is attached to a session.                                      |
+
+The resumed run starts asynchronously, like `run.start`. The host emits
+`run.event` events and one terminal event (`run.completed` or `run.failed`).
+If the prior run cannot be found, the host responds with `run_not_found`; if a
+specified session cannot be found or does not contain the run, it responds with
 `run_not_found`.
 
 ### `run.cancel`

@@ -6,6 +6,14 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+## 1.2 (2026-06-06)
+
+- Add `run.resume` request shape for host-owned checkpoint/trace resume.
+- Add SDK client `resumeRun()` wrapper.
+- Host runtime implements `run.resume` for session-scoped checkpoints and
+  best-effort trace reconstruction, and advertises `run.resume` in
+  `host.ready.capabilities`.
+
 ## 1.1 (2026-05-24)
 
 - Add `run.inject_message` request for mid-run user-message injection.

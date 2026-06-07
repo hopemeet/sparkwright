@@ -27,6 +27,7 @@ export type {
   ResponseResults,
   RunCancelRequestPayload,
   RunInjectMessageRequestPayload,
+  RunResumeRequestPayload,
   RunCompletedEventPayload,
   RunEventPayload,
   RunFailedEventPayload,

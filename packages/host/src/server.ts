@@ -120,6 +120,7 @@ async function handleRequest(
             "sessions",
             "session.inspect",
             "capability.inspect",
+            "run.resume",
             "run.inject_message",
           ],
         },
@@ -130,6 +131,19 @@ async function handleRequest(
       const r = await runtime.startRun(req.payload);
       if (r.ok) respondOk(conn, req.id, { runId: r.runId });
       else respondError(conn, req.id, r.error);
+      return false;
+    }
+    case "run.resume": {
+      const r = await runtime.resumeRun(req.payload);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          runId: r.runId,
+          resumedFromRunId: r.resumedFromRunId,
+          ...(r.sessionId ? { sessionId: r.sessionId } : {}),
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
       return false;
     }
     case "run.inject_message": {
@@ -252,6 +266,31 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         optionalRecord(req.payload, "metadata")
       );
+    case "run.resume":
+      return (
+        requireOnly(req.payload, [
+          "runId",
+          "sessionId",
+          "fromTrace",
+          "force",
+          "model",
+          "permissionMode",
+          "metadata",
+        ]) ??
+        requireString(req.payload, "runId") ??
+        optionalString(req.payload, "sessionId") ??
+        optionalBoolean(req.payload, "fromTrace") ??
+        optionalBoolean(req.payload, "force") ??
+        optionalString(req.payload, "model") ??
+        optionalEnum(req.payload, "permissionMode", [
+          "plan",
+          "default",
+          "accept_edits",
+          "dont_ask",
+          "bypass_permissions",
+        ]) ??
+        optionalRecord(req.payload, "metadata")
+      );
     case "run.inject_message":
       return (
         requireOnly(req.payload, ["runId", "content", "metadata"]) ??
@@ -357,6 +396,15 @@ function optionalRecord(
   const value = record[key];
   if (value === undefined) return undefined;
   return isRecord(value) ? undefined : `${key} must be an object`;
+}
+
+function optionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  return typeof value === "boolean" ? undefined : `${key} must be a boolean`;
 }
 
 function optionalEnum(

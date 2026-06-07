@@ -3,10 +3,7 @@ import {
   asSessionId,
   buildTraceTimelineFile,
   createSessionId,
-  createSessionRunStoreFactory,
   createPermissionModePolicy,
-  createRun,
-  defineTool,
   FileSessionStore,
   loadCheckpointFromRunDir,
   loadTraceEventsFile,
@@ -15,14 +12,10 @@ import {
   resumeRunFromCheckpoint,
   summarizeTraceFile,
   validateSessionTraceConsistency,
-  type ModelAdapter,
-  type ApprovalResolver,
-  type ContextItem,
   type PermissionMode,
   type RunRecord,
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
-  type SparkwrightEvent,
   type TraceSummary,
   type TraceTimeline,
   type TraceLevel,
@@ -31,7 +24,6 @@ import {
   createSessionFileRunStoreFactory,
   FileRunStore,
   LocalWorkspace,
-  MemoryTrace,
 } from "@sparkwright/core/internal";
 import {
   CronStore,
@@ -41,27 +33,24 @@ import {
   type CreateJobInput,
   type UpdateJobPatch,
 } from "@sparkwright/cron";
-import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import {
   loadSkillsFromDirectory,
   type SkillManifest,
   type SkillLoadError,
 } from "@sparkwright/skills";
+import { loadHostConfig, userConfigPath } from "@sparkwright/host";
+import { createCliApprovalResolver } from "./cli-approval.js";
+import { formatEvent } from "./event-format.js";
+import type { CliIO } from "./io.js";
+import { writeLine } from "./io.js";
 import {
-  loadHostConfig,
-  userConfigPath,
-  resolveModelSelection,
-  buildConfiguredAdapter,
-  DETERMINISTIC_PROVIDER,
-  applyToolConfig,
-} from "@sparkwright/host";
+  createCliModel,
+  createConfiguredCliTools,
+  startDirectCoreRun,
+} from "./runners/direct-core-runner.js";
+import { resumeHostRun, startHostRun } from "./runners/host-runner.js";
 
-export interface CliIO {
-  stdout?: Pick<NodeJS.WriteStream, "write">;
-  stderr?: Pick<NodeJS.WriteStream, "write">;
-  stdinIsTTY?: boolean;
-  question?: (prompt: string) => Promise<string>;
-}
+export type { CliIO } from "./io.js";
 
 export interface CliRunResult {
   exitCode: number;
@@ -96,6 +85,7 @@ interface ParsedArgs {
   apply: boolean;
   force: boolean;
   fromTrace: boolean;
+  directCore: boolean;
 }
 
 export async function runCli(
@@ -171,168 +161,24 @@ export async function runCli(
     return { exitCode: 1 };
   }
 
-  return startCliRun(
-    {
-      ...parsed.value,
-      sessionId: parsed.value.sessionId ?? createSessionId(),
-      contextItems: [],
-    },
-    io,
-    env,
-  );
-}
-
-async function startCliRun(
-  parsed: ParsedArgs & {
-    sessionId: string;
-    contextItems?: ContextItem[];
-  },
-  io: CliIO,
-  env: Record<string, string | undefined>,
-): Promise<CliRunResult> {
-  const {
-    goal,
-    traceLevel,
-    workspaceRoot,
-    targetPath,
-    shouldWrite,
-    approveAll,
-    permissionMode,
-    modelName,
-    sessionId,
-  } = parsed;
-  const model = await createCliModel({
-    modelRef: modelName,
-    cwd: workspaceRoot,
-    env,
-    targetPath,
-    shouldWrite,
-    goal,
-  });
-
-  if (!model.ok) {
-    writeLine(io.stderr, model.message);
-    return { exitCode: 1 };
-  }
-
-  const workspace = new LocalWorkspace(workspaceRoot);
-  const approvalResolver = createCliApprovalResolver({ approveAll, io });
-  const policy = createPermissionModePolicy({ mode: permissionMode });
-  const tools = await createConfiguredCliTools(workspaceRoot, env);
-  const trace = new MemoryTrace();
-  const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
-  const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
-
-  // The agent's identity. Edit this string to change who the CLI agent is.
-  const appPrompt =
-    "You are the SparkWright CLI agent. You help the user accomplish tasks in their current workspace by reading files and making focused edits. Work directly and verify your changes.";
-
-  let store: FileRunStore | undefined;
-  const run = createRun({
-    goal,
-    workspace,
-    approvalResolver,
-    policy,
-    promptBuilder: buildAgentPromptBuilder({
-      cwd: workspaceRoot,
-      appPrompt,
-      platform: process.platform,
-    }),
-    tools,
-    model: model.adapter,
-    context: parsed.contextItems ?? [],
-    runStore: createSessionRunStoreFactory({
-      sessionStore,
-      sessionId,
-      runStoreFactory: (record) => {
-        const factory = createSessionFileRunStoreFactory({
-          sessionRootDir,
-          sessionId,
-          agentId: "main",
-          traceLevel,
-        });
-        store = factory(record);
-        return store;
-      },
-      metadata: {
-        source: "cli",
-      },
-    }),
-  });
-
-  let writeCompletedCount = 0;
-  let writeSkippedCount = 0;
-  let writeDeniedCount = 0;
-
-  function recordEvent(event: SparkwrightEvent) {
-    trace.append(event);
-    if (event.type === "workspace.write.completed") writeCompletedCount += 1;
-    else if (event.type === "workspace.write.skipped") writeSkippedCount += 1;
-    else if (event.type === "workspace.write.denied") writeDeniedCount += 1;
-    writeLine(io.stdout, formatEvent(event));
-  }
-
-  for (const event of run.events.all()) {
-    recordEvent(event);
-  }
-
-  run.events.subscribe(recordEvent);
-
-  try {
-    const result = await run.start();
-    return {
-      exitCode: 0,
-      tracePath: store?.tracePath,
-      sessionId,
-      runState: result.state,
-      stopReason: result.stopReason,
-    };
-  } finally {
-    writeLine(
-      io.stdout,
-      `Run ${run.record.state}${run.record.stopReason ? ` (${run.record.stopReason})` : ""}`,
-    );
-    writeLine(
-      io.stdout,
-      summarizeWorkspaceMutations({
-        shouldWrite,
-        completed: writeCompletedCount,
-        skipped: writeSkippedCount,
-        denied: writeDeniedCount,
-      }),
-    );
-    if (store) writeLine(io.stdout, `Trace written to ${store.tracePath}`);
-  }
-}
-
-function summarizeWorkspaceMutations(input: {
-  shouldWrite: boolean;
-  completed: number;
-  skipped: number;
-  denied: number;
-}): string {
-  const { shouldWrite, completed, skipped, denied } = input;
-  if (completed === 0 && skipped === 0 && denied === 0) {
-    return shouldWrite
-      ? "No workspace changes were made (no write was attempted)."
-      : "No workspace changes were made (read-only run).";
-  }
-  const parts: string[] = [];
-  if (completed > 0) parts.push(`${completed} applied`);
-  if (skipped > 0) parts.push(`${skipped} skipped (no-op)`);
-  if (denied > 0) parts.push(`${denied} denied`);
-  return `Workspace writes: ${parts.join(", ")}.`;
-}
-
-async function createConfiguredCliTools(
-  workspaceRoot: string,
-  env: Record<string, string | undefined>,
-) {
-  const cfg = await loadHostConfig(workspaceRoot, env);
-  return applyToolConfig(
-    [createReadFileTool(), createAppendFileTool()],
-    cfg.config.capabilities?.tools,
-  );
+  return parsed.value.directCore
+    ? startDirectCoreRun(
+        {
+          ...parsed.value,
+          sessionId: parsed.value.sessionId ?? createSessionId(),
+          contextItems: [],
+        },
+        io,
+        env,
+      )
+    : startHostRun(
+        {
+          ...parsed.value,
+          sessionId: parsed.value.sessionId ?? createSessionId(),
+        },
+        io,
+        env,
+      );
 }
 
 interface ConfigDefaults {
@@ -393,6 +239,7 @@ function parseArgs(
   let apply = false;
   let force = false;
   let fromTrace = false;
+  let directCore = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -605,6 +452,13 @@ function parseArgs(
       continue;
     }
 
+    if (arg === "--direct-core") {
+      directCore = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
     if (arg === "--session") {
       const value = args[index + 1];
       if (!value)
@@ -742,76 +596,9 @@ function parseArgs(
       apply,
       force,
       fromTrace,
+      directCore,
     },
   };
-}
-
-async function createCliModel(input: {
-  modelRef?: string;
-  cwd: string;
-  env: Record<string, string | undefined>;
-  targetPath: string;
-  shouldWrite: boolean;
-  goal: string;
-}): Promise<
-  { ok: true; adapter: ModelAdapter } | { ok: false; message: string }
-> {
-  const ref = input.modelRef ?? DETERMINISTIC_PROVIDER;
-  if (ref === DETERMINISTIC_PROVIDER) {
-    return {
-      ok: true,
-      adapter: createDeterministicModel({
-        targetPath: input.targetPath,
-        shouldWrite: input.shouldWrite,
-        goal: input.goal,
-      }),
-    };
-  }
-
-  const cfg = await loadHostConfig(input.cwd, input.env);
-  const selection = resolveModelSelection(cfg.config, ref);
-  if (selection.kind === "deterministic") {
-    return {
-      ok: true,
-      adapter: createDeterministicModel({
-        targetPath: input.targetPath,
-        shouldWrite: input.shouldWrite,
-        goal: input.goal,
-      }),
-    };
-  }
-  if (selection.kind === "error") {
-    return { ok: false, message: selection.message };
-  }
-
-  const proxyFetch = await createProxyFetch(resolveProxyUrl(input.env));
-  return buildConfiguredAdapter({
-    selection,
-    env: input.env,
-    fetch: proxyFetch,
-  });
-}
-
-function resolveProxyUrl(
-  env: Record<string, string | undefined>,
-): string | undefined {
-  return env.HTTPS_PROXY ?? env.https_proxy ?? env.HTTP_PROXY ?? env.http_proxy;
-}
-
-async function createProxyFetch(
-  proxyUrl: string | undefined,
-): Promise<typeof fetch | undefined> {
-  if (!proxyUrl) return undefined;
-
-  const { fetch: undiciFetch, ProxyAgent } = await import("undici");
-  const dispatcher = new ProxyAgent(proxyUrl);
-  const proxiedFetch = undiciFetch as unknown as typeof fetch;
-
-  return (url, init) =>
-    proxiedFetch(url, {
-      ...init,
-      dispatcher,
-    } as RequestInit & { dispatcher: typeof dispatcher });
 }
 
 async function handleToolsCommand(
@@ -2209,15 +1996,14 @@ async function handleSessionResumeCommand(
     title: "Prior session context",
   });
 
-  return startCliRun(
-    {
-      ...parsed,
-      sessionId: session.id,
-      contextItems,
-    },
-    io,
-    env,
-  );
+  const runInput = {
+    ...parsed,
+    sessionId: session.id,
+    contextItems,
+  };
+  return parsed.directCore
+    ? startDirectCoreRun(runInput, io, env)
+    : startHostRun(runInput, io, env);
 }
 
 async function handleRunResumeCommand(
@@ -2231,6 +2017,26 @@ async function handleRunResumeCommand(
       "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace]",
     );
     return { exitCode: 1 };
+  }
+
+  if (!parsed.directCore) {
+    return resumeHostRun(
+      {
+        runId: parsed.runId,
+        workspaceRoot: parsed.workspaceRoot,
+        shouldWrite: parsed.shouldWrite,
+        approveAll: parsed.approveAll,
+        permissionMode: parsed.permissionMode,
+        modelName: parsed.modelName,
+        sessionId: parsed.sessionId,
+        targetPath: parsed.targetPath,
+        traceLevel: parsed.traceLevel,
+        fromTrace: parsed.fromTrace,
+        force: parsed.force,
+      },
+      io,
+      env,
+    );
   }
 
   // Locate the run directory. Two layouts are supported:
@@ -2475,362 +2281,6 @@ function parseNonNegativeInteger(
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-function createDeterministicModel(input: {
-  targetPath: string;
-  shouldWrite: boolean;
-  goal: string;
-}): ModelAdapter {
-  let modelCalls = 0;
-
-  return {
-    async complete() {
-      modelCalls += 1;
-
-      if (modelCalls === 1) {
-        return {
-          message: `Reading ${input.targetPath}.`,
-          toolCalls: [
-            {
-              toolName: "read_file",
-              arguments: { path: input.targetPath },
-            },
-          ],
-        };
-      }
-
-      if (modelCalls === 2 && input.shouldWrite) {
-        return {
-          message: `Appending a golden-path section to ${input.targetPath}.`,
-          toolCalls: [
-            {
-              toolName: "append_file",
-              arguments: {
-                path: input.targetPath,
-                heading: "Sparkwright CLI Golden Path",
-                body: `This section was added by Sparkwright while running the goal: "${input.goal}".`,
-              },
-            },
-          ],
-        };
-      }
-
-      return {
-        message: input.shouldWrite
-          ? `Completed approval-gated write path for ${input.targetPath}.`
-          : `Read ${input.targetPath}. Re-run with --write to exercise approval-gated workspace mutation.`,
-      };
-    },
-  };
-}
-
-function createReadFileTool() {
-  return defineTool({
-    name: "read_file",
-    description: "Read a UTF-8 text file from the workspace.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-      },
-      required: ["path"],
-    },
-    policy: { risk: "safe" },
-    async execute(args: unknown, ctx) {
-      if (!ctx.workspace) throw new Error("Workspace is not configured.");
-      const input = args as { path: string };
-      const content = await ctx.workspace.readText(input.path);
-      const anchored = await ctx.workspace.readAnchoredText(input.path);
-      return {
-        path: input.path,
-        content,
-        anchoredContent: anchored.content,
-        anchors: anchored.lines.map((line) => ({
-          line: line.line,
-          anchor: line.anchor,
-        })),
-      };
-    },
-  });
-}
-
-function createAppendFileTool() {
-  return defineTool({
-    name: "append_file",
-    description:
-      "Append a short generated section to a UTF-8 text file in the workspace.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        heading: { type: "string" },
-        body: { type: "string" },
-      },
-      required: ["path", "heading", "body"],
-    },
-    policy: { risk: "safe" },
-    async execute(args: unknown, ctx) {
-      if (!ctx.workspace) throw new Error("Workspace is not configured.");
-      const input = args as { path: string; heading: string; body: string };
-      const current = await ctx.workspace.readText(input.path);
-      const section = `\n\n## ${input.heading}\n\n${input.body}\n`;
-      if (current.includes(`## ${input.heading}`)) {
-        ctx.reportWorkspaceWriteSkipped?.({
-          path: input.path,
-          reason: `Heading "${input.heading}" already present`,
-        });
-        return {
-          path: input.path,
-          changed: false,
-        };
-      }
-
-      const anchored = await ctx.workspace.readAnchoredText(input.path);
-      const lastLine = anchored.lines.at(-1);
-      if (!lastLine) {
-        const write = await ctx.workspace.writeText(
-          input.path,
-          section.trimStart(),
-          {
-            reason: `Append ${input.heading}`,
-          },
-        );
-        if (write?.diffArtifact) ctx.reportToolArtifact?.(write.diffArtifact);
-        return {
-          path: input.path,
-          changed: true,
-          diffArtifactId: write?.diffArtifactId,
-          writeSummary: write?.summary,
-        };
-      }
-
-      const result = await ctx.workspace.editAnchoredText(
-        input.path,
-        [
-          {
-            op: "append",
-            anchor: lastLine.anchor,
-            lines: ["", `## ${input.heading}`, "", input.body],
-          },
-        ],
-        {
-          reason: `Append ${input.heading}`,
-        },
-      );
-      if (result.write?.diffArtifact) {
-        ctx.reportToolArtifact?.(result.write.diffArtifact);
-      }
-      return {
-        path: input.path,
-        changed: result.content !== current,
-        diffArtifactId: result.write?.diffArtifactId,
-        writeSummary: result.write?.summary,
-        finalLines: result.write?.summary.lastLines,
-      };
-    },
-  });
-}
-
-function createCliApprovalResolver(options: {
-  approveAll: boolean;
-  io: CliIO;
-}): ApprovalResolver {
-  return async (request) => {
-    if (options.approveAll) {
-      writeLine(
-        options.io.stderr,
-        `Approval auto-approved: ${request.summary}`,
-      );
-      return {
-        approvalId: request.id,
-        decision: "approved",
-      };
-    }
-
-    if (options.io.stdinIsTTY !== true || !options.io.question) {
-      writeLine(
-        options.io.stderr,
-        `Approval denied because stdin is not interactive: ${request.summary}`,
-      );
-      return {
-        approvalId: request.id,
-        decision: "denied",
-        message: "Non-interactive stdin.",
-      };
-    }
-
-    write(options.io.stderr, formatApprovalRequest(request));
-
-    while (true) {
-      const answer = normalizeApprovalAnswer(
-        await options.io.question("Approve? [y/N] "),
-      );
-
-      if (answer) {
-        return {
-          approvalId: request.id,
-          decision: answer,
-        };
-      }
-
-      writeLine(options.io.stderr, "Please answer yes or no.");
-    }
-  };
-}
-
-function formatApprovalRequest(
-  request: Parameters<ApprovalResolver>[0],
-): string {
-  const lines = [
-    "",
-    "Approval required",
-    `Action: ${request.action}`,
-    `Summary: ${request.summary}`,
-    `Approval ID: ${request.id}`,
-  ];
-
-  const path =
-    isRecord(request.details) && typeof request.details.path === "string"
-      ? request.details.path
-      : undefined;
-  const reason =
-    isRecord(request.details) && typeof request.details.reason === "string"
-      ? request.details.reason
-      : undefined;
-  const diff =
-    isRecord(request.details) && typeof request.details.diff === "string"
-      ? request.details.diff
-      : undefined;
-
-  if (path) lines.push(`Path: ${path}`);
-  if (reason) lines.push(`Reason: ${reason}`);
-  if (diff) lines.push("", diff);
-
-  if (
-    !diff &&
-    isRecord(request.details) &&
-    Object.keys(request.details).length > 0
-  ) {
-    lines.push("", JSON.stringify(request.details, null, 2));
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
-function normalizeApprovalAnswer(
-  answer: string,
-): "approved" | "denied" | undefined {
-  const normalized = answer.trim().toLowerCase();
-
-  if (
-    normalized === "" ||
-    normalized === "n" ||
-    normalized === "no" ||
-    normalized === "deny" ||
-    normalized === "denied"
-  ) {
-    return "denied";
-  }
-
-  if (
-    normalized === "y" ||
-    normalized === "yes" ||
-    normalized === "approve" ||
-    normalized === "approved"
-  ) {
-    return "approved";
-  }
-
-  return undefined;
-}
-
-function formatEvent(event: SparkwrightEvent): string {
-  const payload = event.payload;
-
-  if (event.type === "run.completed" && isRecord(payload)) {
-    return `[${event.sequence}] ${event.type} ${String(payload.reason ?? "")}`.trim();
-  }
-
-  if (event.type === "run.failed" && isRecord(payload)) {
-    return `[${event.sequence}] ${event.type} ${String(payload.reason ?? "")} ${String(payload.code ?? "")}`.trim();
-  }
-
-  if (event.type === "model.completed" && isRecord(payload)) {
-    const trace = isRecord(payload.trace) ? payload.trace : {};
-    const usage = isRecord(payload.usage) ? payload.usage : {};
-    const toolCallCount = Array.isArray(payload.toolCalls)
-      ? payload.toolCalls.length
-      : payload.toolCallCount;
-    const message = typeof payload.message === "string" ? payload.message : "";
-    return [
-      `[${event.sequence}] ${event.type}`,
-      `step=${String(payload.step ?? trace.step ?? "?")}`,
-      `adapter=${String(trace.adapterId ?? "")}`,
-      `tokens=${String(usage.totalTokens ?? payload.totalTokens ?? "")}`,
-      `toolCalls=${String(toolCallCount ?? 0)}`,
-      message ? `message=${previewText(message)}` : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  if (event.type === "validation.failed" && isRecord(payload)) {
-    const result = isRecord(payload.result) ? payload.result : {};
-    const findings = Array.isArray(result.findings) ? result.findings : [];
-    const firstFinding = findings.find(isRecord);
-    return `[${event.sequence}] ${event.type} ${String(payload.stage ?? "")} ${String(payload.hookName ?? "")} ${String(firstFinding?.code ?? "")}`.trim();
-  }
-
-  if (
-    (event.type === "tool.requested" || event.type === "tool.started") &&
-    isRecord(payload)
-  ) {
-    return `[${event.sequence}] ${event.type} ${String(payload.toolName ?? "")}`.trim();
-  }
-
-  if (
-    (event.type === "tool.completed" || event.type === "tool.failed") &&
-    isRecord(payload)
-  ) {
-    const output = isRecord(payload.output) ? payload.output : {};
-    const error = isRecord(payload.error) ? payload.error : {};
-    const errorMetadata = isRecord(error.metadata) ? error.metadata : {};
-    const path = String(output.path ?? errorMetadata.path ?? "");
-    return [
-      `[${event.sequence}] ${event.type}`,
-      String(payload.toolName ?? ""),
-      `status=${String(payload.status ?? "")}`,
-      path ? `path=${path}` : "",
-      event.type === "tool.failed"
-        ? `error=${String(payload.errorCode ?? error.code ?? "")}`
-        : "",
-      `artifacts=${String(
-        Array.isArray(payload.artifacts)
-          ? payload.artifacts.length
-          : (payload.artifactCount ?? 0),
-      )}`,
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-
-  if (event.type === "approval.requested" && isRecord(payload)) {
-    return `[${event.sequence}] ${event.type} ${String(payload.summary ?? "")}`.trim();
-  }
-
-  if (event.type === "workspace.write.requested" && isRecord(payload)) {
-    return `[${event.sequence}] ${event.type} ${String(payload.path ?? "")}`.trim();
-  }
-
-  return `[${event.sequence}] ${event.type}`;
-}
-
-function previewText(value: string, max = 120): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length > max
-    ? `${normalized.slice(0, Math.max(0, max - 3))}...`
-    : normalized;
-}
-
 // NOTE: templates intentionally omit a top-level "$schema" until the schema is
 // published at a stable URL; pointing at an unhosted URL would make editors fail
 // to fetch it. The config schema still *allows* "$schema" (see
@@ -2992,7 +2442,7 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model]',
+    '       sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
@@ -3039,22 +2489,4 @@ function isPermissionMode(value: string | undefined): value is PermissionMode {
 
 function isTraceLevel(value: string | undefined): value is TraceLevel {
   return value === "minimal" || value === "standard" || value === "debug";
-}
-
-function writeLine(
-  stream: Pick<NodeJS.WriteStream, "write"> | undefined,
-  message: string,
-): void {
-  write(stream, `${message}\n`);
-}
-
-function write(
-  stream: Pick<NodeJS.WriteStream, "write"> | undefined,
-  message: string,
-): void {
-  stream?.write(message);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

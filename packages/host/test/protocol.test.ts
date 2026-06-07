@@ -154,6 +154,337 @@ describe("host protocol", () => {
     });
   });
 
+  it("accepts the run.resume payload shape and reports missing runs from runtime lookup", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+    pair.clientSend({
+      envelope: "request",
+      id: "resume",
+      kind: "run.resume",
+      timestamp: TIMESTAMP,
+      payload: {
+        runId: "run_123",
+        sessionId: "sess_123",
+        fromTrace: true,
+        force: false,
+        model: "deterministic",
+        permissionMode: "default",
+        metadata: { source: "test" },
+      },
+    });
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "resume",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: {
+        code: "run_not_found",
+        message: expect.stringContaining("run_123"),
+      },
+    });
+  });
+
+  it("resumes a session-scoped checkpoint through the host runtime", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-resume-"));
+    const sessionId = "sess_resume_test";
+    const runId = "run_resume_test";
+    const runDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "agents",
+      "main",
+      "runs",
+      runId,
+    );
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "checkpoint.json"),
+      JSON.stringify(
+        {
+          schemaVersion: "run-checkpoint.v1",
+          run: {
+            id: runId,
+            goal: "resume checkpoint",
+            state: "running",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:30.000Z",
+            metadata: { tag: "host-resume-test" },
+          },
+          loop: {
+            step: 1,
+            turnCount: 0,
+            context: [],
+            repeatedToolCallCount: 0,
+            transition: { reason: "next_turn" },
+          },
+          model: { activeIndex: 0, fallbackCount: 0 },
+          recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
+          budget: {
+            usage: {
+              elapsedMs: 0,
+              modelCalls: 0,
+              toolCalls: 0,
+              tokens: 0,
+              costUsd: 0,
+            },
+          },
+          queues: {
+            commandCount: 0,
+            pendingPrefetch: false,
+            pendingSummary: false,
+          },
+          resumability: { complete: true, reasons: [] },
+          createdAt: "2026-01-01T00:00:30.500Z",
+          metadata: { snapshotReason: "test" },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const pair = createConnectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "resume_ok",
+        kind: "run.resume",
+        timestamp: TIMESTAMP,
+        payload: {
+          runId,
+          sessionId,
+          model: "deterministic",
+          permissionMode: "default",
+        },
+      });
+
+      const resp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "resume_ok",
+      );
+      expect(resp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: { runId, resumedFromRunId: runId, sessionId },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      expect(
+        pair
+          .clientMessages()
+          .some(
+            (m) =>
+              m.envelope === "event" &&
+              m.kind === "run.event" &&
+              (m.payload as { event?: { type?: string } }).event?.type ===
+                "run.resumed",
+          ),
+      ).toBe(true);
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("continues a resumed run through the todo supervisor when the ledger is unfinished", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-resume-todo-"),
+    );
+    const sessionId = "sess_resume_todo_test";
+    const runId = "run_resume_todo_test";
+    const sessionDir = join(workspace, ".sparkwright", "sessions", sessionId);
+    const runDir = join(sessionDir, "agents", "main", "runs", runId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await writeFile(
+      join(sessionDir, "todo.md"),
+      "- [ ] finish resume\n",
+      "utf8",
+    );
+    await writeFile(
+      join(runDir, "checkpoint.json"),
+      JSON.stringify(
+        {
+          schemaVersion: "run-checkpoint.v1",
+          run: {
+            id: runId,
+            goal: "resume unfinished todo",
+            state: "running",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:30.000Z",
+            metadata: { tag: "host-resume-todo-test" },
+          },
+          loop: {
+            step: 1,
+            turnCount: 0,
+            context: [],
+            repeatedToolCallCount: 0,
+            transition: { reason: "next_turn" },
+          },
+          model: { activeIndex: 0, fallbackCount: 0 },
+          recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
+          budget: {
+            usage: {
+              elapsedMs: 0,
+              modelCalls: 0,
+              toolCalls: 0,
+              tokens: 0,
+              costUsd: 0,
+            },
+          },
+          queues: {
+            commandCount: 0,
+            pendingPrefetch: false,
+            pendingSummary: false,
+          },
+          resumability: { complete: true, reasons: [] },
+          createdAt: "2026-01-01T00:00:30.500Z",
+          metadata: { snapshotReason: "test" },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const pair = createConnectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "resume_todo",
+        kind: "run.resume",
+        timestamp: TIMESTAMP,
+        payload: {
+          runId,
+          sessionId,
+          model: "deterministic",
+          permissionMode: "default",
+        },
+      });
+
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "resume_todo",
+      );
+      const continuation = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.continuation",
+      );
+      expect(continuation).toMatchObject({
+        envelope: "event",
+        kind: "run.continuation",
+        payload: {
+          previousRunId: runId,
+          continuationCount: 1,
+          reason: "unfinished_todo",
+        },
+      });
+      const completed = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: {
+          state: "completed",
+          todoHandoff: { reason: "stalled_without_progress" },
+        },
+      });
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("validates run.resume payloads before dispatch", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+    pair.clientSend({
+      envelope: "request",
+      id: "bad_resume",
+      kind: "run.resume",
+      timestamp: TIMESTAMP,
+      payload: {
+        runId: "run_123",
+        fromTrace: "yes",
+      },
+    } as unknown as HostMessage);
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "bad_resume",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: {
+        code: "invalid_payload",
+        message: "fromTrace must be a boolean",
+      },
+    });
+  });
+
   it("prepares configured skills for TUI/host runs", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-skill-"));
     const pair = createConnectionPair();

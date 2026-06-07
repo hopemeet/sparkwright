@@ -11,6 +11,8 @@ import {
   defineTool,
   FileSessionStore,
   forkSessionFromEvent,
+  loadCheckpointFromRunDir,
+  resumeRunFromCheckpoint,
   summarizeTraceFile,
   validateSessionTraceConsistency,
   type ApprovalResolver,
@@ -50,6 +52,7 @@ import {
 import type {
   HostEvent,
   ProtocolError,
+  RunResumeRequestPayload,
   RunStartRequestPayload,
   CapabilitySnapshot,
 } from "@sparkwright/protocol";
@@ -105,6 +108,27 @@ interface ActiveRun {
   trace: MemoryTrace;
   sessionId: string;
   closeCapabilities?: () => Promise<void>;
+}
+
+type PreparedSkills = Awaited<ReturnType<typeof prepareSkillsForRun>>;
+type PreparedMcp = Awaited<ReturnType<typeof prepareMcpToolsForRun>>;
+
+interface PreparedHostRunEnvironment {
+  workspaceRoot: string;
+  workspace: LocalWorkspace;
+  sessionRootDir: string;
+  trace: MemoryTrace;
+  pendingExtensionEvents: ReturnType<typeof createBufferedEmitter>;
+  runIdHolder: { value: string | null };
+  approvalResolver: ApprovalResolver;
+  model: ModelAdapter;
+  preparedSkills: PreparedSkills | null;
+  preparedMcp: PreparedMcp | null;
+  mainAgent: AgentProfile;
+  tools: ToolDefinition[];
+  sessionStore: FileSessionStore;
+  parentRunRef: { current?: ReturnType<typeof createRun> };
+  runStoreMetadata: Record<string, unknown>;
 }
 
 const MAIN_AGENT_ID = "main";
@@ -211,31 +235,42 @@ export class HostRuntime {
     }
   }
 
-  private async startRunInner(
-    payload: RunStartRequestPayload,
+  async resumeRun(
+    payload: RunResumeRequestPayload,
   ): Promise<
-    { ok: true; runId: string } | { ok: false; error: ProtocolError }
+    | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
+    | { ok: false; error: ProtocolError }
   > {
-    const modelRef = payload.model ?? this.opts.defaultModel;
-    const permissionMode =
-      payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
-    let sessionId: string;
-    try {
-      sessionId = payload.sessionId
-        ? asSessionId(payload.sessionId)
-        : createSessionId();
-    } catch (error) {
+    if (this.active || this.startingRun) {
       return {
         ok: false,
         error: {
-          code: "invalid_payload",
-          message: error instanceof Error ? error.message : String(error),
+          code: "internal_error",
+          message: "another run is already active on this connection",
         },
       };
     }
+    this.startingRun = true;
+    try {
+      return await this.resumeRunInner(payload);
+    } finally {
+      this.startingRun = false;
+    }
+  }
+
+  private async prepareHostRunEnvironment(input: {
+    goal: string;
+    modelRef?: string;
+    permissionMode: PermissionMode;
+    sessionId: string;
+    runStoreMetadata?: Record<string, unknown>;
+  }): Promise<
+    | { ok: true; env: PreparedHostRunEnvironment }
+    | { ok: false; error: ProtocolError }
+  > {
     const model = await createModel({
-      modelRef,
-      goal: payload.goal,
+      modelRef: input.modelRef,
+      goal: input.goal,
       workspaceRoot: this.opts.workspaceRoot,
     });
     if (!model.ok) {
@@ -245,61 +280,13 @@ export class HostRuntime {
       };
     }
 
-    const workspace = new LocalWorkspace(this.opts.workspaceRoot);
     const workspaceRoot = this.opts.workspaceRoot;
+    const workspace = new LocalWorkspace(workspaceRoot);
     const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
     const trace = new MemoryTrace();
     const pendingExtensionEvents = createBufferedEmitter();
-
-    // Captured by the approvalResolver closure so it always references the
-    // run that created it, not whichever run happens to occupy `this.active`
-    // at the moment the approval fires.
     const runIdHolder: { value: string | null } = { value: null };
-    const approvalResolver: ApprovalResolver = (request) =>
-      new Promise((resolve) => {
-        const approvalId = request.id;
-        const currentRunId = runIdHolder.value;
-        if (!currentRunId) {
-          // Approval requested before runId was populated — should not happen
-          // because createRun returns synchronously, but guard rather than
-          // crash on `null!`.
-          resolve({ approvalId, decision: "denied" });
-          return;
-        }
-        this.pendingApprovals.set(approvalId, {
-          approvalId,
-          runId: currentRunId,
-          resolve: (decision) => resolve({ approvalId, decision }),
-        });
-        const details = request.details as { path?: unknown } | undefined;
-        this.opts.emit({
-          envelope: "event",
-          id: nextMessageId("evt"),
-          kind: "approval.requested",
-          timestamp: nowIso(),
-          payload: {
-            runId: currentRunId,
-            approvalId,
-            action: request.action,
-            summary: request.summary,
-            details: {
-              ...(typeof details?.path === "string"
-                ? { path: details.path }
-                : {}),
-              ...(request.details ?? {}),
-            },
-          },
-        });
-      });
-
-    // Thread prior turns of this session into context so the model can see
-    // the conversation history. Each completed prior run contributes a
-    // user (goal) + assistant (final message) pair, tagged for the
-    // "conversation" layer with session-stable cache policy.
-    const priorContext = await this.loadConversationHistory(
-      sessionRootDir,
-      sessionId,
-    );
+    const approvalResolver = this.createApprovalResolver(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
     const toolConfig = loadedConfig.config.capabilities?.tools;
     const skillConfig = loadedConfig.config.capabilities?.skills;
@@ -307,7 +294,7 @@ export class HostRuntime {
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const preparedSkills = skillConfig?.roots?.length
       ? await prepareSkillsForRun({
-          goal: payload.goal,
+          goal: input.goal,
           skillRoots: skillConfig.roots,
           agent: {
             allowedSkills: skillConfig.allowedSkills,
@@ -337,8 +324,6 @@ export class HostRuntime {
           agentId: MAIN_AGENT_ID,
         })
       : null;
-    // Fold markdown-authored agents under config profiles (config wins by id),
-    // so .sparkwright/agents/*.md and config.json describe the same agent set.
     const resolvedProfiles = await resolveAgentProfiles(
       workspaceRoot,
       agentConfig?.profiles,
@@ -350,17 +335,14 @@ export class HostRuntime {
       pendingExtensionEvents,
     );
     const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
-    // Shared across the parent run and every spawned sub-agent so child runs
-    // persist into the SAME session (registering under `session.json.agents`)
-    // instead of vanishing, and so writes to session.json don't race.
     const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
     const childRunStoreFactory = (childAgentId: string) =>
       createSessionRunStoreFactory({
         sessionStore,
-        sessionId,
+        sessionId: input.sessionId,
         runStoreFactory: createSessionFileRunStoreFactory({
           sessionRootDir,
-          sessionId,
+          sessionId: input.sessionId,
           agentId: childAgentId,
           traceLevel: "standard",
         }),
@@ -401,11 +383,9 @@ export class HostRuntime {
         // Todo ledger tools (P0): main agent only. The ledger lives in the
         // session dir as a human-readable markdown file. Child agents do not
         // receive these (they get `childTools`), preserving the single-writer
-        // model without a policy rule. The terminal-audit supervisor that
-        // auto-continues on unfinished todos is NOT wired here yet — these
-        // tools just let the model maintain the ledger.
+        // model without a policy rule.
         ...createTodoTools({
-          getTodoPath: () => join(sessionRootDir, sessionId, "todo.md"),
+          getTodoPath: () => join(sessionRootDir, input.sessionId, "todo.md"),
         }).all(),
         ...(preparedSkills?.tools ?? []),
         ...(preparedMcp?.tools ?? []),
@@ -428,6 +408,7 @@ export class HostRuntime {
 
     const runStoreMetadata: Record<string, unknown> = {
       source: "host",
+      ...(input.runStoreMetadata ?? {}),
       ...(preparedSkills
         ? {
             indexedSkills: preparedSkills.indexedSkills,
@@ -450,6 +431,397 @@ export class HostRuntime {
         : {}),
     };
 
+    return {
+      ok: true,
+      env: {
+        workspaceRoot,
+        workspace,
+        sessionRootDir,
+        trace,
+        pendingExtensionEvents,
+        runIdHolder,
+        approvalResolver,
+        model: model.adapter,
+        preparedSkills,
+        preparedMcp,
+        mainAgent,
+        tools,
+        sessionStore,
+        parentRunRef,
+        runStoreMetadata,
+      },
+    };
+  }
+
+  private createApprovalResolver(runIdHolder: {
+    value: string | null;
+  }): ApprovalResolver {
+    return (request) =>
+      new Promise((resolve) => {
+        const approvalId = request.id;
+        const currentRunId = runIdHolder.value;
+        if (!currentRunId) {
+          // Approval requested before runId was populated — should not happen
+          // because createRun returns synchronously, but guard rather than
+          // crash on `null!`.
+          resolve({ approvalId, decision: "denied" });
+          return;
+        }
+        this.pendingApprovals.set(approvalId, {
+          approvalId,
+          runId: currentRunId,
+          resolve: (decision) => resolve({ approvalId, decision }),
+        });
+        const details = request.details as { path?: unknown } | undefined;
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "approval.requested",
+          timestamp: nowIso(),
+          payload: {
+            runId: currentRunId,
+            approvalId,
+            action: request.action,
+            summary: request.summary,
+            details: {
+              ...(typeof details?.path === "string"
+                ? { path: details.path }
+                : {}),
+              ...(request.details ?? {}),
+            },
+          },
+        });
+      });
+  }
+
+  private async resumeRunInner(
+    payload: RunResumeRequestPayload,
+  ): Promise<
+    | { ok: true; runId: string; resumedFromRunId: string; sessionId?: string }
+    | { ok: false; error: ProtocolError }
+  > {
+    const located = await this.findRunDir(payload.runId, payload.sessionId);
+    if (!located.ok) return located;
+
+    let checkpoint: ReturnType<typeof loadCheckpointFromRunDir>;
+    try {
+      checkpoint = loadCheckpointFromRunDir(located.runDir, {
+        fallbackFromTrace: payload.fromTrace,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    if (!checkpoint) {
+      return {
+        ok: false,
+        error: {
+          code: "run_not_found",
+          message:
+            `No checkpoint.json under ${located.runDir}. ` +
+            `Retry with fromTrace=true to reconstruct one from the trace.`,
+        },
+      };
+    }
+
+    const modelRef = payload.model ?? this.opts.defaultModel;
+    const permissionMode =
+      payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
+    const resumeSessionId = located.sessionId ?? createSessionId();
+    const prepared = await this.prepareHostRunEnvironment({
+      goal: checkpoint.run.goal,
+      modelRef,
+      permissionMode,
+      sessionId: resumeSessionId,
+      runStoreMetadata: {
+        resumedFromRunId: payload.runId,
+        ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
+      },
+    });
+    if (!prepared.ok) return prepared;
+    const env = prepared.env;
+
+    const buildContinuationRun = (goal: string, extraContext: ContextItem[]) =>
+      createRun({
+        goal,
+        context: [...(env.preparedSkills?.context ?? []), ...extraContext],
+        workspace: env.workspace,
+        approvalResolver: env.approvalResolver,
+        policy: createPermissionModePolicy({ mode: permissionMode }),
+        promptBuilder: buildAgentPromptBuilder({
+          cwd: env.workspaceRoot,
+          sessionId: resumeSessionId,
+        }),
+        tools: env.tools,
+        model: env.model,
+        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
+        ...(env.mainAgent.runBudget !== undefined
+          ? { runBudget: env.mainAgent.runBudget }
+          : {}),
+        runStore: createSessionRunStoreFactory({
+          sessionStore: env.sessionStore,
+          sessionId: resumeSessionId,
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: env.sessionRootDir,
+            sessionId: resumeSessionId,
+            agentId: located.agentId,
+            traceLevel: "standard",
+          }),
+          metadata: env.runStoreMetadata,
+        }),
+      });
+
+    const registerActiveRun = (
+      run: ReturnType<typeof createRun>,
+      runId: string,
+    ): SparkwrightEvent[] => {
+      env.parentRunRef.current = run;
+      env.runIdHolder.value = runId;
+      this.active = {
+        runId,
+        run,
+        trace: env.trace,
+        sessionId: resumeSessionId,
+        closeCapabilities: env.preparedMcp
+          ? () => env.preparedMcp!.close()
+          : undefined,
+      };
+      const collected: SparkwrightEvent[] = [];
+      run.events.subscribe((event: SparkwrightEvent) => {
+        env.trace.append(event);
+        collected.push(event);
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.event",
+          timestamp: nowIso(),
+          payload: { runId, event },
+        });
+      });
+      env.pendingExtensionEvents.flush(run.events);
+      return collected;
+    };
+
+    let resolveFirstRunId!: (id: string) => void;
+    let rejectFirstRunId!: (err: unknown) => void;
+    const firstRunId = new Promise<string>((resolve, reject) => {
+      resolveFirstRunId = resolve;
+      rejectFirstRunId = reject;
+    });
+    let firstRunStarted = false;
+    let previousRunId: string | undefined;
+    let lastRunId = "";
+    this.runChainCancelled = false;
+
+    const chainTurns: ContextItem[] = [];
+    const chainTurn = (
+      role: "user" | "assistant",
+      content: string,
+      idSuffix: string,
+    ): ContextItem => ({
+      id: `ctx_resume_chain_${idSuffix}` as ContextItem["id"],
+      type: role,
+      content: content.trim(),
+      metadata: { layer: "conversation", stability: "session" },
+    });
+
+    const supervised = runTodoSupervised({
+      todoPath: join(env.sessionRootDir, resumeSessionId, "todo.md"),
+      sessionId: resumeSessionId,
+      maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
+      maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
+      runOnce: async (input) => {
+        const run = input.continuation
+          ? buildContinuationRun(input.continuation.prompt, [
+              ...chainTurns,
+              input.continuation.context,
+            ])
+          : resumeRunFromCheckpoint(checkpoint, {
+              force: payload.force || !checkpoint.resumability.complete,
+              workspace: env.workspace,
+              approvalResolver: env.approvalResolver,
+              policy: createPermissionModePolicy({ mode: permissionMode }),
+              promptBuilder: buildAgentPromptBuilder({
+                cwd: env.workspaceRoot,
+                sessionId: resumeSessionId,
+              }),
+              tools: env.tools,
+              model: env.model,
+              maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
+              ...(env.mainAgent.runBudget !== undefined
+                ? { runBudget: env.mainAgent.runBudget }
+                : {}),
+              runStore: createSessionRunStoreFactory({
+                sessionStore: env.sessionStore,
+                sessionId: resumeSessionId,
+                runStoreFactory: createSessionFileRunStoreFactory({
+                  sessionRootDir: env.sessionRootDir,
+                  sessionId: resumeSessionId,
+                  agentId: located.agentId,
+                  traceLevel: "standard",
+                }),
+                metadata: env.runStoreMetadata,
+              }),
+            });
+        const runId = run.record.id;
+        lastRunId = runId;
+        const collected = registerActiveRun(run, runId);
+        if (!firstRunStarted) {
+          firstRunStarted = true;
+          resolveFirstRunId(runId);
+        } else if (input.continuation) {
+          this.opts.emit({
+            envelope: "event",
+            id: nextMessageId("evt"),
+            kind: "run.continuation",
+            timestamp: nowIso(),
+            payload: {
+              runId,
+              previousRunId: previousRunId ?? runId,
+              continuationCount: input.continuation.metadata.continuationCount,
+              reason: input.continuation.metadata.reason,
+            },
+          });
+        }
+        const result = await run.start();
+        previousRunId = runId;
+        if (chainTurns.length === 0) {
+          chainTurns.push(
+            chainTurn("user", checkpoint.run.goal, `${runId}_goal`),
+          );
+        }
+        if (result.message && result.message.trim().length > 0) {
+          chainTurns.push(
+            chainTurn("assistant", result.message, `${runId}_answer`),
+          );
+        }
+        if (this.runChainCancelled) {
+          return {
+            result: {
+              ...result,
+              state: "cancelled",
+              stopReason: "manual_cancelled",
+            },
+            events: collected,
+          };
+        }
+        return { result, events: collected };
+      },
+    });
+
+    supervised
+      .then((outcome) => {
+        const handoff =
+          !this.runChainCancelled && outcome.decision.kind === "handoff"
+            ? {
+                reason: outcome.decision.reason,
+                message: outcome.decision.message,
+              }
+            : undefined;
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.completed",
+          timestamp: nowIso(),
+          payload: {
+            runId: lastRunId,
+            state: outcome.result.state,
+            stopReason: outcome.result.stopReason,
+            ...(handoff ? { todoHandoff: handoff } : {}),
+          },
+        });
+      })
+      .catch((err: unknown) => {
+        if (!firstRunStarted) rejectFirstRunId(err);
+        this.opts.emit({
+          envelope: "event",
+          id: nextMessageId("evt"),
+          kind: "run.failed",
+          timestamp: nowIso(),
+          payload: {
+            runId: lastRunId,
+            error: {
+              code: "internal_error",
+              message: err instanceof Error ? err.message : String(err),
+            },
+          },
+        });
+      })
+      .finally(() => {
+        void env.preparedMcp?.close().catch(() => {});
+        this.active = null;
+        for (const [id, p] of this.pendingApprovals) {
+          p.resolve("denied");
+          this.pendingApprovals.delete(id);
+        }
+      });
+
+    let runId: string;
+    try {
+      runId = await firstRunId;
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      runId,
+      resumedFromRunId: payload.runId,
+      sessionId: resumeSessionId,
+    };
+  }
+
+  private async startRunInner(
+    payload: RunStartRequestPayload,
+  ): Promise<
+    { ok: true; runId: string } | { ok: false; error: ProtocolError }
+  > {
+    const modelRef = payload.model ?? this.opts.defaultModel;
+    const permissionMode =
+      payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
+    let sessionId: string;
+    try {
+      sessionId = payload.sessionId
+        ? asSessionId(payload.sessionId)
+        : createSessionId();
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+    const prepared = await this.prepareHostRunEnvironment({
+      goal: payload.goal,
+      modelRef,
+      permissionMode,
+      sessionId,
+    });
+    if (!prepared.ok) return prepared;
+    const env = prepared.env;
+
+    // Thread prior turns of this session into context so the model can see
+    // the conversation history. Each completed prior run contributes a
+    // user (goal) + assistant (final message) pair, tagged for the
+    // "conversation" layer with session-stable cache policy.
+    const priorContext = await this.loadConversationHistory(
+      env.sessionRootDir,
+      sessionId,
+    );
+
     // Build (but do not start) a main-agent run for `goal`, appending
     // `extraContext` after the skills context. Each call mints a fresh runId
     // and run dir; the todo supervisor calls this once per (re)try, so a
@@ -459,34 +831,34 @@ export class HostRuntime {
         goal,
         context: [
           ...priorContext,
-          ...(preparedSkills?.context ?? []),
+          ...(env.preparedSkills?.context ?? []),
           ...extraContext,
         ],
-        workspace,
-        approvalResolver,
+        workspace: env.workspace,
+        approvalResolver: env.approvalResolver,
         policy: createPermissionModePolicy({ mode: permissionMode }),
         promptBuilder: buildAgentPromptBuilder({
-          cwd: workspaceRoot,
+          cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools,
-        model: model.adapter,
+        tools: env.tools,
+        model: env.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
         // the profile's RunBudget when set and derive the step ceiling from it.
-        maxSteps: resolveMainAgentMaxSteps(mainAgent),
-        ...(mainAgent.runBudget !== undefined
-          ? { runBudget: mainAgent.runBudget }
+        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
+        ...(env.mainAgent.runBudget !== undefined
+          ? { runBudget: env.mainAgent.runBudget }
           : {}),
         runStore: createSessionRunStoreFactory({
-          sessionStore,
+          sessionStore: env.sessionStore,
           sessionId,
           runStoreFactory: createSessionFileRunStoreFactory({
-            sessionRootDir,
+            sessionRootDir: env.sessionRootDir,
             sessionId,
             agentId: "main",
             traceLevel: "standard",
           }),
-          metadata: runStoreMetadata,
+          metadata: env.runStoreMetadata,
         }),
       });
 
@@ -497,18 +869,20 @@ export class HostRuntime {
       run: ReturnType<typeof createRun>,
       runId: string,
     ): SparkwrightEvent[] => {
-      parentRunRef.current = run;
-      runIdHolder.value = runId;
+      env.parentRunRef.current = run;
+      env.runIdHolder.value = runId;
       this.active = {
         runId,
         run,
-        trace,
+        trace: env.trace,
         sessionId,
-        closeCapabilities: preparedMcp ? () => preparedMcp.close() : undefined,
+        closeCapabilities: env.preparedMcp
+          ? () => env.preparedMcp!.close()
+          : undefined,
       };
       const collected: SparkwrightEvent[] = [];
       run.events.subscribe((event: SparkwrightEvent) => {
-        trace.append(event);
+        env.trace.append(event);
         collected.push(event);
         this.opts.emit({
           envelope: "event",
@@ -518,7 +892,7 @@ export class HostRuntime {
           payload: { runId, event },
         });
       });
-      pendingExtensionEvents.flush(run.events);
+      env.pendingExtensionEvents.flush(run.events);
       return collected;
     };
 
@@ -554,7 +928,7 @@ export class HostRuntime {
     });
 
     const supervised = runTodoSupervised({
-      todoPath: join(sessionRootDir, sessionId, "todo.md"),
+      todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
       maxContinuations: MAIN_TODO_MAX_CONTINUATIONS,
       maxStalledContinuations: MAIN_TODO_MAX_STALLED_CONTINUATIONS,
@@ -669,7 +1043,7 @@ export class HostRuntime {
         });
       })
       .finally(() => {
-        void preparedMcp?.close().catch(() => {});
+        void env.preparedMcp?.close().catch(() => {});
         this.active = null;
         // The whole supervised chain is done. The per-connection `startingRun`
         // lock guarantees no other run's approvals coexist, so deny any orphans
@@ -693,6 +1067,118 @@ export class HostRuntime {
       };
     }
     return { ok: true, runId };
+  }
+
+  private async findRunDir(
+    runId: string,
+    sessionId?: string,
+  ): Promise<
+    | { ok: true; runDir: string; sessionId?: string; agentId: string }
+    | { ok: false; error: ProtocolError }
+  > {
+    if (!isSafePathSegment(runId)) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message:
+            "runId must contain only letters, numbers, dot, underscore, or hyphen",
+        },
+      };
+    }
+    const sessionRootDir = join(
+      this.opts.workspaceRoot,
+      ".sparkwright",
+      "sessions",
+    );
+    if (sessionId) {
+      let safeSessionId: string;
+      try {
+        safeSessionId = asSessionId(sessionId);
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            code: "invalid_payload",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      const agentsDir = join(sessionRootDir, safeSessionId, "agents");
+      try {
+        const agents = await readdir(agentsDir, { withFileTypes: true });
+        for (const agent of agents) {
+          if (!agent.isDirectory() || !isSafePathSegment(agent.name)) continue;
+          const runDir = join(agentsDir, agent.name, "runs", runId);
+          if (await isDirectory(runDir)) {
+            return {
+              ok: true,
+              runDir,
+              sessionId: safeSessionId,
+              agentId: agent.name,
+            };
+          }
+        }
+      } catch {
+        // handled by not-found below
+      }
+      return {
+        ok: false,
+        error: {
+          code: "run_not_found",
+          message: `run not found in session ${safeSessionId}: ${runId}`,
+        },
+      };
+    }
+
+    try {
+      const sessions = await readdir(sessionRootDir, { withFileTypes: true });
+      for (const session of sessions) {
+        if (!session.isDirectory() || !isSafePathSegment(session.name))
+          continue;
+        const agentsDir = join(sessionRootDir, session.name, "agents");
+        let agents;
+        try {
+          agents = await readdir(agentsDir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const agent of agents) {
+          if (!agent.isDirectory() || !isSafePathSegment(agent.name)) continue;
+          const runDir = join(agentsDir, agent.name, "runs", runId);
+          if (await isDirectory(runDir)) {
+            return {
+              ok: true,
+              runDir,
+              sessionId: session.name,
+              agentId: agent.name,
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to legacy layout and then not-found.
+    }
+
+    const legacyRunDir = join(
+      this.opts.workspaceRoot,
+      ".sparkwright",
+      "runs",
+      runId,
+    );
+    if (await isDirectory(legacyRunDir)) {
+      return { ok: true, runDir: legacyRunDir, agentId: MAIN_AGENT_ID };
+    }
+
+    return {
+      ok: false,
+      error: {
+        code: "run_not_found",
+        message:
+          `Could not find run directory for ${runId} under ` +
+          `${this.opts.workspaceRoot}/.sparkwright.`,
+      },
+    };
   }
 
   /**
@@ -1229,6 +1715,18 @@ function resolveMainAgentMaxSteps(profile: AgentProfile): number {
     return modelCallBudget;
   }
   return MAIN_AGENT_MAX_STEPS_BACKSTOP;
+}
+
+function isSafePathSegment(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value);
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function deriveConfiguredAgents(

@@ -1,0 +1,17 @@
+{
+  "envelope": "request",
+  "id": "req_resume_1",
+  "kind": "run.resume",
+  "timestamp": "2026-05-24T12:00:00.000Z",
+  "payload": {
+    "runId": "run_123",
+    "sessionId": "sess_123",
+    "fromTrace": true,
+    "force": false,
+    "model": "deterministic",
+    "permissionMode": "default",
+    "metadata": {
+      "source": "fixture"
+    }
+  }
+}
