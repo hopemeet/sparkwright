@@ -180,6 +180,112 @@ The CLI and TUI run from compiled output. After pulling changes or editing
 source, rebuild with `npm run build`, or use `npm run cli -- ...` /
 `npm run tui`, which build first.
 
+## ACP Agent Server
+
+Run Sparkwright as an Agent Client Protocol (ACP) agent server for local
+editors and ACP clients:
+
+```bash
+sparkwright acp --workspace /path/to/your/project
+```
+
+The command speaks ACP JSON-RPC over stdio. ACP is an edge protocol here:
+Sparkwright still owns the governed runtime path for policy, approval,
+workspace writes, artifacts, and trace.
+
+Sparkwright can also delegate a bounded sub-task to another ACP-compatible
+agent process through an agent profile:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_reviewer",
+          "name": "External Reviewer",
+          "prompt": "Review changes and report concrete risks.",
+          "metadata": {
+            "acp": {
+              "transport": "stdio",
+              "command": "codex",
+              "args": ["acp"],
+              "timeoutMs": 120000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_reviewer",
+          "toolName": "delegate_external_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+The external agent is launched as a local subprocess over stdio. The delegate
+tool remains a governed Sparkwright tool and requires approval by default.
+
+For local tools that do not expose ACP, use a generic external command profile:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_cli_reviewer",
+          "name": "External CLI Reviewer",
+          "metadata": {
+            "externalCommand": {
+              "command": "agent-cli",
+              "args": ["run", "{{goal}}"],
+              "envMode": "inherit",
+              "input": "none",
+              "timeoutMs": 120000,
+              "maxStdoutBytes": 64000,
+              "maxStderrBytes": 64000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_cli_reviewer",
+          "toolName": "delegate_external_cli_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+`externalCommand` uses `spawn` directly, not a shell. `args` may contain
+`{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`; `input` can be
+`argument`, `stdin`, or `none`. Non-zero exits fail the delegate unless listed
+in `successExitCodes`. `envMode` defaults to `inherit`; set it to `explicit`
+to pass only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes`
+control output capture limits independently, with `maxOutputBytes` retained as
+a shared fallback.
+
+Run a configured external delegate directly while debugging:
+
+```bash
+sparkwright delegates run delegate_external_cli_reviewer \
+  --workspace /path/to/your/project \
+  --goal "Inspect README.md and return one concise suggestion." \
+  --session-id delegate-debug \
+  --trace-level debug \
+  --yes
+```
+
+This direct path still applies the delegate approval gate. Use `--yes` only in
+trusted local debugging contexts. The command writes a normal session trace
+under `.sparkwright/sessions/<session-id>/trace.jsonl`.
+
 ## Configure A Provider
 
 The deterministic model is built in for local smoke tests. For provider-backed
@@ -220,6 +326,10 @@ agent profiles.
   stdio/WebSocket transport.
 - `packages/cli` - command-line interface and TUI launcher.
 - `packages/tui` - interactive terminal product surface.
+- `packages/acp-adapter` - Agent Client Protocol server adapter for local
+  editor/client integration.
+- `packages/acp-client-adapter` - Agent Client Protocol client worker for
+  delegating to external ACP-compatible agent processes.
 - `packages/protocol` - shared host protocol types.
 - `packages/sdk-core` and `packages/sdk-node` - client SDKs for talking to a
   host.

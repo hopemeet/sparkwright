@@ -878,8 +878,15 @@ function validateAgentProfile(
       });
   }
   if (raw.metadata !== undefined) {
-    if (isRecord(raw.metadata)) profile.metadata = raw.metadata;
-    else
+    if (isRecord(raw.metadata)) {
+      validateAgentProfileMetadata(
+        raw.metadata,
+        `${field}.metadata`,
+        filePath,
+        errors,
+      );
+      profile.metadata = raw.metadata;
+    } else
       errors.push({
         file: filePath,
         field: `${field}.metadata`,
@@ -887,6 +894,265 @@ function validateAgentProfile(
       });
   }
   return profile;
+}
+
+function validateAgentProfileMetadata(
+  metadata: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (metadata.acp !== undefined) {
+    if (!isRecord(metadata.acp)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.acp`,
+        message: "must be an object",
+      });
+    } else {
+      validateAcpMetadata(metadata.acp, `${field}.acp`, filePath, errors);
+    }
+  }
+  if (metadata.externalCommand !== undefined) {
+    if (!isRecord(metadata.externalCommand)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.externalCommand`,
+        message: "must be an object",
+      });
+    } else {
+      validateExternalCommandMetadata(
+        metadata.externalCommand,
+        `${field}.externalCommand`,
+        filePath,
+        errors,
+      );
+    }
+  }
+}
+
+function validateAcpMetadata(
+  acp: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  validateKnownKeys(
+    acp,
+    field,
+    filePath,
+    errors,
+    new Set(["transport", "command", "args", "cwd", "env", "timeoutMs"]),
+  );
+  if (acp.transport !== "stdio") {
+    errors.push({
+      file: filePath,
+      field: `${field}.transport`,
+      message: 'must be "stdio"',
+    });
+  }
+  validateRequiredString(acp.command, `${field}.command`, filePath, errors);
+  validateOptionalStringArray(acp.args, `${field}.args`, filePath, errors);
+  validateOptionalString(acp.cwd, `${field}.cwd`, filePath, errors);
+  validateOptionalStringRecord(acp.env, `${field}.env`, filePath, errors);
+  validateOptionalNumber(acp.timeoutMs, `${field}.timeoutMs`, filePath, errors);
+}
+
+function validateExternalCommandMetadata(
+  command: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  validateKnownKeys(
+    command,
+    field,
+    filePath,
+    errors,
+    new Set([
+      "command",
+      "args",
+      "cwd",
+      "env",
+      "envMode",
+      "timeoutMs",
+      "input",
+      "maxOutputBytes",
+      "maxStdoutBytes",
+      "maxStderrBytes",
+      "successExitCodes",
+    ]),
+  );
+  validateRequiredString(command.command, `${field}.command`, filePath, errors);
+  validateOptionalStringArray(command.args, `${field}.args`, filePath, errors);
+  validateOptionalString(command.cwd, `${field}.cwd`, filePath, errors);
+  validateOptionalStringRecord(command.env, `${field}.env`, filePath, errors);
+  validateOptionalNumber(
+    command.timeoutMs,
+    `${field}.timeoutMs`,
+    filePath,
+    errors,
+  );
+  validateOptionalNumber(
+    command.maxOutputBytes,
+    `${field}.maxOutputBytes`,
+    filePath,
+    errors,
+  );
+  validateOptionalNumber(
+    command.maxStdoutBytes,
+    `${field}.maxStdoutBytes`,
+    filePath,
+    errors,
+  );
+  validateOptionalNumber(
+    command.maxStderrBytes,
+    `${field}.maxStderrBytes`,
+    filePath,
+    errors,
+  );
+  if (
+    command.envMode !== undefined &&
+    command.envMode !== "inherit" &&
+    command.envMode !== "explicit"
+  ) {
+    errors.push({
+      file: filePath,
+      field: `${field}.envMode`,
+      message: "must be inherit or explicit",
+    });
+  }
+  if (
+    command.input !== undefined &&
+    command.input !== "argument" &&
+    command.input !== "stdin" &&
+    command.input !== "none"
+  ) {
+    errors.push({
+      file: filePath,
+      field: `${field}.input`,
+      message: "must be argument, stdin, or none",
+    });
+  }
+  validateOptionalIntegerArray(
+    command.successExitCodes,
+    `${field}.successExitCodes`,
+    filePath,
+    errors,
+  );
+}
+
+function validateKnownKeys(
+  record: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+  allowed: Set<string>,
+): void {
+  for (const key of Object.keys(record)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+}
+
+function validateRequiredString(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (typeof value !== "string" || value.length === 0) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must be a non-empty string",
+    });
+  }
+}
+
+function validateOptionalString(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (value !== undefined && typeof value !== "string") {
+    errors.push({ file: filePath, field, message: "must be a string" });
+  }
+}
+
+function validateOptionalNumber(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (value !== undefined && typeof value !== "number") {
+    errors.push({ file: filePath, field, message: "must be a number" });
+  }
+}
+
+function validateOptionalStringArray(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+  ) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must be an array of strings",
+    });
+  }
+}
+
+function validateOptionalIntegerArray(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) ||
+      !value.every(
+        (item) => typeof item === "number" && Number.isInteger(item),
+      ))
+  ) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must be an array of integers",
+    });
+  }
+}
+
+function validateOptionalStringRecord(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (value === undefined) return;
+  if (
+    !isRecord(value) ||
+    !Object.values(value).every((item) => typeof item === "string")
+  ) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must be an object with string values",
+    });
+  }
 }
 
 function validateCapabilityAgents(

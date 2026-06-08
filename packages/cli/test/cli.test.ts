@@ -39,6 +39,43 @@ describe("runCli", () => {
     );
   });
 
+  it("prints top-level help without starting a run", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["--help"], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("Usage: sparkwright init");
+    expect(output.stdoutText()).toContain('sparkwright run "your goal"');
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+  });
+
+  it("prints command help without treating help as a goal", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["run", "--help"], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain('Usage: sparkwright run "your goal"');
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+  });
+
   it("runs the read-only golden path and writes a trace", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -1664,6 +1701,121 @@ describe("runCli", () => {
       },
     );
     expect(session.exitCode).toBe(1);
+  });
+
+  it("runs a configured external command delegate directly", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const commandPath = join(workspace, "delegate-fixture.mjs");
+    await writeFile(
+      commandPath,
+      [
+        "const chunks = [];",
+        'process.stdin.on("data", (chunk) => chunks.push(chunk));',
+        'process.stdin.on("end", () => {',
+        "  process.stdout.write(JSON.stringify({",
+        "    argv: process.argv.slice(2),",
+        '    stdin: Buffer.concat(chunks).toString("utf8")',
+        "  }));",
+        "});",
+        "process.stdin.resume();",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              profiles: [
+                {
+                  id: "external_cli_fixture",
+                  metadata: {
+                    externalCommand: {
+                      command: process.execPath,
+                      args: [commandPath, "--goal", "{{goal}}"],
+                      input: "none",
+                    },
+                  },
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "external_cli_fixture",
+                  toolName: "delegate_external_cli_fixture",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--session-id",
+        "delegate-session-test",
+        "--trace-level",
+        "debug",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toBe("delegate-session-test");
+    expect(result.tracePath).toBe(
+      join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        "delegate-session-test",
+        "trace.jsonl",
+      ),
+    );
+    expect(output.stderrText()).toContain("Approval auto-approved");
+    const parsed = JSON.parse(output.stdoutText()) as {
+      ok: boolean;
+      protocol: string;
+      sessionId: string;
+      runId: string;
+      tracePath: string;
+      output: { exitCode: number; stdout: string };
+    };
+    expect(parsed).toMatchObject({
+      ok: true,
+      protocol: "external_command",
+      sessionId: "delegate-session-test",
+      output: { exitCode: 0 },
+    });
+    expect(JSON.parse(parsed.output.stdout)).toMatchObject({
+      argv: ["--goal", "inspect readme"],
+      stdin: "",
+    });
+    const trace = await readFile(parsed.tracePath, "utf8");
+    expect(trace).toContain('"type":"approval.requested"');
+    expect(trace).toContain('"type":"subagent.completed"');
   });
 
   async function createWorkspace(readme: string): Promise<string> {

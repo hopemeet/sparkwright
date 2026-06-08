@@ -35,11 +35,9 @@ But two things that should follow a project currently do **not**:
    JSON array entries inside `config.json`. There is no "drop a markdown file in
    a known directory and it is live" path.
 
-The reference point for what good ergonomics look like here is opencode's
-`.opencode/` tree (committed; `command/*.md`, `agent/*.md`, `skills/`,
-`opencode.jsonc` all reviewed in PRs). We borrow its **"a file is a
-declaration"** entry-point ergonomics. We do **not** borrow its drop-in
-`tool/*.ts` execution model: every capability in SparkWright must still
+The target ergonomics are project-local, reviewable declarations: commands,
+agent profiles, skills, and project config should be expressible as files that
+can be committed and reviewed. Every capability in SparkWright must still
 converge on the run boundary and pass the existing policy/approval gate. The
 new surfaces declare intent via files; they never introduce a new execution
 path.

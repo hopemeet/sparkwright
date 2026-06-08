@@ -177,7 +177,7 @@ export {
 
 // Approval
 export type { ApprovalResolver } from "./approval.js";
-export { createApprovalRequest } from "./approval.js";
+export { createApprovalRequest, resolveApproval } from "./approval.js";
 
 // Context
 export type {

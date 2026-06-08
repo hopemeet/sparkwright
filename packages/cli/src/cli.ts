@@ -43,6 +43,7 @@ import {
   projectSkillRoot,
   resolveCapabilityDirs,
   resolveSkillRootsForRuntime,
+  runConfiguredDelegate,
   userConfigPath,
   type AgentReport,
   type SkillReport,
@@ -94,6 +95,7 @@ interface ParsedArgs {
   force: boolean;
   fromTrace: boolean;
   directCore: boolean;
+  delegateGoal?: string;
 }
 
 export async function runCli(
@@ -107,6 +109,12 @@ export async function runCli(
   const io = options.io ?? {};
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
+
+  const helpText = helpForArgs(argv);
+  if (helpText) {
+    writeLine(io.stdout, helpText);
+    return { exitCode: 0 };
+  }
 
   if (argv[0] === "init") {
     return handleInitCommand(io, env, argv.slice(1), cwd);
@@ -157,6 +165,10 @@ export async function runCli(
 
   if (command === "capabilities") {
     return handleCapabilitiesCommand(parsed.value, io, env);
+  }
+
+  if (command === "delegates") {
+    return handleDelegatesCommand(parsed.value, io, env);
   }
 
   if (command === "skills") {
@@ -212,6 +224,7 @@ function parseArgs(
     "cron",
     "tools",
     "capabilities",
+    "delegates",
     "skills",
     "agents",
   ]);
@@ -225,6 +238,7 @@ function parseArgs(
     command === "cron" ||
     command === "tools" ||
     command === "capabilities" ||
+    command === "delegates" ||
     command === "skills" ||
     command === "agents"
   ) {
@@ -254,6 +268,7 @@ function parseArgs(
   let force = false;
   let fromTrace = false;
   let directCore = false;
+  let delegateGoal: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -473,6 +488,15 @@ function parseArgs(
       continue;
     }
 
+    if (arg === "--goal") {
+      const value = args[index + 1];
+      if (!value) return { ok: false, message: "Usage: --goal requires text" };
+      delegateGoal = value;
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
     if (arg === "--session") {
       const value = args[index + 1];
       if (!value)
@@ -535,6 +559,14 @@ function parseArgs(
     };
   }
 
+  if (command === "delegates" && subcommand !== "run") {
+    return {
+      ok: false,
+      message:
+        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--format json|text]',
+    };
+  }
+
   if (
     command === "skills" &&
     subcommand !== "list" &&
@@ -566,7 +598,9 @@ function parseArgs(
       ? args.slice(1).join(" ").trim()
       : command === "run" && subcommand === "resume"
         ? "" // checkpoint supplies the original goal
-        : args.join(" ").trim();
+        : command === "delegates" && subcommand === "run"
+          ? (delegateGoal ?? args.slice(1).join(" ").trim())
+          : args.join(" ").trim();
   if (command === "run" && subcommand === "resume" && !args[0]) {
     return {
       ok: false,
@@ -590,6 +624,7 @@ function parseArgs(
       ? (cronRefCommand ? args.slice(1) : args).join("\0")
       : command === "tools" ||
           command === "capabilities" ||
+          command === "delegates" ||
           command === "skills" ||
           command === "agents"
         ? args.join("\0")
@@ -622,6 +657,7 @@ function parseArgs(
       force,
       fromTrace,
       directCore,
+      delegateGoal,
     },
   };
 }
@@ -890,6 +926,96 @@ async function handleCapabilitiesCommand(
     );
     return { exitCode: 1 };
   }
+}
+
+async function handleDelegatesCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  if (parsed.subcommand !== "run") {
+    writeLine(io.stderr, delegatesUsage());
+    return { exitCode: 1 };
+  }
+
+  const words = splitCliWords(parsed.goal);
+  const toolName = words[0];
+  const goal = parsed.delegateGoal ?? words.slice(1).join(" ").trim();
+  if (!toolName || !goal) {
+    writeLine(io.stderr, delegatesUsage());
+    return { exitCode: 1 };
+  }
+
+  const result = await runConfiguredDelegate({
+    workspaceRoot: parsed.workspaceRoot,
+    toolName,
+    goal,
+    env,
+    sessionId: parsed.sessionId ?? createSessionId(),
+    traceLevel: parsed.traceLevel,
+    approvalResolver: createCliApprovalResolver({
+      approveAll: parsed.approveAll,
+      io,
+    }),
+  });
+
+  if (!result.ok) {
+    writeLine(io.stderr, result.message);
+    if (parsed.format === "json") {
+      writeLine(io.stdout, JSON.stringify(result, null, 2));
+    }
+    return { exitCode: 1 };
+  }
+
+  writeLine(
+    io.stdout,
+    parsed.format === "json"
+      ? JSON.stringify(result, null, 2)
+      : formatDelegateRunResult(result),
+  );
+  return {
+    exitCode: 0,
+    tracePath: result.tracePath,
+    sessionId: result.sessionId,
+  };
+}
+
+function formatDelegateRunResult(
+  result: Extract<
+    Awaited<ReturnType<typeof runConfiguredDelegate>>,
+    { ok: true }
+  >,
+): string {
+  const lines = [
+    `delegate.completed ${result.toolName} -> ${result.profileId} (${result.protocol})`,
+  ];
+  if (result.sessionId) {
+    lines.push(`sessionId: ${result.sessionId}`);
+  }
+  if (result.tracePath) {
+    lines.push(`trace: ${result.tracePath}`);
+  }
+  const output = result.output;
+  if (isPlainObject(output)) {
+    if (typeof output.exitCode === "number") {
+      lines.push(`exitCode: ${output.exitCode}`);
+    }
+    if (typeof output.stopReason === "string") {
+      lines.push(`stopReason: ${output.stopReason}`);
+    }
+    if (typeof output.stdout === "string" && output.stdout.length > 0) {
+      lines.push("stdout:", output.stdout.trimEnd());
+    }
+    if (typeof output.stderr === "string" && output.stderr.length > 0) {
+      lines.push("stderr:", output.stderr.trimEnd());
+    }
+    if (typeof output.message === "string" && output.message.length > 0) {
+      lines.push("message:", output.message.trimEnd());
+    }
+  } else {
+    lines.push(JSON.stringify(output, null, 2));
+  }
+  return lines.join("\n");
 }
 
 async function loadCapabilityInspectReport(
@@ -2021,6 +2147,40 @@ function cronUsage(): string {
   ].join("\n");
 }
 
+function helpForArgs(argv: readonly string[]): string | undefined {
+  if (argv.length === 0) return undefined;
+  if (isHelpArg(argv[0])) return usage();
+
+  const command = argv[0];
+  if (!isHelpArg(argv[1])) return undefined;
+
+  if (command === "init") {
+    return ["Usage: sparkwright init", "       sparkwright init --project"].join(
+      "\n",
+    );
+  }
+  if (command === "run") {
+    return 'Usage: sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
+  }
+  if (command === "trace") {
+    return "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>";
+  }
+  if (command === "session") {
+    return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path]";
+  }
+  if (command === "cron") return cronUsage();
+  if (command === "tools") return toolsUsage();
+  if (command === "capabilities") return capabilitiesUsage();
+  if (command === "delegates") return delegatesUsage();
+  if (command === "skills") return skillsUsage();
+  if (command === "agents") return agentsUsage();
+  return undefined;
+}
+
+function isHelpArg(value: string | undefined): boolean {
+  return value === "--help" || value === "-h" || value === "help";
+}
+
 async function handleTraceCommand(
   parsed: ParsedArgs,
   io: CliIO,
@@ -2647,6 +2807,7 @@ function usage(): string {
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
     "       sparkwright capabilities inspect [--workspace path] [--format json|text]",
+    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
     "       sparkwright skills list|validate [--workspace path] [--format json|text]",
@@ -2674,6 +2835,10 @@ function toolsUsage(): string {
 
 function capabilitiesUsage(): string {
   return "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]";
+}
+
+function delegatesUsage(): string {
+  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
 }
 
 function skillsUsage(): string {

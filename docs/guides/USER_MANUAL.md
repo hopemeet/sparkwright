@@ -104,6 +104,126 @@ npm run tui
 The root script rebuilds the workspace before launching. If you run compiled
 files directly after editing source, rebuild first with `npm run build`.
 
+## ACP Agent Server
+
+Use ACP when an editor or local ACP client wants to launch Sparkwright as a
+coding agent subprocess:
+
+```bash
+sparkwright acp --workspace /path/to/project
+```
+
+The ACP server communicates over stdio. It maps ACP sessions and permission
+requests onto the normal Sparkwright host runtime, so policy, approval,
+workspace mutation, artifacts, and trace remain governed by Sparkwright.
+
+## External ACP Delegates
+
+Use an ACP delegate when a SparkWright run should call another local
+ACP-compatible coding agent for a bounded sub-task. Add an agent profile with
+`metadata.acp`, then expose it through `capabilities.agents.delegateTools`:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_reviewer",
+          "name": "External Reviewer",
+          "metadata": {
+            "acp": {
+              "transport": "stdio",
+              "command": "codex",
+              "args": ["acp"],
+              "cwd": ".",
+              "timeoutMs": 120000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_reviewer",
+          "toolName": "delegate_external_reviewer",
+          "description": "Delegate review work to an external ACP agent."
+        }
+      ]
+    }
+  }
+}
+```
+
+`command` and `args` can point at any installed ACP-compatible subprocess. The
+delegate tool is risky and approval-gated by default; the external agent does
+not receive SparkWright file-system or terminal capabilities unless a host
+explicitly adds them through a governed bridge.
+
+## External Command Delegates
+
+Use an external command delegate when a local coding assistant is available as
+a normal CLI rather than an ACP server:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_cli_reviewer",
+          "name": "External CLI Reviewer",
+          "metadata": {
+            "externalCommand": {
+              "command": "agent-cli",
+              "args": ["run", "{{goal}}"],
+              "envMode": "inherit",
+              "input": "none",
+              "timeoutMs": 120000,
+              "maxStdoutBytes": 64000,
+              "maxStderrBytes": 64000,
+              "successExitCodes": [0]
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_cli_reviewer",
+          "toolName": "delegate_external_cli_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+The command is launched with `spawn`, not through a shell. Supported argument
+placeholders are `{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`.
+Set `input` to `argument` to append the goal as the final argument, `stdin` to
+write the goal to standard input, or `none` when the configured args already
+contain all needed context. Non-zero exits fail the delegate unless listed in
+`successExitCodes`. `envMode` defaults to `inherit`; use `explicit` to pass
+only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes` set
+independent capture limits, while `maxOutputBytes` remains a shared fallback.
+
+To debug a configured delegate without asking the main model to choose the
+tool, run it directly:
+
+```bash
+sparkwright delegates run delegate_external_cli_reviewer \
+  --workspace /path/to/project \
+  --goal "Inspect README.md and return one concise suggestion." \
+  --session-id delegate-debug \
+  --trace-level debug \
+  --yes \
+  --format text
+```
+
+The direct command supports ACP and external-command delegates. It does not run
+internal SparkWright child-agent profiles; use the normal run loop for those.
+Direct delegate runs write a session trace under
+`.sparkwright/sessions/<session-id>/trace.jsonl`.
+
 ## Permission Modes
 
 Permission modes shape how runs handle risky actions:

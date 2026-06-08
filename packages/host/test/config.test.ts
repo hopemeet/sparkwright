@@ -390,6 +390,60 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports invalid external delegate metadata fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "bad_external",
+                metadata: {
+                  acp: {
+                    transport: "http",
+                    command: "",
+                    args: "nope",
+                  },
+                  externalCommand: {
+                    command: "",
+                    args: [1],
+                    envMode: "ambient",
+                    input: "pipe",
+                    maxStdoutBytes: "64",
+                    maxStderrBytes: "64",
+                    successExitCodes: ["0"],
+                  },
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(
+        loaded.errors.map((error) => `${error.field}: ${error.message}`),
+      ).toEqual(
+        expect.arrayContaining([
+          'capabilities.agents.profiles.0.metadata.acp.transport: must be "stdio"',
+          "capabilities.agents.profiles.0.metadata.acp.command: must be a non-empty string",
+          "capabilities.agents.profiles.0.metadata.acp.args: must be an array of strings",
+          "capabilities.agents.profiles.0.metadata.externalCommand.command: must be a non-empty string",
+          "capabilities.agents.profiles.0.metadata.externalCommand.args: must be an array of strings",
+          "capabilities.agents.profiles.0.metadata.externalCommand.envMode: must be inherit or explicit",
+          "capabilities.agents.profiles.0.metadata.externalCommand.input: must be argument, stdin, or none",
+          "capabilities.agents.profiles.0.metadata.externalCommand.maxStdoutBytes: must be a number",
+          "capabilities.agents.profiles.0.metadata.externalCommand.maxStderrBytes: must be a number",
+          "capabilities.agents.profiles.0.metadata.externalCommand.successExitCodes: must be an array of integers",
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("returns empty config when no files exist", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

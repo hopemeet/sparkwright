@@ -1,7 +1,6 @@
 {
   "capabilities": {
     "tools": {
-      "enabled": ["mcp_*"],
       "defer": []
     },
     "skills": {

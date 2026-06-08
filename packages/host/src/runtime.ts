@@ -81,6 +81,14 @@ import {
   createSkillManagerTool,
 } from "./tools.js";
 import { createHostShellTool } from "./shell.js";
+import {
+  acpConfigFromAgentProfile,
+  createAcpDelegateTool,
+} from "./acp-child-agent.js";
+import {
+  createExternalCommandDelegateTool,
+  externalCommandConfigFromAgentProfile,
+} from "./external-command-agent.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -393,6 +401,7 @@ export class HostRuntime {
       derivedAgents,
       model: model.adapter,
       childTools,
+      workspaceRoot,
       childRunStoreFactory,
     });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
@@ -1230,6 +1239,7 @@ export class HostRuntime {
                 createGlobPathsTool(this.opts.workspaceRoot),
                 createGrepTextTool(this.opts.workspaceRoot),
               ],
+              workspaceRoot: this.opts.workspaceRoot,
               // Snapshot only describes the tool; its body never runs here
               // (getParent returns undefined and the tool throws first).
               childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
@@ -1731,6 +1741,7 @@ function createConfiguredDelegateTools(input: {
   derivedAgents: DerivedChildAgentProfile[];
   model: ModelAdapter;
   childTools: ToolDefinition[];
+  workspaceRoot: string;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -1749,6 +1760,41 @@ function createConfiguredDelegateTools(input: {
     const toolName =
       delegate.toolName ??
       `delegate_${sanitizeToolSegment(delegate.profileId)}`;
+    const acpConfig = acpConfigFromAgentProfile(profile);
+    if (acpConfig) {
+      tools.push(
+        createAcpDelegateTool({
+          getParent: input.getParent,
+          profile,
+          toolName,
+          description:
+            delegate.description ??
+            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          workspaceRoot: input.workspaceRoot,
+          requiresApproval: delegate.requiresApproval,
+          forbidNesting: delegate.forbidNesting ?? true,
+        }),
+      );
+      continue;
+    }
+    const externalCommandConfig =
+      externalCommandConfigFromAgentProfile(profile);
+    if (externalCommandConfig) {
+      tools.push(
+        createExternalCommandDelegateTool({
+          getParent: input.getParent,
+          profile,
+          toolName,
+          description:
+            delegate.description ??
+            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          workspaceRoot: input.workspaceRoot,
+          requiresApproval: delegate.requiresApproval,
+          forbidNesting: delegate.forbidNesting ?? true,
+        }),
+      );
+      continue;
+    }
     tools.push(
       createAgentTool(input.getParent, {
         name: toolName,
