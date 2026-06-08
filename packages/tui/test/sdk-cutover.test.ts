@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
+
+async function waitForDone(store: EventStore): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const unsub = store.subscribe(() => {
+      const s = store.getSnapshot();
+      if (s.status === "done" || s.status === "error") {
+        unsub();
+        if (s.status === "error") {
+          reject(new Error(s.lastError ?? "unknown error"));
+        } else {
+          resolve();
+        }
+      }
+    });
+  });
+}
 
 /**
  * End-to-end smoke for the SDK cutover: a RunController spawns a real
@@ -37,26 +53,39 @@ describe("TUI ↔ host via sdk-node", () => {
       store,
     });
 
-    const done = new Promise<void>((resolve, reject) => {
-      const unsub = store.subscribe(() => {
-        const s = store.getSnapshot();
-        if (s.status === "done" || s.status === "error") {
-          unsub();
-          if (s.status === "error") {
-            reject(new Error(s.lastError ?? "unknown error"));
-          } else {
-            resolve();
-          }
-        }
-      });
-    });
-
     await controller.start("smoke through sdk");
-    await done;
+    await waitForDone(store);
 
     const snap = store.getSnapshot();
     expect(snap.status).toBe("done");
     expect(snap.events.length).toBeGreaterThan(0);
+    controller.shutdown();
+  }, 30_000);
+
+  it("passes a custom session root through to the spawned host", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-tui-sessions-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      sessionRootDir: sessionRoot,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.start("session root smoke");
+    await waitForDone(store);
+
+    const sessionId = controller.getSessionId();
+    expect(controller.getSessionRootDir()).toBe(sessionRoot);
+    await expect(
+      readFile(join(sessionRoot, sessionId, "trace.jsonl"), "utf8"),
+    ).resolves.toContain("run.completed");
+    await expect(
+      stat(join(workspace, ".sparkwright", "sessions")),
+    ).rejects.toThrow();
+
     controller.shutdown();
   }, 30_000);
 
@@ -70,22 +99,8 @@ describe("TUI ↔ host via sdk-node", () => {
       store,
     });
 
-    const done = new Promise<void>((resolve, reject) => {
-      const unsub = store.subscribe(() => {
-        const s = store.getSnapshot();
-        if (s.status === "done" || s.status === "error") {
-          unsub();
-          if (s.status === "error") {
-            reject(new Error(s.lastError ?? "unknown error"));
-          } else {
-            resolve();
-          }
-        }
-      });
-    });
-
     await controller.start("metadata smoke");
-    await done;
+    await waitForDone(store);
 
     const runsDir = join(
       workspace,

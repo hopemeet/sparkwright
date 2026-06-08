@@ -34,6 +34,8 @@ export type PermissionMode =
 
 export interface RunControllerOptions {
   workspaceRoot: string;
+  /** Session/trace storage root. Defaults to <workspace>/.sparkwright/sessions. */
+  sessionRootDir?: string;
   permissionMode?: PermissionMode;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
@@ -92,6 +94,10 @@ export class RunController {
     return this.sessionId;
   }
 
+  getSessionRootDir(): string {
+    return this.sessionRootDir();
+  }
+
   newSession(): string {
     this.sessionId = `session_tui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     this.currentSessionEvents = [];
@@ -121,7 +127,7 @@ export class RunController {
     this.sessionId = safe;
     this.store.reset();
     this.store.setSessionId(safe);
-    const events = await loadSessionEvents(this.opts.workspaceRoot, safe);
+    const events = await loadSessionEvents(this.sessionRootDir(), safe);
     this.currentSessionEvents = events.slice();
     this.replayEvents(events);
   }
@@ -339,6 +345,8 @@ export class RunController {
         "--stdio",
         "--workspace",
         this.opts.workspaceRoot,
+        "--session-root",
+        this.sessionRootDir(),
         "--permission-mode",
         this.opts.permissionMode ?? "default",
         ...(this.opts.modelName ? ["--model", this.opts.modelName] : []),
@@ -353,6 +361,13 @@ export class RunController {
       return c;
     });
     return this.clientPromise;
+  }
+
+  private sessionRootDir(): string {
+    return (
+      this.opts.sessionRootDir ??
+      join(this.opts.workspaceRoot, ".sparkwright", "sessions")
+    );
   }
 
   private attachListeners(client: Client): void {

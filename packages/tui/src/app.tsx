@@ -6,6 +6,7 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
+import { join } from "node:path";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import { EventStore } from "./state/event-store.js";
 import { RunController } from "./state/run-controller.js";
@@ -71,6 +72,7 @@ import {
 
 export interface CliOverrides {
   workspaceRoot?: string;
+  sessionRootDir?: string;
   permissionMode?: PermissionMode;
   modelName?: string;
   sessionId?: string;
@@ -83,6 +85,7 @@ export interface AppProps {
 
 interface Resolved {
   workspaceRoot: string;
+  sessionRootDir: string;
   permissionMode: PermissionMode;
   /** Model reference "provider/model", or the reserved "deterministic". */
   modelName?: string;
@@ -108,6 +111,8 @@ function resolveConfig(
     cli.workspaceRoot ?? loaded.config.workspace ?? initialCwd;
   if (cli.workspaceRoot) sources.workspace = "cli:--workspace";
   else if (!loaded.config.workspace) sources.workspace = "default:cwd";
+  const sessionRootDir =
+    cli.sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions");
 
   const modelName = cli.modelName ?? loaded.config.model;
   if (cli.modelName) sources.model = "cli:--model";
@@ -121,6 +126,7 @@ function resolveConfig(
 
   return {
     workspaceRoot,
+    sessionRootDir,
     permissionMode,
     modelName,
     providers: loaded.config.providers,
@@ -194,12 +200,13 @@ function AppReady(
     () =>
       new RunController({
         workspaceRoot: resolved.workspaceRoot,
+        sessionRootDir: resolved.sessionRootDir,
         permissionMode: resolved.permissionMode,
         modelName: resolved.modelName,
         initialSessionId: props.cliOverrides.sessionId,
         store,
       }),
-    [resolved.workspaceRoot, store],
+    [resolved.workspaceRoot, resolved.sessionRootDir, store],
   );
 
   // Track the terminal height only to cap the live (in-flight) stream panel so

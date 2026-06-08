@@ -6,10 +6,12 @@ import type { PermissionMode } from "./state/run-controller.js";
 
 export interface RunTuiOptions {
   workspaceRoot?: string;
+  sessionRootDir?: string;
 }
 
 interface CliOverrides {
   workspaceRoot?: string;
+  sessionRootDir?: string;
   permissionMode?: PermissionMode;
   modelName?: string;
   sessionId?: string;
@@ -20,6 +22,8 @@ function parseArgs(argv: string[]): CliOverrides {
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--workspace" && argv[i + 1]) out.workspaceRoot = argv[++i];
+    else if (a === "--session-root" && argv[i + 1])
+      out.sessionRootDir = argv[++i];
     else if (a === "--model" && argv[i + 1]) out.modelName = argv[++i];
     else if (a === "--permission-mode" && argv[i + 1]) {
       const v = argv[++i];
@@ -48,7 +52,10 @@ export async function runTui(
     cli.workspaceRoot ?? options.workspaceRoot ?? process.cwd();
   const props: AppProps = {
     initialCwd,
-    cliOverrides: cli,
+    cliOverrides: {
+      ...cli,
+      sessionRootDir: cli.sessionRootDir ?? options.sessionRootDir,
+    },
   };
 
   // Render into the normal buffer (NOT the alternate screen). The transcript is
