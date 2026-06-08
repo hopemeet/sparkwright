@@ -277,7 +277,7 @@ function createDeterministicModel(input: {
   let modelCalls = 0;
 
   return {
-    async complete() {
+    async complete(modelInput) {
       modelCalls += 1;
 
       if (modelCalls === 1) {
@@ -310,11 +310,27 @@ function createDeterministicModel(input: {
 
       return {
         message: input.shouldWrite
-          ? `Completed approval-gated write path for ${input.targetPath}.`
+          ? formatDeterministicWriteSummary(input.targetPath, modelInput.events)
           : `Read ${input.targetPath}. Re-run with --write to exercise approval-gated workspace mutation.`,
       };
     },
   };
+}
+
+function formatDeterministicWriteSummary(
+  targetPath: string,
+  events: SparkwrightEvent[],
+): string {
+  if (events.some((event) => event.type === "workspace.write.denied")) {
+    return `Write was not applied for ${targetPath} because approval was denied.`;
+  }
+  if (events.some((event) => event.type === "tool.failed")) {
+    return `Write was not applied for ${targetPath} because the write tool failed.`;
+  }
+  if (events.some((event) => event.type === "workspace.write.skipped")) {
+    return `No workspace change was needed for ${targetPath}; the deterministic section was already present.`;
+  }
+  return `Completed approval-gated write path for ${targetPath}.`;
 }
 
 function createReadFileTool() {

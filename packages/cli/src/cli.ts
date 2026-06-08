@@ -1004,7 +1004,7 @@ function formatCapabilityInspectReport(
   lines.push("command dirs:");
   for (const dir of report.command.dirs) {
     lines.push(
-      `  - ${dir.layer}: ${dir.path}${dir.exists ? "" : " (missing)"}`,
+      `  - ${dir.layer}: ${dir.path}${dir.exists ? "" : " (optional, missing)"}`,
     );
   }
   if (report.config.errors.length > 0) {

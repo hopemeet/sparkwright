@@ -220,6 +220,13 @@ describe("runCli", () => {
     expect(events.map((event) => event.type)).not.toContain(
       "workspace.write.completed",
     );
+    const completed = events.find((event) => event.type === "run.completed");
+    expect(completed?.payload?.message).toContain(
+      "Write was not applied for README.md because approval was denied.",
+    );
+    expect(completed?.payload?.message).not.toContain(
+      "Completed approval-gated write path",
+    );
   });
 
   it("auto-approves writes with --yes and records the write path", async () => {
@@ -714,6 +721,23 @@ describe("runCli", () => {
       const mode = (await stat(configPath)).mode & 0o777;
       expect(mode).toBe(0o600);
     }
+  });
+
+  it("marks missing command capability dirs as optional in inspect output", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("command dirs:");
+    expect(output.stdoutText()).toContain("(optional, missing)");
+    expect(output.stdoutText()).not.toContain(" (missing)");
   });
 
   it("creates, lists, and validates workspace skills", async () => {
@@ -1674,14 +1698,27 @@ function createOutputCapture() {
 
 async function readTrace(
   path: string | undefined,
-): Promise<Array<{ type: string; runId?: string }>> {
+): Promise<
+  Array<{
+    type: string;
+    runId?: string;
+    payload?: { message?: string };
+  }>
+> {
   if (!path) throw new Error("Missing trace path.");
   const content = await readFile(path, "utf8");
   return content
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { type: string; runId?: string });
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          type: string;
+          runId?: string;
+          payload?: { message?: string };
+        },
+    );
 }
 
 function checkpointJson(input: { runId: string; goal: string }) {
