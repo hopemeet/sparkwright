@@ -677,6 +677,13 @@ describe("host protocol", () => {
                   command: "ignored",
                   enabled: false,
                 },
+                {
+                  type: "stdio",
+                  name: "missing",
+                  command: join(workspace, "missing-mcp-command"),
+                  enabled: true,
+                  timeoutMs: 100,
+                },
               ],
             },
             agents: {
@@ -811,6 +818,13 @@ describe("host protocol", () => {
                   command: "ignored",
                   enabled: false,
                 },
+                {
+                  type: "stdio",
+                  name: "missing",
+                  command: join(workspace, "missing-mcp-command"),
+                  enabled: true,
+                  timeoutMs: 100,
+                },
               ],
             },
             agents: {
@@ -882,6 +896,14 @@ describe("host protocol", () => {
           mcp: {
             statuses: [
               { serverName: "disabled", status: "disabled", toolNames: [] },
+              {
+                serverName: "missing",
+                status: "failed",
+                toolNames: [],
+                errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+                errorPhase: "connect",
+                errorMessage: expect.stringContaining("ENOENT"),
+              },
             ],
           },
           agents: {

@@ -444,6 +444,10 @@ function EventCard(props: {
     case "mcp.server.prepared": {
       const name = str(p.name) || str(p.serverName) || "mcp";
       const status = str(p.status) || "prepared";
+      const errorCode = str(p.errorCode);
+      const errorPhase = str(p.errorPhase);
+      const error = rec(p.error);
+      const errorMessage = str(error?.message);
       const toolCount =
         typeof p.toolCount === "number"
           ? p.toolCount
@@ -460,6 +464,16 @@ function EventCard(props: {
               {" "}
               · {toolCount} tool{toolCount === 1 ? "" : "s"}
             </Text>
+          ) : null}
+          {errorCode ? (
+            <Text color={theme.error}>
+              {" "}
+              · {errorCode}
+              {errorPhase ? ` (${errorPhase})` : ""}
+            </Text>
+          ) : null}
+          {errorMessage ? (
+            <Text color={theme.muted}> · {errorMessage}</Text>
           ) : null}
         </Box>
       );

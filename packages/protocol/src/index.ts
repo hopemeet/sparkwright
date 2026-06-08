@@ -238,6 +238,9 @@ export interface CapabilityMcpStatus {
   serverName: string;
   status: string;
   toolNames: string[];
+  errorCode?: string;
+  errorPhase?: string;
+  errorMessage?: string;
 }
 
 export interface CapabilityAgentSummary {

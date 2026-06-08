@@ -28,6 +28,18 @@ describe("formatEvent", () => {
     ).toMatchObject({ color: "cyan", detail: "github connected" });
     expect(
       formatEvent(
+        event("mcp.server.prepared", {
+          name: "missing",
+          status: "failed",
+          errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail: "missing failed MCP_SERVER_COMMAND_NOT_FOUND",
+    });
+    expect(
+      formatEvent(
         event("agent.profile.derived", {
           parentAgentId: "planner",
           childAgentId: "reviewer",

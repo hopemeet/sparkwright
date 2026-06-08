@@ -32,6 +32,7 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   else if (t.startsWith("workspace.write")) color = "magenta";
   else if (t === "run.completed") color = "green";
   else if (t.startsWith("run.")) color = "white";
+  if (t === "mcp.server.prepared" && p?.status === "failed") color = "red";
 
   let detail = "";
   if (p) {
@@ -47,9 +48,12 @@ export function formatEvent(event: RunEvent): FormattedEvent {
       detail = str(p.reason ?? p.stopReason);
     else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
     else if (t === "skill.loaded") detail = str(p.name);
-    else if (t === "mcp.server.prepared")
-      detail = `${str(p.name)} ${str(p.status)}`.trim();
-    else if (t === "agent.profile.derived") {
+    else if (t === "mcp.server.prepared") {
+      const name = str(p.name);
+      const status = str(p.status);
+      const errorCode = str(p.errorCode);
+      detail = [name, status, errorCode].filter(Boolean).join(" ");
+    } else if (t === "agent.profile.derived") {
       detail = [str(p.parentAgentId), str(p.childAgentId)]
         .filter(Boolean)
         .join(" → ");

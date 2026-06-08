@@ -1089,7 +1089,8 @@ export class HostRuntime {
       };
     }
     const sessionRootDir =
-      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot);
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
     if (sessionId) {
       let safeSessionId: string;
       try {
@@ -1463,7 +1464,8 @@ export class HostRuntime {
     limit = 20,
   ): Promise<Array<{ id: string; mtimeMs: number; preview: string }>> {
     const root =
-      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot);
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
     let entries: string[];
     try {
       entries = await readdir(root);
@@ -1617,7 +1619,8 @@ export class HostRuntime {
     }
 
     const sessionRootDir =
-      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot);
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
     try {
       const store = new FileSessionStore({ rootDir: sessionRootDir });
       const result = await forkSessionFromEvent({
@@ -1683,6 +1686,13 @@ function buildCapabilitySnapshot(input: {
           toolNames: (input.mcpToolNameMap ?? [])
             .filter((mapping) => mapping.serverName === serverName)
             .map((mapping) => mapping.toolName),
+          ...(status.status === "failed"
+            ? {
+                errorCode: status.errorCode,
+                errorPhase: status.phase,
+                errorMessage: status.error,
+              }
+            : {}),
         }),
       ),
     },

@@ -1821,14 +1821,29 @@ function McpCapabilitySection(props: {
       count={props.mcp.length}
     >
       {props.mcp.map((server) => (
-        <Text key={server.serverName}>
-          <Text color={theme.success}>• </Text>
-          {server.serverName}
-          <Text color={theme.muted}>
-            {" "}
-            · {server.status} · {server.toolNames.length} tools
+        <Box key={server.serverName} flexDirection="column">
+          <Text>
+            <Text color={theme.success}>• </Text>
+            {server.serverName}
+            <Text color={theme.muted}>
+              {" "}
+              · {server.status} · {server.toolNames.length} tools
+            </Text>
+            {server.errorCode ? (
+              <Text color={theme.error}>
+                {" "}
+                · {server.errorCode}
+                {server.errorPhase ? ` (${server.errorPhase})` : ""}
+              </Text>
+            ) : null}
           </Text>
-        </Text>
+          {server.toolNames.length > 0 ? (
+            <Text color={theme.muted}> {server.toolNames.join(", ")}</Text>
+          ) : null}
+          {server.errorMessage ? (
+            <Text color={theme.muted}> {server.errorMessage}</Text>
+          ) : null}
+        </Box>
       ))}
     </CapabilitySection>
   );
