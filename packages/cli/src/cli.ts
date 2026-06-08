@@ -4,6 +4,7 @@ import {
   buildTraceTimelineFile,
   createSessionId,
   createPermissionModePolicy,
+  createRunId,
   FileSessionStore,
   loadCheckpointFromRunDir,
   loadTraceEventsFile,
@@ -17,8 +18,11 @@ import {
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
   type TraceSummary,
+  type TraceVerificationReport,
   type TraceTimeline,
   type TraceLevel,
+  EventLog,
+  verifyTraceFile,
 } from "@sparkwright/core";
 import {
   createSessionFileRunStoreFactory,
@@ -82,6 +86,7 @@ interface ParsedArgs {
   traceLevel: TraceLevel;
   workspaceRoot: string;
   sessionRootDir: string;
+  sessionRootDirSource: "default" | "cli";
   targetPath: string;
   targetPathSource: "default" | "cli";
   shouldWrite: boolean;
@@ -204,14 +209,20 @@ export async function runCli(
     return { exitCode: 1 };
   }
 
-  const validation = await validateCliRunInput(parsed.value, io, env);
-  if (!validation.ok) return { exitCode: 1 };
+  const sessionId = parsed.value.sessionId ?? createSessionId();
+  const runInput = { ...parsed.value, sessionId };
+  const validation = await validateCliRunInput(runInput, io, env);
+  if (!validation.ok) {
+    const tracePath = writeValidationFailureTrace(runInput, validation);
+    if (tracePath)
+      writeLine(io.stdout, `Validation trace written to ${tracePath}`);
+    return { exitCode: 1, tracePath, sessionId };
+  }
 
   return parsed.value.directCore
     ? startDirectCoreRun(
         {
-          ...parsed.value,
-          sessionId: parsed.value.sessionId ?? createSessionId(),
+          ...runInput,
           contextItems: [],
         },
         io,
@@ -219,12 +230,9 @@ export async function runCli(
       )
     : startHostRun(
         {
-          ...parsed.value,
+          ...runInput,
           modelName:
-            parsed.value.modelNameSource === "cli"
-              ? parsed.value.modelName
-              : undefined,
-          sessionId: parsed.value.sessionId ?? createSessionId(),
+            runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
         },
         io,
         env,
@@ -235,7 +243,7 @@ async function validateCliRunInput(
   parsed: ParsedArgs,
   io: CliIO,
   env: Record<string, string | undefined>,
-): Promise<{ ok: boolean }> {
+): Promise<{ ok: boolean; errors: string[]; warnings: string[] }> {
   const validation = await validateRunInput({
     workspaceRoot: parsed.workspaceRoot,
     targetPath: parsed.targetPath,
@@ -252,7 +260,107 @@ async function validateCliRunInput(
   for (const error of validation.errors) {
     writeLine(io.stderr, error);
   }
-  return { ok: validation.ok };
+  return validation;
+}
+
+function writeValidationFailureTrace(
+  parsed: ParsedArgs & { sessionId: string },
+  validation: { errors: string[]; warnings: string[] },
+): string | undefined {
+  if (
+    parsed.sessionRootDirSource === "default" &&
+    validation.errors.some((error) => error.startsWith("Workspace "))
+  ) {
+    return undefined;
+  }
+  try {
+    const now = new Date().toISOString();
+    const runId = createRunId();
+    const run: RunRecord = {
+      id: runId,
+      goal: parsed.goal,
+      state: "failed",
+      stopReason: "validation_failed",
+      createdAt: now,
+      updatedAt: now,
+      metadata: {
+        source: "cli",
+        agentId: "main",
+        workspaceRoot: parsed.workspaceRoot,
+        targetPath: parsed.targetPath,
+      },
+    };
+    const store = new FileRunStore(run, {
+      sessionRootDir: parsed.sessionRootDir,
+      sessionId: parsed.sessionId,
+      agentId: "main",
+      traceLevel: parsed.traceLevel,
+    });
+    const events = new EventLog(runId);
+    const metadata = { sessionId: parsed.sessionId, agentId: "main" };
+    store.append(events.emit("run.created", { goal: parsed.goal }, metadata));
+    store.append(
+      events.emit(
+        "validation.failed",
+        {
+          stage: "input",
+          hookName: "run_input",
+          result: {
+            ok: false,
+            findings: validation.errors.map((message) => ({
+              severity: "error",
+              code: validationCodeForMessage(message),
+              message,
+            })),
+          },
+          warnings: validation.warnings,
+        },
+        metadata,
+      ),
+    );
+    store.append(
+      events.emit(
+        "run.failed",
+        {
+          reason: "validation_failed",
+          code: "RUN_INPUT_VALIDATION_FAILED",
+          message: validation.errors.join("\n"),
+        },
+        metadata,
+      ),
+    );
+    store.finish(run, {
+      signal: "failed",
+      state: "failed",
+      stopReason: "validation_failed",
+      message: validation.errors.join("\n"),
+      failure: {
+        category: "validation",
+        code: "RUN_INPUT_VALIDATION_FAILED",
+        message: validation.errors.join("\n"),
+      },
+      metadata: {},
+    });
+    return store.tracePath;
+  } catch {
+    return undefined;
+  }
+}
+
+function validationCodeForMessage(message: string): string {
+  if (message.startsWith("Workspace does not exist"))
+    return "WORKSPACE_NOT_FOUND";
+  if (message.startsWith("Workspace is not a directory"))
+    return "WORKSPACE_NOT_DIRECTORY";
+  if (message.startsWith("Target does not exist")) return "TARGET_NOT_FOUND";
+  if (message.startsWith("Target is not a file")) return "TARGET_NOT_FILE";
+  if (message.startsWith("Target must stay inside"))
+    return "TARGET_OUTSIDE_WORKSPACE";
+  if (message.startsWith("Target must be a workspace-relative"))
+    return "TARGET_NOT_RELATIVE";
+  if (message.startsWith("Target path must not be empty"))
+    return "TARGET_EMPTY";
+  return "RUN_INPUT_INVALID";
 }
 
 interface ConfigDefaults {
@@ -311,6 +419,7 @@ function parseArgs(
   let traceLevel: TraceLevel = "standard";
   let workspaceRoot = defaults.workspace ?? cwd;
   let sessionRootDir: string | undefined;
+  let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
   let targetPath = "README.md";
   let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   let shouldWrite = false;
@@ -371,6 +480,7 @@ function parseArgs(
           message: "Usage: --session-root requires a path",
         };
       sessionRootDir = value;
+      sessionRootDirSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -602,12 +712,13 @@ function parseArgs(
     command === "trace" &&
     subcommand !== "summary" &&
     subcommand !== "events" &&
-    subcommand !== "timeline"
+    subcommand !== "timeline" &&
+    subcommand !== "verify"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>",
+        "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>",
     };
   }
 
@@ -729,6 +840,7 @@ function parseArgs(
       workspaceRoot,
       sessionRootDir:
         sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
+      sessionRootDirSource,
       targetPath,
       targetPathSource,
       shouldWrite,
@@ -2345,7 +2457,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
   }
   if (command === "trace") {
-    return "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>";
+    return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
   }
   if (command === "session") {
     return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
@@ -2370,9 +2482,19 @@ async function handleTraceCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>",
+      "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>",
     );
     return { exitCode: 1 };
+  }
+  if (parsed.subcommand === "verify") {
+    const report = await verifyTraceFile(parsed.target);
+    writeLine(
+      io.stdout,
+      parsed.format === "text"
+        ? formatTraceVerificationReport(report)
+        : JSON.stringify(report, null, 2),
+    );
+    return { exitCode: report.ok ? 0 : 1 };
   }
   if (parsed.subcommand === "timeline") {
     const timeline = await buildTraceTimelineFile(parsed.target, {
@@ -2824,6 +2946,23 @@ function formatConsistencyReport(
   return lines.join("\n");
 }
 
+function formatTraceVerificationReport(
+  report: TraceVerificationReport,
+): string {
+  const lines = [
+    `status: ${report.ok ? "ok" : "failed"}`,
+    `events: ${report.eventCount}`,
+    `runs: ${report.runIds.length}`,
+    `sessions: ${report.sessionIds.join(", ") || "(none)"}`,
+    `agents: ${report.agentIds.join(", ") || "(none)"}`,
+    `findings: ${report.findings.length}`,
+  ];
+  for (const finding of report.findings) {
+    lines.push(`${finding.severity} ${finding.code}: ${finding.message}`);
+  }
+  return lines.join("\n");
+}
+
 function formatRepairReport(report: SessionTraceRepairReport): string {
   const lines = [
     `mode: ${report.applied ? "applied" : "dry-run"}`,
@@ -3036,6 +3175,7 @@ function usage(): string {
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
+    "       sparkwright trace verify <trace.jsonl> [--format json|text]",
     "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
     '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model]",

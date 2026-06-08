@@ -38,6 +38,30 @@ describe("runTui startup validation", () => {
     }
   });
 
+  it("rejects unknown options", async () => {
+    const stderr = captureStderr();
+    try {
+      const result = await runTui(["--definitely-not-real"]);
+
+      expect(result.exitCode).toBe(1);
+      expect(stderr.text()).toContain("Unknown option: --definitely-not-real");
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  it("prints help without rendering the app", async () => {
+    const stdout = captureStdout();
+    try {
+      const result = await runTui(["--help"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(stdout.text()).toContain("Usage: sparkwright tui");
+    } finally {
+      stdout.restore();
+    }
+  });
+
   it("rejects an explicit missing workspace", async () => {
     const base = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     tempDirs.push(base);
@@ -65,6 +89,21 @@ function captureStderr() {
     text: () => text,
     restore: () => {
       process.stderr.write = original;
+    },
+  };
+}
+
+function captureStdout() {
+  const original = process.stdout.write;
+  let text = "";
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    text += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  return {
+    text: () => text,
+    restore: () => {
+      process.stdout.write = original;
     },
   };
 }

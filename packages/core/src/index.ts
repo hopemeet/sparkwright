@@ -333,6 +333,8 @@ export type {
   TraceTimelinePhaseStatus,
   TraceEventFilter,
   TraceSummary,
+  TraceVerificationFinding,
+  TraceVerificationReport,
   ValidateSessionTraceConsistencyOptions,
 } from "./trace.js";
 export {
@@ -346,6 +348,8 @@ export {
   summarizeTraceFile,
   summarizeTraceJsonl,
   validateSessionTraceConsistency,
+  verifyTraceFile,
+  verifyTraceJsonl,
 } from "./trace.js";
 export type {
   MemoryStore,

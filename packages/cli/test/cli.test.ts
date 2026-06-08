@@ -121,8 +121,9 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(1);
     expect(output.stderrText()).toContain("Workspace does not exist");
+    expect(result.tracePath).toBeUndefined();
     expect(output.stdoutText()).not.toContain("run.started");
-    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stdoutText()).not.toContain("Validation trace written to");
   });
 
   it("rejects an explicit missing target before starting a run", async () => {
@@ -152,8 +153,16 @@ describe("runCli", () => {
     expect(output.stderrText()).toContain(
       "Target does not exist: NO_SUCH_TARGET.md",
     );
+    expect(result.tracePath).toBeDefined();
     expect(output.stdoutText()).not.toContain("run.started");
-    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stdoutText()).toContain("Validation trace written to");
+
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toEqual([
+      "run.created",
+      "validation.failed",
+      "run.failed",
+    ]);
   });
 
   it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
@@ -1894,6 +1903,44 @@ describe("runCli", () => {
     expect(timeline.exitCode).toBe(0);
     expect(timelineOutput.stdoutText()).toContain("phases:");
     expect(timelineOutput.stdoutText()).toContain("completed run");
+  });
+
+  it("verifies trace integrity", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const runOutput = createOutputCapture();
+    const run = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
+      },
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["trace", "verify", run.tracePath!, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("status: ok");
+
+    const brokenTrace = join(workspace, "broken.trace.jsonl");
+    const trace = await readFile(run.tracePath!, "utf8");
+    await writeFile(brokenTrace, trace.trimEnd(), "utf8");
+    const brokenOutput = createOutputCapture();
+    const broken = await runCli(["trace", "verify", brokenTrace], {
+      io: { stdout: brokenOutput.stdout, stderr: brokenOutput.stderr },
+    });
+
+    expect(broken.exitCode).toBe(1);
+    expect(JSON.parse(brokenOutput.stdoutText())).toMatchObject({
+      ok: false,
+      findings: expect.arrayContaining([
+        expect.objectContaining({ code: "TRACE_FINAL_NEWLINE_MISSING" }),
+      ]),
+    });
   });
 
   it("prints compact payload details for trace events text output", async () => {

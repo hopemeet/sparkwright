@@ -23,6 +23,7 @@ import {
   serializeEventJsonl,
   summarizeTraceJsonl,
   validateSessionTraceConsistency,
+  verifyTraceJsonl,
 } from "../src/trace.js";
 
 describe("trace", () => {
@@ -1289,6 +1290,64 @@ describe("trace", () => {
     expect(report.findings).toEqual([]);
   });
 
+  it("accepts collapsed stream text ranges in session trace sequence checks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const sessionRootDir = root;
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: sessionRootDir }),
+      sessionId: "session_stream_compacted",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir,
+        sessionId: "session_stream_compacted",
+        agentId: "main",
+        traceLevel: "standard",
+      }),
+    });
+    const store = factory(run);
+
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    await store.append(log.emit("run.started", {}));
+    await store.append(log.emit("model.stream.started", { step: 1 }));
+    await store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "a" }),
+    );
+    await store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "b" }),
+    );
+    await store.append(log.emit("model.stream.completed", { step: 1 }));
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const trace = await readFile(
+      join(root, "session_stream_compacted", "trace.jsonl"),
+      "utf8",
+    );
+    const traceEvents = trace
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+    expect(traceEvents.map((event) => event.sequence)).toEqual([
+      1, 2, 3, 4, 6, 7,
+    ]);
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_stream_compacted"),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
   it("repairs derived session metadata from trace evidence", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
     tempDirs.push(root);
@@ -1996,6 +2055,63 @@ describe("trace", () => {
     const filtered = filterTraceEvent(event, "standard");
     const size = JSON.stringify(filtered).length;
     expect(size).toBeLessThan(2000);
+  });
+
+  it("verifies a complete single-run trace", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "verify" }),
+      log.emit("run.started", {}),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = verifyTraceJsonl(jsonl);
+
+    expect(report.ok).toBe(true);
+    expect(report.eventCount).toBe(3);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("verifies traces with collapsed stream text sequence ranges", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-stream-verify-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root });
+
+    store.append(log.emit("run.created", { goal: run.goal }));
+    store.append(log.emit("run.started", {}));
+    store.append(log.emit("model.stream.started", { step: 1 }));
+    store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "a" }),
+    );
+    store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "b" }),
+    );
+    store.append(log.emit("model.stream.completed", { step: 1 }));
+    store.append(log.emit("run.completed", { reason: "final_answer" }));
+
+    const report = verifyTraceJsonl(await readFile(store.tracePath, "utf8"));
+
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("flags half-written traces and missing terminal events", () => {
+    const log = new EventLog(createRunId());
+    const event = log.emit("run.created", { goal: "verify" });
+
+    const report = verifyTraceJsonl(JSON.stringify(event));
+
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining([
+        "TRACE_FINAL_NEWLINE_MISSING",
+        "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+      ]),
+    );
   });
 });
 

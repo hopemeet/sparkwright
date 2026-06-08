@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { render } from "ink";
 import React from "react";
 import { validateRunInput } from "@sparkwright/host";
@@ -16,6 +18,7 @@ interface CliOverrides {
   permissionMode?: PermissionMode;
   modelName?: string;
   sessionId?: string;
+  help?: boolean;
 }
 
 function parseArgs(
@@ -25,7 +28,9 @@ function parseArgs(
   const errors: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === "--workspace") {
+    if (a === "--help" || a === "-h") {
+      out.help = true;
+    } else if (a === "--workspace") {
       if (!argv[i + 1]) errors.push("Usage: --workspace requires a path");
       else out.workspaceRoot = argv[++i];
     } else if (a === "--session-root") {
@@ -49,6 +54,8 @@ function parseArgs(
     } else if (a === "--session-id") {
       if (!argv[i + 1]) errors.push("Usage: --session-id requires an id");
       else out.sessionId = argv[++i];
+    } else {
+      errors.push(`Unknown option: ${a}`);
     }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
@@ -74,6 +81,10 @@ export async function runTui(
     return { exitCode: 1 };
   }
   const cli = parsed.value;
+  if (cli.help) {
+    process.stdout.write(`${tuiUsage()}\n`);
+    return { exitCode: 0 };
+  }
   const initialCwd =
     cli.workspaceRoot ?? options.workspaceRoot ?? process.cwd();
   const validation = await validateRunInput({
@@ -113,4 +124,23 @@ export async function runTui(
   });
   await instance.waitUntilExit();
   return { exitCode: 0 };
+}
+
+function tuiUsage(): string {
+  return [
+    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode mode] [--session-id id]",
+    "       node packages/tui/dist/index.js [same options]",
+  ].join("\n");
+}
+
+function isDirectEntry(): boolean {
+  return (
+    process.argv[1] !== undefined &&
+    resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  );
+}
+
+if (isDirectEntry()) {
+  const result = await runTui(process.argv.slice(2));
+  process.exitCode = result.exitCode;
 }

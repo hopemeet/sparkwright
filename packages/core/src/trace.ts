@@ -226,6 +226,207 @@ export async function buildTraceTimelineFile(
   return buildTraceTimelineJsonl(await readFile(path, "utf8"), filter);
 }
 
+export interface TraceVerificationFinding {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TraceVerificationReport {
+  ok: boolean;
+  path?: string;
+  eventCount: number;
+  runIds: string[];
+  sessionIds: string[];
+  agentIds: string[];
+  findings: TraceVerificationFinding[];
+}
+
+export async function verifyTraceFile(
+  path: string,
+): Promise<TraceVerificationReport> {
+  return verifyTraceJsonl(await readFile(path, "utf8"), { path });
+}
+
+export function verifyTraceJsonl(
+  jsonl: string,
+  options: { path?: string } = {},
+): TraceVerificationReport {
+  const findings: TraceVerificationFinding[] = [];
+  if (jsonl.length > 0 && !jsonl.endsWith("\n")) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_FINAL_NEWLINE_MISSING",
+      message:
+        "Trace JSONL does not end with a newline; the final event may be half-written.",
+    });
+  }
+
+  let events: SparkwrightEvent[] = [];
+  try {
+    events = parseTraceJsonl(jsonl, options.path ?? "trace.jsonl");
+  } catch (error) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_JSON_INVALID",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const runIds = new Set<string>();
+  const sessionIds = new Set<string>();
+  const agentIds = new Set<string>();
+  const sequencesByRun = new Map<string, number>();
+  const terminalCountByRun = new Map<string, number>();
+  const writeCountsByRun = new Map<
+    string,
+    { requested: number; completed: number; denied: number; skipped: number }
+  >();
+  const approvalCountsByRun = new Map<
+    string,
+    { requested: number; resolved: number }
+  >();
+  const artifactIds = new Set<string>();
+  let previousMonotonicUs: number | undefined;
+
+  for (const [index, event] of events.entries()) {
+    const line = index + 1;
+    if (!event || typeof event !== "object") {
+      findings.push({
+        severity: "error",
+        code: "TRACE_EVENT_INVALID",
+        message: "Trace line is not an event object.",
+        metadata: { line },
+      });
+      continue;
+    }
+    if (typeof event.runId !== "string" || event.runId.length === 0) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_RUN_ID_MISSING",
+        message: "Trace event is missing runId.",
+        metadata: { line },
+      });
+      continue;
+    }
+    runIds.add(event.runId);
+    const sessionId = stringMetadata(event.metadata, "sessionId");
+    const agentId = stringMetadata(event.metadata, "agentId");
+    if (sessionId) sessionIds.add(sessionId);
+    if (agentId) agentIds.add(agentId);
+
+    if (typeof event.sequence !== "number") {
+      findings.push({
+        severity: "error",
+        code: "TRACE_SEQUENCE_MISSING",
+        message: "Trace event is missing numeric sequence.",
+        metadata: { line, runId: event.runId },
+      });
+    } else {
+      const expected = (sequencesByRun.get(event.runId) ?? 0) + 1;
+      if (event.sequence !== expected) {
+        findings.push({
+          severity: "error",
+          code: "TRACE_SEQUENCE_INVALID",
+          message: "Run event sequence must increase by one.",
+          metadata: {
+            line,
+            runId: event.runId,
+            expected,
+            actual: event.sequence,
+          },
+        });
+      }
+      sequencesByRun.set(event.runId, observedSequenceEnd(event));
+    }
+
+    if (typeof event.monotonicUs === "number") {
+      if (
+        previousMonotonicUs !== undefined &&
+        event.monotonicUs < previousMonotonicUs
+      ) {
+        findings.push({
+          severity: "error",
+          code: "TRACE_MONOTONIC_ORDER_INVALID",
+          message: "monotonicUs moved backward in file order.",
+          metadata: {
+            line,
+            previous: previousMonotonicUs,
+            actual: event.monotonicUs,
+          },
+        });
+      }
+      previousMonotonicUs = event.monotonicUs;
+    }
+
+    if (isTerminalRunEvent(event)) {
+      terminalCountByRun.set(
+        event.runId,
+        (terminalCountByRun.get(event.runId) ?? 0) + 1,
+      );
+    }
+    collectWriteVerificationCounts(writeCountsByRun, event);
+    collectApprovalVerificationCounts(approvalCountsByRun, event);
+    collectArtifactVerificationFindings(artifactIds, event, findings, line);
+  }
+
+  if (sessionIds.size > 1) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_SESSION_ID_CONFLICT",
+      message: "Trace contains events for multiple session ids.",
+      metadata: { sessionIds: [...sessionIds].sort() },
+    });
+  }
+
+  for (const runId of runIds) {
+    const terminalCount = terminalCountByRun.get(runId) ?? 0;
+    if (terminalCount !== 1) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+        message:
+          "Each run in a completed trace must have exactly one terminal event.",
+        metadata: { runId, terminalCount },
+      });
+    }
+  }
+
+  for (const [runId, counts] of writeCountsByRun) {
+    const terminalWrites = counts.completed + counts.denied + counts.skipped;
+    if (terminalWrites > counts.requested) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_WORKSPACE_WRITE_PAIR_INVALID",
+        message: "Workspace write terminal events exceed write requests.",
+        metadata: { runId, ...counts },
+      });
+    }
+  }
+
+  for (const [runId, counts] of approvalCountsByRun) {
+    if (counts.resolved > counts.requested) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_APPROVAL_PAIR_INVALID",
+        message: "Approval resolutions exceed approval requests.",
+        metadata: { runId, ...counts },
+      });
+    }
+  }
+
+  return {
+    ok: findings.every((finding) => finding.severity !== "error"),
+    path: options.path,
+    eventCount: events.length,
+    runIds: [...runIds].sort(),
+    sessionIds: [...sessionIds].sort(),
+    agentIds: [...agentIds].sort(),
+    findings,
+  };
+}
+
 export function buildTraceTimelineJsonl(
   jsonl: string,
   filter: TraceEventFilter = {},
@@ -2256,8 +2457,84 @@ function validateRunEventSequences(
         },
       });
     }
-    lastByRun.set(event.runId, event.sequence);
+    lastByRun.set(event.runId, observedSequenceEnd(event));
   }
+}
+
+function observedSequenceEnd(event: SparkwrightEvent): number {
+  if (
+    event.type === "model.stream.text" &&
+    isRecord(event.payload) &&
+    typeof event.payload.chunkCount === "number" &&
+    Number.isInteger(event.payload.chunkCount) &&
+    event.payload.chunkCount > 1
+  ) {
+    return event.sequence + event.payload.chunkCount - 1;
+  }
+  return event.sequence;
+}
+
+function isTerminalRunEvent(event: SparkwrightEvent): boolean {
+  return (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled"
+  );
+}
+
+function collectWriteVerificationCounts(
+  countsByRun: Map<
+    string,
+    { requested: number; completed: number; denied: number; skipped: number }
+  >,
+  event: SparkwrightEvent,
+): void {
+  const counts = countsByRun.get(event.runId) ?? {
+    requested: 0,
+    completed: 0,
+    denied: 0,
+    skipped: 0,
+  };
+  if (event.type === "workspace.write.requested") counts.requested += 1;
+  else if (event.type === "workspace.write.completed") counts.completed += 1;
+  else if (event.type === "workspace.write.denied") counts.denied += 1;
+  else if (event.type === "workspace.write.skipped") counts.skipped += 1;
+  else return;
+  countsByRun.set(event.runId, counts);
+}
+
+function collectApprovalVerificationCounts(
+  countsByRun: Map<string, { requested: number; resolved: number }>,
+  event: SparkwrightEvent,
+): void {
+  const counts = countsByRun.get(event.runId) ?? {
+    requested: 0,
+    resolved: 0,
+  };
+  if (event.type === "approval.requested") counts.requested += 1;
+  else if (event.type === "approval.resolved") counts.resolved += 1;
+  else return;
+  countsByRun.set(event.runId, counts);
+}
+
+function collectArtifactVerificationFindings(
+  artifactIds: Set<string>,
+  event: SparkwrightEvent,
+  findings: TraceVerificationFinding[],
+  line: number,
+): void {
+  if (event.type !== "artifact.created") return;
+  const payload = event.payload;
+  if (!isRecord(payload) || typeof payload.id !== "string") return;
+  if (artifactIds.has(payload.id)) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_ARTIFACT_ID_CONFLICT",
+      message: "Trace contains duplicate artifact ids.",
+      metadata: { line, artifactId: payload.id },
+    });
+  }
+  artifactIds.add(payload.id);
 }
 
 async function validateRunFiles(
