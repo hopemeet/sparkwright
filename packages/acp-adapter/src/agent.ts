@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   RequestError,
   type Agent,
@@ -18,7 +19,8 @@ import {
   type ResumeSessionRequest,
   type ResumeSessionResponse,
 } from "@agentclientprotocol/sdk";
-import type { PermissionMode } from "@sparkwright/core";
+import type { PermissionMode, TraceLevel } from "@sparkwright/core";
+import { HostRuntime } from "@sparkwright/host";
 import { contentBlocksToText } from "./content.js";
 import {
   AcpSessionStore,
@@ -31,6 +33,8 @@ export interface SparkwrightAcpAgentOptions {
   defaultWorkspaceRoot: string;
   defaultModel?: string;
   defaultPermissionMode?: PermissionMode;
+  defaultTraceLevel?: TraceLevel;
+  defaultShouldWrite?: boolean;
   agentName?: string;
   agentVersion?: string;
 }
@@ -58,6 +62,8 @@ export class SparkwrightAcpAgent implements Agent {
     this.sessions = new AcpSessionStore({
       defaultModel: options.defaultModel,
       defaultPermissionMode: options.defaultPermissionMode,
+      defaultTraceLevel: options.defaultTraceLevel,
+      defaultShouldWrite: options.defaultShouldWrite,
       emit: (session, event) => {
         void routeHostEventToAcp({ session, connection, event }).catch(
           () => {},
@@ -172,9 +178,15 @@ export class SparkwrightAcpAgent implements Agent {
       sessionId: session.sessionId,
       model: this.options.defaultModel,
       permissionMode: this.options.defaultPermissionMode,
+      traceLevel: this.options.defaultTraceLevel ?? "standard",
+      shouldWrite: this.options.defaultShouldWrite === true,
       metadata: {
         source: "acp",
         acpSessionId: session.sessionId,
+        workspaceRoot: session.cwd,
+        permissionMode: this.options.defaultPermissionMode ?? "default",
+        traceLevel: this.options.defaultTraceLevel ?? "standard",
+        shouldWrite: this.options.defaultShouldWrite === true,
       },
     });
 
@@ -198,8 +210,11 @@ export class SparkwrightAcpAgent implements Agent {
 
   async extMethod(
     method: string,
-    _params: Record<string, unknown>,
+    params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
+    if (method === "sparkwright/capabilities") {
+      return this.inspectCapabilities(params);
+    }
     throw RequestError.methodNotFound(method);
   }
 
@@ -221,4 +236,51 @@ export class SparkwrightAcpAgent implements Agent {
   private failTurn(session: AcpSessionInfo, error: Error): void {
     this.activeTurns.get(session.sessionId)?.reject(error);
   }
+
+  private async inspectCapabilities(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const sessionId = stringParam(params.sessionId);
+    if (sessionId) {
+      let session: AcpSessionInfo;
+      try {
+        session = this.sessions.get(sessionId);
+      } catch (error) {
+        throw RequestError.invalidParams({
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      const inspected = await session.runtime.inspectCapabilities();
+      if (inspected.ok) {
+        return inspected.snapshot as unknown as Record<string, unknown>;
+      }
+      throw RequestError.internalError(inspected.error);
+    }
+
+    const rawCwd = stringParam(params.cwd) ?? this.options.defaultWorkspaceRoot;
+    const cwd = resolve(this.options.defaultWorkspaceRoot, rawCwd);
+    const runtime = new HostRuntime({
+      workspaceRoot: cwd,
+      defaultModel: this.options.defaultModel,
+      defaultPermissionMode: this.options.defaultPermissionMode,
+      defaultTraceLevel: this.options.defaultTraceLevel,
+      defaultShouldWrite: this.options.defaultShouldWrite,
+      emit: () => {},
+    });
+    try {
+      const inspected = await runtime.inspectCapabilities();
+      if (inspected.ok) {
+        return inspected.snapshot as unknown as Record<string, unknown>;
+      }
+      throw RequestError.internalError(inspected.error);
+    } finally {
+      runtime.cleanup();
+    }
+  }
+}
+
+function stringParam(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
 }

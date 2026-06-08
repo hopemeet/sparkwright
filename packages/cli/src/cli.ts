@@ -2467,7 +2467,10 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
   }
   if (command === "tui") {
-    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode mode] [--session-id id]";
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]";
+  }
+  if (command === "acp") {
+    return "Usage: sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]";
   }
   if (command === "session") {
     return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
@@ -3173,7 +3176,8 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
-    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode mode] [--session-id id]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
+    "       sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",

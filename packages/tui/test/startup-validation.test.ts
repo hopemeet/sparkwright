@@ -38,6 +38,30 @@ describe("runTui startup validation", () => {
     }
   });
 
+  it("rejects an invalid trace level", async () => {
+    const stderr = captureStderr();
+    try {
+      const result = await runTui(["--trace-level", "verbose"]);
+
+      expect(result.exitCode).toBe(1);
+      expect(stderr.text()).toContain("--trace-level must be one of");
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  it("rejects a missing trace level value", async () => {
+    const stderr = captureStderr();
+    try {
+      const result = await runTui(["--trace-level"]);
+
+      expect(result.exitCode).toBe(1);
+      expect(stderr.text()).toContain("--trace-level requires a value");
+    } finally {
+      stderr.restore();
+    }
+  });
+
   it("rejects unknown options", async () => {
     const stderr = captureStderr();
     try {
@@ -57,6 +81,7 @@ describe("runTui startup validation", () => {
 
       expect(result.exitCode).toBe(0);
       expect(stdout.text()).toContain("Usage: sparkwright tui");
+      expect(stdout.text()).toContain("--write");
     } finally {
       stdout.restore();
     }

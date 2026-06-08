@@ -16,6 +16,8 @@ interface CliOverrides {
   workspaceRoot?: string;
   sessionRootDir?: string;
   permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
+  shouldWrite?: boolean;
   modelName?: string;
   sessionId?: string;
   help?: boolean;
@@ -39,6 +41,8 @@ function parseArgs(
     } else if (a === "--model") {
       if (!argv[i + 1]) errors.push("Usage: --model requires a model name");
       else out.modelName = argv[++i];
+    } else if (a === "--write") {
+      out.shouldWrite = true;
     } else if (a === "--permission-mode") {
       const v = argv[i + 1];
       if (!v) errors.push("Usage: --permission-mode requires a value");
@@ -51,6 +55,18 @@ function parseArgs(
         );
         i += 1;
       }
+    } else if (a === "--trace-level") {
+      const v = argv[i + 1];
+      if (!v) errors.push("Usage: --trace-level requires a value");
+      else if (isTraceLevel(v)) {
+        out.traceLevel = v;
+        i += 1;
+      } else {
+        errors.push(
+          "Usage: --trace-level must be one of: minimal, standard, debug",
+        );
+        i += 1;
+      }
     } else if (a === "--session-id") {
       if (!argv[i + 1]) errors.push("Usage: --session-id requires an id");
       else out.sessionId = argv[++i];
@@ -59,6 +75,12 @@ function parseArgs(
     }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
+}
+
+type TraceLevel = "minimal" | "standard" | "debug";
+
+function isTraceLevel(value: string): value is TraceLevel {
+  return value === "minimal" || value === "standard" || value === "debug";
 }
 
 function isPermissionMode(value: string): value is PermissionMode {
@@ -128,7 +150,7 @@ export async function runTui(
 
 function tuiUsage(): string {
   return [
-    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode mode] [--session-id id]",
+    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
     "       node packages/tui/dist/index.js [same options]",
   ].join("\n");
 }

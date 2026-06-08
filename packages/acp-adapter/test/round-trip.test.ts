@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,6 +37,7 @@ describe("ACP round trip", () => {
       createSparkwrightAcpAgentFactory({
         defaultWorkspaceRoot: cwd,
         defaultModel: "deterministic",
+        defaultTraceLevel: "debug",
       }),
       ndJsonStream(agentToClient.writable, clientToAgent.readable),
     );
@@ -53,6 +54,10 @@ describe("ACP round trip", () => {
       cwd,
       mcpServers: [],
     });
+    const capabilities = await clientConnection.extMethod(
+      "sparkwright/capabilities",
+      { sessionId: session.sessionId },
+    );
     const response = await clientConnection.prompt({
       sessionId: session.sessionId,
       prompt: [{ type: "text", text: "inspect this repo" }],
@@ -71,6 +76,30 @@ describe("ACP round trip", () => {
     expect(
       updates.some((update) => update.update.sessionUpdate === "tool_call"),
     ).toBe(true);
+    expect(Array.isArray(capabilities.tools)).toBe(true);
+    const runsDir = join(
+      cwd,
+      ".sparkwright",
+      "sessions",
+      session.sessionId,
+      "agents",
+      "main",
+      "runs",
+    );
+    const runIds = await readdir(runsDir);
+    const runJson = JSON.parse(
+      await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
+    ) as { metadata?: Record<string, unknown> };
+    expect(runJson.metadata).toMatchObject({
+      source: "acp",
+      traceLevel: "debug",
+      permissionMode: "default",
+      shouldWrite: false,
+      workspaceRoot: cwd,
+    });
+    expect(runJson.metadata?.capabilitySnapshot).toMatchObject({
+      tools: expect.any(Number),
+    });
 
     agentConnection.signal.throwIfAborted?.();
     await clientConnection.closeSession({ sessionId: session.sessionId });

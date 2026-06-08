@@ -3,6 +3,7 @@ import {
   asSessionId,
   createSessionId,
   type PermissionMode,
+  type TraceLevel,
 } from "@sparkwright/core";
 import { HostRuntime } from "@sparkwright/host";
 import type { AgentSideConnection, SessionId } from "@agentclientprotocol/sdk";
@@ -18,6 +19,8 @@ export interface AcpSessionInfo {
 export interface AcpSessionStoreOptions {
   defaultModel?: string;
   defaultPermissionMode?: PermissionMode;
+  defaultTraceLevel?: TraceLevel;
+  defaultShouldWrite?: boolean;
   emit: (session: AcpSessionInfo, event: HostEvent) => void;
 }
 
@@ -73,6 +76,8 @@ export class AcpSessionStore {
         workspaceRoot: cwd,
         defaultModel: this.options.defaultModel,
         defaultPermissionMode: this.options.defaultPermissionMode,
+        defaultTraceLevel: this.options.defaultTraceLevel,
+        defaultShouldWrite: this.options.defaultShouldWrite,
         emit: (event) => this.options.emit(session, event),
       }),
     };

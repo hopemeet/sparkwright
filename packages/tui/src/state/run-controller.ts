@@ -33,11 +33,15 @@ export type PermissionMode =
   | "dont_ask"
   | "bypass_permissions";
 
+export type TraceLevel = "minimal" | "standard" | "debug";
+
 export interface RunControllerOptions {
   workspaceRoot: string;
   /** Session/trace storage root. Defaults to <workspace>/.sparkwright/sessions. */
   sessionRootDir?: string;
   permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
+  shouldWrite?: boolean;
   /** Model reference shown by the TUI. Only request-sourced models are sent to the host. */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -188,6 +192,10 @@ export class RunController {
     this.opts.permissionMode = permissionMode;
   }
 
+  updateTraceLevel(traceLevel: TraceLevel): void {
+    this.opts.traceLevel = traceLevel;
+  }
+
   isRunning(): boolean {
     return this.activeRunId !== null;
   }
@@ -214,7 +222,9 @@ export class RunController {
         sessionId: this.sessionId,
         model: this.requestModelName(),
         permissionMode: this.opts.permissionMode,
-        shouldWrite: this.opts.permissionMode !== "plan",
+        traceLevel: this.opts.traceLevel ?? "standard",
+        shouldWrite: this.shouldWrite(),
+        metadata: this.runRequestMetadata(),
       });
       this.activeRunId = runId;
       this.cancelRequested = false;
@@ -391,13 +401,9 @@ export class RunController {
       sessionRootDir: this.sessionRootDir(),
       source: "tui",
       sessionId: this.sessionId,
-      traceLevel: "standard",
-      shouldWrite: this.opts.permissionMode !== "plan",
-      metadata: {
-        workspaceRoot: this.opts.workspaceRoot,
-        permissionMode: this.opts.permissionMode ?? "default",
-        ...(this.opts.modelName ? { model: this.opts.modelName } : {}),
-      },
+      traceLevel: this.opts.traceLevel ?? "standard",
+      shouldWrite: this.shouldWrite(),
+      metadata: this.runRequestMetadata(),
     });
     if (!result.tracePath) return;
     try {
@@ -427,6 +433,22 @@ export class RunController {
       // The UI already has the human-readable error. Trace readback is best
       // effort so a filesystem race cannot mask the original failure.
     }
+  }
+
+  private runRequestMetadata(): Record<string, unknown> {
+    return {
+      source: "tui",
+      sessionId: this.sessionId,
+      workspaceRoot: this.opts.workspaceRoot,
+      permissionMode: this.opts.permissionMode ?? "default",
+      traceLevel: this.opts.traceLevel ?? "standard",
+      shouldWrite: this.shouldWrite(),
+      ...(this.opts.modelName ? { model: this.opts.modelName } : {}),
+    };
+  }
+
+  private shouldWrite(): boolean {
+    return this.opts.shouldWrite === true;
   }
 
   private hasTerminalRunEvent(): boolean {

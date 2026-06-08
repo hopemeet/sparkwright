@@ -1,7 +1,7 @@
 import { stdin, stdout } from "node:process";
 import { resolve } from "node:path";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import type { PermissionMode } from "@sparkwright/core";
+import type { PermissionMode, TraceLevel } from "@sparkwright/core";
 import { createSparkwrightAcpAgentFactory } from "./agent.js";
 
 export interface AcpMainOptions {
@@ -13,6 +13,8 @@ interface ParsedArgs {
   workspaceRoot: string;
   model?: string;
   permissionMode: PermissionMode;
+  traceLevel: TraceLevel;
+  shouldWrite: boolean;
 }
 
 export async function runAcpMain(
@@ -45,6 +47,8 @@ export async function runAcpMain(
       defaultWorkspaceRoot: args.workspaceRoot,
       defaultModel: args.model,
       defaultPermissionMode: args.permissionMode,
+      defaultTraceLevel: args.traceLevel,
+      defaultShouldWrite: args.shouldWrite,
     })(conn);
     agents.push(agent as SparkwrightAcpAgentHandle);
     return agent;
@@ -63,6 +67,8 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
   let workspaceRoot = resolve(cwd);
   let model: string | undefined;
   let permissionMode: PermissionMode = "default";
+  let traceLevel: TraceLevel = "standard";
+  let shouldWrite = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -70,16 +76,21 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
       workspaceRoot = resolve(cwd, argv[++i]!);
     } else if (arg === "--model" && argv[i + 1]) {
       model = argv[++i];
+    } else if (arg === "--write") {
+      shouldWrite = true;
     } else if (arg === "--permission-mode" && argv[i + 1]) {
       const value = argv[++i];
       if (isPermissionMode(value)) permissionMode = value;
+    } else if (arg === "--trace-level" && argv[i + 1]) {
+      const value = argv[++i];
+      if (isTraceLevel(value)) traceLevel = value;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
     }
   }
 
-  return { workspaceRoot, model, permissionMode };
+  return { workspaceRoot, model, permissionMode, traceLevel, shouldWrite };
 }
 
 function printHelp(): void {
@@ -93,7 +104,9 @@ function printHelp(): void {
       "OPTIONS:",
       "  --workspace <path>         default workspace root (default: cwd)",
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
+      "  --write                    allow approval-gated workspace writes",
       "  --permission-mode <mode>   plan | default | accept_edits | dont_ask | bypass_permissions",
+      "  --trace-level <level>      minimal | standard | debug",
       "",
     ].join("\n"),
   );
@@ -107,4 +120,8 @@ function isPermissionMode(value: string | undefined): value is PermissionMode {
     value === "dont_ask" ||
     value === "bypass_permissions"
   );
+}
+
+function isTraceLevel(value: string | undefined): value is TraceLevel {
+  return value === "minimal" || value === "standard" || value === "debug";
 }

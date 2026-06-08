@@ -15,6 +15,8 @@ export interface ServeConnectionOptions {
   sessionRootDir?: string;
   defaultModel?: string;
   defaultPermissionMode?: RuntimeOptions["defaultPermissionMode"];
+  defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
+  defaultShouldWrite?: RuntimeOptions["defaultShouldWrite"];
   hostName?: string;
   hostVersion?: string;
 }
@@ -35,6 +37,8 @@ export function serveConnection(
     sessionRootDir: opts.sessionRootDir,
     defaultModel: opts.defaultModel,
     defaultPermissionMode: opts.defaultPermissionMode,
+    defaultTraceLevel: opts.defaultTraceLevel,
+    defaultShouldWrite: opts.defaultShouldWrite,
     emit: (event: HostEvent) => {
       try {
         conn.send(event);

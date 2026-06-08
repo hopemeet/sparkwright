@@ -280,13 +280,52 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
-  it("marks default interactive runs as write-enabled for host approvals", async () => {
+  it("marks default interactive runs as read-only unless writes are enabled", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     const store = new EventStore();
     const controller = new RunController({
       workspaceRoot: workspace,
       modelName: "deterministic",
+      traceLevel: "debug",
+      store,
+    });
+
+    await controller.start("metadata smoke");
+    await waitForDone(store);
+
+    const runsDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      controller.getSessionId(),
+      "agents",
+      "main",
+      "runs",
+    );
+    const runIds = await readdir(runsDir);
+    const runJson = JSON.parse(
+      await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
+    ) as { metadata?: Record<string, unknown> };
+    expect(runJson.metadata?.shouldWrite).toBe(false);
+    expect(runJson.metadata?.source).toBe("tui");
+    expect(runJson.metadata?.traceLevel).toBe("debug");
+    expect(runJson.metadata?.workspaceRoot).toBe(workspace);
+    expect(runJson.metadata?.capabilitySnapshot).toMatchObject({
+      tools: expect.any(Number),
+    });
+
+    controller.shutdown();
+  }, 30_000);
+
+  it("marks explicit write-enabled TUI runs for host approvals", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      shouldWrite: true,
       store,
     });
 

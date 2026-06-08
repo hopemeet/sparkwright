@@ -61,7 +61,7 @@ import {
   type Bindings,
 } from "./lib/keybindings.js";
 import type { SessionDiagnostics, SessionSummary } from "./lib/sessions.js";
-import type { PermissionMode } from "./state/run-controller.js";
+import type { PermissionMode, TraceLevel } from "./state/run-controller.js";
 import {
   loadTuiConfig,
   watchTuiConfig,
@@ -75,6 +75,8 @@ export interface CliOverrides {
   workspaceRoot?: string;
   sessionRootDir?: string;
   permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
+  shouldWrite?: boolean;
   modelName?: string;
   sessionId?: string;
 }
@@ -88,6 +90,8 @@ interface Resolved {
   workspaceRoot: string;
   sessionRootDir: string;
   permissionMode: PermissionMode;
+  traceLevel: TraceLevel;
+  shouldWrite: boolean;
   /** Model reference "provider/model", or the reserved "deterministic". */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -128,6 +132,8 @@ function resolveConfig(
     cli.permissionMode ?? loaded.config.permissionMode ?? "default";
   if (cli.permissionMode) sources.permissionMode = "cli:--permission-mode";
   else if (!loaded.config.permissionMode) sources.permissionMode = "default";
+  const traceLevel: TraceLevel = cli.traceLevel ?? "standard";
+  const shouldWrite = cli.shouldWrite === true;
 
   if (!loaded.config.theme) sources.theme = "default";
 
@@ -135,6 +141,8 @@ function resolveConfig(
     workspaceRoot,
     sessionRootDir,
     permissionMode,
+    traceLevel,
+    shouldWrite,
     modelName,
     modelNameSource,
     providers: loaded.config.providers,
@@ -210,6 +218,8 @@ function AppReady(
         workspaceRoot: resolved.workspaceRoot,
         sessionRootDir: resolved.sessionRootDir,
         permissionMode: resolved.permissionMode,
+        traceLevel: resolved.traceLevel,
+        shouldWrite: resolved.shouldWrite,
         modelName: resolved.modelName,
         modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
@@ -403,6 +413,9 @@ function AppReady(
     }
     if (r.permissionMode !== resolved.permissionMode) {
       controller.updatePermissionMode(r.permissionMode);
+    }
+    if (r.traceLevel !== resolved.traceLevel) {
+      controller.updateTraceLevel(r.traceLevel);
     }
     props.setResolved(r);
     // Re-discover file-authored commands so newly added .sparkwright/command/*.md

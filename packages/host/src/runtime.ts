@@ -114,14 +114,15 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 function payloadAllowsWorkspaceWrites(
   payload: RunStartRequestPayload | RunResumeRequestPayload,
   permissionMode: PermissionMode,
+  defaultShouldWrite?: boolean,
 ): boolean {
   if (payload.shouldWrite !== undefined) return payload.shouldWrite;
   if (payload.metadata?.shouldWrite !== undefined) {
     return payload.metadata.shouldWrite === true;
   }
-  // Interactive/non-CLI clients historically used permission mode as the write
-  // boundary. CLI sends `shouldWrite` explicitly, so this preserves SDK/TUI
-  // behavior without weakening CLI's --write gate.
+  if (defaultShouldWrite !== undefined) return defaultShouldWrite;
+  // Legacy SDK clients may omit shouldWrite. Preserve the old host behavior
+  // unless an entrypoint or embedder sets an explicit default.
   if (permissionMode === "plan") return false;
   return true;
 }
@@ -152,6 +153,10 @@ export interface RuntimeOptions {
   defaultModel?: string;
   /** Default permission mode when run.start does not specify one. */
   defaultPermissionMode?: PermissionMode;
+  /** Default trace level when run.start does not specify one. */
+  defaultTraceLevel?: TraceLevel;
+  /** Default workspace-write permission when run.start does not specify one. */
+  defaultShouldWrite?: boolean;
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
 }
@@ -210,13 +215,57 @@ function isTraceLevel(value: unknown): value is TraceLevel {
 function resolveTraceLevel(input: {
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
+  defaultTraceLevel?: TraceLevel;
 }): TraceLevel {
   return (
     input.traceLevel ??
     (isTraceLevel(input.metadata?.traceLevel)
       ? input.metadata.traceLevel
-      : "standard")
+      : (input.defaultTraceLevel ?? "standard"))
   );
+}
+
+function summarizeCapabilitySnapshot(
+  snapshot: CapabilitySnapshot | null,
+): Record<string, unknown> {
+  if (!snapshot) {
+    return {
+      tools: 0,
+      skills: { indexed: 0, loaded: 0 },
+      mcp: { servers: 0, tools: 0 },
+      agents: { profiles: 0, delegateTools: 0 },
+    };
+  }
+  return {
+    tools: snapshot.tools.length,
+    toolNames: snapshot.tools.map((tool) => tool.name),
+    skills: {
+      indexed: snapshot.skills.indexed.length,
+      loaded: snapshot.skills.loaded.length,
+      indexedNames: snapshot.skills.indexed.map((skill) => skill.name),
+      loadedNames: snapshot.skills.loaded.map((skill) => skill.name),
+    },
+    mcp: {
+      servers: snapshot.mcp.statuses.length,
+      tools: snapshot.mcp.statuses.reduce(
+        (sum, status) => sum + status.toolNames.length,
+        0,
+      ),
+      statuses: snapshot.mcp.statuses.map((status) => ({
+        serverName: status.serverName,
+        status: status.status,
+        toolNames: status.toolNames,
+      })),
+    },
+    agents: {
+      profiles: snapshot.agents.profiles.length,
+      profileIds: snapshot.agents.profiles.map((profile) => profile.id),
+      delegateTools: snapshot.agents.delegateTools.length,
+      delegateToolNames: snapshot.agents.delegateTools.map(
+        (delegate) => delegate.toolName,
+      ),
+    },
+  };
 }
 
 // Todo-supervisor continuation budget for the main agent. Conservative, fixed
@@ -531,7 +580,14 @@ export class HostRuntime {
     const runMetadata: Record<string, unknown> = {
       source: "host",
       ...(input.runMetadata ?? {}),
+      workspaceRoot,
+      permissionMode: input.permissionMode,
+      traceLevel,
+      ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
       resolvedModel: model.resolved,
+      capabilitySnapshot: summarizeCapabilitySnapshot(
+        this.lastCapabilitySnapshot,
+      ),
     };
     const runStoreMetadata: Record<string, unknown> = {
       ...runMetadata,
@@ -923,7 +979,11 @@ export class HostRuntime {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
       payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
-    const shouldWrite = payloadAllowsWorkspaceWrites(payload, permissionMode);
+    const shouldWrite = payloadAllowsWorkspaceWrites(
+      payload,
+      permissionMode,
+      this.opts.defaultShouldWrite,
+    );
     const resumeSessionId = located.sessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
@@ -931,7 +991,10 @@ export class HostRuntime {
       permissionMode,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
-      traceLevel: resolveTraceLevel(payload),
+      traceLevel: resolveTraceLevel({
+        ...payload,
+        defaultTraceLevel: this.opts.defaultTraceLevel,
+      }),
       runMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
@@ -1068,7 +1131,11 @@ export class HostRuntime {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
       payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
-    const shouldWrite = payloadAllowsWorkspaceWrites(payload, permissionMode);
+    const shouldWrite = payloadAllowsWorkspaceWrites(
+      payload,
+      permissionMode,
+      this.opts.defaultShouldWrite,
+    );
     let sessionId: string;
     try {
       sessionId = payload.sessionId
@@ -1089,7 +1156,10 @@ export class HostRuntime {
       permissionMode,
       sessionId,
       targetPath: payload.targetPath,
-      traceLevel: resolveTraceLevel(payload),
+      traceLevel: resolveTraceLevel({
+        ...payload,
+        defaultTraceLevel: this.opts.defaultTraceLevel,
+      }),
       runMetadata: {
         ...(payload.metadata ?? {}),
         shouldWrite,

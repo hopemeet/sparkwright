@@ -3,7 +3,7 @@ import { installLogPipe, attachLogSink } from "./log-pipe.js";
 import { createStdioConnection } from "./transport-stdio.js";
 import { startWsServer } from "./transport-ws.js";
 import { serveConnection } from "./server.js";
-import type { PermissionMode } from "@sparkwright/core";
+import type { PermissionMode, TraceLevel } from "@sparkwright/core";
 import { join } from "node:path";
 
 interface ParsedArgs {
@@ -14,6 +14,8 @@ interface ParsedArgs {
   sessionRootDir: string;
   model?: string;
   permissionMode: PermissionMode;
+  traceLevel: TraceLevel;
+  shouldWrite: boolean;
   authToken?: string;
 }
 
@@ -25,6 +27,8 @@ function parseArgs(argv: string[]): ParsedArgs {
   let sessionRootDir: string | undefined;
   let model: string | undefined;
   let permissionMode: PermissionMode = "default";
+  let traceLevel: TraceLevel = "standard";
+  let shouldWrite = false;
   let authToken = process.env.SPARKWRIGHT_HOST_TOKEN;
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -35,9 +39,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--workspace" && argv[i + 1]) workspaceRoot = argv[++i];
     else if (a === "--session-root" && argv[i + 1]) sessionRootDir = argv[++i];
     else if (a === "--model" && argv[i + 1]) model = argv[++i];
+    else if (a === "--write") shouldWrite = true;
     else if (a === "--permission-mode" && argv[i + 1]) {
       const v = argv[++i];
       if (isPermissionMode(v)) permissionMode = v;
+    } else if (a === "--trace-level" && argv[i + 1]) {
+      const v = argv[++i];
+      if (isTraceLevel(v)) traceLevel = v;
     } else if (a === "--auth-token" && argv[i + 1]) authToken = argv[++i];
     else if (a === "--help" || a === "-h") {
       printHelp();
@@ -53,6 +61,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
     model,
     permissionMode,
+    traceLevel,
+    shouldWrite,
     authToken,
   };
 }
@@ -70,7 +80,9 @@ function printHelp(): void {
       "  --workspace <path>         workspace root for runs (default: cwd)",
       "  --session-root <path>      session/trace storage root (default: <workspace>/.sparkwright/sessions)",
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
+      "  --write                    allow approval-gated workspace writes for requests that omit shouldWrite",
       "  --permission-mode <mode>   plan | default | accept_edits | dont_ask | bypass_permissions",
+      "  --trace-level <level>      minimal | standard | debug",
       "  --auth-token <token>       require WS clients to provide Bearer token or ?token=...",
       "                             (also SPARKWRIGHT_HOST_TOKEN)",
       "",
@@ -116,6 +128,8 @@ export async function runHostMain(argv: string[]): Promise<void> {
       sessionRootDir: args.sessionRootDir,
       defaultModel: args.model,
       defaultPermissionMode: args.permissionMode,
+      defaultTraceLevel: args.traceLevel,
+      defaultShouldWrite: args.shouldWrite,
     });
     return;
   }
@@ -151,6 +165,8 @@ export async function runHostMain(argv: string[]): Promise<void> {
         sessionRootDir: args.sessionRootDir,
         defaultModel: args.model,
         defaultPermissionMode: args.permissionMode,
+        defaultTraceLevel: args.traceLevel,
+        defaultShouldWrite: args.shouldWrite,
       });
     },
   });
@@ -164,6 +180,10 @@ function isPermissionMode(value: string): value is PermissionMode {
     value === "dont_ask" ||
     value === "bypass_permissions"
   );
+}
+
+function isTraceLevel(value: string): value is TraceLevel {
+  return value === "minimal" || value === "standard" || value === "debug";
 }
 
 function isLoopbackHost(host: string): boolean {
