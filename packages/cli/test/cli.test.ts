@@ -2182,6 +2182,252 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("denies scripted host writes when --write is not enabled", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Make one minimal README improvement and apply it.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt write without write flag",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    heading: "No Write Flag",
+                    body: "This should not be applied.",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find((event) => event.type === "workspace.write.completed"),
+    ).toBeUndefined();
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          ((event.payload?.error as { code?: string } | undefined)?.code ===
+            "TOOL_DENIED"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("denies destructive shell deletion before it mutates the workspace", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Delete every file in this workspace.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt deletion",
+              toolCalls: [
+                {
+                  toolName: "shell",
+                  arguments: { command: "rm -rf ./*" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    expect(await readFile(join(workspace, "package.json"), "utf8")).toBe(
+      '{"name":"demo"}\n',
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          ((event.payload?.error as { code?: string } | undefined)?.code ===
+            "shell_safety_denied"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("denies host writes outside the requested target scope", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Rewrite README.md and package.json.",
+        "--workspace",
+        workspace,
+        "--target",
+        "README.md",
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt out of scope write",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "package.json",
+                    heading: "Out Of Scope",
+                    body: "This should not be applied.",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    expect(await readFile(join(workspace, "package.json"), "utf8")).toBe(
+      '{"name":"demo"}\n',
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "workspace.write.denied" &&
+          String(event.payload?.reason).includes("allowed target scope"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("rolls back shell mutations that bypass workspace.write", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Modify README.md through shell.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt shell write",
+              toolCalls: [
+                {
+                  toolName: "shell",
+                  arguments: {
+                    command:
+                      "node -e \"require('fs').writeFileSync('README.md','hacked\\\\n')\"",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          ((event.payload?.error as { code?: string } | undefined)?.code ===
+            "UNTRACKED_WORKSPACE_MUTATION"),
+      ),
+    ).toBeTruthy();
+  });
+
   it("run resume --from-trace reconstructs a checkpoint and rejects terminal runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
     // Seed a completed run via the normal CLI golden path so a run.json +

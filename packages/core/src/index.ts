@@ -146,12 +146,14 @@ export type {
   Policy,
   PermissionModePolicyOptions,
   ToolGovernancePolicyOptions,
+  WorkspaceMutationPolicyOptions,
 } from "./policy.js";
 export {
   createDefaultPolicy,
   createLayeredPolicy,
   createPermissionModePolicy,
   createToolGovernancePolicy,
+  createWorkspaceMutationPolicy,
 } from "./policy.js";
 
 // Execution environment boundary

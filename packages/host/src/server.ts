@@ -253,6 +253,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "goal",
           "sessionId",
           "targetPath",
+          "shouldWrite",
           "model",
           "permissionMode",
           "traceLevel",
@@ -261,6 +262,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireString(req.payload, "goal") ??
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
+        optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "permissionMode", [
           "plan",
@@ -282,6 +284,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "runId",
           "sessionId",
           "targetPath",
+          "shouldWrite",
           "fromTrace",
           "force",
           "model",
@@ -292,6 +295,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireString(req.payload, "runId") ??
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
+        optionalBoolean(req.payload, "shouldWrite") ??
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??
         optionalString(req.payload, "model") ??

@@ -200,6 +200,7 @@ export class RunController {
         sessionId: this.sessionId,
         model: this.opts.modelName,
         permissionMode: this.opts.permissionMode,
+        shouldWrite: this.opts.permissionMode !== "plan",
       });
       this.activeRunId = runId;
       this.cancelRequested = false;

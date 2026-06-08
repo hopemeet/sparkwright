@@ -4,10 +4,12 @@ import {
   buildTraceTimelineFile,
   asSessionId,
   createBufferedEmitter,
+  createLayeredPolicy,
   createSessionId,
   createSessionRunStoreFactory,
   createPermissionModePolicy,
   createRun,
+  createWorkspaceMutationPolicy,
   defineTool,
   FileSessionStore,
   forkSessionFromEvent,
@@ -19,6 +21,7 @@ import {
   type ContextItem,
   type EventEmitter,
   type ModelAdapter,
+  type Policy,
   type PermissionMode,
   type RunResult,
   type SparkwrightEvent,
@@ -98,6 +101,38 @@ import {
 function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env.SPARKWRIGHT_DEV_SKILLS;
   return value === "1" || value === "true";
+}
+
+function payloadAllowsWorkspaceWrites(
+  payload: RunStartRequestPayload | RunResumeRequestPayload,
+  permissionMode: PermissionMode,
+): boolean {
+  if (payload.shouldWrite !== undefined) return payload.shouldWrite;
+  if (payload.metadata?.shouldWrite !== undefined) {
+    return payload.metadata.shouldWrite === true;
+  }
+  // Interactive/non-CLI clients historically used permission mode as the write
+  // boundary. CLI sends `shouldWrite` explicitly, so this preserves SDK/TUI
+  // behavior without weakening CLI's --write gate.
+  if (permissionMode === "plan") return false;
+  return true;
+}
+
+function createHostRunPolicy(input: {
+  permissionMode: PermissionMode;
+  shouldWrite: boolean;
+  targetPath?: string;
+}): Policy {
+  return createLayeredPolicy([
+    createPermissionModePolicy({ mode: input.permissionMode }),
+    createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: input.shouldWrite,
+      allowedPaths: input.targetPath ? [input.targetPath] : undefined,
+      maxWriteFiles: 1,
+      maxDiffLines: 200,
+      allowDeletions: false,
+    }),
+  ]);
 }
 
 export interface RuntimeOptions {
@@ -753,6 +788,7 @@ export class HostRuntime {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
       payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
+    const shouldWrite = payloadAllowsWorkspaceWrites(payload, permissionMode);
     const resumeSessionId = located.sessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
@@ -764,10 +800,12 @@ export class HostRuntime {
       runMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
+        shouldWrite,
       },
       runStoreMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
+        shouldWrite,
         ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
       },
     });
@@ -780,7 +818,11 @@ export class HostRuntime {
         context: [...(env.preparedSkills?.context ?? []), ...extraContext],
         workspace: env.workspace,
         approvalResolver: env.approvalResolver,
-        policy: createPermissionModePolicy({ mode: permissionMode }),
+        policy: createHostRunPolicy({
+          permissionMode,
+          shouldWrite,
+          targetPath: payload.targetPath,
+        }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
           sessionId: resumeSessionId,
@@ -831,7 +873,11 @@ export class HostRuntime {
               force: payload.force || !checkpoint.resumability.complete,
               workspace: env.workspace,
               approvalResolver: env.approvalResolver,
-              policy: createPermissionModePolicy({ mode: permissionMode }),
+              policy: createHostRunPolicy({
+                permissionMode,
+                shouldWrite,
+                targetPath: payload.targetPath,
+              }),
               promptBuilder: buildAgentPromptBuilder({
                 cwd: env.workspaceRoot,
                 sessionId: resumeSessionId,
@@ -887,6 +933,7 @@ export class HostRuntime {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
       payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
+    const shouldWrite = payloadAllowsWorkspaceWrites(payload, permissionMode);
     let sessionId: string;
     try {
       sessionId = payload.sessionId
@@ -908,8 +955,14 @@ export class HostRuntime {
       sessionId,
       targetPath: payload.targetPath,
       traceLevel: resolveTraceLevel(payload),
-      runMetadata: payload.metadata,
-      runStoreMetadata: payload.metadata,
+      runMetadata: {
+        ...(payload.metadata ?? {}),
+        shouldWrite,
+      },
+      runStoreMetadata: {
+        ...(payload.metadata ?? {}),
+        shouldWrite,
+      },
     });
     if (!prepared.ok) return prepared;
     const env = prepared.env;
@@ -937,7 +990,11 @@ export class HostRuntime {
         ],
         workspace: env.workspace,
         approvalResolver: env.approvalResolver,
-        policy: createPermissionModePolicy({ mode: permissionMode }),
+        policy: createHostRunPolicy({
+          permissionMode,
+          shouldWrite,
+          targetPath: payload.targetPath,
+        }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
           sessionId,

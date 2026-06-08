@@ -183,6 +183,12 @@ export function createAppendFileTool() {
       additionalProperties: false,
     },
     policy: { risk: "risky" },
+    governance: {
+      sideEffects: ["write"],
+      idempotency: "conditional",
+      dataSensitivity: "internal",
+      origin: { kind: "local", name: "sparkwright" },
+    },
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const { path, body } = args as {

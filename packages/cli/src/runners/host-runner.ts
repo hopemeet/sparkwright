@@ -220,6 +220,7 @@ async function runHostLifecycle(
           permissionMode,
           traceLevel,
           targetPath,
+          shouldWrite,
           metadata: {
             source: "cli",
             targetPath,
@@ -238,6 +239,7 @@ async function runHostLifecycle(
           permissionMode,
           traceLevel,
           targetPath,
+          shouldWrite,
           metadata: {
             source: "cli",
             targetPath,

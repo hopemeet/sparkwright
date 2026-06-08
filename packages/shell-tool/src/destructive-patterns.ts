@@ -14,6 +14,8 @@
 export const DESTRUCTIVE_PATTERNS: readonly RegExp[] = Object.freeze([
   // rm -rf targeting filesystem root, home, or wildcard expansion.
   /\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-rf|-fr)\s+(?:\/(?:\s|$)|\/\s|~(?:\/|\s|$)|\*)/,
+  // rm -rf targeting the current/parent directory or a relative wildcard.
+  /\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-rf|-fr)\s+(?:\.{1,2}(?:\/|\s|$)|\.?\/?\*(?:\s|$))/,
   // Fork bomb.
   /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
   // mkfs.* against any device.

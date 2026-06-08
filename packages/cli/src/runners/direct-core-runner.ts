@@ -1,7 +1,9 @@
 import {
   createPermissionModePolicy,
+  createLayeredPolicy,
   createRun,
   createSessionRunStoreFactory,
+  createWorkspaceMutationPolicy,
   defineTool,
   FileSessionStore,
   type ContextItem,
@@ -84,7 +86,16 @@ export async function startDirectCoreRun(
 
   const workspace = new LocalWorkspace(workspaceRoot);
   const approvalResolver = createCliApprovalResolver({ approveAll, io });
-  const policy = createPermissionModePolicy({ mode: permissionMode });
+  const policy = createLayeredPolicy([
+    createPermissionModePolicy({ mode: permissionMode }),
+    createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: shouldWrite,
+      allowedPaths: [targetPath],
+      maxWriteFiles: 1,
+      maxDiffLines: 200,
+      allowDeletions: false,
+    }),
+  ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });

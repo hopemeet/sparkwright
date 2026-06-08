@@ -4,6 +4,7 @@ import {
   createLayeredPolicy,
   createPermissionModePolicy,
   createToolGovernancePolicy,
+  createWorkspaceMutationPolicy,
   type Policy,
 } from "../src/policy.js";
 
@@ -219,6 +220,158 @@ describe("createToolGovernancePolicy", () => {
     });
 
     expect(decision.decision).toBe("allow");
+  });
+});
+
+describe("createWorkspaceMutationPolicy", () => {
+  it("denies workspace writes when the run is read-only", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: false,
+    });
+
+    const decision = await policy.decide({
+      action: "workspace.write",
+      metadata: { path: "README.md" },
+    });
+
+    expect(decision).toMatchObject({
+      decision: "deny",
+      reason: "Workspace writes require an explicit write-enabled run.",
+      metadata: { path: "README.md" },
+    });
+  });
+
+  it("denies write-side-effect tools when the run is read-only", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: false,
+    });
+
+    const decision = await policy.decide({
+      action: "tool.execute",
+      metadata: {
+        toolName: "append_file",
+        governance: {
+          sideEffects: ["write"],
+        },
+      },
+    });
+
+    expect(decision).toMatchObject({
+      decision: "deny",
+      reason:
+        "Tools with write side effects require an explicit write-enabled run.",
+      metadata: {
+        toolName: "append_file",
+        sideEffects: ["write"],
+      },
+    });
+  });
+
+  it("allows read-only tools when the run is read-only", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: false,
+    });
+
+    const decision = await policy.decide({
+      action: "tool.execute",
+      metadata: {
+        governance: {
+          sideEffects: ["read"],
+        },
+      },
+    });
+
+    expect(decision.decision).toBe("allow");
+  });
+
+  it("denies writes outside the allowed target scope", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: true,
+      allowedPaths: ["README.md"],
+    });
+
+    const decision = await policy.decide({
+      action: "workspace.write",
+      metadata: {
+        path: "package.json",
+        diff: "--- a/package.json\n+++ b/package.json\n@@ -1,1 +1,2 @@\n {}\n+{}\n",
+      },
+    });
+
+    expect(decision).toMatchObject({
+      decision: "deny",
+      reason: "Workspace write is outside the allowed target scope: package.json",
+    });
+  });
+
+  it("denies writes that exceed the distinct file budget", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: true,
+      maxWriteFiles: 1,
+    });
+
+    expect(
+      await policy.decide({
+        action: "workspace.write",
+        metadata: {
+          path: "README.md",
+          diff: "--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,2 @@\n # Demo\n+note\n",
+        },
+      }),
+    ).toMatchObject({ decision: "allow" });
+
+    expect(
+      await policy.decide({
+        action: "workspace.write",
+        metadata: {
+          path: "package.json",
+          diff: "--- a/package.json\n+++ b/package.json\n@@ -1,1 +1,2 @@\n {}\n+{}\n",
+        },
+      }),
+    ).toMatchObject({
+      decision: "deny",
+      reason: "Workspace write exceeds the run file budget of 1.",
+    });
+  });
+
+  it("denies oversized diffs and deletions when configured", async () => {
+    const policy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: true,
+      maxDiffLines: 1,
+      allowDeletions: false,
+    });
+
+    expect(
+      await policy.decide({
+        action: "workspace.write",
+        metadata: {
+          path: "README.md",
+          diff: "--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,3 @@\n # Demo\n+one\n+two\n",
+        },
+      }),
+    ).toMatchObject({
+      decision: "deny",
+      reason: "Workspace write exceeds the diff budget of 1 changed lines.",
+    });
+
+    const deletionPolicy = createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: true,
+      maxDiffLines: 10,
+      allowDeletions: false,
+    });
+
+    expect(
+      await deletionPolicy.decide({
+        action: "workspace.write",
+        metadata: {
+          path: "README.md",
+          diff: "--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+        },
+      }),
+    ).toMatchObject({
+      decision: "deny",
+      reason: "Workspace write deletions are not allowed for this run.",
+    });
   });
 });
 
