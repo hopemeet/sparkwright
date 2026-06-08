@@ -198,6 +198,68 @@ describe("host protocol", () => {
     });
   });
 
+  it("forwards completed-with-tool-failures outcome on run.completed", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-outcome-"),
+    );
+    const pair = createConnectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "run_missing_read",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "inspect missing default target",
+          model: "deterministic",
+          permissionMode: "default",
+        },
+      });
+
+      const started = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "run_missing_read",
+      );
+      expect(started).toMatchObject({
+        envelope: "response",
+        ok: true,
+      });
+      const completed = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: {
+          state: "completed",
+          stopReason: "final_answer",
+          outcome: {
+            kind: "completed_with_tool_failures",
+            toolFailures: { count: 1, codes: ["ENOENT"] },
+          },
+        },
+      });
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("accepts the run.resume payload shape and reports missing runs from runtime lookup", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {
@@ -790,7 +852,9 @@ describe("host protocol", () => {
   });
 
   it("records skill index failures for protocol clients", async () => {
-    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-bad-skill-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-bad-skill-"),
+    );
     const sessionId = "session_bad_skill";
     const pair = createConnectionPair();
     try {

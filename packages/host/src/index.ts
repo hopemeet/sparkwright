@@ -67,6 +67,11 @@ export {
   CONFIG_USER_REL,
   CONFIG_ENV_VAR,
 } from "./config.js";
+export { validateRunInput } from "./run-input-validation.js";
+export type {
+  RunInputValidationInput,
+  RunInputValidationResult,
+} from "./run-input-validation.js";
 export type {
   SharedConfig,
   SharedConfigSourceMap,

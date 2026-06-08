@@ -1,5 +1,6 @@
 import { render } from "ink";
 import React from "react";
+import { validateRunInput } from "@sparkwright/host";
 import { App, type AppProps } from "./app.js";
 import { installTerminalRestore } from "./lib/terminal-restore.js";
 import type { PermissionMode } from "./state/run-controller.js";
@@ -17,20 +18,40 @@ interface CliOverrides {
   sessionId?: string;
 }
 
-function parseArgs(argv: string[]): CliOverrides {
+function parseArgs(
+  argv: string[],
+): { ok: true; value: CliOverrides } | { ok: false; errors: string[] } {
   const out: CliOverrides = {};
+  const errors: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === "--workspace" && argv[i + 1]) out.workspaceRoot = argv[++i];
-    else if (a === "--session-root" && argv[i + 1])
-      out.sessionRootDir = argv[++i];
-    else if (a === "--model" && argv[i + 1]) out.modelName = argv[++i];
-    else if (a === "--permission-mode" && argv[i + 1]) {
-      const v = argv[++i];
-      if (isPermissionMode(v)) out.permissionMode = v;
-    } else if (a === "--session-id" && argv[i + 1]) out.sessionId = argv[++i];
+    if (a === "--workspace") {
+      if (!argv[i + 1]) errors.push("Usage: --workspace requires a path");
+      else out.workspaceRoot = argv[++i];
+    } else if (a === "--session-root") {
+      if (!argv[i + 1]) errors.push("Usage: --session-root requires a path");
+      else out.sessionRootDir = argv[++i];
+    } else if (a === "--model") {
+      if (!argv[i + 1]) errors.push("Usage: --model requires a model name");
+      else out.modelName = argv[++i];
+    } else if (a === "--permission-mode") {
+      const v = argv[i + 1];
+      if (!v) errors.push("Usage: --permission-mode requires a value");
+      else if (isPermissionMode(v)) {
+        out.permissionMode = v;
+        i += 1;
+      } else {
+        errors.push(
+          "Usage: --permission-mode must be one of: plan, default, accept_edits, dont_ask, bypass_permissions",
+        );
+        i += 1;
+      }
+    } else if (a === "--session-id") {
+      if (!argv[i + 1]) errors.push("Usage: --session-id requires an id");
+      else out.sessionId = argv[++i];
+    }
   }
-  return out;
+  return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
 }
 
 function isPermissionMode(value: string): value is PermissionMode {
@@ -47,9 +68,24 @@ export async function runTui(
   argv: string[],
   options: RunTuiOptions = {},
 ): Promise<{ exitCode: number }> {
-  const cli = parseArgs(argv);
+  const parsed = parseArgs(argv);
+  if (!parsed.ok) {
+    for (const error of parsed.errors) process.stderr.write(`${error}\n`);
+    return { exitCode: 1 };
+  }
+  const cli = parsed.value;
   const initialCwd =
     cli.workspaceRoot ?? options.workspaceRoot ?? process.cwd();
+  const validation = await validateRunInput({
+    workspaceRoot: initialCwd,
+    modelName: cli.modelName,
+    validateModel: Boolean(cli.modelName),
+    env: process.env,
+  });
+  if (!validation.ok) {
+    for (const error of validation.errors) process.stderr.write(`${error}\n`);
+    return { exitCode: 1 };
+  }
   const props: AppProps = {
     initialCwd,
     cliOverrides: {

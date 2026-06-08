@@ -611,7 +611,9 @@ export class HostRuntime {
       },
       metadata: run.metadata,
     };
-    const sessionStore = new FileSessionStore({ rootDir: input.sessionRootDir });
+    const sessionStore = new FileSessionStore({
+      rootDir: input.sessionRootDir,
+    });
     const store = createSessionRunStoreFactory({
       sessionStore,
       sessionId: input.sessionId,
@@ -825,6 +827,9 @@ export class HostRuntime {
             runId: lastRunId,
             state: outcome.result.state,
             stopReason: outcome.result.stopReason,
+            ...(outcome.result.metadata.outcome
+              ? { outcome: outcome.result.metadata.outcome }
+              : {}),
             ...(handoff ? { todoHandoff: handoff } : {}),
           },
         });

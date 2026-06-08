@@ -45,6 +45,7 @@ import {
   resolveSkillRootsForRuntime,
   runConfiguredDelegate,
   userConfigPath,
+  validateRunInput,
   type AgentReport,
   type SkillReport,
 } from "@sparkwright/host";
@@ -79,6 +80,7 @@ interface ParsedArgs {
   workspaceRoot: string;
   sessionRootDir: string;
   targetPath: string;
+  targetPathSource: "default" | "cli";
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -199,6 +201,9 @@ export async function runCli(
     return { exitCode: 1 };
   }
 
+  const validation = await validateCliRunInput(parsed.value, io, env);
+  if (!validation.ok) return { exitCode: 1 };
+
   return parsed.value.directCore
     ? startDirectCoreRun(
         {
@@ -221,6 +226,30 @@ export async function runCli(
         io,
         env,
       );
+}
+
+async function validateCliRunInput(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<{ ok: boolean }> {
+  const validation = await validateRunInput({
+    workspaceRoot: parsed.workspaceRoot,
+    targetPath: parsed.targetPath,
+    requireTargetExists: parsed.targetPathSource === "cli",
+    approveAll: parsed.approveAll,
+    shouldWrite: parsed.shouldWrite,
+    modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
+    validateModel: parsed.modelNameSource === "cli",
+    env,
+  });
+  for (const warning of validation.warnings) {
+    writeLine(io.stderr, `Warning: ${warning}`);
+  }
+  for (const error of validation.errors) {
+    writeLine(io.stderr, error);
+  }
+  return { ok: validation.ok };
 }
 
 interface ConfigDefaults {
@@ -280,6 +309,7 @@ function parseArgs(
   let workspaceRoot = defaults.workspace ?? cwd;
   let sessionRootDir: string | undefined;
   let targetPath = "README.md";
+  let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   let shouldWrite = false;
   let approveAll = false;
   let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
@@ -351,6 +381,7 @@ function parseArgs(
           message: "Usage: --target requires a workspace-relative path",
         };
       targetPath = value;
+      targetPathSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -696,6 +727,7 @@ function parseArgs(
       sessionRootDir:
         sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
       targetPath,
+      targetPathSource,
       shouldWrite,
       approveAll,
       permissionMode,

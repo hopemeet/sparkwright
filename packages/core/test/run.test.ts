@@ -775,13 +775,14 @@ describe("SparkwrightRun", () => {
       },
     });
 
-    await run.start();
+    const result = await run.start();
 
     const toolFailed = run.events
       .all()
       .find((event) => event.type === "tool.failed");
     expect(executed).toBe(false);
     expect(run.record.state).toBe("completed");
+    expect(result.metadata.outcome).toBeUndefined();
     expect(toolFailed?.payload).toMatchObject({
       status: "failed",
       error: { code: "TOOL_DENIED" },
@@ -813,6 +814,42 @@ describe("SparkwrightRun", () => {
       error: { code: "TOOL_NOT_FOUND" },
     });
     expect(run.record.state).toBe("completed");
+  });
+
+  it("annotates completed runs that include non-policy tool failures", async () => {
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "unknown tool",
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? { toolCalls: [{ toolName: "missing", arguments: {} }] }
+            : { message: "saw missing tool" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const completed = run.events
+      .all()
+      .find((event) => event.type === "run.completed");
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      metadata: {
+        outcome: {
+          kind: "completed_with_tool_failures",
+          toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
+        },
+      },
+    });
+    expect(completed?.payload).toMatchObject({
+      outcome: {
+        kind: "completed_with_tool_failures",
+        toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
+      },
+    });
   });
 
   it("reports timed out tools through the normal tool failure lifecycle", async () => {

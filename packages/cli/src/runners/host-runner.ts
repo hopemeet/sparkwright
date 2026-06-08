@@ -22,6 +22,13 @@ import { createCliApprovalResolver } from "../cli-approval.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
+import {
+  cliExitCodeForRun,
+  createCliRunEventSummary,
+  summarizeUnhandledToolFailures,
+  summarizeWorkspaceMutations,
+  updateCliRunEventSummary,
+} from "../run-outcome.js";
 
 const require = createRequire(import.meta.url);
 
@@ -99,9 +106,7 @@ async function runHostLifecycle(
   let runState: string | undefined;
   let stopReason: string | undefined;
   let failedMessage: string | undefined;
-  let writeCompletedCount = 0;
-  let writeSkippedCount = 0;
-  let writeDeniedCount = 0;
+  const eventSummary = createCliRunEventSummary();
 
   let tracePath = sessionId
     ? join(sessionRootDir, sessionId, "trace.jsonl")
@@ -144,11 +149,7 @@ async function runHostLifecycle(
 
       client.on("run.event", (msg) => {
         const event = msg.payload.event as SparkwrightEvent;
-        if (event.type === "workspace.write.completed")
-          writeCompletedCount += 1;
-        else if (event.type === "workspace.write.skipped")
-          writeSkippedCount += 1;
-        else if (event.type === "workspace.write.denied") writeDeniedCount += 1;
+        updateCliRunEventSummary(eventSummary, event);
         writeLine(io.stdout, formatEvent(event));
       });
 
@@ -250,11 +251,7 @@ async function runHostLifecycle(
         runId = resumed.runId;
         if (resumed.sessionId) {
           sessionId = resumed.sessionId;
-          tracePath = join(
-            sessionRootDir,
-            sessionId,
-            "trace.jsonl",
-          );
+          tracePath = join(sessionRootDir, sessionId, "trace.jsonl");
         }
       }
     })().catch(async (error: unknown) => {
@@ -281,8 +278,14 @@ async function runHostLifecycle(
 
   try {
     await terminal;
+    const failureSummary = summarizeUnhandledToolFailures(eventSummary);
+    if (failureSummary) writeLine(io.stderr, failureSummary);
     return {
-      exitCode: failedMessage ? 1 : 0,
+      exitCode: cliExitCodeForRun({
+        failedMessage,
+        runState,
+        events: eventSummary,
+      }),
       tracePath,
       sessionId,
       runState,
@@ -297,9 +300,9 @@ async function runHostLifecycle(
       io.stdout,
       summarizeWorkspaceMutations({
         shouldWrite,
-        completed: writeCompletedCount,
-        skipped: writeSkippedCount,
-        denied: writeDeniedCount,
+        completed: eventSummary.writeCompleted,
+        skipped: eventSummary.writeSkipped,
+        denied: eventSummary.writeDenied,
       }),
     );
     if (tracePath && existsSync(tracePath))
@@ -473,23 +476,4 @@ function resolveHostBin(): string {
 
 function resolveHostSourceBin(): string {
   return join(dirname(dirname(resolveHostBin())), "src", "bin.ts");
-}
-
-function summarizeWorkspaceMutations(input: {
-  shouldWrite: boolean;
-  completed: number;
-  skipped: number;
-  denied: number;
-}): string {
-  const { shouldWrite, completed, skipped, denied } = input;
-  if (completed === 0 && skipped === 0 && denied === 0) {
-    return shouldWrite
-      ? "No workspace changes were made (no write was attempted)."
-      : "No workspace changes were made (read-only run).";
-  }
-  const parts: string[] = [];
-  if (completed > 0) parts.push(`${completed} applied`);
-  if (skipped > 0) parts.push(`${skipped} skipped (no-op)`);
-  if (denied > 0) parts.push(`${denied} denied`);
-  return `Workspace writes: ${parts.join(", ")}.`;
 }

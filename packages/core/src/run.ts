@@ -3193,18 +3193,27 @@ export class SparkwrightRun implements RunHandle {
     reason: Extract<RunStopReason, "no_model_configured" | "final_answer">,
     payload: Record<string, unknown>,
   ): RunResult {
-    this.setState("completed", reason);
-    this.events.emit("run.completed", {
+    const outcome =
+      reason === "final_answer"
+        ? completedRunOutcome(this.events.all())
+        : undefined;
+    const completedPayload = {
       reason,
       ...payload,
-    });
+      ...(outcome ? { outcome } : {}),
+    };
+    this.setState("completed", reason);
+    this.events.emit("run.completed", completedPayload);
     const { message: payloadMessage, ...rest } = payload;
     this.result = {
       signal: "completed",
       state: "completed",
       stopReason: reason,
       message: typeof payloadMessage === "string" ? payloadMessage : undefined,
-      metadata: omitUndefined(rest),
+      metadata: omitUndefined({
+        ...rest,
+        ...(outcome ? { outcome } : {}),
+      }),
     };
     return this.result;
   }
@@ -3302,6 +3311,46 @@ function canTransition(from: RunState, to: RunState): boolean {
 
 function isTerminalState(state: RunState): boolean {
   return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+function completedRunOutcome(events: SparkwrightEvent[]):
+  | {
+      kind: "completed_with_tool_failures";
+      toolFailures: { count: number; codes: string[] };
+    }
+  | undefined {
+  const codes = events
+    .filter((event) => event.type === "tool.failed")
+    .map(toolFailureCode)
+    .filter((code): code is string => Boolean(code))
+    .filter((code) => !isPolicyOrApprovalFailure(code));
+
+  if (codes.length === 0) return undefined;
+  return {
+    kind: "completed_with_tool_failures",
+    toolFailures: {
+      count: codes.length,
+      codes: [...new Set(codes)],
+    },
+  };
+}
+
+function toolFailureCode(event: SparkwrightEvent): string | undefined {
+  const payload = event.payload as {
+    error?: { code?: string };
+  };
+  return payload.error?.code;
+}
+
+function isPolicyOrApprovalFailure(code: string | undefined): boolean {
+  if (!code) return false;
+  const normalized = code.toLowerCase();
+  return (
+    normalized === "tool_denied" ||
+    normalized === "untracked_workspace_mutation" ||
+    normalized.endsWith("_denied") ||
+    normalized.includes("safety")
+  );
 }
 
 function isRepeatedToolCall(

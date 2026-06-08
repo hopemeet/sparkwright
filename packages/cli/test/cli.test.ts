@@ -95,6 +95,138 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("Trace written to");
   });
 
+  it("rejects a missing workspace before starting a run", async () => {
+    const missingWorkspace = join(
+      tmpdir(),
+      `sparkwright-missing-${Date.now()}`,
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect missing workspace",
+        "--workspace",
+        missingWorkspace,
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("Workspace does not exist");
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+  });
+
+  it("rejects an explicit missing target before starting a run", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect missing target",
+        "--workspace",
+        workspace,
+        "--target",
+        "NO_SUCH_TARGET.md",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "Target does not exist: NO_SUCH_TARGET.md",
+    );
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+  });
+
+  it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
+    tempDirs.push(workspace);
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect default target",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.runState).toBe("completed");
+    expect(output.stderrText()).toContain("unhandled tool failure");
+    expect(output.stdoutText()).toContain("run.completed final_answer");
+
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toContain("tool.failed");
+    const completed = events.find((event) => event.type === "run.completed");
+    expect(completed?.payload?.message).toContain("Could not read README.md");
+    expect(completed?.payload?.message).not.toContain("Read README.md.");
+    expect(completed?.payload?.outcome).toMatchObject({
+      kind: "completed_with_tool_failures",
+      toolFailures: { count: 1, codes: ["ENOENT"] },
+    });
+  });
+
+  it("warns when --yes is used without --write", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toContain(
+      "Warning: --yes has no effect without --write.",
+    );
+    expect(output.stdoutText()).toContain("run.completed final_answer");
+  });
+
   it("runs the read-only golden path and writes a trace", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -1331,23 +1463,21 @@ describe("runCli", () => {
   it("writes a minimal trace when host startup fails before the run starts", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
+    const missingHostCommand = join(workspace, "missing-host-command");
 
     const result = await runCli(
-      [
-        "run",
-        "inspect temp",
-        "--workspace",
-        workspace,
-        "--model",
-        "invalidmodel",
-      ],
+      ["run", "inspect temp", "--workspace", workspace],
       {
+        env: {
+          XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+          SPARKWRIGHT_HOST_COMMAND: missingHostCommand,
+        },
         io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
       },
     );
 
     expect(result.exitCode).toBe(1);
-    expect(output.stderrText()).toContain("must be in the form");
+    expect(output.stderrText()).toContain(missingHostCommand);
     expect(output.stdoutText()).toContain("Trace written to");
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toEqual([
@@ -2238,8 +2368,8 @@ describe("runCli", () => {
       traceEvents.find(
         (event) =>
           event.type === "tool.failed" &&
-          ((event.payload?.error as { code?: string } | undefined)?.code ===
-            "TOOL_DENIED"),
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "TOOL_DENIED",
       ),
     ).toBeTruthy();
   });
@@ -2298,8 +2428,8 @@ describe("runCli", () => {
       traceEvents.find(
         (event) =>
           event.type === "tool.failed" &&
-          ((event.payload?.error as { code?: string } | undefined)?.code ===
-            "shell_safety_denied"),
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "shell_safety_denied",
       ),
     ).toBeTruthy();
   });
@@ -2422,8 +2552,8 @@ describe("runCli", () => {
       traceEvents.find(
         (event) =>
           event.type === "tool.failed" &&
-          ((event.payload?.error as { code?: string } | undefined)?.code ===
-            "UNTRACKED_WORKSPACE_MUTATION"),
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "UNTRACKED_WORKSPACE_MUTATION",
       ),
     ).toBeTruthy();
   });

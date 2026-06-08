@@ -30,6 +30,13 @@ import { createCliApprovalResolver } from "../cli-approval.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
+import {
+  cliExitCodeForRun,
+  createCliRunEventSummary,
+  summarizeUnhandledToolFailures,
+  summarizeWorkspaceMutations,
+  updateCliRunEventSummary,
+} from "../run-outcome.js";
 
 export interface DirectCoreRunInput {
   goal: string;
@@ -137,15 +144,11 @@ export async function startDirectCoreRun(
     }),
   });
 
-  let writeCompletedCount = 0;
-  let writeSkippedCount = 0;
-  let writeDeniedCount = 0;
+  const eventSummary = createCliRunEventSummary();
 
   function recordEvent(event: SparkwrightEvent) {
     trace.append(event);
-    if (event.type === "workspace.write.completed") writeCompletedCount += 1;
-    else if (event.type === "workspace.write.skipped") writeSkippedCount += 1;
-    else if (event.type === "workspace.write.denied") writeDeniedCount += 1;
+    updateCliRunEventSummary(eventSummary, event);
     writeLine(io.stdout, formatEvent(event));
   }
 
@@ -157,8 +160,13 @@ export async function startDirectCoreRun(
 
   try {
     const result = await run.start();
+    const failureSummary = summarizeUnhandledToolFailures(eventSummary);
+    if (failureSummary) writeLine(io.stderr, failureSummary);
     return {
-      exitCode: 0,
+      exitCode: cliExitCodeForRun({
+        runState: result.state,
+        events: eventSummary,
+      }),
       tracePath: store?.tracePath,
       sessionId,
       runState: result.state,
@@ -173,9 +181,9 @@ export async function startDirectCoreRun(
       io.stdout,
       summarizeWorkspaceMutations({
         shouldWrite,
-        completed: writeCompletedCount,
-        skipped: writeSkippedCount,
-        denied: writeDeniedCount,
+        completed: eventSummary.writeCompleted,
+        skipped: eventSummary.writeSkipped,
+        denied: eventSummary.writeDenied,
       }),
     );
     if (store) writeLine(io.stdout, `Trace written to ${store.tracePath}`);
@@ -237,25 +245,6 @@ export async function createCliModel(input: {
     env: input.env,
     fetch: proxyFetch,
   });
-}
-
-function summarizeWorkspaceMutations(input: {
-  shouldWrite: boolean;
-  completed: number;
-  skipped: number;
-  denied: number;
-}): string {
-  const { shouldWrite, completed, skipped, denied } = input;
-  if (completed === 0 && skipped === 0 && denied === 0) {
-    return shouldWrite
-      ? "No workspace changes were made (no write was attempted)."
-      : "No workspace changes were made (read-only run).";
-  }
-  const parts: string[] = [];
-  if (completed > 0) parts.push(`${completed} applied`);
-  if (skipped > 0) parts.push(`${skipped} skipped (no-op)`);
-  if (denied > 0) parts.push(`${denied} denied`);
-  return `Workspace writes: ${parts.join(", ")}.`;
 }
 
 function resolveProxyUrl(
@@ -322,10 +311,23 @@ function createDeterministicModel(input: {
       return {
         message: input.shouldWrite
           ? formatDeterministicWriteSummary(input.targetPath, modelInput.events)
-          : `Read ${input.targetPath}. Re-run with --write to exercise approval-gated workspace mutation.`,
+          : formatDeterministicReadSummary(input.targetPath, modelInput.events),
       };
     },
   };
+}
+
+function formatDeterministicReadSummary(
+  targetPath: string,
+  events: SparkwrightEvent[],
+): string {
+  const failure = [...events]
+    .reverse()
+    .find((event) => event.type === "tool.failed");
+  if (failure) {
+    return `Could not read ${targetPath}: ${formatToolFailure(failure)}.`;
+  }
+  return `Read ${targetPath}. Re-run with --write to exercise approval-gated workspace mutation.`;
 }
 
 function formatDeterministicWriteSummary(
@@ -336,12 +338,25 @@ function formatDeterministicWriteSummary(
     return `Write was not applied for ${targetPath} because approval was denied.`;
   }
   if (events.some((event) => event.type === "tool.failed")) {
-    return `Write was not applied for ${targetPath} because the write tool failed.`;
+    const failure = [...events]
+      .reverse()
+      .find((event) => event.type === "tool.failed");
+    return `Write was not applied for ${targetPath} because the write tool failed: ${failure ? formatToolFailure(failure) : "unknown error"}.`;
   }
   if (events.some((event) => event.type === "workspace.write.skipped")) {
     return `No workspace change was needed for ${targetPath}; the deterministic section was already present.`;
   }
   return `Completed approval-gated write path for ${targetPath}.`;
+}
+
+function formatToolFailure(event: SparkwrightEvent): string {
+  const payload = event.payload as {
+    error?: { code?: string; message?: string };
+  };
+  const code = payload.error?.code;
+  const message = payload.error?.message;
+  if (code && message) return `${code}: ${message}`;
+  return message ?? code ?? "tool failed";
 }
 
 function createReadFileTool() {
