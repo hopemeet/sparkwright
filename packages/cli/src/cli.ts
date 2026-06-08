@@ -39,6 +39,8 @@ import {
   loadLayeredSkillReport,
   loadLayeredAgentReport,
   loadHostConfig,
+  resolveAgentProfiles,
+  describeExternalDelegateCapability,
   existingSkillRoots,
   projectSkillRoot,
   resolveCapabilityDirs,
@@ -47,6 +49,7 @@ import {
   userConfigPath,
   validateRunInput,
   type AgentReport,
+  type DelegateCapabilityDescriptor,
   type SkillReport,
 } from "@sparkwright/host";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
@@ -974,7 +977,7 @@ interface CapabilityInspectReport {
   tools: ToolsConfigShape;
   skills: SkillReport;
   agents: AgentReport & {
-    delegateTools: Array<{ profileId: string; toolName?: string }>;
+    delegateTools: DelegateCapabilityDescriptor[];
   };
   mcp: {
     servers: Array<{
@@ -1151,6 +1154,11 @@ async function loadCapabilityInspectReport(
     capabilities?.agents?.profiles,
     env,
   );
+  const profiles = await resolveAgentProfiles(
+    workspaceRoot,
+    capabilities?.agents?.profiles,
+  );
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
 
   const commandDirs = await Promise.all(
     resolveCapabilityDirs("command", { cwd: workspaceRoot, env }).map(
@@ -1207,11 +1215,16 @@ async function loadCapabilityInspectReport(
     skills,
     agents: {
       ...agents,
-      delegateTools: (capabilities?.agents?.delegateTools ?? []).map(
-        (tool) => ({
-          profileId: tool.profileId,
-          toolName: tool.toolName,
-        }),
+      delegateTools: (capabilities?.agents?.delegateTools ?? []).flatMap(
+        (delegate) => {
+          const profile = profileById.get(delegate.profileId);
+          if (!profile) return [];
+          const descriptor = describeExternalDelegateCapability({
+            delegate,
+            profile,
+          });
+          return descriptor ? [descriptor] : [];
+        },
       ),
     },
     mcp: {
@@ -1262,6 +1275,11 @@ function formatCapabilityInspectReport(
   for (const agent of report.agents.profiles) {
     lines.push(
       `  - ${agent.id}${agent.name ? ` (${agent.name})` : ""}: ${agent.layer}`,
+    );
+  }
+  for (const tool of report.agents.delegateTools) {
+    lines.push(
+      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}; approval=${tool.requiresApproval ? "required" : "not-required"}; workspace=${tool.workspaceAccess})`,
     );
   }
   if (report.agents.shadows.length > 0) {

@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
 import {
   createSpanId,
   defineTool,
@@ -7,6 +6,16 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import {
+  DelegateExecutionError,
+  assertWorkspaceAccess,
+  describeDelegateCapability,
+  errorCode,
+  resolveDelegateProcessWorkspace,
+  usesWorkspaceRootTemplate,
+  workspaceAccessField,
+  type DelegateWorkspaceAccess,
+} from "./delegate-capability.js";
 
 export interface ExternalCommandAgentConfig {
   command: string;
@@ -14,6 +23,7 @@ export interface ExternalCommandAgentConfig {
   cwd?: string;
   env?: Record<string, string>;
   envMode?: "inherit" | "explicit";
+  workspaceAccess?: DelegateWorkspaceAccess;
   timeoutMs?: number;
   input?: "argument" | "stdin" | "none";
   maxOutputBytes?: number;
@@ -66,6 +76,7 @@ export function externalCommandConfigFromAgentProfile(
     cwd: stringField(config, "cwd"),
     env: stringRecordField(config, "env"),
     envMode: envModeField(config, "envMode"),
+    workspaceAccess: workspaceAccessField(config),
     timeoutMs: numberField(config, "timeoutMs"),
     input: inputModeField(config, "input"),
     maxOutputBytes: numberField(config, "maxOutputBytes"),
@@ -84,6 +95,25 @@ export function createExternalCommandDelegateTool(
       `Agent profile ${input.profile.id} does not contain a valid metadata.externalCommand config.`,
     );
   }
+  const workspaceAccess = config.workspaceAccess ?? "none";
+  const descriptor = describeDelegateCapability({
+    delegate: {
+      profileId: input.profile.id,
+      toolName: input.toolName,
+      requiresApproval: input.requiresApproval,
+      forbidNesting: input.forbidNesting,
+    },
+    profile: input.profile,
+    protocol: "external_command",
+    command: config.command,
+    args: config.args,
+    timeoutMs: config.timeoutMs,
+    workspaceAccess,
+    outputLimits: {
+      stdoutBytes: config.maxStdoutBytes ?? config.maxOutputBytes,
+      stderrBytes: config.maxStderrBytes ?? config.maxOutputBytes,
+    },
+  });
   return defineTool({
     name: input.toolName,
     description: input.description,
@@ -109,11 +139,7 @@ export function createExternalCommandDelegateTool(
       origin: {
         kind: "hosted",
         name: input.profile.id,
-        metadata: {
-          protocol: "external_command",
-          command: config.command,
-          args: config.args ?? [],
-        },
+        metadata: { ...descriptor },
       },
     },
     async execute(args: unknown): Promise<ExternalCommandDelegateToolResult> {
@@ -145,6 +171,7 @@ export function createExternalCommandDelegateTool(
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
         protocol: "external_command",
+        workspaceAccess,
       };
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);
@@ -154,33 +181,44 @@ export function createExternalCommandDelegateTool(
           workspaceRoot: input.workspaceRoot,
           goal: parsed.goal,
           metadata: parsed.metadata,
+          toolName: input.toolName,
         });
         const successExitCodes = config.successExitCodes ?? [0];
         if (
           result.exitCode === null ||
           !successExitCodes.includes(result.exitCode)
         ) {
-          throw Object.assign(
-            new Error(
-              `External command delegate "${input.toolName}" exited with ${exitStatus(
-                result.exitCode,
-                result.signal,
-              )}.`,
-            ),
+          throw new DelegateExecutionError(
+            "DELEGATE_NONZERO_EXIT",
+            `External command delegate "${input.toolName}" exited with ${exitStatus(
+              result.exitCode,
+              result.signal,
+            )}.`,
             {
-              code: "EXTERNAL_COMMAND_DELEGATE_FAILED",
-              metadata: {
-                childRunId,
-                agentId: input.profile.id,
-                agentProfileId: input.profile.id,
-                ...result,
-              },
+              childRunId,
+              agentId: input.profile.id,
+              agentProfileId: input.profile.id,
+              ...result,
             },
           );
         }
         parent.events.emit(
           "subagent.completed",
-          { ...base, stopReason: "completed" },
+          {
+            ...base,
+            stopReason: "completed",
+            result: {
+              protocol: "external_command",
+              agentProfileId: input.profile.id,
+              exitCode: result.exitCode,
+              signal: result.signal,
+              stdoutChars: result.stdout.length,
+              stderrChars: result.stderr.length,
+              stdoutTruncated: result.stdoutTruncated,
+              stderrTruncated: result.stderrTruncated,
+              outputTruncated: result.outputTruncated,
+            },
+          },
           meta,
         );
         return {
@@ -197,6 +235,7 @@ export function createExternalCommandDelegateTool(
           {
             ...base,
             reason: "failed",
+            errorCode: errorCode(error),
             error: error instanceof Error ? error.message : String(error),
           },
           meta,
@@ -212,6 +251,7 @@ async function runExternalCommand(input: {
   workspaceRoot: string;
   goal: string;
   metadata?: Record<string, unknown>;
+  toolName: string;
 }): Promise<
   Pick<
     ExternalCommandDelegateToolResult,
@@ -225,6 +265,17 @@ async function runExternalCommand(input: {
   >
 > {
   const inputMode = input.config.input ?? "argument";
+  const workspaceAccess = input.config.workspaceAccess ?? "none";
+  if (
+    workspaceAccess !== "read_write" &&
+    usesWorkspaceRootTemplate(input.config.args)
+  ) {
+    assertWorkspaceAccess({
+      workspaceAccess,
+      toolName: input.toolName,
+      reason: "workspaceRoot",
+    });
+  }
   const context = {
     goal: input.goal,
     metadataJson: JSON.stringify(input.metadata ?? {}),
@@ -238,71 +289,94 @@ async function runExternalCommand(input: {
     !containsGoalPlaceholder(input.config.args ?? [])
       ? [...configuredArgs, input.goal]
       : configuredArgs;
-  const child = spawn(input.config.command, args, {
-    cwd: input.config.cwd
-      ? resolve(input.workspaceRoot, input.config.cwd)
-      : input.workspaceRoot,
-    env: buildCommandEnv(input.config),
-    stdio: ["pipe", "pipe", "pipe"],
+  const executionWorkspace = await resolveDelegateProcessWorkspace({
+    workspaceRoot: input.workspaceRoot,
+    configuredCwd: input.config.cwd,
+    workspaceAccess,
+    toolName: input.toolName,
   });
-  const output = createOutputCollector({
-    stdoutLimit:
-      input.config.maxStdoutBytes ?? input.config.maxOutputBytes ?? 64_000,
-    stderrLimit:
-      input.config.maxStderrBytes ?? input.config.maxOutputBytes ?? 64_000,
-  });
-  const timeout = createTimeout(input.config.timeoutMs);
 
-  return await new Promise((resolvePromise, reject) => {
-    let settled = false;
-    const settle = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      timeout.dispose();
-      fn();
-    };
+  try {
+    const child = spawn(input.config.command, args, {
+      cwd: executionWorkspace.cwd,
+      env: buildCommandEnv(input.config),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const output = createOutputCollector({
+      stdoutLimit:
+        input.config.maxStdoutBytes ?? input.config.maxOutputBytes ?? 64_000,
+      stderrLimit:
+        input.config.maxStderrBytes ?? input.config.maxOutputBytes ?? 64_000,
+    });
+    const timeout = createTimeout(input.config.timeoutMs);
 
-    child.once("error", (error) => {
-      settle(() =>
-        reject(
-          new Error(
-            `External command "${input.config.command}" failed to start: ${error.message}`,
+    return await new Promise((resolvePromise, reject) => {
+      let settled = false;
+      const settle = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        timeout.dispose();
+        fn();
+      };
+
+      child.once("error", (error: NodeJS.ErrnoException) => {
+        const code =
+          error.code === "ENOENT"
+            ? "DELEGATE_COMMAND_NOT_FOUND"
+            : "DELEGATE_COMMAND_START_FAILED";
+        settle(() =>
+          reject(
+            new DelegateExecutionError(
+              code,
+              `External command "${input.config.command}" failed to start: ${error.message}`,
+              { command: input.config.command, causeCode: error.code },
+            ),
           ),
-        ),
+        );
+      });
+      child.stdout?.on("data", (chunk) => output.appendStdout(chunk));
+      child.stderr?.on("data", (chunk) => output.appendStderr(chunk));
+      timeout.signal.addEventListener(
+        "abort",
+        () => {
+          child.kill();
+          settle(() =>
+            reject(
+              new DelegateExecutionError(
+                "DELEGATE_TIMEOUT",
+                "External command delegate timed out.",
+                { timeoutMs: input.config.timeoutMs },
+              ),
+            ),
+          );
+        },
+        { once: true },
       );
-    });
-    child.stdout?.on("data", (chunk) => output.appendStdout(chunk));
-    child.stderr?.on("data", (chunk) => output.appendStderr(chunk));
-    timeout.signal.addEventListener(
-      "abort",
-      () => {
-        child.kill();
-        settle(() => reject(new Error("External command delegate timed out.")));
-      },
-      { once: true },
-    );
-    child.once("exit", (exitCode, signal) => {
-      const collected = output.result();
-      settle(() =>
-        resolvePromise({
-          exitCode,
-          signal,
-          stdout: collected.stdout,
-          stderr: collected.stderr,
-          stdoutTruncated: collected.stdoutTruncated,
-          stderrTruncated: collected.stderrTruncated,
-          outputTruncated:
-            collected.stdoutTruncated || collected.stderrTruncated,
-        }),
-      );
-    });
+      child.once("exit", (exitCode, signal) => {
+        const collected = output.result();
+        settle(() =>
+          resolvePromise({
+            exitCode,
+            signal,
+            stdout: collected.stdout,
+            stderr: collected.stderr,
+            stdoutTruncated: collected.stdoutTruncated,
+            stderrTruncated: collected.stderrTruncated,
+            outputTruncated:
+              collected.stdoutTruncated || collected.stderrTruncated,
+          }),
+        );
+      });
 
-    if (inputMode === "stdin") {
-      child.stdin?.end(renderStdin(input.goal, input.metadata), "utf8");
-    } else {
-      child.stdin?.end();
-    }
-  });
+      if (inputMode === "stdin") {
+        child.stdin?.end(renderStdin(input.goal, input.metadata), "utf8");
+      } else {
+        child.stdin?.end();
+      }
+    });
+  } finally {
+    await executionWorkspace.cleanup();
+  }
 }
 
 function buildCommandEnv(

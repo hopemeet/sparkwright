@@ -12,7 +12,6 @@ import {
   type SparkwrightEvent,
   type TraceLevel,
 } from "@sparkwright/core";
-import type { CapabilityDelegateToolConfig } from "./config.js";
 import { loadHostConfig } from "./config.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
 import {
@@ -23,6 +22,12 @@ import {
   createExternalCommandDelegateTool,
   externalCommandConfigFromAgentProfile,
 } from "./external-command-agent.js";
+import {
+  delegateToolName,
+  describeDelegateCapability,
+  errorCode,
+  type DelegateFailureCode,
+} from "./delegate-capability.js";
 
 export interface RunConfiguredDelegateInput {
   workspaceRoot: string;
@@ -55,7 +60,7 @@ export type RunConfiguredDelegateResult =
         | "delegate_not_found"
         | "unsupported_delegate_kind"
         | "approval_denied"
-        | "execution_failed";
+        | DelegateFailureCode;
       message: string;
       events?: SparkwrightEvent[];
       sessionId?: string;
@@ -118,6 +123,33 @@ export async function runConfiguredDelegate(
         "Use normal run-loop delegation for internal profiles; delegates run supports metadata.acp and metadata.externalCommand.",
     };
   }
+  const descriptor = describeDelegateCapability({
+    delegate,
+    profile,
+    protocol,
+    command:
+      protocol === "acp" ? acpConfig!.command : externalCommandConfig!.command,
+    args: protocol === "acp" ? acpConfig!.args : externalCommandConfig!.args,
+    timeoutMs:
+      protocol === "acp"
+        ? acpConfig!.timeoutMs
+        : externalCommandConfig!.timeoutMs,
+    workspaceAccess:
+      protocol === "acp"
+        ? (acpConfig!.workspaceAccess ?? "none")
+        : (externalCommandConfig!.workspaceAccess ?? "none"),
+    outputLimits:
+      protocol === "external_command"
+        ? {
+            stdoutBytes:
+              externalCommandConfig!.maxStdoutBytes ??
+              externalCommandConfig!.maxOutputBytes,
+            stderrBytes:
+              externalCommandConfig!.maxStderrBytes ??
+              externalCommandConfig!.maxOutputBytes,
+          }
+        : undefined,
+  });
 
   const parent = createRun({
     goal: input.goal,
@@ -168,6 +200,7 @@ export async function runConfiguredDelegate(
     if (!input.approvalResolver) {
       await persistence?.finish({
         state: "failed",
+        code: "DELEGATE_APPROVAL_DENIED",
         message: `delegate tool ${input.toolName} requires approval`,
       });
       return {
@@ -187,6 +220,7 @@ export async function runConfiguredDelegate(
         profileId: profile.id,
         protocol,
         goal: input.goal,
+        capability: descriptor,
       },
     });
     parent.events.emit("approval.requested", {
@@ -203,6 +237,7 @@ export async function runConfiguredDelegate(
     if (response.decision !== "approved") {
       await persistence?.finish({
         state: "failed",
+        code: "DELEGATE_APPROVAL_DENIED",
         message: response.message ?? `approval denied for ${input.toolName}`,
       });
       return {
@@ -232,19 +267,19 @@ export async function runConfiguredDelegate(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await persistence?.finish({ state: "failed", message });
+    await persistence?.finish({
+      state: "failed",
+      code: errorCode(error),
+      message,
+    });
     return {
       ok: false,
-      code: "execution_failed",
+      code: errorCode(error),
       message,
       events: parent.events.all(),
       ...persistence?.resultMetadata(),
     };
   }
-}
-
-function delegateToolName(delegate: CapabilityDelegateToolConfig): string {
-  return delegate.toolName ?? `delegate_${delegate.profileId}`;
 }
 
 function createDelegateRunPersistence(input: {
@@ -256,6 +291,7 @@ function createDelegateRunPersistence(input: {
 }): {
   finish(input: {
     state: "completed" | "failed";
+    code?: DelegateFailureCode;
     message?: string;
   }): Promise<void>;
   resultMetadata(): { sessionId: string; runId: string; tracePath?: string };
@@ -307,7 +343,7 @@ function createDelegateRunPersistence(input: {
               message: finishInput.message,
               failure: {
                 category: "runtime",
-                code: "DELEGATE_DIRECT_RUN_FAILED",
+                code: finishInput.code ?? "DELEGATE_EXECUTION_FAILED",
                 message: finishInput.message ?? "delegate direct run failed",
                 retryable: false,
                 metadata: {
@@ -327,7 +363,7 @@ function createDelegateRunPersistence(input: {
           ? { reason: result.stopReason }
           : {
               reason: result.stopReason,
-              code: "DELEGATE_DIRECT_RUN_FAILED",
+              code: finishInput.code ?? "DELEGATE_EXECUTION_FAILED",
               message: finishInput.message,
               failure: result.failure,
               metadata: result.metadata,

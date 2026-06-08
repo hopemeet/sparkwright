@@ -137,6 +137,7 @@ ACP-compatible coding agent for a bounded sub-task. Add an agent profile with
               "command": "codex",
               "args": ["acp"],
               "cwd": ".",
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000
             }
           }
@@ -157,7 +158,9 @@ ACP-compatible coding agent for a bounded sub-task. Add an agent profile with
 `command` and `args` can point at any installed ACP-compatible subprocess. The
 delegate tool is risky and approval-gated by default; the external agent does
 not receive SparkWright file-system or terminal capabilities unless a host
-explicitly adds them through a governed bridge.
+explicitly adds them through a governed bridge. Omit `workspaceAccess` to avoid
+passing the project cwd; set `"workspaceAccess": "read_write"` only when the
+external agent should receive direct workspace access.
 
 ## External Command Delegates
 
@@ -178,6 +181,7 @@ a normal CLI rather than an ACP server:
               "args": ["run", "{{goal}}"],
               "envMode": "inherit",
               "input": "none",
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000,
               "maxStdoutBytes": 64000,
               "maxStderrBytes": 64000,
@@ -205,6 +209,9 @@ contain all needed context. Non-zero exits fail the delegate unless listed in
 `successExitCodes`. `envMode` defaults to `inherit`; use `explicit` to pass
 only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes` set
 independent capture limits, while `maxOutputBytes` remains a shared fallback.
+`{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
+otherwise the process runs from an isolated temporary cwd and receives only the
+configured arguments/stdin.
 
 To debug a configured delegate without asking the main model to choose the
 tool, run it directly:

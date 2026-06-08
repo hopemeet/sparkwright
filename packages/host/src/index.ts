@@ -67,6 +67,15 @@ export {
   CONFIG_USER_REL,
   CONFIG_ENV_VAR,
 } from "./config.js";
+export {
+  delegateToolName,
+  describeDelegateCapability,
+  describeExternalDelegateCapability,
+  type DelegateCapabilityDescriptor,
+  type DelegateFailureCode,
+  type DelegateProtocol,
+  type DelegateWorkspaceAccess,
+} from "./delegate-capability.js";
 export { validateRunInput } from "./run-input-validation.js";
 export type {
   RunInputValidationInput,

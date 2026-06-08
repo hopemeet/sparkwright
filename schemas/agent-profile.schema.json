@@ -58,10 +58,72 @@
       },
       "additionalProperties": false
     },
-    "metadata": { "type": "object" }
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "acp": { "$ref": "#/$defs/acpDelegateMetadata" },
+        "externalCommand": {
+          "$ref": "#/$defs/externalCommandDelegateMetadata"
+        }
+      },
+      "additionalProperties": true
+    }
   },
   "additionalProperties": false,
   "$defs": {
+    "workspaceAccess": {
+      "type": "string",
+      "enum": ["none", "read_write"],
+      "description": "Whether an external delegate receives direct project workspace access. Omit or set none to run away from the project directory; set read_write only for explicitly trusted delegates."
+    },
+    "acpDelegateMetadata": {
+      "type": "object",
+      "required": ["transport", "command"],
+      "properties": {
+        "transport": { "const": "stdio" },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": {
+          "type": "string",
+          "description": "Requires workspaceAccess read_write."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "workspaceAccess": { "$ref": "#/$defs/workspaceAccess" },
+        "timeoutMs": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "externalCommandDelegateMetadata": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": {
+          "type": "string",
+          "description": "Requires workspaceAccess read_write."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "envMode": { "type": "string", "enum": ["inherit", "explicit"] },
+        "workspaceAccess": { "$ref": "#/$defs/workspaceAccess" },
+        "timeoutMs": { "type": "number" },
+        "input": { "type": "string", "enum": ["argument", "stdin", "none"] },
+        "maxOutputBytes": { "type": "number" },
+        "maxStdoutBytes": { "type": "number" },
+        "maxStderrBytes": { "type": "number" },
+        "successExitCodes": {
+          "type": "array",
+          "items": { "type": "integer" }
+        }
+      },
+      "additionalProperties": false
+    },
     "capabilityRule": {
       "type": "object",
       "required": ["action", "effect"],

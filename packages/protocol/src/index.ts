@@ -259,6 +259,27 @@ export interface CapabilityAgentSummary {
   mode?: string;
 }
 
+export interface CapabilityDelegateToolSummary {
+  toolName: string;
+  profileId: string;
+  profileName?: string;
+  protocol: "acp" | "external_command";
+  risk: "risky";
+  requiresApproval: boolean;
+  forbidNesting: boolean;
+  sideEffects: string[];
+  workspaceAccess: "none" | "read_write";
+  shellAccess: false;
+  processSpawn: true;
+  command: string;
+  args: string[];
+  timeoutMs?: number;
+  outputLimits?: {
+    stdoutBytes?: number;
+    stderrBytes?: number;
+  };
+}
+
 export interface CapabilitySnapshot {
   tools: CapabilityToolSummary[];
   skills: {
@@ -270,6 +291,7 @@ export interface CapabilitySnapshot {
   };
   agents: {
     profiles: CapabilityAgentSummary[];
+    delegateTools: CapabilityDelegateToolSummary[];
   };
 }
 

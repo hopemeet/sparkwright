@@ -22,6 +22,7 @@ Use `metadata.externalCommand` when the delegate is exposed as a normal CLI:
               "args": ["run", "--workspace", "{{workspaceRoot}}", "{{goal}}"],
               "envMode": "inherit",
               "input": "none",
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000,
               "maxStdoutBytes": 64000,
               "maxStderrBytes": 64000,
@@ -44,6 +45,8 @@ Use `metadata.externalCommand` when the delegate is exposed as a normal CLI:
 
 `args` are passed directly to `spawn`; shell expansion is not applied. Supported
 template values are `{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`.
+`{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
+without it, SparkWright runs the subprocess from an isolated temporary cwd.
 
 Use `envMode: "explicit"` when the child process should receive only the
 configured environment:
@@ -99,6 +102,7 @@ Use `metadata.acp` when the delegate speaks ACP over stdio:
               "transport": "stdio",
               "command": "agent-cli",
               "args": ["acp"],
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000
             }
           }

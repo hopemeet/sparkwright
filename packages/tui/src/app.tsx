@@ -1620,6 +1620,7 @@ function CapabilitiesPanel(props: {
   const loaded = s?.skills.loaded ?? [];
   const mcp = s?.mcp.statuses ?? [];
   const agents = s?.agents.profiles ?? [];
+  const delegateTools = s?.agents.delegateTools ?? [];
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
   );
@@ -1649,6 +1650,7 @@ function CapabilitiesPanel(props: {
             indexedSkills={indexed}
             loadedSkills={loaded}
             agents={agents}
+            delegateTools={delegateTools}
             mcp={mcp}
             cronTools={cronTools}
           />
@@ -1662,7 +1664,10 @@ function CapabilitiesPanel(props: {
           ) : null}
 
           {props.view === "all" || props.view === "agents" ? (
-            <AgentsCapabilitySection agents={agents} />
+            <AgentsCapabilitySection
+              agents={agents}
+              delegateTools={delegateTools}
+            />
           ) : null}
 
           {props.view === "all" || props.view === "mcp" ? (
@@ -1701,6 +1706,7 @@ function CapabilityOverview(props: {
   indexedSkills: CapabilitySnapshot["skills"]["indexed"];
   loadedSkills: CapabilitySnapshot["skills"]["loaded"];
   agents: CapabilitySnapshot["agents"]["profiles"];
+  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
   mcp: CapabilitySnapshot["mcp"]["statuses"];
   cronTools: CapabilitySnapshot["tools"];
 }): React.ReactElement {
@@ -1714,7 +1720,8 @@ function CapabilityOverview(props: {
       <Text>
         <Text color={theme.success}>Available now: </Text>
         {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
-        {props.agents.length} agents, {props.mcp.length} MCP servers
+        {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
+        {props.mcp.length} MCP servers
       </Text>
       <Text color={theme.muted}>
         Indexed Skills are discoverable examples; loaded Skills were selected
@@ -1803,19 +1810,33 @@ function SkillsCapabilitySection(props: {
 
 function AgentsCapabilitySection(props: {
   agents: CapabilitySnapshot["agents"]["profiles"];
+  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
 }): React.ReactElement {
   const theme = useTheme();
+  const count = props.agents.length + props.delegateTools.length;
   return (
     <CapabilitySection
-      title={`agents (${props.agents.length})`}
+      title={`agents (${props.agents.length} / ${props.delegateTools.length} delegates)`}
       empty="no agents reported"
-      count={props.agents.length}
+      count={count}
     >
       {props.agents.map((agent) => (
         <Text key={agent.id}>
           <Text color={theme.success}>• </Text>
           {agent.name ?? agent.id}
           {agent.mode ? <Text color={theme.muted}> · {agent.mode}</Text> : null}
+        </Text>
+      ))}
+      {props.delegateTools.map((tool) => (
+        <Text key={tool.toolName}>
+          <Text color={theme.success}>delegate </Text>
+          {tool.toolName}
+          <Text color={theme.muted}>
+            {" "}
+            → {tool.profileId} · {tool.protocol} ·{" "}
+            {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
+            {tool.workspaceAccess}
+          </Text>
         </Text>
       ))}
     </CapabilitySection>

@@ -1952,6 +1952,12 @@ describe("SparkwrightRun", () => {
           return { message: "unused" };
         },
         async *stream() {
+          for (const chunk of [] as Array<{
+            type: "text_delta";
+            text: string;
+          }>) {
+            yield chunk;
+          }
           throw Object.assign(new Error("stream timed out"), {
             code: "TIMEOUT",
             timeoutKind: "stream",

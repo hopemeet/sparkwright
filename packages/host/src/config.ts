@@ -947,7 +947,15 @@ function validateAcpMetadata(
     field,
     filePath,
     errors,
-    new Set(["transport", "command", "args", "cwd", "env", "timeoutMs"]),
+    new Set([
+      "transport",
+      "command",
+      "args",
+      "cwd",
+      "env",
+      "workspaceAccess",
+      "timeoutMs",
+    ]),
   );
   if (acp.transport !== "stdio") {
     errors.push({
@@ -960,6 +968,12 @@ function validateAcpMetadata(
   validateOptionalStringArray(acp.args, `${field}.args`, filePath, errors);
   validateOptionalString(acp.cwd, `${field}.cwd`, filePath, errors);
   validateOptionalStringRecord(acp.env, `${field}.env`, filePath, errors);
+  validateOptionalWorkspaceAccess(
+    acp.workspaceAccess,
+    `${field}.workspaceAccess`,
+    filePath,
+    errors,
+  );
   validateOptionalNumber(acp.timeoutMs, `${field}.timeoutMs`, filePath, errors);
 }
 
@@ -980,6 +994,7 @@ function validateExternalCommandMetadata(
       "cwd",
       "env",
       "envMode",
+      "workspaceAccess",
       "timeoutMs",
       "input",
       "maxOutputBytes",
@@ -992,6 +1007,12 @@ function validateExternalCommandMetadata(
   validateOptionalStringArray(command.args, `${field}.args`, filePath, errors);
   validateOptionalString(command.cwd, `${field}.cwd`, filePath, errors);
   validateOptionalStringRecord(command.env, `${field}.env`, filePath, errors);
+  validateOptionalWorkspaceAccess(
+    command.workspaceAccess,
+    `${field}.workspaceAccess`,
+    filePath,
+    errors,
+  );
   validateOptionalNumber(
     command.timeoutMs,
     `${field}.timeoutMs`,
@@ -1045,6 +1066,21 @@ function validateExternalCommandMetadata(
     filePath,
     errors,
   );
+}
+
+function validateOptionalWorkspaceAccess(
+  value: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  if (value !== undefined && value !== "none" && value !== "read_write") {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must be none or read_write",
+    });
+  }
 }
 
 function validateKnownKeys(

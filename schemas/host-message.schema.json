@@ -453,6 +453,149 @@
       },
       "additionalProperties": false
     },
+    "CapabilitySnapshot": {
+      "type": "object",
+      "required": ["tools", "skills", "mcp", "agents"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CapabilityToolSummary" }
+        },
+        "skills": {
+          "type": "object",
+          "required": ["indexed", "loaded"],
+          "properties": {
+            "indexed": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilitySkillSummary" }
+            },
+            "loaded": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilitySkillSummary" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "mcp": {
+          "type": "object",
+          "required": ["statuses"],
+          "properties": {
+            "statuses": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityMcpStatus" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "agents": {
+          "type": "object",
+          "required": ["profiles", "delegateTools"],
+          "properties": {
+            "profiles": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityAgentSummary" }
+            },
+            "delegateTools": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityDelegateToolSummary" }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityToolSummary": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string" },
+        "risk": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilitySkillSummary": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "sourcePath": { "type": "string" },
+        "contentHash": { "type": "string" },
+        "version": { "type": "string" },
+        "selectionReason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityMcpStatus": {
+      "type": "object",
+      "required": ["serverName", "status", "toolNames"],
+      "properties": {
+        "serverName": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "toolNames": { "type": "array", "items": { "type": "string" } },
+        "errorCode": { "type": "string" },
+        "errorPhase": { "type": "string" },
+        "errorMessage": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityAgentSummary": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "mode": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityDelegateToolSummary": {
+      "type": "object",
+      "required": [
+        "toolName",
+        "profileId",
+        "protocol",
+        "risk",
+        "requiresApproval",
+        "forbidNesting",
+        "sideEffects",
+        "workspaceAccess",
+        "shellAccess",
+        "processSpawn",
+        "command",
+        "args"
+      ],
+      "properties": {
+        "toolName": { "type": "string", "minLength": 1 },
+        "profileId": { "type": "string", "minLength": 1 },
+        "profileName": { "type": "string" },
+        "protocol": { "type": "string", "enum": ["acp", "external_command"] },
+        "risk": { "const": "risky" },
+        "requiresApproval": { "type": "boolean" },
+        "forbidNesting": { "type": "boolean" },
+        "sideEffects": { "type": "array", "items": { "type": "string" } },
+        "workspaceAccess": {
+          "type": "string",
+          "enum": ["none", "read_write"]
+        },
+        "shellAccess": { "const": false },
+        "processSpawn": { "const": true },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "timeoutMs": { "type": "number" },
+        "outputLimits": {
+          "type": "object",
+          "properties": {
+            "stdoutBytes": { "type": "number" },
+            "stderrBytes": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "HostReadyEventPayload": {
       "type": "object",
       "required": ["protocolVersion", "host"],

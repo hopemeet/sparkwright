@@ -210,6 +210,7 @@ agent process through an agent profile:
               "transport": "stdio",
               "command": "codex",
               "args": ["acp"],
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000
             }
           }
@@ -228,6 +229,9 @@ agent process through an agent profile:
 
 The external agent is launched as a local subprocess over stdio. The delegate
 tool remains a governed Sparkwright tool and requires approval by default.
+Omit `workspaceAccess` to run the subprocess away from the project directory;
+set `"workspaceAccess": "read_write"` only when the external agent should
+receive the project cwd.
 
 For local tools that do not expose ACP, use a generic external command profile:
 
@@ -245,6 +249,7 @@ For local tools that do not expose ACP, use a generic external command profile:
               "args": ["run", "{{goal}}"],
               "envMode": "inherit",
               "input": "none",
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000,
               "maxStdoutBytes": 64000,
               "maxStderrBytes": 64000
@@ -269,7 +274,9 @@ For local tools that do not expose ACP, use a generic external command profile:
 in `successExitCodes`. `envMode` defaults to `inherit`; set it to `explicit`
 to pass only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes`
 control output capture limits independently, with `maxOutputBytes` retained as
-a shared fallback.
+a shared fallback. `{{workspaceRoot}}` and `cwd` require
+`"workspaceAccess": "read_write"`; without it, the command runs from an isolated
+temporary cwd and gets only the prompt/metadata you pass.
 
 Run a configured external delegate directly while debugging:
 

@@ -52,7 +52,6 @@ describe("ACP child agent delegate tool", () => {
           transport: "stdio",
           command: process.execPath,
           args: [fixture.agentPath],
-          cwd: ".",
         },
       },
     };
@@ -84,6 +83,20 @@ describe("ACP child agent delegate tool", () => {
         "subagent.requested",
         "subagent.started",
         "subagent.completed",
+      ]),
+    );
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.completed",
+          payload: expect.objectContaining({
+            result: expect.objectContaining({
+              protocol: "acp",
+              stopReason: "end_turn",
+              toolCalls: 0,
+            }),
+          }),
+        }),
       ]),
     );
   });

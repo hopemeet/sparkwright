@@ -117,6 +117,7 @@ External ACP delegates use `metadata.acp` on a profile:
       "transport": "stdio",
       "command": "codex",
       "args": ["acp"],
+      "workspaceAccess": "read_write",
       "timeoutMs": 120000
     }
   }
@@ -139,6 +140,7 @@ For local assistants that run as regular CLI commands, use
       "args": ["run", "{{goal}}"],
       "envMode": "inherit",
       "input": "none",
+      "workspaceAccess": "read_write",
       "timeoutMs": 120000,
       "maxStdoutBytes": 64000,
       "maxStderrBytes": 64000
@@ -150,6 +152,8 @@ For local assistants that run as regular CLI commands, use
 The command is spawned directly. `args` can include `{{goal}}`,
 `{{metadataJson}}`, and `{{workspaceRoot}}`. `envMode` controls whether the
 child inherits the host environment or receives only configured `env` values.
+`{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
+without it, the external process runs away from the project directory.
 
 Useful commands:
 

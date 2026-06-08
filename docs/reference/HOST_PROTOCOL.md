@@ -367,9 +367,31 @@ scanning files or interpreting local config.
     "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }]
   },
   "mcp": { "statuses": [] },
-  "agents": { "profiles": [{ "id": "main", "mode": "primary" }] }
+  "agents": {
+    "profiles": [{ "id": "main", "mode": "primary" }],
+    "delegateTools": [
+      {
+        "toolName": "delegate_external_reviewer",
+        "profileId": "external_reviewer",
+        "protocol": "external_command",
+        "risk": "risky",
+        "requiresApproval": true,
+        "forbidNesting": true,
+        "sideEffects": ["external"],
+        "workspaceAccess": "none",
+        "shellAccess": false,
+        "processSpawn": true,
+        "command": "agent-cli",
+        "args": ["run", "{{goal}}"]
+      }
+    ]
+  }
 }
 ```
+
+`workspaceAccess: "none"` means the external delegate is not handed the project
+cwd or `{{workspaceRoot}}`. Use `"read_write"` only for explicitly trusted
+delegates that should inspect or mutate the workspace directly.
 
 ---
 
@@ -432,14 +454,14 @@ Terminal event for a core run that reached a final state. `state` may be
 `completed`, `failed`, or `cancelled`; host/runtime protocol errors are reported
 with `run.failed` instead.
 
-| Field         | Type   | Notes                                                           |
-| ------------- | ------ | --------------------------------------------------------------- |
-| `runId`       | string |                                                                 |
-| `state`       | string | Final RunState.                                                 |
-| `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.                |
-| `outcome`     | object | Optional structured non-clean completion summary.                |
-| `failure`     | object | Optional structured cause for `failed` or `cancelled` states.   |
-| `todoHandoff` | object | Optional unfinished-todo handoff reason and message.            |
+| Field         | Type   | Notes                                                         |
+| ------------- | ------ | ------------------------------------------------------------- |
+| `runId`       | string |                                                               |
+| `state`       | string | Final RunState.                                               |
+| `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.              |
+| `outcome`     | object | Optional structured non-clean completion summary.             |
+| `failure`     | object | Optional structured cause for `failed` or `cancelled` states. |
+| `todoHandoff` | object | Optional unfinished-todo handoff reason and message.          |
 
 `failure` uses `{ category, code, message, retryable, metadata }`. Providers may
 include model-specific details such as HTTP status, timeout kind, or retryability

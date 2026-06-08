@@ -95,6 +95,11 @@ import {
   createExternalCommandDelegateTool,
   externalCommandConfigFromAgentProfile,
 } from "./external-command-agent.js";
+import {
+  describeDelegateCapability,
+  delegateToolName,
+  type DelegateCapabilityDescriptor,
+} from "./delegate-capability.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -474,6 +479,10 @@ export class HostRuntime {
       workspaceRoot,
       childRunStoreFactory,
     });
+    const delegateDescriptors = describeConfiguredDelegateTools({
+      delegates: agentConfig?.delegateTools ?? [],
+      derivedAgents,
+    });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
       model: model.adapter,
@@ -516,6 +525,7 @@ export class HostRuntime {
         mainAgent,
         ...derivedAgents.map((agent) => agent.effectiveProfile),
       ],
+      delegateTools: delegateDescriptors,
     });
 
     const runMetadata: Record<string, unknown> = {
@@ -1477,6 +1487,13 @@ export class HostRuntime {
             resolvedProfiles,
           ).map((agent) => agent.effectiveProfile),
         ],
+        delegateTools: describeConfiguredDelegateTools({
+          delegates: agentConfig?.delegateTools ?? [],
+          derivedAgents: deriveConfiguredAgents(
+            mainAgentProfile(resolvedProfiles),
+            resolvedProfiles,
+          ),
+        }),
       });
     } finally {
       await preparedMcp?.close();
@@ -1779,6 +1796,7 @@ function buildCapabilitySnapshot(input: {
   mcpStatuses?: Record<string, McpStatus | { status: "configured" }>;
   mcpToolNameMap?: McpToolNameMapping[];
   agentProfiles?: AgentProfile[];
+  delegateTools?: DelegateCapabilityDescriptor[];
 }): CapabilitySnapshot {
   return {
     tools: input.tools.map((tool) => ({
@@ -1829,6 +1847,7 @@ function buildCapabilitySnapshot(input: {
         name: profile.name,
         mode: profile.experimental?.mode ?? profile.mode,
       })),
+      delegateTools: input.delegateTools ?? [],
     },
   };
 }
@@ -1956,9 +1975,7 @@ function createConfiguredDelegateTools(input: {
   for (const delegate of input.delegates) {
     const profile = byProfile.get(delegate.profileId);
     if (!profile) continue;
-    const toolName =
-      delegate.toolName ??
-      `delegate_${sanitizeToolSegment(delegate.profileId)}`;
+    const toolName = delegateToolName(delegate);
     const acpConfig = acpConfigFromAgentProfile(profile);
     if (acpConfig) {
       tools.push(
@@ -2025,6 +2042,58 @@ function createConfiguredDelegateTools(input: {
     );
   }
   return tools;
+}
+
+function describeConfiguredDelegateTools(input: {
+  delegates: CapabilityDelegateToolConfig[];
+  derivedAgents: DerivedChildAgentProfile[];
+}): DelegateCapabilityDescriptor[] {
+  const byProfile = new Map(
+    input.derivedAgents.map((derived) => [
+      derived.effectiveProfile.id,
+      derived.effectiveProfile,
+    ]),
+  );
+  return input.delegates.flatMap((delegate) => {
+    const profile = byProfile.get(delegate.profileId);
+    if (!profile) return [];
+    const acpConfig = acpConfigFromAgentProfile(profile);
+    if (acpConfig) {
+      return [
+        describeDelegateCapability({
+          delegate,
+          profile,
+          protocol: "acp",
+          command: acpConfig.command,
+          args: acpConfig.args,
+          timeoutMs: acpConfig.timeoutMs,
+          workspaceAccess: acpConfig.workspaceAccess ?? "none",
+        }),
+      ];
+    }
+    const externalCommandConfig =
+      externalCommandConfigFromAgentProfile(profile);
+    if (!externalCommandConfig) return [];
+    return [
+      describeDelegateCapability({
+        delegate,
+        profile,
+        protocol: "external_command",
+        command: externalCommandConfig.command,
+        args: externalCommandConfig.args,
+        timeoutMs: externalCommandConfig.timeoutMs,
+        workspaceAccess: externalCommandConfig.workspaceAccess ?? "none",
+        outputLimits: {
+          stdoutBytes:
+            externalCommandConfig.maxStdoutBytes ??
+            externalCommandConfig.maxOutputBytes,
+          stderrBytes:
+            externalCommandConfig.maxStderrBytes ??
+            externalCommandConfig.maxOutputBytes,
+        },
+      }),
+    ];
+  });
 }
 
 /**
@@ -2427,6 +2496,10 @@ function mergeCapabilitySnapshots(
     },
     agents: {
       profiles: mergeById(configured.agents.profiles, last.agents.profiles),
+      delegateTools: mergeByToolName(
+        configured.agents.delegateTools,
+        last.agents.delegateTools,
+      ),
     },
   };
 }
@@ -2449,4 +2522,14 @@ function mergeById<T extends { id: string }>(base: T[], next: T[]): T[] {
   for (const entry of base) byId.set(entry.id, entry);
   for (const entry of next) byId.set(entry.id, entry);
   return [...byId.values()];
+}
+
+function mergeByToolName<T extends { toolName: string }>(
+  base: T[],
+  next: T[],
+): T[] {
+  const byName = new Map<string, T>();
+  for (const entry of base) byName.set(entry.toolName, entry);
+  for (const entry of next) byName.set(entry.toolName, entry);
+  return [...byName.values()];
 }

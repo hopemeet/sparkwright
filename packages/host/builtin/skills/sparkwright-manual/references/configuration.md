@@ -231,6 +231,7 @@ over stdio and sends the delegated goal through ACP:
               "transport": "stdio",
               "command": "codex",
               "args": ["acp"],
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000
             }
           }
@@ -267,6 +268,7 @@ servers, use `metadata.externalCommand`:
               "args": ["run", "{{goal}}"],
               "envMode": "inherit",
               "input": "none",
+              "workspaceAccess": "read_write",
               "timeoutMs": 120000,
               "maxStdoutBytes": 64000,
               "maxStderrBytes": 64000
@@ -291,7 +293,9 @@ placeholders in `args` are `{{goal}}`, `{{metadataJson}}`, and
 exits fail the delegate unless listed in `successExitCodes`. `envMode` defaults
 to `inherit`; use `explicit` to pass only the configured `env` map. Use
 `maxStdoutBytes` and `maxStderrBytes` for independent output limits, or
-`maxOutputBytes` as a shared fallback.
+`maxOutputBytes` as a shared fallback. `{{workspaceRoot}}` and `cwd` require
+`"workspaceAccess": "read_write"`; without it, the external process runs away
+from the project directory.
 
 Debug configured external delegates directly with:
 

@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import {
   createSpanId,
   defineTool,
@@ -7,6 +6,14 @@ import {
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import { ExternalAcpWorker } from "@sparkwright/acp-client-adapter";
+import {
+  DelegateExecutionError,
+  describeDelegateCapability,
+  errorCode,
+  resolveDelegateProcessWorkspace,
+  workspaceAccessField,
+  type DelegateWorkspaceAccess,
+} from "./delegate-capability.js";
 
 export interface AcpChildAgentConfig {
   transport: "stdio";
@@ -14,6 +21,7 @@ export interface AcpChildAgentConfig {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  workspaceAccess?: DelegateWorkspaceAccess;
   timeoutMs?: number;
 }
 
@@ -56,6 +64,7 @@ export function acpConfigFromAgentProfile(
     args: stringArrayField(acp, "args"),
     cwd: stringField(acp, "cwd"),
     env: stringRecordField(acp, "env"),
+    workspaceAccess: workspaceAccessField(acp),
     timeoutMs: numberField(acp, "timeoutMs"),
   };
 }
@@ -69,15 +78,20 @@ export function createAcpDelegateTool(
       `Agent profile ${input.profile.id} does not contain a valid metadata.acp config.`,
     );
   }
-  const worker = new ExternalAcpWorker({
-    name: input.profile.name ?? input.profile.id,
+  const workspaceAccess = config.workspaceAccess ?? "none";
+  const descriptor = describeDelegateCapability({
+    delegate: {
+      profileId: input.profile.id,
+      toolName: input.toolName,
+      requiresApproval: input.requiresApproval,
+      forbidNesting: input.forbidNesting,
+    },
+    profile: input.profile,
+    protocol: "acp",
     command: config.command,
     args: config.args,
-    cwd: config.cwd
-      ? resolve(input.workspaceRoot, config.cwd)
-      : input.workspaceRoot,
-    env: config.env ? { ...process.env, ...config.env } : process.env,
     timeoutMs: config.timeoutMs,
+    workspaceAccess,
   });
 
   return defineTool({
@@ -105,11 +119,7 @@ export function createAcpDelegateTool(
       origin: {
         kind: "hosted",
         name: input.profile.id,
-        metadata: {
-          protocol: "acp",
-          command: config.command,
-          args: config.args ?? [],
-        },
+        metadata: { ...descriptor },
       },
     },
     async execute(args: unknown): Promise<AcpDelegateToolResult> {
@@ -140,12 +150,30 @@ export function createAcpDelegateTool(
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
         protocol: "acp",
+        workspaceAccess,
       };
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);
+      const executionWorkspace = await resolveDelegateProcessWorkspace({
+        workspaceRoot: input.workspaceRoot,
+        configuredCwd: config.cwd,
+        workspaceAccess,
+        toolName: input.toolName,
+      });
       try {
+        const worker = new ExternalAcpWorker({
+          name: input.profile.name ?? input.profile.id,
+          command: config.command,
+          args: config.args,
+          cwd: executionWorkspace.cwd,
+          env: config.env ? { ...process.env, ...config.env } : process.env,
+          timeoutMs: config.timeoutMs,
+        });
         const result = await worker.run({
-          cwd: input.workspaceRoot,
+          cwd:
+            workspaceAccess === "read_write"
+              ? input.workspaceRoot
+              : executionWorkspace.cwd,
           goal: parsed.goal,
           metadata: parsed.metadata,
         });
@@ -162,24 +190,53 @@ export function createAcpDelegateTool(
         };
         parent.events.emit(
           "subagent.completed",
-          { ...base, stopReason: result.stopReason },
+          {
+            ...base,
+            stopReason: result.stopReason,
+            result: {
+              protocol: "acp",
+              agentProfileId: input.profile.id,
+              stopReason: result.stopReason,
+              messageChars: result.text.length,
+              toolCalls: result.toolCallCount,
+            },
+          },
           meta,
         );
         return output;
       } catch (error) {
+        const wrapped = wrapAcpDelegateError(error);
         parent.events.emit(
           "subagent.failed",
           {
             ...base,
             reason: "failed",
-            error: error instanceof Error ? error.message : String(error),
+            errorCode: errorCode(wrapped),
+            error: wrapped.message,
           },
           meta,
         );
-        throw error;
+        throw wrapped;
+      } finally {
+        await executionWorkspace.cleanup();
       }
     },
   });
+}
+
+function wrapAcpDelegateError(error: unknown): Error {
+  if (error instanceof DelegateExecutionError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("timed out")) {
+    return new DelegateExecutionError("DELEGATE_TIMEOUT", message);
+  }
+  if (message.includes("failed to start") && message.includes("ENOENT")) {
+    return new DelegateExecutionError("DELEGATE_COMMAND_NOT_FOUND", message);
+  }
+  if (message.includes("failed to start")) {
+    return new DelegateExecutionError("DELEGATE_COMMAND_START_FAILED", message);
+  }
+  return error instanceof Error ? error : new Error(message);
 }
 
 function parseDelegateArgs(input: unknown): {

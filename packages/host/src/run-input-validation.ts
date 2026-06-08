@@ -58,7 +58,7 @@ async function validateWorkspace(
       return false;
     }
     return true;
-  } catch (error) {
+  } catch (_error) {
     errors.push(
       `Workspace does not exist or is not accessible: ${workspaceRoot}`,
     );

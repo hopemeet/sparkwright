@@ -23,6 +23,7 @@ describe("external command delegate tool", () => {
           maxStdoutBytes: 2048,
           maxStderrBytes: 1024,
           envMode: "explicit",
+          workspaceAccess: "read_write",
         },
       },
     };
@@ -36,6 +37,7 @@ describe("external command delegate tool", () => {
       maxStdoutBytes: 2048,
       maxStderrBytes: 1024,
       envMode: "explicit",
+      workspaceAccess: "read_write",
     });
   });
 
@@ -58,7 +60,6 @@ describe("external command delegate tool", () => {
           command: process.execPath,
           args: [fixture.commandPath, "--goal", "{{goal}}"],
           input: "none",
-          cwd: ".",
         },
       },
     };
@@ -95,6 +96,106 @@ describe("external command delegate tool", () => {
         "subagent.completed",
       ]),
     );
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.completed",
+          payload: expect.objectContaining({
+            result: expect.objectContaining({
+              protocol: "external_command",
+              exitCode: 0,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("does not expose the workspace path unless explicitly authorized", async () => {
+    const fixture = await createFixtureCommand();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_reviewer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath, "--workspace", "{{workspaceRoot}}"],
+          input: "none",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_reviewer",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+    });
+
+    await expect(
+      tool.execute({ goal: "review the patch" }, {
+        run: parent.record,
+      } as never),
+    ).rejects.toThrow('requires workspaceAccess "read_write"');
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.failed",
+          payload: expect.objectContaining({
+            errorCode: "DELEGATE_WORKSPACE_ACCESS_DENIED",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("can expose the workspace path with explicit read-write access", async () => {
+    const fixture = await createFixtureCommand();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_reviewer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath, "--workspace", "{{workspaceRoot}}"],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_reviewer",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+    });
+
+    const result = (await tool.execute({ goal: "review the patch" }, {
+      run: parent.record,
+    } as never)) as { stdout: string };
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      argv: ["--workspace", fixture.cwd],
+    });
   });
 
   it("can send the delegated goal through stdin", async () => {
