@@ -296,6 +296,7 @@ export class HostRuntime {
     modelRef?: string;
     permissionMode: PermissionMode;
     sessionId: string;
+    targetPath?: string;
     traceLevel?: TraceLevel;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
@@ -307,6 +308,7 @@ export class HostRuntime {
       modelRef: input.modelRef,
       goal: input.goal,
       workspaceRoot: this.opts.workspaceRoot,
+      targetPath: input.targetPath,
     });
     if (!model.ok) {
       return {
@@ -749,6 +751,7 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       sessionId: resumeSessionId,
+      targetPath: payload.targetPath,
       traceLevel: resolveTraceLevel(payload),
       runMetadata: {
         resumedFromRunId: payload.runId,
@@ -895,6 +898,7 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       sessionId,
+      targetPath: payload.targetPath,
       traceLevel: resolveTraceLevel(payload),
       runMetadata: payload.metadata,
       runStoreMetadata: payload.metadata,

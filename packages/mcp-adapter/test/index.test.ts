@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createRunId } from "@sparkwright/core";
+import { createRun, createRunId } from "@sparkwright/core";
 import {
   createMcpSamplingHandler,
   McpSamplingError,
@@ -150,6 +150,67 @@ describe("mcp-adapter", () => {
         mcpToolName: "explode",
         toolName: "mcp_demo_explode",
       },
+    });
+  });
+
+  it("lets the core schema validator reject bad MCP arguments before calling the server", async () => {
+    const client = {
+      callTool: vi.fn(async () => ({
+        content: [{ type: "text" as const, text: "should not run" }],
+      })),
+    };
+    const tool = mcpToolToToolDefinition({
+      serverName: "demo",
+      client,
+      policy: { risk: "safe", requiresApproval: false },
+      mcpTool: {
+        name: "echo",
+        description: "Echo text",
+        inputSchema: {
+          type: "object",
+          properties: {
+            text: { type: "string" },
+          },
+          required: ["text"],
+          additionalProperties: false,
+        },
+      },
+    });
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "call MCP with bad args",
+      tools: [tool],
+      maxSteps: 3,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return { toolCalls: [{ toolName: tool.name, arguments: {} }] };
+          }
+          return { message: "reported bad args" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      stopReason: "final_answer",
+    });
+    expect(client.callTool).not.toHaveBeenCalled();
+    const requested = run.events
+      .all()
+      .find((event) => event.type === "tool.requested");
+    expect(requested?.payload).toMatchObject({
+      toolName: "mcp_demo_echo",
+      arguments: {},
+    });
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    expect(failed?.payload).toMatchObject({
+      error: { code: "TOOL_ARGUMENTS_INVALID" },
     });
   });
 

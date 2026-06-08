@@ -121,8 +121,11 @@ export async function runCli(
   }
 
   // Shared config (model/providers/etc.) is read once here so the CLI and the
-  // TUI configure from the same file. Precedence: CLI flag > env > config.
-  const cfg = await loadHostConfig(cwd, env);
+  // host configure from the same effective workspace. We cannot wait for the
+  // full parser because config itself may provide default workspace/model
+  // values, but an explicit --workspace must decide which project config layer
+  // participates in the merge.
+  const cfg = await loadHostConfig(workspaceBootstrapRoot(argv, cwd), env);
   for (const e of cfg.errors) {
     writeLine(io.stderr, `config: ${e.file}: ${e.field}: ${e.message}`);
   }
@@ -180,7 +183,14 @@ export async function runCli(
   }
 
   const { goal } = parsed.value;
-  if (command !== "run" || !goal) {
+  if (command === "run" && !goal) {
+    writeLine(
+      io.stderr,
+      'Usage: sparkwright run requires a non-empty goal, e.g. sparkwright run "inspect this repo".',
+    );
+    return { exitCode: 1 };
+  }
+  if (command !== "run") {
     writeLine(io.stderr, usage());
     return { exitCode: 1 };
   }
@@ -209,6 +219,16 @@ interface ConfigDefaults {
   model?: string;
   permissionMode?: PermissionMode;
   workspace?: string;
+}
+
+function workspaceBootstrapRoot(argv: string[], cwd: string): string {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== "--workspace") continue;
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) return cwd;
+    return value;
+  }
+  return cwd;
 }
 
 function parseArgs(
@@ -2155,9 +2175,10 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (!isHelpArg(argv[1])) return undefined;
 
   if (command === "init") {
-    return ["Usage: sparkwright init", "       sparkwright init --project"].join(
-      "\n",
-    );
+    return [
+      "Usage: sparkwright init",
+      "       sparkwright init --project",
+    ].join("\n");
   }
   if (command === "run") {
     return 'Usage: sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';

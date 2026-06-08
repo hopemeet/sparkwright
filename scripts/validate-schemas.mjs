@@ -8,6 +8,8 @@ import addFormats from "ajv-formats";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const schemasDir = path.join(root, "schemas");
 
+const protocolDocPath = path.join(root, "docs/reference/PROTOCOL.md");
+
 // Tokens that PROTOCOL.md legitimately mentions but that are NOT event types.
 // These are policy action names, tool-call shapes, or otherwise non-event
 // identifiers that share the "namespace.verb" form with real event types.
@@ -278,10 +280,7 @@ for (const [label, schemaEnum] of [
 // PROTOCOL.md round-trip (warn-only). Scan for tokens shaped like event
 // types and compare to the schema enum. Heuristic, intentionally permissive.
 try {
-  const protocolMd = await readFile(
-    path.join(root, "docs/PROTOCOL.md"),
-    "utf8",
-  );
+  const protocolMd = await readFile(protocolDocPath, "utf8");
   const mentioned = new Set();
   for (const match of protocolMd.matchAll(
     /[`"']([a-z][a-z_]*\.[a-z][a-z_.]*)[`"']/g,
@@ -320,7 +319,7 @@ try {
   }
 } catch (error) {
   console.warn(
-    `Protocol consistency (warn): could not read PROTOCOL.md: ${error instanceof Error ? error.message : String(error)}`,
+    `Protocol consistency (warn): could not read ${path.relative(root, protocolDocPath)}: ${error instanceof Error ? error.message : String(error)}`,
   );
 }
 

@@ -541,6 +541,10 @@ export function createSkillLoaderTool(
         skill,
         resourceFileLimit,
       );
+      const baseDirectory = dirname(skill.sourcePath);
+      const resourceFilePaths = resourceFiles.map((file) =>
+        normalizePath(join(baseDirectory, file)),
+      );
       loadedNames.add(skill.name);
 
       return {
@@ -548,11 +552,11 @@ export function createSkillLoaderTool(
         name: skill.name,
         description: skill.description,
         sourcePath: skill.sourcePath,
-        baseDirectory: dirname(skill.sourcePath),
+        baseDirectory,
         contentHash: skill.contentHash,
         version: versionOf(skill.metadata),
-        content: createSkillToolOutput(skill, resourceFiles),
-        resourceFiles,
+        content: createSkillToolOutput(skill, resourceFilePaths),
+        resourceFiles: resourceFilePaths,
       };
     },
   });
@@ -858,7 +862,7 @@ function versionOf(metadata: Record<string, unknown>): string | undefined {
 
 function createSkillToolOutput(
   skill: SkillDefinition,
-  resourceFiles: string[],
+  resourceFilePaths: string[],
 ): string {
   const baseDirectory = dirname(skill.sourcePath);
   return [
@@ -876,9 +880,7 @@ function createSkillToolOutput(
       "mentions resolves from the base directory above.",
     "",
     "<skill_files>",
-    ...resourceFiles.map(
-      (file) => `<file>${normalizePath(join(baseDirectory, file))}</file>`,
-    ),
+    ...resourceFilePaths.map((file) => `<file>${file}</file>`),
     "</skill_files>",
     "</skill_content>",
   ].join("\n");

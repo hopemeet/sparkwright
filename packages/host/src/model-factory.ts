@@ -12,6 +12,8 @@ export interface ModelFactoryInput {
   goal: string;
   /** Workspace root used to resolve the project-level config layer. */
   workspaceRoot: string;
+  /** Workspace-relative target path for deterministic/local smoke models. */
+  targetPath?: string;
   env?: Record<string, string | undefined>;
 }
 
@@ -27,17 +29,18 @@ export async function createModel(
 ): Promise<
   { ok: true; adapter: ModelAdapter } | { ok: false; message: string }
 > {
-  const ref = input.modelRef ?? DETERMINISTIC_PROVIDER;
   const env = input.env ?? process.env;
+  const loaded = await loadHostConfig(input.workspaceRoot, env);
+  const ref = input.modelRef ?? loaded.config.model ?? DETERMINISTIC_PROVIDER;
+  const targetPath = input.targetPath ?? "README.md";
 
   if (ref === DETERMINISTIC_PROVIDER) {
-    return { ok: true, adapter: createDemoModel(input.goal) };
+    return { ok: true, adapter: createDemoModel(input.goal, targetPath) };
   }
 
-  const loaded = await loadHostConfig(input.workspaceRoot, env);
   const selection = resolveModelSelection(loaded.config, ref);
   if (selection.kind === "deterministic") {
-    return { ok: true, adapter: createDemoModel(input.goal) };
+    return { ok: true, adapter: createDemoModel(input.goal, targetPath) };
   }
   if (selection.kind === "error") {
     return { ok: false, message: selection.message };
@@ -46,16 +49,16 @@ export async function createModel(
 }
 
 /** Two-turn deterministic model used for protocol smoke tests and TUI demos. */
-function createDemoModel(goal: string): ModelAdapter {
+function createDemoModel(goal: string, targetPath: string): ModelAdapter {
   let turn = 0;
   return {
     async complete() {
       turn += 1;
       if (turn === 1) {
         return {
-          message: `Inspecting workspace for goal: "${goal}"`,
+          message: `Inspecting ${targetPath} for goal: "${goal}"`,
           toolCalls: [
-            { toolName: "read_file", arguments: { path: "README.md" } },
+            { toolName: "read_file", arguments: { path: targetPath } },
           ],
         };
       }

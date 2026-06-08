@@ -1,11 +1,15 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type {
   ApprovalResolver,
   PermissionMode,
+  RunRecord,
   SparkwrightEvent,
   TraceLevel,
 } from "@sparkwright/core";
+import { createRunId, createSessionId } from "@sparkwright/core";
+import { EventLog, FileRunStore } from "@sparkwright/core/internal";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import { createCliApprovalResolver } from "../cli-approval.js";
 import { formatEvent } from "../event-format.js";
@@ -198,6 +202,7 @@ async function runHostLifecycle(
           model: modelName,
           permissionMode,
           traceLevel,
+          targetPath,
           metadata: {
             source: "cli",
             targetPath,
@@ -215,6 +220,7 @@ async function runHostLifecycle(
           model: modelName,
           permissionMode,
           traceLevel,
+          targetPath,
           metadata: {
             source: "cli",
             targetPath,
@@ -239,6 +245,15 @@ async function runHostLifecycle(
       runState = "failed";
       stopReason = "host_start_failed";
       writeLine(io.stderr, failedMessage);
+      const failureTrace = writeHostStartFailureTrace({
+        input,
+        message: failedMessage,
+        sessionId,
+        runId,
+      });
+      sessionId = failureTrace.sessionId;
+      runId = failureTrace.runId;
+      tracePath = failureTrace.tracePath;
       resolveOnce();
     });
   });
@@ -266,8 +281,70 @@ async function runHostLifecycle(
         denied: writeDeniedCount,
       }),
     );
-    if (tracePath) writeLine(io.stdout, `Trace written to ${tracePath}`);
+    if (tracePath && existsSync(tracePath))
+      writeLine(io.stdout, `Trace written to ${tracePath}`);
     client?.close();
+  }
+}
+
+function writeHostStartFailureTrace(input: {
+  input: HostRunInput | HostResumeInput;
+  message: string;
+  sessionId?: string;
+  runId?: string;
+}): { tracePath?: string; sessionId?: string; runId?: string } {
+  const sessionId = input.sessionId ?? createSessionId();
+  const runId = (input.runId ?? createRunId()) as RunRecord["id"];
+  const now = new Date().toISOString();
+  const goal =
+    "goal" in input.input
+      ? input.input.goal
+      : `resume ${input.input.runId}`.trim();
+  const run: RunRecord = {
+    id: runId,
+    goal,
+    state: "failed",
+    createdAt: now,
+    updatedAt: now,
+    metadata: {
+      source: "cli",
+      failurePhase: "host_start",
+      targetPath: input.input.targetPath,
+      shouldWrite: input.input.shouldWrite,
+      traceLevel: input.input.traceLevel,
+    },
+  };
+
+  try {
+    const store = new FileRunStore(run, {
+      sessionRootDir: join(
+        input.input.workspaceRoot,
+        ".sparkwright",
+        "sessions",
+      ),
+      sessionId,
+      agentId: "main",
+      traceLevel: input.input.traceLevel,
+    });
+    const events = new EventLog(runId);
+    store.append(events.emit("run.created", { goal: run.goal }));
+    store.append(
+      events.emit("run.failed", {
+        reason: "host_start_failed",
+        code: "HOST_START_FAILED",
+        message: input.message,
+        failure: {
+          category: "runtime",
+          code: "HOST_START_FAILED",
+          message: input.message,
+          retryable: false,
+        },
+        metadata: run.metadata,
+      }),
+    );
+    return { tracePath: store.tracePath, sessionId, runId };
+  } catch {
+    return { sessionId: input.sessionId, runId: input.runId };
   }
 }
 

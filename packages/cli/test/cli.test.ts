@@ -76,6 +76,23 @@ describe("runCli", () => {
     expect(output.stderrText()).toBe("");
   });
 
+  it("rejects an empty run goal with a focused message", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["run", ""], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("requires a non-empty goal");
+    expect(output.stderrText()).not.toContain("sparkwright init");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+  });
+
   it("runs the read-only golden path and writes a trace", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -1112,6 +1129,102 @@ describe("runCli", () => {
     expect(output.stderrText()).toContain('No API key for provider "openai"');
   });
 
+  it("loads project config from --workspace before choosing the host model", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/project-model",
+        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["run", "inspect temp", "--workspace", workspace],
+      {
+        env: {
+          XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+          SPARKWRIGHT_HOST_SOURCE: process.env.SPARKWRIGHT_HOST_SOURCE,
+        },
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain('No API key for provider "openai"');
+    expect(output.stdoutText()).not.toContain("run.completed");
+  });
+
+  it("writes a minimal trace when host startup fails before the run starts", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--model",
+        "invalidmodel",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("must be in the form");
+    expect(output.stdoutText()).toContain("Trace written to");
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toEqual([
+      "run.created",
+      "run.failed",
+    ]);
+    expect(
+      events.find((event) => event.type === "run.failed")?.payload,
+    ).toMatchObject({
+      reason: "host_start_failed",
+      code: "HOST_START_FAILED",
+    });
+  });
+
+  it("passes --target through the host deterministic run", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "NOTES.md"), "# Notes\n", "utf8");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "inspect the target",
+        "--workspace",
+        workspace,
+        "--target",
+        "NOTES.md",
+        "--model",
+        "deterministic",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(
+      events.find((event) => event.type === "tool.requested")?.payload,
+    ).toMatchObject({
+      toolName: "read_file",
+      arguments: { path: "NOTES.md" },
+    });
+  });
+
   it("summarizes a trace file", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
@@ -1146,6 +1259,37 @@ describe("runCli", () => {
     );
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("events:");
+  });
+
+  it("counts failed MCP preparation in trace summaries", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "mcp-failed.trace.jsonl");
+    await writeFile(
+      tracePath,
+      JSON.stringify({
+        id: "evt_mcp_failed",
+        runId: "run_mcp_failed",
+        type: "mcp.server.prepared",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: { name: "slow", status: "failed", toolCount: 0 },
+        metadata: { error: "MCP error -32001: Request timed out" },
+      }) + "\n",
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(["trace", "summary", tracePath], {
+      io: { stdout: output.stdout, stderr: output.stderr },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const summary = JSON.parse(output.stdoutText()) as {
+      errorCount: number;
+      errorCodes: Record<string, number>;
+    };
+    expect(summary.errorCount).toBe(1);
+    expect(summary.errorCodes.MCP_SERVER_PREPARE_FAILED).toBe(1);
   });
 
   it("filters trace events", async () => {
@@ -1848,13 +1992,11 @@ function createOutputCapture() {
   };
 }
 
-async function readTrace(
-  path: string | undefined,
-): Promise<
+async function readTrace(path: string | undefined): Promise<
   Array<{
     type: string;
     runId?: string;
-    payload?: { message?: string };
+    payload?: Record<string, unknown>;
   }>
 > {
   if (!path) throw new Error("Missing trace path.");
@@ -1868,7 +2010,7 @@ async function readTrace(
         JSON.parse(line) as {
           type: string;
           runId?: string;
-          payload?: { message?: string };
+          payload?: Record<string, unknown>;
         },
     );
 }

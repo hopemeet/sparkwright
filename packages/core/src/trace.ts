@@ -347,7 +347,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     if (sessionId) sessionIds.add(sessionId);
     if (agentId) agentIds.add(agentId);
     if (event.type === "artifact.created") summary.artifactCount += 1;
-    if (event.type.endsWith(".failed") || event.type.endsWith(".denied")) {
+    if (isTraceErrorEvent(event)) {
       summary.errorCount += 1;
       collectErrorCode(summary, event);
     }
@@ -2347,10 +2347,24 @@ function collectErrorCode(
   const code = stringValue(
     event.payload.errorCode,
     isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    event.type === "mcp.server.prepared" && event.payload.status === "failed"
+      ? "MCP_SERVER_PREPARE_FAILED"
+      : undefined,
     event.type.endsWith(".denied") ? event.type : undefined,
   );
   if (!code) return;
   summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
+}
+
+function isTraceErrorEvent(event: SparkwrightEvent): boolean {
+  if (event.type.endsWith(".failed") || event.type.endsWith(".denied")) {
+    return true;
+  }
+  return (
+    event.type === "mcp.server.prepared" &&
+    isRecord(event.payload) &&
+    event.payload.status === "failed"
+  );
 }
 
 function isTimelineDetailEvent(event: SparkwrightEvent): boolean {

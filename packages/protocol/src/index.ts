@@ -72,6 +72,8 @@ export interface HandshakeRequestPayload {
 export interface RunStartRequestPayload {
   goal: string;
   sessionId?: string;
+  /** Workspace-relative target path that the run should focus on when applicable. */
+  targetPath?: string;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
   permissionMode?:
@@ -89,6 +91,8 @@ export interface RunResumeRequestPayload {
   runId: string;
   /** Optional session scope used to disambiguate where the prior run lives. */
   sessionId?: string;
+  /** Workspace-relative target path that the resumed run should focus on when applicable. */
+  targetPath?: string;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
   fromTrace?: boolean;
   /** Allow resuming checkpoints that are terminal or otherwise normally refused. */

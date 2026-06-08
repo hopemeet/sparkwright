@@ -299,6 +299,11 @@
       "properties": {
         "goal": { "type": "string", "minLength": 1 },
         "sessionId": { "type": "string", "minLength": 1 },
+        "targetPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Workspace-relative target path that the run should focus on when applicable."
+        },
         "provider": { "type": "string", "enum": ["deterministic", "openai"] },
         "model": { "type": "string", "minLength": 1 },
         "permissionMode": {
@@ -341,6 +346,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional session scope used to disambiguate where the prior run lives."
+        },
+        "targetPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Workspace-relative target path that the resumed run should focus on when applicable."
         },
         "fromTrace": {
           "type": "boolean",

@@ -475,28 +475,24 @@ Review only the requested change.
       },
     );
 
-    expect(output).toMatchObject({
-      status: "loaded",
-      name: "code-reviewer",
-      version: "1.0.0",
-      resourceFiles: ["references/rules.md"],
-    });
-    expect(JSON.stringify(output)).toContain(
-      "Review only the requested change",
-    );
-    // The model reads `content`, not the structured `resourceFiles`. List
-    // each file there as a full path so a weak model can pass it straight to
-    // a file-reading tool instead of joining it against the wrong base.
-    const loaded = output as { content: string };
-    // The loader emits forward-slash paths (normalizePath) for cross-platform
-    // consistency, so build the expected path the same way rather than with the
-    // OS-native separator join() would produce (backslashes on Windows).
     const expectedFile = join(
       root,
       "reviewer",
       "references",
       "rules.md",
     ).replace(/\\/g, "/");
+    expect(output).toMatchObject({
+      status: "loaded",
+      name: "code-reviewer",
+      version: "1.0.0",
+      resourceFiles: [expectedFile],
+    });
+    expect(JSON.stringify(output)).toContain(
+      "Review only the requested change",
+    );
+    // Both the structured field and the model-facing content use full paths so
+    // a weak model can pass them straight to a file-reading tool.
+    const loaded = output as { content: string };
     expect(loaded.content).toContain(`<file>${expectedFile}</file>`);
     expect(loaded.content).not.toContain("<file>references/rules.md</file>");
   });
