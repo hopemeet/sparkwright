@@ -1395,7 +1395,11 @@ describe("SparkwrightRun", () => {
     expect(eventTypes).not.toContain("approval.requested");
     expect(eventTypes).not.toContain("tool.started");
     expect(toolFailed?.payload).toMatchObject({
-      error: { code: "TOOL_ARGUMENTS_INVALID" },
+      toolName: "risky",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: { toolName: "risky" },
+      },
     });
   });
 
@@ -1887,6 +1891,98 @@ describe("SparkwrightRun", () => {
       error: {
         message: "connect timeout",
         code: "UND_ERR_CONNECT_TIMEOUT",
+        category: "timeout",
+        timeoutKind: "connect",
+      },
+    });
+  });
+
+  it("classifies exhausted model timeouts in failure metadata", async () => {
+    let modelCalls = 0;
+
+    const run = createRun({
+      goal: "timeout exhausted",
+      modelRetry: {
+        maxAttempts: 1,
+        initialDelayMs: 1,
+        maxDelayMs: 1,
+        backoffMultiplier: 1,
+        jitter: "none",
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          throw Object.assign(new Error("request timeout"), {
+            code: "TIMEOUT",
+            timeoutKind: "request",
+            configuredTimeoutMs: 100,
+            elapsedMs: 101,
+          });
+        },
+      },
+    });
+
+    await run.start();
+
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "run.failed");
+    expect(modelCalls).toBe(1);
+    expect(run.record.state).toBe("failed");
+    expect(failed?.payload).toMatchObject({
+      reason: "model_retry_exhausted",
+      metadata: {
+        retryable: true,
+        modelError: {
+          category: "timeout",
+          timeoutKind: "request",
+          configuredTimeoutMs: 100,
+          elapsedMs: 101,
+        },
+      },
+    });
+  });
+
+  it("emits model.stream.timeout for streaming model timeouts", async () => {
+    const run = createRun({
+      goal: "stream timeout",
+      modelRetry: { maxAttempts: 1 },
+      model: {
+        async complete() {
+          return { message: "unused" };
+        },
+        async *stream() {
+          throw Object.assign(new Error("stream timed out"), {
+            code: "TIMEOUT",
+            timeoutKind: "stream",
+            configuredTimeoutMs: 50,
+            elapsedMs: 51,
+          });
+        },
+      },
+    });
+
+    await run.start();
+
+    const timeout = run.events
+      .all()
+      .find((event) => event.type === "model.stream.timeout");
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "model.stream.failed");
+    expect(timeout?.payload).toMatchObject({
+      step: 1,
+      message: "stream timed out",
+      timeoutKind: "stream",
+      configuredTimeoutMs: 50,
+      elapsedMs: 51,
+      retryable: true,
+    });
+    expect(failed?.payload).toMatchObject({
+      error: "stream timed out",
+      metadata: {
+        category: "timeout",
+        timeoutKind: "stream",
       },
     });
   });

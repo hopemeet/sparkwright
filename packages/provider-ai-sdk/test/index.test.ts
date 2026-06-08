@@ -33,6 +33,8 @@ describe("createAiSdkModelAdapter", () => {
         inputTokens: 1,
         outputTokens: 1,
         totalTokens: 2,
+        costStatus: "unavailable",
+        costUnavailableReason: "missing_pricing",
       },
     });
   });
@@ -74,7 +76,56 @@ describe("createAiSdkModelAdapter", () => {
         inputTokens: 1,
         outputTokens: 1,
         totalTokens: 2,
+        costStatus: "unavailable",
+        costUnavailableReason: "missing_pricing",
       },
+    });
+  });
+
+  it("marks usage cost as estimated when pricing is configured", async () => {
+    const adapter = createAiSdkModelAdapter({
+      pricing: {
+        inputPerMTokUsd: 1,
+        outputPerMTokUsd: 2,
+      },
+      model: new MockLanguageModelV3({
+        doGenerate: async () => ({
+          content: [{ type: "text", text: "Priced." }],
+          finishReason: { unified: "stop", raw: undefined },
+          usage: usage(),
+          warnings: [],
+        }),
+      }),
+    });
+
+    await expect(adapter.complete(modelInput())).resolves.toMatchObject({
+      usage: {
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+        costUsd: 0.000003,
+        costStatus: "estimated",
+      },
+    });
+  });
+
+  it("annotates request timeout errors with configured timeout metadata", async () => {
+    const adapter = createAiSdkModelAdapter({
+      timeout: 123,
+      model: new MockLanguageModelV3({
+        doGenerate: async () => {
+          throw Object.assign(new Error("request timed out"), {
+            code: "TIMEOUT",
+          });
+        },
+      }),
+    });
+
+    await expect(adapter.complete(modelInput())).rejects.toMatchObject({
+      message: "request timed out",
+      code: "TIMEOUT",
+      timeoutKind: "request",
+      configuredTimeoutMs: 123,
     });
   });
 });

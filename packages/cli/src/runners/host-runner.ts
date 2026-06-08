@@ -25,6 +25,8 @@ import { writeLine } from "../io.js";
 import {
   cliExitCodeForRun,
   createCliRunEventSummary,
+  summarizeRunFailure,
+  summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
@@ -106,7 +108,9 @@ async function runHostLifecycle(
   let runState: string | undefined;
   let stopReason: string | undefined;
   let failedMessage: string | undefined;
+  let terminalFailurePrinted = false;
   const eventSummary = createCliRunEventSummary();
+  const forwardHostLogs = shouldForwardHostLogs(env);
 
   let tracePath = sessionId
     ? join(sessionRootDir, sessionId, "trace.jsonl")
@@ -144,7 +148,7 @@ async function runHostLifecycle(
 
       client.on("host.log", (msg) => {
         const line = msg.payload.line;
-        if (line) writeLine(io.stderr, line);
+        if (line && forwardHostLogs) writeLine(io.stderr, line);
       });
 
       client.on("run.event", (msg) => {
@@ -186,8 +190,21 @@ async function runHostLifecycle(
         stopReason = msg.payload.stopReason;
         if (runState !== "completed") {
           failedMessage =
+            summarizeRunFailure(eventSummary, {
+              state: runState,
+              stopReason,
+            }) ??
+            summarizeTerminalRunFailure({
+              state: runState,
+              stopReason,
+              failure: msg.payload.failure,
+            }) ??
             failedMessage ??
             `Run finished with state ${runState}${stopReason ? ` (${stopReason})` : ""}`;
+          if (!terminalFailurePrinted) {
+            writeLine(io.stderr, failedMessage);
+            terminalFailurePrinted = true;
+          }
         }
         resolveOnce();
       });
@@ -198,6 +215,7 @@ async function runHostLifecycle(
         runState = "failed";
         stopReason = msg.payload.error.code;
         writeLine(io.stderr, failedMessage);
+        terminalFailurePrinted = true;
         resolveOnce();
       });
 
@@ -209,6 +227,7 @@ async function runHostLifecycle(
           runState = "failed";
           stopReason = "host_disconnected";
           writeLine(io.stderr, failedMessage);
+          terminalFailurePrinted = true;
           resolveOnce();
         }
       });
@@ -259,6 +278,7 @@ async function runHostLifecycle(
       runState = "failed";
       stopReason = "host_start_failed";
       writeLine(io.stderr, failedMessage);
+      terminalFailurePrinted = true;
       if (tracePath && existsSync(tracePath)) {
         resolveOnce();
         return;
@@ -309,6 +329,15 @@ async function runHostLifecycle(
       writeLine(io.stdout, `Trace written to ${tracePath}`);
     await closeClient(client);
   }
+}
+
+function shouldForwardHostLogs(
+  env: Record<string, string | undefined>,
+): boolean {
+  const value = env.SPARKWRIGHT_CLI_HOST_LOGS?.trim().toLowerCase();
+  return (
+    value === "1" || value === "true" || value === "yes" || value === "debug"
+  );
 }
 
 async function closeClient(client: Client | undefined): Promise<void> {

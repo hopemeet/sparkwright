@@ -6,8 +6,8 @@
   "payload": {
     "goal": "inspect this repo",
     "sessionId": "session_abc123",
-    "provider": "openai",
-    "model": "gpt-4o-mini",
+    "shouldWrite": true,
+    "model": "openai/gpt-4o-mini",
     "traceLevel": "standard"
   }
 }

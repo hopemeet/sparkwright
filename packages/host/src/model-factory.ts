@@ -144,6 +144,11 @@ function createDemoModel(goal: string, targetPath: string): ModelAdapter {
 interface ScriptedModelStep {
   message?: string;
   toolCalls?: Array<{ toolName: string; arguments: unknown }>;
+  error?: {
+    message: string;
+    code?: string;
+    status?: number;
+  };
 }
 
 async function createScriptedModel(
@@ -164,6 +169,7 @@ async function createScriptedModel(
           message: "scripted model completed.",
         };
         turn += 1;
+        if (step.error) throw scriptedModelError(step.error);
         const startedAt = new Date().toISOString();
         return {
           ...(step.message !== undefined ? { message: step.message } : {}),
@@ -189,6 +195,13 @@ async function createScriptedModel(
       },
     },
   };
+}
+
+function scriptedModelError(step: NonNullable<ScriptedModelStep["error"]>) {
+  return Object.assign(new Error(step.message), {
+    ...(step.code ? { code: step.code } : {}),
+    ...(step.status !== undefined ? { status: step.status } : {}),
+  });
 }
 
 async function loadScriptedModelSteps(
@@ -253,6 +266,8 @@ function normalizeScriptedModelSteps(
     }
     const message = typeof step.message === "string" ? step.message : undefined;
     const toolCalls = step.toolCalls;
+    const error = normalizeScriptedModelError(step.error, index);
+    if (!error.ok) return error;
     if (step.message !== undefined && message === undefined) {
       return {
         ok: false,
@@ -265,18 +280,60 @@ function normalizeScriptedModelSteps(
         message: `Scripted model step ${index + 1} toolCalls must be an array of { toolName, arguments } objects.`,
       };
     }
-    if (message === undefined && toolCalls === undefined) {
+    if (message === undefined && toolCalls === undefined && !error.error) {
       return {
         ok: false,
-        message: `Scripted model step ${index + 1} must include message or toolCalls.`,
+        message: `Scripted model step ${index + 1} must include message, toolCalls, or error.`,
       };
     }
     normalized.push({
       ...(message !== undefined ? { message } : {}),
       ...(toolCalls !== undefined ? { toolCalls } : {}),
+      ...(error.error ? { error: error.error } : {}),
     });
   }
   return { ok: true, steps: normalized };
+}
+
+function normalizeScriptedModelError(
+  value: unknown,
+  index: number,
+):
+  | { ok: true; error?: NonNullable<ScriptedModelStep["error"]> }
+  | { ok: false; message: string } {
+  if (value === undefined) return { ok: true };
+  if (!isRecord(value)) {
+    return {
+      ok: false,
+      message: `Scripted model step ${index + 1} error must be an object.`,
+    };
+  }
+  if (typeof value.message !== "string" || value.message.length === 0) {
+    return {
+      ok: false,
+      message: `Scripted model step ${index + 1} error.message must be a non-empty string.`,
+    };
+  }
+  if (value.code !== undefined && typeof value.code !== "string") {
+    return {
+      ok: false,
+      message: `Scripted model step ${index + 1} error.code must be a string.`,
+    };
+  }
+  if (value.status !== undefined && typeof value.status !== "number") {
+    return {
+      ok: false,
+      message: `Scripted model step ${index + 1} error.status must be a number.`,
+    };
+  }
+  return {
+    ok: true,
+    error: {
+      message: value.message,
+      ...(typeof value.code === "string" ? { code: value.code } : {}),
+      ...(typeof value.status === "number" ? { status: value.status } : {}),
+    },
+  };
 }
 
 function isScriptedToolCalls(

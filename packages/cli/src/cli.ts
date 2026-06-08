@@ -2743,8 +2743,32 @@ function formatTraceSummary(summary: TraceSummary): string {
     `expected denials: ${summary.expectedDenialCount ?? 0}`,
     `top expected denials: ${topDenials || "(none)"}`,
     `tokens: ${summary.usage.totalTokens}`,
+    formatTraceCost(summary.usage),
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
+}
+
+function formatTraceCost(summary: TraceSummary["usage"]): string {
+  const status = summary.costStatus;
+  const cost = summary.estimatedCostUsd;
+  if (status === "estimated") return `cost: $${cost.toFixed(6)} estimated`;
+  if (status === "partial") {
+    return `cost: $${cost.toFixed(6)} partial${formatCostReasons(summary.costUnavailableReasons)}`;
+  }
+  if (status === "unavailable") {
+    return `cost: unavailable${formatCostReasons(summary.costUnavailableReasons)}`;
+  }
+  return "cost: unavailable (not reported)";
+}
+
+function formatCostReasons(
+  reasons: Record<string, number> | undefined,
+): string {
+  if (!reasons || Object.keys(reasons).length === 0) return "";
+  return ` (${Object.entries(reasons)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([reason, count]) => `${reason}:${count}`)
+    .join(", ")})`;
 }
 
 function formatTraceTimeline(timeline: TraceTimeline): string {

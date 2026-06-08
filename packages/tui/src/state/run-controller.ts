@@ -460,8 +460,13 @@ export class RunController {
         this.store.appendNotice(`handed back: ${handoff.message}`);
         this.store.setStatus("done");
       } else {
+        const terminalState = msg.payload.state;
         this.store.setStatus(
-          msg.payload.stopReason === "manual_cancelled" ? "error" : "done",
+          terminalState === "failed" ||
+            terminalState === "cancelled" ||
+            msg.payload.stopReason === "manual_cancelled"
+            ? "error"
+            : "done",
         );
       }
     });

@@ -107,6 +107,7 @@ import type {
   ModelOutputTrace,
   ModelRecoveryHint,
   ModelRetryPolicy,
+  ModelTimeoutKind,
   RunBudget,
   RunBudgetUsage,
   RunCheckpointV1,
@@ -2267,7 +2268,10 @@ export class SparkwrightRun implements RunHandle {
       requestedCall.arguments,
     );
     if (validationResult) {
-      span.close("tool.failed", validationResult);
+      span.close("tool.failed", {
+        ...validationResult,
+        toolName: requestedCall.toolName,
+      });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: validationResult.status,
@@ -2518,6 +2522,7 @@ export class SparkwrightRun implements RunHandle {
         error: {
           code: "TOOL_NOT_FOUND",
           message: `Tool not found: ${toolName}`,
+          metadata: { toolName },
         },
         artifacts: [],
       };
@@ -2529,7 +2534,13 @@ export class SparkwrightRun implements RunHandle {
     return {
       toolCallId,
       status: "failed",
-      error: validationError,
+      error: {
+        ...validationError,
+        metadata: {
+          ...(validationError.metadata ?? {}),
+          toolName,
+        },
+      },
       artifacts: [],
     };
   }
@@ -3124,9 +3135,39 @@ export class SparkwrightRun implements RunHandle {
       }
     } catch (cause) {
       timing.completedAtMs = Date.now();
+      const modelError = normalizeModelError(cause);
+      if (modelError.category === "timeout") {
+        this.events.emit("model.stream.timeout", {
+          step: input.step,
+          message: modelError.message,
+          timeoutKind: modelError.timeoutKind ?? "unknown",
+          retryable: modelError.retryable,
+          ...(modelError.configuredTimeoutMs !== undefined
+            ? { configuredTimeoutMs: modelError.configuredTimeoutMs }
+            : {}),
+          ...(modelError.elapsedMs !== undefined
+            ? { elapsedMs: modelError.elapsedMs }
+            : {}),
+        });
+      }
       this.events.emit("model.stream.failed", {
         step: input.step,
-        error: cause instanceof Error ? cause.message : String(cause),
+        error: modelError.message,
+        ...(modelError.category === "timeout"
+          ? {
+              metadata: {
+                category: modelError.category,
+                timeoutKind: modelError.timeoutKind ?? "unknown",
+                retryable: modelError.retryable,
+                ...(modelError.configuredTimeoutMs !== undefined
+                  ? { configuredTimeoutMs: modelError.configuredTimeoutMs }
+                  : {}),
+                ...(modelError.elapsedMs !== undefined
+                  ? { elapsedMs: modelError.elapsedMs }
+                  : {}),
+              },
+            }
+          : {}),
       });
       throw cause;
     }
@@ -3627,6 +3668,20 @@ function normalizeModelError(cause: unknown): ModelErrorEnvelope {
   const recoveryHint = extractRecoveryHint(cause);
   const retryable = isRetryableModelFailure(cause);
   const retryAfterMs = extractRetryAfterMs(cause);
+  const timeoutKind = extractTimeoutKind(cause, {
+    status,
+    code: upperCode,
+  });
+  const configuredTimeoutMs = isRecord(cause)
+    ? getNestedNumericProperty(cause, [
+        "configuredTimeoutMs",
+        "timeoutMs",
+        "timeout",
+      ])
+    : undefined;
+  const elapsedMs = isRecord(cause)
+    ? getNestedNumericProperty(cause, ["elapsedMs", "durationMs"])
+    : undefined;
 
   return {
     category: modelErrorCategory({
@@ -3634,6 +3689,7 @@ function normalizeModelError(cause: unknown): ModelErrorEnvelope {
       code: upperCode,
       providerCode,
       recoveryHint,
+      timeoutKind,
     }),
     message: getErrorMessage(cause),
     code,
@@ -3641,6 +3697,9 @@ function normalizeModelError(cause: unknown): ModelErrorEnvelope {
     status,
     retryable,
     recoveryHint,
+    timeoutKind,
+    ...(configuredTimeoutMs !== undefined ? { configuredTimeoutMs } : {}),
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
     ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     withholdOutput:
       recoveryHint === "reduce_input" || recoveryHint === "extend_output",
@@ -3692,9 +3751,11 @@ function modelErrorCategory(input: {
   code?: string;
   providerCode?: string;
   recoveryHint?: ModelRecoveryHint;
+  timeoutKind?: ModelTimeoutKind;
 }): ModelErrorEnvelope["category"] {
   if (input.recoveryHint === "reduce_input") return "context_overflow";
   if (input.recoveryHint === "extend_output") return "output_truncated";
+  if (input.timeoutKind) return "timeout";
   // Provider-specific terminal codes win over raw HTTP status because some
   // providers (e.g. OpenAI) signal billing/quota exhaustion with HTTP 429,
   // which is the same status used for transient rate limiting. Conflating
@@ -3703,15 +3764,67 @@ function modelErrorCategory(input: {
   if (input.providerCode === "invalid_api_key") return "auth";
   if (input.providerCode === "model_not_found") return "invalid_request";
   if (input.status === 401 || input.status === 403) return "auth";
+  if (input.status === 408) return "timeout";
   if (input.status === 429) return "rate_limited";
   if (input.status !== undefined && input.status >= 500) {
     return "provider_unavailable";
   }
   if (input.code === "CONTENT_FILTER") return "content_filter";
+  if (input.code !== undefined && isTimeoutCode(input.code)) return "timeout";
   if (input.code !== undefined && RETRYABLE_MODEL_ERROR_CODES.has(input.code)) {
     return "network";
   }
   return "unknown";
+}
+
+function extractTimeoutKind(
+  cause: unknown,
+  input: { status?: number; code?: string },
+): ModelTimeoutKind | undefined {
+  if (isRecord(cause)) {
+    const explicit = getNestedStringProperty(cause, ["timeoutKind"]);
+    if (isModelTimeoutKind(explicit)) return explicit;
+  }
+
+  const code = input.code;
+  if (code !== undefined) {
+    if (code.includes("CONNECT_TIMEOUT")) return "connect";
+    if (isTimeoutCode(code)) return "request";
+  }
+  if (input.status === 408) return "request";
+
+  const message = getErrorMessage(cause).toLowerCase();
+  if (!message.includes("timeout") && !message.includes("timed out")) {
+    return undefined;
+  }
+  if (message.includes("first token") || message.includes("ttft")) {
+    return "first_token";
+  }
+  if (message.includes("stream")) return "stream";
+  if (message.includes("connect")) return "connect";
+  return "request";
+}
+
+function isTimeoutCode(code: string): boolean {
+  return (
+    code === "TIMEOUT" ||
+    code === "ETIMEDOUT" ||
+    code === "UND_ERR_CONNECT_TIMEOUT" ||
+    code.endsWith("_TIMEOUT") ||
+    code.includes("TIMEOUT")
+  );
+}
+
+function isModelTimeoutKind(
+  value: string | undefined,
+): value is ModelTimeoutKind {
+  return (
+    value === "connect" ||
+    value === "request" ||
+    value === "first_token" ||
+    value === "stream" ||
+    value === "unknown"
+  );
 }
 
 function getErrorMessage(cause: unknown): string {

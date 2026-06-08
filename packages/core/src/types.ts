@@ -375,7 +375,15 @@ export type ModelErrorCategory =
   | "provider_unavailable"
   | "invalid_request"
   | "content_filter"
+  | "timeout"
   | "network"
+  | "unknown";
+
+export type ModelTimeoutKind =
+  | "connect"
+  | "request"
+  | "first_token"
+  | "stream"
   | "unknown";
 
 /**
@@ -391,6 +399,9 @@ export interface ModelErrorEnvelope {
   status?: number;
   retryable: boolean;
   recoveryHint?: ModelRecoveryHint;
+  timeoutKind?: ModelTimeoutKind;
+  configuredTimeoutMs?: number;
+  elapsedMs?: number;
   /**
    * Provider-requested cool-down before the next attempt, in milliseconds.
    * Normalized from an HTTP `Retry-After` header (seconds or HTTP-date) or a
@@ -415,7 +426,14 @@ export interface ModelUsage {
   cacheReadTokens?: number;
   /** Provider-reported prompt-cache creation/write tokens, when available. */
   cacheCreationTokens?: number;
+  /**
+   * Estimated model cost in USD when pricing metadata is available.
+   * `costStatus` explains whether this field is meaningful or absent because
+   * pricing is unavailable.
+   */
   costUsd?: number;
+  costStatus?: "estimated" | "unavailable";
+  costUnavailableReason?: "missing_pricing" | string;
 }
 
 /**

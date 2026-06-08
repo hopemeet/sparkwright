@@ -33,6 +33,7 @@ import { writeLine } from "../io.js";
 import {
   cliExitCodeForRun,
   createCliRunEventSummary,
+  summarizeRunFailure,
   summarizeUnhandledToolFailures,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
@@ -160,6 +161,11 @@ export async function startDirectCoreRun(
 
   try {
     const result = await run.start();
+    const runFailureSummary = summarizeRunFailure(eventSummary, {
+      state: result.state,
+      stopReason: result.stopReason,
+    });
+    if (runFailureSummary) writeLine(io.stderr, runFailureSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
     return {

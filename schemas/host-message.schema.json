@@ -267,6 +267,18 @@
       },
       "additionalProperties": false
     },
+    "RunFailureEnvelope": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "category": { "type": "string" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
     "HandshakeRequestPayload": {
       "type": "object",
       "required": ["protocolVersion", "client"],
@@ -304,7 +316,10 @@
           "minLength": 1,
           "description": "Workspace-relative target path that the run should focus on when applicable."
         },
-        "provider": { "type": "string", "enum": ["deterministic", "openai"] },
+        "shouldWrite": {
+          "type": "boolean",
+          "description": "Whether this run is allowed to request workspace writes."
+        },
         "model": { "type": "string", "minLength": 1 },
         "permissionMode": {
           "type": "string",
@@ -351,6 +366,10 @@
           "type": "string",
           "minLength": 1,
           "description": "Workspace-relative target path that the resumed run should focus on when applicable."
+        },
+        "shouldWrite": {
+          "type": "boolean",
+          "description": "Whether the resumed run is allowed to request workspace writes."
         },
         "fromTrace": {
           "type": "boolean",
@@ -505,7 +524,18 @@
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "state": { "type": "string" },
-        "stopReason": { "type": "string" }
+        "stopReason": { "type": "string" },
+        "outcome": { "type": "object" },
+        "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
+        "todoHandoff": {
+          "type": "object",
+          "required": ["reason", "message"],
+          "properties": {
+            "reason": { "type": "string", "minLength": 1 },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

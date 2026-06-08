@@ -1647,6 +1647,10 @@ describe("runCli", () => {
       );
 
       expect(result.exitCode).toBe(1);
+      expect(output.stderrText()).toContain("Model failed:");
+      expect(output.stderrText()).toContain("status=401");
+      expect(output.stderrText()).not.toContain("APICallError");
+      expect(output.stderrText()).not.toContain("@ai-sdk");
       expect(mock.requests).toHaveLength(1);
       expect(mock.requests[0]?.authorization).toBe("Bearer ENV_KEY");
       const events = await readTrace(result.tracePath);
@@ -1763,6 +1767,47 @@ describe("runCli", () => {
     );
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("events:");
+    expect(textOutput.stdoutText()).toContain(
+      "cost: unavailable (not reported)",
+    );
+  });
+
+  it("prints unavailable cost reasons in text trace summaries", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "cost-unavailable.trace.jsonl");
+    await writeFile(
+      tracePath,
+      JSON.stringify({
+        id: "evt_usage",
+        runId: "run_cost",
+        type: "model.completed",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: {
+          usage: {
+            inputTokens: 10,
+            outputTokens: 2,
+            totalTokens: 12,
+            costStatus: "unavailable",
+            costUnavailableReason: "missing_pricing",
+          },
+        },
+      }) + "\n",
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["trace", "summary", tracePath, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "cost: unavailable (missing_pricing:1)",
+    );
   });
 
   it("counts failed MCP preparation in trace summaries", async () => {
@@ -2372,6 +2417,104 @@ describe("runCli", () => {
             "TOOL_DENIED",
       ),
     ).toBeTruthy();
+  });
+
+  it("rejects scripted model tool calls with invalid args before execution or approval", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Exercise invalid tool args.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "invalid tool args",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: { nested: "README.md" } },
+                },
+                {
+                  toolName: "read_file",
+                  arguments: {},
+                },
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    body: "Missing heading should fail validation.",
+                  },
+                },
+              ],
+            },
+            { message: "saw invalid args" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(1);
+    expect(output.stdoutText()).toContain("tool.failed read_file");
+    expect(output.stdoutText()).toContain("tool.failed append_file");
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    const invalidFailures = traceEvents.filter(
+      (event) =>
+        event.type === "tool.failed" &&
+        (event.payload?.error as { code?: string } | undefined)?.code ===
+          "TOOL_ARGUMENTS_INVALID",
+    );
+    expect(invalidFailures).toHaveLength(3);
+    expect(traceEvents.map((event) => event.type)).not.toContain(
+      "tool.started",
+    );
+    expect(traceEvents.map((event) => event.type)).not.toContain(
+      "approval.requested",
+    );
+    expect(traceEvents.map((event) => event.type)).not.toContain(
+      "workspace.write.completed",
+    );
+    expect(
+      invalidFailures.map((event) => event.payload?.toolName).sort(),
+    ).toEqual(["append_file", "read_file", "read_file"]);
+    expect(
+      invalidFailures.map(
+        (event) =>
+          (
+            event.payload?.error as
+              | { metadata?: { toolName?: string } }
+              | undefined
+          )?.metadata?.toolName,
+      ),
+    ).toEqual(["read_file", "read_file", "append_file"]);
+    expect(
+      invalidFailures.map(
+        (event) => (event.payload?.error as { message?: string }).message,
+      ),
+    ).toEqual([
+      "$.path: expected string.",
+      "$.path: required property is missing.",
+      "$.heading: required property is missing.",
+    ]);
   });
 
   it("denies destructive shell deletion before it mutates the workspace", async () => {

@@ -540,11 +540,37 @@ function EventCard(props: {
       // `final_answer` is the normal happy path — the assistant card above
       // already ended the turn, so show only a subtle separator. Surface the
       // reason text just for the unusual stops (budget, cancelled, etc.).
-      const reason = str(p.reason) || str(p.stopReason) || "completed";
-      const isFinal = reason === "final_answer";
+      const state = str(p.state);
+      const reason = str(p.reason) || str(p.stopReason);
+      if (state === "failed") {
+        const err =
+          str(p.message) ||
+          str(rec(p.failure).message) ||
+          str(rec(p.error).message) ||
+          reason ||
+          "run failed";
+        return (
+          <Box paddingX={1} marginTop={1}>
+            <Text color={theme.error}>── run failed: {err}</Text>
+          </Box>
+        );
+      }
+      if (state === "cancelled") {
+        return (
+          <Box paddingX={1} marginTop={1}>
+            <Text color={theme.error}>
+              ── run cancelled: {reason || "cancelled"}
+            </Text>
+          </Box>
+        );
+      }
+      const displayReason = reason || "completed";
+      const isFinal = displayReason === "final_answer";
       return (
         <Box paddingX={1} marginTop={1}>
-          <Text dimColor>{isFinal ? "─────" : `── run ${reason}`}</Text>
+          <Text dimColor>
+            {isFinal ? "─────" : `── run ${displayReason}`}
+          </Text>
         </Box>
       );
     }

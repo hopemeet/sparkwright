@@ -43,17 +43,22 @@ export function createAiSdkModelAdapter(
   return {
     ...(options.id ? { id: options.id } : {}),
     async complete(input: ModelInput): Promise<ModelOutput> {
-      const result = await generateText({
-        model: options.model,
-        messages: toModelMessages(input.prompt ?? fallbackPrompt(input)),
-        allowSystemInMessages: true,
-        tools: toAiSdkTools(input.tools),
-        maxRetries: options.maxRetries ?? 0,
-        timeout: options.timeout,
-        // Forward the run-scoped abort signal so cancel() aborts the in-flight
-        // HTTP request instead of letting it run to completion.
-        abortSignal: input.abortSignal,
-      });
+      let result: Awaited<ReturnType<typeof generateText>>;
+      try {
+        result = await generateText({
+          model: options.model,
+          messages: toModelMessages(input.prompt ?? fallbackPrompt(input)),
+          allowSystemInMessages: true,
+          tools: toAiSdkTools(input.tools),
+          maxRetries: options.maxRetries ?? 0,
+          timeout: options.timeout,
+          // Forward the run-scoped abort signal so cancel() aborts the in-flight
+          // HTTP request instead of letting it run to completion.
+          abortSignal: input.abortSignal,
+        });
+      } catch (cause) {
+        throw annotateTimeoutError(cause, options.timeout, "request");
+      }
 
       const output = {
         message: result.text || undefined,
@@ -71,62 +76,73 @@ export function createAiSdkModelAdapter(
     },
 
     async *stream(input: ModelInput): AsyncIterable<ModelOutputChunk> {
-      const { fullStream } = streamText({
-        model: options.model,
-        messages: toModelMessages(input.prompt ?? fallbackPrompt(input)),
-        allowSystemInMessages: true,
-        tools: toAiSdkTools(input.tools),
-        maxRetries: options.maxRetries ?? 0,
-        timeout: options.timeout,
-        // Forward the run-scoped abort signal so cancel() tears down the SSE
-        // stream mid-flight rather than draining the full response.
-        abortSignal: input.abortSignal,
-      });
+      let fullStream: Awaited<ReturnType<typeof streamText>>["fullStream"];
+      try {
+        ({ fullStream } = streamText({
+          model: options.model,
+          messages: toModelMessages(input.prompt ?? fallbackPrompt(input)),
+          allowSystemInMessages: true,
+          tools: toAiSdkTools(input.tools),
+          maxRetries: options.maxRetries ?? 0,
+          timeout: options.timeout,
+          // Forward the run-scoped abort signal so cancel() tears down the SSE
+          // stream mid-flight rather than draining the full response.
+          abortSignal: input.abortSignal,
+        }));
+      } catch (cause) {
+        throw annotateTimeoutError(cause, options.timeout, "stream");
+      }
 
       // Track tool-input-start id -> index mapping for stable ordering
       const toolCallIdToIndex = new Map<string, number>();
       let nextToolCallIndex = 0;
 
-      for await (const chunk of fullStream) {
-        if (chunk.type === "error") {
-          // The AI SDK reports API/network failures as an `error` chunk on
-          // fullStream rather than throwing. Re-throw so the run loop's
-          // stream catch emits `model.stream.failed` and the run fails
-          // visibly instead of silently completing with empty output.
-          const err = (chunk as { error: unknown }).error;
-          if (err instanceof Error) throw err;
-          throw new Error(typeof err === "string" ? err : JSON.stringify(err));
-        }
-        if (chunk.type === "text-delta") {
-          yield { type: "text_delta", text: chunk.text };
-        } else if (chunk.type === "tool-input-start") {
-          const index = nextToolCallIndex++;
-          toolCallIdToIndex.set(chunk.id, index);
-          yield {
-            type: "tool_call_start",
-            toolName: chunk.toolName,
-            toolCallIndex: index,
-          };
-        } else if (chunk.type === "tool-input-delta") {
-          const index = toolCallIdToIndex.get(chunk.id);
-          if (index !== undefined) {
+      try {
+        for await (const chunk of fullStream) {
+          if (chunk.type === "error") {
+            // The AI SDK reports API/network failures as an `error` chunk on
+            // fullStream rather than throwing. Re-throw so the run loop's
+            // stream catch emits `model.stream.failed` and the run fails
+            // visibly instead of silently completing with empty output.
+            const err = (chunk as { error: unknown }).error;
+            if (err instanceof Error) throw err;
+            throw new Error(
+              typeof err === "string" ? err : JSON.stringify(err),
+            );
+          }
+          if (chunk.type === "text-delta") {
+            yield { type: "text_delta", text: chunk.text };
+          } else if (chunk.type === "tool-input-start") {
+            const index = nextToolCallIndex++;
+            toolCallIdToIndex.set(chunk.id, index);
             yield {
-              type: "tool_call_delta",
+              type: "tool_call_start",
+              toolName: chunk.toolName,
               toolCallIndex: index,
-              argumentsDelta: chunk.delta,
             };
-          }
-        } else if (chunk.type === "tool-call") {
-          const index = toolCallIdToIndex.get(chunk.toolCallId);
-          if (index !== undefined) {
-            yield { type: "tool_call_end", toolCallIndex: index };
-          }
-        } else if (chunk.type === "finish") {
-          const usage = withCost(normalizeUsage(chunk.totalUsage));
-          if (usage) {
-            yield { type: "usage", usage };
+          } else if (chunk.type === "tool-input-delta") {
+            const index = toolCallIdToIndex.get(chunk.id);
+            if (index !== undefined) {
+              yield {
+                type: "tool_call_delta",
+                toolCallIndex: index,
+                argumentsDelta: chunk.delta,
+              };
+            }
+          } else if (chunk.type === "tool-call") {
+            const index = toolCallIdToIndex.get(chunk.toolCallId);
+            if (index !== undefined) {
+              yield { type: "tool_call_end", toolCallIndex: index };
+            }
+          } else if (chunk.type === "finish") {
+            const usage = withCost(normalizeUsage(chunk.totalUsage));
+            if (usage) {
+              yield { type: "usage", usage };
+            }
           }
         }
+      } catch (cause) {
+        throw annotateTimeoutError(cause, options.timeout, "stream");
       }
     },
   };
@@ -321,6 +337,49 @@ function numericValue(value: unknown): number | undefined {
     : undefined;
 }
 
+function annotateTimeoutError(
+  cause: unknown,
+  configuredTimeoutMs: number | undefined,
+  timeoutKind: "request" | "stream",
+): unknown {
+  if (!looksLikeTimeout(cause)) return cause;
+  const metadata = {
+    timeoutKind,
+    ...(configuredTimeoutMs !== undefined ? { configuredTimeoutMs } : {}),
+  };
+  if (cause instanceof Error) {
+    return Object.assign(cause, metadata);
+  }
+  if (isRecord(cause)) {
+    return { ...cause, ...metadata };
+  }
+  return Object.assign(new Error(String(cause)), metadata);
+}
+
+function looksLikeTimeout(cause: unknown): boolean {
+  if (isRecord(cause)) {
+    const code = stringValue(cause.code)?.toUpperCase();
+    if (code && (code.includes("TIMEOUT") || code === "ETIMEDOUT")) {
+      return true;
+    }
+    const name = stringValue(cause.name)?.toLowerCase();
+    if (name?.includes("timeout")) return true;
+  }
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : isRecord(cause)
+        ? stringValue(cause.message)
+        : typeof cause === "string"
+          ? cause
+          : undefined;
+  return message !== undefined && /\b(time[- ]?out|timed out)\b/i.test(message);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -329,7 +388,14 @@ function applyPricing(
   usage: ModelUsage | undefined,
   pricing: ModelPricing | undefined,
 ): ModelUsage | undefined {
-  if (!usage || !pricing) return usage;
+  if (!usage) return usage;
+  if (!pricing) {
+    return {
+      ...usage,
+      costStatus: "unavailable",
+      costUnavailableReason: "missing_pricing",
+    };
+  }
 
   const nonCachedInput =
     (usage.inputTokens ?? 0) - (usage.cacheReadTokens ?? 0);
@@ -339,7 +405,7 @@ function applyPricing(
     (usage.cacheReadTokens ?? 0) * (pricing.cacheReadPerMTokUsd ?? 0) +
     (usage.cacheCreationTokens ?? 0) * (pricing.cacheCreationPerMTokUsd ?? 0);
 
-  return { ...usage, costUsd: cost / 1_000_000 };
+  return { ...usage, costUsd: cost / 1_000_000, costStatus: "estimated" };
 }
 
 /**

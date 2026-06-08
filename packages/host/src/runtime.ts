@@ -830,6 +830,9 @@ export class HostRuntime {
             ...(outcome.result.metadata.outcome
               ? { outcome: outcome.result.metadata.outcome }
               : {}),
+            ...(outcome.result.failure
+              ? { failure: outcome.result.failure }
+              : {}),
             ...(handoff ? { todoHandoff: handoff } : {}),
           },
         });

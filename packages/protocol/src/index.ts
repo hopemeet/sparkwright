@@ -39,6 +39,14 @@ export interface ProtocolError {
   details?: Record<string, unknown>;
 }
 
+export interface RunFailureEnvelope {
+  category?: string;
+  code: string;
+  message: string;
+  retryable?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
@@ -347,6 +355,10 @@ export interface RunCompletedEventPayload {
   runId: string;
   state: string;
   stopReason?: string;
+  /** Present when the run completed with a non-clean outcome summary. */
+  outcome?: object;
+  /** Present when `state` is `failed` or `cancelled` and a structured cause is available. */
+  failure?: RunFailureEnvelope;
   /**
    * Present when the run chain ended by handing back to the human while todos
    * were still unfinished (continuation limit reached, stalled without

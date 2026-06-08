@@ -260,6 +260,84 @@ describe("host protocol", () => {
     }
   });
 
+  it("forwards structured run failure on failed run.completed", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-terminal-failure-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        error: {
+          message: "scripted provider rejected request",
+          code: "invalid_api_key",
+          status: 401,
+        },
+      },
+    ]);
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "run_invalid_args",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "exercise invalid tool args",
+          model: "scripted",
+          permissionMode: "default",
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "run_invalid_args",
+      );
+      const completed = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: {
+          state: "failed",
+          stopReason: "model_auth_failed",
+          failure: {
+            category: "model",
+            code: "MODEL_COMPLETION_FAILED",
+            message: "scripted provider rejected request",
+            retryable: false,
+          },
+        },
+      });
+      expect(JSON.stringify(completed)).toContain('"status":401');
+      expect(JSON.stringify(completed)).not.toContain(
+        "SPARKWRIGHT_SCRIPTED_MODEL_JSON",
+      );
+    } finally {
+      if (previousScript === undefined)
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      else process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("accepts the run.resume payload shape and reports missing runs from runtime lookup", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

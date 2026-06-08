@@ -120,6 +120,8 @@ export interface TraceSummary {
     reasoningTokens: number;
     totalTokens: number;
     estimatedCostUsd: number;
+    costStatus?: "estimated" | "unavailable" | "partial";
+    costUnavailableReasons?: Record<string, number>;
   };
 }
 
@@ -2627,10 +2629,11 @@ function addUsage(summary: TraceSummary, usage: Record<string, unknown>): void {
     usage.estimatedCostUsd,
     usage.costUsd,
   );
+  addCostStatus(summary.usage, usage);
 }
 
 function usageToSummary(usage: Record<string, unknown>): TraceSummary["usage"] {
-  return {
+  const out: TraceSummary["usage"] = {
     inputTokens: numberValue(usage.inputTokens, usage.promptTokens),
     outputTokens: numberValue(usage.outputTokens, usage.completionTokens),
     cacheReadTokens: numberValue(usage.cacheReadTokens),
@@ -2639,6 +2642,51 @@ function usageToSummary(usage: Record<string, unknown>): TraceSummary["usage"] {
     totalTokens: numberValue(usage.totalTokens, usage.tokens),
     estimatedCostUsd: numberValue(usage.estimatedCostUsd, usage.costUsd),
   };
+  addCostStatus(out, usage);
+  return out;
+}
+
+function addCostStatus(
+  target: TraceSummary["usage"],
+  usage: Record<string, unknown>,
+): void {
+  const status = stringValue(usage.costStatus);
+  if (
+    status === "estimated" ||
+    status === "unavailable" ||
+    status === "partial"
+  ) {
+    target.costStatus = mergeCostStatus(target.costStatus, status);
+  } else if (
+    (positiveNumber(usage.estimatedCostUsd) || positiveNumber(usage.costUsd)) &&
+    target.costStatus !== "partial" &&
+    target.costStatus !== "unavailable"
+  ) {
+    target.costStatus = "estimated";
+  }
+
+  const reasons = isRecord(usage.costUnavailableReasons)
+    ? usage.costUnavailableReasons
+    : stringValue(usage.costUnavailableReason)
+      ? { [stringValue(usage.costUnavailableReason)!]: 1 }
+      : undefined;
+  if (!reasons) return;
+
+  const targetReasons = (target.costUnavailableReasons ??= {});
+  for (const [reason, count] of Object.entries(reasons)) {
+    const n = typeof count === "number" && Number.isFinite(count) ? count : 1;
+    targetReasons[reason] = (targetReasons[reason] ?? 0) + n;
+  }
+  target.costStatus = mergeCostStatus(target.costStatus, "unavailable");
+}
+
+function mergeCostStatus(
+  current: TraceSummary["usage"]["costStatus"],
+  next: NonNullable<TraceSummary["usage"]["costStatus"]>,
+): NonNullable<TraceSummary["usage"]["costStatus"]> {
+  if (!current) return next;
+  if (current === next) return current;
+  return "partial";
 }
 
 function numberValue(...values: unknown[]): number {
@@ -2646,6 +2694,10 @@ function numberValue(...values: unknown[]): number {
     if (typeof value === "number" && Number.isFinite(value)) return value;
   }
   return 0;
+}
+
+function positiveNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -40,7 +40,11 @@ export interface UsageModelStats {
   outputTokens: number;
   totalTokens: number;
   costUsd: number;
+  costStatus?: UsageCostStatus;
+  costUnavailableReasons?: Record<string, number>;
 }
+
+export type UsageCostStatus = "estimated" | "unavailable" | "partial";
 
 export interface UsageSnapshot {
   runId: RunId;
@@ -59,6 +63,8 @@ export interface UsageSnapshot {
   contextTokens: number;
   tokens: UsageTokenTotals;
   costUsd: number;
+  costStatus?: UsageCostStatus;
+  costUnavailableReasons?: Record<string, number>;
   /** @reserved Public usage-protocol field consumed by billing/dashboards. */
   byTool: Record<string, UsageToolStats>;
   /** @reserved Public usage-protocol field consumed by billing/dashboards. */
@@ -108,6 +114,8 @@ export function createUsageTracker(
     cachedTokens: 0,
     costUsd: 0,
   };
+  let estimatedCostSeen = false;
+  const costUnavailableReasons: Record<string, number> = {};
   let contextTokens = 0;
   const byTool: Record<string, UsageToolStats> = {};
   const byModel: Record<string, UsageModelStats> = {};
@@ -132,6 +140,7 @@ export function createUsageTracker(
         cached: counters.cachedTokens,
       },
       costUsd: counters.costUsd,
+      ...costStatusFields(estimatedCostSeen, costUnavailableReasons),
       byTool: cloneTool(byTool),
       byModel: cloneModel(byModel),
     };
@@ -172,6 +181,15 @@ export function createUsageTracker(
         counters.totalTokens += total;
         counters.cachedTokens += usage.cacheReadTokens ?? 0;
         counters.costUsd += usage.costUsd ?? 0;
+        if (usage.costStatus === "estimated" || usage.costUsd !== undefined) {
+          estimatedCostSeen = true;
+        }
+        if (usage.costStatus === "unavailable") {
+          incrementReason(
+            costUnavailableReasons,
+            usage.costUnavailableReason ?? "unknown",
+          );
+        }
         if (typeof usage.inputTokens === "number") contextTokens = input;
         if (adapterId) {
           const slot = (byModel[adapterId] ??= {
@@ -186,6 +204,7 @@ export function createUsageTracker(
           slot.outputTokens += output;
           slot.totalTokens += total;
           slot.costUsd += usage.costUsd ?? 0;
+          recordModelCostStatus(slot, usage);
         }
       } else if (adapterId) {
         const slot = (byModel[adapterId] ??= {
@@ -296,6 +315,61 @@ function cloneModel(
   src: Record<string, UsageModelStats>,
 ): Record<string, UsageModelStats> {
   const copy: Record<string, UsageModelStats> = {};
-  for (const [k, v] of Object.entries(src)) copy[k] = { ...v };
+  for (const [k, v] of Object.entries(src)) {
+    copy[k] = {
+      ...v,
+      ...(v.costUnavailableReasons
+        ? { costUnavailableReasons: { ...v.costUnavailableReasons } }
+        : {}),
+    };
+  }
   return copy;
+}
+
+function recordModelCostStatus(
+  stats: UsageModelStats,
+  usage: ModelUsage,
+): void {
+  const estimatedSeen =
+    stats.costStatus === "estimated" ||
+    stats.costStatus === "partial" ||
+    usage.costStatus === "estimated" ||
+    usage.costUsd !== undefined;
+  if (usage.costStatus === "unavailable") {
+    const reasons = (stats.costUnavailableReasons ??= {});
+    incrementReason(reasons, usage.costUnavailableReason ?? "unknown");
+  }
+  const fields = costStatusFields(
+    estimatedSeen,
+    stats.costUnavailableReasons ?? {},
+  );
+  if (fields.costStatus) stats.costStatus = fields.costStatus;
+  if (fields.costUnavailableReasons) {
+    stats.costUnavailableReasons = fields.costUnavailableReasons;
+  }
+}
+
+function costStatusFields(
+  estimatedSeen: boolean,
+  unavailableReasons: Record<string, number>,
+): Pick<UsageSnapshot, "costStatus" | "costUnavailableReasons"> {
+  const unavailableSeen = Object.keys(unavailableReasons).length > 0;
+  const costStatus =
+    estimatedSeen && unavailableSeen
+      ? "partial"
+      : estimatedSeen
+        ? "estimated"
+        : unavailableSeen
+          ? "unavailable"
+          : undefined;
+  return {
+    ...(costStatus ? { costStatus } : {}),
+    ...(unavailableSeen
+      ? { costUnavailableReasons: { ...unavailableReasons } }
+      : {}),
+  };
+}
+
+function incrementReason(target: Record<string, number>, reason: string): void {
+  target[reason] = (target[reason] ?? 0) + 1;
 }

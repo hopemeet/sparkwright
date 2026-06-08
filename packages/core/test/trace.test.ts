@@ -1039,6 +1039,42 @@ describe("trace", () => {
     expect(summary.usage.outputTokens).toBe(5);
   });
 
+  it("summarizes cost estimation status and unavailable reasons", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("model.completed", {
+        usage: {
+          inputTokens: 3,
+          outputTokens: 5,
+          totalTokens: 8,
+          costStatus: "unavailable",
+          costUnavailableReason: "missing_pricing",
+        },
+      }),
+      log.emit("model.completed", {
+        usage: {
+          inputTokens: 10,
+          outputTokens: 2,
+          totalTokens: 12,
+          costUsd: 0.001,
+          costStatus: "estimated",
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.usage.totalTokens).toBe(20);
+    expect(summary.usage.estimatedCostUsd).toBeCloseTo(0.001);
+    expect(summary.usage.costStatus).toBe("partial");
+    expect(summary.usage.costUnavailableReasons).toEqual({
+      missing_pricing: 1,
+    });
+  });
+
   it("uses latest usage snapshots when model usage is unavailable", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
