@@ -568,9 +568,7 @@ function EventCard(props: {
       const isFinal = displayReason === "final_answer";
       return (
         <Box paddingX={1} marginTop={1}>
-          <Text dimColor>
-            {isFinal ? "─────" : `── run ${displayReason}`}
-          </Text>
+          <Text dimColor>{isFinal ? "─────" : `── run ${displayReason}`}</Text>
         </Box>
       );
     }

@@ -168,7 +168,11 @@ export function createHostShellTool(
       const after = await snapshotWorkspace(workspaceRoot);
       const changes = diffWorkspaceSnapshots(before, after);
       if (changes.length > 0) {
-        const rollback = await rollbackWorkspaceSnapshot(workspaceRoot, before, after);
+        const rollback = await rollbackWorkspaceSnapshot(
+          workspaceRoot,
+          before,
+          after,
+        );
         throw new UntrackedWorkspaceMutationError(changes, rollback);
       }
       return output;
@@ -242,7 +246,8 @@ async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
 
       const canCapture =
         content.byteLength <= SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES &&
-        capturedBytes + content.byteLength <= SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES;
+        capturedBytes + content.byteLength <=
+          SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES;
       if (canCapture) capturedBytes += content.byteLength;
       snapshot.set(relativePath, {
         hash: hashBuffer(content),

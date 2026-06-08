@@ -7,7 +7,6 @@ import type {
   SparkwrightEvent,
   TraceLevel,
 } from "@sparkwright/core";
-import { createSessionId } from "@sparkwright/core";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import { writeHostStartFailureTrace } from "@sparkwright/host";
 import { createCliApprovalResolver } from "../cli-approval.js";

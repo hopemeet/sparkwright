@@ -16,7 +16,7 @@ import {
 import type { SparkwrightEvent } from "../src/events.js";
 import { asSessionId, createSessionId, type RunId } from "../src/ids.js";
 import type { RunStore } from "../src/storage.js";
-import type { RunRecord, RunResult } from "../src/types.js";
+import type { Artifact, RunRecord, RunResult } from "../src/types.js";
 import { createSessionFileRunStoreFactory } from "../src/trace.js";
 
 describe("session", () => {
@@ -312,6 +312,38 @@ describe("session", () => {
     ]);
     expect(persisted.map((item) => item.type)).toEqual(["run.created"]);
     expect(finished).toHaveLength(1);
+  });
+
+  it("persists session membership before writing artifacts", async () => {
+    const sessionStore = new InMemorySessionStore();
+    const written: Artifact[] = [];
+    const run = runRecord("run_artifact_wrapped" as unknown as RunId);
+    const factory = createSessionRunStoreFactory({
+      sessionStore,
+      sessionId: "session_artifact_wrapped",
+      runStoreFactory: () => ({
+        append() {},
+        finish() {},
+        writeArtifact(artifact) {
+          written.push(artifact);
+        },
+      }),
+    });
+
+    const runStore = factory(run);
+    await runStore.writeArtifact?.({
+      id: "artifact_test" as Artifact["id"],
+      runId: run.id,
+      type: "text",
+      name: "note.txt",
+      content: "hello",
+      metadata: {},
+    });
+
+    expect(
+      (await sessionStore.get("session_artifact_wrapped"))?.runIds,
+    ).toEqual([run.id]);
+    expect(written).toHaveLength(1);
   });
 
   it("composes FileSessionStore with session-scoped FileRunStore safely", async () => {

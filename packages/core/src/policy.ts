@@ -271,9 +271,10 @@ export function createWorkspaceMutationPolicy(
           );
         }
 
-        const diff = typeof input.metadata?.diff === "string"
-          ? input.metadata.diff
-          : undefined;
+        const diff =
+          typeof input.metadata?.diff === "string"
+            ? input.metadata.diff
+            : undefined;
         const diffStats = diff ? summarizeUnifiedDiff(diff) : undefined;
         if (
           diffStats &&

@@ -33,8 +33,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--port" && argv[i + 1]) port = Number(argv[++i]);
     else if (a === "--host" && argv[i + 1]) host = argv[++i];
     else if (a === "--workspace" && argv[i + 1]) workspaceRoot = argv[++i];
-    else if (a === "--session-root" && argv[i + 1])
-      sessionRootDir = argv[++i];
+    else if (a === "--session-root" && argv[i + 1]) sessionRootDir = argv[++i];
     else if (a === "--model" && argv[i + 1]) model = argv[++i];
     else if (a === "--permission-mode" && argv[i + 1]) {
       const v = argv[++i];

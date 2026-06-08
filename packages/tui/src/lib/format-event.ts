@@ -53,8 +53,7 @@ export function formatEvent(event: RunEvent): FormattedEvent {
       detail = [str(p.kind), str(p.code), str(p.source)]
         .filter(Boolean)
         .join(" ");
-    }
-    else if (t === "mcp.server.prepared") {
+    } else if (t === "mcp.server.prepared") {
       const name = str(p.name);
       const status = str(p.status);
       const errorCode = str(p.errorCode);

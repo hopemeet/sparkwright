@@ -29,14 +29,15 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
   --target README.md \
   --write \
   --yes \
-  --trace-level standard
+  --trace-level standard \
+  --model deterministic
 ```
 
-This path uses the deterministic model by default, so it works as a repeatable
+This path selects the deterministic model explicitly, so it works as a repeatable
 smoke test without an external provider.
 
-The run reads from `examples/repo-pilot`, requests a workspace write, resolves
-approval through `--yes`, writes a diff artifact, and stores trace data under:
+The run reads from `examples/repo-pilot`, enables workspace writes, resolves
+approval through `--yes` if the model asks to edit, and stores trace data under:
 
 ```txt
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
@@ -53,17 +54,19 @@ Read-only trace smoke test:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal
+  --trace-level minimal \
+  --model deterministic
 ```
 
-Interactive approval:
+Approval-enabled run:
 
 ```bash
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
   --write \
-  --trace-level debug
+  --trace-level debug \
+  --model deterministic
 ```
 
 Non-interactive approval for demos and CI smoke checks:
@@ -73,11 +76,12 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
   --workspace examples/repo-pilot \
   --target README.md \
   --write \
-  --yes
+  --yes \
+  --model deterministic
 ```
 
-If `--write` is used without `--yes` in a non-interactive shell, the CLI denies
-the approval request and records `workspace.write.denied` in the trace.
+If `--write` is used without `--yes` in a non-interactive shell, any approval
+request is denied and recorded as `workspace.write.denied` in the trace.
 
 ## Provider-Backed Run
 

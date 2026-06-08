@@ -133,7 +133,7 @@ From the source checkout, you can also run the CLI without linking:
 npm run cli -- run "inspect this repo" --workspace . --model deterministic
 ```
 
-Allow a workspace write and approve it automatically:
+Enable workspace writes and approve them automatically:
 
 ```bash
 sparkwright run "inspect this repo and suggest a README improvement" \
@@ -145,15 +145,16 @@ sparkwright run "inspect this repo and suggest a README improvement" \
   --model deterministic
 ```
 
-That command works inside `examples/repo-pilot`, routes writes through the
-approval path, creates a diff artifact, and writes trace data under:
+That command works inside `examples/repo-pilot`, enables the approval path for
+workspace writes, and writes trace data under:
 
 ```txt
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
 ```
 
-Omit `--yes` to review the approval prompt yourself. Omit `--write` for a
-read-only run.
+If the selected model requests an edit, `--yes` approves it automatically and
+the trace records the resulting workspace write or denial. Omit `--yes` to
+review the approval prompt yourself. Omit `--write` for a read-only run.
 
 ## Interactive TUI
 

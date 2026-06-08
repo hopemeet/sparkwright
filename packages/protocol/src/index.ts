@@ -262,6 +262,7 @@ export interface CapabilityAgentSummary {
 export interface CapabilityDelegateToolSummary {
   toolName: string;
   profileId: string;
+  /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
   protocol: "acp" | "external_command";
   risk: "risky";
@@ -269,7 +270,9 @@ export interface CapabilityDelegateToolSummary {
   forbidNesting: boolean;
   sideEffects: string[];
   workspaceAccess: "none" | "read_write";
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
   shellAccess: false;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
   processSpawn: true;
   command: string;
   args: string[];

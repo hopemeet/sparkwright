@@ -18,6 +18,7 @@ export type DelegateFailureCode =
 export interface DelegateCapabilityDescriptor {
   toolName: string;
   profileId: string;
+  /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
   protocol: DelegateProtocol;
   risk: "risky";
@@ -25,7 +26,9 @@ export interface DelegateCapabilityDescriptor {
   forbidNesting: boolean;
   sideEffects: string[];
   workspaceAccess: DelegateWorkspaceAccess;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
   shellAccess: false;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
   processSpawn: true;
   command: string;
   args: string[];
@@ -38,13 +41,17 @@ export interface DelegateCapabilityDescriptor {
 
 export interface DelegateResultSummary {
   protocol: DelegateProtocol;
+  /** @reserved Public delegate-result identity field consumed by trace and orchestration UIs. */
   agentProfileId: string;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
   stopReason?: string;
+  /** @reserved Public delegate-result metric consumed by trace and orchestration UIs. */
   messageChars?: number;
   toolCalls?: number;
+  /** @reserved Public delegate-result metric consumed by trace and orchestration UIs. */
   stdoutChars?: number;
+  /** @reserved Public delegate-result metric consumed by trace and orchestration UIs. */
   stderrChars?: number;
   stdoutTruncated?: boolean;
   stderrTruncated?: boolean;

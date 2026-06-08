@@ -300,7 +300,8 @@ describe("createWorkspaceMutationPolicy", () => {
 
     expect(decision).toMatchObject({
       decision: "deny",
-      reason: "Workspace write is outside the allowed target scope: package.json",
+      reason:
+        "Workspace write is outside the allowed target scope: package.json",
     });
   });
 

@@ -616,6 +616,7 @@ class SessionRunStore implements RunStore {
   }
 
   async writeArtifact(artifact: Artifact): Promise<void> {
+    await this.ensureMembership();
     const inner = this.getInner();
     if (inner.writeArtifact) {
       await inner.writeArtifact(artifact);
