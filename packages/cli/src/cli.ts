@@ -48,6 +48,7 @@ import {
   type AgentReport,
   type SkillReport,
 } from "@sparkwright/host";
+import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
@@ -96,6 +97,7 @@ interface ParsedArgs {
   force: boolean;
   fromTrace: boolean;
   directCore: boolean;
+  resolveMcp: boolean;
   delegateGoal?: string;
 }
 
@@ -296,6 +298,7 @@ function parseArgs(
   let force = false;
   let fromTrace = false;
   let directCore = false;
+  let resolveMcp = false;
   let delegateGoal: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -517,6 +520,13 @@ function parseArgs(
       continue;
     }
 
+    if (arg === "--resolve-mcp") {
+      resolveMcp = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
     if (arg === "--goal") {
       const value = args[index + 1];
       if (!value) return { ok: false, message: "Usage: --goal requires text" };
@@ -584,7 +594,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]",
+        "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
     };
   }
 
@@ -687,6 +697,7 @@ function parseArgs(
       force,
       fromTrace,
       directCore,
+      resolveMcp,
       delegateGoal,
     },
   };
@@ -917,9 +928,26 @@ interface CapabilityInspectReport {
     delegateTools: Array<{ profileId: string; toolName?: string }>;
   };
   mcp: {
-    servers: Array<{ name: string; type: string; enabled: boolean }>;
+    servers: Array<{
+      name: string;
+      type: string;
+      enabled: boolean;
+      status?: string;
+      toolCount?: number;
+      tools?: Array<{
+        toolName: string;
+        serverName: string;
+        mcpToolName: string;
+      }>;
+      error?: {
+        code?: string;
+        phase?: string;
+        message: string;
+      };
+    }>;
     defaultTimeoutMs?: number;
     namePrefix?: string;
+    resolved?: boolean;
   };
   cron: {
     stateRoot: string;
@@ -941,7 +969,13 @@ async function handleCapabilitiesCommand(
   }
 
   try {
-    const report = await loadCapabilityInspectReport(parsed.workspaceRoot, env);
+    const report = await loadCapabilityInspectReport(
+      parsed.workspaceRoot,
+      env,
+      {
+        resolveMcp: parsed.resolveMcp,
+      },
+    );
     writeLine(
       io.stdout,
       parsed.format === "json"
@@ -1051,6 +1085,7 @@ function formatDelegateRunResult(
 async function loadCapabilityInspectReport(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
+  options: { resolveMcp?: boolean } = {},
 ): Promise<CapabilityInspectReport> {
   const loaded = await loadHostConfig(workspaceRoot, env);
   const capabilities = loaded.config.capabilities;
@@ -1060,7 +1095,7 @@ async function loadCapabilityInspectReport(
     env,
   );
   const skills = await loadLayeredSkillReport(skillRoots, {
-    includeMissingRoots: false,
+    includeMissingRoots: "configured",
   });
   const agents = await loadLayeredAgentReport(
     workspaceRoot,
@@ -1078,6 +1113,44 @@ async function loadCapabilityInspectReport(
     ),
   );
 
+  const mcpServers: CapabilityInspectReport["mcp"]["servers"] = (
+    capabilities?.mcp?.servers ?? []
+  ).map((server) => ({
+    name: server.name,
+    type: server.type,
+    enabled: server.enabled !== false,
+  }));
+
+  if (options.resolveMcp && capabilities?.mcp?.servers?.length) {
+    const prepared = await prepareMcpToolsForRun({
+      servers: capabilities.mcp.servers,
+      defaultTimeoutMs: capabilities.mcp.defaultTimeoutMs,
+      namePrefix: capabilities.mcp.namePrefix,
+      policy: capabilities.mcp.defaultPolicy,
+    });
+    try {
+      for (const server of mcpServers) {
+        const status = prepared.statuses[server.name];
+        if (!status) continue;
+        const tools = prepared.toolNameMap.filter(
+          (tool) => tool.serverName === server.name,
+        );
+        server.status = status.status;
+        server.toolCount = tools.length;
+        server.tools = tools;
+        if (status.status === "failed") {
+          server.error = {
+            message: status.error,
+            ...(status.errorCode ? { code: status.errorCode } : {}),
+            ...(status.phase ? { phase: status.phase } : {}),
+          };
+        }
+      }
+    } finally {
+      await prepared.close();
+    }
+  }
+
   return {
     workspace: workspaceRoot,
     config: { errors: loaded.errors },
@@ -1093,13 +1166,10 @@ async function loadCapabilityInspectReport(
       ),
     },
     mcp: {
-      servers: (capabilities?.mcp?.servers ?? []).map((server) => ({
-        name: server.name,
-        type: server.type,
-        enabled: server.enabled !== false,
-      })),
+      servers: mcpServers,
       defaultTimeoutMs: capabilities?.mcp?.defaultTimeoutMs,
       namePrefix: capabilities?.mcp?.namePrefix,
+      resolved: options.resolveMcp || undefined,
     },
     cron: {
       stateRoot: defaultCronRoot(env),
@@ -1131,6 +1201,12 @@ function formatCapabilityInspectReport(
   for (const skill of report.skills.skills) {
     lines.push(`  - ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
   }
+  if (report.skills.errors.length > 0) {
+    lines.push(`skill errors: ${report.skills.errors.length}`);
+    for (const error of report.skills.errors) {
+      lines.push(`  - ${error.source}: ${error.message}`);
+    }
+  }
   lines.push(
     `agents: ${report.agents.profiles.length} effective, ${report.agents.roots.length} roots, ${report.agents.shadows.length} shadows, ${report.agents.errors.length} errors, ${report.agents.delegateTools.length} delegate tools`,
   );
@@ -1152,8 +1228,16 @@ function formatCapabilityInspectReport(
   lines.push(`mcp: ${report.mcp.servers.length} servers`);
   for (const server of report.mcp.servers) {
     lines.push(
-      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"}`,
+      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"}${server.status ? ` ${server.status}` : ""}${server.toolCount !== undefined ? ` tools=${server.toolCount}` : ""}`,
     );
+    if (server.error) {
+      const code = server.error.code ? `${server.error.code}: ` : "";
+      const phase = server.error.phase ? ` (${server.error.phase})` : "";
+      lines.push(`    error: ${code}${server.error.message}${phase}`);
+    }
+    for (const tool of server.tools ?? []) {
+      lines.push(`    tool: ${tool.toolName} -> ${tool.mcpToolName}`);
+    }
   }
   lines.push(`cron state: ${report.cron.stateRoot}`);
   lines.push(`cron legacy state: ${report.cron.legacyStateRoot}`);
@@ -2846,7 +2930,7 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
-    "       sparkwright capabilities inspect [--workspace path] [--format json|text]",
+    "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
@@ -2874,7 +2958,7 @@ function toolsUsage(): string {
 }
 
 function capabilitiesUsage(): string {
-  return "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]";
+  return "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]";
 }
 
 function delegatesUsage(): string {

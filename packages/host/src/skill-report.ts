@@ -30,7 +30,7 @@ export interface SkillReport {
 
 export async function loadLayeredSkillReport(
   roots: readonly SkillRoot[],
-  options: { includeMissingRoots: boolean },
+  options: { includeMissingRoots: boolean | "configured" },
 ): Promise<SkillReport> {
   const errors: SkillLoadError[] = [];
   const shadows: SkillShadowDiagnostic[] = [];
@@ -47,7 +47,7 @@ export async function loadLayeredSkillReport(
         continue;
       }
     } catch (error) {
-      if (options.includeMissingRoots) {
+      if (shouldReportMissingRoot(root, options.includeMissingRoots)) {
         errors.push({
           source: root.root,
           message:
@@ -85,6 +85,15 @@ export async function loadLayeredSkillReport(
     shadows,
     errors,
   };
+}
+
+function shouldReportMissingRoot(
+  root: SkillRoot,
+  includeMissingRoots: boolean | "configured",
+): boolean {
+  if (includeMissingRoots === true) return true;
+  if (includeMissingRoots === false) return false;
+  return root.layer === "legacy";
 }
 
 function toReportEntry(

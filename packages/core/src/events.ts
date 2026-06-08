@@ -87,6 +87,7 @@ export type EventType =
   | "context.compaction.failed"
   | "skill.indexed"
   | "skill.loaded"
+  | "capability.index.failed"
   | "mcp.server.prepared"
   | "agent.profile.derived"
   | "prompt.built"

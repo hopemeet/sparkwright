@@ -9,7 +9,7 @@ import {
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 
@@ -727,6 +727,73 @@ describe("runCli", () => {
     );
   });
 
+  it("resolves MCP tools during capability inspect only when requested", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            servers: [mcpEchoServerConfig("qa")],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const staticOutput = createOutputCapture();
+    const staticInspect = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: staticOutput.stdout, stderr: staticOutput.stderr },
+      },
+    );
+
+    expect(staticInspect.exitCode).toBe(0);
+    const staticReport = JSON.parse(staticOutput.stdoutText()) as {
+      mcp: { servers: Array<{ status?: string; tools?: unknown[] }> };
+    };
+    expect(staticReport.mcp.servers[0]?.status).toBeUndefined();
+    expect(staticReport.mcp.servers[0]?.tools).toBeUndefined();
+
+    const resolvedOutput = createOutputCapture();
+    const resolvedInspect = await runCli(
+      [
+        "capabilities",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--resolve-mcp",
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: resolvedOutput.stdout, stderr: resolvedOutput.stderr },
+      },
+    );
+
+    expect(resolvedInspect.exitCode).toBe(0);
+    const resolvedReport = JSON.parse(resolvedOutput.stdoutText()) as {
+      mcp: {
+        resolved?: boolean;
+        servers: Array<{
+          status?: string;
+          toolCount?: number;
+          tools?: Array<{ toolName: string; mcpToolName: string }>;
+        }>;
+      };
+    };
+    expect(resolvedReport.mcp.resolved).toBe(true);
+    expect(resolvedReport.mcp.servers[0]).toMatchObject({
+      status: "connected",
+      toolCount: 1,
+      tools: [{ toolName: "mcp_qa_echo", mcpToolName: "echo" }],
+    });
+  });
+
   it("updates user tool config commands without dropping existing fields", async () => {
     const xdg = process.env.XDG_CONFIG_HOME as string;
     const configPath = join(xdg, "sparkwright", "config.json");
@@ -962,6 +1029,70 @@ describe("runCli", () => {
     expect(result.exitCode).toBe(1);
     expect(output.stdoutText()).toContain("errors: 1");
     expect(output.stdoutText()).toContain("Skill name must use lowercase");
+  });
+
+  it("reports skill errors in capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      skills: { errors: Array<{ source: string; message: string }> };
+    };
+    expect(report.skills.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+          message: expect.stringContaining("description"),
+        }),
+      ]),
+    );
+  });
+
+  it("reports configured missing skill roots in capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: { skills: { roots: ["missing-skills"] } },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      skills: { errors: Array<{ source: string; message: string }> };
+    };
+    expect(report.skills.errors).toEqual([
+      {
+        source: join(workspace, ".sparkwright", "missing-skills"),
+        message: "skill root does not exist",
+      },
+    ]);
   });
 
   it("creates, lists, and validates workspace agents", async () => {
@@ -1210,6 +1341,49 @@ describe("runCli", () => {
     );
     expect(check.exitCode).toBe(0);
     expect(checkOutput.stdoutText()).toContain("findings: 0");
+  });
+
+  it("records skill index failures in host startup traces", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "say hello",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("Skill description");
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toEqual([
+      "run.created",
+      "capability.index.failed",
+      "run.failed",
+    ]);
+    expect(
+      events.find((event) => event.type === "capability.index.failed")?.payload,
+    ).toMatchObject({
+      kind: "skills",
+      code: "SKILL_INDEX_FAILED",
+      source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+    });
   });
 
   it("passes --target through the host deterministic run", async () => {
@@ -1901,6 +2075,76 @@ describe("runCli", () => {
     ).toBeUndefined();
   });
 
+  it("runs scripted model tool calls through the host", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            servers: [mcpEchoServerConfig("qa")],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "use MCP echo",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "mcp_qa_echo",
+                  arguments: { text: "sparkwright cli host model smoke" },
+                },
+              ],
+            },
+            {
+              message: "sparkwright cli host model smoke\nsucceeded: true",
+            },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; payload?: unknown });
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.completed" &&
+          (event.payload as { output?: { content?: Array<{ text?: string }> } })
+            .output?.content?.[0]?.text === "sparkwright cli host model smoke",
+      ),
+    ).toBeTruthy();
+  });
+
   it("run resume --from-trace reconstructs a checkpoint and rejects terminal runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
     // Seed a completed run via the normal CLI golden path so a run.json +
@@ -2124,6 +2368,35 @@ describe("runCli", () => {
     expect(trace).toContain('"type":"approval.requested"');
     expect(trace).toContain('"type":"subagent.completed"');
   });
+
+  function mcpEchoServerConfig(name: string) {
+    const repoRoot = resolve(process.cwd(), "../..");
+    const mcpPath = resolve(
+      repoRoot,
+      "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
+    );
+    const transportPath = resolve(
+      repoRoot,
+      "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js",
+    );
+    const zodPath = resolve(repoRoot, "node_modules/zod/v4/index.js");
+    const script = [
+      `import { McpServer } from ${JSON.stringify(mcpPath)};`,
+      `import { StdioServerTransport } from ${JSON.stringify(transportPath)};`,
+      `import { z } from ${JSON.stringify(zodPath)};`,
+      "const server = new McpServer({ name: 'cli-test-mcp', version: '0.0.1' });",
+      "server.registerTool('echo', { description: 'Echo text.', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }] }));",
+      "await server.connect(new StdioServerTransport());",
+    ].join("\n");
+    return {
+      type: "stdio",
+      name,
+      command: process.execPath,
+      args: ["--input-type=module", "-e", script],
+      enabled: true,
+      timeoutMs: 1000,
+    };
+  }
 
   async function createWorkspace(readme: string): Promise<string> {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));

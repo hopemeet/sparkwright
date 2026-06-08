@@ -623,6 +623,8 @@ describe("mcp-adapter", () => {
       status: {
         status: "failed",
         error: "MCP server preparation deny: stdio servers are disabled.",
+        errorCode: "MCP_SERVER_PREPARE_DENIED",
+        phase: "policy",
       },
       tools: [],
     });
@@ -684,6 +686,10 @@ describe("mcp-adapter", () => {
       prepared.status.status === "failed" ? prepared.status.error : "";
     expect(error).not.toContain("sk-ant-abcdef0123456789");
     expect(error).toContain("[REDACTED]");
+    if (prepared.status.status === "failed") {
+      expect(prepared.status.errorCode).toBe("MCP_SERVER_PREPARE_FAILED");
+      expect(prepared.status.phase).toBe("policy");
+    }
   });
 
   it("emits mcp.server.prepared when an emitter is provided", async () => {
@@ -720,6 +726,60 @@ describe("mcp-adapter", () => {
     });
     expect(captured.map((e) => e.type)).toEqual(["mcp.server.prepared"]);
     expect((captured[0].payload as { status: string }).status).toBe("disabled");
+  });
+
+  it("emits structured prepare failure details", async () => {
+    const captured: Array<{
+      type: string;
+      payload: unknown;
+      metadata: unknown;
+    }> = [];
+    const emitter = {
+      emit(
+        type: string,
+        payload: unknown,
+        metadata: Record<string, unknown> = {},
+      ) {
+        captured.push({ type, payload, metadata });
+        return {
+          id: "evt_test",
+          runId: "",
+          type: type as never,
+          timestamp: new Date().toISOString(),
+          sequence: 0,
+          payload,
+          metadata,
+        } as never;
+      },
+    };
+
+    await prepareMcpToolsForRun({
+      servers: [
+        {
+          type: "stdio",
+          name: "missing",
+          command: "/definitely/not/a/real/mcp-command",
+          enabled: true,
+          timeoutMs: 100,
+        },
+      ],
+      emitter: emitter as never,
+    });
+
+    expect(captured[0]?.payload).toMatchObject({
+      name: "missing",
+      status: "failed",
+      errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+      errorPhase: "connect",
+      error: {
+        code: "MCP_SERVER_COMMAND_NOT_FOUND",
+        phase: "connect",
+      },
+    });
+    expect(captured[0]?.metadata).toMatchObject({
+      errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+      errorPhase: "connect",
+    });
   });
 });
 

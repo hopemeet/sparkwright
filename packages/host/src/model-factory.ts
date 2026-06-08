@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { ModelAdapter } from "@sparkwright/core";
 import {
   DETERMINISTIC_PROVIDER,
@@ -8,6 +9,10 @@ import {
   buildConfiguredAdapter,
   type ProviderRuntimeSources,
 } from "./model-builder.js";
+
+const SCRIPTED_PROVIDER = "scripted";
+const SCRIPTED_MODEL_JSON_ENV = "SPARKWRIGHT_SCRIPTED_MODEL_JSON";
+const SCRIPTED_MODEL_FILE_ENV = "SPARKWRIGHT_SCRIPTED_MODEL_FILE";
 
 export interface ModelFactoryInput {
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
@@ -67,6 +72,24 @@ export async function createModel(
     };
   }
 
+  if (ref === SCRIPTED_PROVIDER || ref.startsWith(`${SCRIPTED_PROVIDER}/`)) {
+    const scripted = await createScriptedModel(ref, env);
+    if (!scripted.ok) return scripted;
+    return {
+      ok: true,
+      adapter: scripted.adapter,
+      resolved: {
+        modelRef: ref,
+        providerKey: SCRIPTED_PROVIDER,
+        modelId: ref.includes("/")
+          ? ref.slice(ref.indexOf("/") + 1)
+          : "default",
+        adapterId: SCRIPTED_PROVIDER,
+        modelSource,
+      },
+    };
+  }
+
   const selection = resolveModelSelection(loaded.config, ref);
   if (selection.kind === "deterministic") {
     return {
@@ -116,6 +139,163 @@ function createDemoModel(goal: string, targetPath: string): ModelAdapter {
       };
     },
   };
+}
+
+interface ScriptedModelStep {
+  message?: string;
+  toolCalls?: Array<{ toolName: string; arguments: unknown }>;
+}
+
+async function createScriptedModel(
+  ref: string,
+  env: Record<string, string | undefined>,
+): Promise<
+  { ok: true; adapter: ModelAdapter } | { ok: false; message: string }
+> {
+  const script = await loadScriptedModelSteps(env);
+  if (!script.ok) return script;
+  let turn = 0;
+  return {
+    ok: true,
+    adapter: {
+      id: SCRIPTED_PROVIDER,
+      async complete() {
+        const step = script.steps[turn] ?? {
+          message: "scripted model completed.",
+        };
+        turn += 1;
+        const startedAt = new Date().toISOString();
+        return {
+          ...(step.message !== undefined ? { message: step.message } : {}),
+          ...(step.toolCalls !== undefined
+            ? { toolCalls: step.toolCalls }
+            : {}),
+          trace: {
+            attempt: 1,
+            maxAttempts: 1,
+            retryCount: 0,
+            adapterId: ref,
+            streaming: false,
+            durationMs: 0,
+            ttltMs: 0,
+            requestStartedAt: startedAt,
+            requestCompletedAt: startedAt,
+            ...(step.message !== undefined
+              ? { messageChars: step.message.length }
+              : {}),
+            toolCallCount: step.toolCalls?.length ?? 0,
+          },
+        };
+      },
+    },
+  };
+}
+
+async function loadScriptedModelSteps(
+  env: Record<string, string | undefined>,
+): Promise<
+  { ok: true; steps: ScriptedModelStep[] } | { ok: false; message: string }
+> {
+  const json = env[SCRIPTED_MODEL_JSON_ENV];
+  const file = env[SCRIPTED_MODEL_FILE_ENV];
+  if (json && file) {
+    return {
+      ok: false,
+      message: `${SCRIPTED_MODEL_JSON_ENV} and ${SCRIPTED_MODEL_FILE_ENV} are mutually exclusive.`,
+    };
+  }
+  if (!json && !file) {
+    return {
+      ok: false,
+      message: `Model "scripted" requires ${SCRIPTED_MODEL_JSON_ENV} or ${SCRIPTED_MODEL_FILE_ENV}.`,
+    };
+  }
+  const raw = file ? await readFile(file, "utf8") : (json ?? "");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      ok: false,
+      message: `Invalid scripted model JSON: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const steps = normalizeScriptedModelSteps(parsed);
+  if (!steps.ok) return steps;
+  return steps.steps.length > 0
+    ? steps
+    : { ok: false, message: "Scripted model requires at least one step." };
+}
+
+function normalizeScriptedModelSteps(
+  value: unknown,
+): { ok: true; steps: ScriptedModelStep[] } | { ok: false; message: string } {
+  const steps = Array.isArray(value)
+    ? value
+    : isRecord(value) && Array.isArray(value.steps)
+      ? value.steps
+      : undefined;
+  if (!steps) {
+    return {
+      ok: false,
+      message:
+        "Scripted model JSON must be an array of steps or an object with a steps array.",
+    };
+  }
+  const normalized: ScriptedModelStep[] = [];
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
+    if (!isRecord(step)) {
+      return {
+        ok: false,
+        message: `Scripted model step ${index + 1} must be an object.`,
+      };
+    }
+    const message = typeof step.message === "string" ? step.message : undefined;
+    const toolCalls = step.toolCalls;
+    if (step.message !== undefined && message === undefined) {
+      return {
+        ok: false,
+        message: `Scripted model step ${index + 1} message must be a string.`,
+      };
+    }
+    if (toolCalls !== undefined && !isScriptedToolCalls(toolCalls)) {
+      return {
+        ok: false,
+        message: `Scripted model step ${index + 1} toolCalls must be an array of { toolName, arguments } objects.`,
+      };
+    }
+    if (message === undefined && toolCalls === undefined) {
+      return {
+        ok: false,
+        message: `Scripted model step ${index + 1} must include message or toolCalls.`,
+      };
+    }
+    normalized.push({
+      ...(message !== undefined ? { message } : {}),
+      ...(toolCalls !== undefined ? { toolCalls } : {}),
+    });
+  }
+  return { ok: true, steps: normalized };
+}
+
+function isScriptedToolCalls(
+  value: unknown,
+): value is Array<{ toolName: string; arguments: unknown }> {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry.toolName === "string" &&
+        entry.toolName.length > 0 &&
+        Object.prototype.hasOwnProperty.call(entry, "arguments"),
+    )
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function deterministicResolvedModel(

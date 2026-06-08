@@ -118,6 +118,8 @@ Rules:
 - Set conservative policy for tools that can mutate workspace state, reach
   network services, or touch external systems.
 - Use `capabilities inspect` after editing to confirm the server appears.
+  Add `--resolve-mcp` when you need the host to prepare MCP servers and show
+  resolved tool names, tool counts, and prepare failures.
 
 ## Cron Jobs
 

@@ -341,6 +341,7 @@ Use local facts first:
 
 ```bash
 npm exec sparkwright -- capabilities inspect --workspace . --format text
+npm exec sparkwright -- capabilities inspect --workspace . --resolve-mcp --format text
 npm exec sparkwright -- tools list --format text
 npm exec sparkwright -- agents validate --workspace .
 npm exec sparkwright -- skills validate --workspace .
@@ -352,6 +353,8 @@ Checks to make before proposing edits:
   key exists under `providers`.
 - API key ignored: check environment variable overrides.
 - Tool missing: inspect `tools.enabled` allowlists and `tools.disabled`.
+- MCP tool missing: use `capabilities inspect --resolve-mcp` to distinguish a
+  configured server from a prepared server with resolved tools.
 - User and project capability settings did not combine: remember that most
   fields other than `providers` are wholesale-overridden.
 - MCP server does not start: verify `cwd`, command path, timeout, and

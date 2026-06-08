@@ -42,6 +42,10 @@ For capability lifecycle, inspect:
 - `mcp.server.prepared`
 - `agent.profile.derived`
 
+`mcp.server.prepared` includes resolved `toolNameMap` metadata when preparation
+succeeds. On failure, inspect structured `errorCode`, `errorPhase`, and
+`error.message` before falling back to the legacy metadata error string.
+
 ## Artifacts
 
 Large or user-inspectable outputs should become artifacts instead of prompt

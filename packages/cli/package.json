@@ -39,6 +39,7 @@
     "@sparkwright/core": "0.1.0",
     "@sparkwright/cron": "0.1.0",
     "@sparkwright/host": "0.1.0",
+    "@sparkwright/mcp-adapter": "0.1.0",
     "@sparkwright/project-context": "0.1.0",
     "@sparkwright/provider-ai-sdk": "0.1.0",
     "@sparkwright/provider-registry": "0.1.0",

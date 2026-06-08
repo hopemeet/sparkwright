@@ -378,6 +378,24 @@ async function writeHostStartFailureTrace(input: {
     })(run);
     const events = new EventLog(runId);
     await store.append(events.emit("run.created", { goal: run.goal }));
+    const capabilityFailure = inferCapabilityIndexFailure(input.message);
+    if (capabilityFailure) {
+      await store.append(
+        events.emit(
+          "capability.index.failed",
+          {
+            kind: capabilityFailure.kind,
+            source: capabilityFailure.source,
+            message: input.message,
+            code: capabilityFailure.code,
+          },
+          {
+            source: "cli",
+            failurePhase: "host_start",
+          },
+        ),
+      );
+    }
     await store.append(
       events.emit("run.failed", {
         reason: "host_start_failed",
@@ -401,6 +419,22 @@ async function writeHostStartFailureTrace(input: {
   } catch {
     return { sessionId: input.sessionId, runId: input.runId };
   }
+}
+
+function inferCapabilityIndexFailure(message: string):
+  | {
+      kind: "skills";
+      code: "SKILL_INDEX_FAILED";
+      source?: string;
+    }
+  | undefined {
+  if (!/\bskill\b/i.test(message)) return undefined;
+  const source = message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
+  return {
+    kind: "skills",
+    code: "SKILL_INDEX_FAILED",
+    ...(source ? { source } : {}),
+  };
 }
 
 function formatHostError(error: unknown): string {
