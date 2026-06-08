@@ -951,7 +951,7 @@ export class SparkwrightRun implements RunHandle {
     this.setState("running");
     this.startedAtMs = Date.now();
     this.usageTracker.markStarted();
-    this.events.emit("run.started", {});
+    this.events.emit("run.started", runStartedPayload(this.record.metadata));
     if (this.resumedFromCheckpoint && this.seedLoopState) {
       this.events.emit("run.resumed", {
         fromStep: this.seedLoopState.step,
@@ -3355,6 +3355,13 @@ function shouldRequestContextCompaction(
       item.reason === "max_items_exceeded" ||
       item.reason === "max_total_chars_exceeded",
   );
+}
+
+function runStartedPayload(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const resolvedModel = metadata.resolvedModel;
+  return isRecord(resolvedModel) ? { resolvedModel } : {};
 }
 
 function mergeModelUsage(

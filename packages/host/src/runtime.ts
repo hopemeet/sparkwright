@@ -453,6 +453,7 @@ export class HostRuntime {
     const runMetadata: Record<string, unknown> = {
       source: "host",
       ...(input.runMetadata ?? {}),
+      resolvedModel: model.resolved,
     };
     const runStoreMetadata: Record<string, unknown> = {
       ...runMetadata,

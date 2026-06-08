@@ -82,6 +82,7 @@ interface ParsedArgs {
   permissionMode: PermissionMode;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
+  modelNameSource?: "config" | "cli";
   sessionId?: string;
   format: "json" | "text";
   eventType?: string;
@@ -208,6 +209,10 @@ export async function runCli(
     : startHostRun(
         {
           ...parsed.value,
+          modelName:
+            parsed.value.modelNameSource === "cli"
+              ? parsed.value.modelName
+              : undefined,
           sessionId: parsed.value.sessionId ?? createSessionId(),
         },
         io,
@@ -275,6 +280,9 @@ function parseArgs(
   let approveAll = false;
   let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
   let modelName: string | undefined = defaults.model;
+  let modelNameSource: ParsedArgs["modelNameSource"] = defaults.model
+    ? "config"
+    : undefined;
   let sessionId: string | undefined;
   let format: ParsedArgs["format"] = "json";
   let eventType: string | undefined;
@@ -364,6 +372,7 @@ function parseArgs(
       if (!value)
         return { ok: false, message: "Usage: --model requires a model name" };
       modelName = value;
+      modelNameSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -664,6 +673,7 @@ function parseArgs(
       approveAll,
       permissionMode,
       modelName,
+      modelNameSource,
       sessionId,
       format,
       eventType,
@@ -2376,7 +2386,15 @@ async function handleSessionResumeCommand(
   };
   return parsed.directCore
     ? startDirectCoreRun(runInput, io, env)
-    : startHostRun(runInput, io, env);
+    : startHostRun(
+        {
+          ...runInput,
+          modelName:
+            parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
+        },
+        io,
+        env,
+      );
 }
 
 async function handleRunResumeCommand(
@@ -2400,7 +2418,8 @@ async function handleRunResumeCommand(
         shouldWrite: parsed.shouldWrite,
         approveAll: parsed.approveAll,
         permissionMode: parsed.permissionMode,
-        modelName: parsed.modelName,
+        modelName:
+          parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
         targetPath: parsed.targetPath,
         traceLevel: parsed.traceLevel,

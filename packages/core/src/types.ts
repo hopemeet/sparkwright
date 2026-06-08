@@ -520,6 +520,8 @@ export interface ModelOutputChunk {
 }
 
 export interface ModelAdapter {
+  /** Stable identifier surfaced in trace and usage byModel buckets. */
+  id?: string;
   contextHints?: ModelContextHints;
   complete(input: ModelInput): Promise<ModelOutput>;
   stream?(input: ModelInput): AsyncIterable<ModelOutputChunk>;

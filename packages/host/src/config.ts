@@ -37,9 +37,13 @@ export const DEFAULT_PROVIDER_NPM = "@ai-sdk/openai";
  */
 export const SUPPORTED_PROVIDER_NPMS: Record<
   string,
-  { factory: string; apiKeyEnv: string }
+  { factory: string; apiKeyEnv: string; baseUrlEnv?: string }
 > = {
-  "@ai-sdk/openai": { factory: "createOpenAI", apiKeyEnv: "OPENAI_API_KEY" },
+  "@ai-sdk/openai": {
+    factory: "createOpenAI",
+    apiKeyEnv: "OPENAI_API_KEY",
+    baseUrlEnv: "OPENAI_BASE_URL",
+  },
   "@ai-sdk/anthropic": {
     factory: "createAnthropic",
     apiKeyEnv: "ANTHROPIC_API_KEY",
@@ -156,6 +160,7 @@ export interface SharedConfigSourceMap {
   model?: string;
   permissionMode?: string;
   workspace?: string;
+  providers?: Record<string, string>;
 }
 
 export interface SharedConfigError {
@@ -1416,7 +1421,10 @@ function validateShared(
           continue;
         }
         const provider = validateProvider(value, key, filePath, errors);
-        if (provider) providers[key] = provider;
+        if (provider) {
+          providers[key] = provider;
+          sources.providers = { ...(sources.providers ?? {}), [key]: origin };
+        }
       }
       config.providers = providers;
     } else {
@@ -1534,7 +1542,11 @@ export async function loadHostConfig(
     if (providers) {
       merged.providers = { ...(merged.providers ?? {}), ...providers };
     }
-    Object.assign(sources, v.sources);
+    const { providers: providerSources, ...fieldSources } = v.sources;
+    Object.assign(sources, fieldSources);
+    if (providerSources) {
+      sources.providers = { ...(sources.providers ?? {}), ...providerSources };
+    }
   }
 
   return { config: merged, sources, attempted, errors };

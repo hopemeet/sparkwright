@@ -6,6 +6,8 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -1190,6 +1192,24 @@ describe("runCli", () => {
       reason: "host_start_failed",
       code: "HOST_START_FAILED",
     });
+
+    const checkOutput = createOutputCapture();
+    const check = await runCli(
+      [
+        "session",
+        "check",
+        result.sessionId!,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: checkOutput.stdout, stderr: checkOutput.stderr },
+      },
+    );
+    expect(check.exitCode).toBe(0);
+    expect(checkOutput.stdoutText()).toContain("findings: 0");
   });
 
   it("passes --target through the host deterministic run", async () => {
@@ -1223,6 +1243,149 @@ describe("runCli", () => {
       toolName: "read_file",
       arguments: { path: "NOTES.md" },
     });
+    expect(
+      events.find((event) => event.type === "model.requested")?.payload,
+    ).toMatchObject({
+      adapterId: "deterministic",
+    });
+    expect(
+      events.find((event) => event.type === "run.started")?.payload,
+    ).toMatchObject({
+      resolvedModel: {
+        modelRef: "deterministic",
+        providerKey: "deterministic",
+        modelId: "deterministic",
+        adapterId: "deterministic",
+        modelSource: { layer: "request" },
+      },
+    });
+  });
+
+  it("lets provider env override configured apiKey without leaking the key", async () => {
+    const mock = await createProviderMock();
+    try {
+      const workspace = await createWorkspace("# Demo\n");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/mock-model",
+          providers: {
+            openai: {
+              baseURL: mock.baseURL,
+              apiKey: "CONFIG_KEY",
+              models: { "mock-model": {} },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const output = createOutputCapture();
+
+      const result = await runCli(
+        [
+          "run",
+          "inspect temp",
+          "--workspace",
+          workspace,
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+            SPARKWRIGHT_HOST_SOURCE: process.env.SPARKWRIGHT_HOST_SOURCE,
+            OPENAI_API_KEY: "ENV_KEY",
+          },
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(mock.requests).toHaveLength(1);
+      expect(mock.requests[0]?.authorization).toBe("Bearer ENV_KEY");
+      const events = await readTrace(result.tracePath);
+      const started = events.find((event) => event.type === "run.started");
+      expect(started?.payload).toMatchObject({
+        resolvedModel: {
+          adapterId: "openai:mock-model",
+          modelSource: { layer: "project" },
+          providerSource: { layer: "project" },
+          authSource: "env:OPENAI_API_KEY",
+          baseURLSource: "config",
+        },
+      });
+      expect(JSON.stringify(events)).not.toContain("ENV_KEY");
+      expect(JSON.stringify(events)).not.toContain("CONFIG_KEY");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  it("lets OPENAI_BASE_URL override configured baseURL", async () => {
+    const mock = await createProviderMock();
+    try {
+      const workspace = await createWorkspace("# Demo\n");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/mock-model",
+          providers: {
+            openai: {
+              baseURL: "http://127.0.0.1:9/v1",
+              models: { "mock-model": {} },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const output = createOutputCapture();
+
+      const result = await runCli(
+        [
+          "run",
+          "inspect temp",
+          "--workspace",
+          workspace,
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+            SPARKWRIGHT_HOST_SOURCE: process.env.SPARKWRIGHT_HOST_SOURCE,
+            OPENAI_API_KEY: "ENV_KEY",
+            OPENAI_BASE_URL: mock.baseURL,
+          },
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(mock.requests).toHaveLength(1);
+      expect(mock.requests[0]?.url).toBe("/v1/responses");
+      const events = await readTrace(result.tracePath);
+      expect(
+        events.find((event) => event.type === "run.started")?.payload,
+      ).toMatchObject({
+        resolvedModel: {
+          adapterId: "openai:mock-model",
+          authSource: "env:OPENAI_API_KEY",
+          baseURLSource: "env:OPENAI_BASE_URL",
+        },
+      });
+    } finally {
+      await mock.close();
+    }
   });
 
   it("summarizes a trace file", async () => {
@@ -2013,6 +2176,54 @@ async function readTrace(path: string | undefined): Promise<
           payload?: Record<string, unknown>;
         },
     );
+}
+
+async function createProviderMock(): Promise<{
+  baseURL: string;
+  requests: Array<{
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string;
+  }>;
+  close: () => Promise<void>;
+}> {
+  const requests: Array<{
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string;
+  }> = [];
+  const server: Server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      requests.push({
+        method: req.method,
+        url: req.url,
+        authorization:
+          typeof req.headers.authorization === "string"
+            ? req.headers.authorization
+            : "",
+      });
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            message: "mock provider rejected request",
+            type: "invalid_request_error",
+          },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    baseURL: `http://127.0.0.1:${port}/v1`,
+    requests,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
 }
 
 function checkpointJson(input: { runId: string; goal: string }) {

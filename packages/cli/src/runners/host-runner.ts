@@ -5,11 +5,18 @@ import type {
   ApprovalResolver,
   PermissionMode,
   RunRecord,
+  RunResult,
   SparkwrightEvent,
   TraceLevel,
 } from "@sparkwright/core";
-import { createRunId, createSessionId } from "@sparkwright/core";
-import { EventLog, FileRunStore } from "@sparkwright/core/internal";
+import {
+  createRunId,
+  createSessionId,
+  createSessionFileRunStoreFactory,
+  createSessionRunStoreFactory,
+  EventLog,
+  FileSessionStore,
+} from "@sparkwright/core";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import { createCliApprovalResolver } from "../cli-approval.js";
 import { formatEvent } from "../event-format.js";
@@ -171,6 +178,11 @@ async function runHostLifecycle(
         runId = msg.payload.runId;
         runState = msg.payload.state;
         stopReason = msg.payload.stopReason;
+        if (runState !== "completed") {
+          failedMessage =
+            failedMessage ??
+            `Run finished with state ${runState}${stopReason ? ` (${stopReason})` : ""}`;
+        }
         resolveOnce();
       });
 
@@ -240,12 +252,12 @@ async function runHostLifecycle(
           );
         }
       }
-    })().catch((error: unknown) => {
+    })().catch(async (error: unknown) => {
       failedMessage = formatHostError(error);
       runState = "failed";
       stopReason = "host_start_failed";
       writeLine(io.stderr, failedMessage);
-      const failureTrace = writeHostStartFailureTrace({
+      const failureTrace = await writeHostStartFailureTrace({
         input,
         message: failedMessage,
         sessionId,
@@ -283,16 +295,33 @@ async function runHostLifecycle(
     );
     if (tracePath && existsSync(tracePath))
       writeLine(io.stdout, `Trace written to ${tracePath}`);
-    client?.close();
+    await closeClient(client);
   }
 }
 
-function writeHostStartFailureTrace(input: {
+async function closeClient(client: Client | undefined): Promise<void> {
+  if (!client) return;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      client.off("disconnect", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 1_000);
+    client.on("disconnect", finish);
+    client.close();
+  });
+}
+
+async function writeHostStartFailureTrace(input: {
   input: HostRunInput | HostResumeInput;
   message: string;
   sessionId?: string;
   runId?: string;
-}): { tracePath?: string; sessionId?: string; runId?: string } {
+}): Promise<{ tracePath?: string; sessionId?: string; runId?: string }> {
   const sessionId = input.sessionId ?? createSessionId();
   const runId = (input.runId ?? createRunId()) as RunRecord["id"];
   const now = new Date().toISOString();
@@ -304,6 +333,7 @@ function writeHostStartFailureTrace(input: {
     id: runId,
     goal,
     state: "failed",
+    stopReason: "model_completion_failed",
     createdAt: now,
     updatedAt: now,
     metadata: {
@@ -314,21 +344,41 @@ function writeHostStartFailureTrace(input: {
       traceLevel: input.input.traceLevel,
     },
   };
+  const result: RunResult = {
+    signal: "failed",
+    state: "failed",
+    stopReason: "model_completion_failed",
+    message: input.message,
+    failure: {
+      category: "runtime",
+      code: "HOST_START_FAILED",
+      message: input.message,
+      retryable: false,
+    },
+    metadata: run.metadata,
+  };
 
   try {
-    const store = new FileRunStore(run, {
-      sessionRootDir: join(
-        input.input.workspaceRoot,
-        ".sparkwright",
-        "sessions",
-      ),
+    const sessionRootDir = join(
+      input.input.workspaceRoot,
+      ".sparkwright",
+      "sessions",
+    );
+    const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
+    const store = createSessionRunStoreFactory({
+      sessionStore,
       sessionId,
-      agentId: "main",
-      traceLevel: input.input.traceLevel,
-    });
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir,
+        sessionId,
+        agentId: "main",
+        traceLevel: input.input.traceLevel,
+      }),
+      metadata: { source: "cli" },
+    })(run);
     const events = new EventLog(runId);
-    store.append(events.emit("run.created", { goal: run.goal }));
-    store.append(
+    await store.append(events.emit("run.created", { goal: run.goal }));
+    await store.append(
       events.emit("run.failed", {
         reason: "host_start_failed",
         code: "HOST_START_FAILED",
@@ -342,7 +392,12 @@ function writeHostStartFailureTrace(input: {
         metadata: run.metadata,
       }),
     );
-    return { tracePath: store.tracePath, sessionId, runId };
+    await store.finish(run, result);
+    return {
+      tracePath: join(sessionRootDir, sessionId, "trace.jsonl"),
+      sessionId,
+      runId,
+    };
   } catch {
     return { sessionId: input.sessionId, runId: input.runId };
   }
