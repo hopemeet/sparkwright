@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import {
   createPermissionModePolicy,
   createRun,
@@ -34,6 +33,7 @@ export interface DirectCoreRunInput {
   goal: string;
   traceLevel: TraceLevel;
   workspaceRoot: string;
+  sessionRootDir: string;
   targetPath: string;
   shouldWrite: boolean;
   approveAll: boolean;
@@ -60,6 +60,7 @@ export async function startDirectCoreRun(
     goal,
     traceLevel,
     workspaceRoot,
+    sessionRootDir,
     targetPath,
     shouldWrite,
     approveAll,
@@ -86,7 +87,6 @@ export async function startDirectCoreRun(
   const policy = createPermissionModePolicy({ mode: permissionMode });
   const tools = await createConfiguredCliTools(workspaceRoot, env);
   const trace = new MemoryTrace();
-  const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
   // The agent's identity. Edit this string to change who the CLI agent is.

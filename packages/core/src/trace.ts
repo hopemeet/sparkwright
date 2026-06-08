@@ -107,6 +107,10 @@ export interface TraceSummary {
   errorCount: number;
   /** @reserved Public trace-summary field consumed by diagnostics UIs. */
   errorCodes: Record<string, number>;
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  expectedDenialCount: number;
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  expectedDenialCodes: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   usage: {
     inputTokens: number;
@@ -273,7 +277,7 @@ export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
       continue;
     }
 
-    const phase = createTimelinePhase(event);
+    const phase = createTimelinePhase(event, key !== undefined);
     phases.push(phase);
     if (key && phase.status === "pending") open.set(key, phase);
   }
@@ -303,6 +307,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   const terminalStates: Record<string, number> = {};
   const toolCalls: Record<string, number> = {};
   const errorCodes: Record<string, number> = {};
+  const expectedDenialCodes: Record<string, number> = {};
   const latestUsageByRun = new Map<string, Record<string, unknown>>();
   let modelUsageSeen = false;
   const summary: TraceSummary = {
@@ -316,6 +321,8 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     artifactCount: 0,
     errorCount: 0,
     errorCodes,
+    expectedDenialCount: 0,
+    expectedDenialCodes,
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -347,7 +354,10 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     if (sessionId) sessionIds.add(sessionId);
     if (agentId) agentIds.add(agentId);
     if (event.type === "artifact.created") summary.artifactCount += 1;
-    if (isTraceErrorEvent(event)) {
+    if (isExpectedDenialEvent(event)) {
+      summary.expectedDenialCount += 1;
+      collectExpectedDenialCode(summary, event);
+    } else if (isTraceErrorEvent(event)) {
       summary.errorCount += 1;
       collectErrorCode(summary, event);
     }
@@ -2356,6 +2366,29 @@ function collectErrorCode(
   summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
 }
 
+function collectExpectedDenialCode(
+  summary: TraceSummary,
+  event: SparkwrightEvent,
+): void {
+  if (!isRecord(event.payload)) return;
+  const code = stringValue(
+    isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    event.type.endsWith(".denied") ? event.type : undefined,
+  );
+  if (!code) return;
+  summary.expectedDenialCodes[code] =
+    (summary.expectedDenialCodes[code] ?? 0) + 1;
+}
+
+function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
+  if (event.type.endsWith(".denied")) return true;
+  if (!isRecord(event.payload)) return false;
+  return (
+    isRecord(event.payload.error) &&
+    event.payload.error.code === "APPROVAL_DENIED"
+  );
+}
+
 function isTraceErrorEvent(event: SparkwrightEvent): boolean {
   if (event.type.endsWith(".failed") || event.type.endsWith(".denied")) {
     return true;
@@ -2369,15 +2402,20 @@ function isTraceErrorEvent(event: SparkwrightEvent): boolean {
 
 function isTimelineDetailEvent(event: SparkwrightEvent): boolean {
   return (
+    event.type === "model.turn.started" ||
+    event.type === "model.turn.completed" ||
     event.type === "model.stream.chunk" ||
     event.type.startsWith("model.stream.")
   );
 }
 
-function createTimelinePhase(event: SparkwrightEvent): TraceTimelinePhase {
+function createTimelinePhase(
+  event: SparkwrightEvent,
+  hasPhaseKey: boolean,
+): TraceTimelinePhase {
   const payload = isRecord(event.payload) ? event.payload : {};
   const category = timelineCategory(event.type);
-  const status = initialTimelineStatus(event);
+  const status = initialTimelineStatus(event, hasPhaseKey);
   const metadata = timelinePhaseMetadata(event);
   return {
     id: timelinePhaseKey(event) ?? `${event.runId}:${event.sequence}`,
@@ -2387,11 +2425,11 @@ function createTimelinePhase(event: SparkwrightEvent): TraceTimelinePhase {
     label: timelineLabel(event, payload, category),
     status,
     startedAt: event.timestamp,
-    ...(status === "instant"
+    ...(status !== "pending"
       ? { endedAt: event.timestamp, durationMs: 0 }
       : {}),
     startSequence: event.sequence,
-    ...(status === "instant" ? { endSequence: event.sequence } : {}),
+    ...(status !== "pending" ? { endSequence: event.sequence } : {}),
     eventTypes: [event.type],
     ...(metadata ? { metadata } : {}),
   };
@@ -2413,7 +2451,6 @@ function completeTimelinePhase(
 }
 
 function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
-  if (event.spanId) return `span:${event.spanId}`;
   const payload = isRecord(event.payload) ? event.payload : {};
   const toolCallId = stringValue(payload.toolCallId, payload.id);
   if (
@@ -2457,13 +2494,17 @@ function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
     return `${event.runId}:run`;
   }
 
+  if (event.spanId) return `span:${event.spanId}`;
+
   return undefined;
 }
 
 function initialTimelineStatus(
   event: SparkwrightEvent,
+  hasPhaseKey: boolean,
 ): TraceTimelinePhaseStatus {
   if (terminalTimelineStatus(event)) return terminalTimelineStatus(event)!;
+  if (!hasPhaseKey) return "instant";
   if (
     event.type.endsWith(".requested") ||
     event.type.endsWith(".started") ||
@@ -2480,6 +2521,7 @@ function terminalTimelineStatus(
 ): TraceTimelinePhaseStatus | undefined {
   if (
     event.type.endsWith(".completed") ||
+    event.type.endsWith(".verified") ||
     event.type.endsWith(".skipped") ||
     event.type === "approval.resolved"
   ) {

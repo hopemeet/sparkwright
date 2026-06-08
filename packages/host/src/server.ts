@@ -12,6 +12,7 @@ import { HostRuntime, type RuntimeOptions } from "./runtime.js";
 
 export interface ServeConnectionOptions {
   workspaceRoot: string;
+  sessionRootDir?: string;
   defaultModel?: string;
   defaultPermissionMode?: RuntimeOptions["defaultPermissionMode"];
   hostName?: string;
@@ -31,6 +32,7 @@ export function serveConnection(
   let handshakeDone = false;
   const runtime = new HostRuntime({
     workspaceRoot: opts.workspaceRoot,
+    sessionRootDir: opts.sessionRootDir,
     defaultModel: opts.defaultModel,
     defaultPermissionMode: opts.defaultPermissionMode,
     emit: (event: HostEvent) => {

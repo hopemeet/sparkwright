@@ -986,6 +986,36 @@ describe("trace", () => {
     expect(summary.toolCalls).toEqual({ read_file: 1 });
   });
 
+  it("classifies approval denials separately from unexpected errors", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("workspace.write.denied", {
+        proposalId: "write_1",
+        path: "README.md",
+        reason: "approval_denied",
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_1",
+        status: "failed",
+        error: { code: "APPROVAL_DENIED", message: "denied" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(0);
+    expect(summary.errorCodes).toEqual({});
+    expect(summary.expectedDenialCount).toBe(2);
+    expect(summary.expectedDenialCodes).toEqual({
+      "workspace.write.denied": 1,
+      APPROVAL_DENIED: 1,
+    });
+  });
+
   it("does not double count cumulative usage snapshots in summaries", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -1104,6 +1134,82 @@ describe("trace", () => {
     expect(
       timeline.phases.map((phase) => phase.eventTypes).flat(),
     ).not.toContain("model.stream.chunk");
+  });
+
+  it("uses semantic phase keys before spans in trace timelines", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const span = (spanId: string) => ({
+      __span: { traceId: "trace_1", spanId },
+    });
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}, span("span_run")),
+      log.emit("model.turn.started", {}, span("span_turn_1")),
+      log.emit("model.requested", { step: 1 }, span("span_model_1")),
+      log.emit(
+        "model.completed",
+        { step: 1, message: "ok" },
+        span("span_model_1"),
+      ),
+      log.emit("model.turn.completed", {}, span("span_turn_1")),
+      log.emit(
+        "workspace.anchored_edit.requested",
+        { path: "README.md" },
+        span("span_edit_1"),
+      ),
+      log.emit(
+        "workspace.anchored_edit.verified",
+        { path: "README.md" },
+        span("span_edit_1"),
+      ),
+      log.emit("run.completed", { reason: "final_answer" }, span("span_run")),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "run",
+          status: "completed",
+          startSequence: 1,
+          endSequence: 9,
+        }),
+        expect.objectContaining({
+          category: "model",
+          status: "completed",
+          eventTypes: ["model.requested", "model.completed"],
+        }),
+        expect.objectContaining({
+          category: "workspace",
+          status: "completed",
+          eventTypes: [
+            "workspace.anchored_edit.requested",
+            "workspace.anchored_edit.verified",
+          ],
+        }),
+      ]),
+    );
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["run.started"]),
+        }),
+        expect.objectContaining({
+          eventTypes: expect.arrayContaining(["model.turn.completed"]),
+        }),
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining([
+            "workspace.anchored_edit.requested",
+          ]),
+        }),
+      ]),
+    );
   });
 
   it("validates session trace consistency", async () => {

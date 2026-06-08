@@ -103,6 +103,8 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 export interface RuntimeOptions {
   /** Workspace root for all runs spawned through this runtime. */
   workspaceRoot: string;
+  /** Session/trace storage root. Defaults to <workspaceRoot>/.sparkwright/sessions. */
+  sessionRootDir?: string;
   /** Default model reference ("provider/model") when run.start omits one. */
   defaultModel?: string;
   /** Default permission mode when run.start does not specify one. */
@@ -149,6 +151,10 @@ interface PreparedHostRunEnvironment {
 }
 
 const MAIN_AGENT_ID = "main";
+
+function defaultSessionRootDir(workspaceRoot: string): string {
+  return join(workspaceRoot, ".sparkwright", "sessions");
+}
 
 function isTraceLevel(value: unknown): value is TraceLevel {
   return value === "minimal" || value === "standard" || value === "debug";
@@ -319,7 +325,8 @@ export class HostRuntime {
 
     const workspaceRoot = this.opts.workspaceRoot;
     const workspace = new LocalWorkspace(workspaceRoot);
-    const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
+    const sessionRootDir =
+      this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
     const trace = new MemoryTrace();
     const pendingExtensionEvents = createBufferedEmitter();
     const runIdHolder: { value: string | null } = { value: null };
@@ -1024,11 +1031,8 @@ export class HostRuntime {
         },
       };
     }
-    const sessionRootDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "sessions",
-    );
+    const sessionRootDir =
+      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot);
     if (sessionId) {
       let safeSessionId: string;
       try {
@@ -1114,7 +1118,8 @@ export class HostRuntime {
         code: "run_not_found",
         message:
           `Could not find run directory for ${runId} under ` +
-          `${this.opts.workspaceRoot}/.sparkwright.`,
+          `${this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)} ` +
+          `or ${this.opts.workspaceRoot}/.sparkwright/runs.`,
       },
     };
   }
@@ -1400,7 +1405,8 @@ export class HostRuntime {
   async listSessions(
     limit = 20,
   ): Promise<Array<{ id: string; mtimeMs: number; preview: string }>> {
-    const root = join(this.opts.workspaceRoot, ".sparkwright", "sessions");
+    const root =
+      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot);
     let entries: string[];
     try {
       entries = await readdir(root);
@@ -1472,9 +1478,8 @@ export class HostRuntime {
     }
 
     const sessionDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "sessions",
+      this.opts.sessionRootDir ??
+        defaultSessionRootDir(this.opts.workspaceRoot),
       safeSessionId,
     );
     try {
@@ -1554,11 +1559,8 @@ export class HostRuntime {
       };
     }
 
-    const sessionRootDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "sessions",
-    );
+    const sessionRootDir =
+      this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot);
     try {
       const store = new FileSessionStore({ rootDir: sessionRootDir });
       const result = await forkSessionFromEvent({

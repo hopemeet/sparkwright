@@ -28,6 +28,7 @@ const require = createRequire(import.meta.url);
 export interface HostRunInput {
   goal: string;
   workspaceRoot: string;
+  sessionRootDir: string;
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -40,6 +41,7 @@ export interface HostRunInput {
 export interface HostResumeInput {
   runId: string;
   workspaceRoot: string;
+  sessionRootDir: string;
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -82,6 +84,7 @@ async function runHostLifecycle(
 ): Promise<HostRunResult> {
   const {
     workspaceRoot,
+    sessionRootDir,
     shouldWrite,
     approveAll,
     permissionMode,
@@ -101,7 +104,7 @@ async function runHostLifecycle(
   let writeDeniedCount = 0;
 
   let tracePath = sessionId
-    ? join(workspaceRoot, ".sparkwright", "sessions", sessionId, "trace.jsonl")
+    ? join(sessionRootDir, sessionId, "trace.jsonl")
     : undefined;
 
   const terminal = new Promise<void>((resolveTerminal) => {
@@ -123,6 +126,8 @@ async function runHostLifecycle(
             "--stdio",
             "--workspace",
             workspaceRoot,
+            "--session-root",
+            sessionRootDir,
             "--permission-mode",
             permissionMode,
             ...(modelName ? ["--model", modelName] : []),
@@ -244,9 +249,7 @@ async function runHostLifecycle(
         if (resumed.sessionId) {
           sessionId = resumed.sessionId;
           tracePath = join(
-            workspaceRoot,
-            ".sparkwright",
-            "sessions",
+            sessionRootDir,
             sessionId,
             "trace.jsonl",
           );
@@ -359,11 +362,7 @@ async function writeHostStartFailureTrace(input: {
   };
 
   try {
-    const sessionRootDir = join(
-      input.input.workspaceRoot,
-      ".sparkwright",
-      "sessions",
-    );
+    const sessionRootDir = input.input.sessionRootDir;
     const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
     const store = createSessionRunStoreFactory({
       sessionStore,

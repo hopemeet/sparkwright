@@ -4,12 +4,14 @@ import { createStdioConnection } from "./transport-stdio.js";
 import { startWsServer } from "./transport-ws.js";
 import { serveConnection } from "./server.js";
 import type { PermissionMode } from "@sparkwright/core";
+import { join } from "node:path";
 
 interface ParsedArgs {
   mode: "stdio" | "ws";
   port: number;
   host: string;
   workspaceRoot: string;
+  sessionRootDir: string;
   model?: string;
   permissionMode: PermissionMode;
   authToken?: string;
@@ -20,6 +22,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let port = 7320;
   let host = "127.0.0.1";
   let workspaceRoot = process.cwd();
+  let sessionRootDir: string | undefined;
   let model: string | undefined;
   let permissionMode: PermissionMode = "default";
   let authToken = process.env.SPARKWRIGHT_HOST_TOKEN;
@@ -30,6 +33,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--port" && argv[i + 1]) port = Number(argv[++i]);
     else if (a === "--host" && argv[i + 1]) host = argv[++i];
     else if (a === "--workspace" && argv[i + 1]) workspaceRoot = argv[++i];
+    else if (a === "--session-root" && argv[i + 1])
+      sessionRootDir = argv[++i];
     else if (a === "--model" && argv[i + 1]) model = argv[++i];
     else if (a === "--permission-mode" && argv[i + 1]) {
       const v = argv[++i];
@@ -45,6 +50,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     port,
     host,
     workspaceRoot,
+    sessionRootDir:
+      sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
     model,
     permissionMode,
     authToken,
@@ -62,6 +69,7 @@ function printHelp(): void {
       "",
       "OPTIONS:",
       "  --workspace <path>         workspace root for runs (default: cwd)",
+      "  --session-root <path>      session/trace storage root (default: <workspace>/.sparkwright/sessions)",
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
       "  --permission-mode <mode>   plan | default | accept_edits | dont_ask | bypass_permissions",
       "  --auth-token <token>       require WS clients to provide Bearer token or ?token=...",
@@ -106,6 +114,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
     });
     serveConnection(conn, {
       workspaceRoot: args.workspaceRoot,
+      sessionRootDir: args.sessionRootDir,
       defaultModel: args.model,
       defaultPermissionMode: args.permissionMode,
     });
@@ -140,6 +149,7 @@ export async function runHostMain(argv: string[]): Promise<void> {
       conn.onClose(() => detach());
       serveConnection(conn, {
         workspaceRoot: args.workspaceRoot,
+        sessionRootDir: args.sessionRootDir,
         defaultModel: args.model,
         defaultPermissionMode: args.permissionMode,
       });

@@ -232,6 +232,43 @@ describe("runCli", () => {
     expect(sessionJson.runIds).toHaveLength(1);
   });
 
+  it("writes host run sessions under --session-root", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(sessionRoot);
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toBeTruthy();
+    expect(result.tracePath).toBe(
+      join(sessionRoot, result.sessionId!, "trace.jsonl"),
+    );
+    await expect(
+      readFile(join(sessionRoot, result.sessionId!, "session.json"), "utf8"),
+    ).resolves.toContain(result.sessionId!);
+    await expect(
+      stat(join(workspace, ".sparkwright", "sessions")),
+    ).rejects.toThrow();
+  });
+
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

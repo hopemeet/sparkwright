@@ -77,6 +77,7 @@ interface ParsedArgs {
   target?: string;
   traceLevel: TraceLevel;
   workspaceRoot: string;
+  sessionRootDir: string;
   targetPath: string;
   shouldWrite: boolean;
   approveAll: boolean;
@@ -277,6 +278,7 @@ function parseArgs(
   }
   let traceLevel: TraceLevel = "standard";
   let workspaceRoot = defaults.workspace ?? cwd;
+  let sessionRootDir: string | undefined;
   let targetPath = "README.md";
   let shouldWrite = false;
   let approveAll = false;
@@ -323,6 +325,19 @@ function parseArgs(
       if (!value)
         return { ok: false, message: "Usage: --workspace requires a path" };
       workspaceRoot = value;
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--session-root") {
+      const value = args[index + 1];
+      if (!value)
+        return {
+          ok: false,
+          message: "Usage: --session-root requires a path",
+        };
+      sessionRootDir = value;
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -572,7 +587,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path]",
+        "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]",
     };
   }
 
@@ -644,7 +659,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace]",
+        "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace]",
     };
   }
   if (command === "run" && subcommand === "resume") {
@@ -678,6 +693,8 @@ function parseArgs(
       target,
       traceLevel,
       workspaceRoot,
+      sessionRootDir:
+        sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
       targetPath,
       shouldWrite,
       approveAll,
@@ -2275,13 +2292,13 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
-    return 'Usage: sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
+    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>";
   }
   if (command === "session") {
-    return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path]";
+    return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
   }
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
@@ -2363,7 +2380,7 @@ async function handleSessionCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path]",
+      "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]",
     );
     return { exitCode: 1 };
   }
@@ -2378,12 +2395,7 @@ async function handleSessionCommand(
     return { exitCode: 1, sessionId: parsed.target };
   }
 
-  const sessionDir = join(
-    parsed.workspaceRoot,
-    ".sparkwright",
-    "sessions",
-    sessionId,
-  );
+  const sessionDir = join(parsed.sessionRootDir, sessionId);
 
   if (parsed.subcommand === "summary") {
     const summary = await summarizeTraceFile(join(sessionDir, "trace.jsonl"));
@@ -2428,7 +2440,7 @@ async function handleSessionResumeCommand(
   if (!parsed.target || !parsed.goal) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session resume <session-id> <goal> [--workspace path]",
+      "Usage: sparkwright session resume <session-id> <goal> [--workspace path] [--session-root path]",
     );
     return { exitCode: 1 };
   }
@@ -2443,7 +2455,7 @@ async function handleSessionResumeCommand(
     return { exitCode: 1, sessionId: parsed.target };
   }
 
-  const sessionRootDir = join(parsed.workspaceRoot, ".sparkwright", "sessions");
+  const sessionRootDir = parsed.sessionRootDir;
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
   const session = await sessionStore.get(sessionId);
   if (!session) {
@@ -2489,7 +2501,7 @@ async function handleRunResumeCommand(
   if (!parsed.runId) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace]",
+      "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace]",
     );
     return { exitCode: 1 };
   }
@@ -2499,6 +2511,7 @@ async function handleRunResumeCommand(
       {
         runId: parsed.runId,
         workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
         shouldWrite: parsed.shouldWrite,
         approveAll: parsed.approveAll,
         permissionMode: parsed.permissionMode,
@@ -2518,7 +2531,7 @@ async function handleRunResumeCommand(
   // Locate the run directory. Two layouts are supported:
   //   - session-scoped: <workspace>/.sparkwright/sessions/<sid>/agents/main/runs/<rid>/
   //   - legacy:        <workspace>/.sparkwright/runs/<rid>/
-  const sessionsRoot = join(parsed.workspaceRoot, ".sparkwright", "sessions");
+  const sessionsRoot = parsed.sessionRootDir;
   const legacyRunDir = join(
     parsed.workspaceRoot,
     ".sparkwright",
@@ -2574,7 +2587,7 @@ async function handleRunResumeCommand(
   if (!runDir) {
     writeLine(
       io.stderr,
-      `Could not find run directory for ${parsed.runId} under ${parsed.workspaceRoot}/.sparkwright. ` +
+      `Could not find run directory for ${parsed.runId} under ${parsed.sessionRootDir} or ${parsed.workspaceRoot}/.sparkwright/runs. ` +
         `Pass --session <session-id> to disambiguate.`,
     );
     return { exitCode: 1 };
@@ -2682,6 +2695,11 @@ function formatTraceSummary(summary: TraceSummary): string {
     .slice(0, 5)
     .map(([code, count]) => `${code}:${count}`)
     .join(", ");
+  const topDenials = Object.entries(summary.expectedDenialCodes ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([code, count]) => `${code}:${count}`)
+    .join(", ");
   return [
     `events: ${summary.eventCount}`,
     `runs: ${summary.runIds.length}`,
@@ -2690,6 +2708,8 @@ function formatTraceSummary(summary: TraceSummary): string {
     `artifacts: ${summary.artifactCount}`,
     `errors: ${summary.errorCount}`,
     `top errors: ${topErrors || "(none)"}`,
+    `expected denials: ${summary.expectedDenialCount ?? 0}`,
+    `top expected denials: ${topDenials || "(none)"}`,
     `tokens: ${summary.usage.totalTokens}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
@@ -2938,13 +2958,13 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
+    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
-    "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--format json|text] [--apply]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
-    "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace] [--model provider/model]",
+    "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
+    "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model]",
   ].join("\n");
 }
 
