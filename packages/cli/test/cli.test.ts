@@ -972,6 +972,25 @@ describe("runCli", () => {
     });
   });
 
+  it("capabilities inspect rejects an invalid workspace", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const missingWorkspace = join(workspace, "missing");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", missingWorkspace],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "Workspace does not exist or is not accessible",
+    );
+    expect(output.stdoutText()).toBe("");
+  });
+
   it("updates user tool config commands without dropping existing fields", async () => {
     const xdg = process.env.XDG_CONFIG_HOME as string;
     const configPath = join(xdg, "sparkwright", "config.json");

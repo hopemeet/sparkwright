@@ -81,6 +81,8 @@ export type {
   RunInputValidationInput,
   RunInputValidationResult,
 } from "./run-input-validation.js";
+export { writeHostStartFailureTrace } from "./failure-trace.js";
+export type { HostStartFailureTraceInput } from "./failure-trace.js";
 export type {
   SharedConfig,
   SharedConfigSourceMap,

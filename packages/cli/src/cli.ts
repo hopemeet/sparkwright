@@ -1132,6 +1132,13 @@ async function handleCapabilitiesCommand(
     return { exitCode: 1 };
   }
 
+  const validation = await validateRunInput({
+    workspaceRoot: parsed.workspaceRoot,
+    env,
+  });
+  for (const error of validation.errors) writeLine(io.stderr, error);
+  if (!validation.ok) return { exitCode: 1 };
+
   try {
     const report = await loadCapabilityInspectReport(
       parsed.workspaceRoot,
@@ -2459,6 +2466,9 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
   }
+  if (command === "tui") {
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode mode] [--session-id id]";
+  }
   if (command === "session") {
     return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
   }
@@ -3163,6 +3173,7 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode mode] [--session-id id]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",

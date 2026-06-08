@@ -233,6 +233,53 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
+  it("writes a trace when host startup fails before run events stream", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-test",
+        providers: { openai: {} },
+      }),
+      "utf8",
+    );
+    const sessionRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-tui-sessions-"),
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      sessionRootDir: sessionRoot,
+      modelName: "openai/gpt-test",
+      modelNameSource: "config",
+      store,
+    });
+
+    await controller.start("provider failure smoke");
+    await waitForError(store);
+
+    const sessionId = controller.getSessionId();
+    const trace = await readTrace(join(sessionRoot, sessionId, "trace.jsonl"));
+    expect(trace.map((event) => event.type)).toEqual([
+      "run.created",
+      "run.failed",
+    ]);
+    expect(
+      trace.find((event) => event.type === "run.failed")?.payload,
+    ).toMatchObject({
+      reason: "host_start_failed",
+      code: "HOST_START_FAILED",
+      metadata: { source: "tui" },
+    });
+    expect(store.getSnapshot().events.map((event) => event.type)).toContain(
+      "run.failed",
+    );
+
+    controller.shutdown();
+  }, 30_000);
+
   it("marks default interactive runs as write-enabled for host approvals", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");

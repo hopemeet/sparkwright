@@ -55,6 +55,7 @@ import {
 } from "./lib/project-commands.js";
 import {
   chordMatches,
+  ctrlCPressCount,
   formatBinding,
   DEFAULTS as DEFAULT_BINDINGS,
   type Bindings,
@@ -259,6 +260,7 @@ function AppReady(
   // timer handle so we can disarm it. Avoids quitting the whole TUI on a single
   // accidental Ctrl+C.
   const quitArmRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastQuitInputAtRef = useRef(0);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   // Runtime theme override from /theme; falls back to the configured theme.
   const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
@@ -862,6 +864,32 @@ function AppReady(
     void controller.start(value);
   }
 
+  function requestQuit(presses = 1): void {
+    const now = Date.now();
+    if (now - lastQuitInputAtRef.current < 30) return;
+    lastQuitInputAtRef.current = now;
+    for (let i = 0; i < presses; i += 1) {
+      if (state.status === "running") {
+        if (controller.cancel())
+          toasts.push({ variant: "info", message: "cancelling…" });
+        return;
+      }
+      if (quitArmRef.current) {
+        clearTimeout(quitArmRef.current);
+        quitArmRef.current = null;
+        exit();
+        return;
+      }
+      quitArmRef.current = setTimeout(() => {
+        quitArmRef.current = null;
+      }, 2000);
+      toasts.push({
+        variant: "info",
+        message: "press ctrl+c again to exit",
+      });
+    }
+  }
+
   // Drain the prompt queue: when a run finishes and the controller is free,
   // start the next queued goal. Gated on `controller.isRunning()` so we never
   // double-start, and only on a settled status so an in-flight run is left
@@ -883,30 +911,7 @@ function AppReady(
     useInput((input, key) => {
       const top = layers.top();
       if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
-        // Ctrl+C is a single key that means three different things depending on
-        // state, so a lone press should never drop the user out of the TUI:
-        //   1. A run is in flight → cancel it (this is what the user reaches for
-        //      when esc-to-cancel is forgotten), and don't exit.
-        //   2. Already armed → second press within the window actually exits.
-        //   3. Otherwise → arm the quit window and tell the user to press again.
-        if (state.status === "running") {
-          if (controller.cancel())
-            toasts.push({ variant: "info", message: "cancelling…" });
-          return;
-        }
-        if (quitArmRef.current) {
-          clearTimeout(quitArmRef.current);
-          quitArmRef.current = null;
-          exit();
-          return;
-        }
-        quitArmRef.current = setTimeout(() => {
-          quitArmRef.current = null;
-        }, 2000);
-        toasts.push({
-          variant: "info",
-          message: "press ctrl+c again to exit",
-        });
+        requestQuit(Math.max(1, ctrlCPressCount(input)));
         return;
       }
       if (
@@ -1284,6 +1289,7 @@ function AppReady(
                   toasts.push({ variant: "info", message: "cancelling…" });
               }
             }}
+            onQuit={requestQuit}
             stashRef={stashRef}
             onStashChange={(next) => {
               stashRef.current = next;

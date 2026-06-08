@@ -4,20 +4,12 @@ import { dirname, join } from "node:path";
 import type {
   ApprovalResolver,
   PermissionMode,
-  RunRecord,
-  RunResult,
   SparkwrightEvent,
   TraceLevel,
 } from "@sparkwright/core";
-import {
-  createRunId,
-  createSessionId,
-  createSessionFileRunStoreFactory,
-  createSessionRunStoreFactory,
-  EventLog,
-  FileSessionStore,
-} from "@sparkwright/core";
+import { createSessionId } from "@sparkwright/core";
 import { createClient, type Client } from "@sparkwright/sdk-node";
+import { writeHostStartFailureTrace } from "@sparkwright/host";
 import { createCliApprovalResolver } from "../cli-approval.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
@@ -284,10 +276,15 @@ async function runHostLifecycle(
         return;
       }
       const failureTrace = await writeHostStartFailureTrace({
-        input,
+        goal: "goal" in input ? input.goal : `resume ${input.runId}`.trim(),
         message: failedMessage,
+        sessionRootDir: input.sessionRootDir,
+        source: "cli",
         sessionId,
         runId,
+        traceLevel: input.traceLevel,
+        targetPath: input.targetPath,
+        shouldWrite: input.shouldWrite,
       });
       sessionId = failureTrace.sessionId;
       runId = failureTrace.runId;
@@ -355,123 +352,6 @@ async function closeClient(client: Client | undefined): Promise<void> {
     client.on("disconnect", finish);
     client.close();
   });
-}
-
-async function writeHostStartFailureTrace(input: {
-  input: HostRunInput | HostResumeInput;
-  message: string;
-  sessionId?: string;
-  runId?: string;
-}): Promise<{ tracePath?: string; sessionId?: string; runId?: string }> {
-  const sessionId = input.sessionId ?? createSessionId();
-  const runId = (input.runId ?? createRunId()) as RunRecord["id"];
-  const now = new Date().toISOString();
-  const goal =
-    "goal" in input.input
-      ? input.input.goal
-      : `resume ${input.input.runId}`.trim();
-  const run: RunRecord = {
-    id: runId,
-    goal,
-    state: "failed",
-    stopReason: "model_completion_failed",
-    createdAt: now,
-    updatedAt: now,
-    metadata: {
-      source: "cli",
-      failurePhase: "host_start",
-      targetPath: input.input.targetPath,
-      shouldWrite: input.input.shouldWrite,
-      traceLevel: input.input.traceLevel,
-    },
-  };
-  const result: RunResult = {
-    signal: "failed",
-    state: "failed",
-    stopReason: "model_completion_failed",
-    message: input.message,
-    failure: {
-      category: "runtime",
-      code: "HOST_START_FAILED",
-      message: input.message,
-      retryable: false,
-    },
-    metadata: run.metadata,
-  };
-
-  try {
-    const sessionRootDir = input.input.sessionRootDir;
-    const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
-    const store = createSessionRunStoreFactory({
-      sessionStore,
-      sessionId,
-      runStoreFactory: createSessionFileRunStoreFactory({
-        sessionRootDir,
-        sessionId,
-        agentId: "main",
-        traceLevel: input.input.traceLevel,
-      }),
-      metadata: { source: "cli" },
-    })(run);
-    const events = new EventLog(runId);
-    await store.append(events.emit("run.created", { goal: run.goal }));
-    const capabilityFailure = inferCapabilityIndexFailure(input.message);
-    if (capabilityFailure) {
-      await store.append(
-        events.emit(
-          "capability.index.failed",
-          {
-            kind: capabilityFailure.kind,
-            source: capabilityFailure.source,
-            message: input.message,
-            code: capabilityFailure.code,
-          },
-          {
-            source: "cli",
-            failurePhase: "host_start",
-          },
-        ),
-      );
-    }
-    await store.append(
-      events.emit("run.failed", {
-        reason: "host_start_failed",
-        code: "HOST_START_FAILED",
-        message: input.message,
-        failure: {
-          category: "runtime",
-          code: "HOST_START_FAILED",
-          message: input.message,
-          retryable: false,
-        },
-        metadata: run.metadata,
-      }),
-    );
-    await store.finish(run, result);
-    return {
-      tracePath: join(sessionRootDir, sessionId, "trace.jsonl"),
-      sessionId,
-      runId,
-    };
-  } catch {
-    return { sessionId: input.sessionId, runId: input.runId };
-  }
-}
-
-function inferCapabilityIndexFailure(message: string):
-  | {
-      kind: "skills";
-      code: "SKILL_INDEX_FAILED";
-      source?: string;
-    }
-  | undefined {
-  if (!/\bskill\b/i.test(message)) return undefined;
-  const source = message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
-  return {
-    kind: "skills",
-    code: "SKILL_INDEX_FAILED",
-    ...(source ? { source } : {}),
-  };
 }
 
 function formatHostError(error: unknown): string {

@@ -3,6 +3,7 @@ import {
   parseChord,
   parseChords,
   chordMatches,
+  ctrlCPressCount,
   formatBinding,
   mergeBindings,
   DEFAULTS,
@@ -50,6 +51,12 @@ describe("chordMatches", () => {
     expect(chordMatches(chord, { ctrl: false }, "k")).toBe(false);
     expect(chordMatches(chord, { ctrl: true }, "j")).toBe(false);
   });
+  it("matches ctrl+c when terminals report literal ETX", () => {
+    const chord = parseChord("ctrl+c")!;
+    expect(chordMatches(chord, {}, "\x03")).toBe(true);
+    expect(chordMatches(chord, {}, "\x03\x03")).toBe(true);
+    expect(chordMatches(chord, { ctrl: true }, "c")).toBe(true);
+  });
   it("matches special keys via Ink flags", () => {
     const esc = parseChord("esc")!;
     expect(chordMatches(esc, { escape: true }, "")).toBe(true);
@@ -59,6 +66,14 @@ describe("chordMatches", () => {
     const k = parseChord("k")!;
     expect(chordMatches(k, { ctrl: true }, "k")).toBe(false);
     expect(chordMatches(k, {}, "k")).toBe(true);
+  });
+});
+
+describe("ctrlCPressCount", () => {
+  it("counts bundled ETX bytes from a PTY input chunk", () => {
+    expect(ctrlCPressCount("")).toBe(0);
+    expect(ctrlCPressCount("\x03")).toBe(1);
+    expect(ctrlCPressCount("\x03\x03")).toBe(2);
   });
 });
 

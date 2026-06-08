@@ -6,6 +6,7 @@ import {
   type Client,
   type SpawnHostOptions,
 } from "@sparkwright/sdk-node";
+import { writeHostStartFailureTrace } from "@sparkwright/host";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
@@ -193,17 +194,19 @@ export class RunController {
 
   async start(goal: string): Promise<void> {
     if (this.activeRunId) return;
+    this.store.appendUserMessage(goal);
+    this.store.setStatus("running");
+    this.store.setStopReason(null);
+
     let client: Client;
     try {
       client = await this.ensureClient();
     } catch (err) {
-      this.store.setError(err instanceof Error ? err.message : String(err));
+      const message = formatError(err);
+      await this.recordHostStartFailure(goal, message);
+      this.store.setError(message);
       return;
     }
-
-    this.store.appendUserMessage(goal);
-    this.store.setStatus("running");
-    this.store.setStopReason(null);
 
     try {
       const { runId } = await client.startRun({
@@ -216,7 +219,11 @@ export class RunController {
       this.activeRunId = runId;
       this.cancelRequested = false;
     } catch (err) {
-      this.store.setError(formatError(err));
+      const message = formatError(err);
+      if (!this.hasTerminalRunEvent()) {
+        await this.recordHostStartFailure(goal, message);
+      }
+      this.store.setError(message);
       this.activeRunId = null;
     }
   }
@@ -372,6 +379,64 @@ export class RunController {
       this.opts.sessionRootDir ??
       join(this.opts.workspaceRoot, ".sparkwright", "sessions")
     );
+  }
+
+  private async recordHostStartFailure(
+    goal: string,
+    message: string,
+  ): Promise<void> {
+    const result = await writeHostStartFailureTrace({
+      goal,
+      message,
+      sessionRootDir: this.sessionRootDir(),
+      source: "tui",
+      sessionId: this.sessionId,
+      traceLevel: "standard",
+      shouldWrite: this.opts.permissionMode !== "plan",
+      metadata: {
+        workspaceRoot: this.opts.workspaceRoot,
+        permissionMode: this.opts.permissionMode ?? "default",
+        ...(this.opts.modelName ? { model: this.opts.modelName } : {}),
+      },
+    });
+    if (!result.tracePath) return;
+    try {
+      const events = await loadSessionEvents(
+        this.sessionRootDir(),
+        this.sessionId,
+      );
+      const existingIds = new Set(
+        this.currentSessionEvents
+          .map((event) =>
+            typeof event === "object" && event !== null && "id" in event
+              ? (event as { id?: unknown }).id
+              : undefined,
+          )
+          .filter((id): id is string => typeof id === "string"),
+      );
+      for (const event of events) {
+        const id = typeof event.id === "string" ? event.id : undefined;
+        if (id && existingIds.has(id)) continue;
+        this.currentSessionEvents.push(event);
+        if (id) existingIds.add(id);
+        this.store.appendEvent(
+          event as unknown as Parameters<typeof this.store.appendEvent>[0],
+        );
+      }
+    } catch {
+      // The UI already has the human-readable error. Trace readback is best
+      // effort so a filesystem race cannot mask the original failure.
+    }
+  }
+
+  private hasTerminalRunEvent(): boolean {
+    return this.currentSessionEvents.some((event) => {
+      if (typeof event !== "object" || event === null || !("type" in event)) {
+        return false;
+      }
+      const type = (event as { type?: unknown }).type;
+      return type === "run.failed" || type === "run.completed";
+    });
   }
 
   private requestModelName(): string | undefined {
