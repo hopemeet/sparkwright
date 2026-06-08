@@ -37,8 +37,9 @@ export interface RunControllerOptions {
   /** Session/trace storage root. Defaults to <workspace>/.sparkwright/sessions. */
   sessionRootDir?: string;
   permissionMode?: PermissionMode;
-  /** Model reference in "provider/model" form, or the reserved "deterministic". */
+  /** Model reference shown by the TUI. Only request-sourced models are sent to the host. */
   modelName?: string;
+  modelNameSource?: "config" | "request";
   store: EventStore;
   /** If provided, runs accumulate into this session id. */
   initialSessionId?: string;
@@ -174,8 +175,12 @@ export class RunController {
   }
 
   /** Hot-swap the model. Affects the NEXT run; in-flight is unaffected. */
-  updateModel(modelName?: string): void {
+  updateModel(
+    modelName?: string,
+    source: RunControllerOptions["modelNameSource"] = "request",
+  ): void {
     this.opts.modelName = modelName;
+    this.opts.modelNameSource = source;
   }
 
   updatePermissionMode(permissionMode: PermissionMode): void {
@@ -204,7 +209,7 @@ export class RunController {
       const { runId } = await client.startRun({
         goal,
         sessionId: this.sessionId,
-        model: this.opts.modelName,
+        model: this.requestModelName(),
         permissionMode: this.opts.permissionMode,
         shouldWrite: this.opts.permissionMode !== "plan",
       });
@@ -349,7 +354,6 @@ export class RunController {
         this.sessionRootDir(),
         "--permission-mode",
         this.opts.permissionMode ?? "default",
-        ...(this.opts.modelName ? ["--model", this.opts.modelName] : []),
       ],
     };
     this.clientPromise = createClient({
@@ -368,6 +372,12 @@ export class RunController {
       this.opts.sessionRootDir ??
       join(this.opts.workspaceRoot, ".sparkwright", "sessions")
     );
+  }
+
+  private requestModelName(): string | undefined {
+    return this.opts.modelNameSource === "config"
+      ? undefined
+      : this.opts.modelName;
   }
 
   private attachListeners(client: Client): void {

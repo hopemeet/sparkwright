@@ -85,9 +85,87 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
+  it("does not pass config-sourced model as a request override", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ model: "deterministic" }),
+      "utf8",
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      modelNameSource: "config",
+      store,
+    });
+
+    await controller.start("config model smoke");
+    await waitForDone(store);
+
+    const events = await readTrace(
+      join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        controller.getSessionId(),
+        "trace.jsonl",
+      ),
+    );
+    expect(
+      events.find((event) => event.type === "run.started")?.payload,
+    ).toMatchObject({
+      resolvedModel: {
+        adapterId: "deterministic",
+        modelSource: { layer: "project" },
+      },
+    });
+
+    controller.shutdown();
+  }, 30_000);
+
+  it("passes explicit model selection as a request override", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      modelNameSource: "request",
+      store,
+    });
+
+    await controller.start("request model smoke");
+    await waitForDone(store);
+
+    const events = await readTrace(
+      join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        controller.getSessionId(),
+        "trace.jsonl",
+      ),
+    );
+    expect(
+      events.find((event) => event.type === "run.started")?.payload,
+    ).toMatchObject({
+      resolvedModel: {
+        adapterId: "deterministic",
+        modelSource: { layer: "request" },
+      },
+    });
+
+    controller.shutdown();
+  }, 30_000);
+
   it("passes a custom session root through to the spawned host", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
-    const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-tui-sessions-"));
+    const sessionRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-tui-sessions-"),
+    );
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     const store = new EventStore();
     const controller = new RunController({
@@ -139,11 +217,7 @@ describe("TUI ↔ host via sdk-node", () => {
       snap.events
         .map((event) => event.type)
         .filter((type) => type !== "tui.user"),
-    ).toEqual([
-      "run.created",
-      "capability.index.failed",
-      "run.failed",
-    ]);
+    ).toEqual(["run.created", "capability.index.failed", "run.failed"]);
     const trace = await readFile(
       join(
         workspace,
@@ -190,3 +264,17 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 });
+
+async function readTrace(path: string): Promise<
+  Array<{
+    type: string;
+    payload?: unknown;
+  }>
+> {
+  const raw = await readFile(path, "utf8");
+  return raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { type: string; payload?: unknown });
+}

@@ -41,7 +41,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Approval                          | `approval.requested`, `approval.resolved`, `interaction.requested`, `interaction.resolved`                                        | Show pending review and final decision                                |
 | Workspace mutation                | `workspace.write.requested`, `artifact.created`, `workspace.write.completed`, `workspace.write.denied`, `workspace.write.skipped` | Link diff artifacts and final mutation state                          |
 | Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                  | Stream output incrementally; cap retained inline output               |
-| Skill and edge lifecycle          | `skill.indexed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                                                   | Show capability changes as environment/context evidence               |
+| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                        | Show capability changes as environment/context evidence               |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                     | Show as host automation, not model-authored work                      |
 
 A backend projection can materialize these rows into a read model, but the

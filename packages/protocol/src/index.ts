@@ -239,7 +239,9 @@ export interface CapabilityMcpStatus {
   status: string;
   toolNames: string[];
   errorCode?: string;
+  /** @reserved Public capability-status field consumed by diagnostics UIs. */
   errorPhase?: string;
+  /** @reserved Public capability-status field consumed by diagnostics UIs. */
   errorMessage?: string;
 }
 

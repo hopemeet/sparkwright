@@ -221,6 +221,7 @@ Current event types:
 - `context.compaction.started`
 - `context.compaction.completed`
 - `context.compaction.failed`
+- `capability.index.failed`
 - `skill.indexed`
 - `skill.loaded`
 - `mcp.server.prepared`

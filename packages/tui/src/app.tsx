@@ -89,6 +89,7 @@ interface Resolved {
   permissionMode: PermissionMode;
   /** Model reference "provider/model", or the reserved "deterministic". */
   modelName?: string;
+  modelNameSource?: "config" | "request";
   /** Provider definitions (for re-resolving creds on a /model change). */
   providers?: TuiConfigFile["providers"];
   sources: SourceMap;
@@ -115,6 +116,11 @@ function resolveConfig(
     cli.sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions");
 
   const modelName = cli.modelName ?? loaded.config.model;
+  const modelNameSource = cli.modelName
+    ? ("request" as const)
+    : loaded.config.model
+      ? ("config" as const)
+      : undefined;
   if (cli.modelName) sources.model = "cli:--model";
 
   const permissionMode: PermissionMode =
@@ -129,6 +135,7 @@ function resolveConfig(
     sessionRootDir,
     permissionMode,
     modelName,
+    modelNameSource,
     providers: loaded.config.providers,
     sources,
     attempted: loaded.attempted,
@@ -203,6 +210,7 @@ function AppReady(
         sessionRootDir: resolved.sessionRootDir,
         permissionMode: resolved.permissionMode,
         modelName: resolved.modelName,
+        modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
         store,
       }),
@@ -388,7 +396,9 @@ function AppReady(
   async function reloadConfig(verbose: boolean): Promise<void> {
     const loaded = await loadTuiConfig(props.initialCwd);
     const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
-    if (r.modelName !== resolved.modelName) controller.updateModel(r.modelName);
+    if (!modelOverride && r.modelName !== resolved.modelName) {
+      controller.updateModel(r.modelName, r.modelNameSource);
+    }
     if (r.permissionMode !== resolved.permissionMode) {
       controller.updatePermissionMode(r.permissionMode);
     }
@@ -995,13 +1005,14 @@ function AppReady(
               layers.pop("stash");
             }}
             onCommitModel={(modelName) => {
-              setModelOverride({ modelName });
-              controller.updateModel(modelName || undefined);
+              const nextModelName = modelName.trim() || "deterministic";
+              setModelOverride({ modelName: nextModelName });
+              controller.updateModel(nextModelName, "request");
               layers.pop("model");
               toasts.push({
                 variant: "success",
                 title: "model",
-                message: `${modelName || "deterministic"} (next run)`,
+                message: `${nextModelName} (next run)`,
               });
             }}
             onFork={(seq) => {
@@ -1188,13 +1199,14 @@ function AppReady(
               layers.pop("stash");
             }}
             onCommitModel={(modelName) => {
-              setModelOverride({ modelName });
-              controller.updateModel(modelName || undefined);
+              const nextModelName = modelName.trim() || "deterministic";
+              setModelOverride({ modelName: nextModelName });
+              controller.updateModel(nextModelName, "request");
               layers.pop("model");
               toasts.push({
                 variant: "success",
                 title: "model",
-                message: `${modelName || "deterministic"} (next run)`,
+                message: `${nextModelName} (next run)`,
               });
             }}
             onFork={(seq) => {
