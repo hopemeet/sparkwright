@@ -20,6 +20,21 @@ describe("formatEvent", () => {
     });
   });
 
+  it("formats capability failures", () => {
+    expect(
+      formatEvent(
+        event("capability.index.failed", {
+          kind: "skills",
+          code: "SKILL_INDEX_FAILED",
+          source: "/tmp/bad/SKILL.md",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail: "skills SKILL_INDEX_FAILED /tmp/bad/SKILL.md",
+    });
+  });
+
   it("formats MCP and agent lifecycle events", () => {
     expect(
       formatEvent(

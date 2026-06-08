@@ -789,6 +789,89 @@ describe("host protocol", () => {
     }
   });
 
+  it("records skill index failures for protocol clients", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-bad-skill-"));
+    const sessionId = "session_bad_skill";
+    const pair = createConnectionPair();
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+        ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "r",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "hello", sessionId },
+      });
+
+      const response = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "r",
+      );
+      expect(response).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "internal_error" },
+      });
+      const streamedEvents = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      expect(streamedEvents.map((event) => event.type)).toEqual([
+        "run.created",
+        "capability.index.failed",
+        "run.failed",
+      ]);
+      expect(streamedEvents[1]?.payload).toMatchObject({
+        kind: "skills",
+        code: "SKILL_INDEX_FAILED",
+        source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      });
+
+      const traceEvents = (
+        await readFile(
+          join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      expect(traceEvents.map((event) => event.type)).toEqual([
+        "run.created",
+        "capability.index.failed",
+        "run.failed",
+      ]);
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("returns a host-authored capability snapshot", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-capability-"),

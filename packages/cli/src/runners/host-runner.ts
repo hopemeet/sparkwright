@@ -262,6 +262,10 @@ async function runHostLifecycle(
       runState = "failed";
       stopReason = "host_start_failed";
       writeLine(io.stderr, failedMessage);
+      if (tracePath && existsSync(tracePath)) {
+        resolveOnce();
+        return;
+      }
       const failureTrace = await writeHostStartFailureTrace({
         input,
         message: failedMessage,

@@ -4,6 +4,7 @@ import {
   buildTraceTimelineFile,
   asSessionId,
   createBufferedEmitter,
+  createRunId,
   createLayeredPolicy,
   createSessionId,
   createSessionRunStoreFactory,
@@ -12,6 +13,7 @@ import {
   createWorkspaceMutationPolicy,
   defineTool,
   FileSessionStore,
+  EventLog,
   forkSessionFromEvent,
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
@@ -23,6 +25,7 @@ import {
   type ModelAdapter,
   type Policy,
   type PermissionMode,
+  type RunRecord,
   type RunResult,
   type SparkwrightEvent,
   type TraceLevel,
@@ -189,6 +192,10 @@ const MAIN_AGENT_ID = "main";
 
 function defaultSessionRootDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".sparkwright", "sessions");
+}
+
+function extractSkillSourcePath(message: string): string | undefined {
+  return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
 }
 
 function isTraceLevel(value: unknown): value is TraceLevel {
@@ -376,28 +383,47 @@ export class HostRuntime {
       skillConfig?.roots,
     );
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
-    const preparedSkills = existingPreparedSkillRoots.length
-      ? await prepareSkillsForRun({
-          goal: input.goal,
-          skillRoots: existingPreparedSkillRoots,
-          agent: {
-            allowedSkills: skillConfig?.allowedSkills,
-            deniedSkills: skillConfig?.deniedSkills,
-          },
-          // Default to on-demand loading: expose the skill_load tool and let
-          // the model pull bodies it judges relevant, rather than auto-residing
-          // matcher-selected skills (which both pollutes context and double-
-          // injects when the loader tool is also on). A config can opt back into
-          // auto-resident by setting loadSelectedSkills: true.
-          includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
-          loadSelectedSkills: skillConfig?.loadSelectedSkills ?? false,
-          maxSelectedSkills: skillConfig?.maxSelectedSkills,
-          resourceFileLimit: skillConfig?.resourceFileLimit,
-          includeDevSkills: devSkillsEnabled(),
-          emitter: pendingExtensionEvents,
-          agentId: MAIN_AGENT_ID,
-        })
-      : null;
+    let preparedSkills: PreparedSkills | null = null;
+    try {
+      preparedSkills = existingPreparedSkillRoots.length
+        ? await prepareSkillsForRun({
+            goal: input.goal,
+            skillRoots: existingPreparedSkillRoots,
+            agent: {
+              allowedSkills: skillConfig?.allowedSkills,
+              deniedSkills: skillConfig?.deniedSkills,
+            },
+            // Default to on-demand loading: expose the skill_load tool and let
+            // the model pull bodies it judges relevant, rather than auto-residing
+            // matcher-selected skills (which both pollutes context and double-
+            // injects when the loader tool is also on). A config can opt back into
+            // auto-resident by setting loadSelectedSkills: true.
+            includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
+            loadSelectedSkills: skillConfig?.loadSelectedSkills ?? false,
+            maxSelectedSkills: skillConfig?.maxSelectedSkills,
+            resourceFileLimit: skillConfig?.resourceFileLimit,
+            includeDevSkills: devSkillsEnabled(),
+            emitter: pendingExtensionEvents,
+            agentId: MAIN_AGENT_ID,
+          })
+        : null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.recordCapabilityIndexFailure({
+        goal: input.goal,
+        sessionId: input.sessionId,
+        sessionRootDir,
+        traceLevel: input.traceLevel ?? "standard",
+        message,
+        source: extractSkillSourcePath(message),
+        targetPath: input.targetPath,
+        metadata: input.runStoreMetadata ?? input.runMetadata ?? {},
+      });
+      return {
+        ok: false,
+        error: { code: "internal_error", message },
+      };
+    }
     const preparedMcp = mcpConfig?.servers?.length
       ? await prepareMcpToolsForRun({
           servers: mcpConfig.servers,
@@ -544,6 +570,97 @@ export class HostRuntime {
         runStoreMetadata,
       },
     };
+  }
+
+  private async recordCapabilityIndexFailure(input: {
+    goal: string;
+    sessionId: string;
+    sessionRootDir: string;
+    traceLevel: TraceLevel;
+    message: string;
+    source?: string;
+    targetPath?: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    const now = nowIso();
+    const runId = createRunId();
+    const run: RunRecord = {
+      id: runId,
+      goal: input.goal,
+      state: "failed",
+      stopReason: "model_completion_failed",
+      createdAt: now,
+      updatedAt: now,
+      metadata: {
+        source: "host",
+        failurePhase: "capability_index",
+        targetPath: input.targetPath ?? "README.md",
+        ...input.metadata,
+      },
+    };
+    const result: RunResult = {
+      signal: "failed",
+      state: "failed",
+      stopReason: "model_completion_failed",
+      message: input.message,
+      failure: {
+        category: "runtime",
+        code: "SKILL_INDEX_FAILED",
+        message: input.message,
+        retryable: false,
+      },
+      metadata: run.metadata,
+    };
+    const sessionStore = new FileSessionStore({ rootDir: input.sessionRootDir });
+    const store = createSessionRunStoreFactory({
+      sessionStore,
+      sessionId: input.sessionId,
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: input.sessionRootDir,
+        sessionId: input.sessionId,
+        agentId: MAIN_AGENT_ID,
+        traceLevel: input.traceLevel,
+      }),
+      metadata: { source: "host" },
+    })(run);
+    const events = new EventLog(runId);
+    const append = async (event: SparkwrightEvent) => {
+      await store.append(event);
+      this.opts.emit({
+        envelope: "event",
+        id: nextMessageId("evt"),
+        kind: "run.event",
+        timestamp: nowIso(),
+        payload: { runId, event },
+      });
+    };
+    await append(events.emit("run.created", { goal: input.goal }));
+    await append(
+      events.emit(
+        "capability.index.failed",
+        {
+          kind: "skills",
+          source: input.source,
+          message: input.message,
+          code: "SKILL_INDEX_FAILED",
+        },
+        {
+          source: "host",
+          failurePhase: "capability_index",
+          agentId: MAIN_AGENT_ID,
+        },
+      ),
+    );
+    await append(
+      events.emit("run.failed", {
+        reason: "capability_index_failed",
+        code: "SKILL_INDEX_FAILED",
+        message: input.message,
+        failure: result.failure,
+        metadata: run.metadata,
+      }),
+    );
+    await store.finish(run, result);
   }
 
   private createApprovalResolver(runIdHolder: {

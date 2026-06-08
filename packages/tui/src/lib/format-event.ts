@@ -26,6 +26,7 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   else if (t.startsWith("approval.")) color = "yellow";
   else if (t.startsWith("tool.")) color = "cyan";
   else if (t.startsWith("skill.")) color = "blue";
+  else if (t.startsWith("capability.")) color = "red";
   else if (t.startsWith("mcp.")) color = "cyan";
   else if (t.startsWith("agent.") || t.startsWith("subagent."))
     color = t.endsWith(".failed") ? "red" : "magenta";
@@ -48,6 +49,11 @@ export function formatEvent(event: RunEvent): FormattedEvent {
       detail = str(p.reason ?? p.stopReason);
     else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
     else if (t === "skill.loaded") detail = str(p.name);
+    else if (t === "capability.index.failed") {
+      detail = [str(p.kind), str(p.code), str(p.source)]
+        .filter(Boolean)
+        .join(" ");
+    }
     else if (t === "mcp.server.prepared") {
       const name = str(p.name);
       const status = str(p.status);

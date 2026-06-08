@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventStore } from "../src/state/event-store.js";
@@ -16,6 +23,22 @@ async function waitForDone(store: EventStore): Promise<void> {
         } else {
           resolve();
         }
+      }
+    });
+  });
+}
+
+async function waitForError(store: EventStore): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const current = store.getSnapshot();
+    if (current.status === "error") {
+      resolve();
+      return;
+    }
+    const unsub = store.subscribe(() => {
+      if (store.getSnapshot().status === "error") {
+        unsub();
+        resolve();
       }
     });
   });
@@ -85,6 +108,53 @@ describe("TUI ↔ host via sdk-node", () => {
     await expect(
       stat(join(workspace, ".sparkwright", "sessions")),
     ).rejects.toThrow();
+
+    controller.shutdown();
+  }, 30_000);
+
+  it("surfaces skill index failures from the host event stream", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+      "utf8",
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.start("skill failure smoke");
+    await waitForError(store);
+
+    const snap = store.getSnapshot();
+    expect(snap.lastError).toContain("Skill description");
+    expect(
+      snap.events
+        .map((event) => event.type)
+        .filter((type) => type !== "tui.user"),
+    ).toEqual([
+      "run.created",
+      "capability.index.failed",
+      "run.failed",
+    ]);
+    const trace = await readFile(
+      join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        controller.getSessionId(),
+        "trace.jsonl",
+      ),
+      "utf8",
+    );
+    expect(trace).toContain('"type":"capability.index.failed"');
 
     controller.shutdown();
   }, 30_000);
