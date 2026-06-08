@@ -382,6 +382,50 @@ Common metadata:
 }
 ```
 
+### Run Start Events
+
+`run.started` payloads may include `resolvedModel` when the host can report the
+actual adapter selected for the run. This is diagnostic evidence for model
+selection and configuration precedence; it must not include raw provider keys,
+tokens, or request headers.
+
+```json
+{
+  "resolvedModel": {
+    "modelRef": "openai/gpt-5.4-mini",
+    "providerKey": "openai",
+    "modelId": "gpt-5.4-mini",
+    "adapterId": "openai:gpt-5.4-mini",
+    "modelSource": {
+      "layer": "project",
+      "path": "/repo/.sparkwright/config.json"
+    },
+    "providerSource": {
+      "layer": "user",
+      "path": "/home/user/.config/sparkwright/config.json"
+    },
+    "authSource": "env:OPENAI_API_KEY",
+    "baseURLSource": "env:OPENAI_BASE_URL"
+  }
+}
+```
+
+Field semantics:
+
+- `modelRef`: the model reference after CLI/config/default resolution.
+- `providerKey` and `modelId`: the parsed provider and model identifiers.
+- `adapterId`: the stable model adapter id used in trace and usage buckets.
+- `modelSource`: where the selected `modelRef` came from. `layer: "request"`
+  means the caller explicitly passed a model, usually through `--model` or
+  host protocol input. Config-backed values should report `user`, `project`, or
+  `env` when known.
+- `providerSource`: where the provider definition came from, when applicable.
+- `authSource`: source label for the credential used to construct the provider
+  adapter, for example `env:OPENAI_API_KEY` or `config`. This field is not a
+  credential and must not contain secret material.
+- `baseURLSource`: source label for the provider base URL when one is set, for
+  example `env:OPENAI_BASE_URL` or `config`.
+
 ### Run Completion Events
 
 `run.completed` payloads should include the terminal reason:

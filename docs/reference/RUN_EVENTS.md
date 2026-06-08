@@ -48,6 +48,25 @@ A backend projection can materialize these rows into a read model, but the
 source of truth should remain the append-only event log plus `run.json`,
 `result.json`, and artifacts.
 
+## Model Selection Evidence
+
+When present, `run.started.payload.resolvedModel` records the actual model
+adapter selected for the run. Consumers can show this in diagnostics, session
+inspectors, or trace reports to explain why a run used a specific
+provider/model.
+
+Stable consumption rules:
+
+- Prefer `resolvedModel.adapterId` for the concrete adapter label.
+- Use `resolvedModel.modelSource.layer` to distinguish explicit request
+  overrides from user, project, env, or default config sources.
+- Use `resolvedModel.providerSource.layer` to explain where the provider
+  definition came from when the run is provider-backed.
+- Treat `resolvedModel.authSource` and `resolvedModel.baseURLSource` as source
+  labels only. They must not contain API keys, tokens, or raw headers.
+- Keep the event optional. Older traces and some embedders may emit
+  `run.started` with an empty payload.
+
 ## Streaming
 
 Streaming events are partial telemetry. They are not a replacement for the
