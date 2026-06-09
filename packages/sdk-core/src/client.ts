@@ -64,9 +64,12 @@ export interface CollectedRun {
   runId: string;
   runIds: string[];
   start: ResponseResults["run.start"];
+  /** @reserved Public collected-run field consumed by SDK consumers. */
   terminal: RunTerminalEvent;
   events: HostEvent[];
+  /** @reserved Public collected-run field consumed by SDK consumers. */
   runEvents: unknown[];
+  /** @reserved Public collected-run field consumed by SDK consumers. */
   finalAnswer?: string;
   outcome?: unknown;
   failure?: unknown;

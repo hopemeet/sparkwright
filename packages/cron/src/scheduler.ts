@@ -18,6 +18,7 @@ export interface CronTickResult {
   attempted: number;
   completed: number;
   skippedBecauseLocked: boolean;
+  /** @reserved Public scheduler-tick field consumed by cron diagnostics. */
   skippedBecauseJobLocked?: number;
 }
 
