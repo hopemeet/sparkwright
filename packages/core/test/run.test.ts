@@ -852,6 +852,182 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("annotates completed runs with recovered tool failures separately", async () => {
+    let modelCalls = 0;
+    const read = defineTool({
+      name: "read",
+      description: "Read a named item.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      execute(args) {
+        return { path: (args as { path: string }).path };
+      },
+    });
+    const run = createRun({
+      goal: "recover invalid args",
+      tools: [read],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: { nested: "README.md" } },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [
+                { toolName: "read", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          return { message: "recovered" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const completed = run.events
+      .all()
+      .find((event) => event.type === "run.completed");
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      metadata: {
+        outcome: {
+          kind: "completed_with_recovered_tool_failures",
+          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+        },
+      },
+    });
+    expect(completed?.payload).toMatchObject({
+      outcome: {
+        kind: "completed_with_recovered_tool_failures",
+        toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+      },
+    });
+  });
+
+  it("does not treat a later success on a different target as recovery", async () => {
+    let modelCalls = 0;
+    const read = defineTool({
+      name: "read",
+      description: "Read a named item.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      execute(args) {
+        return { path: (args as { path: string }).path };
+      },
+    });
+    const run = createRun({
+      goal: "try one target then another",
+      tools: [read],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: { nested: "README.md" } },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [
+                { toolName: "read", arguments: { path: "package.json" } },
+              ],
+            };
+          }
+          return { message: "answered with different target" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      metadata: {
+        outcome: {
+          kind: "completed_with_tool_failures",
+          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+        },
+      },
+    });
+  });
+
+  it("does not recover ambiguous object targets by picking one string leaf", async () => {
+    let modelCalls = 0;
+    const read = defineTool({
+      name: "read",
+      description: "Read a named item.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      execute(args) {
+        return { path: (args as { path: string }).path };
+      },
+    });
+    const run = createRun({
+      goal: "try ambiguous target",
+      tools: [read],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: {
+                    path: { old: "README.md", next: "package.json" },
+                  },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [
+                { toolName: "read", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          return { message: "answered with ambiguous prior target" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      metadata: {
+        outcome: {
+          kind: "completed_with_tool_failures",
+          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+        },
+      },
+    });
+  });
+
   it("reports timed out tools through the normal tool failure lifecycle", async () => {
     let modelCalls = 0;
 

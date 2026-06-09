@@ -119,6 +119,21 @@ export {
   toolBatchEventPayload,
 } from "./tool-orchestration.js";
 
+// Run outcome classification
+export type {
+  ClassifiedToolFailure,
+  CompletedRunOutcome,
+  ToolFailureCategory,
+  ToolOutcomeSummary,
+} from "./run-outcome.js";
+export {
+  analyzeToolOutcomes,
+  classifyToolFailure,
+  completedRunOutcomeFromEvents,
+  isPolicyOrApprovalFailure,
+  toolTargetFingerprint,
+} from "./run-outcome.js";
+
 // Prompt-cache integrity detector.
 export type { CacheBreakDetectorOptions } from "./cache-break.js";
 export { wrapPromptBuilderWithCacheBreakDetector } from "./cache-break.js";

@@ -987,7 +987,7 @@ describe("trace", () => {
     expect(summary.toolCalls).toEqual({ read_file: 1 });
   });
 
-  it("classifies approval denials separately from unexpected errors", () => {
+  it("classifies policy and approval denials separately from unexpected errors", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const jsonl = [
@@ -1001,6 +1001,11 @@ describe("trace", () => {
         status: "failed",
         error: { code: "APPROVAL_DENIED", message: "denied" },
       }),
+      log.emit("tool.failed", {
+        toolCallId: "call_2",
+        status: "failed",
+        error: { code: "TOOL_DENIED", message: "write disabled" },
+      }),
       log.emit("run.completed", { reason: "final_answer" }),
     ]
       .map(serializeEventJsonl)
@@ -1010,10 +1015,11 @@ describe("trace", () => {
 
     expect(summary.errorCount).toBe(0);
     expect(summary.errorCodes).toEqual({});
-    expect(summary.expectedDenialCount).toBe(2);
+    expect(summary.expectedDenialCount).toBe(3);
     expect(summary.expectedDenialCodes).toEqual({
       "workspace.write.denied": 1,
       APPROVAL_DENIED: 1,
+      TOOL_DENIED: 1,
     });
   });
 

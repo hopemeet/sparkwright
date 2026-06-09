@@ -83,6 +83,7 @@ import {
   runToolBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
+import { completedRunOutcomeFromEvents } from "./run-outcome.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
@@ -3236,7 +3237,7 @@ export class SparkwrightRun implements RunHandle {
   ): RunResult {
     const outcome =
       reason === "final_answer"
-        ? completedRunOutcome(this.events.all())
+        ? completedRunOutcomeFromEvents(this.events.all())
         : undefined;
     const completedPayload = {
       reason,
@@ -3354,46 +3355,6 @@ function isTerminalState(state: RunState): boolean {
   return state === "completed" || state === "failed" || state === "cancelled";
 }
 
-function completedRunOutcome(events: SparkwrightEvent[]):
-  | {
-      kind: "completed_with_tool_failures";
-      toolFailures: { count: number; codes: string[] };
-    }
-  | undefined {
-  const codes = events
-    .filter((event) => event.type === "tool.failed")
-    .map(toolFailureCode)
-    .filter((code): code is string => Boolean(code))
-    .filter((code) => !isPolicyOrApprovalFailure(code));
-
-  if (codes.length === 0) return undefined;
-  return {
-    kind: "completed_with_tool_failures",
-    toolFailures: {
-      count: codes.length,
-      codes: [...new Set(codes)],
-    },
-  };
-}
-
-function toolFailureCode(event: SparkwrightEvent): string | undefined {
-  const payload = event.payload as {
-    error?: { code?: string };
-  };
-  return payload.error?.code;
-}
-
-function isPolicyOrApprovalFailure(code: string | undefined): boolean {
-  if (!code) return false;
-  const normalized = code.toLowerCase();
-  return (
-    normalized === "tool_denied" ||
-    normalized === "untracked_workspace_mutation" ||
-    normalized.endsWith("_denied") ||
-    normalized.includes("safety")
-  );
-}
-
 function isRepeatedToolCall(
   previous: { toolName: string; arguments: unknown } | undefined,
   next: { toolName: string; arguments: unknown },
@@ -3406,12 +3367,9 @@ function isRepeatedToolCall(
 
 /**
  * A coarse "what does this call act on" key, used only by the doom-loop guard.
- * It recognizes a model retrying the *same* target with cosmetically different
- * arguments (e.g. re-reading a path with a different `offset`/`limit`) by keying
- * on the path/patterns when present rather than the full argument object. Falls
- * back to a stable stringify of the whole argument object for tools that carry
- * no obvious target. This is a heuristic for loop detection only — it is never
- * used to dedupe or cache real results.
+ * This intentionally stays narrower than outcome recovery fingerprinting: a
+ * corrected argument shape for the same human-visible target should get a real
+ * execution chance instead of being skipped as another repeat.
  */
 function semanticToolTarget(toolName: string, args: unknown): string {
   if (args && typeof args === "object") {
@@ -3420,7 +3378,7 @@ function semanticToolTarget(toolName: string, args: unknown): string {
       return `${toolName}::path::${record.path}`;
     }
     if (Array.isArray(record.patterns)) {
-      return `${toolName}::patterns::${record.patterns.join(" ")}`;
+      return `${toolName}::patterns::${record.patterns.join("\u0000")}`;
     }
     if (typeof record.pattern === "string") {
       return `${toolName}::pattern::${record.pattern}`;

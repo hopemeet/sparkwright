@@ -1,6 +1,7 @@
-import type { SparkwrightEvent } from "@sparkwright/core";
+import { analyzeToolOutcomes, type SparkwrightEvent } from "@sparkwright/core";
 
 export interface CliRunEventSummary {
+  events: SparkwrightEvent[];
   toolFailures: Array<{ code?: string }>;
   writeCompleted: number;
   writeSkipped: number;
@@ -23,6 +24,7 @@ export interface CliRunFailureSummary {
 
 export function createCliRunEventSummary(): CliRunEventSummary {
   return {
+    events: [],
     toolFailures: [],
     writeCompleted: 0,
     writeSkipped: 0,
@@ -34,6 +36,7 @@ export function updateCliRunEventSummary(
   summary: CliRunEventSummary,
   event: SparkwrightEvent,
 ): void {
+  summary.events.push(event);
   if (event.type === "tool.failed") {
     summary.toolFailures.push({ code: toolFailureCode(event) });
   } else if (event.type === "workspace.write.completed")
@@ -45,10 +48,7 @@ export function updateCliRunEventSummary(
 }
 
 export function unhandledToolFailureCount(summary: CliRunEventSummary): number {
-  const unhandled = summary.toolFailures.filter(
-    (failure) => !isPolicyOrApprovalFailure(failure.code),
-  ).length;
-  return Math.max(0, unhandled - summary.writeDenied);
+  return analyzeToolOutcomes(summary.events).unresolvedFailures.length;
 }
 
 export function cliExitCodeForRun(input: {
@@ -195,17 +195,6 @@ function runFailureSummary(event: SparkwrightEvent): CliRunFailureSummary {
       : {}),
     metadata: isRecord(payload.metadata) ? payload.metadata : undefined,
   };
-}
-
-function isPolicyOrApprovalFailure(code: string | undefined): boolean {
-  if (!code) return false;
-  const normalized = code.toLowerCase();
-  return (
-    normalized === "tool_denied" ||
-    normalized === "untracked_workspace_mutation" ||
-    normalized.endsWith("_denied") ||
-    normalized.includes("safety")
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

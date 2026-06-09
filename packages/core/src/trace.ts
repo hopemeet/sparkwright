@@ -24,6 +24,7 @@ import type {
   RunRecord,
   RunResult,
 } from "./types.js";
+import { isPolicyOrApprovalFailure } from "./run-outcome.js";
 
 export type TraceLevel = "minimal" | "standard" | "debug";
 export type TraceRedactor = (event: SparkwrightEvent) => SparkwrightEvent;
@@ -2664,7 +2665,7 @@ function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
   if (!isRecord(event.payload)) return false;
   return (
     isRecord(event.payload.error) &&
-    event.payload.error.code === "APPROVAL_DENIED"
+    isPolicyOrApprovalFailure(stringValue(event.payload.error.code))
   );
 }
 

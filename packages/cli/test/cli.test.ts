@@ -2583,6 +2583,73 @@ describe("runCli", () => {
     ]);
   });
 
+  it("treats recovered tool argument failures as a completed run warning", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Recover from invalid read args.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "invalid read args first",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: { nested: "README.md" } },
+                },
+              ],
+            },
+            {
+              message: "recover with valid read",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "README.md" },
+                },
+              ],
+            },
+            { message: "recovered" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(output.stderrText()).not.toContain("unhandled tool failure");
+
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find((event) => event.type === "tool.failed"),
+    ).toBeTruthy();
+    expect(
+      traceEvents.find((event) => event.type === "tool.completed"),
+    ).toBeTruthy();
+    const completed = traceEvents.find(
+      (event) => event.type === "run.completed",
+    );
+    expect(completed?.payload?.outcome).toMatchObject({
+      kind: "completed_with_recovered_tool_failures",
+      toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+    });
+  });
+
   it("denies destructive shell deletion before it mutates the workspace", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
