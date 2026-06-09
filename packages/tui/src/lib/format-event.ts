@@ -48,6 +48,7 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     else if (t === "run.completed" || t === "run.failed")
       detail = str(p.reason ?? p.stopReason);
     else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
+    else if (t === "skill.failed") detail = str(p.source ?? p.message);
     else if (t === "skill.loaded") detail = str(p.name);
     else if (t === "capability.index.failed") {
       detail = [str(p.kind), str(p.code), str(p.source)]

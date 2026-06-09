@@ -41,7 +41,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Approval                          | `approval.requested`, `approval.resolved`, `interaction.requested`, `interaction.resolved`                                        | Show pending review and final decision                                |
 | Workspace mutation                | `workspace.write.requested`, `artifact.created`, `workspace.write.completed`, `workspace.write.denied`, `workspace.write.skipped` | Link diff artifacts and final mutation state                          |
 | Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                  | Stream output incrementally; cap retained inline output               |
-| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                        | Show capability changes as environment/context evidence               |
+| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`         | Show capability changes as environment/context evidence               |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                     | Show as host automation, not model-authored work                      |
 
 A backend projection can materialize these rows into a read model, but the
@@ -207,6 +207,8 @@ Stable consumption guidance:
 Skill events explain capability/context changes at the edge of the run.
 
 - `skill.indexed` means a Skill source was scanned and reduced to metadata.
+- `skill.failed` means one Skill source could not be loaded; other valid Skills
+  may still be available.
 - `skill.loaded` means a selected Skill body was loaded into context or through
   a governed loader tool.
 - Related edge events such as `mcp.server.prepared` and

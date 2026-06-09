@@ -18,6 +18,12 @@ describe("formatEvent", () => {
       color: "blue",
       detail: "reviewer",
     });
+    expect(
+      formatEvent(event("skill.failed", { source: "/tmp/bad/SKILL.md" })),
+    ).toMatchObject({
+      color: "red",
+      detail: "/tmp/bad/SKILL.md",
+    });
   });
 
   it("formats capability failures", () => {

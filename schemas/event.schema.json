@@ -58,6 +58,7 @@
         "context.compaction.failed",
         "capability.index.failed",
         "skill.indexed",
+        "skill.failed",
         "skill.loaded",
         "mcp.server.prepared",
         "agent.profile.derived",

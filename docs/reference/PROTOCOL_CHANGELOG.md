@@ -12,6 +12,11 @@ Conventions:
 
 ## Unreleased
 
+- `event.schema.json`: additive — new `skill.failed` event type. Emitted when
+  one Skill source cannot be loaded while the runtime continues with other
+  valid Skills. Migration: none; consumers may render it as a diagnostic
+  failure row.
+
 - `event.schema.json`: additive — new optional `monotonicUs` envelope field
   (integer microseconds). Carries process-monotonic high-resolution time (from
   `performance.now()`) so trace sinks get sub-millisecond ordering and real

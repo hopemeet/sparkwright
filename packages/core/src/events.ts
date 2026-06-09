@@ -86,6 +86,7 @@ export type EventType =
   | "context.compaction.completed"
   | "context.compaction.failed"
   | "skill.indexed"
+  | "skill.failed"
   | "skill.loaded"
   | "capability.index.failed"
   | "mcp.server.prepared"

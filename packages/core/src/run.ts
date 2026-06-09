@@ -2366,6 +2366,9 @@ export class SparkwrightRun implements RunHandle {
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
       annotatedResult,
     );
+    if (requestedCall.toolName === "skill_load") {
+      this.emitSkillLoadedFromToolResult(annotatedResult);
+    }
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
       status: annotatedResult.status,
@@ -2378,6 +2381,25 @@ export class SparkwrightRun implements RunHandle {
     await this.runAfterToolCallHook(state, requestedCall, annotatedResult);
     batchResults?.push(annotatedResult);
     return undefined;
+  }
+
+  private emitSkillLoadedFromToolResult(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    if (result.output.status !== "loaded") return;
+    const name = getStringProperty(result.output, "name");
+    if (!name) return;
+
+    this.events.emit(
+      "skill.loaded",
+      { name, status: "loaded" },
+      {
+        sourcePackage: "@sparkwright/skills",
+        mode: "on_demand_tool",
+        version: getStringProperty(result.output, "version"),
+        sourcePath: getStringProperty(result.output, "sourcePath"),
+        contentHash: getStringProperty(result.output, "contentHash"),
+      },
+    );
   }
 
   /**

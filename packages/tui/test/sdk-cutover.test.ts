@@ -190,7 +190,7 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
-  it("surfaces skill index failures from the host event stream", async () => {
+  it("surfaces skill load failures from the host event stream", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
@@ -209,15 +209,16 @@ describe("TUI ↔ host via sdk-node", () => {
     });
 
     await controller.start("skill failure smoke");
-    await waitForError(store);
+    await waitForDone(store);
 
     const snap = store.getSnapshot();
-    expect(snap.lastError).toContain("Skill description");
-    expect(
-      snap.events
-        .map((event) => event.type)
-        .filter((type) => type !== "tui.user"),
-    ).toEqual(["run.created", "capability.index.failed", "run.failed"]);
+    expect(snap.lastError).toBeNull();
+    const eventTypes = snap.events
+      .map((event) => event.type)
+      .filter((type) => type !== "tui.user");
+    expect(eventTypes).toContain("skill.failed");
+    expect(eventTypes).toContain("run.completed");
+    expect(eventTypes).not.toContain("capability.index.failed");
     const trace = await readFile(
       join(
         workspace,
@@ -228,7 +229,7 @@ describe("TUI ↔ host via sdk-node", () => {
       ),
       "utf8",
     );
-    expect(trace).toContain('"type":"capability.index.failed"');
+    expect(trace).toContain('"type":"skill.failed"');
 
     controller.shutdown();
   }, 30_000);

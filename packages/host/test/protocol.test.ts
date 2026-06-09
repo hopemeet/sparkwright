@@ -929,7 +929,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("records skill index failures for protocol clients", async () => {
+  it("records skill load failures for protocol clients", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-bad-skill-"),
     );
@@ -974,23 +974,28 @@ describe("host protocol", () => {
       const response = await pair.waitFor(
         (m) => m.envelope === "response" && m.id === "r",
       );
-      expect(response).toMatchObject({
-        envelope: "response",
-        ok: false,
-        error: { code: "internal_error" },
-      });
+      expect(response).toMatchObject({ envelope: "response", ok: true });
+      await pair.waitFor(
+        (m) =>
+          m.envelope === "event" &&
+          m.kind === "run.completed",
+      );
       const streamedEvents = pair
         .clientMessages()
         .filter((m) => m.envelope === "event" && m.kind === "run.event")
         .map((m) => m.payload.event as SparkwrightEvent);
-      expect(streamedEvents.map((event) => event.type)).toEqual([
-        "run.created",
+      expect(streamedEvents.map((event) => event.type)).toContain(
+        "skill.failed",
+      );
+      expect(streamedEvents.map((event) => event.type)).toContain(
+        "run.completed",
+      );
+      expect(streamedEvents.map((event) => event.type)).not.toContain(
         "capability.index.failed",
-        "run.failed",
-      ]);
-      expect(streamedEvents[1]?.payload).toMatchObject({
-        kind: "skills",
-        code: "SKILL_INDEX_FAILED",
+      );
+      expect(
+        streamedEvents.find((event) => event.type === "skill.failed")?.payload,
+      ).toMatchObject({
         source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
       });
 
@@ -1003,11 +1008,8 @@ describe("host protocol", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as SparkwrightEvent);
-      expect(traceEvents.map((event) => event.type)).toEqual([
-        "run.created",
-        "capability.index.failed",
-        "run.failed",
-      ]);
+      expect(traceEvents.map((event) => event.type)).toContain("skill.failed");
+      expect(traceEvents.map((event) => event.type)).toContain("run.completed");
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });

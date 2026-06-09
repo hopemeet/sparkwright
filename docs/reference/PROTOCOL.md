@@ -223,6 +223,7 @@ Current event types:
 - `context.compaction.failed`
 - `capability.index.failed`
 - `skill.indexed`
+- `skill.failed`
 - `skill.loaded`
 - `mcp.server.prepared`
 - `agent.profile.derived`
@@ -321,6 +322,23 @@ Common metadata:
         "contentHash": "..."
       }
     ]
+  }
+}
+```
+
+`skill.failed`:
+
+```json
+{
+  "payload": {
+    "source": ".sparkwright/skills/bad/SKILL.md",
+    "message": "Skill description must be a non-empty string: ..."
+  },
+  "metadata": {
+    "experimental": true,
+    "schemaVersion": "edge-trace.v0.1",
+    "sourcePackage": "@sparkwright/skills",
+    "phase": "load"
   }
 }
 ```

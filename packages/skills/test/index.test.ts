@@ -332,6 +332,68 @@ Body
     expect(indexed.metadata.sourcePackage).toBe("@sparkwright/skills");
   });
 
+  it("skips invalid skills during run preparation and emits skill.failed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-bad-"));
+    await mkdir(join(root, "good"));
+    await mkdir(join(root, "bad"));
+    await writeFile(
+      join(root, "good", "SKILL.md"),
+      `---
+name: good-skill
+description: Handles good requests.
+---
+Good body.
+`,
+    );
+    await writeFile(
+      join(root, "bad", "SKILL.md"),
+      `---
+name: bad-skill
+---
+Bad body.
+`,
+    );
+
+    const captured: Array<{ type: string; payload: unknown }> = [];
+    const emitter = {
+      emit(type: string, payload: unknown) {
+        captured.push({ type, payload });
+        return {
+          id: "evt_test",
+          runId: "",
+          type: type as never,
+          timestamp: new Date().toISOString(),
+          sequence: 0,
+          payload,
+        } as never;
+      },
+    };
+
+    const prepared = await prepareSkillsForRun({
+      goal: "good request",
+      skillRoots: [root],
+      emitter: emitter as never,
+    });
+
+    expect(prepared.indexedSkills.map((skill) => skill.name)).toEqual([
+      "good-skill",
+    ]);
+    expect(captured).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "skill.failed",
+          payload: expect.objectContaining({
+            source: join(root, "bad", "SKILL.md"),
+          }),
+        }),
+        expect.objectContaining({
+          type: "skill.indexed",
+          payload: { count: 1 },
+        }),
+      ]),
+    );
+  });
+
   it("filters skills by agent access policy", () => {
     const notifier = parseSkill(`---
 name: dingtalk-notifier

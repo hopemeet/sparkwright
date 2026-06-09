@@ -1538,7 +1538,7 @@ describe("runCli", () => {
     expect(checkOutput.stdoutText()).toContain("findings: 0");
   });
 
-  it("records skill index failures in host startup traces", async () => {
+  it("records skill load failures without aborting host startup", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
       recursive: true,
@@ -1564,19 +1564,17 @@ describe("runCli", () => {
       },
     );
 
-    expect(result.exitCode).toBe(1);
-    expect(output.stderrText()).toContain("Skill description");
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toBe("");
     const events = await readTrace(result.tracePath);
-    expect(events.map((event) => event.type)).toEqual([
-      "run.created",
+    expect(events.map((event) => event.type)).toContain("skill.failed");
+    expect(events.map((event) => event.type)).toContain("run.completed");
+    expect(events.map((event) => event.type)).not.toContain(
       "capability.index.failed",
-      "run.failed",
-    ]);
+    );
     expect(
-      events.find((event) => event.type === "capability.index.failed")?.payload,
+      events.find((event) => event.type === "skill.failed")?.payload,
     ).toMatchObject({
-      kind: "skills",
-      code: "SKILL_INDEX_FAILED",
       source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
     });
   });
