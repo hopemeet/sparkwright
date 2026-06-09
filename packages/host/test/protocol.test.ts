@@ -623,7 +623,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("continues a resumed run through the todo supervisor when the ledger is unfinished", async () => {
+  it("hands off unfinished todos after a final resumed answer", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-resume-todo-"),
     );
@@ -718,18 +718,6 @@ describe("host protocol", () => {
       await pair.waitFor(
         (m) => m.envelope === "response" && m.id === "resume_todo",
       );
-      const continuation = await pair.waitFor(
-        (m) => m.envelope === "event" && m.kind === "run.continuation",
-      );
-      expect(continuation).toMatchObject({
-        envelope: "event",
-        kind: "run.continuation",
-        payload: {
-          previousRunId: runId,
-          continuationCount: 1,
-          reason: "unfinished_todo",
-        },
-      });
       const completed = await pair.waitFor(
         (m) => m.envelope === "event" && m.kind === "run.completed",
       );
@@ -738,9 +726,14 @@ describe("host protocol", () => {
         kind: "run.completed",
         payload: {
           state: "completed",
-          todoHandoff: { reason: "stalled_without_progress" },
+          todoHandoff: { reason: "non_resumable_stop_reason" },
         },
       });
+      expect(
+        pair
+          .clientMessages()
+          .some((m) => m.envelope === "event" && m.kind === "run.continuation"),
+      ).toBe(false);
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });

@@ -28,6 +28,23 @@ describe("host tools", () => {
     await expect(
       tool.execute({ path: "packages/*/package.json" }, ctx),
     ).rejects.toThrow(/read_file does not support glob patterns.*glob_paths/);
+    await expect(
+      tool.execute({ path: "packages/*/package.json" }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+  });
+
+  it("rejects read_file directory paths with tool guidance", async () => {
+    const ctx = await createWorkspace({
+      "docs/README.md": "# Docs\n",
+    });
+    const tool = createReadFileTool();
+
+    await expect(tool.execute({ path: "docs" }, ctx)).rejects.toThrow(
+      /expected a file path.*directory.*glob_paths/,
+    );
+    await expect(tool.execute({ path: "docs" }, ctx)).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+    });
   });
 
   it("exposes glob_paths for safe file discovery", async () => {

@@ -270,6 +270,37 @@ describe("createTodoWriteTool", () => {
     expect((await run(changed)).hint).toBeUndefined();
   });
 
+  it("enforces an optional run-scoped write budget", async () => {
+    const path = await tempPath();
+    const write = createTodoWriteTool({
+      getTodoPath: () => path,
+      maxWritesPerRun: 2,
+    });
+    const ctx = (runId: string) => ({ run: { id: runId } }) as never;
+
+    await write.execute(
+      { items: [{ title: "a", status: "pending" }] },
+      ctx("run-1"),
+    );
+    await write.execute(
+      { items: [{ title: "a", status: "in_progress" }] },
+      ctx("run-1"),
+    );
+    await expect(
+      write.execute(
+        { items: [{ title: "a", status: "completed" }] },
+        ctx("run-1"),
+      ),
+    ).rejects.toThrow(/run call limit exceeded/);
+
+    await expect(
+      write.execute(
+        { items: [{ title: "b", status: "pending" }] },
+        ctx("run-2"),
+      ),
+    ).resolves.toMatchObject({ saved: true });
+  });
+
   it("write accepts common status synonyms (todo/done) case-insensitively", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({ getTodoPath: () => path });
@@ -339,7 +370,7 @@ describe("TodoLedger helpers", () => {
     expect(context.metadata.todoLedger).toBe(true);
   });
 
-  it("audits terminal runs and recommends continuation only when safe", async () => {
+  it("hands off unfinished todos after a final answer", async () => {
     const ledger = {
       schemaVersion: "todo-ledger.v1" as const,
       metadata: {},
@@ -356,6 +387,29 @@ describe("TodoLedger helpers", () => {
       maxContinuations: 3,
       continuationCount: 0,
     });
+    expect(decision).toMatchObject({
+      kind: "handoff",
+      reason: "non_resumable_stop_reason",
+    });
+  });
+
+  it("recommends continuation only for resumable terminal reasons", async () => {
+    const ledger = {
+      schemaVersion: "todo-ledger.v1" as const,
+      metadata: {},
+      items: [{ title: "next", status: "pending" as const, depth: 0 }],
+    };
+    const decision = auditTodoAfterTerminal(ledger, {
+      result: {
+        signal: "failed",
+        state: "failed",
+        stopReason: "max_steps_exceeded",
+        metadata: {},
+      },
+      events: [{ type: "workspace.write.completed" } as never],
+      maxContinuations: 3,
+      continuationCount: 0,
+    });
     expect(decision.kind).toBe("continue");
     // The "what next" branch is now a structured, testable directive rather than
     // free-form prose.
@@ -365,19 +419,6 @@ describe("TodoLedger helpers", () => {
     expect(decision.kind === "continue" ? decision.prompt : "").toContain(
       "Next open item: next.",
     );
-
-    const denied = auditTodoAfterTerminal(ledger, {
-      result: {
-        signal: "cancelled",
-        state: "cancelled",
-        stopReason: "manual_cancelled",
-        metadata: {},
-      },
-    });
-    expect(denied).toMatchObject({
-      kind: "handoff",
-      reason: "non_resumable_stop_reason",
-    });
   });
 
   it("derives next_open_item from the first actionable item", () => {
@@ -444,9 +485,9 @@ describe("TodoLedger helpers", () => {
     };
     const decision = auditTodoAfterTerminal(ledger, {
       result: {
-        signal: "completed",
-        state: "completed",
-        stopReason: "final_answer",
+        signal: "failed",
+        state: "failed",
+        stopReason: "max_steps_exceeded",
         metadata: {},
       },
       // Only a read happened — no external side effect.
@@ -488,9 +529,11 @@ describe("runTodoSupervised", () => {
         }
         return {
           result: {
-            signal: "completed",
-            state: "completed",
-            stopReason: "final_answer",
+            signal: input.continuation ? "completed" : "failed",
+            state: input.continuation ? "completed" : "failed",
+            stopReason: input.continuation
+              ? "final_answer"
+              : "max_steps_exceeded",
             metadata: {},
           },
           events: [{ type: "workspace.write.completed" } as never],
@@ -504,7 +547,7 @@ describe("runTodoSupervised", () => {
     expect(result.continuationCount).toBe(1);
   });
 
-  it("does not stall a read-only run that completes items without write events", async () => {
+  it("does not stall resumable read-only runs that complete items without write events", async () => {
     // A multi-step investigation: each round completes one more item but emits
     // no workspace.write/artifact events (pure reads). The event-only progress
     // signal never fires, yet the newly-completed item must count as progress
@@ -545,9 +588,12 @@ describe("runTodoSupervised", () => {
         };
         return {
           result: {
-            signal: "completed",
-            state: "completed",
-            stopReason: "final_answer",
+            signal: completedCount >= titles.length ? "completed" : "failed",
+            state: completedCount >= titles.length ? "completed" : "failed",
+            stopReason:
+              completedCount >= titles.length
+                ? "final_answer"
+                : "max_steps_exceeded",
             metadata: {},
           },
           // Read-only: no workspace.write/anchored_edit/artifact events.
@@ -578,9 +624,9 @@ describe("runTodoSupervised", () => {
       runOnce() {
         return {
           result: {
-            signal: "completed",
-            state: "completed",
-            stopReason: "final_answer",
+            signal: "failed",
+            state: "failed",
+            stopReason: "max_steps_exceeded",
             metadata: {},
           },
           events: [{ type: "workspace.read" } as never],

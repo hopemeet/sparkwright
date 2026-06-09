@@ -86,6 +86,12 @@ export interface CreateTodoToolsOptions {
    * so a single tool bundle can serve many runs.
    */
   getTodoPath(): string;
+  /**
+   * Optional run-scoped call budget. The todo ledger is bookkeeping, not the
+   * work itself; a run that keeps calling todo_write after this limit should
+   * stop updating the list and answer or use a concrete non-todo tool.
+   */
+  maxWritesPerRun?: number;
 }
 
 /**
@@ -121,6 +127,7 @@ export function createTodoWriteTool(
   // Per-tool-instance (per run-chain) counter of consecutive no-op writes,
   // reset on any write that actually changes the ledger.
   let consecutiveNoops = 0;
+  const writesByRun = new Map<string, number>();
   return defineTool({
     name: "todo_write",
     description: [
@@ -163,7 +170,17 @@ export function createTodoWriteTool(
     // doom loop. Without this, a benign duplicate ledger write (e.g. the model
     // restating the plan) tripped REPEATED_TOOL_CALL_SKIPPED and burned a turn.
     governance: { sideEffects: ["none"], idempotency: "idempotent" },
-    async execute(args: unknown): Promise<TodoWriteResult> {
+    async execute(args: unknown, ctx): Promise<TodoWriteResult> {
+      const runId = ctx.run?.id ?? "__standalone__";
+      if (options.maxWritesPerRun !== undefined) {
+        const nextCount = (writesByRun.get(runId) ?? 0) + 1;
+        writesByRun.set(runId, nextCount);
+        if (nextCount > options.maxWritesPerRun) {
+          throw new Error(
+            `todo_write: run call limit exceeded (${options.maxWritesPerRun}). Stop updating the ledger and take a concrete non-todo action, or give your final answer with the current status.`,
+          );
+        }
+      }
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({

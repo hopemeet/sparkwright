@@ -25,6 +25,7 @@ import {
   type ModelAdapter,
   type Policy,
   type PermissionMode,
+  type RunBudget,
   type RunRecord,
   type RunResult,
   type SparkwrightEvent,
@@ -279,6 +280,10 @@ function summarizeCapabilitySnapshot(
 // audits once and stops.
 const MAIN_TODO_MAX_CONTINUATIONS = 4;
 const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
+const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
+const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
+const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
+const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -556,6 +561,7 @@ export class HostRuntime {
         // model without a policy rule.
         ...createTodoTools({
           getTodoPath: () => join(sessionRootDir, input.sessionId, "todo.md"),
+          maxWritesPerRun: MAIN_TODO_MAX_WRITES_PER_RUN,
         }).all(),
         ...(preparedSkills?.tools ?? []),
         ...(preparedMcp?.tools ?? []),
@@ -1027,10 +1033,8 @@ export class HostRuntime {
         }),
         tools: env.tools,
         model: env.model,
-        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-        ...(env.mainAgent.runBudget !== undefined
-          ? { runBudget: env.mainAgent.runBudget }
-          : {}),
+        maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
+        runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
         metadata: env.runMetadata,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
@@ -1185,7 +1189,11 @@ export class HostRuntime {
     // `extraContext` after the skills context. Each call mints a fresh runId
     // and run dir; the todo supervisor calls this once per (re)try, so a
     // continuation is a new run that carries the prior run's todo ledger.
-    const buildRun = (goal: string, extraContext: ContextItem[]) =>
+    const buildRun = (
+      goal: string,
+      extraContext: ContextItem[],
+      overrides: { maxSteps?: number; runBudget?: RunBudget } = {},
+    ) =>
       createRun({
         goal,
         context: [
@@ -1208,10 +1216,12 @@ export class HostRuntime {
         model: env.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
         // the profile's RunBudget when set and derive the step ceiling from it.
-        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-        ...(env.mainAgent.runBudget !== undefined
-          ? { runBudget: env.mainAgent.runBudget }
-          : {}),
+        maxSteps: overrides.maxSteps ?? resolveMainAgentMaxSteps(env.mainAgent),
+        ...(overrides.runBudget !== undefined
+          ? { runBudget: overrides.runBudget }
+          : env.mainAgent.runBudget !== undefined
+            ? { runBudget: env.mainAgent.runBudget }
+            : {}),
         metadata: env.runMetadata,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
@@ -1257,7 +1267,11 @@ export class HostRuntime {
         const extraContext = supervisedInput.continuation
           ? [...chainTurns, supervisedInput.continuation.context]
           : [];
-        return buildRun(goal, extraContext);
+        if (!supervisedInput.continuation) return buildRun(goal, extraContext);
+        return buildRun(goal, extraContext, {
+          maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
+          runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
+        });
       },
       afterRun: (_supervisedInput, run, result) => {
         const runId = run.record.id;
@@ -1957,6 +1971,36 @@ function resolveMainAgentMaxSteps(profile: AgentProfile): number {
     return modelCallBudget;
   }
   return MAIN_AGENT_MAX_STEPS_BACKSTOP;
+}
+
+function resolveTodoContinuationMaxSteps(profile: AgentProfile): number {
+  return Math.min(
+    resolveMainAgentMaxSteps(profile),
+    MAIN_TODO_CONTINUATION_MAX_STEPS,
+  );
+}
+
+function resolveTodoContinuationRunBudget(profile: AgentProfile): RunBudget {
+  return {
+    ...(profile.runBudget ?? {}),
+    maxModelCalls: minBudgetValue(
+      profile.runBudget?.maxModelCalls,
+      MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS,
+    ),
+    maxToolCalls: minBudgetValue(
+      profile.runBudget?.maxToolCalls,
+      MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS,
+    ),
+  };
+}
+
+function minBudgetValue(
+  configured: number | undefined,
+  continuationLimit: number,
+): number {
+  return configured === undefined
+    ? continuationLimit
+    : Math.min(configured, continuationLimit);
 }
 
 function isSafePathSegment(value: string): boolean {

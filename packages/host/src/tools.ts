@@ -66,11 +66,18 @@ export function createReadFileTool() {
         limit?: number;
       };
       if (containsGlobPattern(path)) {
-        throw new Error(
+        throw toolArgumentsInvalid(
           `read_file does not support glob patterns: ${path}. Use glob_paths to find matching files, then call read_file with a concrete path.`,
         );
       }
-      const content = await ctx.workspace.readText(path);
+      const content = await ctx.workspace.readText(path).catch((error) => {
+        if (isNodeErrorCode(error, "EISDIR")) {
+          throw toolArgumentsInvalid(
+            `read_file expected a file path but ${path} is a directory. Use glob_paths to list files inside it, then call read_file with a concrete file path.`,
+          );
+        }
+        throw error;
+      });
       const lines = content.split("\n");
       const totalLines = lines.length;
       const startLine = Math.max(1, Math.floor(offset ?? 1));
@@ -143,6 +150,19 @@ export function createReadFileTool() {
       };
     },
   });
+}
+
+function toolArgumentsInvalid(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "TOOL_ARGUMENTS_INVALID" });
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
 
 export function createGlobPathsTool(workspaceRoot: string) {
