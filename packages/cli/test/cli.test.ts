@@ -1960,10 +1960,19 @@ describe("runCli", () => {
       eventCount: number;
       runIds: string[];
       byType: Record<string, number>;
+      toolFailures: { total: number; byCode: Record<string, number> };
+      workspaceReads: {
+        total: number;
+        uniquePaths: number;
+        duplicatePaths: Record<string, number>;
+      };
     };
     expect(summary.eventCount).toBeGreaterThan(0);
     expect(summary.runIds).toHaveLength(1);
     expect(summary.byType["run.completed"]).toBe(1);
+    expect(summary.toolFailures.total).toBe(0);
+    expect(summary.workspaceReads.total).toBeGreaterThan(0);
+    expect(summary.workspaceReads.uniquePaths).toBeGreaterThan(0);
 
     const textOutput = createOutputCapture();
     const text = await runCli(
@@ -1977,6 +1986,9 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain(
       "cost: unavailable (not reported)",
     );
+    expect(textOutput.stdoutText()).toContain("tool calls:");
+    expect(textOutput.stdoutText()).toContain("tool failures: 0 total");
+    expect(textOutput.stdoutText()).toContain("workspace reads:");
   });
 
   it("prints unavailable cost reasons in text trace summaries", async () => {

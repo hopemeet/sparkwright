@@ -1142,7 +1142,11 @@ class WorkspaceWalker {
     assertInsideRoot(this.root, resolved, path);
     const targetStat = await stat(resolved);
     if (!targetStat.isDirectory()) {
-      throw new Error(`Workspace path is not a directory: ${path}`);
+      throw toolArgumentsInvalid(
+        `Workspace discovery path is not a directory: ${path}. ` +
+          "Use path='.' with include/exclude or glob patterns to narrow discovery, " +
+          "or call a file-read tool when you already have a concrete file path.",
+      );
     }
     return resolved;
   }
@@ -1152,6 +1156,10 @@ class WorkspaceWalker {
     const path = relative(this.root, fullPath).split(sep).join("/");
     return path.length > 0 ? path : ".";
   }
+}
+
+function toolArgumentsInvalid(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "TOOL_ARGUMENTS_INVALID" });
 }
 
 function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {

@@ -263,6 +263,26 @@ describe("coding tools", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("rejects grep_text file paths with recovery guidance", async () => {
+    const { root, ctx } = await createWorkspace({
+      "README.md": "# Demo\nrelease:check\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+
+    await expect(
+      tool.execute({ pattern: "release:check", path: "README.md" }, ctx),
+    ).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+      message: expect.stringContaining("path is not a directory"),
+    });
+    await expect(
+      tool.execute({ pattern: "release:check", path: "README.md" }, ctx),
+    ).rejects.toThrow("Use path='.'");
+  });
+
   it("matches workspace-relative glob paths", async () => {
     const { root, ctx } = await createWorkspace({
       "src/index.ts": "export const value = 1;\n",

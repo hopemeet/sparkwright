@@ -3175,6 +3175,12 @@ function formatTraceSummary(summary: TraceSummary): string {
     .slice(0, 5)
     .map(([code, count]) => `${code}:${count}`)
     .join(", ");
+  const topToolCalls = formatTopCounts(summary.toolCalls, 8);
+  const topToolFailures = formatTopCounts(summary.toolFailures?.byCode, 5);
+  const duplicateReads = formatTopCounts(
+    summary.workspaceReads?.duplicatePaths,
+    8,
+  );
   return [
     `events: ${summary.eventCount}`,
     `runs: ${summary.runIds.length}`,
@@ -3187,8 +3193,28 @@ function formatTraceSummary(summary: TraceSummary): string {
     `top expected denials: ${topDenials || "(none)"}`,
     `tokens: ${summary.usage.totalTokens}`,
     formatTraceCost(summary.usage),
+    `tool calls: ${sumCounts(summary.toolCalls)} total${topToolCalls ? ` (${topToolCalls})` : ""}`,
+    `tool failures: ${summary.toolFailures?.total ?? 0} total${topToolFailures ? ` (${topToolFailures})` : ""}`,
+    `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
+}
+
+function formatTopCounts(
+  counts: Record<string, number> | undefined,
+  limit: number,
+): string {
+  if (!counts) return "";
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([key, count]) => `${key}:${count}`)
+    .join(", ");
+}
+
+function sumCounts(counts: Record<string, number> | undefined): number {
+  if (!counts) return 0;
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
 }
 
 function formatTraceCost(summary: TraceSummary["usage"]): string {

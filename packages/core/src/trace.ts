@@ -102,6 +102,17 @@ export interface TraceSummary {
   terminalStates: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   toolCalls: Record<string, number>;
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  toolFailures: {
+    total: number;
+    byCode: Record<string, number>;
+  };
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  workspaceReads: {
+    total: number;
+    uniquePaths: number;
+    duplicatePaths: Record<string, number>;
+  };
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   artifactCount: number;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
@@ -516,6 +527,8 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   const byType: Record<string, number> = {};
   const terminalStates: Record<string, number> = {};
   const toolCalls: Record<string, number> = {};
+  const toolFailureCodes: Record<string, number> = {};
+  const workspaceReadPaths: Record<string, number> = {};
   const errorCodes: Record<string, number> = {};
   const expectedDenialCodes: Record<string, number> = {};
   const latestUsageByRun = new Map<string, Record<string, unknown>>();
@@ -528,6 +541,15 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     byType,
     terminalStates,
     toolCalls,
+    toolFailures: {
+      total: 0,
+      byCode: toolFailureCodes,
+    },
+    workspaceReads: {
+      total: 0,
+      uniquePaths: 0,
+      duplicatePaths: {},
+    },
     artifactCount: 0,
     errorCount: 0,
     errorCodes,
@@ -574,6 +596,8 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
 
     collectTerminalState(summary, event);
     collectToolCall(summary, event);
+    collectToolFailure(summary, event);
+    collectWorkspaceRead(summary, event, workspaceReadPaths);
     if (event.type === "usage.updated") {
       const usage = usageFromEvent(event);
       if (usage)
@@ -592,6 +616,12 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   summary.runIds = [...runIds].sort();
   summary.sessionIds = [...sessionIds].sort();
   summary.agentIds = [...agentIds].sort();
+  summary.workspaceReads.uniquePaths = Object.keys(workspaceReadPaths).length;
+  summary.workspaceReads.duplicatePaths = Object.fromEntries(
+    Object.entries(workspaceReadPaths)
+      .filter(([, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+  );
   return summary;
 }
 
@@ -2632,6 +2662,30 @@ function collectToolCall(summary: TraceSummary, event: SparkwrightEvent): void {
   summary.toolCalls[toolName] = (summary.toolCalls[toolName] ?? 0) + 1;
 }
 
+function collectToolFailure(
+  summary: TraceSummary,
+  event: SparkwrightEvent,
+): void {
+  if (event.type !== "tool.failed") return;
+  summary.toolFailures.total += 1;
+  const code = traceErrorCode(event) ?? "unknown";
+  summary.toolFailures.byCode[code] =
+    (summary.toolFailures.byCode[code] ?? 0) + 1;
+}
+
+function collectWorkspaceRead(
+  summary: TraceSummary,
+  event: SparkwrightEvent,
+  workspaceReadPaths: Record<string, number>,
+): void {
+  if (event.type !== "workspace.read") return;
+  summary.workspaceReads.total += 1;
+  if (!isRecord(event.payload)) return;
+  const path = stringValue(event.payload.path);
+  if (!path) return;
+  workspaceReadPaths[path] = (workspaceReadPaths[path] ?? 0) + 1;
+}
+
 function latestOpenModelPhaseKey(
   open: Map<string, TraceTimelinePhase>,
   runId: string,
@@ -2644,8 +2698,14 @@ function collectErrorCode(
   summary: TraceSummary,
   event: SparkwrightEvent,
 ): void {
-  if (!isRecord(event.payload)) return;
-  const code = stringValue(
+  const code = traceErrorCode(event);
+  if (!code) return;
+  summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
+}
+
+function traceErrorCode(event: SparkwrightEvent): string | undefined {
+  if (!isRecord(event.payload)) return undefined;
+  return stringValue(
     event.payload.errorCode,
     isRecord(event.payload.error) ? event.payload.error.code : undefined,
     event.type === "mcp.server.prepared" && event.payload.status === "failed"
@@ -2653,8 +2713,6 @@ function collectErrorCode(
       : undefined,
     event.type.endsWith(".denied") ? event.type : undefined,
   );
-  if (!code) return;
-  summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
 }
 
 function collectExpectedDenialCode(
