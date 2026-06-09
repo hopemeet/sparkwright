@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -3234,6 +3235,115 @@ describe("runCli", () => {
     const trace = await readFile(parsed.tracePath, "utf8");
     expect(trace).toContain('"type":"approval.requested"');
     expect(trace).toContain('"type":"subagent.completed"');
+  });
+
+  it("requires --write before a direct delegate can receive read-write workspace access", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const commandPath = join(workspace, "delegate-fixture.mjs");
+    await writeFile(
+      commandPath,
+      [
+        "process.stdout.write(JSON.stringify({",
+        "  argv: process.argv.slice(2),",
+        "  cwd: process.cwd()",
+        "}));",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              profiles: [
+                {
+                  id: "external_cli_fixture",
+                  metadata: {
+                    externalCommand: {
+                      command: process.execPath,
+                      args: [commandPath, "--workspace", "{{workspaceRoot}}"],
+                      input: "none",
+                      workspaceAccess: "read_write",
+                    },
+                  },
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "external_cli_fixture",
+                  toolName: "delegate_external_cli_fixture",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const deniedOutput = createOutputCapture();
+    const denied = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--format",
+        "text",
+      ],
+      {
+        io: {
+          stdout: deniedOutput.stdout,
+          stderr: deniedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(denied.exitCode).toBe(1);
+    expect(deniedOutput.stderrText()).toContain(
+      "parent run has not enabled workspace writes",
+    );
+
+    const approvedOutput = createOutputCapture();
+    const approved = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--write",
+        "--yes",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: approvedOutput.stdout,
+          stderr: approvedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(approved.exitCode).toBe(0);
+    const parsed = JSON.parse(approvedOutput.stdoutText()) as {
+      output: { stdout: string };
+    };
+    expect(JSON.parse(parsed.output.stdout)).toMatchObject({
+      argv: ["--workspace", workspace],
+      cwd: await realpath(workspace),
+    });
   });
 
   function mcpEchoServerConfig(name: string) {

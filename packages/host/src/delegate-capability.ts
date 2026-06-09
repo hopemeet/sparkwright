@@ -192,6 +192,23 @@ export function assertWorkspaceAccess(input: {
   );
 }
 
+export function assertReadWriteWorkspaceAccessAllowed(input: {
+  workspaceAccess: DelegateWorkspaceAccess;
+  toolName: string;
+  allowed: boolean;
+}): void {
+  if (input.workspaceAccess !== "read_write" || input.allowed) return;
+  throw new DelegateExecutionError(
+    "DELEGATE_WORKSPACE_ACCESS_DENIED",
+    `Delegate tool "${input.toolName}" requests workspaceAccess "read_write", but the parent run has not enabled workspace writes.`,
+    {
+      toolName: input.toolName,
+      workspaceAccess: input.workspaceAccess,
+      reason: "parent_write_disabled",
+    },
+  );
+}
+
 export async function resolveDelegateProcessWorkspace(input: {
   workspaceRoot: string;
   configuredCwd?: string;

@@ -36,6 +36,7 @@ export interface RunConfiguredDelegateInput {
   env?: Record<string, string | undefined>;
   metadata?: Record<string, unknown>;
   approvalResolver?: ApprovalResolver;
+  shouldWrite?: boolean;
   sessionId?: string;
   traceLevel?: TraceLevel;
   persistTrace?: boolean;
@@ -182,6 +183,7 @@ export async function runConfiguredDelegate(
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          allowReadWriteWorkspaceAccess: input.shouldWrite === true,
         })
       : createExternalCommandDelegateTool({
           getParent: () => parent,
@@ -193,6 +195,7 @@ export async function runConfiguredDelegate(
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          allowReadWriteWorkspaceAccess: input.shouldWrite === true,
         });
 
   const requiresApproval = delegate.requiresApproval ?? true;

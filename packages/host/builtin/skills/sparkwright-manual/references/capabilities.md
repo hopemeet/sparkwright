@@ -153,7 +153,9 @@ The command is spawned directly. `args` can include `{{goal}}`,
 `{{metadataJson}}`, and `{{workspaceRoot}}`. `envMode` controls whether the
 child inherits the host environment or receives only configured `env` values.
 `{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
-without it, the external process runs away from the project directory.
+without it, the external process runs away from the project directory. A
+`read_write` delegate also requires the parent run or direct debug command to
+enable workspace writes.
 
 Useful commands:
 

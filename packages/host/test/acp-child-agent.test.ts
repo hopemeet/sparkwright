@@ -100,6 +100,54 @@ describe("ACP child agent delegate tool", () => {
       ]),
     );
   });
+
+  it("requires parent write access before exposing the workspace to ACP delegates", async () => {
+    const fixture = await createFixtureAgent();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_reviewer",
+      name: "External Reviewer",
+      metadata: {
+        acp: {
+          transport: "stdio",
+          command: process.execPath,
+          args: [fixture.agentPath],
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createAcpDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_reviewer",
+      description: "Delegate to fixture ACP worker.",
+      workspaceRoot: fixture.cwd,
+    });
+
+    await expect(
+      tool.execute({ goal: "review the patch" }, {
+        run: parent.record,
+      } as never),
+    ).rejects.toThrow("parent run has not enabled workspace writes");
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.failed",
+          payload: expect.objectContaining({
+            errorCode: "DELEGATE_WORKSPACE_ACCESS_DENIED",
+          }),
+        }),
+      ]),
+    );
+  });
 });
 
 async function createFixtureAgent(): Promise<{

@@ -789,7 +789,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--format json|text]',
+        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes] [--format json|text]',
     };
   }
 
@@ -1450,6 +1450,7 @@ async function handleDelegatesCommand(
       approveAll: parsed.approveAll,
       io,
     }),
+    shouldWrite: parsed.shouldWrite,
   });
 
   if (!result.ok) {
@@ -3471,7 +3472,7 @@ function usage(): string {
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
+    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
     "       sparkwright skills list|validate [--workspace path] [--format json|text]",
@@ -3511,7 +3512,7 @@ function capabilitiesUsage(): string {
 }
 
 function delegatesUsage(): string {
-  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
+  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
 }
 
 function skillsUsage(): string {

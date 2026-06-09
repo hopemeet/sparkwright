@@ -85,6 +85,11 @@ sparkwright delegates run delegate_external_cli_reviewer \
 The command still goes through the delegate approval gate. It writes a trace to
 `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
+Delegates with `workspaceAccess: "read_write"` also require the parent run (or
+direct debug command) to enable workspace writes. For direct debugging, pass
+`--write --yes`; without `--write`, SparkWright refuses to hand the project
+workspace to the delegate even if the delegate tool itself is approved.
+
 ## ACP Stdio
 
 Use `metadata.acp` when the delegate speaks ACP over stdio:

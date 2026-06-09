@@ -409,6 +409,7 @@ export class HostRuntime {
     goal: string;
     modelRef?: string;
     permissionMode: PermissionMode;
+    shouldWrite: boolean;
     sessionId: string;
     targetPath?: string;
     traceLevel?: TraceLevel;
@@ -539,6 +540,7 @@ export class HostRuntime {
       childTools,
       workspaceRoot,
       childRunStoreFactory,
+      allowReadWriteWorkspaceAccess: input.shouldWrite,
     });
     const delegateDescriptors = describeConfiguredDelegateTools({
       delegates: agentConfig?.delegateTools ?? [],
@@ -1002,6 +1004,7 @@ export class HostRuntime {
       goal: checkpoint.run.goal,
       modelRef,
       permissionMode,
+      shouldWrite,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       traceLevel: resolveTraceLevel({
@@ -1165,6 +1168,7 @@ export class HostRuntime {
       goal: payload.goal,
       modelRef,
       permissionMode,
+      shouldWrite,
       sessionId,
       targetPath: payload.targetPath,
       traceLevel: resolveTraceLevel({
@@ -1535,6 +1539,7 @@ export class HostRuntime {
                 createGrepTextTool(this.opts.workspaceRoot),
               ],
               workspaceRoot: this.opts.workspaceRoot,
+              allowReadWriteWorkspaceAccess: false,
               // Snapshot only describes the tool; its body never runs here
               // (getParent returns undefined and the tool throws first).
               childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
@@ -2164,6 +2169,7 @@ function createConfiguredDelegateTools(input: {
   model: ModelAdapter;
   childTools: ToolDefinition[];
   workspaceRoot: string;
+  allowReadWriteWorkspaceAccess: boolean;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -2193,6 +2199,7 @@ function createConfiguredDelegateTools(input: {
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
         }),
       );
       continue;
@@ -2211,6 +2218,7 @@ function createConfiguredDelegateTools(input: {
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
         }),
       );
       continue;

@@ -7,6 +7,7 @@ import {
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import { ExternalAcpWorker } from "@sparkwright/acp-client-adapter";
 import {
+  assertReadWriteWorkspaceAccessAllowed,
   DelegateExecutionError,
   describeDelegateCapability,
   errorCode,
@@ -33,6 +34,7 @@ export interface CreateAcpDelegateToolInput {
   workspaceRoot: string;
   requiresApproval?: boolean;
   forbidNesting?: boolean;
+  allowReadWriteWorkspaceAccess?: boolean;
 }
 
 export interface AcpDelegateToolResult {
@@ -154,13 +156,21 @@ export function createAcpDelegateTool(
       };
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);
-      const executionWorkspace = await resolveDelegateProcessWorkspace({
-        workspaceRoot: input.workspaceRoot,
-        configuredCwd: config.cwd,
-        workspaceAccess,
-        toolName: input.toolName,
-      });
+      let executionWorkspace:
+        | Awaited<ReturnType<typeof resolveDelegateProcessWorkspace>>
+        | undefined;
       try {
+        assertReadWriteWorkspaceAccessAllowed({
+          workspaceAccess,
+          toolName: input.toolName,
+          allowed: input.allowReadWriteWorkspaceAccess === true,
+        });
+        executionWorkspace = await resolveDelegateProcessWorkspace({
+          workspaceRoot: input.workspaceRoot,
+          configuredCwd: config.cwd,
+          workspaceAccess,
+          toolName: input.toolName,
+        });
         const worker = new ExternalAcpWorker({
           name: input.profile.name ?? input.profile.id,
           command: config.command,
@@ -218,7 +228,7 @@ export function createAcpDelegateTool(
         );
         throw wrapped;
       } finally {
-        await executionWorkspace.cleanup();
+        await executionWorkspace?.cleanup();
       }
     },
   });

@@ -159,6 +159,53 @@ describe("external command delegate tool", () => {
     );
   });
 
+  it("requires parent write access before exposing the workspace path", async () => {
+    const fixture = await createFixtureCommand();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_reviewer",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath, "--workspace", "{{workspaceRoot}}"],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_reviewer",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+    });
+
+    await expect(
+      tool.execute({ goal: "review the patch" }, {
+        run: parent.record,
+      } as never),
+    ).rejects.toThrow("parent run has not enabled workspace writes");
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.failed",
+          payload: expect.objectContaining({
+            errorCode: "DELEGATE_WORKSPACE_ACCESS_DENIED",
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("can expose the workspace path with explicit read-write access", async () => {
     const fixture = await createFixtureCommand();
     const parent = createRun({
@@ -187,6 +234,7 @@ describe("external command delegate tool", () => {
       toolName: "delegate_external_reviewer",
       description: "Delegate to fixture command.",
       workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
     });
 
     const result = (await tool.execute({ goal: "review the patch" }, {

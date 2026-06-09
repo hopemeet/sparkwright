@@ -8,6 +8,7 @@ import {
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
   DelegateExecutionError,
+  assertReadWriteWorkspaceAccessAllowed,
   assertWorkspaceAccess,
   describeDelegateCapability,
   errorCode,
@@ -40,6 +41,7 @@ export interface CreateExternalCommandDelegateToolInput {
   workspaceRoot: string;
   requiresApproval?: boolean;
   forbidNesting?: boolean;
+  allowReadWriteWorkspaceAccess?: boolean;
 }
 
 export interface ExternalCommandDelegateToolResult {
@@ -176,6 +178,11 @@ export function createExternalCommandDelegateTool(
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);
       try {
+        assertReadWriteWorkspaceAccessAllowed({
+          workspaceAccess,
+          toolName: input.toolName,
+          allowed: input.allowReadWriteWorkspaceAccess === true,
+        });
         const result = await runExternalCommand({
           config,
           workspaceRoot: input.workspaceRoot,
