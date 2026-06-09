@@ -119,6 +119,21 @@ export {
   toolBatchEventPayload,
 } from "./tool-orchestration.js";
 
+// Run outcome classification
+export type {
+  ClassifiedToolFailure,
+  CompletedRunOutcome,
+  ToolFailureCategory,
+  ToolOutcomeSummary,
+} from "./run-outcome.js";
+export {
+  analyzeToolOutcomes,
+  classifyToolFailure,
+  completedRunOutcomeFromEvents,
+  isPolicyOrApprovalFailure,
+  toolTargetFingerprint,
+} from "./run-outcome.js";
+
 // Prompt-cache integrity detector.
 export type { CacheBreakDetectorOptions } from "./cache-break.js";
 export { wrapPromptBuilderWithCacheBreakDetector } from "./cache-break.js";
@@ -146,12 +161,14 @@ export type {
   Policy,
   PermissionModePolicyOptions,
   ToolGovernancePolicyOptions,
+  WorkspaceMutationPolicyOptions,
 } from "./policy.js";
 export {
   createDefaultPolicy,
   createLayeredPolicy,
   createPermissionModePolicy,
   createToolGovernancePolicy,
+  createWorkspaceMutationPolicy,
 } from "./policy.js";
 
 // Execution environment boundary
@@ -177,7 +194,7 @@ export {
 
 // Approval
 export type { ApprovalResolver } from "./approval.js";
-export { createApprovalRequest } from "./approval.js";
+export { createApprovalRequest, resolveApproval } from "./approval.js";
 
 // Context
 export type {
@@ -331,6 +348,8 @@ export type {
   TraceTimelinePhaseStatus,
   TraceEventFilter,
   TraceSummary,
+  TraceVerificationFinding,
+  TraceVerificationReport,
   ValidateSessionTraceConsistencyOptions,
 } from "./trace.js";
 export {
@@ -344,6 +363,8 @@ export {
   summarizeTraceFile,
   summarizeTraceJsonl,
   validateSessionTraceConsistency,
+  verifyTraceFile,
+  verifyTraceJsonl,
 } from "./trace.js";
 export type {
   MemoryStore,

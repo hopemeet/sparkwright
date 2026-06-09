@@ -107,6 +107,56 @@ Common fields:
 - `runBudget`
 - `metadata`
 
+External ACP delegates use `metadata.acp` on a profile:
+
+```json
+{
+  "id": "external_reviewer",
+  "metadata": {
+    "acp": {
+      "transport": "stdio",
+      "command": "codex",
+      "args": ["acp"],
+      "workspaceAccess": "read_write",
+      "timeoutMs": 120000
+    }
+  }
+}
+```
+
+Expose the profile with `capabilities.agents.delegateTools` to create a
+risky, approval-gated delegate tool. Use the command and args for the installed
+ACP-compatible agent process on the host machine.
+
+For local assistants that run as regular CLI commands, use
+`metadata.externalCommand` instead:
+
+```json
+{
+  "id": "external_cli_reviewer",
+  "metadata": {
+    "externalCommand": {
+      "command": "agent-cli",
+      "args": ["run", "{{goal}}"],
+      "envMode": "inherit",
+      "input": "none",
+      "workspaceAccess": "read_write",
+      "timeoutMs": 120000,
+      "maxStdoutBytes": 64000,
+      "maxStderrBytes": 64000
+    }
+  }
+}
+```
+
+The command is spawned directly. `args` can include `{{goal}}`,
+`{{metadataJson}}`, and `{{workspaceRoot}}`. `envMode` controls whether the
+child inherits the host environment or receives only configured `env` values.
+`{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
+without it, the external process runs away from the project directory. A
+`read_write` delegate also requires the parent run or direct debug command to
+enable workspace writes.
+
 Useful commands:
 
 ```bash

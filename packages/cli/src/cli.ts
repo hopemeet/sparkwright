@@ -1,9 +1,17 @@
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
+  FileTaskStore,
+  type TaskId,
+  type TaskOutputChunk,
+  type TaskRecord,
+  type TaskStatus,
+} from "@sparkwright/agent-runtime";
+import {
   asSessionId,
   buildTraceTimelineFile,
   createSessionId,
   createPermissionModePolicy,
+  createRunId,
   FileSessionStore,
   loadCheckpointFromRunDir,
   loadTraceEventsFile,
@@ -17,8 +25,11 @@ import {
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
   type TraceSummary,
+  type TraceVerificationReport,
   type TraceTimeline,
   type TraceLevel,
+  EventLog,
+  verifyTraceFile,
 } from "@sparkwright/core";
 import {
   createSessionFileRunStoreFactory,
@@ -31,6 +42,7 @@ import {
   legacyConfigCronRoot,
   runCronJobByRef,
   tickCron,
+  type CronJob,
   type CreateJobInput,
   type UpdateJobPatch,
 } from "@sparkwright/cron";
@@ -39,14 +51,20 @@ import {
   loadLayeredSkillReport,
   loadLayeredAgentReport,
   loadHostConfig,
+  resolveAgentProfiles,
+  describeExternalDelegateCapability,
   existingSkillRoots,
   projectSkillRoot,
   resolveCapabilityDirs,
   resolveSkillRootsForRuntime,
+  runConfiguredDelegate,
   userConfigPath,
+  validateRunInput,
   type AgentReport,
+  type DelegateCapabilityDescriptor,
   type SkillReport,
 } from "@sparkwright/host";
+import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
@@ -75,12 +93,16 @@ interface ParsedArgs {
   target?: string;
   traceLevel: TraceLevel;
   workspaceRoot: string;
+  sessionRootDir: string;
+  sessionRootDirSource: "default" | "cli";
   targetPath: string;
+  targetPathSource: "default" | "cli";
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
+  modelNameSource?: "config" | "cli";
   sessionId?: string;
   format: "json" | "text";
   eventType?: string;
@@ -94,6 +116,8 @@ interface ParsedArgs {
   force: boolean;
   fromTrace: boolean;
   directCore: boolean;
+  resolveMcp: boolean;
+  delegateGoal?: string;
 }
 
 export async function runCli(
@@ -108,13 +132,22 @@ export async function runCli(
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
 
+  const helpText = helpForArgs(argv);
+  if (helpText) {
+    writeLine(io.stdout, helpText);
+    return { exitCode: 0 };
+  }
+
   if (argv[0] === "init") {
     return handleInitCommand(io, env, argv.slice(1), cwd);
   }
 
   // Shared config (model/providers/etc.) is read once here so the CLI and the
-  // TUI configure from the same file. Precedence: CLI flag > env > config.
-  const cfg = await loadHostConfig(cwd, env);
+  // host configure from the same effective workspace. We cannot wait for the
+  // full parser because config itself may provide default workspace/model
+  // values, but an explicit --workspace must decide which project config layer
+  // participates in the merge.
+  const cfg = await loadHostConfig(workspaceBootstrapRoot(argv, cwd), env);
   for (const e of cfg.errors) {
     writeLine(io.stderr, `config: ${e.file}: ${e.field}: ${e.message}`);
   }
@@ -155,8 +188,16 @@ export async function runCli(
     return handleToolsCommand(parsed.value, io, env);
   }
 
+  if (command === "tasks") {
+    return handleTasksCommand(parsed.value, io);
+  }
+
   if (command === "capabilities") {
     return handleCapabilitiesCommand(parsed.value, io, env);
+  }
+
+  if (command === "delegates") {
+    return handleDelegatesCommand(parsed.value, io, env);
   }
 
   if (command === "skills") {
@@ -168,16 +209,32 @@ export async function runCli(
   }
 
   const { goal } = parsed.value;
-  if (command !== "run" || !goal) {
+  if (command === "run" && !goal) {
+    writeLine(
+      io.stderr,
+      'Usage: sparkwright run requires a non-empty goal, e.g. sparkwright run "inspect this repo".',
+    );
+    return { exitCode: 1 };
+  }
+  if (command !== "run") {
     writeLine(io.stderr, usage());
     return { exitCode: 1 };
+  }
+
+  const sessionId = parsed.value.sessionId ?? createSessionId();
+  const runInput = { ...parsed.value, sessionId };
+  const validation = await validateCliRunInput(runInput, io, env);
+  if (!validation.ok) {
+    const tracePath = writeValidationFailureTrace(runInput, validation);
+    if (tracePath)
+      writeLine(io.stdout, `Validation trace written to ${tracePath}`);
+    return { exitCode: 1, tracePath, sessionId };
   }
 
   return parsed.value.directCore
     ? startDirectCoreRun(
         {
-          ...parsed.value,
-          sessionId: parsed.value.sessionId ?? createSessionId(),
+          ...runInput,
           contextItems: [],
         },
         io,
@@ -185,18 +242,153 @@ export async function runCli(
       )
     : startHostRun(
         {
-          ...parsed.value,
-          sessionId: parsed.value.sessionId ?? createSessionId(),
+          ...runInput,
+          modelName:
+            runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
         },
         io,
         env,
       );
 }
 
+async function validateCliRunInput(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<{ ok: boolean; errors: string[]; warnings: string[] }> {
+  const validation = await validateRunInput({
+    workspaceRoot: parsed.workspaceRoot,
+    targetPath: parsed.targetPath,
+    requireTargetExists: parsed.targetPathSource === "cli",
+    approveAll: parsed.approveAll,
+    shouldWrite: parsed.shouldWrite,
+    modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
+    validateModel: parsed.modelNameSource === "cli",
+    env,
+  });
+  for (const warning of validation.warnings) {
+    writeLine(io.stderr, `Warning: ${warning}`);
+  }
+  for (const error of validation.errors) {
+    writeLine(io.stderr, error);
+  }
+  return validation;
+}
+
+function writeValidationFailureTrace(
+  parsed: ParsedArgs & { sessionId: string },
+  validation: { errors: string[]; warnings: string[] },
+): string | undefined {
+  if (
+    parsed.sessionRootDirSource === "default" &&
+    validation.errors.some((error) => error.startsWith("Workspace "))
+  ) {
+    return undefined;
+  }
+  try {
+    const now = new Date().toISOString();
+    const runId = createRunId();
+    const run: RunRecord = {
+      id: runId,
+      goal: parsed.goal,
+      state: "failed",
+      stopReason: "validation_failed",
+      createdAt: now,
+      updatedAt: now,
+      metadata: {
+        source: "cli",
+        agentId: "main",
+        workspaceRoot: parsed.workspaceRoot,
+        targetPath: parsed.targetPath,
+      },
+    };
+    const store = new FileRunStore(run, {
+      sessionRootDir: parsed.sessionRootDir,
+      sessionId: parsed.sessionId,
+      agentId: "main",
+      traceLevel: parsed.traceLevel,
+    });
+    const events = new EventLog(runId);
+    const metadata = { sessionId: parsed.sessionId, agentId: "main" };
+    store.append(events.emit("run.created", { goal: parsed.goal }, metadata));
+    store.append(
+      events.emit(
+        "validation.failed",
+        {
+          stage: "input",
+          hookName: "run_input",
+          result: {
+            ok: false,
+            findings: validation.errors.map((message) => ({
+              severity: "error",
+              code: validationCodeForMessage(message),
+              message,
+            })),
+          },
+          warnings: validation.warnings,
+        },
+        metadata,
+      ),
+    );
+    store.append(
+      events.emit(
+        "run.failed",
+        {
+          reason: "validation_failed",
+          code: "RUN_INPUT_VALIDATION_FAILED",
+          message: validation.errors.join("\n"),
+        },
+        metadata,
+      ),
+    );
+    store.finish(run, {
+      signal: "failed",
+      state: "failed",
+      stopReason: "validation_failed",
+      message: validation.errors.join("\n"),
+      failure: {
+        category: "validation",
+        code: "RUN_INPUT_VALIDATION_FAILED",
+        message: validation.errors.join("\n"),
+      },
+      metadata: {},
+    });
+    return store.tracePath;
+  } catch {
+    return undefined;
+  }
+}
+
+function validationCodeForMessage(message: string): string {
+  if (message.startsWith("Workspace does not exist"))
+    return "WORKSPACE_NOT_FOUND";
+  if (message.startsWith("Workspace is not a directory"))
+    return "WORKSPACE_NOT_DIRECTORY";
+  if (message.startsWith("Target does not exist")) return "TARGET_NOT_FOUND";
+  if (message.startsWith("Target is not a file")) return "TARGET_NOT_FILE";
+  if (message.startsWith("Target must stay inside"))
+    return "TARGET_OUTSIDE_WORKSPACE";
+  if (message.startsWith("Target must be a workspace-relative"))
+    return "TARGET_NOT_RELATIVE";
+  if (message.startsWith("Target path must not be empty"))
+    return "TARGET_EMPTY";
+  return "RUN_INPUT_INVALID";
+}
+
 interface ConfigDefaults {
   model?: string;
   permissionMode?: PermissionMode;
   workspace?: string;
+}
+
+function workspaceBootstrapRoot(argv: string[], cwd: string): string {
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== "--workspace") continue;
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) return cwd;
+    return value;
+  }
+  return cwd;
 }
 
 function parseArgs(
@@ -211,7 +403,9 @@ function parseArgs(
     "session",
     "cron",
     "tools",
+    "tasks",
     "capabilities",
+    "delegates",
     "skills",
     "agents",
   ]);
@@ -224,7 +418,9 @@ function parseArgs(
     command === "session" ||
     command === "cron" ||
     command === "tools" ||
+    command === "tasks" ||
     command === "capabilities" ||
+    command === "delegates" ||
     command === "skills" ||
     command === "agents"
   ) {
@@ -236,11 +432,17 @@ function parseArgs(
   }
   let traceLevel: TraceLevel = "standard";
   let workspaceRoot = defaults.workspace ?? cwd;
+  let sessionRootDir: string | undefined;
+  let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
   let targetPath = "README.md";
+  let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   let shouldWrite = false;
   let approveAll = false;
   let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
   let modelName: string | undefined = defaults.model;
+  let modelNameSource: ParsedArgs["modelNameSource"] = defaults.model
+    ? "config"
+    : undefined;
   let sessionId: string | undefined;
   let format: ParsedArgs["format"] = "json";
   let eventType: string | undefined;
@@ -254,6 +456,8 @@ function parseArgs(
   let force = false;
   let fromTrace = false;
   let directCore = false;
+  let resolveMcp = false;
+  let delegateGoal: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -282,6 +486,20 @@ function parseArgs(
       continue;
     }
 
+    if (arg === "--session-root") {
+      const value = args[index + 1];
+      if (!value)
+        return {
+          ok: false,
+          message: "Usage: --session-root requires a path",
+        };
+      sessionRootDir = value;
+      sessionRootDirSource = "cli";
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
     if (arg === "--target") {
       const value = args[index + 1];
       if (!value)
@@ -290,6 +508,7 @@ function parseArgs(
           message: "Usage: --target requires a workspace-relative path",
         };
       targetPath = value;
+      targetPathSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -329,6 +548,7 @@ function parseArgs(
       if (!value)
         return { ok: false, message: "Usage: --model requires a model name" };
       modelName = value;
+      modelNameSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -473,6 +693,22 @@ function parseArgs(
       continue;
     }
 
+    if (arg === "--resolve-mcp") {
+      resolveMcp = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--goal") {
+      const value = args[index + 1];
+      if (!value) return { ok: false, message: "Usage: --goal requires text" };
+      delegateGoal = value;
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
     if (arg === "--session") {
       const value = args[index + 1];
       if (!value)
@@ -490,12 +726,13 @@ function parseArgs(
     command === "trace" &&
     subcommand !== "summary" &&
     subcommand !== "events" &&
-    subcommand !== "timeline"
+    subcommand !== "timeline" &&
+    subcommand !== "verify"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>",
+        "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>",
     };
   }
 
@@ -509,7 +746,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path]",
+        "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]",
     };
   }
 
@@ -527,11 +764,32 @@ function parseArgs(
     };
   }
 
+  if (
+    command === "tasks" &&
+    subcommand !== "list" &&
+    subcommand !== "get" &&
+    subcommand !== "output"
+  ) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright tasks <list|get|output> [task-id] [--workspace path] [--root-dir path] [--status status] [--kind kind]",
+    };
+  }
+
   if (command === "capabilities" && subcommand !== "inspect") {
     return {
       ok: false,
       message:
-        "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]",
+        "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+    };
+  }
+
+  if (command === "delegates" && subcommand !== "run") {
+    return {
+      ok: false,
+      message:
+        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes] [--format json|text]',
     };
   }
 
@@ -566,12 +824,14 @@ function parseArgs(
       ? args.slice(1).join(" ").trim()
       : command === "run" && subcommand === "resume"
         ? "" // checkpoint supplies the original goal
-        : args.join(" ").trim();
+        : command === "delegates" && subcommand === "run"
+          ? (delegateGoal ?? args.slice(1).join(" ").trim())
+          : args.join(" ").trim();
   if (command === "run" && subcommand === "resume" && !args[0]) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace]",
+        "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace]",
     };
   }
   if (command === "run" && subcommand === "resume") {
@@ -584,12 +844,15 @@ function parseArgs(
       subcommand === "pause" ||
       subcommand === "resume" ||
       subcommand === "remove" ||
+      subcommand === "status" ||
       subcommand === "run");
   const effectiveGoal =
     command === "cron"
       ? (cronRefCommand ? args.slice(1) : args).join("\0")
       : command === "tools" ||
+          command === "tasks" ||
           command === "capabilities" ||
+          command === "delegates" ||
           command === "skills" ||
           command === "agents"
         ? args.join("\0")
@@ -604,11 +867,16 @@ function parseArgs(
       target,
       traceLevel,
       workspaceRoot,
+      sessionRootDir:
+        sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
+      sessionRootDirSource,
       targetPath,
+      targetPathSource,
       shouldWrite,
       approveAll,
       permissionMode,
       modelName,
+      modelNameSource,
       sessionId,
       format,
       eventType,
@@ -622,6 +890,8 @@ function parseArgs(
       force,
       fromTrace,
       directCore,
+      resolveMcp,
+      delegateGoal,
     },
   };
 }
@@ -686,6 +956,235 @@ async function handleToolsCommand(
     );
     return { exitCode: 1 };
   }
+}
+
+async function handleTasksCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "list" &&
+    subcommand !== "get" &&
+    subcommand !== "output"
+  ) {
+    writeLine(io.stderr, tasksUsage());
+    return { exitCode: 1 };
+  }
+
+  const args = parseTaskArgs(parsed.goal);
+  if (!args.ok) {
+    writeLine(io.stderr, args.message);
+    return { exitCode: 1 };
+  }
+
+  const rootDir = args.value.rootDir ?? defaultTaskRoot(parsed.workspaceRoot);
+  const store = new FileTaskStore({ rootDir, createRoot: false });
+
+  try {
+    if (subcommand === "list") {
+      const tasks = store.list({
+        status: args.value.status,
+        kind: args.value.kind,
+        parentRunId: parsed.runId,
+      });
+      writeLine(
+        io.stdout,
+        formatTaskList({ rootDir, tasks, format: parsed.format }),
+      );
+      return { exitCode: 0 };
+    }
+
+    const taskId = args.value.taskId ?? parsed.target;
+    if (!taskId) {
+      writeLine(io.stderr, `Usage: sparkwright tasks ${subcommand} <task-id>`);
+      return { exitCode: 1 };
+    }
+    const id = taskId as unknown as TaskId;
+    const record = store.get(id);
+    if (!record) {
+      writeLine(io.stderr, `Task not found: ${taskId}`);
+      return { exitCode: 1 };
+    }
+
+    if (subcommand === "get") {
+      writeLine(io.stdout, JSON.stringify(record, null, 2));
+      return { exitCode: 0 };
+    }
+
+    const maxChunks = args.value.maxChunks ?? parsed.limit ?? 200;
+    const fromSequence = args.value.fromSequence ?? 0;
+    const chunks = await readTaskOutput(store, id, {
+      fromSequence,
+      maxChunks,
+    });
+    const nextSequence =
+      chunks.length > 0
+        ? chunks[chunks.length - 1]!.sequence + 1
+        : fromSequence;
+    writeLine(
+      io.stdout,
+      JSON.stringify(
+        {
+          taskId,
+          chunks,
+          nextSequence,
+          complete: isTerminalTaskStatus(record.status),
+          status: record.status,
+          error: record.error,
+          lastOutputAt: record.lastOutputAt,
+        },
+        null,
+        2,
+      ),
+    );
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+interface TaskParsedArgs {
+  rootDir?: string;
+  taskId?: string;
+  status?: TaskStatus;
+  kind?: string;
+  fromSequence?: number;
+  maxChunks?: number;
+}
+
+function parseTaskArgs(
+  input: string,
+): { ok: true; value: TaskParsedArgs } | { ok: false; message: string } {
+  let args: string[];
+  try {
+    args = input.includes("\0")
+      ? input.split("\0").filter(Boolean)
+      : splitShellLike(input);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const out: TaskParsedArgs = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const next = args[i + 1];
+    if (arg === "--root-dir") {
+      if (!next)
+        return { ok: false, message: "Usage: --root-dir requires a path" };
+      out.rootDir = next;
+      i += 1;
+    } else if (arg === "--status") {
+      if (!isTaskStatus(next)) {
+        return {
+          ok: false,
+          message:
+            "Usage: --status must be one of: pending, running, completed, failed, cancelled",
+        };
+      }
+      out.status = next;
+      i += 1;
+    } else if (arg === "--kind") {
+      if (!next) return { ok: false, message: "Usage: --kind requires text" };
+      out.kind = next;
+      i += 1;
+    } else if (arg === "--from-sequence") {
+      const value = parseNonNegativeInteger(next);
+      if (value === undefined) {
+        return {
+          ok: false,
+          message: "Usage: --from-sequence requires a non-negative integer",
+        };
+      }
+      out.fromSequence = value;
+      i += 1;
+    } else if (arg === "--max-chunks") {
+      const value = parsePositiveInteger(next);
+      if (value === undefined) {
+        return {
+          ok: false,
+          message: "Usage: --max-chunks requires a positive integer",
+        };
+      }
+      out.maxChunks = value;
+      i += 1;
+    } else if (arg?.startsWith("--")) {
+      return { ok: false, message: `Unknown tasks option: ${arg}` };
+    } else if (!out.taskId) {
+      out.taskId = arg;
+    } else {
+      return { ok: false, message: `Unexpected tasks argument: ${arg}` };
+    }
+  }
+  return { ok: true, value: out };
+}
+
+function defaultTaskRoot(workspaceRoot: string): string {
+  return join(workspaceRoot, ".sparkwright", "tasks");
+}
+
+function isTaskStatus(value: string | undefined): value is TaskStatus {
+  return (
+    value === "pending" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled"
+  );
+}
+
+function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
+
+async function readTaskOutput(
+  store: FileTaskStore,
+  id: TaskId,
+  options: { fromSequence: number; maxChunks: number },
+): Promise<TaskOutputChunk[]> {
+  const chunks: TaskOutputChunk[] = [];
+  for await (const chunk of store.loadOutput(id, options.fromSequence)) {
+    chunks.push(chunk);
+    if (chunks.length >= options.maxChunks) break;
+  }
+  return chunks;
+}
+
+function formatTaskList(input: {
+  rootDir: string;
+  tasks: TaskRecord[];
+  format: ParsedArgs["format"];
+}): string {
+  if (input.format === "json") {
+    return JSON.stringify(
+      {
+        rootDir: input.rootDir,
+        tasks: input.tasks,
+      },
+      null,
+      2,
+    );
+  }
+  const lines = [`rootDir: ${input.rootDir}`];
+  if (input.tasks.length === 0) {
+    lines.push("tasks: (none)");
+    return lines.join("\n");
+  }
+  lines.push(`tasks: ${input.tasks.length}`);
+  for (const task of input.tasks) {
+    lines.push(
+      `- ${task.id} ${task.status} ${task.kind}${task.title ? ` (${task.title})` : ""}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 type ToolConfigAction = "enable" | "disable" | "defer";
@@ -848,12 +1347,29 @@ interface CapabilityInspectReport {
   tools: ToolsConfigShape;
   skills: SkillReport;
   agents: AgentReport & {
-    delegateTools: Array<{ profileId: string; toolName?: string }>;
+    delegateTools: DelegateCapabilityDescriptor[];
   };
   mcp: {
-    servers: Array<{ name: string; type: string; enabled: boolean }>;
+    servers: Array<{
+      name: string;
+      type: string;
+      enabled: boolean;
+      status?: string;
+      toolCount?: number;
+      tools?: Array<{
+        toolName: string;
+        serverName: string;
+        mcpToolName: string;
+      }>;
+      error?: {
+        code?: string;
+        phase?: string;
+        message: string;
+      };
+    }>;
     defaultTimeoutMs?: number;
     namePrefix?: string;
+    resolved?: boolean;
   };
   cron: {
     stateRoot: string;
@@ -874,8 +1390,21 @@ async function handleCapabilitiesCommand(
     return { exitCode: 1 };
   }
 
+  const validation = await validateRunInput({
+    workspaceRoot: parsed.workspaceRoot,
+    env,
+  });
+  for (const error of validation.errors) writeLine(io.stderr, error);
+  if (!validation.ok) return { exitCode: 1 };
+
   try {
-    const report = await loadCapabilityInspectReport(parsed.workspaceRoot, env);
+    const report = await loadCapabilityInspectReport(
+      parsed.workspaceRoot,
+      env,
+      {
+        resolveMcp: parsed.resolveMcp,
+      },
+    );
     writeLine(
       io.stdout,
       parsed.format === "json"
@@ -892,9 +1421,101 @@ async function handleCapabilitiesCommand(
   }
 }
 
+async function handleDelegatesCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  if (parsed.subcommand !== "run") {
+    writeLine(io.stderr, delegatesUsage());
+    return { exitCode: 1 };
+  }
+
+  const words = splitCliWords(parsed.goal);
+  const toolName = words[0];
+  const goal = parsed.delegateGoal ?? words.slice(1).join(" ").trim();
+  if (!toolName || !goal) {
+    writeLine(io.stderr, delegatesUsage());
+    return { exitCode: 1 };
+  }
+
+  const result = await runConfiguredDelegate({
+    workspaceRoot: parsed.workspaceRoot,
+    toolName,
+    goal,
+    env,
+    sessionId: parsed.sessionId ?? createSessionId(),
+    traceLevel: parsed.traceLevel,
+    approvalResolver: createCliApprovalResolver({
+      approveAll: parsed.approveAll,
+      io,
+    }),
+    shouldWrite: parsed.shouldWrite,
+  });
+
+  if (!result.ok) {
+    writeLine(io.stderr, result.message);
+    if (parsed.format === "json") {
+      writeLine(io.stdout, JSON.stringify(result, null, 2));
+    }
+    return { exitCode: 1 };
+  }
+
+  writeLine(
+    io.stdout,
+    parsed.format === "json"
+      ? JSON.stringify(result, null, 2)
+      : formatDelegateRunResult(result),
+  );
+  return {
+    exitCode: 0,
+    tracePath: result.tracePath,
+    sessionId: result.sessionId,
+  };
+}
+
+function formatDelegateRunResult(
+  result: Extract<
+    Awaited<ReturnType<typeof runConfiguredDelegate>>,
+    { ok: true }
+  >,
+): string {
+  const lines = [
+    `delegate.completed ${result.toolName} -> ${result.profileId} (${result.protocol})`,
+  ];
+  if (result.sessionId) {
+    lines.push(`sessionId: ${result.sessionId}`);
+  }
+  if (result.tracePath) {
+    lines.push(`trace: ${result.tracePath}`);
+  }
+  const output = result.output;
+  if (isPlainObject(output)) {
+    if (typeof output.exitCode === "number") {
+      lines.push(`exitCode: ${output.exitCode}`);
+    }
+    if (typeof output.stopReason === "string") {
+      lines.push(`stopReason: ${output.stopReason}`);
+    }
+    if (typeof output.stdout === "string" && output.stdout.length > 0) {
+      lines.push("stdout:", output.stdout.trimEnd());
+    }
+    if (typeof output.stderr === "string" && output.stderr.length > 0) {
+      lines.push("stderr:", output.stderr.trimEnd());
+    }
+    if (typeof output.message === "string" && output.message.length > 0) {
+      lines.push("message:", output.message.trimEnd());
+    }
+  } else {
+    lines.push(JSON.stringify(output, null, 2));
+  }
+  return lines.join("\n");
+}
+
 async function loadCapabilityInspectReport(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
+  options: { resolveMcp?: boolean } = {},
 ): Promise<CapabilityInspectReport> {
   const loaded = await loadHostConfig(workspaceRoot, env);
   const capabilities = loaded.config.capabilities;
@@ -904,13 +1525,18 @@ async function loadCapabilityInspectReport(
     env,
   );
   const skills = await loadLayeredSkillReport(skillRoots, {
-    includeMissingRoots: false,
+    includeMissingRoots: "configured",
   });
   const agents = await loadLayeredAgentReport(
     workspaceRoot,
     capabilities?.agents?.profiles,
     env,
   );
+  const profiles = await resolveAgentProfiles(
+    workspaceRoot,
+    capabilities?.agents?.profiles,
+  );
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
 
   const commandDirs = await Promise.all(
     resolveCapabilityDirs("command", { cwd: workspaceRoot, env }).map(
@@ -922,6 +1548,44 @@ async function loadCapabilityInspectReport(
     ),
   );
 
+  const mcpServers: CapabilityInspectReport["mcp"]["servers"] = (
+    capabilities?.mcp?.servers ?? []
+  ).map((server) => ({
+    name: server.name,
+    type: server.type,
+    enabled: server.enabled !== false,
+  }));
+
+  if (options.resolveMcp && capabilities?.mcp?.servers?.length) {
+    const prepared = await prepareMcpToolsForRun({
+      servers: capabilities.mcp.servers,
+      defaultTimeoutMs: capabilities.mcp.defaultTimeoutMs,
+      namePrefix: capabilities.mcp.namePrefix,
+      policy: capabilities.mcp.defaultPolicy,
+    });
+    try {
+      for (const server of mcpServers) {
+        const status = prepared.statuses[server.name];
+        if (!status) continue;
+        const tools = prepared.toolNameMap.filter(
+          (tool) => tool.serverName === server.name,
+        );
+        server.status = status.status;
+        server.toolCount = tools.length;
+        server.tools = tools;
+        if (status.status === "failed") {
+          server.error = {
+            message: status.error,
+            ...(status.errorCode ? { code: status.errorCode } : {}),
+            ...(status.phase ? { phase: status.phase } : {}),
+          };
+        }
+      }
+    } finally {
+      await prepared.close();
+    }
+  }
+
   return {
     workspace: workspaceRoot,
     config: { errors: loaded.errors },
@@ -929,21 +1593,23 @@ async function loadCapabilityInspectReport(
     skills,
     agents: {
       ...agents,
-      delegateTools: (capabilities?.agents?.delegateTools ?? []).map(
-        (tool) => ({
-          profileId: tool.profileId,
-          toolName: tool.toolName,
-        }),
+      delegateTools: (capabilities?.agents?.delegateTools ?? []).flatMap(
+        (delegate) => {
+          const profile = profileById.get(delegate.profileId);
+          if (!profile) return [];
+          const descriptor = describeExternalDelegateCapability({
+            delegate,
+            profile,
+          });
+          return descriptor ? [descriptor] : [];
+        },
       ),
     },
     mcp: {
-      servers: (capabilities?.mcp?.servers ?? []).map((server) => ({
-        name: server.name,
-        type: server.type,
-        enabled: server.enabled !== false,
-      })),
+      servers: mcpServers,
       defaultTimeoutMs: capabilities?.mcp?.defaultTimeoutMs,
       namePrefix: capabilities?.mcp?.namePrefix,
+      resolved: options.resolveMcp || undefined,
     },
     cron: {
       stateRoot: defaultCronRoot(env),
@@ -975,12 +1641,23 @@ function formatCapabilityInspectReport(
   for (const skill of report.skills.skills) {
     lines.push(`  - ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
   }
+  if (report.skills.errors.length > 0) {
+    lines.push(`skill errors: ${report.skills.errors.length}`);
+    for (const error of report.skills.errors) {
+      lines.push(`  - ${error.source}: ${error.message}`);
+    }
+  }
   lines.push(
     `agents: ${report.agents.profiles.length} effective, ${report.agents.roots.length} roots, ${report.agents.shadows.length} shadows, ${report.agents.errors.length} errors, ${report.agents.delegateTools.length} delegate tools`,
   );
   for (const agent of report.agents.profiles) {
     lines.push(
       `  - ${agent.id}${agent.name ? ` (${agent.name})` : ""}: ${agent.layer}`,
+    );
+  }
+  for (const tool of report.agents.delegateTools) {
+    lines.push(
+      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}; approval=${tool.requiresApproval ? "required" : "not-required"}; workspace=${tool.workspaceAccess})`,
     );
   }
   if (report.agents.shadows.length > 0) {
@@ -996,15 +1673,23 @@ function formatCapabilityInspectReport(
   lines.push(`mcp: ${report.mcp.servers.length} servers`);
   for (const server of report.mcp.servers) {
     lines.push(
-      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"}`,
+      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"}${server.status ? ` ${server.status}` : ""}${server.toolCount !== undefined ? ` tools=${server.toolCount}` : ""}`,
     );
+    if (server.error) {
+      const code = server.error.code ? `${server.error.code}: ` : "";
+      const phase = server.error.phase ? ` (${server.error.phase})` : "";
+      lines.push(`    error: ${code}${server.error.message}${phase}`);
+    }
+    for (const tool of server.tools ?? []) {
+      lines.push(`    tool: ${tool.toolName} -> ${tool.mcpToolName}`);
+    }
   }
   lines.push(`cron state: ${report.cron.stateRoot}`);
   lines.push(`cron legacy state: ${report.cron.legacyStateRoot}`);
   lines.push("command dirs:");
   for (const dir of report.command.dirs) {
     lines.push(
-      `  - ${dir.layer}: ${dir.path}${dir.exists ? "" : " (missing)"}`,
+      `  - ${dir.layer}: ${dir.path}${dir.exists ? "" : " (optional, missing)"}`,
     );
   }
   if (report.config.errors.length > 0) {
@@ -1745,6 +2430,14 @@ async function handleCronCommand(
       return { exitCode: 0 };
     }
 
+    if (subcommand === "status") {
+      writeLine(
+        io.stdout,
+        JSON.stringify(formatCronStatus(await store.getJob(ref)), null, 2),
+      );
+      return { exitCode: 0 };
+    }
+
     if (subcommand === "run") {
       const model = await createCliModel({
         modelRef: parsed.modelName,
@@ -1962,6 +2655,7 @@ function isCronSubcommand(
   | "pause"
   | "resume"
   | "remove"
+  | "status"
   | "run"
   | "tick" {
   return (
@@ -1971,9 +2665,30 @@ function isCronSubcommand(
     value === "pause" ||
     value === "resume" ||
     value === "remove" ||
+    value === "status" ||
     value === "run" ||
     value === "tick"
   );
+}
+
+function formatCronStatus(job: CronJob): Record<string, unknown> {
+  return {
+    id: job.id,
+    name: job.name,
+    enabled: job.enabled,
+    state: job.state,
+    schedule: job.scheduleDisplay,
+    nextRunAt: job.nextRunAt,
+    runningSince: job.runningSince ?? null,
+    lastRunAt: job.lastRunAt,
+    lastStatus: job.lastStatus,
+    lastError: job.lastError,
+    lastRunId: job.lastRunId ?? null,
+    lastTracePath: job.lastTracePath ?? null,
+    lastOutputPath: job.lastOutputPath ?? null,
+    repeat: job.repeat,
+    workspace: job.workspace ?? null,
+  };
 }
 
 function splitComma(value: string): string[] {
@@ -2015,10 +2730,52 @@ function cronUsage(): string {
     'Usage: sparkwright cron create --schedule "every 1h" --prompt "task" [--name name] [--skill name] [--repeat n|forever]',
     "       sparkwright cron list",
     "       sparkwright cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text]",
-    "       sparkwright cron pause|resume|remove <job-id-or-name>",
+    "       sparkwright cron pause|resume|remove|status <job-id-or-name>",
     "       sparkwright cron run <job-id-or-name> [--model provider/model] [--yes]",
     "       sparkwright cron tick [--model provider/model] [--yes]",
   ].join("\n");
+}
+
+function helpForArgs(argv: readonly string[]): string | undefined {
+  if (argv.length === 0) return undefined;
+  if (isHelpArg(argv[0])) return usage();
+
+  const command = argv[0];
+  if (!isHelpArg(argv[1])) return undefined;
+
+  if (command === "init") {
+    return [
+      "Usage: sparkwright init",
+      "       sparkwright init --project",
+    ].join("\n");
+  }
+  if (command === "run") {
+    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
+  }
+  if (command === "trace") {
+    return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
+  }
+  if (command === "tui") {
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]";
+  }
+  if (command === "acp") {
+    return "Usage: sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]";
+  }
+  if (command === "session") {
+    return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
+  }
+  if (command === "cron") return cronUsage();
+  if (command === "tools") return toolsUsage();
+  if (command === "tasks") return tasksUsage();
+  if (command === "capabilities") return capabilitiesUsage();
+  if (command === "delegates") return delegatesUsage();
+  if (command === "skills") return skillsUsage();
+  if (command === "agents") return agentsUsage();
+  return undefined;
+}
+
+function isHelpArg(value: string | undefined): boolean {
+  return value === "--help" || value === "-h" || value === "help";
 }
 
 async function handleTraceCommand(
@@ -2028,9 +2785,19 @@ async function handleTraceCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright trace <summary|events|timeline> <trace.jsonl>",
+      "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>",
     );
     return { exitCode: 1 };
+  }
+  if (parsed.subcommand === "verify") {
+    const report = await verifyTraceFile(parsed.target);
+    writeLine(
+      io.stdout,
+      parsed.format === "text"
+        ? formatTraceVerificationReport(report)
+        : JSON.stringify(report, null, 2),
+    );
+    return { exitCode: report.ok ? 0 : 1 };
   }
   if (parsed.subcommand === "timeline") {
     const timeline = await buildTraceTimelineFile(parsed.target, {
@@ -2088,7 +2855,7 @@ async function handleSessionCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path]",
+      "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]",
     );
     return { exitCode: 1 };
   }
@@ -2103,12 +2870,7 @@ async function handleSessionCommand(
     return { exitCode: 1, sessionId: parsed.target };
   }
 
-  const sessionDir = join(
-    parsed.workspaceRoot,
-    ".sparkwright",
-    "sessions",
-    sessionId,
-  );
+  const sessionDir = join(parsed.sessionRootDir, sessionId);
 
   if (parsed.subcommand === "summary") {
     const summary = await summarizeTraceFile(join(sessionDir, "trace.jsonl"));
@@ -2153,7 +2915,7 @@ async function handleSessionResumeCommand(
   if (!parsed.target || !parsed.goal) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session resume <session-id> <goal> [--workspace path]",
+      "Usage: sparkwright session resume <session-id> <goal> [--workspace path] [--session-root path]",
     );
     return { exitCode: 1 };
   }
@@ -2168,7 +2930,7 @@ async function handleSessionResumeCommand(
     return { exitCode: 1, sessionId: parsed.target };
   }
 
-  const sessionRootDir = join(parsed.workspaceRoot, ".sparkwright", "sessions");
+  const sessionRootDir = parsed.sessionRootDir;
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
   const session = await sessionStore.get(sessionId);
   if (!session) {
@@ -2195,7 +2957,15 @@ async function handleSessionResumeCommand(
   };
   return parsed.directCore
     ? startDirectCoreRun(runInput, io, env)
-    : startHostRun(runInput, io, env);
+    : startHostRun(
+        {
+          ...runInput,
+          modelName:
+            parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
+        },
+        io,
+        env,
+      );
 }
 
 async function handleRunResumeCommand(
@@ -2206,7 +2976,7 @@ async function handleRunResumeCommand(
   if (!parsed.runId) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace]",
+      "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace]",
     );
     return { exitCode: 1 };
   }
@@ -2216,10 +2986,12 @@ async function handleRunResumeCommand(
       {
         runId: parsed.runId,
         workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
         shouldWrite: parsed.shouldWrite,
         approveAll: parsed.approveAll,
         permissionMode: parsed.permissionMode,
-        modelName: parsed.modelName,
+        modelName:
+          parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
         targetPath: parsed.targetPath,
         traceLevel: parsed.traceLevel,
@@ -2234,7 +3006,7 @@ async function handleRunResumeCommand(
   // Locate the run directory. Two layouts are supported:
   //   - session-scoped: <workspace>/.sparkwright/sessions/<sid>/agents/main/runs/<rid>/
   //   - legacy:        <workspace>/.sparkwright/runs/<rid>/
-  const sessionsRoot = join(parsed.workspaceRoot, ".sparkwright", "sessions");
+  const sessionsRoot = parsed.sessionRootDir;
   const legacyRunDir = join(
     parsed.workspaceRoot,
     ".sparkwright",
@@ -2290,7 +3062,7 @@ async function handleRunResumeCommand(
   if (!runDir) {
     writeLine(
       io.stderr,
-      `Could not find run directory for ${parsed.runId} under ${parsed.workspaceRoot}/.sparkwright. ` +
+      `Could not find run directory for ${parsed.runId} under ${parsed.sessionRootDir} or ${parsed.workspaceRoot}/.sparkwright/runs. ` +
         `Pass --session <session-id> to disambiguate.`,
     );
     return { exitCode: 1 };
@@ -2398,6 +3170,17 @@ function formatTraceSummary(summary: TraceSummary): string {
     .slice(0, 5)
     .map(([code, count]) => `${code}:${count}`)
     .join(", ");
+  const topDenials = Object.entries(summary.expectedDenialCodes ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([code, count]) => `${code}:${count}`)
+    .join(", ");
+  const topToolCalls = formatTopCounts(summary.toolCalls, 8);
+  const topToolFailures = formatTopCounts(summary.toolFailures?.byCode, 5);
+  const duplicateReads = formatTopCounts(
+    summary.workspaceReads?.duplicatePaths,
+    8,
+  );
   return [
     `events: ${summary.eventCount}`,
     `runs: ${summary.runIds.length}`,
@@ -2406,9 +3189,55 @@ function formatTraceSummary(summary: TraceSummary): string {
     `artifacts: ${summary.artifactCount}`,
     `errors: ${summary.errorCount}`,
     `top errors: ${topErrors || "(none)"}`,
+    `expected denials: ${summary.expectedDenialCount ?? 0}`,
+    `top expected denials: ${topDenials || "(none)"}`,
     `tokens: ${summary.usage.totalTokens}`,
+    formatTraceCost(summary.usage),
+    `tool calls: ${sumCounts(summary.toolCalls)} total${topToolCalls ? ` (${topToolCalls})` : ""}`,
+    `tool failures: ${summary.toolFailures?.total ?? 0} total${topToolFailures ? ` (${topToolFailures})` : ""}`,
+    `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
+}
+
+function formatTopCounts(
+  counts: Record<string, number> | undefined,
+  limit: number,
+): string {
+  if (!counts) return "";
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([key, count]) => `${key}:${count}`)
+    .join(", ");
+}
+
+function sumCounts(counts: Record<string, number> | undefined): number {
+  if (!counts) return 0;
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
+}
+
+function formatTraceCost(summary: TraceSummary["usage"]): string {
+  const status = summary.costStatus;
+  const cost = summary.estimatedCostUsd;
+  if (status === "estimated") return `cost: $${cost.toFixed(6)} estimated`;
+  if (status === "partial") {
+    return `cost: $${cost.toFixed(6)} partial${formatCostReasons(summary.costUnavailableReasons)}`;
+  }
+  if (status === "unavailable") {
+    return `cost: unavailable${formatCostReasons(summary.costUnavailableReasons)}`;
+  }
+  return "cost: unavailable (not reported)";
+}
+
+function formatCostReasons(
+  reasons: Record<string, number> | undefined,
+): string {
+  if (!reasons || Object.keys(reasons).length === 0) return "";
+  return ` (${Object.entries(reasons)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([reason, count]) => `${reason}:${count}`)
+    .join(", ")})`;
 }
 
 function formatTraceTimeline(timeline: TraceTimeline): string {
@@ -2438,6 +3267,23 @@ function formatConsistencyReport(
     `status: ${report.ok ? "ok" : "failed"}`,
     `session: ${report.sessionId ?? "(unknown)"}`,
     `runs: ${report.runIds.length}`,
+    `findings: ${report.findings.length}`,
+  ];
+  for (const finding of report.findings) {
+    lines.push(`${finding.severity} ${finding.code}: ${finding.message}`);
+  }
+  return lines.join("\n");
+}
+
+function formatTraceVerificationReport(
+  report: TraceVerificationReport,
+): string {
+  const lines = [
+    `status: ${report.ok ? "ok" : "failed"}`,
+    `events: ${report.eventCount}`,
+    `runs: ${report.runIds.length}`,
+    `sessions: ${report.sessionIds.join(", ") || "(none)"}`,
+    `agents: ${report.agentIds.join(", ") || "(none)"}`,
     `findings: ${report.findings.length}`,
   ];
   for (const finding of report.findings) {
@@ -2646,20 +3492,27 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
-    "       sparkwright capabilities inspect [--workspace path] [--format json|text]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
+    "       sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]",
+    "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+    '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
+    "       sparkwright cron list|status|run|tick",
+    "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
+    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
     "       sparkwright skills list|validate [--workspace path] [--format json|text]",
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
+    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
-    "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--format json|text] [--apply]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
-    "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--force] [--from-trace] [--model provider/model]",
+    "       sparkwright trace verify <trace.jsonl> [--format json|text]",
+    "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
+    "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model]",
   ].join("\n");
 }
 
@@ -2672,8 +3525,20 @@ function toolsUsage(): string {
   ].join("\n");
 }
 
+function tasksUsage(): string {
+  return [
+    "Usage: sparkwright tasks list [--workspace path] [--root-dir path] [--status status] [--kind kind] [--run-id id] [--format json|text]",
+    "       sparkwright tasks get <task-id> [--workspace path] [--root-dir path]",
+    "       sparkwright tasks output <task-id> [--workspace path] [--root-dir path] [--from-sequence n] [--max-chunks n]",
+  ].join("\n");
+}
+
 function capabilitiesUsage(): string {
-  return "Usage: sparkwright capabilities inspect [--workspace path] [--format json|text]";
+  return "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]";
+}
+
+function delegatesUsage(): string {
+  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
 }
 
 function skillsUsage(): string {

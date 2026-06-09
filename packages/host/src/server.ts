@@ -12,8 +12,11 @@ import { HostRuntime, type RuntimeOptions } from "./runtime.js";
 
 export interface ServeConnectionOptions {
   workspaceRoot: string;
+  sessionRootDir?: string;
   defaultModel?: string;
   defaultPermissionMode?: RuntimeOptions["defaultPermissionMode"];
+  defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
+  defaultShouldWrite?: RuntimeOptions["defaultShouldWrite"];
   hostName?: string;
   hostVersion?: string;
 }
@@ -31,8 +34,11 @@ export function serveConnection(
   let handshakeDone = false;
   const runtime = new HostRuntime({
     workspaceRoot: opts.workspaceRoot,
+    sessionRootDir: opts.sessionRootDir,
     defaultModel: opts.defaultModel,
     defaultPermissionMode: opts.defaultPermissionMode,
+    defaultTraceLevel: opts.defaultTraceLevel,
+    defaultShouldWrite: opts.defaultShouldWrite,
     emit: (event: HostEvent) => {
       try {
         conn.send(event);
@@ -250,6 +256,8 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, [
           "goal",
           "sessionId",
+          "targetPath",
+          "shouldWrite",
           "model",
           "permissionMode",
           "traceLevel",
@@ -257,6 +265,8 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         requireString(req.payload, "goal") ??
         optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "targetPath") ??
+        optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "permissionMode", [
           "plan",
@@ -277,6 +287,8 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireOnly(req.payload, [
           "runId",
           "sessionId",
+          "targetPath",
+          "shouldWrite",
           "fromTrace",
           "force",
           "model",
@@ -286,6 +298,8 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         requireString(req.payload, "runId") ??
         optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "targetPath") ??
+        optionalBoolean(req.payload, "shouldWrite") ??
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??
         optionalString(req.payload, "model") ??

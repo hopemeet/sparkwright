@@ -85,7 +85,24 @@ export type McpServerConfig =
 export type McpStatus =
   | { status: "connected" }
   | { status: "disabled" }
-  | { status: "failed"; error: string };
+  | {
+      status: "failed";
+      error: string;
+      errorCode?: McpPrepareErrorCode;
+      phase?: McpPreparePhase;
+      timeoutMs?: number;
+      durationMs?: number;
+    };
+
+export type McpPreparePhase = "policy" | "connect" | "list_tools";
+
+export type McpPrepareErrorCode =
+  | "MCP_SERVER_PREPARE_DENIED"
+  | "MCP_SERVER_COMMAND_NOT_FOUND"
+  | "MCP_SERVER_PREPARE_TIMEOUT"
+  | "MCP_SERVER_CONNECT_FAILED"
+  | "MCP_SERVER_LIST_TOOLS_FAILED"
+  | "MCP_SERVER_PREPARE_FAILED";
 
 export interface McpToolNameMapping {
   toolName: string;
@@ -230,19 +247,38 @@ export async function prepareMcpToolsForRun(
       const server = prepared[i];
       const config = options.servers[i];
       const status = server.status.status;
+      const failure =
+        server.status.status === "failed" ? server.status : undefined;
       options.emitter.emit(
         "mcp.server.prepared",
         {
           name: server.name,
           status,
           toolCount: server.tools.length,
+          ...(failure
+            ? {
+                errorCode: failure.errorCode,
+                errorPhase: failure.phase,
+                error: {
+                  code: failure.errorCode,
+                  message: failure.error,
+                  phase: failure.phase,
+                },
+              }
+            : {}),
         },
         {
           ...baseMeta,
           serverType: config?.type,
           toolNameMap: server.toolNameMap,
           ...(server.status.status === "failed"
-            ? { error: server.status.error }
+            ? {
+                error: server.status.error,
+                errorCode: server.status.errorCode,
+                errorPhase: server.status.phase,
+                timeoutMs: server.status.timeoutMs,
+                durationMs: server.status.durationMs,
+              }
             : {}),
         },
       );
@@ -283,6 +319,8 @@ export async function prepareMcpServer(
   }
 
   let client: Client | undefined;
+  let phase: McpPreparePhase = "policy";
+  const startedAt = Date.now();
 
   try {
     const serverDecision = await serverPolicy.decide({
@@ -297,6 +335,10 @@ export async function prepareMcpServer(
         status: {
           status: "failed",
           error: `MCP server preparation ${serverDecision.decision}: ${serverDecision.reason}`,
+          errorCode: "MCP_SERVER_PREPARE_DENIED",
+          phase,
+          timeoutMs,
+          durationMs: Date.now() - startedAt,
         },
         tools: [],
         toolNameMap: [],
@@ -323,11 +365,13 @@ export async function prepareMcpServer(
         );
       }
       const transport = buildMcpTransport(config, name, options.onStdioStderr);
+      phase = "connect";
       await next.connect(transport, { timeout: timeoutMs });
       return next;
     };
 
     client = await connect();
+    phase = "list_tools";
     const listed = await client.listTools(undefined, { timeout: timeoutMs });
 
     // A reconnecting wrapper owns the live client once enabled, so close() must
@@ -382,15 +426,18 @@ export async function prepareMcpServer(
     };
   } catch (cause) {
     await client?.close().catch(() => {});
+    const error = classifyMcpPrepareFailure(cause, phase);
     return {
       name,
       status: {
         status: "failed",
         // Connection failures can echo back auth headers / tokens; strip them
         // before the message reaches logs, traces, or the model.
-        error: redactSensitiveText(
-          cause instanceof Error ? cause.message : String(cause),
-        ),
+        error: error.message,
+        errorCode: error.code,
+        phase,
+        timeoutMs,
+        durationMs: Date.now() - startedAt,
       },
       tools: [],
       toolNameMap: [],
@@ -506,11 +553,34 @@ export function mcpToolToToolDefinition(input: {
             serverName: input.serverName,
             mcpToolName: input.mcpTool.name,
             toolName,
+            errorPhase: "call_tool",
           },
         };
       }
     },
   });
+}
+
+function classifyMcpPrepareFailure(
+  cause: unknown,
+  phase: McpPreparePhase,
+): { code: McpPrepareErrorCode; message: string } {
+  const rawMessage = cause instanceof Error ? cause.message : String(cause);
+  const message = redactSensitiveText(rawMessage);
+  const nodeCode = isRecord(cause) ? cause.code : undefined;
+  if (nodeCode === "ENOENT" || /\bENOENT\b/u.test(rawMessage)) {
+    return { code: "MCP_SERVER_COMMAND_NOT_FOUND", message };
+  }
+  if (/timed out|timeout|Request timed out/i.test(rawMessage)) {
+    return { code: "MCP_SERVER_PREPARE_TIMEOUT", message };
+  }
+  if (phase === "list_tools") {
+    return { code: "MCP_SERVER_LIST_TOOLS_FAILED", message };
+  }
+  if (phase === "connect") {
+    return { code: "MCP_SERVER_CONNECT_FAILED", message };
+  }
+  return { code: "MCP_SERVER_PREPARE_FAILED", message };
 }
 
 function buildMcpTransport(

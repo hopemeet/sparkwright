@@ -138,11 +138,30 @@ export type SkillRootInput = string | SkillRoot;
 export async function prepareSkillsForRun(
   options: PrepareSkillsForRunOptions,
 ): Promise<PreparedSkills> {
+  const baseMeta = {
+    experimental: true,
+    schemaVersion: "edge-trace.v0.1",
+    sourcePackage: "@sparkwright/skills",
+    ...(options.agentId ? { agentId: options.agentId } : {}),
+  };
   const skills = excludeDevSkills(
-    filterSkillsForAgent(await loadSkills(options.skillRoots), options.agent),
+    filterSkillsForAgent(
+      await loadSkillsForRun(options.skillRoots, (source, message) => {
+        options.emitter?.emit(
+          "skill.failed",
+          { source, message },
+          { ...baseMeta, phase: "load" },
+        );
+      }),
+      options.agent,
+    ),
     options.includeDevSkills ?? false,
   );
   const indexedSkills = skills.map(toSkillIndexEntry);
+  const rankedIndexedSkills = rankIndexedSkillsByGoal(
+    indexedSkills,
+    options.goal,
+  );
   const loadSelectedSkills = options.loadSelectedSkills ?? true;
   // Matching only feeds the resident-context path; skip it entirely under
   // on-demand loading, where `selected` is never read.
@@ -161,24 +180,19 @@ export async function prepareSkillsForRun(
       }))
     : [];
 
-  const baseMeta = {
-    experimental: true,
-    schemaVersion: "edge-trace.v0.1",
-    sourcePackage: "@sparkwright/skills",
-    ...(options.agentId ? { agentId: options.agentId } : {}),
-  };
-
   if (options.emitter) {
     options.emitter.emit(
       "skill.indexed",
       { count: indexedSkills.length },
       {
         ...baseMeta,
-        skills: indexedSkills.map((entry) => ({
+        skills: rankedIndexedSkills.map((entry, index) => ({
+          rank: index + 1,
           name: entry.name,
           version: entry.version,
           sourcePath: entry.sourcePath,
           contentHash: entry.contentHash,
+          relevance: entry.relevance,
         })),
         skillRoots: options.skillRoots,
       },
@@ -204,9 +218,7 @@ export async function prepareSkillsForRun(
 
   return {
     context: [
-      createSkillIndexContext(
-        rankIndexedSkillsByGoal(indexedSkills, options.goal),
-      ),
+      createSkillIndexContext(rankedIndexedSkills),
       ...(loadSelectedSkills
         ? selected.map(({ skill, reason }) =>
             createLoadedSkillContext(skill, reason),
@@ -225,19 +237,39 @@ export async function prepareSkillsForRun(
   };
 }
 
-export async function loadSkills(
+async function loadSkillsForRun(
   skillRoots: SkillRootInput[],
+  onError?: (source: string, message: string) => void,
 ): Promise<SkillDefinition[]> {
   const loadedByRoot = await Promise.all(
     skillRoots.map(async (input, rootIndex) => {
       const root = normalizeSkillRoot(input);
-      const skillFiles = (await findSkillFiles(root.root)).sort((left, right) =>
-        left.localeCompare(right),
+      let skillFiles: string[];
+      try {
+        skillFiles = (await findSkillFiles(root.root)).sort((left, right) =>
+          left.localeCompare(right),
+        );
+      } catch (error) {
+        onError?.(root.root, errorMessage(error));
+        return { rootIndex, skills: [] };
+      }
+
+      const loaded = await Promise.all(
+        skillFiles.map(async (path) => {
+          try {
+            return await loadSkill(path, { layer: root.layer });
+          } catch (error) {
+            onError?.(path, errorMessage(error));
+            return undefined;
+          }
+        }),
       );
-      const skills = await Promise.all(
-        skillFiles.map((path) => loadSkill(path, { layer: root.layer })),
-      );
-      return { rootIndex, skills };
+      return {
+        rootIndex,
+        skills: loaded.filter(
+          (skill): skill is SkillDefinition => skill !== undefined,
+        ),
+      };
     }),
   );
 
@@ -251,6 +283,18 @@ export async function loadSkills(
   return [...byName.values()].sort((left, right) =>
     left.sourcePath.localeCompare(right.sourcePath),
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function loadSkills(
+  skillRoots: SkillRootInput[],
+): Promise<SkillDefinition[]> {
+  return loadSkillsForRun(skillRoots, (_source, message) => {
+    throw new Error(message);
+  });
 }
 
 export async function loadSkill(
@@ -541,6 +585,10 @@ export function createSkillLoaderTool(
         skill,
         resourceFileLimit,
       );
+      const baseDirectory = dirname(skill.sourcePath);
+      const resourceFilePaths = resourceFiles.map((file) =>
+        normalizePath(join(baseDirectory, file)),
+      );
       loadedNames.add(skill.name);
 
       return {
@@ -548,11 +596,11 @@ export function createSkillLoaderTool(
         name: skill.name,
         description: skill.description,
         sourcePath: skill.sourcePath,
-        baseDirectory: dirname(skill.sourcePath),
+        baseDirectory,
         contentHash: skill.contentHash,
         version: versionOf(skill.metadata),
-        content: createSkillToolOutput(skill, resourceFiles),
-        resourceFiles,
+        content: createSkillToolOutput(skill, resourceFilePaths),
+        resourceFiles: resourceFilePaths,
       };
     },
   });
@@ -858,7 +906,7 @@ function versionOf(metadata: Record<string, unknown>): string | undefined {
 
 function createSkillToolOutput(
   skill: SkillDefinition,
-  resourceFiles: string[],
+  resourceFilePaths: string[],
 ): string {
   const baseDirectory = dirname(skill.sourcePath);
   return [
@@ -876,9 +924,7 @@ function createSkillToolOutput(
       "mentions resolves from the base directory above.",
     "",
     "<skill_files>",
-    ...resourceFiles.map(
-      (file) => `<file>${normalizePath(join(baseDirectory, file))}</file>`,
-    ),
+    ...resourceFilePaths.map((file) => `<file>${file}</file>`),
     "</skill_files>",
     "</skill_content>",
   ].join("\n");

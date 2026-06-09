@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { CommandRegistry, Command } from "../lib/commands.js";
+import { ctrlCPressCount } from "../lib/keybindings.js";
 import {
   appendHistory,
   loadHistory,
@@ -66,6 +67,7 @@ export function InputBox(props: {
    * its handler reliably receives the key.
    */
   onEscape?: () => void;
+  onQuit?: (presses?: number) => void;
   /** Stash snapshot bridge — parent owns the latest StashFile. */
   stashRef: { current: StashFile };
   onStashChange: (next: StashFile) => void;
@@ -365,6 +367,12 @@ export function InputBox(props: {
     if (key.ctrl && input === "r" && history.length > 0) {
       setSearchQuery("");
       setSearchCursor(0);
+      return;
+    }
+    const quitPresses =
+      ctrlCPressCount(input) || (key.ctrl && input === "c" ? 1 : 0);
+    if (quitPresses > 0) {
+      props.onQuit?.(quitPresses);
       return;
     }
 

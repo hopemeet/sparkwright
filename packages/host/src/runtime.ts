@@ -4,12 +4,16 @@ import {
   buildTraceTimelineFile,
   asSessionId,
   createBufferedEmitter,
+  createRunId,
+  createLayeredPolicy,
   createSessionId,
   createSessionRunStoreFactory,
   createPermissionModePolicy,
   createRun,
+  createWorkspaceMutationPolicy,
   defineTool,
   FileSessionStore,
+  EventLog,
   forkSessionFromEvent,
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
@@ -19,7 +23,10 @@ import {
   type ContextItem,
   type EventEmitter,
   type ModelAdapter,
+  type Policy,
   type PermissionMode,
+  type RunBudget,
+  type RunRecord,
   type RunResult,
   type SparkwrightEvent,
   type TraceLevel,
@@ -37,6 +44,7 @@ import {
   type McpToolNameMapping,
 } from "@sparkwright/mcp-adapter";
 import {
+  FileTaskStore,
   createAgentTool,
   createTodoTools,
   deriveChildAgentProfile,
@@ -46,6 +54,11 @@ import {
   type DerivedChildAgentProfile,
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
+import {
+  CronStore,
+  defaultCronRoot,
+  legacyConfigCronRoot,
+} from "@sparkwright/cron";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 import {
   createSessionFileRunStoreFactory,
@@ -58,6 +71,7 @@ import type {
   RunResumeRequestPayload,
   RunStartRequestPayload,
   CapabilitySnapshot,
+  CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "./config.js";
@@ -81,6 +95,19 @@ import {
   createSkillManagerTool,
 } from "./tools.js";
 import { createHostShellTool } from "./shell.js";
+import {
+  acpConfigFromAgentProfile,
+  createAcpDelegateTool,
+} from "./acp-child-agent.js";
+import {
+  createExternalCommandDelegateTool,
+  externalCommandConfigFromAgentProfile,
+} from "./external-command-agent.js";
+import {
+  describeDelegateCapability,
+  delegateToolName,
+  type DelegateCapabilityDescriptor,
+} from "./delegate-capability.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -92,13 +119,52 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return value === "1" || value === "true";
 }
 
+function payloadAllowsWorkspaceWrites(
+  payload: RunStartRequestPayload | RunResumeRequestPayload,
+  permissionMode: PermissionMode,
+  defaultShouldWrite?: boolean,
+): boolean {
+  if (payload.shouldWrite !== undefined) return payload.shouldWrite;
+  if (payload.metadata?.shouldWrite !== undefined) {
+    return payload.metadata.shouldWrite === true;
+  }
+  if (defaultShouldWrite !== undefined) return defaultShouldWrite;
+  // Legacy SDK clients may omit shouldWrite. Preserve the old host behavior
+  // unless an entrypoint or embedder sets an explicit default.
+  if (permissionMode === "plan") return false;
+  return true;
+}
+
+function createHostRunPolicy(input: {
+  permissionMode: PermissionMode;
+  shouldWrite: boolean;
+  targetPath?: string;
+}): Policy {
+  return createLayeredPolicy([
+    createPermissionModePolicy({ mode: input.permissionMode }),
+    createWorkspaceMutationPolicy({
+      allowWorkspaceWrites: input.shouldWrite,
+      allowedPaths: input.targetPath ? [input.targetPath] : undefined,
+      maxWriteFiles: 1,
+      maxDiffLines: 200,
+      allowDeletions: false,
+    }),
+  ]);
+}
+
 export interface RuntimeOptions {
   /** Workspace root for all runs spawned through this runtime. */
   workspaceRoot: string;
+  /** Session/trace storage root. Defaults to <workspaceRoot>/.sparkwright/sessions. */
+  sessionRootDir?: string;
   /** Default model reference ("provider/model") when run.start omits one. */
   defaultModel?: string;
   /** Default permission mode when run.start does not specify one. */
   defaultPermissionMode?: PermissionMode;
+  /** Default trace level when run.start does not specify one. */
+  defaultTraceLevel?: TraceLevel;
+  /** Default workspace-write permission when run.start does not specify one. */
+  defaultShouldWrite?: boolean;
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
 }
@@ -142,6 +208,14 @@ interface PreparedHostRunEnvironment {
 
 const MAIN_AGENT_ID = "main";
 
+function defaultSessionRootDir(workspaceRoot: string): string {
+  return join(workspaceRoot, ".sparkwright", "sessions");
+}
+
+function extractSkillSourcePath(message: string): string | undefined {
+  return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
+}
+
 function isTraceLevel(value: unknown): value is TraceLevel {
   return value === "minimal" || value === "standard" || value === "debug";
 }
@@ -149,13 +223,57 @@ function isTraceLevel(value: unknown): value is TraceLevel {
 function resolveTraceLevel(input: {
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
+  defaultTraceLevel?: TraceLevel;
 }): TraceLevel {
   return (
     input.traceLevel ??
     (isTraceLevel(input.metadata?.traceLevel)
       ? input.metadata.traceLevel
-      : "standard")
+      : (input.defaultTraceLevel ?? "standard"))
   );
+}
+
+function summarizeCapabilitySnapshot(
+  snapshot: CapabilitySnapshot | null,
+): Record<string, unknown> {
+  if (!snapshot) {
+    return {
+      tools: 0,
+      skills: { indexed: 0, loaded: 0 },
+      mcp: { servers: 0, tools: 0 },
+      agents: { profiles: 0, delegateTools: 0 },
+    };
+  }
+  return {
+    tools: snapshot.tools.length,
+    toolNames: snapshot.tools.map((tool) => tool.name),
+    skills: {
+      indexed: snapshot.skills.indexed.length,
+      loaded: snapshot.skills.loaded.length,
+      indexedNames: snapshot.skills.indexed.map((skill) => skill.name),
+      loadedNames: snapshot.skills.loaded.map((skill) => skill.name),
+    },
+    mcp: {
+      servers: snapshot.mcp.statuses.length,
+      tools: snapshot.mcp.statuses.reduce(
+        (sum, status) => sum + status.toolNames.length,
+        0,
+      ),
+      statuses: snapshot.mcp.statuses.map((status) => ({
+        serverName: status.serverName,
+        status: status.status,
+        toolNames: status.toolNames,
+      })),
+    },
+    agents: {
+      profiles: snapshot.agents.profiles.length,
+      profileIds: snapshot.agents.profiles.map((profile) => profile.id),
+      delegateTools: snapshot.agents.delegateTools.length,
+      delegateToolNames: snapshot.agents.delegateTools.map(
+        (delegate) => delegate.toolName,
+      ),
+    },
+  };
 }
 
 // Todo-supervisor continuation budget for the main agent. Conservative, fixed
@@ -169,6 +287,10 @@ function resolveTraceLevel(input: {
 // audits once and stops.
 const MAIN_TODO_MAX_CONTINUATIONS = 4;
 const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
+const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
+const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
+const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
+const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -287,7 +409,9 @@ export class HostRuntime {
     goal: string;
     modelRef?: string;
     permissionMode: PermissionMode;
+    shouldWrite: boolean;
     sessionId: string;
+    targetPath?: string;
     traceLevel?: TraceLevel;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
@@ -299,6 +423,7 @@ export class HostRuntime {
       modelRef: input.modelRef,
       goal: input.goal,
       workspaceRoot: this.opts.workspaceRoot,
+      targetPath: input.targetPath,
     });
     if (!model.ok) {
       return {
@@ -309,7 +434,8 @@ export class HostRuntime {
 
     const workspaceRoot = this.opts.workspaceRoot;
     const workspace = new LocalWorkspace(workspaceRoot);
-    const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
+    const sessionRootDir =
+      this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
     const trace = new MemoryTrace();
     const pendingExtensionEvents = createBufferedEmitter();
     const runIdHolder: { value: string | null } = { value: null };
@@ -324,28 +450,47 @@ export class HostRuntime {
       skillConfig?.roots,
     );
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
-    const preparedSkills = existingPreparedSkillRoots.length
-      ? await prepareSkillsForRun({
-          goal: input.goal,
-          skillRoots: existingPreparedSkillRoots,
-          agent: {
-            allowedSkills: skillConfig?.allowedSkills,
-            deniedSkills: skillConfig?.deniedSkills,
-          },
-          // Default to on-demand loading: expose the skill_load tool and let
-          // the model pull bodies it judges relevant, rather than auto-residing
-          // matcher-selected skills (which both pollutes context and double-
-          // injects when the loader tool is also on). A config can opt back into
-          // auto-resident by setting loadSelectedSkills: true.
-          includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
-          loadSelectedSkills: skillConfig?.loadSelectedSkills ?? false,
-          maxSelectedSkills: skillConfig?.maxSelectedSkills,
-          resourceFileLimit: skillConfig?.resourceFileLimit,
-          includeDevSkills: devSkillsEnabled(),
-          emitter: pendingExtensionEvents,
-          agentId: MAIN_AGENT_ID,
-        })
-      : null;
+    let preparedSkills: PreparedSkills | null = null;
+    try {
+      preparedSkills = existingPreparedSkillRoots.length
+        ? await prepareSkillsForRun({
+            goal: input.goal,
+            skillRoots: existingPreparedSkillRoots,
+            agent: {
+              allowedSkills: skillConfig?.allowedSkills,
+              deniedSkills: skillConfig?.deniedSkills,
+            },
+            // Default to on-demand loading: expose the skill_load tool and let
+            // the model pull bodies it judges relevant, rather than auto-residing
+            // matcher-selected skills (which both pollutes context and double-
+            // injects when the loader tool is also on). A config can opt back into
+            // auto-resident by setting loadSelectedSkills: true.
+            includeLoaderTool: skillConfig?.includeLoaderTool ?? true,
+            loadSelectedSkills: skillConfig?.loadSelectedSkills ?? false,
+            maxSelectedSkills: skillConfig?.maxSelectedSkills,
+            resourceFileLimit: skillConfig?.resourceFileLimit,
+            includeDevSkills: devSkillsEnabled(),
+            emitter: pendingExtensionEvents,
+            agentId: MAIN_AGENT_ID,
+          })
+        : null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.recordCapabilityIndexFailure({
+        goal: input.goal,
+        sessionId: input.sessionId,
+        sessionRootDir,
+        traceLevel: input.traceLevel ?? "standard",
+        message,
+        source: extractSkillSourcePath(message),
+        targetPath: input.targetPath,
+        metadata: input.runStoreMetadata ?? input.runMetadata ?? {},
+      });
+      return {
+        ok: false,
+        error: { code: "internal_error", message },
+      };
+    }
     const preparedMcp = mcpConfig?.servers?.length
       ? await prepareMcpToolsForRun({
           servers: mcpConfig.servers,
@@ -393,7 +538,13 @@ export class HostRuntime {
       derivedAgents,
       model: model.adapter,
       childTools,
+      workspaceRoot,
       childRunStoreFactory,
+      allowReadWriteWorkspaceAccess: input.shouldWrite,
+    });
+    const delegateDescriptors = describeConfiguredDelegateTools({
+      delegates: agentConfig?.delegateTools ?? [],
+      derivedAgents,
     });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
@@ -419,6 +570,7 @@ export class HostRuntime {
         // model without a policy rule.
         ...createTodoTools({
           getTodoPath: () => join(sessionRootDir, input.sessionId, "todo.md"),
+          maxWritesPerRun: MAIN_TODO_MAX_WRITES_PER_RUN,
         }).all(),
         ...(preparedSkills?.tools ?? []),
         ...(preparedMcp?.tools ?? []),
@@ -437,11 +589,20 @@ export class HostRuntime {
         mainAgent,
         ...derivedAgents.map((agent) => agent.effectiveProfile),
       ],
+      delegateTools: delegateDescriptors,
     });
 
     const runMetadata: Record<string, unknown> = {
       source: "host",
       ...(input.runMetadata ?? {}),
+      workspaceRoot,
+      permissionMode: input.permissionMode,
+      traceLevel,
+      ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
+      resolvedModel: model.resolved,
+      capabilitySnapshot: summarizeCapabilitySnapshot(
+        this.lastCapabilitySnapshot,
+      ),
     };
     const runStoreMetadata: Record<string, unknown> = {
       ...runMetadata,
@@ -490,6 +651,99 @@ export class HostRuntime {
         runStoreMetadata,
       },
     };
+  }
+
+  private async recordCapabilityIndexFailure(input: {
+    goal: string;
+    sessionId: string;
+    sessionRootDir: string;
+    traceLevel: TraceLevel;
+    message: string;
+    source?: string;
+    targetPath?: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    const now = nowIso();
+    const runId = createRunId();
+    const run: RunRecord = {
+      id: runId,
+      goal: input.goal,
+      state: "failed",
+      stopReason: "model_completion_failed",
+      createdAt: now,
+      updatedAt: now,
+      metadata: {
+        source: "host",
+        failurePhase: "capability_index",
+        targetPath: input.targetPath ?? "README.md",
+        ...input.metadata,
+      },
+    };
+    const result: RunResult = {
+      signal: "failed",
+      state: "failed",
+      stopReason: "model_completion_failed",
+      message: input.message,
+      failure: {
+        category: "runtime",
+        code: "SKILL_INDEX_FAILED",
+        message: input.message,
+        retryable: false,
+      },
+      metadata: run.metadata,
+    };
+    const sessionStore = new FileSessionStore({
+      rootDir: input.sessionRootDir,
+    });
+    const store = createSessionRunStoreFactory({
+      sessionStore,
+      sessionId: input.sessionId,
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: input.sessionRootDir,
+        sessionId: input.sessionId,
+        agentId: MAIN_AGENT_ID,
+        traceLevel: input.traceLevel,
+      }),
+      metadata: { source: "host" },
+    })(run);
+    const events = new EventLog(runId);
+    const append = async (event: SparkwrightEvent) => {
+      await store.append(event);
+      this.opts.emit({
+        envelope: "event",
+        id: nextMessageId("evt"),
+        kind: "run.event",
+        timestamp: nowIso(),
+        payload: { runId, event },
+      });
+    };
+    await append(events.emit("run.created", { goal: input.goal }));
+    await append(
+      events.emit(
+        "capability.index.failed",
+        {
+          kind: "skills",
+          source: input.source,
+          message: input.message,
+          code: "SKILL_INDEX_FAILED",
+        },
+        {
+          source: "host",
+          failurePhase: "capability_index",
+          agentId: MAIN_AGENT_ID,
+        },
+      ),
+    );
+    await append(
+      events.emit("run.failed", {
+        reason: "capability_index_failed",
+        code: "SKILL_INDEX_FAILED",
+        message: input.message,
+        failure: result.failure,
+        metadata: run.metadata,
+      }),
+    );
+    await store.finish(run, result);
   }
 
   private createApprovalResolver(runIdHolder: {
@@ -654,6 +908,12 @@ export class HostRuntime {
             runId: lastRunId,
             state: outcome.result.state,
             stopReason: outcome.result.stopReason,
+            ...(outcome.result.metadata.outcome
+              ? { outcome: outcome.result.metadata.outcome }
+              : {}),
+            ...(outcome.result.failure
+              ? { failure: outcome.result.failure }
+              : {}),
             ...(handoff ? { todoHandoff: handoff } : {}),
           },
         });
@@ -734,20 +994,32 @@ export class HostRuntime {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
       payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
+    const shouldWrite = payloadAllowsWorkspaceWrites(
+      payload,
+      permissionMode,
+      this.opts.defaultShouldWrite,
+    );
     const resumeSessionId = located.sessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
       modelRef,
       permissionMode,
+      shouldWrite,
       sessionId: resumeSessionId,
-      traceLevel: resolveTraceLevel(payload),
+      targetPath: payload.targetPath,
+      traceLevel: resolveTraceLevel({
+        ...payload,
+        defaultTraceLevel: this.opts.defaultTraceLevel,
+      }),
       runMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
+        shouldWrite,
       },
       runStoreMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
+        shouldWrite,
         ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
       },
     });
@@ -760,17 +1032,19 @@ export class HostRuntime {
         context: [...(env.preparedSkills?.context ?? []), ...extraContext],
         workspace: env.workspace,
         approvalResolver: env.approvalResolver,
-        policy: createPermissionModePolicy({ mode: permissionMode }),
+        policy: createHostRunPolicy({
+          permissionMode,
+          shouldWrite,
+          targetPath: payload.targetPath,
+        }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
           sessionId: resumeSessionId,
         }),
         tools: env.tools,
         model: env.model,
-        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-        ...(env.mainAgent.runBudget !== undefined
-          ? { runBudget: env.mainAgent.runBudget }
-          : {}),
+        maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
+        runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
         metadata: env.runMetadata,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
@@ -811,7 +1085,11 @@ export class HostRuntime {
               force: payload.force || !checkpoint.resumability.complete,
               workspace: env.workspace,
               approvalResolver: env.approvalResolver,
-              policy: createPermissionModePolicy({ mode: permissionMode }),
+              policy: createHostRunPolicy({
+                permissionMode,
+                shouldWrite,
+                targetPath: payload.targetPath,
+              }),
               promptBuilder: buildAgentPromptBuilder({
                 cwd: env.workspaceRoot,
                 sessionId: resumeSessionId,
@@ -867,6 +1145,11 @@ export class HostRuntime {
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
       payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
+    const shouldWrite = payloadAllowsWorkspaceWrites(
+      payload,
+      permissionMode,
+      this.opts.defaultShouldWrite,
+    );
     let sessionId: string;
     try {
       sessionId = payload.sessionId
@@ -885,10 +1168,21 @@ export class HostRuntime {
       goal: payload.goal,
       modelRef,
       permissionMode,
+      shouldWrite,
       sessionId,
-      traceLevel: resolveTraceLevel(payload),
-      runMetadata: payload.metadata,
-      runStoreMetadata: payload.metadata,
+      targetPath: payload.targetPath,
+      traceLevel: resolveTraceLevel({
+        ...payload,
+        defaultTraceLevel: this.opts.defaultTraceLevel,
+      }),
+      runMetadata: {
+        ...(payload.metadata ?? {}),
+        shouldWrite,
+      },
+      runStoreMetadata: {
+        ...(payload.metadata ?? {}),
+        shouldWrite,
+      },
     });
     if (!prepared.ok) return prepared;
     const env = prepared.env;
@@ -906,7 +1200,11 @@ export class HostRuntime {
     // `extraContext` after the skills context. Each call mints a fresh runId
     // and run dir; the todo supervisor calls this once per (re)try, so a
     // continuation is a new run that carries the prior run's todo ledger.
-    const buildRun = (goal: string, extraContext: ContextItem[]) =>
+    const buildRun = (
+      goal: string,
+      extraContext: ContextItem[],
+      overrides: { maxSteps?: number; runBudget?: RunBudget } = {},
+    ) =>
       createRun({
         goal,
         context: [
@@ -916,7 +1214,11 @@ export class HostRuntime {
         ],
         workspace: env.workspace,
         approvalResolver: env.approvalResolver,
-        policy: createPermissionModePolicy({ mode: permissionMode }),
+        policy: createHostRunPolicy({
+          permissionMode,
+          shouldWrite,
+          targetPath: payload.targetPath,
+        }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
           sessionId,
@@ -925,10 +1227,12 @@ export class HostRuntime {
         model: env.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
         // the profile's RunBudget when set and derive the step ceiling from it.
-        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-        ...(env.mainAgent.runBudget !== undefined
-          ? { runBudget: env.mainAgent.runBudget }
-          : {}),
+        maxSteps: overrides.maxSteps ?? resolveMainAgentMaxSteps(env.mainAgent),
+        ...(overrides.runBudget !== undefined
+          ? { runBudget: overrides.runBudget }
+          : env.mainAgent.runBudget !== undefined
+            ? { runBudget: env.mainAgent.runBudget }
+            : {}),
         metadata: env.runMetadata,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
@@ -974,7 +1278,11 @@ export class HostRuntime {
         const extraContext = supervisedInput.continuation
           ? [...chainTurns, supervisedInput.continuation.context]
           : [];
-        return buildRun(goal, extraContext);
+        if (!supervisedInput.continuation) return buildRun(goal, extraContext);
+        return buildRun(goal, extraContext, {
+          maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
+          runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
+        });
       },
       afterRun: (_supervisedInput, run, result) => {
         const runId = run.record.id;
@@ -1010,11 +1318,9 @@ export class HostRuntime {
         },
       };
     }
-    const sessionRootDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "sessions",
-    );
+    const sessionRootDir =
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
     if (sessionId) {
       let safeSessionId: string;
       try {
@@ -1100,7 +1406,8 @@ export class HostRuntime {
         code: "run_not_found",
         message:
           `Could not find run directory for ${runId} under ` +
-          `${this.opts.workspaceRoot}/.sparkwright.`,
+          `${this.opts.sessionRootDir ?? defaultSessionRootDir(this.opts.workspaceRoot)} ` +
+          `or ${this.opts.workspaceRoot}/.sparkwright/runs.`,
       },
     };
   }
@@ -1164,6 +1471,7 @@ export class HostRuntime {
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
+    const automation = await this.inspectAutomationSummary();
     const resolvedProfiles = await resolveAgentProfiles(
       this.opts.workspaceRoot,
       agentConfig?.profiles,
@@ -1230,6 +1538,8 @@ export class HostRuntime {
                 createGlobPathsTool(this.opts.workspaceRoot),
                 createGrepTextTool(this.opts.workspaceRoot),
               ],
+              workspaceRoot: this.opts.workspaceRoot,
+              allowReadWriteWorkspaceAccess: false,
               // Snapshot only describes the tool; its body never runs here
               // (getParent returns undefined and the tool throws first).
               childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
@@ -1274,10 +1584,37 @@ export class HostRuntime {
             resolvedProfiles,
           ).map((agent) => agent.effectiveProfile),
         ],
+        delegateTools: describeConfiguredDelegateTools({
+          delegates: agentConfig?.delegateTools ?? [],
+          derivedAgents: deriveConfiguredAgents(
+            mainAgentProfile(resolvedProfiles),
+            resolvedProfiles,
+          ),
+        }),
+        automation,
       });
     } finally {
       await preparedMcp?.close();
     }
+  }
+
+  private async inspectAutomationSummary(): Promise<CapabilityAutomationSummary> {
+    const cronRoot = defaultCronRoot();
+    const taskRoot = join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+    const cronJobs = await readCronJobsForSnapshot(cronRoot);
+    const tasks = readTasksForSnapshot(taskRoot);
+    return {
+      cron: {
+        rootDir: cronRoot,
+        total: cronJobs.length,
+        jobs: cronJobs.slice(0, 8),
+      },
+      tasks: {
+        rootDir: taskRoot,
+        total: tasks.length,
+        tasks: tasks.slice(0, 8),
+      },
+    };
   }
 
   private async readJsonField(
@@ -1385,7 +1722,9 @@ export class HostRuntime {
   async listSessions(
     limit = 20,
   ): Promise<Array<{ id: string; mtimeMs: number; preview: string }>> {
-    const root = join(this.opts.workspaceRoot, ".sparkwright", "sessions");
+    const root =
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
     let entries: string[];
     try {
       entries = await readdir(root);
@@ -1457,9 +1796,8 @@ export class HostRuntime {
     }
 
     const sessionDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "sessions",
+      this.opts.sessionRootDir ??
+        defaultSessionRootDir(this.opts.workspaceRoot),
       safeSessionId,
     );
     try {
@@ -1539,11 +1877,9 @@ export class HostRuntime {
       };
     }
 
-    const sessionRootDir = join(
-      this.opts.workspaceRoot,
-      ".sparkwright",
-      "sessions",
-    );
+    const sessionRootDir =
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
     try {
       const store = new FileSessionStore({ rootDir: sessionRootDir });
       const result = await forkSessionFromEvent({
@@ -1577,6 +1913,8 @@ function buildCapabilitySnapshot(input: {
   mcpStatuses?: Record<string, McpStatus | { status: "configured" }>;
   mcpToolNameMap?: McpToolNameMapping[];
   agentProfiles?: AgentProfile[];
+  delegateTools?: DelegateCapabilityDescriptor[];
+  automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
     tools: input.tools.map((tool) => ({
@@ -1609,6 +1947,13 @@ function buildCapabilitySnapshot(input: {
           toolNames: (input.mcpToolNameMap ?? [])
             .filter((mapping) => mapping.serverName === serverName)
             .map((mapping) => mapping.toolName),
+          ...(status.status === "failed"
+            ? {
+                errorCode: status.errorCode,
+                errorPhase: status.phase,
+                errorMessage: status.error,
+              }
+            : {}),
         }),
       ),
     },
@@ -1620,8 +1965,70 @@ function buildCapabilitySnapshot(input: {
         name: profile.name,
         mode: profile.experimental?.mode ?? profile.mode,
       })),
+      delegateTools: input.delegateTools ?? [],
     },
+    automation: input.automation,
   };
+}
+
+async function readCronJobsForSnapshot(
+  rootDir: string,
+): Promise<CapabilityAutomationSummary["cron"]["jobs"]> {
+  try {
+    const store = new CronStore({
+      rootDir,
+      legacyRootDir: legacyConfigCronRoot(),
+    });
+    const jobs = await store.listJobs();
+    return jobs
+      .slice()
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((job) => ({
+        id: job.id,
+        name: job.name,
+        enabled: job.enabled,
+        state: job.state,
+        schedule: job.scheduleDisplay,
+        nextRunAt: job.nextRunAt,
+        lastRunAt: job.lastRunAt,
+        lastStatus: job.lastStatus,
+        lastError: job.lastError,
+        lastTracePath: job.lastTracePath ?? null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function readTasksForSnapshot(
+  rootDir: string,
+): CapabilityAutomationSummary["tasks"]["tasks"] {
+  try {
+    const store = new FileTaskStore({ rootDir, createRoot: false });
+    return store
+      .list()
+      .sort((a, b) => {
+        const aTime = a.completedAt ?? a.lastOutputAt ?? a.createdAt;
+        const bTime = b.completedAt ?? b.lastOutputAt ?? b.createdAt;
+        return bTime.localeCompare(aTime);
+      })
+      .map((task) => ({
+        id: task.id,
+        kind: task.kind,
+        status: task.status,
+        title: task.title,
+        parentRunId: task.parentRunId,
+        createdAt: task.createdAt,
+        completedAt: task.completedAt,
+        outputChunks: task.outputChunks,
+        lastOutputAt: task.lastOutputAt,
+        error: task.error
+          ? { code: task.error.code, message: task.error.message }
+          : undefined,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
@@ -1659,6 +2066,36 @@ function resolveMainAgentMaxSteps(profile: AgentProfile): number {
     return modelCallBudget;
   }
   return MAIN_AGENT_MAX_STEPS_BACKSTOP;
+}
+
+function resolveTodoContinuationMaxSteps(profile: AgentProfile): number {
+  return Math.min(
+    resolveMainAgentMaxSteps(profile),
+    MAIN_TODO_CONTINUATION_MAX_STEPS,
+  );
+}
+
+function resolveTodoContinuationRunBudget(profile: AgentProfile): RunBudget {
+  return {
+    ...(profile.runBudget ?? {}),
+    maxModelCalls: minBudgetValue(
+      profile.runBudget?.maxModelCalls,
+      MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS,
+    ),
+    maxToolCalls: minBudgetValue(
+      profile.runBudget?.maxToolCalls,
+      MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS,
+    ),
+  };
+}
+
+function minBudgetValue(
+  configured: number | undefined,
+  continuationLimit: number,
+): number {
+  return configured === undefined
+    ? continuationLimit
+    : Math.min(configured, continuationLimit);
 }
 
 function isSafePathSegment(value: string): boolean {
@@ -1731,6 +2168,8 @@ function createConfiguredDelegateTools(input: {
   derivedAgents: DerivedChildAgentProfile[];
   model: ModelAdapter;
   childTools: ToolDefinition[];
+  workspaceRoot: string;
+  allowReadWriteWorkspaceAccess: boolean;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -1746,9 +2185,44 @@ function createConfiguredDelegateTools(input: {
   for (const delegate of input.delegates) {
     const profile = byProfile.get(delegate.profileId);
     if (!profile) continue;
-    const toolName =
-      delegate.toolName ??
-      `delegate_${sanitizeToolSegment(delegate.profileId)}`;
+    const toolName = delegateToolName(delegate);
+    const acpConfig = acpConfigFromAgentProfile(profile);
+    if (acpConfig) {
+      tools.push(
+        createAcpDelegateTool({
+          getParent: input.getParent,
+          profile,
+          toolName,
+          description:
+            delegate.description ??
+            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          workspaceRoot: input.workspaceRoot,
+          requiresApproval: delegate.requiresApproval,
+          forbidNesting: delegate.forbidNesting ?? true,
+          allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+        }),
+      );
+      continue;
+    }
+    const externalCommandConfig =
+      externalCommandConfigFromAgentProfile(profile);
+    if (externalCommandConfig) {
+      tools.push(
+        createExternalCommandDelegateTool({
+          getParent: input.getParent,
+          profile,
+          toolName,
+          description:
+            delegate.description ??
+            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          workspaceRoot: input.workspaceRoot,
+          requiresApproval: delegate.requiresApproval,
+          forbidNesting: delegate.forbidNesting ?? true,
+          allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+        }),
+      );
+      continue;
+    }
     tools.push(
       createAgentTool(input.getParent, {
         name: toolName,
@@ -1780,6 +2254,58 @@ function createConfiguredDelegateTools(input: {
     );
   }
   return tools;
+}
+
+function describeConfiguredDelegateTools(input: {
+  delegates: CapabilityDelegateToolConfig[];
+  derivedAgents: DerivedChildAgentProfile[];
+}): DelegateCapabilityDescriptor[] {
+  const byProfile = new Map(
+    input.derivedAgents.map((derived) => [
+      derived.effectiveProfile.id,
+      derived.effectiveProfile,
+    ]),
+  );
+  return input.delegates.flatMap((delegate) => {
+    const profile = byProfile.get(delegate.profileId);
+    if (!profile) return [];
+    const acpConfig = acpConfigFromAgentProfile(profile);
+    if (acpConfig) {
+      return [
+        describeDelegateCapability({
+          delegate,
+          profile,
+          protocol: "acp",
+          command: acpConfig.command,
+          args: acpConfig.args,
+          timeoutMs: acpConfig.timeoutMs,
+          workspaceAccess: acpConfig.workspaceAccess ?? "none",
+        }),
+      ];
+    }
+    const externalCommandConfig =
+      externalCommandConfigFromAgentProfile(profile);
+    if (!externalCommandConfig) return [];
+    return [
+      describeDelegateCapability({
+        delegate,
+        profile,
+        protocol: "external_command",
+        command: externalCommandConfig.command,
+        args: externalCommandConfig.args,
+        timeoutMs: externalCommandConfig.timeoutMs,
+        workspaceAccess: externalCommandConfig.workspaceAccess ?? "none",
+        outputLimits: {
+          stdoutBytes:
+            externalCommandConfig.maxStdoutBytes ??
+            externalCommandConfig.maxOutputBytes,
+          stderrBytes:
+            externalCommandConfig.maxStderrBytes ??
+            externalCommandConfig.maxOutputBytes,
+        },
+      }),
+    ];
+  });
 }
 
 /**
@@ -2182,7 +2708,12 @@ function mergeCapabilitySnapshots(
     },
     agents: {
       profiles: mergeById(configured.agents.profiles, last.agents.profiles),
+      delegateTools: mergeByToolName(
+        configured.agents.delegateTools,
+        last.agents.delegateTools,
+      ),
     },
+    automation: configured.automation ?? last.automation,
   };
 }
 
@@ -2204,4 +2735,14 @@ function mergeById<T extends { id: string }>(base: T[], next: T[]): T[] {
   for (const entry of base) byId.set(entry.id, entry);
   for (const entry of next) byId.set(entry.id, entry);
   return [...byId.values()];
+}
+
+function mergeByToolName<T extends { toolName: string }>(
+  base: T[],
+  next: T[],
+): T[] {
+  const byName = new Map<string, T>();
+  for (const entry of base) byName.set(entry.toolName, entry);
+  for (const entry of next) byName.set(entry.toolName, entry);
+  return [...byName.values()];
 }

@@ -39,6 +39,14 @@ export interface ProtocolError {
   details?: Record<string, unknown>;
 }
 
+export interface RunFailureEnvelope {
+  category?: string;
+  code: string;
+  message: string;
+  retryable?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
@@ -72,6 +80,10 @@ export interface HandshakeRequestPayload {
 export interface RunStartRequestPayload {
   goal: string;
   sessionId?: string;
+  /** Workspace-relative target path that the run should focus on when applicable. */
+  targetPath?: string;
+  /** Whether this run is allowed to request workspace writes. */
+  shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
   permissionMode?:
@@ -89,6 +101,10 @@ export interface RunResumeRequestPayload {
   runId: string;
   /** Optional session scope used to disambiguate where the prior run lives. */
   sessionId?: string;
+  /** Workspace-relative target path that the resumed run should focus on when applicable. */
+  targetPath?: string;
+  /** Whether the resumed run is allowed to request workspace writes. */
+  shouldWrite?: boolean;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
   fromTrace?: boolean;
   /** Allow resuming checkpoints that are terminal or otherwise normally refused. */
@@ -230,12 +246,80 @@ export interface CapabilityMcpStatus {
   serverName: string;
   status: string;
   toolNames: string[];
+  errorCode?: string;
+  /** @reserved Public capability-status field consumed by diagnostics UIs. */
+  errorPhase?: string;
+  /** @reserved Public capability-status field consumed by diagnostics UIs. */
+  errorMessage?: string;
 }
 
 export interface CapabilityAgentSummary {
   id: string;
   name?: string;
   mode?: string;
+}
+
+export interface CapabilityDelegateToolSummary {
+  toolName: string;
+  profileId: string;
+  /** @reserved Public capability-inspection field consumed by host protocol clients. */
+  profileName?: string;
+  protocol: "acp" | "external_command";
+  risk: "risky";
+  requiresApproval: boolean;
+  forbidNesting: boolean;
+  sideEffects: string[];
+  workspaceAccess: "none" | "read_write";
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  shellAccess: false;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  processSpawn: true;
+  command: string;
+  args: string[];
+  timeoutMs?: number;
+  outputLimits?: {
+    stdoutBytes?: number;
+    stderrBytes?: number;
+  };
+}
+
+export interface CapabilityCronJobSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
+  state: string;
+  schedule: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  lastTracePath?: string | null;
+}
+
+export interface CapabilityTaskSummary {
+  id: string;
+  kind: string;
+  status: string;
+  title?: string;
+  parentRunId: string;
+  createdAt: string;
+  completedAt?: string;
+  outputChunks?: number;
+  lastOutputAt?: string;
+  error?: { code: string; message: string };
+}
+
+export interface CapabilityAutomationSummary {
+  cron: {
+    rootDir: string;
+    jobs: CapabilityCronJobSummary[];
+    total: number;
+  };
+  tasks: {
+    rootDir: string;
+    tasks: CapabilityTaskSummary[];
+    total: number;
+  };
 }
 
 export interface CapabilitySnapshot {
@@ -249,7 +333,9 @@ export interface CapabilitySnapshot {
   };
   agents: {
     profiles: CapabilityAgentSummary[];
+    delegateTools: CapabilityDelegateToolSummary[];
   };
+  automation?: CapabilityAutomationSummary;
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +420,12 @@ export interface RunCompletedEventPayload {
   runId: string;
   state: string;
   stopReason?: string;
+  /** Final answer text when the run ended by producing one. */
+  message?: string;
+  /** Present when the run completed with a non-clean outcome summary. */
+  outcome?: object;
+  /** Present when `state` is `failed` or `cancelled` and a structured cause is available. */
+  failure?: RunFailureEnvelope;
   /**
    * Present when the run chain ended by handing back to the human while todos
    * were still unfinished (continuation limit reached, stalled without

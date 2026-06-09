@@ -1,0 +1,54 @@
+{
+  "name": "@sparkwright/acp-client-adapter",
+  "version": "0.1.0",
+  "description": "ACP client worker adapter for SparkWright tools and hosts.",
+  "license": "Apache-2.0",
+  "author": "hopemeet <https://x.com/hopemeet_ai>",
+  "homepage": "https://github.com/hopemeet/sparkwright#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hopemeet/sparkwright.git",
+    "directory": "packages/acp-client-adapter"
+  },
+  "bugs": {
+    "url": "https://github.com/hopemeet/sparkwright/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.25.0",
+    "@sparkwright/core": "0.1.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "private": false,
+  "sideEffects": false,
+  "keywords": [
+    "agents",
+    "acp",
+    "client",
+    "adapter",
+    "runtime"
+  ]
+}

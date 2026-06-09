@@ -24,6 +24,7 @@ import type {
   RunRecord,
   RunResult,
 } from "./types.js";
+import { isPolicyOrApprovalFailure } from "./run-outcome.js";
 
 export type TraceLevel = "minimal" | "standard" | "debug";
 export type TraceRedactor = (event: SparkwrightEvent) => SparkwrightEvent;
@@ -101,12 +102,27 @@ export interface TraceSummary {
   terminalStates: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   toolCalls: Record<string, number>;
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  toolFailures: {
+    total: number;
+    byCode: Record<string, number>;
+  };
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  workspaceReads: {
+    total: number;
+    uniquePaths: number;
+    duplicatePaths: Record<string, number>;
+  };
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   artifactCount: number;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   errorCount: number;
   /** @reserved Public trace-summary field consumed by diagnostics UIs. */
   errorCodes: Record<string, number>;
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  expectedDenialCount: number;
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  expectedDenialCodes: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   usage: {
     inputTokens: number;
@@ -116,6 +132,8 @@ export interface TraceSummary {
     reasoningTokens: number;
     totalTokens: number;
     estimatedCostUsd: number;
+    costStatus?: "estimated" | "unavailable" | "partial";
+    costUnavailableReasons?: Record<string, number>;
   };
 }
 
@@ -220,6 +238,213 @@ export async function buildTraceTimelineFile(
   return buildTraceTimelineJsonl(await readFile(path, "utf8"), filter);
 }
 
+export interface TraceVerificationFinding {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TraceVerificationReport {
+  ok: boolean;
+  path?: string;
+  eventCount: number;
+  runIds: string[];
+  sessionIds: string[];
+  agentIds: string[];
+  findings: TraceVerificationFinding[];
+}
+
+export async function verifyTraceFile(
+  path: string,
+): Promise<TraceVerificationReport> {
+  return verifyTraceJsonl(await readFile(path, "utf8"), { path });
+}
+
+export function verifyTraceJsonl(
+  jsonl: string,
+  options: { path?: string } = {},
+): TraceVerificationReport {
+  const findings: TraceVerificationFinding[] = [];
+  if (jsonl.length > 0 && !jsonl.endsWith("\n")) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_FINAL_NEWLINE_MISSING",
+      message:
+        "Trace JSONL does not end with a newline; the final event may be half-written.",
+    });
+  }
+
+  let events: SparkwrightEvent[] = [];
+  try {
+    events = parseTraceJsonl(jsonl, options.path ?? "trace.jsonl");
+  } catch (error) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_JSON_INVALID",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const runIds = new Set<string>();
+  const sessionIds = new Set<string>();
+  const agentIds = new Set<string>();
+  const sequencesByRun = new Map<string, number>();
+  const terminalCountByRun = new Map<string, number>();
+  const writeCountsByRun = new Map<
+    string,
+    { requested: number; completed: number; denied: number; skipped: number }
+  >();
+  const approvalCountsByRun = new Map<
+    string,
+    { requested: number; resolved: number }
+  >();
+  const artifactIds = new Set<string>();
+  const previousMonotonicUsByTrace = new Map<string, number>();
+
+  for (const [index, event] of events.entries()) {
+    const line = index + 1;
+    if (!event || typeof event !== "object") {
+      findings.push({
+        severity: "error",
+        code: "TRACE_EVENT_INVALID",
+        message: "Trace line is not an event object.",
+        metadata: { line },
+      });
+      continue;
+    }
+    if (typeof event.runId !== "string" || event.runId.length === 0) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_RUN_ID_MISSING",
+        message: "Trace event is missing runId.",
+        metadata: { line },
+      });
+      continue;
+    }
+    runIds.add(event.runId);
+    const sessionId = stringMetadata(event.metadata, "sessionId");
+    const agentId = stringMetadata(event.metadata, "agentId");
+    if (sessionId) sessionIds.add(sessionId);
+    if (agentId) agentIds.add(agentId);
+
+    if (typeof event.sequence !== "number") {
+      findings.push({
+        severity: "error",
+        code: "TRACE_SEQUENCE_MISSING",
+        message: "Trace event is missing numeric sequence.",
+        metadata: { line, runId: event.runId },
+      });
+    } else {
+      const expected = (sequencesByRun.get(event.runId) ?? 0) + 1;
+      if (event.sequence !== expected) {
+        findings.push({
+          severity: "error",
+          code: "TRACE_SEQUENCE_INVALID",
+          message: "Run event sequence must increase by one.",
+          metadata: {
+            line,
+            runId: event.runId,
+            expected,
+            actual: event.sequence,
+          },
+        });
+      }
+      sequencesByRun.set(event.runId, observedSequenceEnd(event));
+    }
+
+    if (typeof event.monotonicUs === "number") {
+      const traceKey =
+        typeof event.traceId === "string" && event.traceId.length > 0
+          ? event.traceId
+          : event.runId;
+      const previousMonotonicUs = previousMonotonicUsByTrace.get(traceKey);
+      if (
+        previousMonotonicUs !== undefined &&
+        event.monotonicUs < previousMonotonicUs
+      ) {
+        findings.push({
+          severity: "error",
+          code: "TRACE_MONOTONIC_ORDER_INVALID",
+          message: "monotonicUs moved backward in file order.",
+          metadata: {
+            line,
+            traceId: traceKey,
+            previous: previousMonotonicUs,
+            actual: event.monotonicUs,
+          },
+        });
+      }
+      previousMonotonicUsByTrace.set(traceKey, event.monotonicUs);
+    }
+
+    if (isTerminalRunEvent(event)) {
+      terminalCountByRun.set(
+        event.runId,
+        (terminalCountByRun.get(event.runId) ?? 0) + 1,
+      );
+    }
+    collectWriteVerificationCounts(writeCountsByRun, event);
+    collectApprovalVerificationCounts(approvalCountsByRun, event);
+    collectArtifactVerificationFindings(artifactIds, event, findings, line);
+  }
+
+  if (sessionIds.size > 1) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_SESSION_ID_CONFLICT",
+      message: "Trace contains events for multiple session ids.",
+      metadata: { sessionIds: [...sessionIds].sort() },
+    });
+  }
+
+  for (const runId of runIds) {
+    const terminalCount = terminalCountByRun.get(runId) ?? 0;
+    if (terminalCount !== 1) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+        message:
+          "Each run in a completed trace must have exactly one terminal event.",
+        metadata: { runId, terminalCount },
+      });
+    }
+  }
+
+  for (const [runId, counts] of writeCountsByRun) {
+    const terminalWrites = counts.completed + counts.denied + counts.skipped;
+    if (terminalWrites > counts.requested) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_WORKSPACE_WRITE_PAIR_INVALID",
+        message: "Workspace write terminal events exceed write requests.",
+        metadata: { runId, ...counts },
+      });
+    }
+  }
+
+  for (const [runId, counts] of approvalCountsByRun) {
+    if (counts.resolved > counts.requested) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_APPROVAL_PAIR_INVALID",
+        message: "Approval resolutions exceed approval requests.",
+        metadata: { runId, ...counts },
+      });
+    }
+  }
+
+  return {
+    ok: findings.every((finding) => finding.severity !== "error"),
+    path: options.path,
+    eventCount: events.length,
+    runIds: [...runIds].sort(),
+    sessionIds: [...sessionIds].sort(),
+    agentIds: [...agentIds].sort(),
+    findings,
+  };
+}
+
 export function buildTraceTimelineJsonl(
   jsonl: string,
   filter: TraceEventFilter = {},
@@ -273,7 +498,7 @@ export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
       continue;
     }
 
-    const phase = createTimelinePhase(event);
+    const phase = createTimelinePhase(event, key !== undefined);
     phases.push(phase);
     if (key && phase.status === "pending") open.set(key, phase);
   }
@@ -302,7 +527,10 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   const byType: Record<string, number> = {};
   const terminalStates: Record<string, number> = {};
   const toolCalls: Record<string, number> = {};
+  const toolFailureCodes: Record<string, number> = {};
+  const workspaceReadPaths: Record<string, number> = {};
   const errorCodes: Record<string, number> = {};
+  const expectedDenialCodes: Record<string, number> = {};
   const latestUsageByRun = new Map<string, Record<string, unknown>>();
   let modelUsageSeen = false;
   const summary: TraceSummary = {
@@ -313,9 +541,20 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     byType,
     terminalStates,
     toolCalls,
+    toolFailures: {
+      total: 0,
+      byCode: toolFailureCodes,
+    },
+    workspaceReads: {
+      total: 0,
+      uniquePaths: 0,
+      duplicatePaths: {},
+    },
     artifactCount: 0,
     errorCount: 0,
     errorCodes,
+    expectedDenialCount: 0,
+    expectedDenialCodes,
     usage: {
       inputTokens: 0,
       outputTokens: 0,
@@ -347,13 +586,18 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     if (sessionId) sessionIds.add(sessionId);
     if (agentId) agentIds.add(agentId);
     if (event.type === "artifact.created") summary.artifactCount += 1;
-    if (event.type.endsWith(".failed") || event.type.endsWith(".denied")) {
+    if (isExpectedDenialEvent(event)) {
+      summary.expectedDenialCount += 1;
+      collectExpectedDenialCode(summary, event);
+    } else if (isTraceErrorEvent(event)) {
       summary.errorCount += 1;
       collectErrorCode(summary, event);
     }
 
     collectTerminalState(summary, event);
     collectToolCall(summary, event);
+    collectToolFailure(summary, event);
+    collectWorkspaceRead(summary, event, workspaceReadPaths);
     if (event.type === "usage.updated") {
       const usage = usageFromEvent(event);
       if (usage)
@@ -372,6 +616,12 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   summary.runIds = [...runIds].sort();
   summary.sessionIds = [...sessionIds].sort();
   summary.agentIds = [...agentIds].sort();
+  summary.workspaceReads.uniquePaths = Object.keys(workspaceReadPaths).length;
+  summary.workspaceReads.duplicatePaths = Object.fromEntries(
+    Object.entries(workspaceReadPaths)
+      .filter(([, count]) => count > 1)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+  );
   return summary;
 }
 
@@ -1505,6 +1755,7 @@ function reconstructCheckpointFromTrace(
   let costUsd = 0;
   let lastTimestampMs: number | undefined;
   let firstTimestampMs: number | undefined;
+  let eventSequence = 0;
 
   if (tracePath) {
     const lines = readFileSync(tracePath, "utf8").split(/\r?\n/);
@@ -1517,6 +1768,9 @@ function reconstructCheckpointFromTrace(
         continue; // skip corrupt lines — best-effort
       }
       if (event.runId !== run.id) continue;
+      if (typeof event.sequence === "number") {
+        eventSequence = Math.max(eventSequence, observedSequenceEnd(event));
+      }
       const ts = Date.parse(event.timestamp);
       if (!Number.isNaN(ts)) {
         firstTimestampMs ??= ts;
@@ -1560,6 +1814,7 @@ function reconstructCheckpointFromTrace(
       repeatedToolCallCount: 0,
       transition: { reason: "next_turn" },
     },
+    eventSequence,
     model: { activeIndex: 0, fallbackCount: 0 },
     recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
     budget: {
@@ -2244,8 +2499,84 @@ function validateRunEventSequences(
         },
       });
     }
-    lastByRun.set(event.runId, event.sequence);
+    lastByRun.set(event.runId, observedSequenceEnd(event));
   }
+}
+
+function observedSequenceEnd(event: SparkwrightEvent): number {
+  if (
+    event.type === "model.stream.text" &&
+    isRecord(event.payload) &&
+    typeof event.payload.chunkCount === "number" &&
+    Number.isInteger(event.payload.chunkCount) &&
+    event.payload.chunkCount > 1
+  ) {
+    return event.sequence + event.payload.chunkCount - 1;
+  }
+  return event.sequence;
+}
+
+function isTerminalRunEvent(event: SparkwrightEvent): boolean {
+  return (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled"
+  );
+}
+
+function collectWriteVerificationCounts(
+  countsByRun: Map<
+    string,
+    { requested: number; completed: number; denied: number; skipped: number }
+  >,
+  event: SparkwrightEvent,
+): void {
+  const counts = countsByRun.get(event.runId) ?? {
+    requested: 0,
+    completed: 0,
+    denied: 0,
+    skipped: 0,
+  };
+  if (event.type === "workspace.write.requested") counts.requested += 1;
+  else if (event.type === "workspace.write.completed") counts.completed += 1;
+  else if (event.type === "workspace.write.denied") counts.denied += 1;
+  else if (event.type === "workspace.write.skipped") counts.skipped += 1;
+  else return;
+  countsByRun.set(event.runId, counts);
+}
+
+function collectApprovalVerificationCounts(
+  countsByRun: Map<string, { requested: number; resolved: number }>,
+  event: SparkwrightEvent,
+): void {
+  const counts = countsByRun.get(event.runId) ?? {
+    requested: 0,
+    resolved: 0,
+  };
+  if (event.type === "approval.requested") counts.requested += 1;
+  else if (event.type === "approval.resolved") counts.resolved += 1;
+  else return;
+  countsByRun.set(event.runId, counts);
+}
+
+function collectArtifactVerificationFindings(
+  artifactIds: Set<string>,
+  event: SparkwrightEvent,
+  findings: TraceVerificationFinding[],
+  line: number,
+): void {
+  if (event.type !== "artifact.created") return;
+  const payload = event.payload;
+  if (!isRecord(payload) || typeof payload.id !== "string") return;
+  if (artifactIds.has(payload.id)) {
+    findings.push({
+      severity: "error",
+      code: "TRACE_ARTIFACT_ID_CONFLICT",
+      message: "Trace contains duplicate artifact ids.",
+      metadata: { line, artifactId: payload.id },
+    });
+  }
+  artifactIds.add(payload.id);
 }
 
 async function validateRunFiles(
@@ -2331,6 +2662,30 @@ function collectToolCall(summary: TraceSummary, event: SparkwrightEvent): void {
   summary.toolCalls[toolName] = (summary.toolCalls[toolName] ?? 0) + 1;
 }
 
+function collectToolFailure(
+  summary: TraceSummary,
+  event: SparkwrightEvent,
+): void {
+  if (event.type !== "tool.failed") return;
+  summary.toolFailures.total += 1;
+  const code = traceErrorCode(event) ?? "unknown";
+  summary.toolFailures.byCode[code] =
+    (summary.toolFailures.byCode[code] ?? 0) + 1;
+}
+
+function collectWorkspaceRead(
+  summary: TraceSummary,
+  event: SparkwrightEvent,
+  workspaceReadPaths: Record<string, number>,
+): void {
+  if (event.type !== "workspace.read") return;
+  summary.workspaceReads.total += 1;
+  if (!isRecord(event.payload)) return;
+  const path = stringValue(event.payload.path);
+  if (!path) return;
+  workspaceReadPaths[path] = (workspaceReadPaths[path] ?? 0) + 1;
+}
+
 function latestOpenModelPhaseKey(
   open: Map<string, TraceTimelinePhase>,
   runId: string,
@@ -2343,27 +2698,73 @@ function collectErrorCode(
   summary: TraceSummary,
   event: SparkwrightEvent,
 ): void {
-  if (!isRecord(event.payload)) return;
-  const code = stringValue(
-    event.payload.errorCode,
-    isRecord(event.payload.error) ? event.payload.error.code : undefined,
-    event.type.endsWith(".denied") ? event.type : undefined,
-  );
+  const code = traceErrorCode(event);
   if (!code) return;
   summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
 }
 
+function traceErrorCode(event: SparkwrightEvent): string | undefined {
+  if (!isRecord(event.payload)) return undefined;
+  return stringValue(
+    event.payload.errorCode,
+    isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    event.type === "mcp.server.prepared" && event.payload.status === "failed"
+      ? "MCP_SERVER_PREPARE_FAILED"
+      : undefined,
+    event.type.endsWith(".denied") ? event.type : undefined,
+  );
+}
+
+function collectExpectedDenialCode(
+  summary: TraceSummary,
+  event: SparkwrightEvent,
+): void {
+  if (!isRecord(event.payload)) return;
+  const code = stringValue(
+    isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    event.type.endsWith(".denied") ? event.type : undefined,
+  );
+  if (!code) return;
+  summary.expectedDenialCodes[code] =
+    (summary.expectedDenialCodes[code] ?? 0) + 1;
+}
+
+function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
+  if (event.type.endsWith(".denied")) return true;
+  if (!isRecord(event.payload)) return false;
+  return (
+    isRecord(event.payload.error) &&
+    isPolicyOrApprovalFailure(stringValue(event.payload.error.code))
+  );
+}
+
+function isTraceErrorEvent(event: SparkwrightEvent): boolean {
+  if (event.type.endsWith(".failed") || event.type.endsWith(".denied")) {
+    return true;
+  }
+  return (
+    event.type === "mcp.server.prepared" &&
+    isRecord(event.payload) &&
+    event.payload.status === "failed"
+  );
+}
+
 function isTimelineDetailEvent(event: SparkwrightEvent): boolean {
   return (
+    event.type === "model.turn.started" ||
+    event.type === "model.turn.completed" ||
     event.type === "model.stream.chunk" ||
     event.type.startsWith("model.stream.")
   );
 }
 
-function createTimelinePhase(event: SparkwrightEvent): TraceTimelinePhase {
+function createTimelinePhase(
+  event: SparkwrightEvent,
+  hasPhaseKey: boolean,
+): TraceTimelinePhase {
   const payload = isRecord(event.payload) ? event.payload : {};
   const category = timelineCategory(event.type);
-  const status = initialTimelineStatus(event);
+  const status = initialTimelineStatus(event, hasPhaseKey);
   const metadata = timelinePhaseMetadata(event);
   return {
     id: timelinePhaseKey(event) ?? `${event.runId}:${event.sequence}`,
@@ -2373,11 +2774,11 @@ function createTimelinePhase(event: SparkwrightEvent): TraceTimelinePhase {
     label: timelineLabel(event, payload, category),
     status,
     startedAt: event.timestamp,
-    ...(status === "instant"
+    ...(status !== "pending"
       ? { endedAt: event.timestamp, durationMs: 0 }
       : {}),
     startSequence: event.sequence,
-    ...(status === "instant" ? { endSequence: event.sequence } : {}),
+    ...(status !== "pending" ? { endSequence: event.sequence } : {}),
     eventTypes: [event.type],
     ...(metadata ? { metadata } : {}),
   };
@@ -2399,7 +2800,6 @@ function completeTimelinePhase(
 }
 
 function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
-  if (event.spanId) return `span:${event.spanId}`;
   const payload = isRecord(event.payload) ? event.payload : {};
   const toolCallId = stringValue(payload.toolCallId, payload.id);
   if (
@@ -2443,13 +2843,17 @@ function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
     return `${event.runId}:run`;
   }
 
+  if (event.spanId) return `span:${event.spanId}`;
+
   return undefined;
 }
 
 function initialTimelineStatus(
   event: SparkwrightEvent,
+  hasPhaseKey: boolean,
 ): TraceTimelinePhaseStatus {
   if (terminalTimelineStatus(event)) return terminalTimelineStatus(event)!;
+  if (!hasPhaseKey) return "instant";
   if (
     event.type.endsWith(".requested") ||
     event.type.endsWith(".started") ||
@@ -2466,6 +2870,7 @@ function terminalTimelineStatus(
 ): TraceTimelinePhaseStatus | undefined {
   if (
     event.type.endsWith(".completed") ||
+    event.type.endsWith(".verified") ||
     event.type.endsWith(".skipped") ||
     event.type === "approval.resolved"
   ) {
@@ -2571,10 +2976,11 @@ function addUsage(summary: TraceSummary, usage: Record<string, unknown>): void {
     usage.estimatedCostUsd,
     usage.costUsd,
   );
+  addCostStatus(summary.usage, usage);
 }
 
 function usageToSummary(usage: Record<string, unknown>): TraceSummary["usage"] {
-  return {
+  const out: TraceSummary["usage"] = {
     inputTokens: numberValue(usage.inputTokens, usage.promptTokens),
     outputTokens: numberValue(usage.outputTokens, usage.completionTokens),
     cacheReadTokens: numberValue(usage.cacheReadTokens),
@@ -2583,6 +2989,51 @@ function usageToSummary(usage: Record<string, unknown>): TraceSummary["usage"] {
     totalTokens: numberValue(usage.totalTokens, usage.tokens),
     estimatedCostUsd: numberValue(usage.estimatedCostUsd, usage.costUsd),
   };
+  addCostStatus(out, usage);
+  return out;
+}
+
+function addCostStatus(
+  target: TraceSummary["usage"],
+  usage: Record<string, unknown>,
+): void {
+  const status = stringValue(usage.costStatus);
+  if (
+    status === "estimated" ||
+    status === "unavailable" ||
+    status === "partial"
+  ) {
+    target.costStatus = mergeCostStatus(target.costStatus, status);
+  } else if (
+    (positiveNumber(usage.estimatedCostUsd) || positiveNumber(usage.costUsd)) &&
+    target.costStatus !== "partial" &&
+    target.costStatus !== "unavailable"
+  ) {
+    target.costStatus = "estimated";
+  }
+
+  const reasons = isRecord(usage.costUnavailableReasons)
+    ? usage.costUnavailableReasons
+    : stringValue(usage.costUnavailableReason)
+      ? { [stringValue(usage.costUnavailableReason)!]: 1 }
+      : undefined;
+  if (!reasons) return;
+
+  const targetReasons = (target.costUnavailableReasons ??= {});
+  for (const [reason, count] of Object.entries(reasons)) {
+    const n = typeof count === "number" && Number.isFinite(count) ? count : 1;
+    targetReasons[reason] = (targetReasons[reason] ?? 0) + n;
+  }
+  target.costStatus = mergeCostStatus(target.costStatus, "unavailable");
+}
+
+function mergeCostStatus(
+  current: TraceSummary["usage"]["costStatus"],
+  next: NonNullable<TraceSummary["usage"]["costStatus"]>,
+): NonNullable<TraceSummary["usage"]["costStatus"]> {
+  if (!current) return next;
+  if (current === next) return current;
+  return "partial";
 }
 
 function numberValue(...values: unknown[]): number {
@@ -2590,6 +3041,10 @@ function numberValue(...values: unknown[]): number {
     if (typeof value === "number" && Number.isFinite(value)) return value;
   }
   return 0;
+}
+
+function positiveNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -56,6 +56,46 @@ describe("UsageTracker", () => {
     expect(snap.contextTokens).toBe(1500); // latest call only (live context)
   });
 
+  it("tracks unavailable and partial model cost status", () => {
+    const tracker = createUsageTracker({ runId: createRunId() });
+    tracker.recordModelUsage({
+      adapterId: "provider:unknown",
+      usage: {
+        inputTokens: 100,
+        outputTokens: 10,
+        costStatus: "unavailable",
+        costUnavailableReason: "missing_pricing",
+      },
+    });
+
+    let snap = tracker.snapshot();
+    expect(snap.costUsd).toBe(0);
+    expect(snap.costStatus).toBe("unavailable");
+    expect(snap.costUnavailableReasons).toEqual({ missing_pricing: 1 });
+    expect(snap.byModel["provider:unknown"]).toMatchObject({
+      costStatus: "unavailable",
+      costUnavailableReasons: { missing_pricing: 1 },
+    });
+
+    tracker.recordModelUsage({
+      adapterId: "provider:priced",
+      usage: {
+        inputTokens: 100,
+        outputTokens: 10,
+        costUsd: 0.01,
+        costStatus: "estimated",
+      },
+    });
+
+    snap = tracker.snapshot();
+    expect(snap.costUsd).toBeCloseTo(0.01);
+    expect(snap.costStatus).toBe("partial");
+    expect(snap.costUnavailableReasons).toEqual({ missing_pricing: 1 });
+    expect(snap.byModel["provider:priced"]).toMatchObject({
+      costStatus: "estimated",
+    });
+  });
+
   it("emits usage.updated events through the supplied emitter", () => {
     const emitter = new EventLog(createRunId());
     const seen: string[] = [];

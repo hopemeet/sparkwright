@@ -41,12 +41,31 @@ A timeline should be built from event families rather than exact payload shapes.
 | Approval                          | `approval.requested`, `approval.resolved`, `interaction.requested`, `interaction.resolved`                                        | Show pending review and final decision                                |
 | Workspace mutation                | `workspace.write.requested`, `artifact.created`, `workspace.write.completed`, `workspace.write.denied`, `workspace.write.skipped` | Link diff artifacts and final mutation state                          |
 | Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                  | Stream output incrementally; cap retained inline output               |
-| Skill and edge lifecycle          | `skill.indexed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                                                   | Show capability changes as environment/context evidence               |
+| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`        | Show capability changes as environment/context evidence               |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                     | Show as host automation, not model-authored work                      |
 
 A backend projection can materialize these rows into a read model, but the
 source of truth should remain the append-only event log plus `run.json`,
 `result.json`, and artifacts.
+
+## Model Selection Evidence
+
+When present, `run.started.payload.resolvedModel` records the actual model
+adapter selected for the run. Consumers can show this in diagnostics, session
+inspectors, or trace reports to explain why a run used a specific
+provider/model.
+
+Stable consumption rules:
+
+- Prefer `resolvedModel.adapterId` for the concrete adapter label.
+- Use `resolvedModel.modelSource.layer` to distinguish explicit request
+  overrides from user, project, env, or default config sources.
+- Use `resolvedModel.providerSource.layer` to explain where the provider
+  definition came from when the run is provider-backed.
+- Treat `resolvedModel.authSource` and `resolvedModel.baseURLSource` as source
+  labels only. They must not contain API keys, tokens, or raw headers.
+- Keep the event optional. Older traces and some embedders may emit
+  `run.started` with an empty payload.
 
 ## Streaming
 
@@ -171,10 +190,15 @@ Stable consumption guidance:
 
 - Treat checkpoints as snapshots owned by the backend store, not as replacement
   trace events.
-- Keep checkpoint identity and creation time in the snapshot record. Link to the
-  nearest event `sequence` if the host exposes that association.
+- Keep checkpoint identity and creation time in the snapshot record. When
+  `eventSequence` is present, treat it as the last persisted event sequence for
+  that run; resumed runs continue after it so append-only per-run traces remain
+  contiguous.
 - Use checkpoint snapshots to resume or branch state, then use events to explain
   how that state was reached.
+- Do not treat `eventSequence` as a session-wide or cross-agent ordering key.
+  Session traces may contain multiple runs and processes; use event timestamps,
+  `traceId`, `runId`, and timeline tooling for aggregate ordering.
 - If future `checkpoint.*` events are added, render them as timeline markers and
   keep snapshot payloads outside the event body when large.
 
@@ -183,6 +207,8 @@ Stable consumption guidance:
 Skill events explain capability/context changes at the edge of the run.
 
 - `skill.indexed` means a Skill source was scanned and reduced to metadata.
+- `skill.failed` means one Skill source could not be loaded; other valid Skills
+  may still be available.
 - `skill.loaded` means a selected Skill body was loaded into context or through
   a governed loader tool.
 - Related edge events such as `mcp.server.prepared` and

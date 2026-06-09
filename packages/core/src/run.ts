@@ -83,6 +83,7 @@ import {
   runToolBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
+import { completedRunOutcomeFromEvents } from "./run-outcome.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
@@ -104,7 +105,6 @@ import type {
   ModelAdapter,
   ModelInput,
   ModelOutput,
-  ModelOutputTrace,
   ModelRecoveryHint,
   ModelRetryPolicy,
   RunBudget,
@@ -123,6 +123,26 @@ import type {
   ToolResult,
   ModelErrorEnvelope,
 } from "./types.js";
+import { getStringProperty, isRecord, omitUndefined } from "./record-utils.js";
+import {
+  ModelCompletionFailure,
+  extractRecoveryHint,
+  isLikelySideEffectFailure,
+  isRetryableModelFailure,
+  normalizeModelError,
+  toModelFailure,
+} from "./run-model-errors.js";
+import {
+  buildModelOutputTrace,
+  countOmissionReasons,
+  mergeModelUsage,
+  type StreamTraceTiming,
+} from "./run-trace-build.js";
+import {
+  selectModelFailureStopReason,
+  validateModelOutput,
+  validateRunBudget,
+} from "./run-validation.js";
 
 const DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT = 3;
 const DEFAULT_MODEL_RETRY_MAX_ATTEMPTS = 3;
@@ -131,27 +151,6 @@ const DEFAULT_MODEL_RETRY_MAX_DELAY_MS = 30_000;
 const DEFAULT_MODEL_RETRY_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
-const RETRYABLE_MODEL_ERROR_CODES = new Set([
-  "ECONNRESET",
-  "ETIMEDOUT",
-  "EAI_AGAIN",
-  "ENETDOWN",
-  "ENETRESET",
-  "ENETUNREACH",
-  "EPIPE",
-  "RATE_LIMITED",
-  "RATE_LIMIT_EXCEEDED",
-  "TIMEOUT",
-  "TOO_MANY_REQUESTS",
-  "UND_ERR_CONNECT_TIMEOUT",
-]);
-
-interface StreamTraceTiming {
-  startedAtMs: number;
-  firstChunkAtMs?: number;
-  completedAtMs?: number;
-}
-
 export interface CreateRunOptions {
   goal: string;
   /**
@@ -571,7 +570,9 @@ export class SparkwrightRun implements RunHandle {
           updatedAt: now,
           metadata: options.metadata ?? {},
         };
-    this.events = new EventLog(this.record.id);
+    this.events = new EventLog(this.record.id, {
+      sequence: checkpoint?.eventSequence,
+    });
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
     // InteractionChannel.approve, when supplied, takes precedence as the
@@ -951,7 +952,7 @@ export class SparkwrightRun implements RunHandle {
     this.setState("running");
     this.startedAtMs = Date.now();
     this.usageTracker.markStarted();
-    this.events.emit("run.started", {});
+    this.events.emit("run.started", runStartedPayload(this.record.metadata));
     if (this.resumedFromCheckpoint && this.seedLoopState) {
       this.events.emit("run.resumed", {
         fromStep: this.seedLoopState.step,
@@ -1840,6 +1841,7 @@ export class SparkwrightRun implements RunHandle {
       schemaVersion: "run-checkpoint.v1",
       run: { ...this.record, metadata: { ...this.record.metadata } },
       loop: cloneLoopState(loop),
+      eventSequence: this.events.lastSequence,
       model: {
         activeIndex: this.activeModelIndex,
         activeAdapterId: getModelAdapterId(this.models[this.activeModelIndex]),
@@ -2267,7 +2269,10 @@ export class SparkwrightRun implements RunHandle {
       requestedCall.arguments,
     );
     if (validationResult) {
-      span.close("tool.failed", validationResult);
+      span.close("tool.failed", {
+        ...validationResult,
+        toolName: requestedCall.toolName,
+      });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: validationResult.status,
@@ -2358,6 +2363,9 @@ export class SparkwrightRun implements RunHandle {
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
       annotatedResult,
     );
+    if (requestedCall.toolName === "skill_load") {
+      this.emitSkillLoadedFromToolResult(annotatedResult);
+    }
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
       status: annotatedResult.status,
@@ -2370,6 +2378,25 @@ export class SparkwrightRun implements RunHandle {
     await this.runAfterToolCallHook(state, requestedCall, annotatedResult);
     batchResults?.push(annotatedResult);
     return undefined;
+  }
+
+  private emitSkillLoadedFromToolResult(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    if (result.output.status !== "loaded") return;
+    const name = getStringProperty(result.output, "name");
+    if (!name) return;
+
+    this.events.emit(
+      "skill.loaded",
+      { name, status: "loaded" },
+      {
+        sourcePackage: "@sparkwright/skills",
+        mode: "on_demand_tool",
+        version: getStringProperty(result.output, "version"),
+        sourcePath: getStringProperty(result.output, "sourcePath"),
+        contentHash: getStringProperty(result.output, "contentHash"),
+      },
+    );
   }
 
   /**
@@ -2518,6 +2545,7 @@ export class SparkwrightRun implements RunHandle {
         error: {
           code: "TOOL_NOT_FOUND",
           message: `Tool not found: ${toolName}`,
+          metadata: { toolName },
         },
         artifacts: [],
       };
@@ -2529,7 +2557,13 @@ export class SparkwrightRun implements RunHandle {
     return {
       toolCallId,
       status: "failed",
-      error: validationError,
+      error: {
+        ...validationError,
+        metadata: {
+          ...(validationError.metadata ?? {}),
+          toolName,
+        },
+      },
       artifacts: [],
     };
   }
@@ -3124,9 +3158,39 @@ export class SparkwrightRun implements RunHandle {
       }
     } catch (cause) {
       timing.completedAtMs = Date.now();
+      const modelError = normalizeModelError(cause);
+      if (modelError.category === "timeout") {
+        this.events.emit("model.stream.timeout", {
+          step: input.step,
+          message: modelError.message,
+          timeoutKind: modelError.timeoutKind ?? "unknown",
+          retryable: modelError.retryable,
+          ...(modelError.configuredTimeoutMs !== undefined
+            ? { configuredTimeoutMs: modelError.configuredTimeoutMs }
+            : {}),
+          ...(modelError.elapsedMs !== undefined
+            ? { elapsedMs: modelError.elapsedMs }
+            : {}),
+        });
+      }
       this.events.emit("model.stream.failed", {
         step: input.step,
-        error: cause instanceof Error ? cause.message : String(cause),
+        error: modelError.message,
+        ...(modelError.category === "timeout"
+          ? {
+              metadata: {
+                category: modelError.category,
+                timeoutKind: modelError.timeoutKind ?? "unknown",
+                retryable: modelError.retryable,
+                ...(modelError.configuredTimeoutMs !== undefined
+                  ? { configuredTimeoutMs: modelError.configuredTimeoutMs }
+                  : {}),
+                ...(modelError.elapsedMs !== undefined
+                  ? { elapsedMs: modelError.elapsedMs }
+                  : {}),
+              },
+            }
+          : {}),
       });
       throw cause;
     }
@@ -3193,18 +3257,27 @@ export class SparkwrightRun implements RunHandle {
     reason: Extract<RunStopReason, "no_model_configured" | "final_answer">,
     payload: Record<string, unknown>,
   ): RunResult {
-    this.setState("completed", reason);
-    this.events.emit("run.completed", {
+    const outcome =
+      reason === "final_answer"
+        ? completedRunOutcomeFromEvents(this.events.all())
+        : undefined;
+    const completedPayload = {
       reason,
       ...payload,
-    });
+      ...(outcome ? { outcome } : {}),
+    };
+    this.setState("completed", reason);
+    this.events.emit("run.completed", completedPayload);
     const { message: payloadMessage, ...rest } = payload;
     this.result = {
       signal: "completed",
       state: "completed",
       stopReason: reason,
       message: typeof payloadMessage === "string" ? payloadMessage : undefined,
-      metadata: omitUndefined(rest),
+      metadata: omitUndefined({
+        ...rest,
+        ...(outcome ? { outcome } : {}),
+      }),
     };
     return this.result;
   }
@@ -3316,12 +3389,9 @@ function isRepeatedToolCall(
 
 /**
  * A coarse "what does this call act on" key, used only by the doom-loop guard.
- * It recognizes a model retrying the *same* target with cosmetically different
- * arguments (e.g. re-reading a path with a different `offset`/`limit`) by keying
- * on the path/patterns when present rather than the full argument object. Falls
- * back to a stable stringify of the whole argument object for tools that carry
- * no obvious target. This is a heuristic for loop detection only — it is never
- * used to dedupe or cache real results.
+ * This intentionally stays narrower than outcome recovery fingerprinting: a
+ * corrected argument shape for the same human-visible target should get a real
+ * execution chance instead of being skipped as another repeat.
  */
 function semanticToolTarget(toolName: string, args: unknown): string {
   if (args && typeof args === "object") {
@@ -3330,7 +3400,7 @@ function semanticToolTarget(toolName: string, args: unknown): string {
       return `${toolName}::path::${record.path}`;
     }
     if (Array.isArray(record.patterns)) {
-      return `${toolName}::patterns::${record.patterns.join(" ")}`;
+      return `${toolName}::patterns::${record.patterns.join("\u0000")}`;
     }
     if (typeof record.pattern === "string") {
       return `${toolName}::pattern::${record.pattern}`;
@@ -3357,118 +3427,11 @@ function shouldRequestContextCompaction(
   );
 }
 
-function mergeModelUsage(
-  current: ModelOutput["usage"],
-  next: ModelOutput["usage"],
-): ModelOutput["usage"] {
-  if (!next) return current;
-  return {
-    inputTokens: next.inputTokens ?? current?.inputTokens,
-    outputTokens: next.outputTokens ?? current?.outputTokens,
-    totalTokens: next.totalTokens ?? current?.totalTokens,
-    cacheReadTokens: next.cacheReadTokens ?? current?.cacheReadTokens,
-    cacheCreationTokens:
-      next.cacheCreationTokens ?? current?.cacheCreationTokens,
-    costUsd: next.costUsd ?? current?.costUsd,
-  };
-}
-
-function buildModelOutputTrace(input: {
-  output: ModelOutput;
-  attempt: number;
-  maxAttempts: number;
-  adapterId?: string;
-  streaming: boolean;
-  requestStartedAtMs: number;
-  requestCompletedAtMs: number;
-  streamTiming?: StreamTraceTiming;
-}): ModelOutputTrace {
-  const durationMs = Math.max(
-    0,
-    input.requestCompletedAtMs - input.requestStartedAtMs,
-  );
-  const usage = input.output.usage;
-  const inputTokens = usage?.inputTokens;
-  const outputTokens = usage?.outputTokens;
-  const totalTokens =
-    usage?.totalTokens ??
-    (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens ?? 0) + (outputTokens ?? 0)
-      : undefined);
-  const ttftMs =
-    input.streamTiming?.firstChunkAtMs === undefined
-      ? undefined
-      : Math.max(
-          0,
-          input.streamTiming.firstChunkAtMs - input.requestStartedAtMs,
-        );
-  const samplingMs =
-    ttftMs === undefined ? undefined : Math.max(0, durationMs - ttftMs);
-  const cacheReadTokens = usage?.cacheReadTokens;
-  const cacheCreationTokens = usage?.cacheCreationTokens;
-
-  return compactModelTrace({
-    attempt: input.attempt,
-    maxAttempts: input.maxAttempts,
-    retryCount: input.attempt - 1,
-    adapterId: input.adapterId,
-    streaming: input.streaming,
-    durationMs,
-    ttftMs,
-    ttltMs: durationMs,
-    requestStartedAt: new Date(input.requestStartedAtMs).toISOString(),
-    requestCompletedAt: new Date(input.requestCompletedAtMs).toISOString(),
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
-    cacheHitRatePct: ratePct(cacheReadTokens, inputTokens),
-    inputTokensPerSecond: ratePerSecond(inputTokens, ttftMs),
-    outputTokensPerSecond: ratePerSecond(
-      outputTokens,
-      samplingMs ?? durationMs,
-    ),
-    messageChars: input.output.message?.length,
-    toolCallCount: input.output.toolCalls?.length ?? 0,
-  });
-}
-
-function compactModelTrace(trace: ModelOutputTrace): ModelOutputTrace {
-  return Object.fromEntries(
-    Object.entries(trace).filter(([, value]) => value !== undefined),
-  ) as ModelOutputTrace;
-}
-
-function ratePerSecond(
-  count: number | undefined,
-  ms: number | undefined,
-): number | undefined {
-  if (count === undefined || ms === undefined || ms <= 0) return undefined;
-  return Math.round((count / (ms / 1000)) * 100) / 100;
-}
-
-function ratePct(
-  numerator: number | undefined,
-  denominator: number | undefined,
-): number | undefined {
-  if (
-    numerator === undefined ||
-    denominator === undefined ||
-    denominator <= 0
-  ) {
-    return undefined;
-  }
-  return Math.round((numerator / denominator) * 10000) / 100;
-}
-
-function countOmissionReasons(
-  omitted: Array<{ reason: string }>,
-): Record<string, number> {
-  return omitted.reduce<Record<string, number>>((counts, item) => {
-    counts[item.reason] = (counts[item.reason] ?? 0) + 1;
-    return counts;
-  }, {});
+function runStartedPayload(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const resolvedModel = metadata.resolvedModel;
+  return isRecord(resolvedModel) ? { resolvedModel } : {};
 }
 
 class ModelOutputInvalidError extends Error {
@@ -3481,324 +3444,12 @@ class ModelOutputInvalidError extends Error {
   }
 }
 
-class ModelCompletionFailure extends Error {
-  readonly cause: unknown;
-  readonly attempt: number;
-  readonly retryable: boolean;
-
-  constructor(cause: unknown, attempt: number, retryable: boolean) {
-    super(getErrorMessage(cause));
-    this.name = "ModelCompletionFailure";
-    this.cause = cause;
-    this.attempt = attempt;
-    this.retryable = retryable;
-  }
-}
-
-function toModelFailure(cause: unknown): ModelCompletionFailure {
-  if (cause instanceof ModelCompletionFailure) return cause;
-  return new ModelCompletionFailure(cause, 1, false);
-}
-
-/**
- * Heuristic: did this tool failure plausibly leave a side effect dangling?
- *
- * Network / timeout / aborted classes are the dangerous ones — the tool may
- * have already sent its outbound request when the failure surfaced. Pure
- * validation / argument / schema errors are safe to ignore here because the
- * tool never actually executed.
- */
-function isLikelySideEffectFailure(
-  error: ToolResult["error"] | undefined,
-): boolean {
-  if (!error) return false;
-  const code = error.code?.toUpperCase?.() ?? "";
-  if (RETRYABLE_MODEL_ERROR_CODES.has(code)) return true;
-  if (
-    code === "TOOL_TIMEOUT" ||
-    code === "TOOL_ABORTED" ||
-    code === "FETCH_FAILED" ||
-    code === "NETWORK_ERROR" ||
-    code.startsWith("E") // ECONN*, ETIME*, ENET*, etc.
-  ) {
-    return true;
-  }
-  const cause = error.cause;
-  if (cause && typeof cause === "object" && !Array.isArray(cause)) {
-    const nestedCode = (cause as Record<string, unknown>).code;
-    if (typeof nestedCode === "string") {
-      const upper = nestedCode.toUpperCase();
-      if (RETRYABLE_MODEL_ERROR_CODES.has(upper)) return true;
-    }
-  }
-  return false;
-}
-
-function isRetryableModelFailure(cause: unknown): boolean {
-  if (!isRecord(cause)) return false;
-
-  if (hasNonRetryableProviderCode(cause)) return false;
-
-  if (cause.retryable === true) return true;
-  if (cause.retryable === false) return false;
-
-  const status = getNestedNumericProperty(cause, ["status", "statusCode"]);
-  if (status !== undefined) {
-    return (
-      status === 408 ||
-      status === 409 ||
-      status === 425 ||
-      status === 429 ||
-      status >= 500
-    );
-  }
-
-  const code = getNestedStringProperty(cause, ["code"])?.toUpperCase();
-  return code !== undefined && RETRYABLE_MODEL_ERROR_CODES.has(code);
-}
-
-function normalizeModelError(cause: unknown): ModelErrorEnvelope {
-  const status = isRecord(cause)
-    ? getNestedNumericProperty(cause, ["status", "statusCode"])
-    : undefined;
-  const code = isRecord(cause)
-    ? getNestedStringProperty(cause, ["code"])
-    : undefined;
-  const upperCode = code?.toUpperCase();
-  const providerCode = isRecord(cause)
-    ? getProviderErrorCode(cause)
-    : undefined;
-  const recoveryHint = extractRecoveryHint(cause);
-  const retryable = isRetryableModelFailure(cause);
-  const retryAfterMs = extractRetryAfterMs(cause);
-
-  return {
-    category: modelErrorCategory({
-      status,
-      code: upperCode,
-      providerCode,
-      recoveryHint,
-    }),
-    message: getErrorMessage(cause),
-    code,
-    providerCode,
-    status,
-    retryable,
-    recoveryHint,
-    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    withholdOutput:
-      recoveryHint === "reduce_input" || recoveryHint === "extend_output",
-    safeToRetrySamePrompt: retryable && recoveryHint !== "reduce_input",
-  };
-}
-
-/**
- * Best-effort extraction of a provider cool-down (in ms) from a raw model
- * error. Recognizes, in priority order:
- *   1. a numeric `retryAfterMs` field (already in ms)
- *   2. a numeric `retryAfter` field (interpreted as seconds)
- *   3. an HTTP `Retry-After` header — either delta-seconds (`"120"`) or an
- *      HTTP-date (`"Wed, 21 Oct 2026 07:28:00 GMT"`), converted relative to now
- * All three are searched recursively (covers `error.headers['retry-after']`,
- * `cause.response.headers`, etc). Returns `undefined` when none is found or the
- * value is non-positive / unparseable.
- */
-function extractRetryAfterMs(cause: unknown): number | undefined {
-  if (!isRecord(cause)) return undefined;
-
-  const ms = getNestedNumericProperty(cause, ["retryAfterMs"]);
-  if (ms !== undefined && Number.isFinite(ms) && ms > 0) return ms;
-
-  const seconds = getNestedNumericProperty(cause, ["retryAfter"]);
-  if (seconds !== undefined && Number.isFinite(seconds) && seconds > 0) {
-    return Math.round(seconds * 1000);
-  }
-
-  const header = getNestedStringProperty(cause, ["retry-after", "Retry-After"]);
-  if (header !== undefined) {
-    const trimmed = header.trim();
-    const numeric = Number(trimmed);
-    if (Number.isFinite(numeric) && numeric > 0) {
-      return Math.round(numeric * 1000);
-    }
-    const dateMs = Date.parse(trimmed);
-    if (Number.isFinite(dateMs)) {
-      const delta = dateMs - Date.now();
-      if (delta > 0) return delta;
-    }
-  }
-
-  return undefined;
-}
-
-function modelErrorCategory(input: {
-  status?: number;
-  code?: string;
-  providerCode?: string;
-  recoveryHint?: ModelRecoveryHint;
-}): ModelErrorEnvelope["category"] {
-  if (input.recoveryHint === "reduce_input") return "context_overflow";
-  if (input.recoveryHint === "extend_output") return "output_truncated";
-  // Provider-specific terminal codes win over raw HTTP status because some
-  // providers (e.g. OpenAI) signal billing/quota exhaustion with HTTP 429,
-  // which is the same status used for transient rate limiting. Conflating
-  // them would push terminal failures through the retry loop unnecessarily.
-  if (input.providerCode === "insufficient_quota") return "quota";
-  if (input.providerCode === "invalid_api_key") return "auth";
-  if (input.providerCode === "model_not_found") return "invalid_request";
-  if (input.status === 401 || input.status === 403) return "auth";
-  if (input.status === 429) return "rate_limited";
-  if (input.status !== undefined && input.status >= 500) {
-    return "provider_unavailable";
-  }
-  if (input.code === "CONTENT_FILTER") return "content_filter";
-  if (input.code !== undefined && RETRYABLE_MODEL_ERROR_CODES.has(input.code)) {
-    return "network";
-  }
-  return "unknown";
-}
-
-function getErrorMessage(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  if (isRecord(cause)) {
-    const message = getStringProperty(cause, "message");
-    if (message !== undefined) return message;
-  }
-  return "Model completion failed.";
-}
-
-function getStringProperty(
-  value: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const property = value[key];
-  return typeof property === "string" ? property : undefined;
-}
-
-function getNumericProperty(
-  value: Record<string, unknown>,
-  key: string,
-): number | undefined {
-  const property = value[key];
-  return typeof property === "number" ? property : undefined;
-}
-
-function getNestedStringProperty(
-  value: Record<string, unknown>,
-  keys: string[],
-): string | undefined {
-  for (const key of keys) {
-    const direct = getStringProperty(value, key);
-    if (direct !== undefined) return direct;
-  }
-
-  for (const nested of nestedRecords(value)) {
-    const found = getNestedStringProperty(nested, keys);
-    if (found !== undefined) return found;
-  }
-
-  return undefined;
-}
-
-function getNestedNumericProperty(
-  value: Record<string, unknown>,
-  keys: string[],
-): number | undefined {
-  for (const key of keys) {
-    const direct = getNumericProperty(value, key);
-    if (direct !== undefined) return direct;
-  }
-
-  for (const nested of nestedRecords(value)) {
-    const found = getNestedNumericProperty(nested, keys);
-    if (found !== undefined) return found;
-  }
-
-  return undefined;
-}
-
-function hasNonRetryableProviderCode(value: Record<string, unknown>): boolean {
-  const providerCode = getProviderErrorCode(value);
-  return (
-    providerCode === "insufficient_quota" ||
-    providerCode === "invalid_api_key" ||
-    providerCode === "model_not_found"
-  );
-}
-
-function getProviderErrorCode(
-  value: Record<string, unknown>,
-): string | undefined {
-  const direct = getStringProperty(value, "code");
-  if (direct !== undefined) return direct;
-
-  const data = value.data;
-  if (isRecord(data)) {
-    const error = data.error;
-    if (isRecord(error)) {
-      const code = getStringProperty(error, "code");
-      if (code !== undefined) return code;
-    }
-  }
-
-  const error = value.error;
-  if (isRecord(error)) {
-    const code = getStringProperty(error, "code");
-    if (code !== undefined) return code;
-  }
-
-  // Walk one more layer of nested records (e.g. cause/lastError) so that
-  // wrappers like ModelCompletionFailure still expose the underlying
-  // provider code. Without this, retry-wrapped errors lose `insufficient_quota`
-  // and similar terminal signals, falling back to raw HTTP status alone.
-  for (const nested of nestedRecords(value)) {
-    const found = getProviderErrorCode(nested);
-    if (found !== undefined) return found;
-  }
-
-  return undefined;
-}
-
-function nestedRecords(
-  value: Record<string, unknown>,
-): Record<string, unknown>[] {
-  const records: Record<string, unknown>[] = [];
-  const knownNestedKeys = ["cause", "data", "error", "lastError"];
-
-  for (const nested of Object.values(value)) {
-    if (isRecord(nested)) records.push(nested);
-    if (Array.isArray(nested)) {
-      for (const item of nested) {
-        if (isRecord(item)) records.push(item);
-      }
-    }
-  }
-
-  for (const key of knownNestedKeys) {
-    const nested = value[key];
-    if (isRecord(nested)) records.push(nested);
-  }
-
-  const errors = value.errors;
-  if (Array.isArray(errors)) {
-    for (const error of errors) {
-      if (isRecord(error)) records.push(error);
-    }
-  }
-
-  return records;
-}
-
 function getModelAdapterId(
   adapter: ModelAdapter | undefined,
 ): string | undefined {
   if (!adapter) return undefined;
   const named = adapter as ModelAdapter & { id?: string; name?: string };
   return named.id ?? named.name;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function cloneLoopState(state: RunLoopState): RunLoopState {
@@ -3818,128 +3469,6 @@ function cloneLoopState(state: RunLoopState): RunLoopState {
         : undefined,
     },
   };
-}
-
-function validateModelOutput(output: ModelOutput): string | undefined {
-  if (typeof output !== "object" || output === null || Array.isArray(output)) {
-    return "Model output must be an object.";
-  }
-
-  if (output.message !== undefined && typeof output.message !== "string") {
-    return "Model output message must be a string when provided.";
-  }
-
-  if (output.toolCalls !== undefined) {
-    if (!Array.isArray(output.toolCalls))
-      return "Model output toolCalls must be an array when provided.";
-
-    for (const [index, toolCall] of output.toolCalls.entries()) {
-      if (
-        typeof toolCall !== "object" ||
-        toolCall === null ||
-        Array.isArray(toolCall)
-      ) {
-        return `Model output toolCalls[${index}] must be an object.`;
-      }
-
-      if (
-        typeof toolCall.toolName !== "string" ||
-        toolCall.toolName.length === 0
-      ) {
-        return `Model output toolCalls[${index}].toolName must be a non-empty string.`;
-      }
-
-      if (!("arguments" in toolCall)) {
-        return `Model output toolCalls[${index}].arguments is required.`;
-      }
-    }
-  }
-
-  if (output.usage !== undefined) {
-    if (!isRecord(output.usage)) {
-      return "Model output usage must be an object when provided.";
-    }
-
-    for (const key of [
-      "inputTokens",
-      "outputTokens",
-      "totalTokens",
-      "costUsd",
-    ]) {
-      const value = output.usage[key as keyof typeof output.usage];
-      if (
-        value !== undefined &&
-        (typeof value !== "number" || !Number.isFinite(value) || value < 0)
-      ) {
-        return `Model output usage.${key} must be a non-negative number when provided.`;
-      }
-    }
-  }
-
-  return undefined;
-}
-
-function validateRunBudget(budget: RunBudget | undefined): void {
-  if (!budget) return;
-
-  validatePositiveIntegerBudget(budget.maxDurationMs, "maxDurationMs");
-  validatePositiveIntegerBudget(budget.maxModelCalls, "maxModelCalls");
-  validatePositiveIntegerBudget(budget.maxToolCalls, "maxToolCalls");
-  validatePositiveIntegerBudget(budget.maxTokens, "maxTokens");
-
-  if (
-    budget.maxCostUsd !== undefined &&
-    (typeof budget.maxCostUsd !== "number" ||
-      !Number.isFinite(budget.maxCostUsd) ||
-      budget.maxCostUsd <= 0)
-  ) {
-    throw new Error("runBudget.maxCostUsd must be a positive number.");
-  }
-}
-
-function validatePositiveIntegerBudget(
-  value: number | undefined,
-  key: keyof Omit<RunBudget, "maxCostUsd">,
-): void {
-  if (value === undefined) return;
-
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`runBudget.${key} must be a positive integer.`);
-  }
-}
-
-/**
- * Decide which RunStopReason to attach when a model completion failed.
- *
- * Policy (most-specific wins):
- *   - category "auth"    -> model_auth_failed       (bad/missing API key, 401/403)
- *   - category "quota"   -> model_quota_exhausted   (insufficient_quota / billing)
- *   - retryable && exhausted retry budget -> model_retry_exhausted
- *   - everything else    -> model_completion_failed
- *
- * Note: provider_unavailable (5xx) and rate_limited (429) are intentionally
- * mapped through the retryable-exhaustion path today, since the loop already
- * retries them. A dedicated `model_provider_unavailable` reason is reserved
- * for future use when a provider signals a terminal outage without retry.
- */
-type ModelFailureStopReason = Extract<
-  RunStopReason,
-  | "model_completion_failed"
-  | "model_retry_exhausted"
-  | "model_auth_failed"
-  | "model_quota_exhausted"
-  | "model_provider_unavailable"
->;
-
-function selectModelFailureStopReason(input: {
-  category: ModelErrorEnvelope["category"];
-  retryable: boolean;
-  exhausted: boolean;
-}): ModelFailureStopReason {
-  if (input.category === "auth") return "model_auth_failed";
-  if (input.category === "quota") return "model_quota_exhausted";
-  if (input.retryable && input.exhausted) return "model_retry_exhausted";
-  return "model_completion_failed";
 }
 
 class RunBudgetExceededError extends Error {
@@ -3972,46 +3501,6 @@ class RunBudgetExceededError extends Error {
     super(message);
     this.name = "RunBudgetExceededError";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Recovery hint helpers (see ModelRecoveryHint). Providers attach
-// `recoveryHint` on the error they throw. Common shapes:
-//   { recoveryHint: 'reduce_input' }            // 413 / context too long
-//   { recoveryHint: 'extend_output' }           // max_output_tokens hit
-//   { recoveryHint: 'fallback_model' }          // provider down / quota
-// We also recognize a few common HTTP signals so a vanilla provider error
-// still routes through the recovery path without bespoke wrapping.
-// ---------------------------------------------------------------------------
-function extractRecoveryHint(cause: unknown): ModelRecoveryHint | undefined {
-  if (!isRecord(cause)) return undefined;
-  const direct = getStringProperty(cause, "recoveryHint");
-  if (
-    direct === "reduce_input" ||
-    direct === "extend_output" ||
-    direct === "fallback_model"
-  ) {
-    return direct;
-  }
-  for (const nested of nestedRecords(cause)) {
-    const inner = getStringProperty(nested, "recoveryHint");
-    if (
-      inner === "reduce_input" ||
-      inner === "extend_output" ||
-      inner === "fallback_model"
-    ) {
-      return inner;
-    }
-  }
-  // Implicit signals from common provider error shapes:
-  const status = getNestedNumericProperty(cause, ["status", "statusCode"]);
-  if (status === 413) return "reduce_input";
-  const code = getNestedStringProperty(cause, ["code"])?.toUpperCase();
-  if (code === "PROMPT_TOO_LONG" || code === "CONTEXT_LENGTH_EXCEEDED") {
-    return "reduce_input";
-  }
-  if (code === "MAX_OUTPUT_TOKENS") return "extend_output";
-  return undefined;
 }
 
 function makeContinuationContextItem(
@@ -4084,14 +3573,6 @@ function failureCategoryFor(
   if (reason.startsWith("validation_") || code.startsWith("VALIDATION_"))
     return "validation";
   return "runtime";
-}
-
-function omitUndefined(
-  input: Record<string, unknown>,
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(input).filter(([, value]) => value !== undefined),
-  );
 }
 
 function promptMetadataString(

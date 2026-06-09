@@ -6,6 +6,7 @@ import {
   type Client,
   type SpawnHostOptions,
 } from "@sparkwright/sdk-node";
+import { writeHostStartFailureTrace } from "@sparkwright/host";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
@@ -32,11 +33,18 @@ export type PermissionMode =
   | "dont_ask"
   | "bypass_permissions";
 
+export type TraceLevel = "minimal" | "standard" | "debug";
+
 export interface RunControllerOptions {
   workspaceRoot: string;
+  /** Session/trace storage root. Defaults to <workspace>/.sparkwright/sessions. */
+  sessionRootDir?: string;
   permissionMode?: PermissionMode;
-  /** Model reference in "provider/model" form, or the reserved "deterministic". */
+  traceLevel?: TraceLevel;
+  shouldWrite?: boolean;
+  /** Model reference shown by the TUI. Only request-sourced models are sent to the host. */
   modelName?: string;
+  modelNameSource?: "config" | "request";
   store: EventStore;
   /** If provided, runs accumulate into this session id. */
   initialSessionId?: string;
@@ -92,6 +100,10 @@ export class RunController {
     return this.sessionId;
   }
 
+  getSessionRootDir(): string {
+    return this.sessionRootDir();
+  }
+
   newSession(): string {
     this.sessionId = `session_tui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     this.currentSessionEvents = [];
@@ -121,7 +133,7 @@ export class RunController {
     this.sessionId = safe;
     this.store.reset();
     this.store.setSessionId(safe);
-    const events = await loadSessionEvents(this.opts.workspaceRoot, safe);
+    const events = await loadSessionEvents(this.sessionRootDir(), safe);
     this.currentSessionEvents = events.slice();
     this.replayEvents(events);
   }
@@ -168,12 +180,20 @@ export class RunController {
   }
 
   /** Hot-swap the model. Affects the NEXT run; in-flight is unaffected. */
-  updateModel(modelName?: string): void {
+  updateModel(
+    modelName?: string,
+    source: RunControllerOptions["modelNameSource"] = "request",
+  ): void {
     this.opts.modelName = modelName;
+    this.opts.modelNameSource = source;
   }
 
   updatePermissionMode(permissionMode: PermissionMode): void {
     this.opts.permissionMode = permissionMode;
+  }
+
+  updateTraceLevel(traceLevel: TraceLevel): void {
+    this.opts.traceLevel = traceLevel;
   }
 
   isRunning(): boolean {
@@ -182,29 +202,38 @@ export class RunController {
 
   async start(goal: string): Promise<void> {
     if (this.activeRunId) return;
+    this.store.appendUserMessage(goal);
+    this.store.setStatus("running");
+    this.store.setStopReason(null);
+
     let client: Client;
     try {
       client = await this.ensureClient();
     } catch (err) {
-      this.store.setError(err instanceof Error ? err.message : String(err));
+      const message = formatError(err);
+      await this.recordHostStartFailure(goal, message);
+      this.store.setError(message);
       return;
     }
-
-    this.store.appendUserMessage(goal);
-    this.store.setStatus("running");
-    this.store.setStopReason(null);
 
     try {
       const { runId } = await client.startRun({
         goal,
         sessionId: this.sessionId,
-        model: this.opts.modelName,
+        model: this.requestModelName(),
         permissionMode: this.opts.permissionMode,
+        traceLevel: this.opts.traceLevel ?? "standard",
+        shouldWrite: this.shouldWrite(),
+        metadata: this.runRequestMetadata(),
       });
       this.activeRunId = runId;
       this.cancelRequested = false;
     } catch (err) {
-      this.store.setError(formatError(err));
+      const message = formatError(err);
+      if (!this.hasTerminalRunEvent()) {
+        await this.recordHostStartFailure(goal, message);
+      }
+      this.store.setError(message);
       this.activeRunId = null;
     }
   }
@@ -338,9 +367,10 @@ export class RunController {
         "--stdio",
         "--workspace",
         this.opts.workspaceRoot,
+        "--session-root",
+        this.sessionRootDir(),
         "--permission-mode",
         this.opts.permissionMode ?? "default",
-        ...(this.opts.modelName ? ["--model", this.opts.modelName] : []),
       ],
     };
     this.clientPromise = createClient({
@@ -352,6 +382,89 @@ export class RunController {
       return c;
     });
     return this.clientPromise;
+  }
+
+  private sessionRootDir(): string {
+    return (
+      this.opts.sessionRootDir ??
+      join(this.opts.workspaceRoot, ".sparkwright", "sessions")
+    );
+  }
+
+  private async recordHostStartFailure(
+    goal: string,
+    message: string,
+  ): Promise<void> {
+    const result = await writeHostStartFailureTrace({
+      goal,
+      message,
+      sessionRootDir: this.sessionRootDir(),
+      source: "tui",
+      sessionId: this.sessionId,
+      traceLevel: this.opts.traceLevel ?? "standard",
+      shouldWrite: this.shouldWrite(),
+      metadata: this.runRequestMetadata(),
+    });
+    if (!result.tracePath) return;
+    try {
+      const events = await loadSessionEvents(
+        this.sessionRootDir(),
+        this.sessionId,
+      );
+      const existingIds = new Set(
+        this.currentSessionEvents
+          .map((event) =>
+            typeof event === "object" && event !== null && "id" in event
+              ? (event as { id?: unknown }).id
+              : undefined,
+          )
+          .filter((id): id is string => typeof id === "string"),
+      );
+      for (const event of events) {
+        const id = typeof event.id === "string" ? event.id : undefined;
+        if (id && existingIds.has(id)) continue;
+        this.currentSessionEvents.push(event);
+        if (id) existingIds.add(id);
+        this.store.appendEvent(
+          event as unknown as Parameters<typeof this.store.appendEvent>[0],
+        );
+      }
+    } catch {
+      // The UI already has the human-readable error. Trace readback is best
+      // effort so a filesystem race cannot mask the original failure.
+    }
+  }
+
+  private runRequestMetadata(): Record<string, unknown> {
+    return {
+      source: "tui",
+      sessionId: this.sessionId,
+      workspaceRoot: this.opts.workspaceRoot,
+      permissionMode: this.opts.permissionMode ?? "default",
+      traceLevel: this.opts.traceLevel ?? "standard",
+      shouldWrite: this.shouldWrite(),
+      ...(this.opts.modelName ? { model: this.opts.modelName } : {}),
+    };
+  }
+
+  private shouldWrite(): boolean {
+    return this.opts.shouldWrite === true;
+  }
+
+  private hasTerminalRunEvent(): boolean {
+    return this.currentSessionEvents.some((event) => {
+      if (typeof event !== "object" || event === null || !("type" in event)) {
+        return false;
+      }
+      const type = (event as { type?: unknown }).type;
+      return type === "run.failed" || type === "run.completed";
+    });
+  }
+
+  private requestModelName(): string | undefined {
+    return this.opts.modelNameSource === "config"
+      ? undefined
+      : this.opts.modelName;
   }
 
   private attachListeners(client: Client): void {
@@ -434,8 +547,13 @@ export class RunController {
         this.store.appendNotice(`handed back: ${handoff.message}`);
         this.store.setStatus("done");
       } else {
+        const terminalState = msg.payload.state;
         this.store.setStatus(
-          msg.payload.stopReason === "manual_cancelled" ? "error" : "done",
+          terminalState === "failed" ||
+            terminalState === "cancelled" ||
+            msg.payload.stopReason === "manual_cancelled"
+            ? "error"
+            : "done",
         );
       }
     });

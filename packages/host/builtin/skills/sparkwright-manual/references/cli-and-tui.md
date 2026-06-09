@@ -62,6 +62,16 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --model openai/<model-name>
 ```
 
+Scripted host run for deterministic tool-call diagnostics:
+
+```bash
+SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read_file","arguments":{"path":"README.md"}}]},{"message":"done"}]' \
+  npm exec sparkwright -- run "call scripted tools" \
+  --workspace examples/repo-pilot \
+  --model scripted \
+  --trace-level debug
+```
+
 ## High-Frequency Flags
 
 - `--workspace path`: workspace root for reads, writes, traces, sessions, and
@@ -74,6 +84,9 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
 - `--trace-level level`: one of `minimal`, `standard`, `debug`.
 - `--session-id id`: attach a run to a known session id.
 - `--model provider/model`: select a configured provider/model.
+- `--model scripted`: run a host-backed scripted model from
+  `SPARKWRIGHT_SCRIPTED_MODEL_JSON` or `SPARKWRIGHT_SCRIPTED_MODEL_FILE` for
+  repeatable tool-call diagnostics.
 - `--direct-core`: bypass the host and run the legacy in-process deterministic
   harness. Keep this for core regression tests and diagnostics, not the default
   product path.

@@ -17,6 +17,10 @@ if (args[0] === "tui") {
   // alive via listening sockets (WS) or stdin (stdio).
   const { runHostMain } = await import("@sparkwright/host");
   await runHostMain(args.slice(1));
+} else if (args[0] === "acp") {
+  // Lazy import so normal CLI/TUI paths do not load the ACP SDK.
+  const { runAcpMain } = await import("@sparkwright/acp-adapter");
+  await runAcpMain(args.slice(1), { cwd: process.cwd(), env: process.env });
 } else {
   const rl = createInterface({ input: stdin, output: stderr });
   try {

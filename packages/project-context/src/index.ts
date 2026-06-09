@@ -217,6 +217,22 @@ const WORKSPACE_PATH_GUIDANCE = [
   "  it relative to cwd, or list the parent directory once to see what exists.",
 ].join("\n");
 
+const REPO_EVIDENCE_GUIDANCE = [
+  "Repository-maintainer evidence:",
+  "- For repository review, release readiness, documentation comparison, or test",
+  "  harness proposals, ground the answer in actual workspace reads before",
+  "  making maintainer recommendations.",
+  "- Read the files named by the user. For broad repo tasks, also inspect the",
+  "  nearest manifest/scripts and existing tests or examples (for example",
+  "  package.json, test directories, scripts, docs, or examples as relevant).",
+  "- A path listing alone is discovery, not evidence for behavioral claims. If",
+  "  you only listed files, say that the result is preliminary and read the",
+  "  relevant files before proposing concrete changes.",
+  "- If a high-risk tool such as shell is denied, continue with read-only file",
+  "  tools where possible instead of asking the user to paste data that is",
+  "  available in the workspace.",
+].join("\n");
+
 const DELEGATION_GUIDANCE = [
   "Reporting a sub-agent's result:",
   "- A spawned/delegated child returns a `message` that is already its final,",
@@ -308,6 +324,17 @@ export function buildAgentPromptBuilder(
     createToolGuidanceSection({
       name: "workspace_path_resolution",
       guidance: WORKSPACE_PATH_GUIDANCE,
+      whenTool: (tool) =>
+        tool.name === "read_file" ||
+        tool.name === "glob_paths" ||
+        tool.name === "grep_text",
+    }),
+  );
+
+  sections.push(
+    createToolGuidanceSection({
+      name: "repo_maintainer_evidence",
+      guidance: REPO_EVIDENCE_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "read_file" ||
         tool.name === "glob_paths" ||

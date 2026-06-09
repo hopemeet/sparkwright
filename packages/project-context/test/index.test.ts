@@ -257,6 +257,25 @@ describe("buildAgentPromptBuilder", () => {
     );
   });
 
+  it("injects repo evidence guidance when workspace read tools are present", async () => {
+    const builder = buildAgentPromptBuilder({
+      cwd: await tempDir(),
+      ignoreProjectInstructions: true,
+    });
+    const guidanceOf = async (tools: { name: string }[]) => {
+      const messages = await builder.build(buildInput(tools));
+      return messages.find(
+        (m) => m.metadata?.sectionName === "repo_maintainer_evidence",
+      )?.content;
+    };
+
+    expect(await guidanceOf([])).toBeUndefined();
+    const guidance = await guidanceOf([{ name: "read_file" }]);
+    expect(guidance).toContain("Repository-maintainer evidence");
+    expect(guidance).toContain("A path listing alone is discovery");
+    expect(guidance).toContain("shell is denied");
+  });
+
   it("injects delegation-relay guidance only when a spawn/delegate tool is present", async () => {
     const builder = buildAgentPromptBuilder({
       cwd: await tempDir(),

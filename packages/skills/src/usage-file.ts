@@ -50,20 +50,8 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
     this.flush();
   }
 
-  markAgentCreated(name: string, metadata?: Record<string, unknown>): void {
-    const r = this.ensure(name);
-    r.agentCreated = true;
-    if (metadata) r.metadata = { ...r.metadata, ...metadata };
-    this.flush();
-  }
-
   forget(name: string): void {
     this.byName.delete(name);
-    this.flush();
-  }
-
-  setPinned(name: string, pinned: boolean): void {
-    this.ensure(name).pinned = pinned;
     this.flush();
   }
 
@@ -116,8 +104,6 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
         useCount: 0,
         patchCount: 0,
         state: "active",
-        pinned: false,
-        agentCreated: false,
       };
       this.byName.set(name, r);
     }
@@ -126,8 +112,5 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
 }
 
 function cloneRecord(record: SkillUsageRecord): SkillUsageRecord {
-  return {
-    ...record,
-    metadata: record.metadata ? { ...record.metadata } : undefined,
-  };
+  return { ...record };
 }

@@ -6,6 +6,7 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
+import { join } from "node:path";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
 import { EventStore } from "./state/event-store.js";
 import { RunController } from "./state/run-controller.js";
@@ -54,12 +55,13 @@ import {
 } from "./lib/project-commands.js";
 import {
   chordMatches,
+  ctrlCPressCount,
   formatBinding,
   DEFAULTS as DEFAULT_BINDINGS,
   type Bindings,
 } from "./lib/keybindings.js";
 import type { SessionDiagnostics, SessionSummary } from "./lib/sessions.js";
-import type { PermissionMode } from "./state/run-controller.js";
+import type { PermissionMode, TraceLevel } from "./state/run-controller.js";
 import {
   loadTuiConfig,
   watchTuiConfig,
@@ -71,7 +73,10 @@ import {
 
 export interface CliOverrides {
   workspaceRoot?: string;
+  sessionRootDir?: string;
   permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
+  shouldWrite?: boolean;
   modelName?: string;
   sessionId?: string;
 }
@@ -83,9 +88,13 @@ export interface AppProps {
 
 interface Resolved {
   workspaceRoot: string;
+  sessionRootDir: string;
   permissionMode: PermissionMode;
+  traceLevel: TraceLevel;
+  shouldWrite: boolean;
   /** Model reference "provider/model", or the reserved "deterministic". */
   modelName?: string;
+  modelNameSource?: "config" | "request";
   /** Provider definitions (for re-resolving creds on a /model change). */
   providers?: TuiConfigFile["providers"];
   sources: SourceMap;
@@ -108,21 +117,34 @@ function resolveConfig(
     cli.workspaceRoot ?? loaded.config.workspace ?? initialCwd;
   if (cli.workspaceRoot) sources.workspace = "cli:--workspace";
   else if (!loaded.config.workspace) sources.workspace = "default:cwd";
+  const sessionRootDir =
+    cli.sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions");
 
   const modelName = cli.modelName ?? loaded.config.model;
+  const modelNameSource = cli.modelName
+    ? ("request" as const)
+    : loaded.config.model
+      ? ("config" as const)
+      : undefined;
   if (cli.modelName) sources.model = "cli:--model";
 
   const permissionMode: PermissionMode =
     cli.permissionMode ?? loaded.config.permissionMode ?? "default";
   if (cli.permissionMode) sources.permissionMode = "cli:--permission-mode";
   else if (!loaded.config.permissionMode) sources.permissionMode = "default";
+  const traceLevel: TraceLevel = cli.traceLevel ?? "standard";
+  const shouldWrite = cli.shouldWrite === true;
 
   if (!loaded.config.theme) sources.theme = "default";
 
   return {
     workspaceRoot,
+    sessionRootDir,
     permissionMode,
+    traceLevel,
+    shouldWrite,
     modelName,
+    modelNameSource,
     providers: loaded.config.providers,
     sources,
     attempted: loaded.attempted,
@@ -194,12 +216,16 @@ function AppReady(
     () =>
       new RunController({
         workspaceRoot: resolved.workspaceRoot,
+        sessionRootDir: resolved.sessionRootDir,
         permissionMode: resolved.permissionMode,
+        traceLevel: resolved.traceLevel,
+        shouldWrite: resolved.shouldWrite,
         modelName: resolved.modelName,
+        modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
         store,
       }),
-    [resolved.workspaceRoot, store],
+    [resolved.workspaceRoot, resolved.sessionRootDir, store],
   );
 
   // Track the terminal height only to cap the live (in-flight) stream panel so
@@ -239,11 +265,8 @@ function AppReady(
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const labelsRef = useRef<SessionLabels | null>(null);
-  // Double-Ctrl+C-to-exit: the first press (when idle) arms a brief window;
-  // exit only happens if a second Ctrl+C lands before it expires. Stored as a
-  // timer handle so we can disarm it. Avoids quitting the whole TUI on a single
-  // accidental Ctrl+C.
-  const quitArmRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ctrl+C cancels an active run; when idle it exits immediately. This keeps
+  // the TUI scriptable under PTYs and matches the footer's "ctrl+c quit" hint.
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   // Runtime theme override from /theme; falls back to the configured theme.
   const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
@@ -381,9 +404,14 @@ function AppReady(
   async function reloadConfig(verbose: boolean): Promise<void> {
     const loaded = await loadTuiConfig(props.initialCwd);
     const r = resolveConfig(loaded, props.cliOverrides, props.initialCwd);
-    if (r.modelName !== resolved.modelName) controller.updateModel(r.modelName);
+    if (!modelOverride && r.modelName !== resolved.modelName) {
+      controller.updateModel(r.modelName, r.modelNameSource);
+    }
     if (r.permissionMode !== resolved.permissionMode) {
       controller.updatePermissionMode(r.permissionMode);
+    }
+    if (r.traceLevel !== resolved.traceLevel) {
+      controller.updateTraceLevel(r.traceLevel);
     }
     props.setResolved(r);
     // Re-discover file-authored commands so newly added .sparkwright/command/*.md
@@ -646,8 +674,8 @@ function AppReady(
     });
     reg.register({
       name: "cron",
-      title: "Browse cron support",
-      description: "Show cron-related tools and capability status.",
+      title: "Browse automation status",
+      description: "Show cron jobs and durable background task state.",
       category: "view",
       run: () => void openCapabilities("cron"),
     });
@@ -845,6 +873,18 @@ function AppReady(
     void controller.start(value);
   }
 
+  function requestQuit(presses = 1): void {
+    for (let i = 0; i < presses; i += 1) {
+      if (state.status === "running") {
+        if (controller.cancel())
+          toasts.push({ variant: "info", message: "cancelling…" });
+        return;
+      }
+      exit();
+      return;
+    }
+  }
+
   // Drain the prompt queue: when a run finishes and the controller is free,
   // start the next queued goal. Gated on `controller.isRunning()` so we never
   // double-start, and only on a settled status so an in-flight run is left
@@ -866,30 +906,7 @@ function AppReady(
     useInput((input, key) => {
       const top = layers.top();
       if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
-        // Ctrl+C is a single key that means three different things depending on
-        // state, so a lone press should never drop the user out of the TUI:
-        //   1. A run is in flight → cancel it (this is what the user reaches for
-        //      when esc-to-cancel is forgotten), and don't exit.
-        //   2. Already armed → second press within the window actually exits.
-        //   3. Otherwise → arm the quit window and tell the user to press again.
-        if (state.status === "running") {
-          if (controller.cancel())
-            toasts.push({ variant: "info", message: "cancelling…" });
-          return;
-        }
-        if (quitArmRef.current) {
-          clearTimeout(quitArmRef.current);
-          quitArmRef.current = null;
-          exit();
-          return;
-        }
-        quitArmRef.current = setTimeout(() => {
-          quitArmRef.current = null;
-        }, 2000);
-        toasts.push({
-          variant: "info",
-          message: "press ctrl+c again to exit",
-        });
+        requestQuit(Math.max(1, ctrlCPressCount(input)));
         return;
       }
       if (
@@ -988,13 +1005,14 @@ function AppReady(
               layers.pop("stash");
             }}
             onCommitModel={(modelName) => {
-              setModelOverride({ modelName });
-              controller.updateModel(modelName || undefined);
+              const nextModelName = modelName.trim() || "deterministic";
+              setModelOverride({ modelName: nextModelName });
+              controller.updateModel(nextModelName, "request");
               layers.pop("model");
               toasts.push({
                 variant: "success",
                 title: "model",
-                message: `${modelName || "deterministic"} (next run)`,
+                message: `${nextModelName} (next run)`,
               });
             }}
             onFork={(seq) => {
@@ -1181,13 +1199,14 @@ function AppReady(
               layers.pop("stash");
             }}
             onCommitModel={(modelName) => {
-              setModelOverride({ modelName });
-              controller.updateModel(modelName || undefined);
+              const nextModelName = modelName.trim() || "deterministic";
+              setModelOverride({ modelName: nextModelName });
+              controller.updateModel(nextModelName, "request");
               layers.pop("model");
               toasts.push({
                 variant: "success",
                 title: "model",
-                message: `${modelName || "deterministic"} (next run)`,
+                message: `${nextModelName} (next run)`,
               });
             }}
             onFork={(seq) => {
@@ -1265,6 +1284,7 @@ function AppReady(
                   toasts.push({ variant: "info", message: "cancelling…" });
               }
             }}
+            onQuit={requestQuit}
             stashRef={stashRef}
             onStashChange={(next) => {
               stashRef.current = next;
@@ -1601,9 +1621,11 @@ function CapabilitiesPanel(props: {
   const loaded = s?.skills.loaded ?? [];
   const mcp = s?.mcp.statuses ?? [];
   const agents = s?.agents.profiles ?? [];
+  const delegateTools = s?.agents.delegateTools ?? [];
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
   );
+  const automation = s?.automation;
   const title = capabilityPanelTitle(props.view);
   return (
     <Box
@@ -1630,8 +1652,10 @@ function CapabilitiesPanel(props: {
             indexedSkills={indexed}
             loadedSkills={loaded}
             agents={agents}
+            delegateTools={delegateTools}
             mcp={mcp}
             cronTools={cronTools}
+            automation={automation}
           />
 
           {props.view === "all" || props.view === "tools" ? (
@@ -1643,7 +1667,10 @@ function CapabilitiesPanel(props: {
           ) : null}
 
           {props.view === "all" || props.view === "agents" ? (
-            <AgentsCapabilitySection agents={agents} />
+            <AgentsCapabilitySection
+              agents={agents}
+              delegateTools={delegateTools}
+            />
           ) : null}
 
           {props.view === "all" || props.view === "mcp" ? (
@@ -1651,7 +1678,7 @@ function CapabilitiesPanel(props: {
           ) : null}
 
           {props.view === "cron" ? (
-            <CronCapabilitySection tools={cronTools} />
+            <CronCapabilitySection tools={cronTools} automation={automation} />
           ) : null}
         </>
       ) : null}
@@ -1682,8 +1709,10 @@ function CapabilityOverview(props: {
   indexedSkills: CapabilitySnapshot["skills"]["indexed"];
   loadedSkills: CapabilitySnapshot["skills"]["loaded"];
   agents: CapabilitySnapshot["agents"]["profiles"];
+  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
   mcp: CapabilitySnapshot["mcp"]["statuses"];
   cronTools: CapabilitySnapshot["tools"];
+  automation?: CapabilitySnapshot["automation"];
 }): React.ReactElement {
   const theme = useTheme();
   const unloadedSkills = Math.max(
@@ -1695,7 +1724,8 @@ function CapabilityOverview(props: {
       <Text>
         <Text color={theme.success}>Available now: </Text>
         {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
-        {props.agents.length} agents, {props.mcp.length} MCP servers
+        {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
+        {props.mcp.length} MCP servers
       </Text>
       <Text color={theme.muted}>
         Indexed Skills are discoverable examples; loaded Skills were selected
@@ -1711,6 +1741,14 @@ function CapabilityOverview(props: {
         <Text color={theme.muted}>
           Cron support is present through {props.cronTools.length} prepared tool
           {props.cronTools.length === 1 ? "" : "s"}.
+        </Text>
+      ) : null}
+      {props.automation ? (
+        <Text color={theme.muted}>
+          Automation state: {props.automation.cron.total} cron job
+          {props.automation.cron.total === 1 ? "" : "s"},{" "}
+          {props.automation.tasks.total} background task
+          {props.automation.tasks.total === 1 ? "" : "s"}.
         </Text>
       ) : null}
     </Box>
@@ -1784,19 +1822,33 @@ function SkillsCapabilitySection(props: {
 
 function AgentsCapabilitySection(props: {
   agents: CapabilitySnapshot["agents"]["profiles"];
+  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
 }): React.ReactElement {
   const theme = useTheme();
+  const count = props.agents.length + props.delegateTools.length;
   return (
     <CapabilitySection
-      title={`agents (${props.agents.length})`}
+      title={`agents (${props.agents.length} / ${props.delegateTools.length} delegates)`}
       empty="no agents reported"
-      count={props.agents.length}
+      count={count}
     >
       {props.agents.map((agent) => (
         <Text key={agent.id}>
           <Text color={theme.success}>• </Text>
           {agent.name ?? agent.id}
           {agent.mode ? <Text color={theme.muted}> · {agent.mode}</Text> : null}
+        </Text>
+      ))}
+      {props.delegateTools.map((tool) => (
+        <Text key={tool.toolName}>
+          <Text color={theme.success}>delegate </Text>
+          {tool.toolName}
+          <Text color={theme.muted}>
+            {" "}
+            → {tool.profileId} · {tool.protocol} ·{" "}
+            {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
+            {tool.workspaceAccess}
+          </Text>
         </Text>
       ))}
     </CapabilitySection>
@@ -1814,14 +1866,29 @@ function McpCapabilitySection(props: {
       count={props.mcp.length}
     >
       {props.mcp.map((server) => (
-        <Text key={server.serverName}>
-          <Text color={theme.success}>• </Text>
-          {server.serverName}
-          <Text color={theme.muted}>
-            {" "}
-            · {server.status} · {server.toolNames.length} tools
+        <Box key={server.serverName} flexDirection="column">
+          <Text>
+            <Text color={theme.success}>• </Text>
+            {server.serverName}
+            <Text color={theme.muted}>
+              {" "}
+              · {server.status} · {server.toolNames.length} tools
+            </Text>
+            {server.errorCode ? (
+              <Text color={theme.error}>
+                {" "}
+                · {server.errorCode}
+                {server.errorPhase ? ` (${server.errorPhase})` : ""}
+              </Text>
+            ) : null}
           </Text>
-        </Text>
+          {server.toolNames.length > 0 ? (
+            <Text color={theme.muted}> {server.toolNames.join(", ")}</Text>
+          ) : null}
+          {server.errorMessage ? (
+            <Text color={theme.muted}> {server.errorMessage}</Text>
+          ) : null}
+        </Box>
       ))}
     </CapabilitySection>
   );
@@ -1829,28 +1896,112 @@ function McpCapabilitySection(props: {
 
 function CronCapabilitySection(props: {
   tools: CapabilitySnapshot["tools"];
+  automation?: CapabilitySnapshot["automation"];
 }): React.ReactElement {
   const theme = useTheme();
+  const cron = props.automation?.cron;
+  const tasks = props.automation?.tasks;
   return (
-    <CapabilitySection
-      title={`cron tools (${props.tools.length})`}
-      empty="cron tool is not prepared for this host"
-      count={props.tools.length}
-    >
-      {props.tools.map((tool) => (
-        <Text key={tool.name}>
-          <Text color={theme.success}>• </Text>
-          {tool.name}
-          {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-          {tool.origin ? (
-            <Text color={theme.muted}> · {tool.origin}</Text>
-          ) : null}
-        </Text>
-      ))}
-      <Text color={theme.muted}>
-        schedule records are managed through the cron command surface
-      </Text>
-    </CapabilitySection>
+    <>
+      <CapabilitySection
+        title={`cron jobs (${cron?.total ?? 0})`}
+        empty="no cron jobs recorded"
+        count={cron?.total ?? 0}
+      >
+        {cron?.jobs.map((job) => (
+          <Box key={job.id} flexDirection="column">
+            <Text>
+              <Text color={job.enabled ? theme.success : theme.muted}>• </Text>
+              {job.name}
+              <Text color={theme.muted}>
+                {" "}
+                · {job.state} · {job.schedule}
+              </Text>
+              {job.lastStatus ? (
+                <Text
+                  color={job.lastStatus === "ok" ? theme.success : theme.error}
+                >
+                  {" "}
+                  · last {job.lastStatus}
+                </Text>
+              ) : null}
+            </Text>
+            <Text color={theme.muted}>
+              next {job.nextRunAt ?? "none"} · last {job.lastRunAt ?? "never"}
+            </Text>
+            {job.lastError ? (
+              <Text color={theme.error}> {job.lastError}</Text>
+            ) : null}
+          </Box>
+        ))}
+        {cron && cron.total > cron.jobs.length ? (
+          <Text color={theme.muted}>
+            … {cron.total - cron.jobs.length} more
+          </Text>
+        ) : null}
+        {cron ? <Text color={theme.muted}>state: {cron.rootDir}</Text> : null}
+      </CapabilitySection>
+
+      <CapabilitySection
+        title={`background tasks (${tasks?.total ?? 0})`}
+        empty="no durable background tasks recorded"
+        count={tasks?.total ?? 0}
+      >
+        {tasks?.tasks.map((task) => (
+          <Box key={task.id} flexDirection="column">
+            <Text>
+              <Text
+                color={
+                  task.status === "failed"
+                    ? theme.error
+                    : task.status === "completed"
+                      ? theme.success
+                      : theme.accent
+                }
+              >
+                •{" "}
+              </Text>
+              {task.kind}
+              <Text color={theme.muted}>
+                {" "}
+                · {task.status} · {task.id}
+              </Text>
+            </Text>
+            <Text color={theme.muted}>
+              {task.title ?? "untitled"} · output {task.outputChunks ?? 0}
+            </Text>
+            {task.error ? (
+              <Text color={theme.error}>
+                {task.error.code}: {task.error.message}
+              </Text>
+            ) : null}
+          </Box>
+        ))}
+        {tasks && tasks.total > tasks.tasks.length ? (
+          <Text color={theme.muted}>
+            … {tasks.total - tasks.tasks.length} more
+          </Text>
+        ) : null}
+        {tasks ? <Text color={theme.muted}>state: {tasks.rootDir}</Text> : null}
+      </CapabilitySection>
+
+      <CapabilitySection
+        title={`cron tools (${props.tools.length})`}
+        empty="cron tool is not prepared for this host"
+        count={props.tools.length}
+      >
+        {props.tools.map((tool) => (
+          <Text key={tool.name}>
+            <Text color={theme.success}>• </Text>
+            {tool.name}
+            {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+            {tool.origin ? (
+              <Text color={theme.muted}> · {tool.origin}</Text>
+            ) : null}
+          </Text>
+        ))}
+      </CapabilitySection>
+    </>
   );
 }
 

@@ -90,16 +90,13 @@ describe("FileSkillUsageRecorder", () => {
     const first = new FileSkillUsageRecorder({ path });
     first.recordUse("a", new Date("2026-01-01T00:00:00Z"));
     first.recordPatch("a", new Date("2026-01-02T00:00:00Z"));
-    first.markAgentCreated("a", { origin: "test" });
-    first.setPinned("a", true);
+    first.setState("a", "stale");
 
     const second = new FileSkillUsageRecorder({ path });
     expect(second.get("a")).toMatchObject({
       useCount: 1,
       patchCount: 1,
-      agentCreated: true,
-      pinned: true,
-      metadata: { origin: "test" },
+      state: "stale",
     });
     expect(await readFile(path, "utf8")).toContain("skill-usage.v0.1");
   });

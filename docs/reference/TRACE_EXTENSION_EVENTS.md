@@ -15,6 +15,7 @@ Experimental extension event names use the same dotted style as core events:
 
 ```txt
 skill.indexed
+skill.failed
 skill.loaded
 mcp.server.prepared
 agent.profile.derived
@@ -42,6 +43,19 @@ Emitted after a Skill source has been scanned and reduced to index metadata.
 }
 ```
 
+## skill.failed
+
+Emitted when one Skill source cannot be loaded. Other valid Skills may still be
+indexed and used.
+
+```json
+{
+  "source": ".sparkwright/skills/bad/SKILL.md",
+  "message": "Skill description must be a non-empty string: ...",
+  "phase": "load"
+}
+```
+
 ## skill.loaded
 
 Emitted when a selected Skill body is loaded into context or through a governed
@@ -62,7 +76,7 @@ loader tool.
 `mode` may be:
 
 - `resident_context`
-- `tool_observation`
+- `on_demand_tool`
 
 ## mcp.server.prepared
 

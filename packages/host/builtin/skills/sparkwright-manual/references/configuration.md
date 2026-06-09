@@ -214,6 +214,108 @@ Config-defined profiles live under `capabilities.agents.profiles`, and matching
 config entries win over markdown profiles. Only `delegateTools` entries become
 callable tools.
 
+Agent profiles may also describe an external ACP-compatible worker under
+`metadata.acp`. When such a profile is exposed through `delegateTools`,
+SparkWright creates an approval-gated tool that launches the configured command
+over stdio and sends the delegated goal through ACP:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_reviewer",
+          "metadata": {
+            "acp": {
+              "transport": "stdio",
+              "command": "codex",
+              "args": ["acp"],
+              "workspaceAccess": "read_write",
+              "timeoutMs": 120000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_reviewer",
+          "toolName": "delegate_external_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+`command` and `args` are local to the machine running the host. The ACP
+delegate receives the project cwd and prompt content, while SparkWright keeps
+policy, approval, trace, and the parent run lifecycle.
+
+For local assistants that are exposed as normal CLI commands rather than ACP
+servers, use `metadata.externalCommand`:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_cli_reviewer",
+          "metadata": {
+            "externalCommand": {
+              "command": "agent-cli",
+              "args": ["run", "{{goal}}"],
+              "envMode": "inherit",
+              "input": "none",
+              "workspaceAccess": "read_write",
+              "timeoutMs": 120000,
+              "maxStdoutBytes": 64000,
+              "maxStderrBytes": 64000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_cli_reviewer",
+          "toolName": "delegate_external_cli_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+External command delegates call `spawn` directly, not a shell. Supported
+placeholders in `args` are `{{goal}}`, `{{metadataJson}}`, and
+`{{workspaceRoot}}`. `input` may be `argument`, `stdin`, or `none`. Non-zero
+exits fail the delegate unless listed in `successExitCodes`. `envMode` defaults
+to `inherit`; use `explicit` to pass only the configured `env` map. Use
+`maxStdoutBytes` and `maxStderrBytes` for independent output limits, or
+`maxOutputBytes` as a shared fallback. `{{workspaceRoot}}` and `cwd` require
+`"workspaceAccess": "read_write"`; without it, the external process runs away
+from the project directory.
+
+Debug configured external delegates directly with:
+
+```bash
+sparkwright delegates run delegate_external_cli_reviewer \
+  --workspace . \
+  --goal "Inspect README.md and return one concise suggestion." \
+  --session-id delegate-debug \
+  --trace-level debug \
+  --yes
+```
+
+This command supports external ACP and external command delegates. Internal
+SparkWright child-agent profiles still run through the normal model/tool loop.
+It writes a normal session trace under
+`.sparkwright/sessions/<session-id>/trace.jsonl`.
+If the delegate profile uses `workspaceAccess: "read_write"`, direct debug runs
+must also pass `--write`; otherwise SparkWright refuses to expose the project
+workspace even when the delegate execution itself is approved.
+
 ## Cost Metadata
 
 Per-model cost metadata is optional and used for usage/cost reporting:
@@ -246,6 +348,7 @@ Use local facts first:
 
 ```bash
 npm exec sparkwright -- capabilities inspect --workspace . --format text
+npm exec sparkwright -- capabilities inspect --workspace . --resolve-mcp --format text
 npm exec sparkwright -- tools list --format text
 npm exec sparkwright -- agents validate --workspace .
 npm exec sparkwright -- skills validate --workspace .
@@ -257,6 +360,8 @@ Checks to make before proposing edits:
   key exists under `providers`.
 - API key ignored: check environment variable overrides.
 - Tool missing: inspect `tools.enabled` allowlists and `tools.disabled`.
+- MCP tool missing: use `capabilities inspect --resolve-mcp` to distinguish a
+  configured server from a prepared server with resolved tools.
 - User and project capability settings did not combine: remember that most
   fields other than `providers` are wholesale-overridden.
 - MCP server does not start: verify `cwd`, command path, timeout, and

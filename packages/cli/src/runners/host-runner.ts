@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type {
@@ -7,16 +8,27 @@ import type {
   TraceLevel,
 } from "@sparkwright/core";
 import { createClient, type Client } from "@sparkwright/sdk-node";
+import { writeHostStartFailureTrace } from "@sparkwright/host";
 import { createCliApprovalResolver } from "../cli-approval.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
+import {
+  cliExitCodeForRun,
+  createCliRunEventSummary,
+  summarizeRunFailure,
+  summarizeTerminalRunFailure,
+  summarizeUnhandledToolFailures,
+  summarizeWorkspaceMutations,
+  updateCliRunEventSummary,
+} from "../run-outcome.js";
 
 const require = createRequire(import.meta.url);
 
 export interface HostRunInput {
   goal: string;
   workspaceRoot: string;
+  sessionRootDir: string;
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -29,6 +41,7 @@ export interface HostRunInput {
 export interface HostResumeInput {
   runId: string;
   workspaceRoot: string;
+  sessionRootDir: string;
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -71,6 +84,7 @@ async function runHostLifecycle(
 ): Promise<HostRunResult> {
   const {
     workspaceRoot,
+    sessionRootDir,
     shouldWrite,
     approveAll,
     permissionMode,
@@ -85,12 +99,12 @@ async function runHostLifecycle(
   let runState: string | undefined;
   let stopReason: string | undefined;
   let failedMessage: string | undefined;
-  let writeCompletedCount = 0;
-  let writeSkippedCount = 0;
-  let writeDeniedCount = 0;
+  let terminalFailurePrinted = false;
+  const eventSummary = createCliRunEventSummary();
+  const forwardHostLogs = shouldForwardHostLogs(env);
 
   let tracePath = sessionId
-    ? join(workspaceRoot, ".sparkwright", "sessions", sessionId, "trace.jsonl")
+    ? join(sessionRootDir, sessionId, "trace.jsonl")
     : undefined;
 
   const terminal = new Promise<void>((resolveTerminal) => {
@@ -112,6 +126,8 @@ async function runHostLifecycle(
             "--stdio",
             "--workspace",
             workspaceRoot,
+            "--session-root",
+            sessionRootDir,
             "--permission-mode",
             permissionMode,
             ...(modelName ? ["--model", modelName] : []),
@@ -123,16 +139,12 @@ async function runHostLifecycle(
 
       client.on("host.log", (msg) => {
         const line = msg.payload.line;
-        if (line) writeLine(io.stderr, line);
+        if (line && forwardHostLogs) writeLine(io.stderr, line);
       });
 
       client.on("run.event", (msg) => {
         const event = msg.payload.event as SparkwrightEvent;
-        if (event.type === "workspace.write.completed")
-          writeCompletedCount += 1;
-        else if (event.type === "workspace.write.skipped")
-          writeSkippedCount += 1;
-        else if (event.type === "workspace.write.denied") writeDeniedCount += 1;
+        updateCliRunEventSummary(eventSummary, event);
         writeLine(io.stdout, formatEvent(event));
       });
 
@@ -167,6 +179,24 @@ async function runHostLifecycle(
         runId = msg.payload.runId;
         runState = msg.payload.state;
         stopReason = msg.payload.stopReason;
+        if (runState !== "completed") {
+          failedMessage =
+            summarizeRunFailure(eventSummary, {
+              state: runState,
+              stopReason,
+            }) ??
+            summarizeTerminalRunFailure({
+              state: runState,
+              stopReason,
+              failure: msg.payload.failure,
+            }) ??
+            failedMessage ??
+            `Run finished with state ${runState}${stopReason ? ` (${stopReason})` : ""}`;
+          if (!terminalFailurePrinted) {
+            writeLine(io.stderr, failedMessage);
+            terminalFailurePrinted = true;
+          }
+        }
         resolveOnce();
       });
 
@@ -176,6 +206,7 @@ async function runHostLifecycle(
         runState = "failed";
         stopReason = msg.payload.error.code;
         writeLine(io.stderr, failedMessage);
+        terminalFailurePrinted = true;
         resolveOnce();
       });
 
@@ -187,6 +218,7 @@ async function runHostLifecycle(
           runState = "failed";
           stopReason = "host_disconnected";
           writeLine(io.stderr, failedMessage);
+          terminalFailurePrinted = true;
           resolveOnce();
         }
       });
@@ -198,6 +230,8 @@ async function runHostLifecycle(
           model: modelName,
           permissionMode,
           traceLevel,
+          targetPath,
+          shouldWrite,
           metadata: {
             source: "cli",
             targetPath,
@@ -215,6 +249,8 @@ async function runHostLifecycle(
           model: modelName,
           permissionMode,
           traceLevel,
+          targetPath,
+          shouldWrite,
           metadata: {
             source: "cli",
             targetPath,
@@ -225,28 +261,47 @@ async function runHostLifecycle(
         runId = resumed.runId;
         if (resumed.sessionId) {
           sessionId = resumed.sessionId;
-          tracePath = join(
-            workspaceRoot,
-            ".sparkwright",
-            "sessions",
-            sessionId,
-            "trace.jsonl",
-          );
+          tracePath = join(sessionRootDir, sessionId, "trace.jsonl");
         }
       }
-    })().catch((error: unknown) => {
+    })().catch(async (error: unknown) => {
       failedMessage = formatHostError(error);
       runState = "failed";
       stopReason = "host_start_failed";
       writeLine(io.stderr, failedMessage);
+      terminalFailurePrinted = true;
+      if (tracePath && existsSync(tracePath)) {
+        resolveOnce();
+        return;
+      }
+      const failureTrace = await writeHostStartFailureTrace({
+        goal: "goal" in input ? input.goal : `resume ${input.runId}`.trim(),
+        message: failedMessage,
+        sessionRootDir: input.sessionRootDir,
+        source: "cli",
+        sessionId,
+        runId,
+        traceLevel: input.traceLevel,
+        targetPath: input.targetPath,
+        shouldWrite: input.shouldWrite,
+      });
+      sessionId = failureTrace.sessionId;
+      runId = failureTrace.runId;
+      tracePath = failureTrace.tracePath;
       resolveOnce();
     });
   });
 
   try {
     await terminal;
+    const failureSummary = summarizeUnhandledToolFailures(eventSummary);
+    if (failureSummary) writeLine(io.stderr, failureSummary);
     return {
-      exitCode: failedMessage ? 1 : 0,
+      exitCode: cliExitCodeForRun({
+        failedMessage,
+        runState,
+        events: eventSummary,
+      }),
       tracePath,
       sessionId,
       runState,
@@ -261,14 +316,41 @@ async function runHostLifecycle(
       io.stdout,
       summarizeWorkspaceMutations({
         shouldWrite,
-        completed: writeCompletedCount,
-        skipped: writeSkippedCount,
-        denied: writeDeniedCount,
+        completed: eventSummary.writeCompleted,
+        skipped: eventSummary.writeSkipped,
+        denied: eventSummary.writeDenied,
       }),
     );
-    if (tracePath) writeLine(io.stdout, `Trace written to ${tracePath}`);
-    client?.close();
+    if (tracePath && existsSync(tracePath))
+      writeLine(io.stdout, `Trace written to ${tracePath}`);
+    await closeClient(client);
   }
+}
+
+function shouldForwardHostLogs(
+  env: Record<string, string | undefined>,
+): boolean {
+  const value = env.SPARKWRIGHT_CLI_HOST_LOGS?.trim().toLowerCase();
+  return (
+    value === "1" || value === "true" || value === "yes" || value === "debug"
+  );
+}
+
+async function closeClient(client: Client | undefined): Promise<void> {
+  if (!client) return;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      client.off("disconnect", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 1_000);
+    client.on("disconnect", finish);
+    client.close();
+  });
 }
 
 function formatHostError(error: unknown): string {
@@ -302,23 +384,4 @@ function resolveHostBin(): string {
 
 function resolveHostSourceBin(): string {
   return join(dirname(dirname(resolveHostBin())), "src", "bin.ts");
-}
-
-function summarizeWorkspaceMutations(input: {
-  shouldWrite: boolean;
-  completed: number;
-  skipped: number;
-  denied: number;
-}): string {
-  const { shouldWrite, completed, skipped, denied } = input;
-  if (completed === 0 && skipped === 0 && denied === 0) {
-    return shouldWrite
-      ? "No workspace changes were made (no write was attempted)."
-      : "No workspace changes were made (read-only run).";
-  }
-  const parts: string[] = [];
-  if (completed > 0) parts.push(`${completed} applied`);
-  if (skipped > 0) parts.push(`${skipped} skipped (no-op)`);
-  if (denied > 0) parts.push(`${denied} denied`);
-  return `Workspace writes: ${parts.join(", ")}.`;
 }

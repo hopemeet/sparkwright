@@ -133,7 +133,7 @@ From the source checkout, you can also run the CLI without linking:
 npm run cli -- run "inspect this repo" --workspace . --model deterministic
 ```
 
-Allow a workspace write and approve it automatically:
+Enable workspace writes and approve them automatically:
 
 ```bash
 sparkwright run "inspect this repo and suggest a README improvement" \
@@ -145,15 +145,16 @@ sparkwright run "inspect this repo and suggest a README improvement" \
   --model deterministic
 ```
 
-That command works inside `examples/repo-pilot`, routes writes through the
-approval path, creates a diff artifact, and writes trace data under:
+That command works inside `examples/repo-pilot`, enables the approval path for
+workspace writes, and writes trace data under:
 
 ```txt
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
 ```
 
-Omit `--yes` to review the approval prompt yourself. Omit `--write` for a
-read-only run.
+If the selected model requests an edit, `--yes` approves it automatically and
+the trace records the resulting workspace write or denial. Omit `--yes` to
+review the approval prompt yourself. Omit `--write` for a read-only run.
 
 ## Interactive TUI
 
@@ -179,6 +180,119 @@ npm run tui
 The CLI and TUI run from compiled output. After pulling changes or editing
 source, rebuild with `npm run build`, or use `npm run cli -- ...` /
 `npm run tui`, which build first.
+
+## ACP Agent Server
+
+Run Sparkwright as an Agent Client Protocol (ACP) agent server for local
+editors and ACP clients:
+
+```bash
+sparkwright acp --workspace /path/to/your/project
+```
+
+The command speaks ACP JSON-RPC over stdio. ACP is an edge protocol here:
+Sparkwright still owns the governed runtime path for policy, approval,
+workspace writes, artifacts, and trace.
+
+Sparkwright can also delegate a bounded sub-task to another ACP-compatible
+agent process through an agent profile:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_reviewer",
+          "name": "External Reviewer",
+          "prompt": "Review changes and report concrete risks.",
+          "metadata": {
+            "acp": {
+              "transport": "stdio",
+              "command": "codex",
+              "args": ["acp"],
+              "workspaceAccess": "read_write",
+              "timeoutMs": 120000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_reviewer",
+          "toolName": "delegate_external_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+The external agent is launched as a local subprocess over stdio. The delegate
+tool remains a governed Sparkwright tool and requires approval by default.
+Omit `workspaceAccess` to run the subprocess away from the project directory;
+set `"workspaceAccess": "read_write"` only when the external agent should
+receive the project cwd.
+
+For local tools that do not expose ACP, use a generic external command profile:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_cli_reviewer",
+          "name": "External CLI Reviewer",
+          "metadata": {
+            "externalCommand": {
+              "command": "agent-cli",
+              "args": ["run", "{{goal}}"],
+              "envMode": "inherit",
+              "input": "none",
+              "workspaceAccess": "read_write",
+              "timeoutMs": 120000,
+              "maxStdoutBytes": 64000,
+              "maxStderrBytes": 64000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_cli_reviewer",
+          "toolName": "delegate_external_cli_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+`externalCommand` uses `spawn` directly, not a shell. `args` may contain
+`{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`; `input` can be
+`argument`, `stdin`, or `none`. Non-zero exits fail the delegate unless listed
+in `successExitCodes`. `envMode` defaults to `inherit`; set it to `explicit`
+to pass only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes`
+control output capture limits independently, with `maxOutputBytes` retained as
+a shared fallback. `{{workspaceRoot}}` and `cwd` require
+`"workspaceAccess": "read_write"`; without it, the command runs from an isolated
+temporary cwd and gets only the prompt/metadata you pass.
+
+Run a configured external delegate directly while debugging:
+
+```bash
+sparkwright delegates run delegate_external_cli_reviewer \
+  --workspace /path/to/your/project \
+  --goal "Inspect README.md and return one concise suggestion." \
+  --session-id delegate-debug \
+  --trace-level debug \
+  --yes
+```
+
+This direct path still applies the delegate approval gate. Use `--yes` only in
+trusted local debugging contexts. The command writes a normal session trace
+under `.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 ## Configure A Provider
 
@@ -220,6 +334,10 @@ agent profiles.
   stdio/WebSocket transport.
 - `packages/cli` - command-line interface and TUI launcher.
 - `packages/tui` - interactive terminal product surface.
+- `packages/acp-adapter` - Agent Client Protocol server adapter for local
+  editor/client integration.
+- `packages/acp-client-adapter` - Agent Client Protocol client worker for
+  delegating to external ACP-compatible agent processes.
 - `packages/protocol` - shared host protocol types.
 - `packages/sdk-core` and `packages/sdk-node` - client SDKs for talking to a
   host.

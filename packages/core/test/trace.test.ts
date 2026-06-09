@@ -23,6 +23,7 @@ import {
   serializeEventJsonl,
   summarizeTraceJsonl,
   validateSessionTraceConsistency,
+  verifyTraceJsonl,
 } from "../src/trace.js";
 
 describe("trace", () => {
@@ -520,6 +521,7 @@ describe("trace", () => {
     expect(
       (reloaded?.metadata as { step?: number }).step ?? 0,
     ).toBeGreaterThanOrEqual(2);
+    expect(reloaded?.eventSequence ?? 0).toBeGreaterThan(0);
   });
 
   it("reconstructs a best-effort checkpoint from trace when checkpoint.json is missing", async () => {
@@ -640,11 +642,13 @@ describe("trace", () => {
     expect(reconstructed?.budget.usage.modelCalls).toBe(1);
     expect(reconstructed?.budget.usage.toolCalls).toBe(1);
     expect(reconstructed?.loop.step).toBe(2); // resumed AFTER last seen step
+    expect(reconstructed?.eventSequence).toBe(2);
 
     // Now actually resume it (force required since resumability.complete=false).
     let observedStep = 0;
     const run = resumeRunFromCheckpoint(reconstructed!, {
       force: true,
+      runStore: (record) => new FileRunStore(record, { rootDir: root }),
       model: {
         async complete(input) {
           observedStep = input.step;
@@ -656,6 +660,10 @@ describe("trace", () => {
     expect(result.signal).toBe("completed");
     expect(observedStep).toBe(2);
     expect(run.record.id).toBe(runId);
+    const report = verifyTraceJsonl(
+      await readFile(join(runDir, "trace.jsonl"), "utf8"),
+    );
+    expect(report.findings).toEqual([]);
   });
 
   it("RunHandle.persistCheckpoint writes via the wired runStore", async () => {
@@ -986,6 +994,42 @@ describe("trace", () => {
     expect(summary.toolCalls).toEqual({ read_file: 1 });
   });
 
+  it("classifies policy and approval denials separately from unexpected errors", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("workspace.write.denied", {
+        proposalId: "write_1",
+        path: "README.md",
+        reason: "approval_denied",
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_1",
+        status: "failed",
+        error: { code: "APPROVAL_DENIED", message: "denied" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_2",
+        status: "failed",
+        error: { code: "TOOL_DENIED", message: "write disabled" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(0);
+    expect(summary.errorCodes).toEqual({});
+    expect(summary.expectedDenialCount).toBe(3);
+    expect(summary.expectedDenialCodes).toEqual({
+      "workspace.write.denied": 1,
+      APPROVAL_DENIED: 1,
+      TOOL_DENIED: 1,
+    });
+  });
+
   it("does not double count cumulative usage snapshots in summaries", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -1007,6 +1051,42 @@ describe("trace", () => {
     expect(summary.usage.totalTokens).toBe(12);
     expect(summary.usage.inputTokens).toBe(3);
     expect(summary.usage.outputTokens).toBe(5);
+  });
+
+  it("summarizes cost estimation status and unavailable reasons", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("model.completed", {
+        usage: {
+          inputTokens: 3,
+          outputTokens: 5,
+          totalTokens: 8,
+          costStatus: "unavailable",
+          costUnavailableReason: "missing_pricing",
+        },
+      }),
+      log.emit("model.completed", {
+        usage: {
+          inputTokens: 10,
+          outputTokens: 2,
+          totalTokens: 12,
+          costUsd: 0.001,
+          costStatus: "estimated",
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.usage.totalTokens).toBe(20);
+    expect(summary.usage.estimatedCostUsd).toBeCloseTo(0.001);
+    expect(summary.usage.costStatus).toBe("partial");
+    expect(summary.usage.costUnavailableReasons).toEqual({
+      missing_pricing: 1,
+    });
   });
 
   it("uses latest usage snapshots when model usage is unavailable", () => {
@@ -1106,6 +1186,82 @@ describe("trace", () => {
     ).not.toContain("model.stream.chunk");
   });
 
+  it("uses semantic phase keys before spans in trace timelines", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const span = (spanId: string) => ({
+      __span: { traceId: "trace_1", spanId },
+    });
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}, span("span_run")),
+      log.emit("model.turn.started", {}, span("span_turn_1")),
+      log.emit("model.requested", { step: 1 }, span("span_model_1")),
+      log.emit(
+        "model.completed",
+        { step: 1, message: "ok" },
+        span("span_model_1"),
+      ),
+      log.emit("model.turn.completed", {}, span("span_turn_1")),
+      log.emit(
+        "workspace.anchored_edit.requested",
+        { path: "README.md" },
+        span("span_edit_1"),
+      ),
+      log.emit(
+        "workspace.anchored_edit.verified",
+        { path: "README.md" },
+        span("span_edit_1"),
+      ),
+      log.emit("run.completed", { reason: "final_answer" }, span("span_run")),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "run",
+          status: "completed",
+          startSequence: 1,
+          endSequence: 9,
+        }),
+        expect.objectContaining({
+          category: "model",
+          status: "completed",
+          eventTypes: ["model.requested", "model.completed"],
+        }),
+        expect.objectContaining({
+          category: "workspace",
+          status: "completed",
+          eventTypes: [
+            "workspace.anchored_edit.requested",
+            "workspace.anchored_edit.verified",
+          ],
+        }),
+      ]),
+    );
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["run.started"]),
+        }),
+        expect.objectContaining({
+          eventTypes: expect.arrayContaining(["model.turn.completed"]),
+        }),
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining([
+            "workspace.anchored_edit.requested",
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("validates session trace consistency", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
     tempDirs.push(root);
@@ -1144,6 +1300,64 @@ describe("trace", () => {
       sessionId: "session_check",
       runIds: [run.id],
     });
+    expect(report.findings).toEqual([]);
+  });
+
+  it("accepts collapsed stream text ranges in session trace sequence checks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const sessionRootDir = root;
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: sessionRootDir }),
+      sessionId: "session_stream_compacted",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir,
+        sessionId: "session_stream_compacted",
+        agentId: "main",
+        traceLevel: "standard",
+      }),
+    });
+    const store = factory(run);
+
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    await store.append(log.emit("run.started", {}));
+    await store.append(log.emit("model.stream.started", { step: 1 }));
+    await store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "a" }),
+    );
+    await store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "b" }),
+    );
+    await store.append(log.emit("model.stream.completed", { step: 1 }));
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const trace = await readFile(
+      join(root, "session_stream_compacted", "trace.jsonl"),
+      "utf8",
+    );
+    const traceEvents = trace
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+    expect(traceEvents.map((event) => event.sequence)).toEqual([
+      1, 2, 3, 4, 6, 7,
+    ]);
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_stream_compacted"),
+    });
+
+    expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);
   });
 
@@ -1854,6 +2068,85 @@ describe("trace", () => {
     const filtered = filterTraceEvent(event, "standard");
     const size = JSON.stringify(filtered).length;
     expect(size).toBeLessThan(2000);
+  });
+
+  it("verifies a complete single-run trace", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "verify" }),
+      log.emit("run.started", {}),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = verifyTraceJsonl(jsonl);
+
+    expect(report.ok).toBe(true);
+    expect(report.eventCount).toBe(3);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("verifies traces with collapsed stream text sequence ranges", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-stream-verify-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root });
+
+    store.append(log.emit("run.created", { goal: run.goal }));
+    store.append(log.emit("run.started", {}));
+    store.append(log.emit("model.stream.started", { step: 1 }));
+    store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "a" }),
+    );
+    store.append(
+      log.emit("model.stream.chunk", { type: "text_delta", text: "b" }),
+    );
+    store.append(log.emit("model.stream.completed", { step: 1 }));
+    store.append(log.emit("run.completed", { reason: "final_answer" }));
+
+    const report = verifyTraceJsonl(await readFile(store.tracePath, "utf8"));
+
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("checks monotonic ordering per trace id, not across appended traces", () => {
+    const first = new EventLog(createRunId());
+    const second = new EventLog(createRunId());
+    const firstStart = first.emit("run.created", { goal: "first" });
+    const firstDone = first.emit("run.completed", { reason: "final_answer" });
+    const secondStart = second.emit("run.created", { goal: "second" });
+    const secondDone = second.emit("run.completed", {
+      reason: "final_answer",
+    });
+    secondStart.monotonicUs = 1;
+    secondDone.monotonicUs = 2;
+
+    const report = verifyTraceJsonl(
+      [firstStart, firstDone, secondStart, secondDone]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
+
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("flags half-written traces and missing terminal events", () => {
+    const log = new EventLog(createRunId());
+    const event = log.emit("run.created", { goal: "verify" });
+
+    const report = verifyTraceJsonl(JSON.stringify(event));
+
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining([
+        "TRACE_FINAL_NEWLINE_MISSING",
+        "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+      ]),
+    );
   });
 });
 

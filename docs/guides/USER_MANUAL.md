@@ -29,14 +29,15 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
   --target README.md \
   --write \
   --yes \
-  --trace-level standard
+  --trace-level standard \
+  --model deterministic
 ```
 
-This path uses the deterministic model by default, so it works as a repeatable
+This path selects the deterministic model explicitly, so it works as a repeatable
 smoke test without an external provider.
 
-The run reads from `examples/repo-pilot`, requests a workspace write, resolves
-approval through `--yes`, writes a diff artifact, and stores trace data under:
+The run reads from `examples/repo-pilot`, enables workspace writes, resolves
+approval through `--yes` if the model asks to edit, and stores trace data under:
 
 ```txt
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
@@ -53,17 +54,19 @@ Read-only trace smoke test:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal
+  --trace-level minimal \
+  --model deterministic
 ```
 
-Interactive approval:
+Approval-enabled run:
 
 ```bash
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
   --write \
-  --trace-level debug
+  --trace-level debug \
+  --model deterministic
 ```
 
 Non-interactive approval for demos and CI smoke checks:
@@ -73,11 +76,12 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
   --workspace examples/repo-pilot \
   --target README.md \
   --write \
-  --yes
+  --yes \
+  --model deterministic
 ```
 
-If `--write` is used without `--yes` in a non-interactive shell, the CLI denies
-the approval request and records `workspace.write.denied` in the trace.
+If `--write` is used without `--yes` in a non-interactive shell, any approval
+request is denied and recorded as `workspace.write.denied` in the trace.
 
 ## Provider-Backed Run
 
@@ -103,6 +107,133 @@ npm run tui
 
 The root script rebuilds the workspace before launching. If you run compiled
 files directly after editing source, rebuild first with `npm run build`.
+
+## ACP Agent Server
+
+Use ACP when an editor or local ACP client wants to launch Sparkwright as a
+coding agent subprocess:
+
+```bash
+sparkwright acp --workspace /path/to/project
+```
+
+The ACP server communicates over stdio. It maps ACP sessions and permission
+requests onto the normal Sparkwright host runtime, so policy, approval,
+workspace mutation, artifacts, and trace remain governed by Sparkwright.
+
+## External ACP Delegates
+
+Use an ACP delegate when a SparkWright run should call another local
+ACP-compatible coding agent for a bounded sub-task. Add an agent profile with
+`metadata.acp`, then expose it through `capabilities.agents.delegateTools`:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_reviewer",
+          "name": "External Reviewer",
+          "metadata": {
+            "acp": {
+              "transport": "stdio",
+              "command": "codex",
+              "args": ["acp"],
+              "cwd": ".",
+              "workspaceAccess": "read_write",
+              "timeoutMs": 120000
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_reviewer",
+          "toolName": "delegate_external_reviewer",
+          "description": "Delegate review work to an external ACP agent."
+        }
+      ]
+    }
+  }
+}
+```
+
+`command` and `args` can point at any installed ACP-compatible subprocess. The
+delegate tool is risky and approval-gated by default; the external agent does
+not receive SparkWright file-system or terminal capabilities unless a host
+explicitly adds them through a governed bridge. Omit `workspaceAccess` to avoid
+passing the project cwd; set `"workspaceAccess": "read_write"` only when the
+external agent should receive direct workspace access.
+
+## External Command Delegates
+
+Use an external command delegate when a local coding assistant is available as
+a normal CLI rather than an ACP server:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "external_cli_reviewer",
+          "name": "External CLI Reviewer",
+          "metadata": {
+            "externalCommand": {
+              "command": "agent-cli",
+              "args": ["run", "{{goal}}"],
+              "envMode": "inherit",
+              "input": "none",
+              "workspaceAccess": "read_write",
+              "timeoutMs": 120000,
+              "maxStdoutBytes": 64000,
+              "maxStderrBytes": 64000,
+              "successExitCodes": [0]
+            }
+          }
+        }
+      ],
+      "delegateTools": [
+        {
+          "profileId": "external_cli_reviewer",
+          "toolName": "delegate_external_cli_reviewer"
+        }
+      ]
+    }
+  }
+}
+```
+
+The command is launched with `spawn`, not through a shell. Supported argument
+placeholders are `{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`.
+Set `input` to `argument` to append the goal as the final argument, `stdin` to
+write the goal to standard input, or `none` when the configured args already
+contain all needed context. Non-zero exits fail the delegate unless listed in
+`successExitCodes`. `envMode` defaults to `inherit`; use `explicit` to pass
+only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes` set
+independent capture limits, while `maxOutputBytes` remains a shared fallback.
+`{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
+otherwise the process runs from an isolated temporary cwd and receives only the
+configured arguments/stdin.
+
+To debug a configured delegate without asking the main model to choose the
+tool, run it directly:
+
+```bash
+sparkwright delegates run delegate_external_cli_reviewer \
+  --workspace /path/to/project \
+  --goal "Inspect README.md and return one concise suggestion." \
+  --session-id delegate-debug \
+  --trace-level debug \
+  --yes \
+  --format text
+```
+
+The direct command supports ACP and external-command delegates. It does not run
+internal SparkWright child-agent profiles; use the normal run loop for those.
+Direct delegate runs write a session trace under
+`.sparkwright/sessions/<session-id>/trace.jsonl`.
 
 ## Permission Modes
 

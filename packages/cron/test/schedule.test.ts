@@ -9,6 +9,7 @@ import {
   jobIsDue,
   legacyConfigCronRoot,
   parseSchedule,
+  runCronJobByRef,
   scanAssembledPrompt,
   tickCron,
   withFileLock,
@@ -128,6 +129,103 @@ describe("CronStore", () => {
     release();
     await held;
     expect(result.skippedBecauseLocked).toBe(true);
+  });
+
+  it("locks manual runs per job and does not double-mark the job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-job-lock-"));
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cron-ws-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new CronStore({ rootDir: root });
+    const job = await store.createJob(
+      {
+        prompt: "summarize readme",
+        schedule: "every 1m",
+        repeat: { times: 5 },
+        workspace,
+      },
+      new Date("2026-01-01T00:00:00.000Z"),
+    );
+
+    let release!: () => void;
+    let firstPromise!: Promise<Awaited<ReturnType<typeof runCronJobByRef>>>;
+    const entered = new Promise<void>((resolve) => {
+      const model = {
+        async complete() {
+          resolve();
+          await new Promise<void>((done) => {
+            release = done;
+          });
+          return { message: "ok" };
+        },
+      };
+      firstPromise = runCronJobByRef(job.id, {
+        rootDir: root,
+        store,
+        model,
+        now: new Date("2026-01-01T00:01:00.000Z"),
+      });
+    });
+    await entered;
+
+    const second = await runCronJobByRef(job.id, {
+      rootDir: root,
+      store,
+      model: {
+        async complete() {
+          return { message: "should not run" };
+        },
+      },
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+    release();
+    const first = await firstPromise;
+
+    expect(first.result.ok).toBe(true);
+    expect(second.result.ok).toBe(false);
+    expect(second.result.message).toContain("already running");
+    const after = await store.getJob(job.id);
+    expect(after.repeat.completed).toBe(1);
+    expect(after.lastStatus).toBe("ok");
+    expect(after.lastRunId).toMatch(/^run_/);
+    expect(after.lastTracePath).toContain(`cron-${job.id}`);
+    expect(after.lastOutputPath).toContain(after.lastRunId ?? "");
+  });
+
+  it("stores failed run summaries and trace references", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-fail-"));
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cron-ws-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new CronStore({ rootDir: root });
+    const job = await store.createJob(
+      {
+        prompt: "fail",
+        schedule: "1m",
+        workspace,
+      },
+      new Date("2026-01-01T00:00:00.000Z"),
+    );
+
+    const result = await runCronJobByRef(job.id, {
+      rootDir: root,
+      store,
+      model: {
+        async complete() {
+          throw Object.assign(new Error("synthetic cron failure"), {
+            code: "SYNTHETIC_CRON_FAILURE",
+          });
+        },
+      },
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result.result.ok).toBe(false);
+    const after = await store.getJob(job.id);
+    expect(after.state).toBe("error");
+    expect(after.lastStatus).toBe("error");
+    expect(after.lastError).toContain("synthetic cron failure");
+    expect(after.lastRunId).toMatch(/^run_/);
+    expect(after.lastTracePath).toContain(`cron-${job.id}`);
+    expect(after.lastOutputPath).toBeNull();
   });
 });
 

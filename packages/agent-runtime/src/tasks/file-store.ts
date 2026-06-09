@@ -32,6 +32,8 @@ import type { TaskId, TaskOutputChunk, TaskRecord } from "./types.js";
 export interface FileTaskStoreOptions {
   /** Root directory for `tasks/<taskId>/record.json` and `output.jsonl`. */
   rootDir: string;
+  /** Create the root eagerly. Set false for read-only inspection commands. */
+  createRoot?: boolean;
 }
 
 /**
@@ -53,7 +55,9 @@ export class FileTaskStore implements TaskStore {
 
   constructor(options: FileTaskStoreOptions) {
     this.rootDir = resolve(options.rootDir);
-    mkdirSync(this.tasksDir(), { recursive: true });
+    if (options.createRoot !== false) {
+      mkdirSync(this.tasksDir(), { recursive: true });
+    }
     this.loadExistingRecords();
   }
 
@@ -214,6 +218,7 @@ export class FileTaskStore implements TaskStore {
   }
 
   private loadExistingRecords(): void {
+    if (!existsSync(this.tasksDir())) return;
     for (const entry of readdirSync(this.tasksDir(), { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const id = entry.name as unknown as TaskId;

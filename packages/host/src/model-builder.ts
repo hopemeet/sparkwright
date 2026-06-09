@@ -15,6 +15,11 @@ export interface BuildAdapterInput {
   fetch?: typeof fetch;
 }
 
+export interface ProviderRuntimeSources {
+  apiKey: string;
+  baseURL?: string;
+}
+
 /**
  * Construct a {@link ModelAdapter} for a resolved provider selection. The
  * provider's AI SDK package (`npm`) is loaded lazily so only the packages a
@@ -29,7 +34,8 @@ export interface BuildAdapterInput {
 export async function buildConfiguredAdapter(
   input: BuildAdapterInput,
 ): Promise<
-  { ok: true; adapter: ModelAdapter } | { ok: false; message: string }
+  | { ok: true; adapter: ModelAdapter; sources: ProviderRuntimeSources }
+  | { ok: false; message: string }
 > {
   const { selection, env } = input;
   const npmInfo = SUPPORTED_PROVIDER_NPMS[selection.npm];
@@ -40,13 +46,18 @@ export async function buildConfiguredAdapter(
     };
   }
 
-  const apiKey = selection.apiKey ?? env[npmInfo.apiKeyEnv];
+  const envApiKey = nonEmptyEnv(env, npmInfo.apiKeyEnv);
+  const apiKey = envApiKey ?? selection.apiKey;
   if (!apiKey) {
     return {
       ok: false,
       message: `No API key for provider "${selection.providerKey}". Set ${npmInfo.apiKeyEnv}, or add an "apiKey" to that provider in your config.`,
     };
   }
+  const baseUrlEnv = npmInfo.baseUrlEnv
+    ? nonEmptyEnv(env, npmInfo.baseUrlEnv)
+    : undefined;
+  const baseURL = baseUrlEnv ?? selection.baseURL;
 
   let mod: Record<string, unknown>;
   try {
@@ -79,7 +90,7 @@ export async function buildConfiguredAdapter(
     }) => (modelId: string) => unknown
   )({
     apiKey,
-    baseURL: selection.baseURL,
+    baseURL,
     fetch: input.fetch,
   });
 
@@ -106,5 +117,21 @@ export async function buildConfiguredAdapter(
     adapter: await registry.getAdapter(
       `${selection.providerKey}:${selection.modelId}`,
     ),
+    sources: {
+      apiKey: envApiKey ? `env:${npmInfo.apiKeyEnv}` : "config",
+      ...(baseURL
+        ? {
+            baseURL: baseUrlEnv ? `env:${npmInfo.baseUrlEnv}` : "config",
+          }
+        : {}),
+    },
   };
+}
+
+function nonEmptyEnv(
+  env: Record<string, string | undefined>,
+  key: string,
+): string | undefined {
+  const value = env[key];
+  return value && value.length > 0 ? value : undefined;
 }

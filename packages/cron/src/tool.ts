@@ -15,7 +15,7 @@ export function createCronTool(options: CreateCronToolOptions) {
   return defineTool({
     name: "cron",
     description:
-      "Create, list, update, pause, resume, run, or remove scheduled SparkWright cron jobs. Jobs run in fresh sessions; the cron tool is disabled inside scheduled runs.",
+      "Create, list, inspect, update, pause, resume, run, or remove scheduled SparkWright cron jobs. Jobs run in fresh sessions; the cron tool is disabled inside scheduled runs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -28,6 +28,7 @@ export function createCronTool(options: CreateCronToolOptions) {
             "pause",
             "resume",
             "run",
+            "status",
             "remove",
           ],
         },
@@ -79,6 +80,9 @@ export function createCronTool(options: CreateCronToolOptions) {
         case "remove":
           if (!input.ref) throw new Error("cron.remove requires ref");
           return store.removeJob(input.ref);
+        case "status":
+          if (!input.ref) throw new Error("cron.status requires ref");
+          return store.getJob(input.ref);
         case "run":
           throw new Error(
             "cron.run is available from the CLI (`sparkwright cron run <ref>`) so scheduled runs do not recursively start from an active agent session.",

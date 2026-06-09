@@ -6,6 +6,7 @@
 import { createApprovalId } from "./ids.js";
 import type { RunId } from "./ids.js";
 import type { ApprovalRequest, ApprovalResponse } from "./types.js";
+import { isRecord } from "./record-utils.js";
 
 export type ApprovalResolver = (
   request: ApprovalRequest,
@@ -122,8 +123,4 @@ function deniedApprovalResponse(
     decision: "denied",
     message,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

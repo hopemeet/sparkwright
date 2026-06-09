@@ -171,6 +171,12 @@ export interface RunCheckpointV1 {
   run: RunRecord;
   /** @reserved Public checkpoint payload consumed by resume/fork tooling. */
   loop: RunLoopState;
+  /**
+   * Last persisted event sequence observed for this run when the checkpoint was
+   * created or reconstructed. Resumed runs continue after this value so an
+   * append-only run trace remains valid.
+   */
+  eventSequence?: number;
   model: {
     activeIndex: number;
     activeAdapterId?: string;
@@ -375,7 +381,15 @@ export type ModelErrorCategory =
   | "provider_unavailable"
   | "invalid_request"
   | "content_filter"
+  | "timeout"
   | "network"
+  | "unknown";
+
+export type ModelTimeoutKind =
+  | "connect"
+  | "request"
+  | "first_token"
+  | "stream"
   | "unknown";
 
 /**
@@ -391,6 +405,9 @@ export interface ModelErrorEnvelope {
   status?: number;
   retryable: boolean;
   recoveryHint?: ModelRecoveryHint;
+  timeoutKind?: ModelTimeoutKind;
+  configuredTimeoutMs?: number;
+  elapsedMs?: number;
   /**
    * Provider-requested cool-down before the next attempt, in milliseconds.
    * Normalized from an HTTP `Retry-After` header (seconds or HTTP-date) or a
@@ -415,7 +432,14 @@ export interface ModelUsage {
   cacheReadTokens?: number;
   /** Provider-reported prompt-cache creation/write tokens, when available. */
   cacheCreationTokens?: number;
+  /**
+   * Estimated model cost in USD when pricing metadata is available.
+   * `costStatus` explains whether this field is meaningful or absent because
+   * pricing is unavailable.
+   */
   costUsd?: number;
+  costStatus?: "estimated" | "unavailable";
+  costUnavailableReason?: "missing_pricing" | string;
 }
 
 /**
@@ -520,6 +544,8 @@ export interface ModelOutputChunk {
 }
 
 export interface ModelAdapter {
+  /** Stable identifier surfaced in trace and usage byModel buckets. */
+  id?: string;
   contextHints?: ModelContextHints;
   complete(input: ModelInput): Promise<ModelOutput>;
   stream?(input: ModelInput): AsyncIterable<ModelOutputChunk>;

@@ -191,4 +191,141 @@ describe("@sparkwright/sdk-core Client", () => {
       agents: { profiles: [{ id: "main" }] },
     });
   });
+
+  it("starts a run and collects stable lifecycle evidence", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const collected = client.startRunAndCollect({
+      goal: "inspect metadata",
+    });
+    const request = transport.sent[0];
+
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "run.start",
+      payload: { goal: "inspect metadata" },
+    });
+
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: { runId: "run_1" },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_1",
+      kind: "run.event",
+      timestamp: "2026-05-24T00:00:00.000Z",
+      payload: {
+        runId: "run_1",
+        event: { type: "model.stream.chunk", payload: { text: "a" } },
+      },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_2",
+      kind: "run.event",
+      timestamp: "2026-05-24T00:00:01.000Z",
+      payload: {
+        runId: "run_1",
+        event: {
+          type: "tool.failed",
+          payload: {
+            error: { code: "TOOL_ARGUMENTS_INVALID", message: "bad args" },
+          },
+        },
+      },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_3",
+      kind: "run.event",
+      timestamp: "2026-05-24T00:00:02.000Z",
+      payload: {
+        runId: "run_1",
+        event: { type: "artifact.created", payload: { path: "a.log" } },
+      },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_4",
+      kind: "run.event",
+      timestamp: "2026-05-24T00:00:03.000Z",
+      payload: {
+        runId: "run_1",
+        event: {
+          type: "workspace.write.completed",
+          payload: { path: "README.md" },
+        },
+      },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_5",
+      kind: "approval.requested",
+      timestamp: "2026-05-24T00:00:04.000Z",
+      payload: {
+        runId: "run_1",
+        approvalId: "approval_1",
+        action: "workspace.write",
+        summary: "write README.md",
+      },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_6",
+      kind: "run.continuation",
+      timestamp: "2026-05-24T00:00:05.000Z",
+      payload: {
+        runId: "run_2",
+        previousRunId: "run_1",
+        continuationCount: 1,
+        reason: "unfinished_todo",
+      },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_7",
+      kind: "run.completed",
+      timestamp: "2026-05-24T00:00:06.000Z",
+      payload: {
+        runId: "run_2",
+        state: "completed",
+        stopReason: "final_answer",
+        message: "done",
+        outcome: {
+          kind: "completed_with_tool_failures",
+          toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+        },
+      },
+    });
+
+    await expect(collected).resolves.toMatchObject({
+      runId: "run_1",
+      runIds: ["run_1", "run_2"],
+      terminal: { payload: { runId: "run_2" } },
+      finalAnswer: "done",
+      outcome: {
+        kind: "completed_with_tool_failures",
+        toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+      },
+      toolFailures: [{ type: "tool.failed" }],
+      artifacts: [{ type: "artifact.created" }],
+      writes: [{ type: "workspace.write.completed" }],
+      approvals: [{ kind: "approval.requested" }],
+    });
+    await expect(collected).resolves.toMatchObject({
+      runEvents: [
+        { type: "tool.failed" },
+        { type: "artifact.created" },
+        { type: "workspace.write.completed" },
+      ],
+    });
+  });
 });

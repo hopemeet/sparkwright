@@ -175,14 +175,16 @@ Begin a new agent run.
 
 **Payload**
 
-| Field        | Type                                     | Required | Notes                                                              |
-| ------------ | ---------------------------------------- | -------- | ------------------------------------------------------------------ |
-| `goal`       | string                                   | yes      | User goal text.                                                    |
-| `sessionId`  | string                                   | no       | Existing session to write into; host creates a new one if omitted. |
-| `provider`   | `"deterministic"` \| `"openai"`          | no       | Overrides host default.                                            |
-| `model`      | string                                   | no       | Required when `provider` is `openai`.                              |
-| `traceLevel` | `"minimal"` \| `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.            |
-| `metadata`   | object                                   | no       | Free-form, propagated to runRecord.                                |
+| Field            | Type                                     | Required | Notes                                                                      |
+| ---------------- | ---------------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `goal`           | string                                   | yes      | User goal text.                                                            |
+| `sessionId`      | string                                   | no       | Existing session to write into; host creates a new one if omitted.         |
+| `targetPath`     | string                                   | no       | Workspace-relative target path the run should focus on when applicable.    |
+| `shouldWrite`    | boolean                                  | no       | Whether this run is allowed to request workspace writes.                   |
+| `model`          | string                                   | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
+| `permissionMode` | string                                   | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
+| `traceLevel`     | `"minimal"` \| `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                    |
+| `metadata`       | object                                   | no       | Free-form, propagated to runRecord.                                        |
 
 **Response result**
 
@@ -230,6 +232,8 @@ prefer checking the host capability list before using it.
 | ---------------- | ------- | -------- | -------------------------------------------------------------------------- |
 | `runId`          | string  | yes      | Prior run id to resume.                                                    |
 | `sessionId`      | string  | no       | Session scope used to disambiguate where the prior run lives.              |
+| `targetPath`     | string  | no       | Workspace-relative target path the resumed run should focus on if needed.  |
+| `shouldWrite`    | boolean | no       | Whether this resumed run is allowed to request workspace writes.           |
 | `fromTrace`      | boolean | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.         |
 | `force`          | boolean | no       | Allow resuming checkpoints that are terminal or normally refused.          |
 | `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
@@ -363,9 +367,31 @@ scanning files or interpreting local config.
     "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }]
   },
   "mcp": { "statuses": [] },
-  "agents": { "profiles": [{ "id": "main", "mode": "primary" }] }
+  "agents": {
+    "profiles": [{ "id": "main", "mode": "primary" }],
+    "delegateTools": [
+      {
+        "toolName": "delegate_external_reviewer",
+        "profileId": "external_reviewer",
+        "protocol": "external_command",
+        "risk": "risky",
+        "requiresApproval": true,
+        "forbidNesting": true,
+        "sideEffects": ["external"],
+        "workspaceAccess": "none",
+        "shellAccess": false,
+        "processSpawn": true,
+        "command": "agent-cli",
+        "args": ["run", "{{goal}}"]
+      }
+    ]
+  }
 }
 ```
+
+`workspaceAccess: "none"` means the external delegate is not handed the project
+cwd or `{{workspaceRoot}}`. Use `"read_write"` only for explicitly trusted
+delegates that should inspect or mutate the workspace directly.
 
 ---
 
@@ -424,17 +450,28 @@ A run is paused waiting for human decision.
 
 ### `run.completed`
 
-Terminal event for a successful or cancelled run.
+Terminal event for a core run that reached a final state. `state` may be
+`completed`, `failed`, or `cancelled`; host/runtime protocol errors are reported
+with `run.failed` instead.
 
-| Field        | Type   | Notes                                            |
-| ------------ | ------ | ------------------------------------------------ |
-| `runId`      | string |                                                  |
-| `state`      | string | Final RunState.                                  |
-| `stopReason` | string | Optional. `manual_cancelled` for user-cancelled. |
+| Field         | Type   | Notes                                                         |
+| ------------- | ------ | ------------------------------------------------------------- |
+| `runId`       | string |                                                               |
+| `state`       | string | Final RunState.                                               |
+| `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.              |
+| `outcome`     | object | Optional structured non-clean completion summary.             |
+| `failure`     | object | Optional structured cause for `failed` or `cancelled` states. |
+| `todoHandoff` | object | Optional unfinished-todo handoff reason and message.          |
+
+`failure` uses `{ category, code, message, retryable, metadata }`. Providers may
+include model-specific details such as HTTP status, timeout kind, or retryability
+inside `metadata.modelError`; clients should surface the message/code and treat
+unknown metadata as diagnostic context.
 
 ### `run.failed`
 
-Terminal event for a run that ended in error.
+Terminal event for a host/runtime protocol error before a core run can finish
+normally.
 
 | Field   | Type          |
 | ------- | ------------- |

@@ -1,14 +1,14 @@
 {
-  "name": "@sparkwright/skill-curator",
+  "name": "@sparkwright/acp-adapter",
   "version": "0.1.0",
-  "description": "Background skill maintenance: lifecycle state machine + dry-run consolidation reviews.",
+  "description": "ACP agent-server adapter for Sparkwright host runtimes.",
   "license": "Apache-2.0",
   "author": "hopemeet <https://x.com/hopemeet_ai>",
   "homepage": "https://github.com/hopemeet/sparkwright#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hopemeet/sparkwright.git",
-    "directory": "packages/skill-curator"
+    "directory": "packages/acp-adapter"
   },
   "bugs": {
     "url": "https://github.com/hopemeet/sparkwright/issues"
@@ -32,8 +32,15 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.25.0",
+    "@sparkwright/acp-client-adapter": "0.1.0",
     "@sparkwright/core": "0.1.0",
-    "@sparkwright/skills": "0.1.0"
+    "@sparkwright/host": "0.1.0",
+    "@sparkwright/protocol": "0.1.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.6"
   },
   "publishConfig": {
     "access": "public"
@@ -42,8 +49,8 @@
   "sideEffects": false,
   "keywords": [
     "agents",
-    "skills",
-    "curation",
-    "self-improvement"
+    "acp",
+    "adapter",
+    "runtime"
   ]
 }

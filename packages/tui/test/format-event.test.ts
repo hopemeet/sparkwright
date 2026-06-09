@@ -18,6 +18,27 @@ describe("formatEvent", () => {
       color: "blue",
       detail: "reviewer",
     });
+    expect(
+      formatEvent(event("skill.failed", { source: "/tmp/bad/SKILL.md" })),
+    ).toMatchObject({
+      color: "red",
+      detail: "/tmp/bad/SKILL.md",
+    });
+  });
+
+  it("formats capability failures", () => {
+    expect(
+      formatEvent(
+        event("capability.index.failed", {
+          kind: "skills",
+          code: "SKILL_INDEX_FAILED",
+          source: "/tmp/bad/SKILL.md",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail: "skills SKILL_INDEX_FAILED /tmp/bad/SKILL.md",
+    });
   });
 
   it("formats MCP and agent lifecycle events", () => {
@@ -26,6 +47,18 @@ describe("formatEvent", () => {
         event("mcp.server.prepared", { name: "github", status: "connected" }),
       ),
     ).toMatchObject({ color: "cyan", detail: "github connected" });
+    expect(
+      formatEvent(
+        event("mcp.server.prepared", {
+          name: "missing",
+          status: "failed",
+          errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail: "missing failed MCP_SERVER_COMMAND_NOT_FOUND",
+    });
     expect(
       formatEvent(
         event("agent.profile.derived", {

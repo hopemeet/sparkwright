@@ -131,6 +131,9 @@ export function chordMatches(
   },
   inkInput: string,
 ): boolean {
+  if (chord.ctrl && chord.key === "c" && ctrlCPressCount(inkInput) > 0) {
+    return !chord.meta;
+  }
   if (!!chord.ctrl !== !!inkKey.ctrl) return false;
   if (!!chord.meta !== !!inkKey.meta) return false;
   // Ink's `shift` flag isn't always reliable for printable chars (user just
@@ -166,6 +169,14 @@ export function chordMatches(
     default:
       return false;
   }
+}
+
+export function ctrlCPressCount(inkInput: string): number {
+  let count = 0;
+  for (const char of inkInput) {
+    if (char === "\x03") count += 1;
+  }
+  return count;
 }
 
 /** Pretty-print a chord for help panels. */

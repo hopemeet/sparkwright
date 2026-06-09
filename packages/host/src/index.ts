@@ -15,6 +15,11 @@ export { installCrashLog } from "./crash-log.js";
 export { runHostMain } from "./main.js";
 export { buildConfiguredAdapter } from "./model-builder.js";
 export type { BuildAdapterInput } from "./model-builder.js";
+export { runConfiguredDelegate } from "./delegate-runner.js";
+export type {
+  RunConfiguredDelegateInput,
+  RunConfiguredDelegateResult,
+} from "./delegate-runner.js";
 export { applyToolConfig } from "./tools.js";
 export {
   projectSkillRoot,
@@ -62,6 +67,22 @@ export {
   CONFIG_USER_REL,
   CONFIG_ENV_VAR,
 } from "./config.js";
+export {
+  delegateToolName,
+  describeDelegateCapability,
+  describeExternalDelegateCapability,
+  type DelegateCapabilityDescriptor,
+  type DelegateFailureCode,
+  type DelegateProtocol,
+  type DelegateWorkspaceAccess,
+} from "./delegate-capability.js";
+export { validateRunInput } from "./run-input-validation.js";
+export type {
+  RunInputValidationInput,
+  RunInputValidationResult,
+} from "./run-input-validation.js";
+export { writeHostStartFailureTrace } from "./failure-trace.js";
+export type { HostStartFailureTraceInput } from "./failure-trace.js";
 export type {
   SharedConfig,
   SharedConfigSourceMap,

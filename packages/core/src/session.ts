@@ -30,6 +30,7 @@ import {
 import type { SparkwrightEvent } from "./events.js";
 import type { RunStore } from "./storage.js";
 import type { Artifact, ContextItem, RunRecord, RunResult } from "./types.js";
+import { isRecord } from "./record-utils.js";
 
 /**
  * A session record aggregating an ordered list of run ids plus arbitrary
@@ -616,6 +617,7 @@ class SessionRunStore implements RunStore {
   }
 
   async writeArtifact(artifact: Artifact): Promise<void> {
+    await this.ensureMembership();
     const inner = this.getInner();
     if (inner.writeArtifact) {
       await inner.writeArtifact(artifact);
@@ -879,10 +881,6 @@ export async function forkSessionFromEvent(
     copiedEventCount: copied,
     truncatedAtSequence: lastSequence,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function formatReplayContextLine(

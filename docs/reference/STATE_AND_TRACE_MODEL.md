@@ -170,6 +170,9 @@ Runtime live state exists only while a run is active in a process. Examples:
 Live state may be summarized into `RunCheckpointV1`, but not every active
 resource is automatically resumable. Checkpoints must state resumability
 explicitly instead of implying that a paused process can always be restored.
+When a checkpoint includes `eventSequence`, it records the last persisted event
+sequence for that run so resume can append new events without restarting the
+run's sequence numbering.
 
 ### 5. Gateway Routing State
 

@@ -28,6 +28,13 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Added
 
+- External delegate capability descriptors now surface in host capability
+  snapshots, CLI `capabilities inspect`, and the TUI capability panel. They
+  report protocol (`acp` / `external_command`), approval requirement,
+  process-spawn status, shell access, workspace access, command, timeout, and
+  output limits. Delegate trace events now include structured failure codes
+  and compact completion summaries such as exit code and output truncation
+  flags.
 - `workspace.write.skipped` event so idempotent edit tools can record
   "no-op" decisions on the trace and callers can distinguish "no write
   attempted" from "write attempted and applied". New
@@ -104,6 +111,12 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Changed
 
+- External ACP and external-command delegates no longer receive direct project
+  workspace access by default. Delegates run from an isolated temporary cwd and
+  `{{workspaceRoot}}` / configured `cwd` are rejected unless the profile
+  metadata explicitly sets `"workspaceAccess": "read_write"`. This is a
+  safety-oriented migration: existing external reviewers that intentionally
+  inspect or mutate the workspace must opt in with that field.
 - `packages/core/src/index.ts` reorganized with explicit PUBLIC / IMPLEMENTATION sections. Reference implementation classes are tagged `@internal` and remain re-exported from the top-level entry for backward compatibility. In a future minor release they will be removed from the top-level entry — depend on them via `@sparkwright/core/internal` and pin a minor version.
 - `packages/core` and `packages/cli` no longer ship `src` in npm `files` — only `dist`. This closes the deep-path import bypass.
 - `packages/cli` no longer exposes a library entry (`exports` / `main` / `types` removed). It is a `bin` only.

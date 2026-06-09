@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
-import type { SparkwrightEvent } from "@sparkwright/core";
+import type { RunId, SparkwrightEvent } from "@sparkwright/core";
+import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
+import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import type { Connection } from "../src/connection.js";
 import { serveConnection } from "../src/server.js";
 import { HostRuntime } from "../src/runtime.js";
@@ -196,6 +198,146 @@ describe("host protocol", () => {
       ok: false,
       error: { code: "invalid_payload" },
     });
+  });
+
+  it("forwards completed-with-tool-failures outcome on run.completed", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-outcome-"),
+    );
+    const pair = createConnectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "run_missing_read",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "inspect missing default target",
+          model: "deterministic",
+          permissionMode: "default",
+        },
+      });
+
+      const started = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "run_missing_read",
+      );
+      expect(started).toMatchObject({
+        envelope: "response",
+        ok: true,
+      });
+      const completed = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: {
+          state: "completed",
+          stopReason: "final_answer",
+          outcome: {
+            kind: "completed_with_tool_failures",
+            toolFailures: { count: 1, codes: ["ENOENT"] },
+          },
+        },
+      });
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("forwards structured run failure on failed run.completed", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-terminal-failure-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        error: {
+          message: "scripted provider rejected request",
+          code: "invalid_api_key",
+          status: 401,
+        },
+      },
+    ]);
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "run_invalid_args",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "exercise invalid tool args",
+          model: "scripted",
+          permissionMode: "default",
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "run_invalid_args",
+      );
+      const completed = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: {
+          state: "failed",
+          stopReason: "model_auth_failed",
+          failure: {
+            category: "model",
+            code: "MODEL_COMPLETION_FAILED",
+            message: "scripted provider rejected request",
+            retryable: false,
+          },
+        },
+      });
+      expect(JSON.stringify(completed)).toContain('"status":401');
+      expect(JSON.stringify(completed)).not.toContain(
+        "SPARKWRIGHT_SCRIPTED_MODEL_JSON",
+      );
+    } finally {
+      if (previousScript === undefined)
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      else process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("accepts the run.resume payload shape and reports missing runs from runtime lookup", async () => {
@@ -483,7 +625,7 @@ describe("host protocol", () => {
     }
   });
 
-  it("continues a resumed run through the todo supervisor when the ledger is unfinished", async () => {
+  it("hands off unfinished todos after a final resumed answer", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-resume-todo-"),
     );
@@ -578,18 +720,6 @@ describe("host protocol", () => {
       await pair.waitFor(
         (m) => m.envelope === "response" && m.id === "resume_todo",
       );
-      const continuation = await pair.waitFor(
-        (m) => m.envelope === "event" && m.kind === "run.continuation",
-      );
-      expect(continuation).toMatchObject({
-        envelope: "event",
-        kind: "run.continuation",
-        payload: {
-          previousRunId: runId,
-          continuationCount: 1,
-          reason: "unfinished_todo",
-        },
-      });
       const completed = await pair.waitFor(
         (m) => m.envelope === "event" && m.kind === "run.completed",
       );
@@ -598,9 +728,14 @@ describe("host protocol", () => {
         kind: "run.completed",
         payload: {
           state: "completed",
-          todoHandoff: { reason: "stalled_without_progress" },
+          todoHandoff: { reason: "non_resumable_stop_reason" },
         },
       });
+      expect(
+        pair
+          .clientMessages()
+          .some((m) => m.envelope === "event" && m.kind === "run.continuation"),
+      ).toBe(false);
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });
@@ -676,6 +811,13 @@ describe("host protocol", () => {
                   name: "disabled",
                   command: "ignored",
                   enabled: false,
+                },
+                {
+                  type: "stdio",
+                  name: "missing",
+                  command: join(workspace, "missing-mcp-command"),
+                  enabled: true,
+                  timeoutMs: 100,
                 },
               ],
             },
@@ -782,6 +924,91 @@ describe("host protocol", () => {
     }
   });
 
+  it("records skill load failures for protocol clients", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-bad-skill-"),
+    );
+    const sessionId = "session_bad_skill";
+    const pair = createConnectionPair();
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+        ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "r",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "hello", sessionId },
+      });
+
+      const response = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "r",
+      );
+      expect(response).toMatchObject({ envelope: "response", ok: true });
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      const streamedEvents = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      expect(streamedEvents.map((event) => event.type)).toContain(
+        "skill.failed",
+      );
+      expect(streamedEvents.map((event) => event.type)).toContain(
+        "run.completed",
+      );
+      expect(streamedEvents.map((event) => event.type)).not.toContain(
+        "capability.index.failed",
+      );
+      expect(
+        streamedEvents.find((event) => event.type === "skill.failed")?.payload,
+      ).toMatchObject({
+        source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      });
+
+      const traceEvents = (
+        await readFile(
+          join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      expect(traceEvents.map((event) => event.type)).toContain("skill.failed");
+      expect(traceEvents.map((event) => event.type)).toContain("run.completed");
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("returns a host-authored capability snapshot", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-capability-"),
@@ -810,6 +1037,13 @@ describe("host protocol", () => {
                   name: "disabled",
                   command: "ignored",
                   enabled: false,
+                },
+                {
+                  type: "stdio",
+                  name: "missing",
+                  command: join(workspace, "missing-mcp-command"),
+                  enabled: true,
+                  timeoutMs: 100,
                 },
               ],
             },
@@ -882,6 +1116,14 @@ describe("host protocol", () => {
           mcp: {
             statuses: [
               { serverName: "disabled", status: "disabled", toolNames: [] },
+              {
+                serverName: "missing",
+                status: "failed",
+                toolNames: [],
+                errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+                errorPhase: "connect",
+                errorMessage: expect.stringContaining("ENOENT"),
+              },
             ],
           },
           agents: {
@@ -1271,6 +1513,87 @@ describe("host protocol", () => {
       runtime.cleanup();
     } finally {
       await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("includes cron and durable task summaries in capability inspection", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
+    const previousStateHome = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = stateHome;
+    try {
+      const cronStore = new CronStore({ rootDir: defaultCronRoot() });
+      const cronJob = await cronStore.createJob(
+        {
+          name: "readme-daily",
+          prompt: "summarize README.md",
+          schedule: "every 1d",
+          workspace,
+        },
+        new Date("2026-06-09T00:00:00.000Z"),
+      );
+
+      const taskStore = new FileTaskStore({
+        rootDir: join(workspace, ".sparkwright", "tasks"),
+      });
+      const taskId = createTaskId();
+      taskStore.create({
+        id: taskId,
+        parentRunId: "run_automation_snapshot" as RunId,
+        kind: "maintenance-check",
+        title: "README maintenance",
+      });
+      taskStore.update(taskId, {
+        status: "failed",
+        completedAt: "2026-06-09T00:00:01.000Z",
+        error: {
+          code: "SYNTHETIC_TASK_FAILURE",
+          message: "synthetic task failure",
+        },
+      });
+
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const inspected = await runtime.inspectCapabilities();
+      expect(inspected.ok).toBe(true);
+      if (!inspected.ok) return;
+      expect(inspected.snapshot.automation).toMatchObject({
+        cron: {
+          rootDir: defaultCronRoot(),
+          total: 1,
+          jobs: [
+            expect.objectContaining({
+              id: cronJob.id,
+              name: "readme-daily",
+              state: "scheduled",
+              schedule: "every 1d",
+            }),
+          ],
+        },
+        tasks: {
+          rootDir: join(workspace, ".sparkwright", "tasks"),
+          total: 1,
+          tasks: [
+            expect.objectContaining({
+              id: taskId,
+              kind: "maintenance-check",
+              status: "failed",
+              error: {
+                code: "SYNTHETIC_TASK_FAILURE",
+                message: "synthetic task failure",
+              },
+            }),
+          ],
+        },
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+      await rm(workspace, { recursive: true, force: true });
+      await rm(stateHome, { recursive: true, force: true });
     }
   });
 });

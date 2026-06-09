@@ -3,6 +3,7 @@
 // constraints as additional layers, not as edits to the default policy.
 // Risk → tool gate is enforced in run.ts via `checkToolGate`.
 
+import { isRecord } from "./record-utils.js";
 export type PolicyDecisionKind = "allow" | "deny" | "requires_approval";
 export type PermissionMode =
   | "plan"
@@ -45,6 +46,18 @@ export interface PermissionModePolicyOptions {
 export interface ToolGovernancePolicyOptions {
   agentId?: string;
   roles?: string[];
+}
+
+export interface WorkspaceMutationPolicyOptions {
+  allowWorkspaceWrites: boolean;
+  /** Optional workspace-relative file paths this run may mutate. */
+  allowedPaths?: readonly string[];
+  /** Maximum distinct file paths this run may write. Undefined means unlimited. */
+  maxWriteFiles?: number;
+  /** Maximum changed diff lines per write. Undefined means unlimited. */
+  maxDiffLines?: number;
+  /** Whether unified diffs may include deleted lines. Defaults to true. */
+  allowDeletions?: boolean;
 }
 
 export function createDefaultPolicy(): Policy {
@@ -205,6 +218,120 @@ export function createToolGovernancePolicy(
   };
 }
 
+export function createWorkspaceMutationPolicy(
+  options: WorkspaceMutationPolicyOptions,
+): Policy {
+  const allowedPaths = new Set(
+    (options.allowedPaths ?? [])
+      .map(normalizeWorkspacePolicyPath)
+      .filter((path): path is string => path !== undefined),
+  );
+  const writtenPaths = new Set<string>();
+  const allowDeletions = options.allowDeletions ?? true;
+
+  return {
+    decide(input): PolicyDecision {
+      if (options.allowWorkspaceWrites) {
+        if (input.action !== "workspace.write") {
+          return allowDecision(
+            input,
+            "Workspace mutations allowed for this run.",
+          );
+        }
+
+        const path = workspaceWritePathFromInput(input);
+        if (!path) {
+          return denyDecision(
+            input,
+            "Workspace write path is required for mutation policy.",
+          );
+        }
+
+        if (allowedPaths.size > 0 && !allowedPaths.has(path)) {
+          return denyDecision(
+            input,
+            `Workspace write is outside the allowed target scope: ${path}`,
+            { path, allowedPaths: [...allowedPaths] },
+          );
+        }
+
+        const nextWrittenPaths = new Set(writtenPaths);
+        nextWrittenPaths.add(path);
+        if (
+          options.maxWriteFiles !== undefined &&
+          nextWrittenPaths.size > options.maxWriteFiles
+        ) {
+          return denyDecision(
+            input,
+            `Workspace write exceeds the run file budget of ${options.maxWriteFiles}.`,
+            {
+              path,
+              writtenPaths: [...writtenPaths],
+              maxWriteFiles: options.maxWriteFiles,
+            },
+          );
+        }
+
+        const diff =
+          typeof input.metadata?.diff === "string"
+            ? input.metadata.diff
+            : undefined;
+        const diffStats = diff ? summarizeUnifiedDiff(diff) : undefined;
+        if (
+          diffStats &&
+          options.maxDiffLines !== undefined &&
+          diffStats.changedLines > options.maxDiffLines
+        ) {
+          return denyDecision(
+            input,
+            `Workspace write exceeds the diff budget of ${options.maxDiffLines} changed lines.`,
+            { path, diffStats, maxDiffLines: options.maxDiffLines },
+          );
+        }
+        if (diffStats && !allowDeletions && diffStats.deletedLines > 0) {
+          return denyDecision(
+            input,
+            "Workspace write deletions are not allowed for this run.",
+            { path, diffStats },
+          );
+        }
+
+        writtenPaths.add(path);
+        return allowDecision(input, "Workspace write is within run limits.", {
+          path,
+          writtenPaths: [...writtenPaths],
+          ...(diffStats ? { diffStats } : {}),
+        });
+      }
+
+      if (input.action === "workspace.write") {
+        return denyDecision(
+          input,
+          "Workspace writes require an explicit write-enabled run.",
+        );
+      }
+
+      if (input.action !== "tool.execute") {
+        return allowDecision(
+          input,
+          "Action is outside workspace mutation policy.",
+        );
+      }
+
+      const sideEffects = sideEffectsFromInput(input);
+      if (!sideEffects.includes("write")) {
+        return allowDecision(input, "Tool has no declared write side effect.");
+      }
+
+      return denyDecision(
+        input,
+        "Tools with write side effects require an explicit write-enabled run.",
+        { sideEffects },
+      );
+    },
+  };
+}
+
 function allowDecision(
   input: PolicyInput,
   reason: string,
@@ -269,6 +396,52 @@ function governanceFromInput(
   return undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function sideEffectsFromInput(input: PolicyInput): string[] {
+  const governance = governanceFromInput(input);
+  const sideEffects = governance?.sideEffects;
+  if (!Array.isArray(sideEffects)) return [];
+  return sideEffects.filter(
+    (sideEffect): sideEffect is string => typeof sideEffect === "string",
+  );
+}
+
+function workspaceWritePathFromInput(input: PolicyInput): string | undefined {
+  const raw =
+    typeof input.metadata?.path === "string"
+      ? input.metadata.path
+      : typeof input.resource?.path === "string"
+        ? input.resource.path
+        : undefined;
+  return raw ? normalizeWorkspacePolicyPath(raw) : undefined;
+}
+
+function normalizeWorkspacePolicyPath(path: string): string | undefined {
+  const normalized = path
+    .replaceAll("\\", "/")
+    .split("/")
+    .filter((part) => part.length > 0 && part !== ".")
+    .join("/");
+  if (!normalized || normalized === ".." || normalized.startsWith("../")) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function summarizeUnifiedDiff(diff: string): {
+  addedLines: number;
+  deletedLines: number;
+  changedLines: number;
+} {
+  let addedLines = 0;
+  let deletedLines = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) addedLines += 1;
+    else if (line.startsWith("-")) deletedLines += 1;
+  }
+  return {
+    addedLines,
+    deletedLines,
+    changedLines: addedLines + deletedLines,
+  };
 }

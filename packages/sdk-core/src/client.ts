@@ -49,6 +49,33 @@ export type ClientEventMap = {
   disconnect: [string | undefined];
 };
 
+export type RunTerminalEvent =
+  | (HostEvent & { kind: "run.completed" })
+  | (HostEvent & { kind: "run.failed" });
+
+export interface StartRunAndCollectOptions {
+  /** Default: false, because provider chunk boundaries are not stable. */
+  includeStreamChunks?: boolean;
+  /** Default: the client's request timeout. */
+  terminalTimeoutMs?: number;
+}
+
+export interface CollectedRun {
+  runId: string;
+  runIds: string[];
+  start: ResponseResults["run.start"];
+  terminal: RunTerminalEvent;
+  events: HostEvent[];
+  runEvents: unknown[];
+  finalAnswer?: string;
+  outcome?: unknown;
+  failure?: unknown;
+  toolFailures: unknown[];
+  artifacts: unknown[];
+  writes: unknown[];
+  approvals: Array<HostEvent & { kind: "approval.requested" }>;
+}
+
 let messageCounter = 0;
 function nextRequestId(): string {
   messageCounter += 1;
@@ -107,6 +134,152 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "run.start",
       payload as unknown as Record<string, unknown>,
     ) as Promise<ResponseResults["run.start"]>;
+  }
+
+  async startRunAndCollect(
+    payload: RunStartRequestPayload,
+    options: StartRunAndCollectOptions = {},
+  ): Promise<CollectedRun> {
+    const events: HostEvent[] = [];
+    const runEvents: unknown[] = [];
+    const toolFailures: unknown[] = [];
+    const artifacts: unknown[] = [];
+    const writes: unknown[] = [];
+    const approvals: Array<HostEvent & { kind: "approval.requested" }> = [];
+    const includeStreamChunks = options.includeStreamChunks ?? false;
+    const terminalTimeoutMs =
+      options.terminalTimeoutMs ?? this.requestTimeoutMs;
+    let startedRunId: string | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const runIds = new Set<string>();
+
+    let resolveTerminal!: (event: RunTerminalEvent) => void;
+    let rejectTerminal!: (error: ProtocolError) => void;
+    const terminal = new Promise<RunTerminalEvent>((resolve, reject) => {
+      resolveTerminal = resolve;
+      rejectTerminal = reject;
+    });
+
+    const shouldAcceptRunId = (runId: string): boolean =>
+      !startedRunId || runIds.has(runId);
+    const shouldAcceptTerminal = (event: RunTerminalEvent): boolean =>
+      shouldAcceptRunId(event.payload.runId);
+
+    const onRunEvent = (event: HostEvent & { kind: "run.event" }) => {
+      if (!shouldAcceptRunId(event.payload.runId)) return;
+      if (!startedRunId) runIds.add(event.payload.runId);
+      const inner = event.payload.event;
+      if (!includeStreamChunks && eventType(inner) === "model.stream.chunk") {
+        return;
+      }
+      events.push(event);
+      runEvents.push(inner);
+      switch (eventType(inner)) {
+        case "tool.failed":
+          toolFailures.push(inner);
+          break;
+        case "artifact.created":
+          artifacts.push(inner);
+          break;
+        case "workspace.write.completed":
+          writes.push(inner);
+          break;
+      }
+    };
+    const onApproval = (event: HostEvent & { kind: "approval.requested" }) => {
+      if (!shouldAcceptRunId(event.payload.runId)) return;
+      events.push(event);
+      approvals.push(event);
+    };
+    const onContinuation = (
+      event: HostEvent & { kind: "run.continuation" },
+    ) => {
+      if (
+        !shouldAcceptRunId(event.payload.previousRunId) &&
+        !shouldAcceptRunId(event.payload.runId)
+      ) {
+        return;
+      }
+      runIds.add(event.payload.previousRunId);
+      runIds.add(event.payload.runId);
+      events.push(event);
+    };
+    const onCompleted = (event: HostEvent & { kind: "run.completed" }) => {
+      if (!shouldAcceptTerminal(event)) return;
+      events.push(event);
+      resolveTerminal(event);
+    };
+    const onFailed = (event: HostEvent & { kind: "run.failed" }) => {
+      if (!shouldAcceptTerminal(event)) return;
+      events.push(event);
+      resolveTerminal(event);
+    };
+    const onDisconnect = (reason: string | undefined) => {
+      if (!startedRunId) return;
+      rejectTerminal({
+        code: "internal_error",
+        message: `transport closed before run completed: ${reason}`,
+      });
+    };
+
+    this.on("run.event", onRunEvent);
+    this.on("approval.requested", onApproval);
+    this.on("run.continuation", onContinuation);
+    this.on("run.completed", onCompleted);
+    this.on("run.failed", onFailed);
+    this.on("disconnect", onDisconnect);
+
+    try {
+      const start = await this.startRun(payload);
+      startedRunId = start.runId;
+      runIds.add(start.runId);
+      timer = setTimeout(() => {
+        rejectTerminal({
+          code: "internal_error",
+          message: `run did not complete within ${terminalTimeoutMs}ms`,
+        });
+      }, terminalTimeoutMs);
+      const terminalEvent = await terminal;
+      if (!runIds.has(terminalEvent.payload.runId)) {
+        throw {
+          code: "internal_error",
+          message: `received terminal event for ${terminalEvent.payload.runId}; expected one of ${[...runIds].join(", ")}`,
+        } satisfies ProtocolError;
+      }
+      if (timer) clearTimeout(timer);
+      return {
+        runId: start.runId,
+        runIds: [...runIds],
+        start,
+        terminal: terminalEvent,
+        events,
+        runEvents,
+        finalAnswer:
+          terminalEvent.kind === "run.completed"
+            ? terminalEvent.payload.message
+            : undefined,
+        outcome:
+          terminalEvent.kind === "run.completed"
+            ? terminalEvent.payload.outcome
+            : undefined,
+        failure:
+          terminalEvent.kind === "run.completed"
+            ? terminalEvent.payload.failure
+            : terminalEvent.payload.error,
+        toolFailures,
+        artifacts,
+        writes,
+        approvals,
+      };
+    } finally {
+      if (timer) clearTimeout(timer);
+      this.off("run.event", onRunEvent);
+      this.off("approval.requested", onApproval);
+      this.off("run.continuation", onContinuation);
+      this.off("run.completed", onCompleted);
+      this.off("run.failed", onFailed);
+      this.off("disconnect", onDisconnect);
+    }
   }
 
   resumeRun(
@@ -237,4 +410,13 @@ export class Client extends TypedEmitter<ClientEventMap> {
     }
     // Hosts do not send requests to clients in v1.0; ignore.
   }
+}
+
+function eventType(event: unknown): string | undefined {
+  if (!isRecord(event)) return undefined;
+  return typeof event.type === "string" ? event.type : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

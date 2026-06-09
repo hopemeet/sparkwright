@@ -2,12 +2,17 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
+import type { RunId } from "@sparkwright/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 
@@ -37,6 +42,379 @@ describe("runCli", () => {
     await Promise.all(
       tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
     );
+  });
+
+  it("prints top-level help without starting a run", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["--help"], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("Usage: sparkwright init");
+    expect(output.stdoutText()).toContain(
+      "sparkwright cron list|status|run|tick",
+    );
+    expect(output.stdoutText()).toContain('sparkwright run "your goal"');
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+  });
+
+  it("prints command help without treating help as a goal", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["run", "--help"], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain('Usage: sparkwright run "your goal"');
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+  });
+
+  it("prints cron status for a stored job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
+    tempDirs.push(root);
+    const createOutput = createOutputCapture();
+    const created = await runCli(
+      [
+        "cron",
+        "create",
+        "--root-dir",
+        root,
+        "--schedule",
+        "every 1d",
+        "--prompt",
+        "summarize README.md",
+        "--name",
+        "readme-daily",
+      ],
+      {
+        io: {
+          stdout: createOutput.stdout,
+          stderr: createOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+
+    const statusOutput = createOutputCapture();
+    const status = await runCli(
+      ["cron", "status", "readme-daily", "--root-dir", root],
+      {
+        io: {
+          stdout: statusOutput.stdout,
+          stderr: statusOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(status.exitCode).toBe(0);
+    const parsed = JSON.parse(statusOutput.stdoutText()) as {
+      name: string;
+      state: string;
+      schedule: string;
+      lastTracePath: string | null;
+    };
+    expect(parsed).toMatchObject({
+      name: "readme-daily",
+      state: "scheduled",
+      schedule: "every 1d",
+      lastTracePath: null,
+    });
+  });
+
+  it("inspects durable background tasks without starting tasks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-task-cli-"));
+    tempDirs.push(root);
+    const store = new FileTaskStore({ rootDir: root });
+    const taskId = createTaskId();
+    const record = store.create({
+      id: taskId,
+      parentRunId: "run_task_cli" as RunId,
+      kind: "maintenance-check",
+      title: "README maintenance",
+      metadata: { source: "test" },
+    });
+    store.update(taskId, {
+      status: "completed",
+      startedAt: "2026-06-09T00:00:00.000Z",
+      completedAt: "2026-06-09T00:00:01.000Z",
+      result: { summary: "ok" },
+    });
+    store.appendOutput(taskId, {
+      taskId,
+      timestamp: "2026-06-09T00:00:00.500Z",
+      channel: "stdout",
+      data: "summary: ok\n",
+    });
+
+    const listOutput = createOutputCapture();
+    const listed = await runCli(
+      [
+        "tasks",
+        "list",
+        "--root-dir",
+        root,
+        "--status",
+        "completed",
+        "--kind",
+        "maintenance-check",
+      ],
+      {
+        io: {
+          stdout: listOutput.stdout,
+          stderr: listOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(listed.exitCode).toBe(0);
+    const list = JSON.parse(listOutput.stdoutText()) as {
+      rootDir: string;
+      tasks: Array<{ id: string; status: string; kind: string }>;
+    };
+    expect(list.rootDir).toBe(root);
+    expect(list.tasks).toEqual([
+      expect.objectContaining({
+        id: record.id,
+        status: "completed",
+        kind: "maintenance-check",
+      }),
+    ]);
+
+    const getOutput = createOutputCapture();
+    const got = await runCli(["tasks", "get", taskId, "--root-dir", root], {
+      io: {
+        stdout: getOutput.stdout,
+        stderr: getOutput.stderr,
+        stdinIsTTY: false,
+      },
+    });
+    expect(got.exitCode).toBe(0);
+    expect(JSON.parse(getOutput.stdoutText())).toMatchObject({
+      id: taskId,
+      result: { summary: "ok" },
+    });
+
+    const outputCapture = createOutputCapture();
+    const output = await runCli(
+      ["tasks", "output", taskId, "--root-dir", root, "--from-sequence", "0"],
+      {
+        io: {
+          stdout: outputCapture.stdout,
+          stderr: outputCapture.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(output.exitCode).toBe(0);
+    expect(JSON.parse(outputCapture.stdoutText())).toMatchObject({
+      taskId,
+      chunks: [
+        expect.objectContaining({
+          sequence: 0,
+          channel: "stdout",
+          data: "summary: ok\n",
+        }),
+      ],
+      complete: true,
+      status: "completed",
+    });
+  });
+
+  it("does not create the default task root during empty task inspection", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["tasks", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("tasks: (none)");
+    await expect(
+      stat(join(workspace, ".sparkwright", "tasks")),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an empty run goal with a focused message", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["run", ""], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("requires a non-empty goal");
+    expect(output.stderrText()).not.toContain("sparkwright init");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+  });
+
+  it("rejects a missing workspace before starting a run", async () => {
+    const missingWorkspace = join(
+      tmpdir(),
+      `sparkwright-missing-${Date.now()}`,
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect missing workspace",
+        "--workspace",
+        missingWorkspace,
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("Workspace does not exist");
+    expect(result.tracePath).toBeUndefined();
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).not.toContain("Validation trace written to");
+  });
+
+  it("rejects an explicit missing target before starting a run", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect missing target",
+        "--workspace",
+        workspace,
+        "--target",
+        "NO_SUCH_TARGET.md",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "Target does not exist: NO_SUCH_TARGET.md",
+    );
+    expect(result.tracePath).toBeDefined();
+    expect(output.stdoutText()).not.toContain("run.started");
+    expect(output.stdoutText()).toContain("Validation trace written to");
+
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toEqual([
+      "run.created",
+      "validation.failed",
+      "run.failed",
+    ]);
+  });
+
+  it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
+    tempDirs.push(workspace);
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect default target",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.runState).toBe("completed");
+    expect(output.stderrText()).toContain("unhandled tool failure");
+    expect(output.stdoutText()).toContain("run.completed final_answer");
+
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toContain("tool.failed");
+    const completed = events.find((event) => event.type === "run.completed");
+    expect(completed?.payload?.message).toContain("Could not read README.md");
+    expect(completed?.payload?.message).not.toContain("Read README.md.");
+    expect(completed?.payload?.outcome).toMatchObject({
+      kind: "completed_with_tool_failures",
+      toolFailures: { count: 1, codes: ["ENOENT"] },
+    });
+  });
+
+  it("warns when --yes is used without --write", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toContain(
+      "Warning: --yes has no effect without --write.",
+    );
+    expect(output.stdoutText()).toContain("run.completed final_answer");
   });
 
   it("runs the read-only golden path and writes a trace", async () => {
@@ -176,6 +554,43 @@ describe("runCli", () => {
     expect(sessionJson.runIds).toHaveLength(1);
   });
 
+  it("writes host run sessions under --session-root", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(sessionRoot);
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toBeTruthy();
+    expect(result.tracePath).toBe(
+      join(sessionRoot, result.sessionId!, "trace.jsonl"),
+    );
+    await expect(
+      readFile(join(sessionRoot, result.sessionId!, "session.json"), "utf8"),
+    ).resolves.toContain(result.sessionId!);
+    await expect(
+      stat(join(workspace, ".sparkwright", "sessions")),
+    ).rejects.toThrow();
+  });
+
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -219,6 +634,13 @@ describe("runCli", () => {
     );
     expect(events.map((event) => event.type)).not.toContain(
       "workspace.write.completed",
+    );
+    const completed = events.find((event) => event.type === "run.completed");
+    expect(completed?.payload?.message).toContain(
+      "Write was not applied for README.md because approval was denied.",
+    );
+    expect(completed?.payload?.message).not.toContain(
+      "Completed approval-gated write path",
     );
   });
 
@@ -664,6 +1086,92 @@ describe("runCli", () => {
     );
   });
 
+  it("resolves MCP tools during capability inspect only when requested", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            servers: [mcpEchoServerConfig("qa")],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const staticOutput = createOutputCapture();
+    const staticInspect = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: staticOutput.stdout, stderr: staticOutput.stderr },
+      },
+    );
+
+    expect(staticInspect.exitCode).toBe(0);
+    const staticReport = JSON.parse(staticOutput.stdoutText()) as {
+      mcp: { servers: Array<{ status?: string; tools?: unknown[] }> };
+    };
+    expect(staticReport.mcp.servers[0]?.status).toBeUndefined();
+    expect(staticReport.mcp.servers[0]?.tools).toBeUndefined();
+
+    const resolvedOutput = createOutputCapture();
+    const resolvedInspect = await runCli(
+      [
+        "capabilities",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--resolve-mcp",
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: resolvedOutput.stdout, stderr: resolvedOutput.stderr },
+      },
+    );
+
+    expect(resolvedInspect.exitCode).toBe(0);
+    const resolvedReport = JSON.parse(resolvedOutput.stdoutText()) as {
+      mcp: {
+        resolved?: boolean;
+        servers: Array<{
+          status?: string;
+          toolCount?: number;
+          tools?: Array<{ toolName: string; mcpToolName: string }>;
+        }>;
+      };
+    };
+    expect(resolvedReport.mcp.resolved).toBe(true);
+    expect(resolvedReport.mcp.servers[0]).toMatchObject({
+      status: "connected",
+      toolCount: 1,
+      tools: [{ toolName: "mcp_qa_echo", mcpToolName: "echo" }],
+    });
+  });
+
+  it("capabilities inspect rejects an invalid workspace", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const missingWorkspace = join(workspace, "missing");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", missingWorkspace],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "Workspace does not exist or is not accessible",
+    );
+    expect(output.stdoutText()).toBe("");
+  });
+
   it("updates user tool config commands without dropping existing fields", async () => {
     const xdg = process.env.XDG_CONFIG_HOME as string;
     const configPath = join(xdg, "sparkwright", "config.json");
@@ -714,6 +1222,23 @@ describe("runCli", () => {
       const mode = (await stat(configPath)).mode & 0o777;
       expect(mode).toBe(0o600);
     }
+  });
+
+  it("marks missing command capability dirs as optional in inspect output", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("command dirs:");
+    expect(output.stdoutText()).toContain("(optional, missing)");
+    expect(output.stdoutText()).not.toContain(" (missing)");
   });
 
   it("creates, lists, and validates workspace skills", async () => {
@@ -884,6 +1409,70 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("Skill name must use lowercase");
   });
 
+  it("reports skill errors in capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      skills: { errors: Array<{ source: string; message: string }> };
+    };
+    expect(report.skills.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+          message: expect.stringContaining("description"),
+        }),
+      ]),
+    );
+  });
+
+  it("reports configured missing skill roots in capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: { skills: { roots: ["missing-skills"] } },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      skills: { errors: Array<{ source: string; message: string }> };
+    };
+    expect(report.skills.errors).toEqual([
+      {
+        source: join(workspace, ".sparkwright", "missing-skills"),
+        message: "skill root does not exist",
+      },
+    ]);
+  });
+
   it("creates, lists, and validates workspace agents", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const createOutput = createOutputCapture();
@@ -1051,6 +1640,306 @@ describe("runCli", () => {
     expect(output.stderrText()).toContain('No API key for provider "openai"');
   });
 
+  it("loads project config from --workspace before choosing the host model", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/project-model",
+        providers: { openai: { baseURL: "https://api.openai.com/v1" } },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["run", "inspect temp", "--workspace", workspace],
+      {
+        env: {
+          XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+          SPARKWRIGHT_HOST_SOURCE: process.env.SPARKWRIGHT_HOST_SOURCE,
+        },
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain('No API key for provider "openai"');
+    expect(output.stdoutText()).not.toContain("run.completed");
+  });
+
+  it("writes a minimal trace when host startup fails before the run starts", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+    const missingHostCommand = join(workspace, "missing-host-command");
+
+    const result = await runCli(
+      ["run", "inspect temp", "--workspace", workspace],
+      {
+        env: {
+          XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+          SPARKWRIGHT_HOST_COMMAND: missingHostCommand,
+        },
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(missingHostCommand);
+    expect(output.stdoutText()).toContain("Trace written to");
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toEqual([
+      "run.created",
+      "run.failed",
+    ]);
+    expect(
+      events.find((event) => event.type === "run.failed")?.payload,
+    ).toMatchObject({
+      reason: "host_start_failed",
+      code: "HOST_START_FAILED",
+    });
+
+    const checkOutput = createOutputCapture();
+    const check = await runCli(
+      [
+        "session",
+        "check",
+        result.sessionId!,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: checkOutput.stdout, stderr: checkOutput.stderr },
+      },
+    );
+    expect(check.exitCode).toBe(0);
+    expect(checkOutput.stdoutText()).toContain("findings: 0");
+  });
+
+  it("records skill load failures without aborting host startup", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "skills", "bad"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+      ["---", "name: bad", "---", "Missing description.", ""].join("\n"),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "say hello",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toBe("");
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).toContain("skill.failed");
+    expect(events.map((event) => event.type)).toContain("run.completed");
+    expect(events.map((event) => event.type)).not.toContain(
+      "capability.index.failed",
+    );
+    expect(
+      events.find((event) => event.type === "skill.failed")?.payload,
+    ).toMatchObject({
+      source: join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
+    });
+  });
+
+  it("passes --target through the host deterministic run", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "NOTES.md"), "# Notes\n", "utf8");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "inspect the target",
+        "--workspace",
+        workspace,
+        "--target",
+        "NOTES.md",
+        "--model",
+        "deterministic",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(
+      events.find((event) => event.type === "tool.requested")?.payload,
+    ).toMatchObject({
+      toolName: "read_file",
+      arguments: { path: "NOTES.md" },
+    });
+    expect(
+      events.find((event) => event.type === "model.requested")?.payload,
+    ).toMatchObject({
+      adapterId: "deterministic",
+    });
+    expect(
+      events.find((event) => event.type === "run.started")?.payload,
+    ).toMatchObject({
+      resolvedModel: {
+        modelRef: "deterministic",
+        providerKey: "deterministic",
+        modelId: "deterministic",
+        adapterId: "deterministic",
+        modelSource: { layer: "request" },
+      },
+    });
+  });
+
+  it("lets provider env override configured apiKey without leaking the key", async () => {
+    const mock = await createProviderMock();
+    try {
+      const workspace = await createWorkspace("# Demo\n");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/mock-model",
+          providers: {
+            openai: {
+              baseURL: mock.baseURL,
+              apiKey: "CONFIG_KEY",
+              models: { "mock-model": {} },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const output = createOutputCapture();
+
+      const result = await runCli(
+        [
+          "run",
+          "inspect temp",
+          "--workspace",
+          workspace,
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+            SPARKWRIGHT_HOST_SOURCE: process.env.SPARKWRIGHT_HOST_SOURCE,
+            OPENAI_API_KEY: "ENV_KEY",
+          },
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(output.stderrText()).toContain("Model failed:");
+      expect(output.stderrText()).toContain("status=401");
+      expect(output.stderrText()).not.toContain("APICallError");
+      expect(output.stderrText()).not.toContain("@ai-sdk");
+      expect(mock.requests).toHaveLength(1);
+      expect(mock.requests[0]?.authorization).toBe("Bearer ENV_KEY");
+      const events = await readTrace(result.tracePath);
+      const started = events.find((event) => event.type === "run.started");
+      expect(started?.payload).toMatchObject({
+        resolvedModel: {
+          adapterId: "openai:mock-model",
+          modelSource: { layer: "project" },
+          providerSource: { layer: "project" },
+          authSource: "env:OPENAI_API_KEY",
+          baseURLSource: "config",
+        },
+      });
+      expect(JSON.stringify(events)).not.toContain("ENV_KEY");
+      expect(JSON.stringify(events)).not.toContain("CONFIG_KEY");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  it("lets OPENAI_BASE_URL override configured baseURL", async () => {
+    const mock = await createProviderMock();
+    try {
+      const workspace = await createWorkspace("# Demo\n");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/mock-model",
+          providers: {
+            openai: {
+              baseURL: "http://127.0.0.1:9/v1",
+              models: { "mock-model": {} },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const output = createOutputCapture();
+
+      const result = await runCli(
+        [
+          "run",
+          "inspect temp",
+          "--workspace",
+          workspace,
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+            SPARKWRIGHT_HOST_SOURCE: process.env.SPARKWRIGHT_HOST_SOURCE,
+            OPENAI_API_KEY: "ENV_KEY",
+            OPENAI_BASE_URL: mock.baseURL,
+          },
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(mock.requests).toHaveLength(1);
+      expect(mock.requests[0]?.url).toBe("/v1/responses");
+      const events = await readTrace(result.tracePath);
+      expect(
+        events.find((event) => event.type === "run.started")?.payload,
+      ).toMatchObject({
+        resolvedModel: {
+          adapterId: "openai:mock-model",
+          authSource: "env:OPENAI_API_KEY",
+          baseURLSource: "env:OPENAI_BASE_URL",
+        },
+      });
+    } finally {
+      await mock.close();
+    }
+  });
+
   it("summarizes a trace file", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const runOutput = createOutputCapture();
@@ -1071,10 +1960,19 @@ describe("runCli", () => {
       eventCount: number;
       runIds: string[];
       byType: Record<string, number>;
+      toolFailures: { total: number; byCode: Record<string, number> };
+      workspaceReads: {
+        total: number;
+        uniquePaths: number;
+        duplicatePaths: Record<string, number>;
+      };
     };
     expect(summary.eventCount).toBeGreaterThan(0);
     expect(summary.runIds).toHaveLength(1);
     expect(summary.byType["run.completed"]).toBe(1);
+    expect(summary.toolFailures.total).toBe(0);
+    expect(summary.workspaceReads.total).toBeGreaterThan(0);
+    expect(summary.workspaceReads.uniquePaths).toBeGreaterThan(0);
 
     const textOutput = createOutputCapture();
     const text = await runCli(
@@ -1085,6 +1983,81 @@ describe("runCli", () => {
     );
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("events:");
+    expect(textOutput.stdoutText()).toContain(
+      "cost: unavailable (not reported)",
+    );
+    expect(textOutput.stdoutText()).toContain("tool calls:");
+    expect(textOutput.stdoutText()).toContain("tool failures: 0 total");
+    expect(textOutput.stdoutText()).toContain("workspace reads:");
+  });
+
+  it("prints unavailable cost reasons in text trace summaries", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "cost-unavailable.trace.jsonl");
+    await writeFile(
+      tracePath,
+      JSON.stringify({
+        id: "evt_usage",
+        runId: "run_cost",
+        type: "model.completed",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: {
+          usage: {
+            inputTokens: 10,
+            outputTokens: 2,
+            totalTokens: 12,
+            costStatus: "unavailable",
+            costUnavailableReason: "missing_pricing",
+          },
+        },
+      }) + "\n",
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["trace", "summary", tracePath, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "cost: unavailable (missing_pricing:1)",
+    );
+  });
+
+  it("counts failed MCP preparation in trace summaries", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "mcp-failed.trace.jsonl");
+    await writeFile(
+      tracePath,
+      JSON.stringify({
+        id: "evt_mcp_failed",
+        runId: "run_mcp_failed",
+        type: "mcp.server.prepared",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: { name: "slow", status: "failed", toolCount: 0 },
+        metadata: { error: "MCP error -32001: Request timed out" },
+      }) + "\n",
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(["trace", "summary", tracePath], {
+      io: { stdout: output.stdout, stderr: output.stderr },
+    });
+
+    expect(result.exitCode).toBe(0);
+    const summary = JSON.parse(output.stdoutText()) as {
+      errorCount: number;
+      errorCodes: Record<string, number>;
+    };
+    expect(summary.errorCount).toBe(1);
+    expect(summary.errorCodes.MCP_SERVER_PREPARE_FAILED).toBe(1);
   });
 
   it("filters trace events", async () => {
@@ -1140,6 +2113,44 @@ describe("runCli", () => {
     expect(timeline.exitCode).toBe(0);
     expect(timelineOutput.stdoutText()).toContain("phases:");
     expect(timelineOutput.stdoutText()).toContain("completed run");
+  });
+
+  it("verifies trace integrity", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const runOutput = createOutputCapture();
+    const run = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        io: { stdout: runOutput.stdout, stderr: runOutput.stderr },
+      },
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["trace", "verify", run.tracePath!, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("status: ok");
+
+    const brokenTrace = join(workspace, "broken.trace.jsonl");
+    const trace = await readFile(run.tracePath!, "utf8");
+    await writeFile(brokenTrace, trace.trimEnd(), "utf8");
+    const brokenOutput = createOutputCapture();
+    const broken = await runCli(["trace", "verify", brokenTrace], {
+      io: { stdout: brokenOutput.stdout, stderr: brokenOutput.stderr },
+    });
+
+    expect(broken.exitCode).toBe(1);
+    expect(JSON.parse(brokenOutput.stdoutText())).toMatchObject({
+      ok: false,
+      findings: expect.arrayContaining([
+        expect.objectContaining({ code: "TRACE_FINAL_NEWLINE_MISSING" }),
+      ]),
+    });
   });
 
   it("prints compact payload details for trace events text output", async () => {
@@ -1533,6 +2544,487 @@ describe("runCli", () => {
     ).toBeUndefined();
   });
 
+  it("runs scripted model tool calls through the host", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            servers: [mcpEchoServerConfig("qa")],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "use MCP echo",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "mcp_qa_echo",
+                  arguments: { text: "sparkwright cli host model smoke" },
+                },
+              ],
+            },
+            {
+              message: "sparkwright cli host model smoke\nsucceeded: true",
+            },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; payload?: unknown });
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.completed" &&
+          (event.payload as { output?: { content?: Array<{ text?: string }> } })
+            .output?.content?.[0]?.text === "sparkwright cli host model smoke",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("denies scripted host writes when --write is not enabled", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Make one minimal README improvement and apply it.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt write without write flag",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    heading: "No Write Flag",
+                    body: "This should not be applied.",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find((event) => event.type === "workspace.write.completed"),
+    ).toBeUndefined();
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "TOOL_DENIED",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("rejects scripted model tool calls with invalid args before execution or approval", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Exercise invalid tool args.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "invalid tool args",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: { nested: "README.md" } },
+                },
+                {
+                  toolName: "read_file",
+                  arguments: {},
+                },
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    body: "Missing heading should fail validation.",
+                  },
+                },
+              ],
+            },
+            { message: "saw invalid args" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(1);
+    expect(output.stdoutText()).toContain("tool.failed read_file");
+    expect(output.stdoutText()).toContain("tool.failed append_file");
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    const invalidFailures = traceEvents.filter(
+      (event) =>
+        event.type === "tool.failed" &&
+        (event.payload?.error as { code?: string } | undefined)?.code ===
+          "TOOL_ARGUMENTS_INVALID",
+    );
+    expect(invalidFailures).toHaveLength(3);
+    expect(traceEvents.map((event) => event.type)).not.toContain(
+      "tool.started",
+    );
+    expect(traceEvents.map((event) => event.type)).not.toContain(
+      "approval.requested",
+    );
+    expect(traceEvents.map((event) => event.type)).not.toContain(
+      "workspace.write.completed",
+    );
+    expect(
+      invalidFailures.map((event) => event.payload?.toolName).sort(),
+    ).toEqual(["append_file", "read_file", "read_file"]);
+    expect(
+      invalidFailures.map(
+        (event) =>
+          (
+            event.payload?.error as
+              | { metadata?: { toolName?: string } }
+              | undefined
+          )?.metadata?.toolName,
+      ),
+    ).toEqual(["read_file", "read_file", "append_file"]);
+    expect(
+      invalidFailures.map(
+        (event) => (event.payload?.error as { message?: string }).message,
+      ),
+    ).toEqual([
+      "$.path: expected string.",
+      "$.path: required property is missing.",
+      "$.heading: required property is missing.",
+    ]);
+  });
+
+  it("treats recovered tool argument failures as a completed run warning", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Recover from invalid read args.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "invalid read args first",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: { nested: "README.md" } },
+                },
+              ],
+            },
+            {
+              message: "recover with valid read",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "README.md" },
+                },
+              ],
+            },
+            { message: "recovered" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(output.stderrText()).not.toContain("unhandled tool failure");
+
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find((event) => event.type === "tool.failed"),
+    ).toBeTruthy();
+    expect(
+      traceEvents.find((event) => event.type === "tool.completed"),
+    ).toBeTruthy();
+    const completed = traceEvents.find(
+      (event) => event.type === "run.completed",
+    );
+    expect(completed?.payload?.outcome).toMatchObject({
+      kind: "completed_with_recovered_tool_failures",
+      toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
+    });
+  });
+
+  it("denies destructive shell deletion before it mutates the workspace", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Delete every file in this workspace.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt deletion",
+              toolCalls: [
+                {
+                  toolName: "shell",
+                  arguments: { command: "rm -rf ./*" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    expect(await readFile(join(workspace, "package.json"), "utf8")).toBe(
+      '{"name":"demo"}\n',
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "shell_safety_denied",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("denies host writes outside the requested target scope", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Rewrite README.md and package.json.",
+        "--workspace",
+        workspace,
+        "--target",
+        "README.md",
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt out of scope write",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "package.json",
+                    heading: "Out Of Scope",
+                    body: "This should not be applied.",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    expect(await readFile(join(workspace, "package.json"), "utf8")).toBe(
+      '{"name":"demo"}\n',
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "workspace.write.denied" &&
+          String(event.payload?.reason).includes("allowed target scope"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("rolls back shell mutations that bypass workspace.write", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Modify README.md through shell.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt shell write",
+              toolCalls: [
+                {
+                  toolName: "shell",
+                  arguments: {
+                    command:
+                      "node -e \"require('fs').writeFileSync('README.md','hacked\\\\n')\"",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "UNTRACKED_WORKSPACE_MUTATION",
+      ),
+    ).toBeTruthy();
+  });
+
   it("run resume --from-trace reconstructs a checkpoint and rejects terminal runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
     // Seed a completed run via the normal CLI golden path so a run.json +
@@ -1642,6 +3134,259 @@ describe("runCli", () => {
     expect(session.exitCode).toBe(1);
   });
 
+  it("runs a configured external command delegate directly", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const commandPath = join(workspace, "delegate-fixture.mjs");
+    await writeFile(
+      commandPath,
+      [
+        "const chunks = [];",
+        'process.stdin.on("data", (chunk) => chunks.push(chunk));',
+        'process.stdin.on("end", () => {',
+        "  process.stdout.write(JSON.stringify({",
+        "    argv: process.argv.slice(2),",
+        '    stdin: Buffer.concat(chunks).toString("utf8")',
+        "  }));",
+        "});",
+        "process.stdin.resume();",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              profiles: [
+                {
+                  id: "external_cli_fixture",
+                  metadata: {
+                    externalCommand: {
+                      command: process.execPath,
+                      args: [commandPath, "--goal", "{{goal}}"],
+                      input: "none",
+                    },
+                  },
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "external_cli_fixture",
+                  toolName: "delegate_external_cli_fixture",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--session-id",
+        "delegate-session-test",
+        "--trace-level",
+        "debug",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.sessionId).toBe("delegate-session-test");
+    expect(result.tracePath).toBe(
+      join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        "delegate-session-test",
+        "trace.jsonl",
+      ),
+    );
+    expect(output.stderrText()).toContain("Approval auto-approved");
+    const parsed = JSON.parse(output.stdoutText()) as {
+      ok: boolean;
+      protocol: string;
+      sessionId: string;
+      runId: string;
+      tracePath: string;
+      output: { exitCode: number; stdout: string };
+    };
+    expect(parsed).toMatchObject({
+      ok: true,
+      protocol: "external_command",
+      sessionId: "delegate-session-test",
+      output: { exitCode: 0 },
+    });
+    expect(JSON.parse(parsed.output.stdout)).toMatchObject({
+      argv: ["--goal", "inspect readme"],
+      stdin: "",
+    });
+    const trace = await readFile(parsed.tracePath, "utf8");
+    expect(trace).toContain('"type":"approval.requested"');
+    expect(trace).toContain('"type":"subagent.completed"');
+  });
+
+  it("requires --write before a direct delegate can receive read-write workspace access", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const commandPath = join(workspace, "delegate-fixture.mjs");
+    await writeFile(
+      commandPath,
+      [
+        "process.stdout.write(JSON.stringify({",
+        "  argv: process.argv.slice(2),",
+        "  cwd: process.cwd()",
+        "}));",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              profiles: [
+                {
+                  id: "external_cli_fixture",
+                  metadata: {
+                    externalCommand: {
+                      command: process.execPath,
+                      args: [commandPath, "--workspace", "{{workspaceRoot}}"],
+                      input: "none",
+                      workspaceAccess: "read_write",
+                    },
+                  },
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "external_cli_fixture",
+                  toolName: "delegate_external_cli_fixture",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const deniedOutput = createOutputCapture();
+    const denied = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--format",
+        "text",
+      ],
+      {
+        io: {
+          stdout: deniedOutput.stdout,
+          stderr: deniedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(denied.exitCode).toBe(1);
+    expect(deniedOutput.stderrText()).toContain(
+      "parent run has not enabled workspace writes",
+    );
+
+    const approvedOutput = createOutputCapture();
+    const approved = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--write",
+        "--yes",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: approvedOutput.stdout,
+          stderr: approvedOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(approved.exitCode).toBe(0);
+    const parsed = JSON.parse(approvedOutput.stdoutText()) as {
+      output: { stdout: string };
+    };
+    expect(JSON.parse(parsed.output.stdout)).toMatchObject({
+      argv: ["--workspace", workspace],
+      cwd: await realpath(workspace),
+    });
+  });
+
+  function mcpEchoServerConfig(name: string) {
+    const repoRoot = resolve(process.cwd(), "../..");
+    const mcpPath = resolve(
+      repoRoot,
+      "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
+    );
+    const transportPath = resolve(
+      repoRoot,
+      "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js",
+    );
+    const zodPath = resolve(repoRoot, "node_modules/zod/v4/index.js");
+    const script = [
+      `import { McpServer } from ${JSON.stringify(mcpPath)};`,
+      `import { StdioServerTransport } from ${JSON.stringify(transportPath)};`,
+      `import { z } from ${JSON.stringify(zodPath)};`,
+      "const server = new McpServer({ name: 'cli-test-mcp', version: '0.0.1' });",
+      "server.registerTool('echo', { description: 'Echo text.', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }] }));",
+      "await server.connect(new StdioServerTransport());",
+    ].join("\n");
+    return {
+      type: "stdio",
+      name,
+      command: process.execPath,
+      args: ["--input-type=module", "-e", script],
+      enabled: true,
+      timeoutMs: 1000,
+    };
+  }
+
   async function createWorkspace(readme: string): Promise<string> {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
     tempDirs.push(workspace);
@@ -1672,16 +3417,75 @@ function createOutputCapture() {
   };
 }
 
-async function readTrace(
-  path: string | undefined,
-): Promise<Array<{ type: string; runId?: string }>> {
+async function readTrace(path: string | undefined): Promise<
+  Array<{
+    type: string;
+    runId?: string;
+    payload?: Record<string, unknown>;
+  }>
+> {
   if (!path) throw new Error("Missing trace path.");
   const content = await readFile(path, "utf8");
   return content
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { type: string; runId?: string });
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          type: string;
+          runId?: string;
+          payload?: Record<string, unknown>;
+        },
+    );
+}
+
+async function createProviderMock(): Promise<{
+  baseURL: string;
+  requests: Array<{
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string;
+  }>;
+  close: () => Promise<void>;
+}> {
+  const requests: Array<{
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string;
+  }> = [];
+  const server: Server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      requests.push({
+        method: req.method,
+        url: req.url,
+        authorization:
+          typeof req.headers.authorization === "string"
+            ? req.headers.authorization
+            : "",
+      });
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            message: "mock provider rejected request",
+            type: "invalid_request_error",
+          },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    baseURL: `http://127.0.0.1:${port}/v1`,
+    requests,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  };
 }
 
 function checkpointJson(input: { runId: string; goal: string }) {

@@ -331,6 +331,7 @@ export class ControlledWorkspace implements WorkspaceRuntime {
         resource: workspacePath,
         reason: options.reason,
         proposalId: proposal.id,
+        diff: proposal.diff,
       },
     });
 

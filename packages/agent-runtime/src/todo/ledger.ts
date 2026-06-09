@@ -22,7 +22,6 @@ const UNFINISHED_STATUSES: ReadonlySet<TodoStatus> = new Set([
 ]);
 
 const DEFAULT_RESUMABLE_STOP_REASONS: ReadonlySet<RunStopReason> = new Set([
-  "final_answer",
   "max_steps_exceeded",
   "max_model_calls_exceeded",
   "max_tool_calls_exceeded",

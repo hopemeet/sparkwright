@@ -75,6 +75,32 @@ try {
     ],
     installDir,
   );
+
+  const writeSmokeWorkspace = join(tempRoot, "write-smoke-workspace");
+  mkdirSync(writeSmokeWorkspace, { recursive: true });
+  writeFileSync(join(writeSmokeWorkspace, "README.md"), "# Write Smoke\n");
+  run(
+    npx,
+    [
+      "sparkwright",
+      "run",
+      "--direct-core",
+      "exercise approval-gated write path",
+      "--workspace",
+      writeSmokeWorkspace,
+      "--target",
+      "README.md",
+      "--write",
+      "--yes",
+      "--trace-level",
+      "minimal",
+      "--model",
+      "deterministic",
+    ],
+    installDir,
+  );
+
+  assertWriteSmokeResult(writeSmokeWorkspace);
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
 }
@@ -112,4 +138,39 @@ function run(command, args, cwd) {
     console.error(`Command failed: ${command} ${args.join(" ")}`);
     process.exit(result.status ?? 1);
   }
+}
+
+function assertWriteSmokeResult(workspace) {
+  const readme = readFileSync(join(workspace, "README.md"), "utf8");
+  if (!readme.includes("## Sparkwright CLI Golden Path")) {
+    throw new Error("Release install write smoke did not update README.md.");
+  }
+
+  const sessionRoot = join(workspace, ".sparkwright", "sessions");
+  const files = listFiles(sessionRoot);
+  if (!files.some((file) => file.endsWith(".diff"))) {
+    throw new Error(
+      "Release install write smoke did not create a diff artifact.",
+    );
+  }
+
+  const trace = files.find((file) => file.endsWith("trace.jsonl"));
+  if (!trace) {
+    throw new Error("Release install write smoke did not create a trace.");
+  }
+  const traceContent = readFileSync(trace, "utf8");
+  if (!traceContent.includes('"workspace.write.completed"')) {
+    throw new Error(
+      "Release install write smoke trace did not record workspace.write.completed.",
+    );
+  }
+}
+
+function listFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) return listFiles(full);
+    if (entry.isFile()) return [full];
+    return [];
+  });
 }

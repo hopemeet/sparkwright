@@ -332,6 +332,68 @@ Body
     expect(indexed.metadata.sourcePackage).toBe("@sparkwright/skills");
   });
 
+  it("skips invalid skills during run preparation and emits skill.failed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-bad-"));
+    await mkdir(join(root, "good"));
+    await mkdir(join(root, "bad"));
+    await writeFile(
+      join(root, "good", "SKILL.md"),
+      `---
+name: good-skill
+description: Handles good requests.
+---
+Good body.
+`,
+    );
+    await writeFile(
+      join(root, "bad", "SKILL.md"),
+      `---
+name: bad-skill
+---
+Bad body.
+`,
+    );
+
+    const captured: Array<{ type: string; payload: unknown }> = [];
+    const emitter = {
+      emit(type: string, payload: unknown) {
+        captured.push({ type, payload });
+        return {
+          id: "evt_test",
+          runId: "",
+          type: type as never,
+          timestamp: new Date().toISOString(),
+          sequence: 0,
+          payload,
+        } as never;
+      },
+    };
+
+    const prepared = await prepareSkillsForRun({
+      goal: "good request",
+      skillRoots: [root],
+      emitter: emitter as never,
+    });
+
+    expect(prepared.indexedSkills.map((skill) => skill.name)).toEqual([
+      "good-skill",
+    ]);
+    expect(captured).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "skill.failed",
+          payload: expect.objectContaining({
+            source: join(root, "bad", "SKILL.md"),
+          }),
+        }),
+        expect.objectContaining({
+          type: "skill.indexed",
+          payload: { count: 1 },
+        }),
+      ]),
+    );
+  });
+
   it("filters skills by agent access policy", () => {
     const notifier = parseSkill(`---
 name: dingtalk-notifier
@@ -475,28 +537,24 @@ Review only the requested change.
       },
     );
 
-    expect(output).toMatchObject({
-      status: "loaded",
-      name: "code-reviewer",
-      version: "1.0.0",
-      resourceFiles: ["references/rules.md"],
-    });
-    expect(JSON.stringify(output)).toContain(
-      "Review only the requested change",
-    );
-    // The model reads `content`, not the structured `resourceFiles`. List
-    // each file there as a full path so a weak model can pass it straight to
-    // a file-reading tool instead of joining it against the wrong base.
-    const loaded = output as { content: string };
-    // The loader emits forward-slash paths (normalizePath) for cross-platform
-    // consistency, so build the expected path the same way rather than with the
-    // OS-native separator join() would produce (backslashes on Windows).
     const expectedFile = join(
       root,
       "reviewer",
       "references",
       "rules.md",
     ).replace(/\\/g, "/");
+    expect(output).toMatchObject({
+      status: "loaded",
+      name: "code-reviewer",
+      version: "1.0.0",
+      resourceFiles: [expectedFile],
+    });
+    expect(JSON.stringify(output)).toContain(
+      "Review only the requested change",
+    );
+    // Both the structured field and the model-facing content use full paths so
+    // a weak model can pass them straight to a file-reading tool.
+    const loaded = output as { content: string };
     expect(loaded.content).toContain(`<file>${expectedFile}</file>`);
     expect(loaded.content).not.toContain("<file>references/rules.md</file>");
   });
