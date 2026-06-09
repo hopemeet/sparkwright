@@ -190,10 +190,15 @@ Stable consumption guidance:
 
 - Treat checkpoints as snapshots owned by the backend store, not as replacement
   trace events.
-- Keep checkpoint identity and creation time in the snapshot record. Link to the
-  nearest event `sequence` if the host exposes that association.
+- Keep checkpoint identity and creation time in the snapshot record. When
+  `eventSequence` is present, treat it as the last persisted event sequence for
+  that run; resumed runs continue after it so append-only per-run traces remain
+  contiguous.
 - Use checkpoint snapshots to resume or branch state, then use events to explain
   how that state was reached.
+- Do not treat `eventSequence` as a session-wide or cross-agent ordering key.
+  Session traces may contain multiple runs and processes; use event timestamps,
+  `traceId`, `runId`, and timeline tooling for aggregate ordering.
 - If future `checkpoint.*` events are added, render them as timeline markers and
   keep snapshot payloads outside the event body when large.
 

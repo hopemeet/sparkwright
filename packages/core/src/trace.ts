@@ -289,7 +289,7 @@ export function verifyTraceJsonl(
     { requested: number; resolved: number }
   >();
   const artifactIds = new Set<string>();
-  let previousMonotonicUs: number | undefined;
+  const previousMonotonicUsByTrace = new Map<string, number>();
 
   for (const [index, event] of events.entries()) {
     const line = index + 1;
@@ -343,6 +343,11 @@ export function verifyTraceJsonl(
     }
 
     if (typeof event.monotonicUs === "number") {
+      const traceKey =
+        typeof event.traceId === "string" && event.traceId.length > 0
+          ? event.traceId
+          : event.runId;
+      const previousMonotonicUs = previousMonotonicUsByTrace.get(traceKey);
       if (
         previousMonotonicUs !== undefined &&
         event.monotonicUs < previousMonotonicUs
@@ -353,12 +358,13 @@ export function verifyTraceJsonl(
           message: "monotonicUs moved backward in file order.",
           metadata: {
             line,
+            traceId: traceKey,
             previous: previousMonotonicUs,
             actual: event.monotonicUs,
           },
         });
       }
-      previousMonotonicUs = event.monotonicUs;
+      previousMonotonicUsByTrace.set(traceKey, event.monotonicUs);
     }
 
     if (isTerminalRunEvent(event)) {
@@ -1719,6 +1725,7 @@ function reconstructCheckpointFromTrace(
   let costUsd = 0;
   let lastTimestampMs: number | undefined;
   let firstTimestampMs: number | undefined;
+  let eventSequence = 0;
 
   if (tracePath) {
     const lines = readFileSync(tracePath, "utf8").split(/\r?\n/);
@@ -1731,6 +1738,9 @@ function reconstructCheckpointFromTrace(
         continue; // skip corrupt lines — best-effort
       }
       if (event.runId !== run.id) continue;
+      if (typeof event.sequence === "number") {
+        eventSequence = Math.max(eventSequence, observedSequenceEnd(event));
+      }
       const ts = Date.parse(event.timestamp);
       if (!Number.isNaN(ts)) {
         firstTimestampMs ??= ts;
@@ -1774,6 +1784,7 @@ function reconstructCheckpointFromTrace(
       repeatedToolCallCount: 0,
       transition: { reason: "next_turn" },
     },
+    eventSequence,
     model: { activeIndex: 0, fallbackCount: 0 },
     recovery: { outputRecoveriesUsed: 0, maxOutputRecoveries: 3 },
     budget: {

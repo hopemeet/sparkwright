@@ -573,7 +573,9 @@ export class SparkwrightRun implements RunHandle {
           updatedAt: now,
           metadata: options.metadata ?? {},
         };
-    this.events = new EventLog(this.record.id);
+    this.events = new EventLog(this.record.id, {
+      sequence: checkpoint?.eventSequence,
+    });
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
     // InteractionChannel.approve, when supplied, takes precedence as the
@@ -1842,6 +1844,7 @@ export class SparkwrightRun implements RunHandle {
       schemaVersion: "run-checkpoint.v1",
       run: { ...this.record, metadata: { ...this.record.metadata } },
       loop: cloneLoopState(loop),
+      eventSequence: this.events.lastSequence,
       model: {
         activeIndex: this.activeModelIndex,
         activeAdapterId: getModelAdapterId(this.models[this.activeModelIndex]),

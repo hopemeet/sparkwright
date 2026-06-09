@@ -80,7 +80,7 @@ export async function runTodoSupervised(
   // spin the stall guard forever (at worst it completes every item, which ends
   // the loop). Status churn that does not raise the completed count still
   // counts as no progress.
-  let prevCompleted = 0;
+  let prevCompleted = summarizeTodoLedger(await readLedgerFn()).completed;
 
   while (true) {
     const output = await options.runOnce({

@@ -560,6 +560,39 @@ describe("runTodoSupervised", () => {
     expect(result.decision.kind).toBe("complete");
     expect(result.stalledContinuationCount).toBe(0);
   });
+
+  it("does not count already-completed resumed ledger items as new progress", async () => {
+    const ledger: TodoLedger = {
+      schemaVersion: "todo-ledger.v1",
+      metadata: {},
+      items: [
+        { title: "already done", status: "completed", depth: 0 },
+        { title: "still open", status: "pending", depth: 0 },
+      ],
+    };
+
+    const result = await runTodoSupervised({
+      readLedger: () => ledger,
+      maxContinuations: 10,
+      maxStalledContinuations: 0,
+      runOnce() {
+        return {
+          result: {
+            signal: "completed",
+            state: "completed",
+            stopReason: "final_answer",
+            metadata: {},
+          },
+          events: [{ type: "workspace.read" } as never],
+        };
+      },
+    });
+
+    expect(result.decision).toMatchObject({
+      kind: "handoff",
+      reason: "stalled_without_progress",
+    });
+  });
 });
 
 describe("policy denies todo_write for child agents", () => {

@@ -171,6 +171,12 @@ export interface RunCheckpointV1 {
   run: RunRecord;
   /** @reserved Public checkpoint payload consumed by resume/fork tooling. */
   loop: RunLoopState;
+  /**
+   * Last persisted event sequence observed for this run when the checkpoint was
+   * created or reconstructed. Resumed runs continue after this value so an
+   * append-only run trace remains valid.
+   */
+  eventSequence?: number;
   model: {
     activeIndex: number;
     activeAdapterId?: string;

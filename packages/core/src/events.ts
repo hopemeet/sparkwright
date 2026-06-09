@@ -236,7 +236,16 @@ export class EventLog implements EventEmitter {
   private readonly listeners = new Set<(event: SparkwrightEvent) => void>();
   private readonly defaultTraceId: TraceId;
 
-  constructor(private readonly runId: RunId) {
+  constructor(
+    private readonly runId: RunId,
+    options: { sequence?: number } = {},
+  ) {
+    if (options.sequence !== undefined) {
+      if (!Number.isInteger(options.sequence) || options.sequence < 0) {
+        throw new Error("EventLog sequence must be a non-negative integer.");
+      }
+      this.sequence = options.sequence;
+    }
     this.defaultTraceId = createTraceId();
   }
 
@@ -248,6 +257,10 @@ export class EventLog implements EventEmitter {
    */
   get traceId(): TraceId {
     return this.defaultTraceId;
+  }
+
+  get lastSequence(): number {
+    return this.sequence;
   }
 
   emit<TPayload>(

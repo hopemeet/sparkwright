@@ -521,6 +521,7 @@ describe("trace", () => {
     expect(
       (reloaded?.metadata as { step?: number }).step ?? 0,
     ).toBeGreaterThanOrEqual(2);
+    expect(reloaded?.eventSequence ?? 0).toBeGreaterThan(0);
   });
 
   it("reconstructs a best-effort checkpoint from trace when checkpoint.json is missing", async () => {
@@ -641,11 +642,13 @@ describe("trace", () => {
     expect(reconstructed?.budget.usage.modelCalls).toBe(1);
     expect(reconstructed?.budget.usage.toolCalls).toBe(1);
     expect(reconstructed?.loop.step).toBe(2); // resumed AFTER last seen step
+    expect(reconstructed?.eventSequence).toBe(2);
 
     // Now actually resume it (force required since resumability.complete=false).
     let observedStep = 0;
     const run = resumeRunFromCheckpoint(reconstructed!, {
       force: true,
+      runStore: (record) => new FileRunStore(record, { rootDir: root }),
       model: {
         async complete(input) {
           observedStep = input.step;
@@ -657,6 +660,10 @@ describe("trace", () => {
     expect(result.signal).toBe("completed");
     expect(observedStep).toBe(2);
     expect(run.record.id).toBe(runId);
+    const report = verifyTraceJsonl(
+      await readFile(join(runDir, "trace.jsonl"), "utf8"),
+    );
+    expect(report.findings).toEqual([]);
   });
 
   it("RunHandle.persistCheckpoint writes via the wired runStore", async () => {
@@ -2100,6 +2107,28 @@ describe("trace", () => {
     store.append(log.emit("run.completed", { reason: "final_answer" }));
 
     const report = verifyTraceJsonl(await readFile(store.tracePath, "utf8"));
+
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("checks monotonic ordering per trace id, not across appended traces", () => {
+    const first = new EventLog(createRunId());
+    const second = new EventLog(createRunId());
+    const firstStart = first.emit("run.created", { goal: "first" });
+    const firstDone = first.emit("run.completed", { reason: "final_answer" });
+    const secondStart = second.emit("run.created", { goal: "second" });
+    const secondDone = second.emit("run.completed", {
+      reason: "final_answer",
+    });
+    secondStart.monotonicUs = 1;
+    secondDone.monotonicUs = 2;
+
+    const report = verifyTraceJsonl(
+      [firstStart, firstDone, secondStart, secondDone]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
 
     expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);

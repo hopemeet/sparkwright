@@ -265,12 +265,8 @@ function AppReady(
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
   const [labels, setLabels] = useState<Record<string, string>>({});
   const labelsRef = useRef<SessionLabels | null>(null);
-  // Double-Ctrl+C-to-exit: the first press (when idle) arms a brief window;
-  // exit only happens if a second Ctrl+C lands before it expires. Stored as a
-  // timer handle so we can disarm it. Avoids quitting the whole TUI on a single
-  // accidental Ctrl+C.
-  const quitArmRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastQuitInputAtRef = useRef(0);
+  // Ctrl+C cancels an active run; when idle it exits immediately. This keeps
+  // the TUI scriptable under PTYs and matches the footer's "ctrl+c quit" hint.
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   // Runtime theme override from /theme; falls back to the configured theme.
   const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
@@ -878,28 +874,14 @@ function AppReady(
   }
 
   function requestQuit(presses = 1): void {
-    const now = Date.now();
-    if (now - lastQuitInputAtRef.current < 30) return;
-    lastQuitInputAtRef.current = now;
     for (let i = 0; i < presses; i += 1) {
       if (state.status === "running") {
         if (controller.cancel())
           toasts.push({ variant: "info", message: "cancelling…" });
         return;
       }
-      if (quitArmRef.current) {
-        clearTimeout(quitArmRef.current);
-        quitArmRef.current = null;
-        exit();
-        return;
-      }
-      quitArmRef.current = setTimeout(() => {
-        quitArmRef.current = null;
-      }, 2000);
-      toasts.push({
-        variant: "info",
-        message: "press ctrl+c again to exit",
-      });
+      exit();
+      return;
     }
   }
 
