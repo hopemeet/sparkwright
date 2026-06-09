@@ -6,8 +6,8 @@
 
 /**
  * Lifecycle state of a skill in the registry, used by tooling that prunes /
- * surfaces only "active" skills. Curators may auto-transition between states;
- * pinning is a manual escape hatch.
+ * surfaces only "active" skills (see {@link import("./matcher.js").matchSkills}
+ * `excludeStates`). Embedders drive transitions via {@link SkillUsageRecorder.setState}.
  *
  * @public
  * @stability experimental v0.1
@@ -27,11 +27,6 @@ export interface SkillUsageRecord {
   lastUsedAt?: string;
   lastPatchedAt?: string;
   state: SkillUsageState;
-  pinned: boolean;
-  /** True iff the skill was authored by the agent (vs. the user / host). */
-  agentCreated: boolean;
-  /** Free-form provenance, e.g. {origin: "background_review", sessionId}. */
-  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -47,13 +42,9 @@ export interface SkillUsageRecorder {
   recordUse(name: string, at?: Date): void;
   /** Bump patchCount + lastPatchedAt (called on edit / patch / write_file). */
   recordPatch(name: string, at?: Date): void;
-  /** Mark a skill as created by the agent (vs. user). */
-  markAgentCreated(name: string, metadata?: Record<string, unknown>): void;
   /** Drop the record entirely (e.g. on archive). */
   forget(name: string): void;
-  /** Pin / unpin to bypass curator auto-transitions. */
-  setPinned(name: string, pinned: boolean): void;
-  /** Set lifecycle state (curators call this). */
+  /** Set lifecycle state (e.g. demote to stale / archive). */
   setState(name: string, state: SkillUsageState): void;
   /** Read a single record, or undefined if untracked. */
   get(name: string): SkillUsageRecord | undefined;
@@ -76,7 +67,7 @@ export class InMemorySkillUsageRecorder implements SkillUsageRecorder {
     r.useCount += 1;
     r.lastUsedAt = at.toISOString();
     // Touching a stale skill reactivates it; archived stays archived until
-    // an explicit setState (curator's job, not the matcher's).
+    // an explicit setState.
     if (r.state === "stale") r.state = "active";
   }
 
@@ -86,18 +77,8 @@ export class InMemorySkillUsageRecorder implements SkillUsageRecorder {
     r.lastPatchedAt = at.toISOString();
   }
 
-  markAgentCreated(name: string, metadata?: Record<string, unknown>): void {
-    const r = this.ensure(name);
-    r.agentCreated = true;
-    if (metadata) r.metadata = { ...r.metadata, ...metadata };
-  }
-
   forget(name: string): void {
     this.byName.delete(name);
-  }
-
-  setPinned(name: string, pinned: boolean): void {
-    this.ensure(name).pinned = pinned;
   }
 
   setState(name: string, state: SkillUsageState): void {
@@ -123,8 +104,6 @@ export class InMemorySkillUsageRecorder implements SkillUsageRecorder {
         useCount: 0,
         patchCount: 0,
         state: "active",
-        pinned: false,
-        agentCreated: false,
       };
       this.byName.set(name, r);
     }
