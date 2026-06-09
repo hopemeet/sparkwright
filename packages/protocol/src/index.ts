@@ -380,6 +380,8 @@ export interface RunCompletedEventPayload {
   runId: string;
   state: string;
   stopReason?: string;
+  /** Final answer text when the run ended by producing one. */
+  message?: string;
   /** Present when the run completed with a non-clean outcome summary. */
   outcome?: object;
   /** Present when `state` is `failed` or `cancelled` and a structured cause is available. */
