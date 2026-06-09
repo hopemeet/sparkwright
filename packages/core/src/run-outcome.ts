@@ -1,4 +1,5 @@
 import type { SparkwrightEvent } from "./events.js";
+import { isRecord } from "./record-utils.js";
 
 export type ToolFailureCategory =
   | "policy_denial"
@@ -203,10 +204,6 @@ function uniqueCodes(failures: readonly ClassifiedToolFailure[]): string[] {
         .filter((code): code is string => Boolean(code)),
     ),
   ];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { SparkwrightEvent } from "./events.js";
+import { isRecord } from "./record-utils.js";
 
 export type TrajectoryFindingSeverity = "info" | "warning" | "error";
 
@@ -207,8 +208,4 @@ function readString(value: unknown, key: string): string | undefined {
 
   const result = value[key];
   return typeof result === "string" ? result : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

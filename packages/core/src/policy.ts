@@ -3,6 +3,7 @@
 // constraints as additional layers, not as edits to the default policy.
 // Risk → tool gate is enforced in run.ts via `checkToolGate`.
 
+import { isRecord } from "./record-utils.js";
 export type PolicyDecisionKind = "allow" | "deny" | "requires_approval";
 export type PermissionMode =
   | "plan"
@@ -443,8 +444,4 @@ function summarizeUnifiedDiff(diff: string): {
     deletedLines,
     changedLines: addedLines + deletedLines,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

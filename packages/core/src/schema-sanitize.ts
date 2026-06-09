@@ -20,10 +20,7 @@
 //
 // The function is pure and recursive; it never mutates its input.
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
+import { isRecord } from "./record-utils.js";
 function isNullSchema(node: unknown): boolean {
   return isRecord(node) && node.type === "null" && !("properties" in node);
 }

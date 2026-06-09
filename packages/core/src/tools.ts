@@ -9,6 +9,7 @@ import type {
   ToolCall,
   ToolResult,
 } from "./types.js";
+import { isRecord } from "./record-utils.js";
 
 export type ToolRisk = "safe" | "risky" | "denied";
 export type ToolSideEffect = "none" | "read" | "write" | "network" | "external";
@@ -857,8 +858,4 @@ function validateType(
     default:
       return undefined;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

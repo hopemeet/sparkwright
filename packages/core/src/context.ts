@@ -8,6 +8,7 @@ import { createContextItemId } from "./ids.js";
 import type { SparkwrightEvent } from "./events.js";
 import type { Artifact, RunRecord, ContextItem, ToolResult } from "./types.js";
 import type { ToolDescriptor } from "./tools.js";
+import { isRecord } from "./record-utils.js";
 
 export type ContextLayer =
   | "resident"
@@ -1611,8 +1612,4 @@ function safeStringify(value: unknown): string {
       },
     });
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
