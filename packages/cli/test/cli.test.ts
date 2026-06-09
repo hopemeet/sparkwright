@@ -11,6 +11,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import type { RunId } from "@sparkwright/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -3352,10 +3353,16 @@ describe("runCli", () => {
     const parsed = JSON.parse(approvedOutput.stdoutText()) as {
       output: { stdout: string };
     };
-    expect(JSON.parse(parsed.output.stdout)).toMatchObject({
-      argv: ["--workspace", workspace],
-      cwd: await realpath(workspace),
-    });
+    const delegateInvocation = JSON.parse(parsed.output.stdout) as {
+      argv: string[];
+      cwd: string;
+    };
+    expect(delegateInvocation.argv).toEqual(["--workspace", workspace]);
+    // Windows reports the temp dir in 8.3 short form (RUNNER~1) where realpath
+    // canonicalizes to the long name; normalize both sides before comparing.
+    expect(await realpath(delegateInvocation.cwd)).toBe(
+      await realpath(workspace),
+    );
   });
 
   function mcpEchoServerConfig(name: string) {
@@ -3369,10 +3376,13 @@ describe("runCli", () => {
       "node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js",
     );
     const zodPath = resolve(repoRoot, "node_modules/zod/v4/index.js");
+    // ESM `import` of an absolute path must be a file:// URL on Windows
+    // (a bare `C:\...` specifier is rejected); POSIX tolerates a bare path but
+    // file:// works there too, so always convert.
     const script = [
-      `import { McpServer } from ${JSON.stringify(mcpPath)};`,
-      `import { StdioServerTransport } from ${JSON.stringify(transportPath)};`,
-      `import { z } from ${JSON.stringify(zodPath)};`,
+      `import { McpServer } from ${JSON.stringify(pathToFileURL(mcpPath).href)};`,
+      `import { StdioServerTransport } from ${JSON.stringify(pathToFileURL(transportPath).href)};`,
+      `import { z } from ${JSON.stringify(pathToFileURL(zodPath).href)};`,
       "const server = new McpServer({ name: 'cli-test-mcp', version: '0.0.1' });",
       "server.registerTool('echo', { description: 'Echo text.', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }] }));",
       "await server.connect(new StdioServerTransport());",
@@ -3383,7 +3393,9 @@ describe("runCli", () => {
       command: process.execPath,
       args: ["--input-type=module", "-e", script],
       enabled: true,
-      timeoutMs: 1000,
+      // Generous ceiling so a cold node + ESM SDK load on the slow Windows CI
+      // runner has room to connect (not a delay on fast machines).
+      timeoutMs: 15000,
     };
   }
 

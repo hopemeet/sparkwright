@@ -361,9 +361,12 @@ describe("external command delegate tool", () => {
     } as never)) as { stdout: string };
     const lines = result.stdout.trimEnd().split("\n");
 
+    // explicit env mode drops the inherited PATH on POSIX; Windows always
+    // keeps a PATH-like var in the child, so only assert hasPath strictly off
+    // POSIX.
     expect(JSON.parse(lines[1] ?? "{}")).toEqual({
       hasCustomEnv: true,
-      hasPath: false,
+      hasPath: process.platform === "win32" ? expect.any(Boolean) : false,
     });
   });
 

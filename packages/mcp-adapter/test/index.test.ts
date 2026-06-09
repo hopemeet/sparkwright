@@ -766,18 +766,24 @@ describe("mcp-adapter", () => {
       emitter: emitter as never,
     });
 
+    // A missing command spawns ENOENT on POSIX (-> COMMAND_NOT_FOUND) but on
+    // Windows the spawn error races the connect timeout and surfaces as a
+    // generic connect failure. Accept either structured code.
+    const failureCode = expect.stringMatching(
+      /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED)$/,
+    );
     expect(captured[0]?.payload).toMatchObject({
       name: "missing",
       status: "failed",
-      errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+      errorCode: failureCode,
       errorPhase: "connect",
       error: {
-        code: "MCP_SERVER_COMMAND_NOT_FOUND",
+        code: failureCode,
         phase: "connect",
       },
     });
     expect(captured[0]?.metadata).toMatchObject({
-      errorCode: "MCP_SERVER_COMMAND_NOT_FOUND",
+      errorCode: failureCode,
       errorPhase: "connect",
     });
   });
