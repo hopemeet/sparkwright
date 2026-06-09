@@ -20,6 +20,7 @@ export interface ToolOutcomeSummary {
   failures: ClassifiedToolFailure[];
   unresolvedFailures: ClassifiedToolFailure[];
   recoveredFailures: ClassifiedToolFailure[];
+  /** @reserved Public outcome field consumed by policy / diagnostics UIs. */
   policyDenials: ClassifiedToolFailure[];
 }
 
