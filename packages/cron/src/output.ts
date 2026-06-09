@@ -12,12 +12,14 @@ export async function writeJobOutput(input: {
   jobId: string;
   content: string;
   at?: Date;
+  runId?: string;
 }): Promise<CronOutputRecord> {
   const at = input.at ?? new Date();
   const dir = join(input.rootDir, "output", input.jobId);
   await mkdir(dir, { recursive: true });
   const stamp = at.toISOString().replace(/[:.]/g, "-");
-  const path = join(dir, `${stamp}.md`);
+  const suffix = input.runId ? `-${input.runId}` : "";
+  const path = join(dir, `${stamp}${suffix}.md`);
   const tmp = `${path}.tmp`;
   const handle = await open(tmp, "w", 0o600);
   try {

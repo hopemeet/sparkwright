@@ -36,6 +36,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.64",
     "@sparkwright/acp-adapter": "0.1.0",
+    "@sparkwright/agent-runtime": "0.1.0",
     "@sparkwright/core": "0.1.0",
     "@sparkwright/cron": "0.1.0",
     "@sparkwright/host": "0.1.0",

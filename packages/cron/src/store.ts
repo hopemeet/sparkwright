@@ -79,9 +79,13 @@ export class CronStore {
         state: "scheduled",
         enabled: true,
         nextRunAt: computeNextRun(parsed.schedule, now),
+        runningSince: null,
         lastRunAt: null,
         lastStatus: null,
         lastError: null,
+        lastRunId: null,
+        lastTracePath: null,
+        lastOutputPath: null,
         deliver: input.deliver ?? "local",
         ...(input.workspace ? { workspace: resolve(input.workspace) } : {}),
         createdAt,
@@ -178,6 +182,7 @@ export class CronStore {
         job.nextRunAt = computeNextRun(job.schedule, now);
       }
       job.state = "running";
+      job.runningSince = now.toISOString();
       job.updatedAt = now.toISOString();
       return job;
     });
@@ -185,7 +190,20 @@ export class CronStore {
 
   async markJobRun(
     id: string,
-    input: { ok: true } | { ok: false; error: string },
+    input:
+      | {
+          ok: true;
+          runId?: string;
+          tracePath?: string;
+          outputPath?: string;
+        }
+      | {
+          ok: false;
+          error: string;
+          runId?: string;
+          tracePath?: string;
+          outputPath?: string;
+        },
     now = new Date(),
   ): Promise<CronJob | null> {
     return this.withMutation(async (data) => {
@@ -193,6 +211,10 @@ export class CronStore {
       job.lastRunAt = now.toISOString();
       job.lastStatus = input.ok ? "ok" : "error";
       job.lastError = input.ok ? null : input.error;
+      job.runningSince = null;
+      if (input.runId !== undefined) job.lastRunId = input.runId;
+      if (input.tracePath !== undefined) job.lastTracePath = input.tracePath;
+      if (input.outputPath !== undefined) job.lastOutputPath = input.outputPath;
       job.repeat.completed += 1;
       if (!input.ok) job.state = "error";
       else if (

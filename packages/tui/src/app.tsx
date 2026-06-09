@@ -674,8 +674,8 @@ function AppReady(
     });
     reg.register({
       name: "cron",
-      title: "Browse cron support",
-      description: "Show cron-related tools and capability status.",
+      title: "Browse automation status",
+      description: "Show cron jobs and durable background task state.",
       category: "view",
       run: () => void openCapabilities("cron"),
     });
@@ -1625,6 +1625,7 @@ function CapabilitiesPanel(props: {
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
   );
+  const automation = s?.automation;
   const title = capabilityPanelTitle(props.view);
   return (
     <Box
@@ -1654,6 +1655,7 @@ function CapabilitiesPanel(props: {
             delegateTools={delegateTools}
             mcp={mcp}
             cronTools={cronTools}
+            automation={automation}
           />
 
           {props.view === "all" || props.view === "tools" ? (
@@ -1676,7 +1678,7 @@ function CapabilitiesPanel(props: {
           ) : null}
 
           {props.view === "cron" ? (
-            <CronCapabilitySection tools={cronTools} />
+            <CronCapabilitySection tools={cronTools} automation={automation} />
           ) : null}
         </>
       ) : null}
@@ -1710,6 +1712,7 @@ function CapabilityOverview(props: {
   delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
   mcp: CapabilitySnapshot["mcp"]["statuses"];
   cronTools: CapabilitySnapshot["tools"];
+  automation?: CapabilitySnapshot["automation"];
 }): React.ReactElement {
   const theme = useTheme();
   const unloadedSkills = Math.max(
@@ -1738,6 +1741,14 @@ function CapabilityOverview(props: {
         <Text color={theme.muted}>
           Cron support is present through {props.cronTools.length} prepared tool
           {props.cronTools.length === 1 ? "" : "s"}.
+        </Text>
+      ) : null}
+      {props.automation ? (
+        <Text color={theme.muted}>
+          Automation state: {props.automation.cron.total} cron job
+          {props.automation.cron.total === 1 ? "" : "s"},{" "}
+          {props.automation.tasks.total} background task
+          {props.automation.tasks.total === 1 ? "" : "s"}.
         </Text>
       ) : null}
     </Box>
@@ -1885,28 +1896,112 @@ function McpCapabilitySection(props: {
 
 function CronCapabilitySection(props: {
   tools: CapabilitySnapshot["tools"];
+  automation?: CapabilitySnapshot["automation"];
 }): React.ReactElement {
   const theme = useTheme();
+  const cron = props.automation?.cron;
+  const tasks = props.automation?.tasks;
   return (
-    <CapabilitySection
-      title={`cron tools (${props.tools.length})`}
-      empty="cron tool is not prepared for this host"
-      count={props.tools.length}
-    >
-      {props.tools.map((tool) => (
-        <Text key={tool.name}>
-          <Text color={theme.success}>• </Text>
-          {tool.name}
-          {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-          {tool.origin ? (
-            <Text color={theme.muted}> · {tool.origin}</Text>
-          ) : null}
-        </Text>
-      ))}
-      <Text color={theme.muted}>
-        schedule records are managed through the cron command surface
-      </Text>
-    </CapabilitySection>
+    <>
+      <CapabilitySection
+        title={`cron jobs (${cron?.total ?? 0})`}
+        empty="no cron jobs recorded"
+        count={cron?.total ?? 0}
+      >
+        {cron?.jobs.map((job) => (
+          <Box key={job.id} flexDirection="column">
+            <Text>
+              <Text color={job.enabled ? theme.success : theme.muted}>• </Text>
+              {job.name}
+              <Text color={theme.muted}>
+                {" "}
+                · {job.state} · {job.schedule}
+              </Text>
+              {job.lastStatus ? (
+                <Text
+                  color={job.lastStatus === "ok" ? theme.success : theme.error}
+                >
+                  {" "}
+                  · last {job.lastStatus}
+                </Text>
+              ) : null}
+            </Text>
+            <Text color={theme.muted}>
+              next {job.nextRunAt ?? "none"} · last {job.lastRunAt ?? "never"}
+            </Text>
+            {job.lastError ? (
+              <Text color={theme.error}> {job.lastError}</Text>
+            ) : null}
+          </Box>
+        ))}
+        {cron && cron.total > cron.jobs.length ? (
+          <Text color={theme.muted}>
+            … {cron.total - cron.jobs.length} more
+          </Text>
+        ) : null}
+        {cron ? <Text color={theme.muted}>state: {cron.rootDir}</Text> : null}
+      </CapabilitySection>
+
+      <CapabilitySection
+        title={`background tasks (${tasks?.total ?? 0})`}
+        empty="no durable background tasks recorded"
+        count={tasks?.total ?? 0}
+      >
+        {tasks?.tasks.map((task) => (
+          <Box key={task.id} flexDirection="column">
+            <Text>
+              <Text
+                color={
+                  task.status === "failed"
+                    ? theme.error
+                    : task.status === "completed"
+                      ? theme.success
+                      : theme.accent
+                }
+              >
+                •{" "}
+              </Text>
+              {task.kind}
+              <Text color={theme.muted}>
+                {" "}
+                · {task.status} · {task.id}
+              </Text>
+            </Text>
+            <Text color={theme.muted}>
+              {task.title ?? "untitled"} · output {task.outputChunks ?? 0}
+            </Text>
+            {task.error ? (
+              <Text color={theme.error}>
+                {task.error.code}: {task.error.message}
+              </Text>
+            ) : null}
+          </Box>
+        ))}
+        {tasks && tasks.total > tasks.tasks.length ? (
+          <Text color={theme.muted}>
+            … {tasks.total - tasks.tasks.length} more
+          </Text>
+        ) : null}
+        {tasks ? <Text color={theme.muted}>state: {tasks.rootDir}</Text> : null}
+      </CapabilitySection>
+
+      <CapabilitySection
+        title={`cron tools (${props.tools.length})`}
+        empty="cron tool is not prepared for this host"
+        count={props.tools.length}
+      >
+        {props.tools.map((tool) => (
+          <Text key={tool.name}>
+            <Text color={theme.success}>• </Text>
+            {tool.name}
+            {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+            {tool.origin ? (
+              <Text color={theme.muted}> · {tool.origin}</Text>
+            ) : null}
+          </Text>
+        ))}
+      </CapabilitySection>
+    </>
   );
 }
 

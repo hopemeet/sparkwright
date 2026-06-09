@@ -10,6 +10,8 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
+import type { RunId } from "@sparkwright/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 
@@ -54,6 +56,9 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain("Usage: sparkwright init");
+    expect(output.stdoutText()).toContain(
+      "sparkwright cron list|status|run|tick",
+    );
     expect(output.stdoutText()).toContain('sparkwright run "your goal"');
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
@@ -76,6 +81,181 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
+  });
+
+  it("prints cron status for a stored job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
+    tempDirs.push(root);
+    const createOutput = createOutputCapture();
+    const created = await runCli(
+      [
+        "cron",
+        "create",
+        "--root-dir",
+        root,
+        "--schedule",
+        "every 1d",
+        "--prompt",
+        "summarize README.md",
+        "--name",
+        "readme-daily",
+      ],
+      {
+        io: {
+          stdout: createOutput.stdout,
+          stderr: createOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+
+    const statusOutput = createOutputCapture();
+    const status = await runCli(
+      ["cron", "status", "readme-daily", "--root-dir", root],
+      {
+        io: {
+          stdout: statusOutput.stdout,
+          stderr: statusOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(status.exitCode).toBe(0);
+    const parsed = JSON.parse(statusOutput.stdoutText()) as {
+      name: string;
+      state: string;
+      schedule: string;
+      lastTracePath: string | null;
+    };
+    expect(parsed).toMatchObject({
+      name: "readme-daily",
+      state: "scheduled",
+      schedule: "every 1d",
+      lastTracePath: null,
+    });
+  });
+
+  it("inspects durable background tasks without starting tasks", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-task-cli-"));
+    tempDirs.push(root);
+    const store = new FileTaskStore({ rootDir: root });
+    const taskId = createTaskId();
+    const record = store.create({
+      id: taskId,
+      parentRunId: "run_task_cli" as RunId,
+      kind: "maintenance-check",
+      title: "README maintenance",
+      metadata: { source: "test" },
+    });
+    store.update(taskId, {
+      status: "completed",
+      startedAt: "2026-06-09T00:00:00.000Z",
+      completedAt: "2026-06-09T00:00:01.000Z",
+      result: { summary: "ok" },
+    });
+    store.appendOutput(taskId, {
+      taskId,
+      timestamp: "2026-06-09T00:00:00.500Z",
+      channel: "stdout",
+      data: "summary: ok\n",
+    });
+
+    const listOutput = createOutputCapture();
+    const listed = await runCli(
+      [
+        "tasks",
+        "list",
+        "--root-dir",
+        root,
+        "--status",
+        "completed",
+        "--kind",
+        "maintenance-check",
+      ],
+      {
+        io: {
+          stdout: listOutput.stdout,
+          stderr: listOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(listed.exitCode).toBe(0);
+    const list = JSON.parse(listOutput.stdoutText()) as {
+      rootDir: string;
+      tasks: Array<{ id: string; status: string; kind: string }>;
+    };
+    expect(list.rootDir).toBe(root);
+    expect(list.tasks).toEqual([
+      expect.objectContaining({
+        id: record.id,
+        status: "completed",
+        kind: "maintenance-check",
+      }),
+    ]);
+
+    const getOutput = createOutputCapture();
+    const got = await runCli(["tasks", "get", taskId, "--root-dir", root], {
+      io: {
+        stdout: getOutput.stdout,
+        stderr: getOutput.stderr,
+        stdinIsTTY: false,
+      },
+    });
+    expect(got.exitCode).toBe(0);
+    expect(JSON.parse(getOutput.stdoutText())).toMatchObject({
+      id: taskId,
+      result: { summary: "ok" },
+    });
+
+    const outputCapture = createOutputCapture();
+    const output = await runCli(
+      ["tasks", "output", taskId, "--root-dir", root, "--from-sequence", "0"],
+      {
+        io: {
+          stdout: outputCapture.stdout,
+          stderr: outputCapture.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(output.exitCode).toBe(0);
+    expect(JSON.parse(outputCapture.stdoutText())).toMatchObject({
+      taskId,
+      chunks: [
+        expect.objectContaining({
+          sequence: 0,
+          channel: "stdout",
+          data: "summary: ok\n",
+        }),
+      ],
+      complete: true,
+      status: "completed",
+    });
+  });
+
+  it("does not create the default task root during empty task inspection", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["tasks", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("tasks: (none)");
+    await expect(
+      stat(join(workspace, ".sparkwright", "tasks")),
+    ).rejects.toThrow();
   });
 
   it("rejects an empty run goal with a focused message", async () => {

@@ -30,6 +30,8 @@ export interface RunCronJobResult {
   ok: boolean;
   message: string;
   outputPath?: string;
+  runId?: string;
+  tracePath?: string;
   silent: boolean;
 }
 
@@ -55,6 +57,7 @@ export async function runCronJob(
     { onWarn: "pass" },
   );
 
+  let tracePath: string | undefined;
   const run = createRun({
     goal,
     workspace: new LocalWorkspace(workspaceRoot),
@@ -74,22 +77,27 @@ export async function runCronJob(
   });
 
   const result = await run.start();
-  const message = result.message ?? "";
+  const message = result.message ?? result.failure?.message ?? "";
+  tracePath = join(sessionRootDir, `cron-${job.id}`, "trace.jsonl");
   const silent = message.trimStart().startsWith("[SILENT]");
+  const ok = result.state === "completed";
   const output =
-    message.trim().length > 0
+    ok && message.trim().length > 0
       ? await writeJobOutput({
           rootDir: options.rootDir,
           jobId: job.id,
           content: message,
           at: now,
+          runId: run.record.id,
         })
       : undefined;
 
   return {
-    ok: result.state === "completed",
+    ok,
     message,
     outputPath: output?.path,
+    runId: run.record.id,
+    tracePath,
     silent,
   };
 }

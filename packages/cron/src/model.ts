@@ -24,9 +24,13 @@ export interface CronJob {
   state: JobState;
   enabled: boolean;
   nextRunAt: string | null;
+  runningSince?: string | null;
   lastRunAt: string | null;
   lastStatus: JobStatus | null;
   lastError: string | null;
+  lastRunId?: string | null;
+  lastTracePath?: string | null;
+  lastOutputPath?: string | null;
   deliver: DeliveryTarget;
   workspace?: string;
   createdAt: string;
@@ -65,4 +69,5 @@ export type CronAction =
   | "pause"
   | "resume"
   | "run"
+  | "status"
   | "remove";

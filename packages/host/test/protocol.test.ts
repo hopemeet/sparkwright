@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
-import type { SparkwrightEvent } from "@sparkwright/core";
+import type { RunId, SparkwrightEvent } from "@sparkwright/core";
+import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
+import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import type { Connection } from "../src/connection.js";
 import { serveConnection } from "../src/server.js";
 import { HostRuntime } from "../src/runtime.js";
@@ -969,9 +971,7 @@ describe("host protocol", () => {
       );
       expect(response).toMatchObject({ envelope: "response", ok: true });
       await pair.waitFor(
-        (m) =>
-          m.envelope === "event" &&
-          m.kind === "run.completed",
+        (m) => m.envelope === "event" && m.kind === "run.completed",
       );
       const streamedEvents = pair
         .clientMessages()
@@ -1513,6 +1513,87 @@ describe("host protocol", () => {
       runtime.cleanup();
     } finally {
       await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("includes cron and durable task summaries in capability inspection", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
+    const previousStateHome = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = stateHome;
+    try {
+      const cronStore = new CronStore({ rootDir: defaultCronRoot() });
+      const cronJob = await cronStore.createJob(
+        {
+          name: "readme-daily",
+          prompt: "summarize README.md",
+          schedule: "every 1d",
+          workspace,
+        },
+        new Date("2026-06-09T00:00:00.000Z"),
+      );
+
+      const taskStore = new FileTaskStore({
+        rootDir: join(workspace, ".sparkwright", "tasks"),
+      });
+      const taskId = createTaskId();
+      taskStore.create({
+        id: taskId,
+        parentRunId: "run_automation_snapshot" as RunId,
+        kind: "maintenance-check",
+        title: "README maintenance",
+      });
+      taskStore.update(taskId, {
+        status: "failed",
+        completedAt: "2026-06-09T00:00:01.000Z",
+        error: {
+          code: "SYNTHETIC_TASK_FAILURE",
+          message: "synthetic task failure",
+        },
+      });
+
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const inspected = await runtime.inspectCapabilities();
+      expect(inspected.ok).toBe(true);
+      if (!inspected.ok) return;
+      expect(inspected.snapshot.automation).toMatchObject({
+        cron: {
+          rootDir: defaultCronRoot(),
+          total: 1,
+          jobs: [
+            expect.objectContaining({
+              id: cronJob.id,
+              name: "readme-daily",
+              state: "scheduled",
+              schedule: "every 1d",
+            }),
+          ],
+        },
+        tasks: {
+          rootDir: join(workspace, ".sparkwright", "tasks"),
+          total: 1,
+          tasks: [
+            expect.objectContaining({
+              id: taskId,
+              kind: "maintenance-check",
+              status: "failed",
+              error: {
+                code: "SYNTHETIC_TASK_FAILURE",
+                message: "synthetic task failure",
+              },
+            }),
+          ],
+        },
+      });
+    } finally {
+      if (previousStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousStateHome;
+      await rm(workspace, { recursive: true, force: true });
+      await rm(stateHome, { recursive: true, force: true });
     }
   });
 });

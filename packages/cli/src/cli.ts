@@ -1,5 +1,12 @@
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
+  FileTaskStore,
+  type TaskId,
+  type TaskOutputChunk,
+  type TaskRecord,
+  type TaskStatus,
+} from "@sparkwright/agent-runtime";
+import {
   asSessionId,
   buildTraceTimelineFile,
   createSessionId,
@@ -35,6 +42,7 @@ import {
   legacyConfigCronRoot,
   runCronJobByRef,
   tickCron,
+  type CronJob,
   type CreateJobInput,
   type UpdateJobPatch,
 } from "@sparkwright/cron";
@@ -178,6 +186,10 @@ export async function runCli(
 
   if (command === "tools") {
     return handleToolsCommand(parsed.value, io, env);
+  }
+
+  if (command === "tasks") {
+    return handleTasksCommand(parsed.value, io);
   }
 
   if (command === "capabilities") {
@@ -391,6 +403,7 @@ function parseArgs(
     "session",
     "cron",
     "tools",
+    "tasks",
     "capabilities",
     "delegates",
     "skills",
@@ -405,6 +418,7 @@ function parseArgs(
     command === "session" ||
     command === "cron" ||
     command === "tools" ||
+    command === "tasks" ||
     command === "capabilities" ||
     command === "delegates" ||
     command === "skills" ||
@@ -750,6 +764,19 @@ function parseArgs(
     };
   }
 
+  if (
+    command === "tasks" &&
+    subcommand !== "list" &&
+    subcommand !== "get" &&
+    subcommand !== "output"
+  ) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright tasks <list|get|output> [task-id] [--workspace path] [--root-dir path] [--status status] [--kind kind]",
+    };
+  }
+
   if (command === "capabilities" && subcommand !== "inspect") {
     return {
       ok: false,
@@ -817,11 +844,13 @@ function parseArgs(
       subcommand === "pause" ||
       subcommand === "resume" ||
       subcommand === "remove" ||
+      subcommand === "status" ||
       subcommand === "run");
   const effectiveGoal =
     command === "cron"
       ? (cronRefCommand ? args.slice(1) : args).join("\0")
       : command === "tools" ||
+          command === "tasks" ||
           command === "capabilities" ||
           command === "delegates" ||
           command === "skills" ||
@@ -927,6 +956,235 @@ async function handleToolsCommand(
     );
     return { exitCode: 1 };
   }
+}
+
+async function handleTasksCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (
+    subcommand !== "list" &&
+    subcommand !== "get" &&
+    subcommand !== "output"
+  ) {
+    writeLine(io.stderr, tasksUsage());
+    return { exitCode: 1 };
+  }
+
+  const args = parseTaskArgs(parsed.goal);
+  if (!args.ok) {
+    writeLine(io.stderr, args.message);
+    return { exitCode: 1 };
+  }
+
+  const rootDir = args.value.rootDir ?? defaultTaskRoot(parsed.workspaceRoot);
+  const store = new FileTaskStore({ rootDir, createRoot: false });
+
+  try {
+    if (subcommand === "list") {
+      const tasks = store.list({
+        status: args.value.status,
+        kind: args.value.kind,
+        parentRunId: parsed.runId,
+      });
+      writeLine(
+        io.stdout,
+        formatTaskList({ rootDir, tasks, format: parsed.format }),
+      );
+      return { exitCode: 0 };
+    }
+
+    const taskId = args.value.taskId ?? parsed.target;
+    if (!taskId) {
+      writeLine(io.stderr, `Usage: sparkwright tasks ${subcommand} <task-id>`);
+      return { exitCode: 1 };
+    }
+    const id = taskId as unknown as TaskId;
+    const record = store.get(id);
+    if (!record) {
+      writeLine(io.stderr, `Task not found: ${taskId}`);
+      return { exitCode: 1 };
+    }
+
+    if (subcommand === "get") {
+      writeLine(io.stdout, JSON.stringify(record, null, 2));
+      return { exitCode: 0 };
+    }
+
+    const maxChunks = args.value.maxChunks ?? parsed.limit ?? 200;
+    const fromSequence = args.value.fromSequence ?? 0;
+    const chunks = await readTaskOutput(store, id, {
+      fromSequence,
+      maxChunks,
+    });
+    const nextSequence =
+      chunks.length > 0
+        ? chunks[chunks.length - 1]!.sequence + 1
+        : fromSequence;
+    writeLine(
+      io.stdout,
+      JSON.stringify(
+        {
+          taskId,
+          chunks,
+          nextSequence,
+          complete: isTerminalTaskStatus(record.status),
+          status: record.status,
+          error: record.error,
+          lastOutputAt: record.lastOutputAt,
+        },
+        null,
+        2,
+      ),
+    );
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+interface TaskParsedArgs {
+  rootDir?: string;
+  taskId?: string;
+  status?: TaskStatus;
+  kind?: string;
+  fromSequence?: number;
+  maxChunks?: number;
+}
+
+function parseTaskArgs(
+  input: string,
+): { ok: true; value: TaskParsedArgs } | { ok: false; message: string } {
+  let args: string[];
+  try {
+    args = input.includes("\0")
+      ? input.split("\0").filter(Boolean)
+      : splitShellLike(input);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const out: TaskParsedArgs = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const next = args[i + 1];
+    if (arg === "--root-dir") {
+      if (!next)
+        return { ok: false, message: "Usage: --root-dir requires a path" };
+      out.rootDir = next;
+      i += 1;
+    } else if (arg === "--status") {
+      if (!isTaskStatus(next)) {
+        return {
+          ok: false,
+          message:
+            "Usage: --status must be one of: pending, running, completed, failed, cancelled",
+        };
+      }
+      out.status = next;
+      i += 1;
+    } else if (arg === "--kind") {
+      if (!next) return { ok: false, message: "Usage: --kind requires text" };
+      out.kind = next;
+      i += 1;
+    } else if (arg === "--from-sequence") {
+      const value = parseNonNegativeInteger(next);
+      if (value === undefined) {
+        return {
+          ok: false,
+          message: "Usage: --from-sequence requires a non-negative integer",
+        };
+      }
+      out.fromSequence = value;
+      i += 1;
+    } else if (arg === "--max-chunks") {
+      const value = parsePositiveInteger(next);
+      if (value === undefined) {
+        return {
+          ok: false,
+          message: "Usage: --max-chunks requires a positive integer",
+        };
+      }
+      out.maxChunks = value;
+      i += 1;
+    } else if (arg?.startsWith("--")) {
+      return { ok: false, message: `Unknown tasks option: ${arg}` };
+    } else if (!out.taskId) {
+      out.taskId = arg;
+    } else {
+      return { ok: false, message: `Unexpected tasks argument: ${arg}` };
+    }
+  }
+  return { ok: true, value: out };
+}
+
+function defaultTaskRoot(workspaceRoot: string): string {
+  return join(workspaceRoot, ".sparkwright", "tasks");
+}
+
+function isTaskStatus(value: string | undefined): value is TaskStatus {
+  return (
+    value === "pending" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled"
+  );
+}
+
+function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
+
+async function readTaskOutput(
+  store: FileTaskStore,
+  id: TaskId,
+  options: { fromSequence: number; maxChunks: number },
+): Promise<TaskOutputChunk[]> {
+  const chunks: TaskOutputChunk[] = [];
+  for await (const chunk of store.loadOutput(id, options.fromSequence)) {
+    chunks.push(chunk);
+    if (chunks.length >= options.maxChunks) break;
+  }
+  return chunks;
+}
+
+function formatTaskList(input: {
+  rootDir: string;
+  tasks: TaskRecord[];
+  format: ParsedArgs["format"];
+}): string {
+  if (input.format === "json") {
+    return JSON.stringify(
+      {
+        rootDir: input.rootDir,
+        tasks: input.tasks,
+      },
+      null,
+      2,
+    );
+  }
+  const lines = [`rootDir: ${input.rootDir}`];
+  if (input.tasks.length === 0) {
+    lines.push("tasks: (none)");
+    return lines.join("\n");
+  }
+  lines.push(`tasks: ${input.tasks.length}`);
+  for (const task of input.tasks) {
+    lines.push(
+      `- ${task.id} ${task.status} ${task.kind}${task.title ? ` (${task.title})` : ""}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 type ToolConfigAction = "enable" | "disable" | "defer";
@@ -2171,6 +2429,14 @@ async function handleCronCommand(
       return { exitCode: 0 };
     }
 
+    if (subcommand === "status") {
+      writeLine(
+        io.stdout,
+        JSON.stringify(formatCronStatus(await store.getJob(ref)), null, 2),
+      );
+      return { exitCode: 0 };
+    }
+
     if (subcommand === "run") {
       const model = await createCliModel({
         modelRef: parsed.modelName,
@@ -2388,6 +2654,7 @@ function isCronSubcommand(
   | "pause"
   | "resume"
   | "remove"
+  | "status"
   | "run"
   | "tick" {
   return (
@@ -2397,9 +2664,30 @@ function isCronSubcommand(
     value === "pause" ||
     value === "resume" ||
     value === "remove" ||
+    value === "status" ||
     value === "run" ||
     value === "tick"
   );
+}
+
+function formatCronStatus(job: CronJob): Record<string, unknown> {
+  return {
+    id: job.id,
+    name: job.name,
+    enabled: job.enabled,
+    state: job.state,
+    schedule: job.scheduleDisplay,
+    nextRunAt: job.nextRunAt,
+    runningSince: job.runningSince ?? null,
+    lastRunAt: job.lastRunAt,
+    lastStatus: job.lastStatus,
+    lastError: job.lastError,
+    lastRunId: job.lastRunId ?? null,
+    lastTracePath: job.lastTracePath ?? null,
+    lastOutputPath: job.lastOutputPath ?? null,
+    repeat: job.repeat,
+    workspace: job.workspace ?? null,
+  };
 }
 
 function splitComma(value: string): string[] {
@@ -2441,7 +2729,7 @@ function cronUsage(): string {
     'Usage: sparkwright cron create --schedule "every 1h" --prompt "task" [--name name] [--skill name] [--repeat n|forever]',
     "       sparkwright cron list",
     "       sparkwright cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text]",
-    "       sparkwright cron pause|resume|remove <job-id-or-name>",
+    "       sparkwright cron pause|resume|remove|status <job-id-or-name>",
     "       sparkwright cron run <job-id-or-name> [--model provider/model] [--yes]",
     "       sparkwright cron tick [--model provider/model] [--yes]",
   ].join("\n");
@@ -2477,6 +2765,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   }
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
+  if (command === "tasks") return tasksUsage();
   if (command === "capabilities") return capabilitiesUsage();
   if (command === "delegates") return delegatesUsage();
   if (command === "skills") return skillsUsage();
@@ -3179,6 +3468,9 @@ function usage(): string {
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
     "       sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+    '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
+    "       sparkwright cron list|status|run|tick",
+    "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
@@ -3203,6 +3495,14 @@ function toolsUsage(): string {
     "       sparkwright tools enable <tool-pattern...>",
     "       sparkwright tools disable <tool-pattern...>",
     "       sparkwright tools defer <tool-pattern...>",
+  ].join("\n");
+}
+
+function tasksUsage(): string {
+  return [
+    "Usage: sparkwright tasks list [--workspace path] [--root-dir path] [--status status] [--kind kind] [--run-id id] [--format json|text]",
+    "       sparkwright tasks get <task-id> [--workspace path] [--root-dir path]",
+    "       sparkwright tasks output <task-id> [--workspace path] [--root-dir path] [--from-sequence n] [--max-chunks n]",
   ].join("\n");
 }
 

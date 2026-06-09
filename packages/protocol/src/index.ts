@@ -283,6 +283,45 @@ export interface CapabilityDelegateToolSummary {
   };
 }
 
+export interface CapabilityCronJobSummary {
+  id: string;
+  name: string;
+  enabled: boolean;
+  state: string;
+  schedule: string;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  lastTracePath?: string | null;
+}
+
+export interface CapabilityTaskSummary {
+  id: string;
+  kind: string;
+  status: string;
+  title?: string;
+  parentRunId: string;
+  createdAt: string;
+  completedAt?: string;
+  outputChunks?: number;
+  lastOutputAt?: string;
+  error?: { code: string; message: string };
+}
+
+export interface CapabilityAutomationSummary {
+  cron: {
+    rootDir: string;
+    jobs: CapabilityCronJobSummary[];
+    total: number;
+  };
+  tasks: {
+    rootDir: string;
+    tasks: CapabilityTaskSummary[];
+    total: number;
+  };
+}
+
 export interface CapabilitySnapshot {
   tools: CapabilityToolSummary[];
   skills: {
@@ -296,6 +335,7 @@ export interface CapabilitySnapshot {
     profiles: CapabilityAgentSummary[];
     delegateTools: CapabilityDelegateToolSummary[];
   };
+  automation?: CapabilityAutomationSummary;
 }
 
 // ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ import {
   type McpToolNameMapping,
 } from "@sparkwright/mcp-adapter";
 import {
+  FileTaskStore,
   createAgentTool,
   createTodoTools,
   deriveChildAgentProfile,
@@ -53,6 +54,11 @@ import {
   type DerivedChildAgentProfile,
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
+import {
+  CronStore,
+  defaultCronRoot,
+  legacyConfigCronRoot,
+} from "@sparkwright/cron";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 import {
   createSessionFileRunStoreFactory,
@@ -65,6 +71,7 @@ import type {
   RunResumeRequestPayload,
   RunStartRequestPayload,
   CapabilitySnapshot,
+  CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig } from "./config.js";
@@ -1460,6 +1467,7 @@ export class HostRuntime {
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
+    const automation = await this.inspectAutomationSummary();
     const resolvedProfiles = await resolveAgentProfiles(
       this.opts.workspaceRoot,
       agentConfig?.profiles,
@@ -1578,10 +1586,30 @@ export class HostRuntime {
             resolvedProfiles,
           ),
         }),
+        automation,
       });
     } finally {
       await preparedMcp?.close();
     }
+  }
+
+  private async inspectAutomationSummary(): Promise<CapabilityAutomationSummary> {
+    const cronRoot = defaultCronRoot();
+    const taskRoot = join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+    const cronJobs = await readCronJobsForSnapshot(cronRoot);
+    const tasks = readTasksForSnapshot(taskRoot);
+    return {
+      cron: {
+        rootDir: cronRoot,
+        total: cronJobs.length,
+        jobs: cronJobs.slice(0, 8),
+      },
+      tasks: {
+        rootDir: taskRoot,
+        total: tasks.length,
+        tasks: tasks.slice(0, 8),
+      },
+    };
   }
 
   private async readJsonField(
@@ -1881,6 +1909,7 @@ function buildCapabilitySnapshot(input: {
   mcpToolNameMap?: McpToolNameMapping[];
   agentProfiles?: AgentProfile[];
   delegateTools?: DelegateCapabilityDescriptor[];
+  automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
     tools: input.tools.map((tool) => ({
@@ -1933,7 +1962,68 @@ function buildCapabilitySnapshot(input: {
       })),
       delegateTools: input.delegateTools ?? [],
     },
+    automation: input.automation,
   };
+}
+
+async function readCronJobsForSnapshot(
+  rootDir: string,
+): Promise<CapabilityAutomationSummary["cron"]["jobs"]> {
+  try {
+    const store = new CronStore({
+      rootDir,
+      legacyRootDir: legacyConfigCronRoot(),
+    });
+    const jobs = await store.listJobs();
+    return jobs
+      .slice()
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((job) => ({
+        id: job.id,
+        name: job.name,
+        enabled: job.enabled,
+        state: job.state,
+        schedule: job.scheduleDisplay,
+        nextRunAt: job.nextRunAt,
+        lastRunAt: job.lastRunAt,
+        lastStatus: job.lastStatus,
+        lastError: job.lastError,
+        lastTracePath: job.lastTracePath ?? null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function readTasksForSnapshot(
+  rootDir: string,
+): CapabilityAutomationSummary["tasks"]["tasks"] {
+  try {
+    const store = new FileTaskStore({ rootDir, createRoot: false });
+    return store
+      .list()
+      .sort((a, b) => {
+        const aTime = a.completedAt ?? a.lastOutputAt ?? a.createdAt;
+        const bTime = b.completedAt ?? b.lastOutputAt ?? b.createdAt;
+        return bTime.localeCompare(aTime);
+      })
+      .map((task) => ({
+        id: task.id,
+        kind: task.kind,
+        status: task.status,
+        title: task.title,
+        parentRunId: task.parentRunId,
+        createdAt: task.createdAt,
+        completedAt: task.completedAt,
+        outputChunks: task.outputChunks,
+        lastOutputAt: task.lastOutputAt,
+        error: task.error
+          ? { code: task.error.code, message: task.error.message }
+          : undefined,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
@@ -2615,6 +2705,7 @@ function mergeCapabilitySnapshots(
         last.agents.delegateTools,
       ),
     },
+    automation: configured.automation ?? last.automation,
   };
 }
 
