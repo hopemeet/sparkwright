@@ -147,7 +147,8 @@ export class Client extends TypedEmitter<ClientEventMap> {
     const writes: unknown[] = [];
     const approvals: Array<HostEvent & { kind: "approval.requested" }> = [];
     const includeStreamChunks = options.includeStreamChunks ?? false;
-    const terminalTimeoutMs = options.terminalTimeoutMs ?? this.requestTimeoutMs;
+    const terminalTimeoutMs =
+      options.terminalTimeoutMs ?? this.requestTimeoutMs;
     let startedRunId: string | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const runIds = new Set<string>();
@@ -190,7 +191,9 @@ export class Client extends TypedEmitter<ClientEventMap> {
       events.push(event);
       approvals.push(event);
     };
-    const onContinuation = (event: HostEvent & { kind: "run.continuation" }) => {
+    const onContinuation = (
+      event: HostEvent & { kind: "run.continuation" },
+    ) => {
       if (
         !shouldAcceptRunId(event.payload.previousRunId) &&
         !shouldAcceptRunId(event.payload.runId)

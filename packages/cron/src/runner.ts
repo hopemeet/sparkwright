@@ -57,7 +57,6 @@ export async function runCronJob(
     { onWarn: "pass" },
   );
 
-  let tracePath: string | undefined;
   const run = createRun({
     goal,
     workspace: new LocalWorkspace(workspaceRoot),
@@ -78,7 +77,7 @@ export async function runCronJob(
 
   const result = await run.start();
   const message = result.message ?? result.failure?.message ?? "";
-  tracePath = join(sessionRootDir, `cron-${job.id}`, "trace.jsonl");
+  const tracePath = join(sessionRootDir, `cron-${job.id}`, "trace.jsonl");
   const silent = message.trimStart().startsWith("[SILENT]");
   const ok = result.state === "completed";
   const output =
