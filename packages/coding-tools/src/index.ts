@@ -595,8 +595,9 @@ export function createListDirTool(
     policy: { risk: "safe" },
     governance: readGovernance(),
     async execute(args, ctx) {
-      const input = normalizeListDirInput(args, options);
-      const walker = await createWorkspaceWalker(ctx, options);
+      const root = await resolveWorkspaceRoot(ctx, options);
+      const input = normalizeListDirInput(args, options, root);
+      const walker = new WorkspaceWalker(root, ctx);
       const entries = await walker.list(input);
       return {
         path: input.path,
@@ -643,8 +644,9 @@ export function createGrepTextTool(
     governance: readGovernance(),
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
-      const input = normalizeGrepTextInput(args, options);
-      const walker = await createWorkspaceWalker(ctx, options);
+      const root = await resolveWorkspaceRoot(ctx, options);
+      const input = normalizeGrepTextInput(args, options, root);
+      const walker = new WorkspaceWalker(root, ctx);
       const files = await walker.files({
         path: input.path,
         includeHidden: input.includeHidden,
@@ -831,6 +833,7 @@ function normalizeEditAnchoredTextInput(
 function normalizeListDirInput(
   args: ListDirInput,
   options: CodingToolsOptions,
+  workspaceRoot?: string,
 ): Required<ListDirInput> {
   const input = args ?? {};
   assertRecord(input, "list_dir input");
@@ -839,6 +842,7 @@ function normalizeListDirInput(
       typeof input.path === "string" && input.path.length > 0
         ? input.path
         : ".",
+      workspaceRoot,
     ),
     recursive: input.recursive === true,
     includeHidden:
@@ -855,6 +859,7 @@ function normalizeListDirInput(
 function normalizeGrepTextInput(
   args: GrepTextInput,
   options: CodingToolsOptions,
+  workspaceRoot?: string,
 ): Required<GrepTextInput> {
   assertRecord(args, "grep_text input");
   const pattern = readString(args, "pattern");
@@ -863,6 +868,7 @@ function normalizeGrepTextInput(
     pattern,
     path: normalizeWorkspacePath(
       typeof args.path === "string" && args.path.length > 0 ? args.path : ".",
+      workspaceRoot,
     ),
     regex: args.regex === true,
     caseSensitive: args.caseSensitive ?? true,
@@ -964,14 +970,6 @@ function splitLines(content: string): string[] {
 function limitString(content: string, maxChars: number) {
   if (content.length <= maxChars) return { content, truncated: false };
   return { content: content.slice(0, maxChars), truncated: true };
-}
-
-async function createWorkspaceWalker(
-  ctx: RuntimeContext,
-  options: CodingToolsOptions,
-) {
-  const root = await resolveWorkspaceRoot(ctx, options);
-  return new WorkspaceWalker(root, ctx);
 }
 
 async function resolveWorkspaceRoot(
