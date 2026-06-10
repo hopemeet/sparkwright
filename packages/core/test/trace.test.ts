@@ -1403,6 +1403,116 @@ describe("trace", () => {
     expect(report.findings).toEqual([]);
   });
 
+  it("flags a delegated sub-agent that never produced a terminal result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: root }),
+      sessionId: "session_orphan",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: root,
+        sessionId: "session_orphan",
+        agentId: "main",
+        traceLevel: "debug",
+      }),
+    });
+    const store = factory(run);
+
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    // Requested + started, but no subagent.completed / subagent.failed.
+    const subPayload = {
+      childRunId: "cmd_doc_reviewer_x",
+      parentRunId: run.id,
+    };
+    const subMeta = { agentProfileId: "doc_reviewer" };
+    await store.append(log.emit("subagent.requested", subPayload, subMeta));
+    await store.append(log.emit("subagent.started", subPayload, subMeta));
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_orphan"),
+    });
+
+    // Lost child result is a warning (not an error): the session still "ok"s,
+    // but the orphaned delegation and its profile are surfaced for triage.
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          code: "SUBAGENT_NOT_TERMINATED",
+          metadata: expect.objectContaining({
+            childRunId: "cmd_doc_reviewer_x",
+            parentRunId: run.id,
+            agentProfileId: "doc_reviewer",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("accepts a delegated sub-agent that reached a terminal result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: root }),
+      sessionId: "session_child_ok",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: root,
+        sessionId: "session_child_ok",
+        agentId: "main",
+        traceLevel: "debug",
+      }),
+    });
+    const store = factory(run);
+
+    const subPayload = {
+      childRunId: "cmd_doc_reviewer_y",
+      parentRunId: run.id,
+    };
+    const subMeta = { agentProfileId: "doc_reviewer" };
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    await store.append(log.emit("subagent.requested", subPayload, subMeta));
+    await store.append(log.emit("subagent.started", subPayload, subMeta));
+    await store.append(
+      log.emit(
+        "subagent.completed",
+        { ...subPayload, stopReason: "completed" },
+        subMeta,
+      ),
+    );
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_child_ok"),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(
+      report.findings.filter((f) => f.code === "SUBAGENT_NOT_TERMINATED"),
+    ).toEqual([]);
+  });
+
   it("accepts collapsed stream text ranges in session trace sequence checks", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
     tempDirs.push(root);

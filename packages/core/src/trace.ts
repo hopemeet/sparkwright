@@ -798,6 +798,7 @@ export async function validateSessionTraceConsistency({
   }
 
   validateRunEventSequences(traceEvents, findings);
+  validateSubagentLifecycles(traceEvents, findings);
   await validateRunFiles(sessionDir, runIds, findings);
 
   return {
@@ -2502,6 +2503,82 @@ function validateSequence(
       });
     }
   });
+}
+
+/**
+ * Reconstruct each delegated child's lifecycle from the parent's event stream
+ * and flag any sub-agent that was requested but never produced a terminal
+ * (`subagent.completed` / `subagent.failed`) event — i.e. a delegated sub-task
+ * whose result was silently lost.
+ *
+ * External and ACP delegate children are NOT registered as session agents
+ * (`session.json.agents` stays `["main"]`), so this `childRunId` pairing is the
+ * only structural signal `session check` has that a delegation actually
+ * resolved. Findings are warnings (not errors) so a session where a child was
+ * legitimately killed mid-flight still validates, while the lost-result and the
+ * child's `agentProfileId` are surfaced for triage.
+ */
+function validateSubagentLifecycles(
+  events: SparkwrightEvent[],
+  findings: SessionTraceConsistencyFinding[],
+): void {
+  interface ChildLifecycle {
+    childRunId: string;
+    parentRunId?: string;
+    agentProfileId?: string;
+    requested: boolean;
+    terminated: boolean;
+  }
+  const children = new Map<string, ChildLifecycle>();
+  const childState = (childRunId: string): ChildLifecycle => {
+    let state = children.get(childRunId);
+    if (!state) {
+      state = { childRunId, requested: false, terminated: false };
+      children.set(childRunId, state);
+    }
+    return state;
+  };
+  for (const event of events) {
+    if (!event.type.startsWith("subagent.")) continue;
+    const payload = event.payload as Record<string, unknown> | undefined;
+    const childRunId =
+      typeof payload?.childRunId === "string" ? payload.childRunId : undefined;
+    if (!childRunId) continue;
+    const state = childState(childRunId);
+    if (typeof payload?.parentRunId === "string") {
+      state.parentRunId = payload.parentRunId;
+    }
+    const metadata = event.metadata as Record<string, unknown> | undefined;
+    if (typeof metadata?.agentProfileId === "string") {
+      state.agentProfileId = metadata.agentProfileId;
+    }
+    if (
+      event.type === "subagent.requested" ||
+      event.type === "subagent.started"
+    ) {
+      state.requested = true;
+    } else if (
+      event.type === "subagent.completed" ||
+      event.type === "subagent.failed"
+    ) {
+      state.terminated = true;
+    }
+  }
+  for (const state of children.values()) {
+    if (state.requested && !state.terminated) {
+      findings.push({
+        severity: "warning",
+        code: "SUBAGENT_NOT_TERMINATED",
+        message:
+          "A delegated sub-agent was requested but never produced a completed/failed result.",
+        metadata: {
+          childRunId: state.childRunId,
+          parentRunId: state.parentRunId,
+          agentProfileId: state.agentProfileId,
+        },
+      });
+    }
+  }
 }
 
 function validateRunEventSequences(
