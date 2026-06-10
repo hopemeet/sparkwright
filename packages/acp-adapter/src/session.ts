@@ -21,6 +21,14 @@ export interface AcpSessionStoreOptions {
   defaultPermissionMode?: PermissionMode;
   defaultTraceLevel?: TraceLevel;
   defaultShouldWrite?: boolean;
+  /**
+   * Root directory under which per-session artifacts (trace, transcript,
+   * blobs, …) are written. When omitted, HostRuntime falls back to
+   * `<workspace>/.sparkwright/sessions`, which writes into the workspace —
+   * undesirable when the workspace is a clean checkout. Plumbed from the ACP
+   * `--session-root` flag to keep parity with `sparkwright run`/`tui`.
+   */
+  sessionRootDir?: string;
   emit: (session: AcpSessionInfo, event: HostEvent) => void;
 }
 
@@ -74,6 +82,9 @@ export class AcpSessionStore {
       cwd,
       runtime: new HostRuntime({
         workspaceRoot: cwd,
+        ...(this.options.sessionRootDir
+          ? { sessionRootDir: this.options.sessionRootDir }
+          : {}),
         defaultModel: this.options.defaultModel,
         defaultPermissionMode: this.options.defaultPermissionMode,
         defaultTraceLevel: this.options.defaultTraceLevel,

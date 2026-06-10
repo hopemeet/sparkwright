@@ -3000,7 +3000,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]";
   }
   if (command === "acp") {
-    return "Usage: sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]";
+    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]";
   }
   if (command === "session") {
     return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
@@ -3761,7 +3761,7 @@ function usage(): string {
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
-    "       sparkwright acp [--workspace path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]",
+    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
