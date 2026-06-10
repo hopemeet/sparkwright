@@ -24,7 +24,10 @@ import type {
   RunRecord,
   RunResult,
 } from "./types.js";
-import { isPolicyOrApprovalFailure } from "./run-outcome.js";
+import {
+  analyzeToolOutcomes,
+  isPolicyOrApprovalFailure,
+} from "./run-outcome.js";
 
 export type TraceLevel = "minimal" | "standard" | "debug";
 export type TraceRedactor = (event: SparkwrightEvent) => SparkwrightEvent;
@@ -106,6 +109,14 @@ export interface TraceSummary {
   toolFailures: {
     total: number;
     byCode: Record<string, number>;
+    unresolved: {
+      total: number;
+      byCode: Record<string, number>;
+    };
+    recovered: {
+      total: number;
+      byCode: Record<string, number>;
+    };
   };
   /** @reserved Public trace-summary field consumed by diagnostics UIs. */
   workspaceReads: {
@@ -528,10 +539,13 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   const terminalStates: Record<string, number> = {};
   const toolCalls: Record<string, number> = {};
   const toolFailureCodes: Record<string, number> = {};
+  const unresolvedToolFailureCodes: Record<string, number> = {};
+  const recoveredToolFailureCodes: Record<string, number> = {};
   const workspaceReadPaths: Record<string, number> = {};
   const errorCodes: Record<string, number> = {};
   const expectedDenialCodes: Record<string, number> = {};
   const latestUsageByRun = new Map<string, Record<string, unknown>>();
+  const events: SparkwrightEvent[] = [];
   let modelUsageSeen = false;
   const summary: TraceSummary = {
     eventCount: 0,
@@ -544,6 +558,14 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     toolFailures: {
       total: 0,
       byCode: toolFailureCodes,
+      unresolved: {
+        total: 0,
+        byCode: unresolvedToolFailureCodes,
+      },
+      recovered: {
+        total: 0,
+        byCode: recoveredToolFailureCodes,
+      },
     },
     workspaceReads: {
       total: 0,
@@ -578,6 +600,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     }
 
     summary.eventCount += 1;
+    events.push(event);
     runIds.add(String(event.runId));
     byType[event.type] = (byType[event.type] ?? 0) + 1;
 
@@ -589,7 +612,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     if (isExpectedDenialEvent(event)) {
       summary.expectedDenialCount += 1;
       collectExpectedDenialCode(summary, event);
-    } else if (isTraceErrorEvent(event)) {
+    } else if (event.type !== "tool.failed" && isTraceErrorEvent(event)) {
       summary.errorCount += 1;
       collectErrorCode(summary, event);
     }
@@ -622,6 +645,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
       .filter(([, count]) => count > 1)
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   );
+  collectClassifiedToolFailures(summary, events);
   return summary;
 }
 
@@ -2671,6 +2695,29 @@ function collectToolFailure(
   const code = traceErrorCode(event) ?? "unknown";
   summary.toolFailures.byCode[code] =
     (summary.toolFailures.byCode[code] ?? 0) + 1;
+}
+
+function collectClassifiedToolFailures(
+  summary: TraceSummary,
+  events: readonly SparkwrightEvent[],
+): void {
+  const outcomes = analyzeToolOutcomes(events);
+  summary.toolFailures.unresolved.total = outcomes.unresolvedFailures.length;
+  summary.toolFailures.recovered.total = outcomes.recoveredFailures.length;
+
+  for (const failure of outcomes.unresolvedFailures) {
+    const code = failure.code ?? "unknown";
+    summary.toolFailures.unresolved.byCode[code] =
+      (summary.toolFailures.unresolved.byCode[code] ?? 0) + 1;
+    summary.errorCount += 1;
+    summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
+  }
+
+  for (const failure of outcomes.recoveredFailures) {
+    const code = failure.code ?? "unknown";
+    summary.toolFailures.recovered.byCode[code] =
+      (summary.toolFailures.recovered.byCode[code] ?? 0) + 1;
+  }
 }
 
 function collectWorkspaceRead(

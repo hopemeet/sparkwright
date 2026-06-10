@@ -1,5 +1,5 @@
 import { readdir, stat, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   buildTraceTimelineFile,
   asSessionId,
@@ -26,6 +26,7 @@ import {
   type ModelAdapter,
   type Policy,
   type PermissionMode,
+  type RunId,
   type RunBudget,
   type RunRecord,
   type RunResult,
@@ -46,7 +47,12 @@ import {
 } from "@sparkwright/mcp-adapter";
 import {
   FileTaskStore,
+  TaskManager,
   createAgentTool,
+  createTaskGet,
+  createTaskList,
+  createTaskOutput,
+  createTaskStop,
   createTodoTools,
   deriveChildAgentProfile,
   runTodoSupervised,
@@ -163,6 +169,29 @@ function createHostRunPolicy(input: {
       confidentialPaths: input.confidentialPaths ?? [],
     }),
   ]);
+}
+
+function createHostTaskPollingTools(input: {
+  manager: TaskManager;
+  getParentRunId: () => RunId;
+}): ToolDefinition[] {
+  const options = {
+    manager: input.manager,
+    getParentRunId: input.getParentRunId,
+  };
+  return [
+    createTaskList(options),
+    createTaskGet(options),
+    createTaskStop(options),
+    createTaskOutput(options),
+  ];
+}
+
+function requireActiveRunId(value: string | null): RunId {
+  if (!value) {
+    throw new Error("Task tool invoked before a run id was assigned.");
+  }
+  return value as RunId;
 }
 
 export interface RuntimeOptions {
@@ -324,6 +353,7 @@ const DELEGATED_AGENT_CONTRACT = [
  */
 export class HostRuntime {
   private opts: RuntimeOptions;
+  private readonly taskManager: TaskManager;
   private active: ActiveRun | null = null;
   // Synchronously-set reservation so two concurrent startRun() calls cannot
   // both pass the "is a run active?" guard before `this.active` is populated
@@ -338,11 +368,27 @@ export class HostRuntime {
   private lastCapabilitySnapshot: CapabilitySnapshot | null = null;
 
   constructor(opts: RuntimeOptions) {
-    this.opts = opts;
+    this.opts = {
+      ...opts,
+      workspaceRoot: resolve(opts.workspaceRoot),
+      ...(opts.sessionRootDir
+        ? { sessionRootDir: resolve(opts.sessionRootDir) }
+        : {}),
+    };
+    this.taskManager = new TaskManager({
+      store: new FileTaskStore({
+        rootDir: this.taskRootDir(),
+        createRoot: false,
+      }),
+    });
   }
 
   hasActiveRun(): boolean {
     return this.active !== null;
+  }
+
+  private taskRootDir(): string {
+    return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
   }
 
   async inspectCapabilities(): Promise<
@@ -578,7 +624,13 @@ export class HostRuntime {
         createSkillManagerTool(workspaceRoot, skillRoots),
         createAgentInspectorTool(workspaceRoot),
         createAgentManagerTool(workspaceRoot),
-        createHostShellTool(workspaceRoot),
+        createHostShellTool(workspaceRoot, {
+          taskManager: this.taskManager,
+        }),
+        ...createHostTaskPollingTools({
+          manager: this.taskManager,
+          getParentRunId: () => requireActiveRunId(runIdHolder.value),
+        }),
         // Todo ledger tools (P0): main agent only. The ledger lives in the
         // session dir as a human-readable markdown file. Child agents do not
         // receive these (they get `childTools`), preserving the single-writer
@@ -1538,7 +1590,13 @@ export class HostRuntime {
             createSkillManagerTool(this.opts.workspaceRoot, skillRoots),
             createAgentInspectorTool(this.opts.workspaceRoot),
             createAgentManagerTool(this.opts.workspaceRoot),
-            createHostShellTool(this.opts.workspaceRoot),
+            createHostShellTool(this.opts.workspaceRoot, {
+              taskManager: this.taskManager,
+            }),
+            ...createHostTaskPollingTools({
+              manager: this.taskManager,
+              getParentRunId: () => "run_capability_snapshot" as RunId,
+            }),
             ...(preparedSkills?.tools ?? []),
             ...(preparedMcp?.tools ?? []),
             ...createConfiguredDelegateTools({
@@ -1620,7 +1678,7 @@ export class HostRuntime {
 
   private async inspectAutomationSummary(): Promise<CapabilityAutomationSummary> {
     const cronRoot = defaultCronRoot();
-    const taskRoot = join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+    const taskRoot = this.taskRootDir();
     const cronJobs = await readCronJobsForSnapshot(cronRoot);
     const tasks = readTasksForSnapshot(taskRoot);
     return {

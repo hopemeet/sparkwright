@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createContextItemId,
   createRun,
+  classifyToolFailure,
   defineTool,
   type ContextItem,
   type ModelAdapter,
@@ -23,6 +24,13 @@ describe("SparkwrightRun", () => {
     await Promise.all(
       tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
     );
+  });
+
+  it("classifies custom tool argument error codes as model argument errors", () => {
+    expect(classifyToolFailure("TASK_ARGUMENTS_INVALID")).toBe(
+      "model_arg_error",
+    );
+    expect(classifyToolFailure("CRON_INPUT_INVALID")).toBe("model_arg_error");
   });
 
   it("loops model-tool-observation until a final answer", async () => {

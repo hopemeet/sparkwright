@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   createRunId,
@@ -70,6 +71,52 @@ describe("coding tools", () => {
       lineCount: 4,
       truncated: true,
     });
+  });
+
+  it("normalizes file URL read_text paths", async () => {
+    const { root, ctx } = await createWorkspace({
+      "docs/README.md": "# Docs\n",
+    });
+    const tool = getTool<ReadTextInput, ReadTextResult>(
+      createCodingTools(),
+      "read_text",
+    );
+
+    const result = await tool.execute(
+      { path: pathToFileURL(join(root, "docs/README.md")).href },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      path: "docs/README.md",
+      content: "# Docs",
+    });
+  });
+
+  it("reports coding tool input validation failures as tool argument errors", async () => {
+    const { root, ctx } = await createWorkspace({
+      "README.md": "# Demo\n",
+    });
+    const tools = createCodingTools({ workspaceRoot: root });
+    const readText = getTool<ReadTextInput, ReadTextResult>(tools, "read_text");
+    const editAnchored = getTool<EditAnchoredTextInput, EditAnchoredTextResult>(
+      tools,
+      "edit_anchored_text",
+    );
+    const globPaths = getTool<GlobPathsInput, GlobPathsResult>(
+      tools,
+      "glob_paths",
+    );
+
+    await expect(
+      readText.execute({ path: "README.md", startLine: 3, endLine: 1 }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(
+      editAnchored.execute({ path: "README.md", edits: [] }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(
+      globPaths.execute({ patterns: [] }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
   });
 
   it("reads anchors and applies anchored edits through the workspace", async () => {
@@ -281,24 +328,44 @@ describe("coding tools", () => {
     ]);
   });
 
-  it("rejects grep_text file paths with recovery guidance", async () => {
+  it("searches a concrete grep_text file path", async () => {
     const { root, ctx } = await createWorkspace({
       "README.md": "# Demo\nrelease:check\n",
+      "src/other.md": "release:check\n",
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
       "grep_text",
     );
 
-    await expect(
-      tool.execute({ pattern: "release:check", path: "README.md" }, ctx),
-    ).rejects.toMatchObject({
-      code: "TOOL_ARGUMENTS_INVALID",
-      message: expect.stringContaining("path is not a directory"),
+    const result = await tool.execute(
+      { pattern: "release:check", path: "README.md" },
+      ctx,
+    );
+
+    expect(result.matches.map((match) => match.path)).toEqual(["README.md"]);
+  });
+
+  it("normalizes file URL grep_text paths inside the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "docs/README.md": "# Demo\nrelease:check\n",
     });
-    await expect(
-      tool.execute({ pattern: "release:check", path: "README.md" }, ctx),
-    ).rejects.toThrow("Use path='.'");
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+
+    const result = await tool.execute(
+      {
+        pattern: "release:check",
+        path: pathToFileURL(join(root, "docs/README.md")).href,
+      },
+      ctx,
+    );
+
+    expect(result.matches.map((match) => match.path)).toEqual([
+      "docs/README.md",
+    ]);
   });
 
   it("matches workspace-relative glob paths", async () => {
@@ -563,6 +630,9 @@ describe("coding tools", () => {
     await expect(tool.execute({ path: "../" }, ctx)).rejects.toThrow(
       "Path escapes workspace root",
     );
+    await expect(tool.execute({ path: "../" }, ctx)).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+    });
   });
 
   it("normalizes an absolute grep_text path inside the workspace", async () => {

@@ -2615,6 +2615,59 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "read README via absolute path",
+        "--workspace",
+        ".",
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        cwd: workspace,
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: join(workspace, "README.md") },
+                },
+              ],
+            },
+            {
+              message: "absolute read succeeded",
+            },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.completed" &&
+          (event.payload as { output?: { path?: string } }).output?.path ===
+            "README.md",
+      ),
+    ).toBeTruthy();
+  });
+
   it("denies scripted host writes when --write is not enabled", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -2840,6 +2893,116 @@ describe("runCli", () => {
       kind: "completed_with_recovered_tool_failures",
       toolFailures: { count: 1, codes: ["TOOL_ARGUMENTS_INVALID"] },
     });
+  });
+
+  it("treats skipped repeated calls after a successful result as recovered", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Avoid repeating completed reads.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "read once",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "README.md" },
+                },
+              ],
+            },
+            {
+              message: "repeat the same read",
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "README.md" },
+                },
+              ],
+            },
+            { message: "answered from the first read" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(output.stderrText()).not.toContain("unhandled tool failure");
+
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload as { error?: { code?: string } } | undefined)?.error
+            ?.code === "REPEATED_TOOL_CALL_SKIPPED",
+      ),
+    ).toBeTruthy();
+    const completed = traceEvents.find(
+      (event) => event.type === "run.completed",
+    );
+    expect(completed?.payload?.outcome).toMatchObject({
+      kind: "completed_with_recovered_tool_failures",
+      toolFailures: { count: 1, codes: ["REPEATED_TOOL_CALL_SKIPPED"] },
+    });
+
+    const summaryOutput = createOutputCapture();
+    const summary = await runCli(
+      ["trace", "summary", run.tracePath!, "--format", "json"],
+      {
+        io: { stdout: summaryOutput.stdout, stderr: summaryOutput.stderr },
+      },
+    );
+    expect(summary.exitCode).toBe(0);
+    const parsedSummary = JSON.parse(summaryOutput.stdoutText()) as {
+      errorCount: number;
+      toolFailures: {
+        unresolved: { total: number };
+        recovered: { total: number; byCode: Record<string, number> };
+      };
+    };
+    expect(parsedSummary.errorCount).toBe(0);
+    expect(parsedSummary.toolFailures.unresolved.total).toBe(0);
+    expect(parsedSummary.toolFailures.recovered).toMatchObject({
+      total: 1,
+      byCode: { REPEATED_TOOL_CALL_SKIPPED: 1 },
+    });
+
+    const textSummaryOutput = createOutputCapture();
+    const textSummary = await runCli(
+      ["trace", "summary", run.tracePath!, "--format", "text"],
+      {
+        io: {
+          stdout: textSummaryOutput.stdout,
+          stderr: textSummaryOutput.stderr,
+        },
+      },
+    );
+    expect(textSummary.exitCode).toBe(0);
+    expect(textSummaryOutput.stdoutText()).toContain("errors: 0");
+    expect(textSummaryOutput.stdoutText()).toContain(
+      "unresolved tool failures: 0 total",
+    );
+    expect(textSummaryOutput.stdoutText()).toContain(
+      "recovered tool failures: 1 total (REPEATED_TOOL_CALL_SKIPPED:1)",
+    );
   });
 
   it("denies destructive shell deletion before it mutates the workspace", async () => {

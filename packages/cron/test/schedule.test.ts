@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   CronStore,
   computeNextRun,
+  createCronTool,
   defaultCronRoot,
   jobIsDue,
   legacyConfigCronRoot,
@@ -33,6 +34,20 @@ describe("cron schedule parsing", () => {
     expect(parseSchedule("2026-01-02T03:04:05.000Z", now).schedule).toEqual({
       kind: "once",
       runAt: "2026-01-02T03:04:05.000Z",
+    });
+  });
+
+  it("reports cron tool validation failures as tool argument errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-tool-"));
+    const tool = createCronTool({ rootDir: root });
+
+    await expect(tool.execute(null, {} as never)).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+    });
+    await expect(
+      tool.execute({ action: "create" }, {} as never),
+    ).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
     });
   });
 

@@ -487,7 +487,7 @@ function parseArgs(
       const value = args[index + 1];
       if (!value)
         return { ok: false, message: "Usage: --workspace requires a path" };
-      workspaceRoot = value;
+      workspaceRoot = resolve(cwd, value);
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -883,6 +883,12 @@ function parseArgs(
         ? args.join("\0")
         : goal;
 
+  workspaceRoot = resolve(cwd, workspaceRoot);
+  const resolvedSessionRootDir =
+    sessionRootDir !== undefined
+      ? resolve(cwd, sessionRootDir)
+      : join(workspaceRoot, ".sparkwright", "sessions");
+
   return {
     ok: true,
     value: {
@@ -892,8 +898,7 @@ function parseArgs(
       target,
       traceLevel,
       workspaceRoot,
-      sessionRootDir:
-        sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions"),
+      sessionRootDir: resolvedSessionRootDir,
       sessionRootDirSource,
       targetPath,
       targetPathSource,
@@ -3212,6 +3217,14 @@ function formatTraceSummary(summary: TraceSummary): string {
     .join(", ");
   const topToolCalls = formatTopCounts(summary.toolCalls, 8);
   const topToolFailures = formatTopCounts(summary.toolFailures?.byCode, 5);
+  const unresolvedToolFailures = formatTopCounts(
+    summary.toolFailures?.unresolved?.byCode,
+    5,
+  );
+  const recoveredToolFailures = formatTopCounts(
+    summary.toolFailures?.recovered?.byCode,
+    5,
+  );
   const duplicateReads = formatTopCounts(
     summary.workspaceReads?.duplicatePaths,
     8,
@@ -3230,6 +3243,8 @@ function formatTraceSummary(summary: TraceSummary): string {
     formatTraceCost(summary.usage),
     `tool calls: ${sumCounts(summary.toolCalls)} total${topToolCalls ? ` (${topToolCalls})` : ""}`,
     `tool failures: ${summary.toolFailures?.total ?? 0} total${topToolFailures ? ` (${topToolFailures})` : ""}`,
+    `unresolved tool failures: ${summary.toolFailures?.unresolved?.total ?? 0} total${unresolvedToolFailures ? ` (${unresolvedToolFailures})` : ""}`,
+    `recovered tool failures: ${summary.toolFailures?.recovered?.total ?? 0} total${recoveredToolFailures ? ` (${recoveredToolFailures})` : ""}`,
     `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");

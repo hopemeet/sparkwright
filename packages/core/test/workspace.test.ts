@@ -167,6 +167,27 @@ describe("LocalWorkspace", () => {
     });
   });
 
+  it("canonicalizes absolute paths through controlled workspace", async () => {
+    await writeFile(join(root, "README.md"), "public\n", "utf8");
+    const run = createRunRecord();
+    const events = new EventLog(run.id);
+    const workspace = new ControlledWorkspace({
+      run,
+      events,
+      workspace: new LocalWorkspace(root),
+    });
+
+    await expect(
+      workspace.canonicalPath(join(root, "README.md")),
+    ).resolves.toBe("README.md");
+    await expect(workspace.readText(join(root, "README.md"))).resolves.toBe(
+      "public\n",
+    );
+    expect(
+      events.all().find((event) => event.type === "workspace.read")?.payload,
+    ).toMatchObject({ path: "README.md" });
+  });
+
   it("denies reads of a confidential path and emits workspace.read.denied", async () => {
     await writeFile(join(root, "README.md"), "public\n", "utf8");
     await writeFile(join(root, "secret.txt"), "SECRET_TOKEN=abc\n", "utf8");

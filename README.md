@@ -69,17 +69,22 @@ Key advantages:
 
 ## Current Status
 
-Sparkwright is pre-v0. It is a runnable kernel for local agent harnesses, not a
+Sparkwright is pre-v0. It is a runnable local agent runtime and host, not a
 production sandbox or a complete end-user agent product.
 
-The deterministic CLI path currently proves:
+The current CLI/TUI/host path exercises:
 
-- run lifecycle and structured events
-- tool execution with schema validation
-- approval-gated workspace mutation
-- diff artifacts
-- durable session storage
-- JSONL trace output
+- run lifecycle, structured events, and resumable sessions
+- provider-backed and deterministic model runs
+- built-in coding tools for file reads, text search, anchored edits, patches,
+  shell commands, skills, agents, cron, MCP, and background tasks
+- tool argument validation with recoverable model-argument failures
+- approval-gated workspace mutation with diff artifacts and rollback for
+  untracked shell writes
+- long-running shell promotion to durable background tasks with
+  `task_list`, `task_get`, `task_output`, and `task_stop`
+- JSONL trace output, trace summaries, timelines, verification, and session
+  checks
 
 Real provider runs are opt-in through configuration or CLI flags.
 
@@ -180,6 +185,38 @@ npm run tui
 The CLI and TUI run from compiled output. After pulling changes or editing
 source, rebuild with `npm run build`, or use `npm run cli -- ...` /
 `npm run tui`, which build first.
+
+## Tools, Paths, And Background Tasks
+
+Built-in file tools accept workspace-relative paths. Common model-provided path
+forms are normalized when they stay inside the workspace:
+
+- `README.md`
+- `./README.md`
+- `/absolute/path/to/workspace/README.md`
+- `file:///absolute/path/to/workspace/README.md`
+
+Tool outputs report canonical workspace-relative paths. When a path was
+normalized from a different input form, tools such as `read_file` also include
+`inputPath` so the model can see what was accepted and how it resolved.
+
+Discovery tools and concrete-file tools are separate. Use `glob_paths` to find
+files by pattern, `grep_text` to search a directory or a concrete file, and
+`read_file` with a concrete path. Workspace escapes are rejected before the
+filesystem is read.
+
+Shell commands run through the host policy path. Short commands complete in the
+foreground; long-running shell commands are promoted to durable background
+tasks. Poll them with:
+
+```bash
+sparkwright tasks list --workspace .
+sparkwright tasks output <task-id> --workspace .
+sparkwright tasks get <task-id> --workspace .
+```
+
+The same task state is available to the model through `task_list`, `task_get`,
+`task_output`, and `task_stop`.
 
 ## ACP Agent Server
 

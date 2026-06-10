@@ -8,15 +8,17 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import type { Readable } from "node:stream";
 import { dirname, join } from "node:path";
+import type { TaskManager } from "@sparkwright/agent-runtime";
 import {
   createShellTool,
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+  type ShellPromotionHandler,
 } from "@sparkwright/shell-tool";
 import type {
   ExecutionEnvironment,
   LiveShellHandle,
+  RunId,
   ShellExecutionRequest,
   ShellExecutionResult,
   ShellStreamingResult,
@@ -24,21 +26,49 @@ import type {
 } from "@sparkwright/core";
 import type { ShellToolInput, ShellToolOutput } from "@sparkwright/shell-tool";
 
-// Per-call wall-clock ceiling. Commands exceeding this are killed and reported
-// as timed out. Keeps a stray `cat`/REPL from hanging the run.
-const DEFAULT_TIMEOUT_MS = 60_000;
+const PROMOTED_SHELL_KIND = "shell.promoted";
+const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
 const SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES = 25 * 1024 * 1024;
 const AUDIT_EXCLUDED_DIRS = new Set([".git", ".sparkwright", "node_modules"]);
 
-async function* streamToStrings(
-  stream: Readable | null,
-): AsyncIterable<string> {
-  if (!stream) return;
-  for await (const chunk of stream) {
-    yield typeof chunk === "string"
-      ? chunk
-      : (chunk as Buffer).toString("utf8");
+class LiveOutputBuffer {
+  private readonly chunks: string[] = [];
+  private readonly waiters: Array<() => void> = [];
+  private closed = false;
+  private subscriptions = 0;
+
+  push(chunk: string): void {
+    if (chunk.length === 0) return;
+    this.chunks.push(chunk);
+    this.wake();
+  }
+
+  close(): void {
+    this.closed = true;
+    this.wake();
+  }
+
+  text(): string {
+    return this.chunks.join("");
+  }
+
+  async *stream(): AsyncIterable<string> {
+    const start = this.subscriptions === 0 ? 0 : this.chunks.length;
+    this.subscriptions += 1;
+    let index = start;
+    while (true) {
+      while (index < this.chunks.length) {
+        yield this.chunks[index++]!;
+      }
+      if (this.closed) return;
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+  }
+
+  private wake(): void {
+    const waiters = this.waiters.splice(0);
+    for (const waiter of waiters) waiter();
   }
 }
 
@@ -55,6 +85,8 @@ function spawnStreaming(request: ShellExecutionRequest): ShellStreamingResult {
     typeof request.metadata?.rawCommand === "string"
       ? (request.metadata.rawCommand as string)
       : [request.command, ...(request.args ?? [])].join(" ");
+  const stdout = new LiveOutputBuffer();
+  const stderr = new LiveOutputBuffer();
 
   const child = spawn("bash", ["-c", raw], {
     cwd: request.cwd,
@@ -62,24 +94,36 @@ function spawnStreaming(request: ShellExecutionRequest): ShellStreamingResult {
   });
 
   let timedOut = false;
-  const timeoutMs = request.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill("SIGTERM");
-  }, timeoutMs);
+  const timeoutMs = request.timeoutMs;
+  const timer =
+    typeof timeoutMs === "number"
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }, timeoutMs)
+      : undefined;
+
+  child.stdout?.on("data", (chunk: Buffer | string) => {
+    stdout.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+  });
+  child.stderr?.on("data", (chunk: Buffer | string) => {
+    stderr.push(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+  });
 
   const completed = new Promise<ShellExecutionResult>((resolve) => {
     const finish = (
       status: ShellExecutionResult["status"],
       exitCode: number | null,
-      stderr = "",
+      errorStderr = "",
     ): void => {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      stdout.close();
+      stderr.close();
       resolve({
         status,
         exitCode,
-        stdout: "",
-        stderr,
+        stdout: stdout.text(),
+        stderr: stderr.text() || errorStderr,
         startedAt,
         completedAt: new Date().toISOString(),
         metadata: { timedOut, pid: child.pid },
@@ -92,8 +136,8 @@ function spawnStreaming(request: ShellExecutionRequest): ShellStreamingResult {
   });
 
   const handle: LiveShellHandle = {
-    stdout: () => streamToStrings(child.stdout),
-    stderr: () => streamToStrings(child.stderr),
+    stdout: () => stdout.stream(),
+    stderr: () => stderr.stream(),
     abort: (reason) => {
       void reason;
       child.kill("SIGTERM");
@@ -135,6 +179,12 @@ function createHostShellEnvironment(): ExecutionEnvironment {
   };
 }
 
+export interface HostShellToolOptions {
+  taskManager?: TaskManager;
+  foregroundTimeoutMs?: number;
+  defaultTimeoutMs?: number;
+}
+
 /**
  * Built-in `shell` tool. Risky + approval-gated by core policy, and every
  * command is safety-classified by `@sparkwright/shell-tool` (destructive
@@ -143,28 +193,44 @@ function createHostShellEnvironment(): ExecutionEnvironment {
  */
 export function createHostShellTool(
   workspaceRoot: string,
+  options: HostShellToolOptions = {},
 ): ToolDefinition<ShellToolInput, ShellToolOutput> {
-  const shell = createShellTool({
-    environment: createHostShellEnvironment(),
+  const environment = createHostShellEnvironment();
+  const foregroundTimeoutMs =
+    options.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS;
+  const defaultTimeoutMs =
+    options.defaultTimeoutMs ??
+    (options.taskManager
+      ? undefined
+      : FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS);
+  const descriptor = createShellTool({
+    environment,
     workspaceRoot,
-    defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
-    foregroundTimeoutMs: RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-    // This demo host has no background TaskManager, so a command that outlives
-    // the foreground deadline can't be adopted — throwing makes the shell tool
-    // abort it and report `timedOut` rather than claiming a phantom background
-    // task. Wire to a TaskManager here to support long-running shells.
-    onPromote: () => {
-      throw new Error(
-        "host: background promotion is not supported; long-running shells time out.",
-      );
-    },
+    defaultTimeoutMs,
+    foregroundTimeoutMs,
+    onPromote: createUnavailablePromotionHandler(),
   });
 
   return {
-    ...shell,
+    ...descriptor,
     async execute(args, ctx) {
       const before = await snapshotWorkspace(workspaceRoot);
+      const shell = createShellTool({
+        environment,
+        workspaceRoot,
+        defaultTimeoutMs,
+        foregroundTimeoutMs,
+        onPromote: options.taskManager
+          ? createTaskPromotionHandler({
+              manager: options.taskManager,
+              parentRunId: ctx.run.id,
+              workspaceRoot,
+              before,
+            })
+          : createUnavailablePromotionHandler(),
+      });
       const output = await shell.execute(args, ctx);
+      if (output.promoted) return output;
       const after = await snapshotWorkspace(workspaceRoot);
       const changes = diffWorkspaceSnapshots(before, after);
       if (changes.length > 0) {
@@ -178,6 +244,102 @@ export function createHostShellTool(
       return output;
     },
   };
+}
+
+function createUnavailablePromotionHandler(): ShellPromotionHandler {
+  return () => {
+    throw new Error(
+      "host: background promotion is not supported; long-running shells time out.",
+    );
+  };
+}
+
+function createTaskPromotionHandler(input: {
+  manager: TaskManager;
+  parentRunId: RunId;
+  workspaceRoot: string;
+  before: WorkspaceSnapshot;
+}): ShellPromotionHandler {
+  return ({ handle, completed, request, partialStdout, partialStderr }) => {
+    const rawCommand =
+      typeof request.metadata?.rawCommand === "string"
+        ? request.metadata.rawCommand
+        : [request.command, ...(request.args ?? [])].join(" ");
+    const task = input.manager.spawn({
+      parentRunId: input.parentRunId,
+      kind: PROMOTED_SHELL_KIND,
+      title: `shell: ${rawCommand}`,
+      metadata: {
+        command: rawCommand,
+        cwd: request.cwd,
+        timeoutMs: request.timeoutMs,
+      },
+      runner: async (ctrl) => {
+        if (partialStdout) {
+          ctrl.emitOutput({ channel: "stdout", data: partialStdout });
+        }
+        if (partialStderr) {
+          ctrl.emitOutput({ channel: "stderr", data: partialStderr });
+        }
+
+        const stdoutDrain = (async () => {
+          for await (const chunk of handle.stdout()) {
+            ctrl.emitOutput({ channel: "stdout", data: chunk });
+          }
+        })();
+        const stderrDrain = (async () => {
+          for await (const chunk of handle.stderr()) {
+            ctrl.emitOutput({ channel: "stderr", data: chunk });
+          }
+        })();
+        ctrl.signal.addEventListener(
+          "abort",
+          () => handle.abort("task cancelled"),
+          { once: true },
+        );
+
+        const final = await completed;
+        await Promise.allSettled([stdoutDrain, stderrDrain]);
+        const after = await snapshotWorkspace(input.workspaceRoot);
+        const changes = diffWorkspaceSnapshots(input.before, after);
+        if (changes.length > 0) {
+          const rollback = await rollbackWorkspaceSnapshot(
+            input.workspaceRoot,
+            input.before,
+            after,
+          );
+          throw new UntrackedWorkspaceMutationError(changes, rollback);
+        }
+
+        if (final.status !== "completed" || final.exitCode !== 0) {
+          throw new ShellTaskExitError(final);
+        }
+
+        return {
+          command: rawCommand,
+          exitCode: final.exitCode,
+          completedAt: final.completedAt,
+        };
+      },
+    });
+
+    return { taskId: String(task.record.id) };
+  };
+}
+
+class ShellTaskExitError extends Error {
+  readonly code = "SHELL_TASK_EXITED";
+
+  constructor(result: ShellExecutionResult) {
+    super(
+      `Promoted shell command exited with ${
+        result.exitCode === null
+          ? result.status
+          : `exit code ${result.exitCode}`
+      }.`,
+    );
+    this.name = "ShellTaskExitError";
+  }
 }
 
 interface WorkspaceSnapshotEntry {

@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   defineTool,
@@ -8,6 +9,11 @@ import {
   LocalWorkspace,
   type RuntimeContext,
 } from "@sparkwright/core";
+import {
+  InMemoryTaskStore,
+  TaskManager,
+  type TaskId,
+} from "@sparkwright/agent-runtime";
 import {
   createAgentInspectorTool,
   createAgentManagerTool,
@@ -17,6 +23,7 @@ import {
   createSkillInspectorTool,
   createSkillManagerTool,
 } from "../src/tools.js";
+import { createHostShellTool } from "../src/shell.js";
 
 describe("host tools", () => {
   it("rejects read_file glob paths with tool guidance", async () => {
@@ -43,6 +50,48 @@ describe("host tools", () => {
       /expected a file path.*directory.*glob_paths/,
     );
     await expect(tool.execute({ path: "docs" }, ctx)).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+    });
+  });
+
+  it("normalizes read_file absolute and file URL paths", async () => {
+    const ctx = await createWorkspace({
+      "docs/README.md": "# Docs\n",
+    });
+    const tool = createReadFileTool();
+
+    const absolutePath = join(ctx.workspaceRoot, "docs/README.md");
+    await expect(
+      tool.execute({ path: absolutePath }, ctx),
+    ).resolves.toMatchObject({
+      path: "docs/README.md",
+      inputPath: absolutePath,
+      content: "# Docs\n",
+    });
+
+    const fileUrl = pathToFileURL(
+      join(ctx.workspaceRoot, "docs/README.md"),
+    ).href;
+    await expect(tool.execute({ path: fileUrl }, ctx)).resolves.toMatchObject({
+      path: "docs/README.md",
+      inputPath: fileUrl,
+      content: "# Docs\n",
+    });
+  });
+
+  it("rejects read_file escaped paths as tool argument errors", async () => {
+    const ctx = await createWorkspace({
+      "README.md": "# Demo\n",
+    });
+    const tool = createReadFileTool();
+
+    await expect(tool.execute({ path: "../README.md" }, ctx)).rejects.toThrow(
+      "Path escapes workspace root",
+    );
+    await expect(
+      tool.execute({ path: "../README.md" }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(tool.execute({ path: 42 }, ctx)).rejects.toMatchObject({
       code: "TOOL_ARGUMENTS_INVALID",
     });
   });
@@ -242,6 +291,88 @@ describe("host tools", () => {
         }
       ).properties.action.enum,
     ).toEqual(["create", "remove"]);
+  });
+
+  it("reports manager and inspector validation failures as tool argument errors", async () => {
+    const ctx = await createWorkspace({});
+    const skillInspector = createSkillInspectorTool(
+      ctx.workspaceRoot,
+      undefined,
+    );
+    const skillManager = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const agentManager = createAgentManagerTool(ctx.workspaceRoot);
+
+    await expect(
+      skillInspector.execute({ action: "create" }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(
+      skillManager.execute({ action: "list" }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(
+      agentManager.execute(
+        { action: "create", id: "agent", prompt: "x", maxSteps: 0 },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+  });
+
+  it("promotes long-running shell commands to background tasks", async () => {
+    const ctx = await createWorkspace({});
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      foregroundTimeoutMs: 20,
+    });
+
+    const result = await tool.execute(
+      {
+        command:
+          "node -e \"setTimeout(() => console.log('promoted done'), 80)\"",
+      },
+      ctx,
+    );
+
+    expect(result.promoted).toBe(true);
+    expect(result.taskId).toMatch(/^task_/);
+    const handle = manager.handle(result.taskId as TaskId);
+    expect(handle).toBeDefined();
+    const record = await handle!.wait();
+    expect(record.status).toBe("completed");
+
+    const chunks = [];
+    for await (const chunk of manager.store.loadOutput(
+      result.taskId as TaskId,
+    )) {
+      chunks.push(chunk.data);
+    }
+    expect(chunks.join("")).toContain("promoted done");
+  });
+
+  it("rolls back workspace mutations made by promoted shell tasks", async () => {
+    const ctx = await createWorkspace({});
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      taskManager: manager,
+      foregroundTimeoutMs: 20,
+    });
+
+    const result = await tool.execute(
+      {
+        command:
+          "node -e \"setTimeout(() => require('fs').writeFileSync('leak.txt', 'x'), 80)\"",
+      },
+      ctx,
+    );
+
+    expect(result.promoted).toBe(true);
+    const handle = manager.handle(result.taskId as TaskId);
+    expect(handle).toBeDefined();
+    const record = await handle!.wait();
+    expect(record.status).toBe("failed");
+    expect(record.error?.code).toBe("UNTRACKED_WORKSPACE_MUTATION");
+    await expect(
+      readFile(join(ctx.workspaceRoot, "leak.txt")),
+    ).rejects.toThrow();
   });
 });
 

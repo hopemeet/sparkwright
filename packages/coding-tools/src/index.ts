@@ -1,5 +1,6 @@
 import { opendir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   defineTool,
   type AnchoredEditOperation,
@@ -401,9 +402,11 @@ export function createApplyPatchTool(): ToolDefinition<
 
 function normalizeApplyPatchInput(args: ApplyPatchInput): ApplyPatchInput {
   assertRecord(args, "apply_patch input");
-  const path = readString(args, "path");
+  const path = normalizeFileUrlPath(readString(args, "path"));
   const patch = readString(args, "patch");
-  if (patch.trim() === "") throw new Error("patch must be a non-empty string.");
+  if (patch.trim() === "") {
+    throw toolArgumentsInvalid("patch must be a non-empty string.");
+  }
   const reason = typeof args.reason === "string" ? args.reason : undefined;
   return { path, patch, reason };
 }
@@ -778,7 +781,7 @@ function normalizeReadTextInput(
   options: CodingToolsOptions,
 ): Required<ReadTextInput> {
   assertRecord(args, "read_text input");
-  const path = readString(args, "path");
+  const path = normalizeFileUrlPath(readString(args, "path"));
   const startLine = readOptionalPositiveInteger(args, "startLine") ?? 1;
   const endLine =
     readOptionalPositiveInteger(args, "endLine") ?? Number.MAX_SAFE_INTEGER;
@@ -787,7 +790,9 @@ function normalizeReadTextInput(
     options.maxReadChars ??
     DEFAULT_MAX_READ_CHARS;
   if (endLine < startLine) {
-    throw new Error("endLine must be greater than or equal to startLine.");
+    throw toolArgumentsInvalid(
+      "endLine must be greater than or equal to startLine.",
+    );
   }
   return { path, startLine, endLine, maxChars };
 }
@@ -796,10 +801,10 @@ function normalizeEditAnchoredTextInput(
   args: EditAnchoredTextInput,
 ): EditAnchoredTextInput {
   assertRecord(args, "edit_anchored_text input");
-  const path = readString(args, "path");
+  const path = normalizeFileUrlPath(readString(args, "path"));
   const editsValue = args.edits as unknown;
   if (!Array.isArray(editsValue) || editsValue.length === 0) {
-    throw new Error("edits must be a non-empty array.");
+    throw toolArgumentsInvalid("edits must be a non-empty array.");
   }
 
   const edits = editsValue.map((edit, index) => {
@@ -807,7 +812,7 @@ function normalizeEditAnchoredTextInput(
     const op = readString(edit, "op");
     const anchor = readString(edit, "anchor");
     if (!["replace", "delete", "append", "prepend"].includes(op)) {
-      throw new Error(`Unsupported edit op: ${op}`);
+      throw toolArgumentsInvalid(`Unsupported edit op: ${op}`);
     }
     if (op === "delete") return { op, anchor } satisfies AnchoredEditOperation;
     const lines = edit.lines;
@@ -815,7 +820,9 @@ function normalizeEditAnchoredTextInput(
       !Array.isArray(lines) ||
       !lines.every((line) => typeof line === "string")
     ) {
-      throw new Error(`edits[${index}].lines must be an array of strings.`);
+      throw toolArgumentsInvalid(
+        `edits[${index}].lines must be an array of strings.`,
+      );
     }
     return { op, anchor, lines } as AnchoredEditOperation;
   });
@@ -863,7 +870,9 @@ function normalizeGrepTextInput(
 ): Required<GrepTextInput> {
   assertRecord(args, "grep_text input");
   const pattern = readString(args, "pattern");
-  if (pattern.length === 0) throw new Error("pattern must not be empty.");
+  if (pattern.length === 0) {
+    throw toolArgumentsInvalid("pattern must not be empty.");
+  }
   return {
     pattern,
     path: normalizeWorkspacePath(
@@ -906,7 +915,9 @@ function normalizeGlobPathsInput(
         ? patternsValue
         : undefined;
   if (!patterns || patterns.length === 0) {
-    throw new Error("patterns must be a string or a non-empty string array.");
+    throw toolArgumentsInvalid(
+      "patterns must be a string or a non-empty string array.",
+    );
   }
   return {
     patterns: workspaceRoot
@@ -1001,7 +1012,7 @@ class WorkspaceWalker {
   ) {}
 
   async list(input: Required<ListDirInput>) {
-    const start = await this.resolveExisting(input.path);
+    const start = await this.resolveExistingDirectory(input.path);
     const entries: DirectoryEntry[] = [];
     let truncated = false;
 
@@ -1027,13 +1038,17 @@ class WorkspaceWalker {
     exclude: string[];
     maxPaths: number;
   }) {
-    const start = await this.resolveExisting(input.path);
+    const start = await this.resolveExistingPath(input.path);
     const includeMatchers = input.include.map(globMatcher);
     const excludeMatchers = input.exclude.map(globMatcher);
     const paths: string[] = [];
     let truncated = false;
 
-    for await (const entry of this.walk(start, {
+    if (start.type === "file") {
+      return { paths: [this.toWorkspacePath(start.fullPath)], truncated };
+    }
+
+    for await (const entry of this.walk(start.fullPath, {
       recursive: true,
       includeHidden: input.includeHidden,
     })) {
@@ -1058,7 +1073,7 @@ class WorkspaceWalker {
   }
 
   async glob(input: NormalizedGlobPathsInput) {
-    const start = await this.resolveExisting(input.path);
+    const start = await this.resolveExistingDirectory(input.path);
     const includeMatchers = input.patterns.map(globMatcher);
     const excludeMatchers = input.exclude.map(globMatcher);
     const paths: string[] = [];
@@ -1143,19 +1158,31 @@ class WorkspaceWalker {
     }
   }
 
-  private async resolveExisting(path: string): Promise<string> {
-    const fullPath = resolve(this.root, path);
-    const resolved = await realpath(fullPath);
-    assertInsideRoot(this.root, resolved, path);
-    const targetStat = await stat(resolved);
-    if (!targetStat.isDirectory()) {
+  private async resolveExistingDirectory(path: string): Promise<string> {
+    const target = await this.resolveExistingPath(path);
+    if (target.type !== "directory") {
       throw toolArgumentsInvalid(
         `Workspace discovery path is not a directory: ${path}. ` +
           "Use path='.' with include/exclude or glob patterns to narrow discovery, " +
           "or call a file-read tool when you already have a concrete file path.",
       );
     }
-    return resolved;
+    return target.fullPath;
+  }
+
+  private async resolveExistingPath(
+    path: string,
+  ): Promise<{ fullPath: string; type: "directory" | "file" | "other" }> {
+    const fullPath = resolve(this.root, path);
+    const resolved = await realpath(fullPath);
+    assertInsideRoot(this.root, resolved, path);
+    const targetStat = await stat(resolved);
+    const type = targetStat.isDirectory()
+      ? "directory"
+      : targetStat.isFile()
+        ? "file"
+        : "other";
+    return { fullPath: resolved, type };
   }
 
   private toWorkspacePath(fullPath: string): string {
@@ -1170,8 +1197,9 @@ function toolArgumentsInvalid(message: string): Error & { code: string } {
 }
 
 function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
-  if (workspaceRoot && (isAbsolute(path) || /^[A-Za-z]:/.test(path))) {
-    const rel = relative(workspaceRoot, path);
+  const decoded = normalizeFileUrlPath(path);
+  if (workspaceRoot && (isAbsolute(decoded) || /^[A-Za-z]:/.test(decoded))) {
+    const rel = relative(workspaceRoot, decoded);
     if (
       rel === "" ||
       (!rel.startsWith("..") && rel !== ".." && !isAbsolute(rel))
@@ -1179,9 +1207,9 @@ function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
       return normalizeWorkspacePath(rel || ".");
     }
   }
-  const normalized = path.replace(/\\/g, "/");
+  const normalized = decoded.replace(/\\/g, "/");
   if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) {
-    throw new Error(`Path escapes workspace root: ${path}`);
+    throw toolArgumentsInvalid(`Path escapes workspace root: ${path}`);
   }
   const parts = normalized.split("/").filter(Boolean);
   const output: string[] = [];
@@ -1189,7 +1217,7 @@ function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
     if (part === ".") continue;
     if (part === "..") {
       if (output.length === 0) {
-        throw new Error(`Path escapes workspace root: ${path}`);
+        throw toolArgumentsInvalid(`Path escapes workspace root: ${path}`);
       }
       output.pop();
       continue;
@@ -1197,6 +1225,15 @@ function normalizeWorkspacePath(path: string, workspaceRoot?: string): string {
     output.push(part);
   }
   return output.length > 0 ? output.join("/") : ".";
+}
+
+function normalizeFileUrlPath(path: string): string {
+  if (!path.startsWith("file://")) return path;
+  try {
+    return fileURLToPath(path);
+  } catch {
+    throw toolArgumentsInvalid(`Invalid file URL path: ${path}`);
+  }
 }
 
 function assertInsideRoot(root: string, target: string, originalPath: string) {
@@ -1207,7 +1244,7 @@ function assertInsideRoot(root: string, target: string, originalPath: string) {
   ) {
     return;
   }
-  throw new Error(`Path escapes workspace root: ${originalPath}`);
+  throw toolArgumentsInvalid(`Path escapes workspace root: ${originalPath}`);
 }
 
 const TYPE_ORDER: Record<DirectoryEntry["type"], number> = {
@@ -1363,14 +1400,14 @@ function assertRecord(
   label: string,
 ): asserts value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
+    throw toolArgumentsInvalid(`${label} must be an object.`);
   }
 }
 
 function readString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`${key} must be a non-empty string.`);
+    throw toolArgumentsInvalid(`${key} must be a non-empty string.`);
   }
   return value;
 }
@@ -1382,7 +1419,7 @@ function readOptionalPositiveInteger(
   const value = record[key];
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || typeof value !== "number" || value < 1) {
-    throw new Error(`${key} must be a positive integer.`);
+    throw toolArgumentsInvalid(`${key} must be a positive integer.`);
   }
   return value;
 }
@@ -1394,7 +1431,7 @@ function readOptionalNonNegativeInteger(
   const value = record[key];
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || typeof value !== "number" || value < 0) {
-    throw new Error(`${key} must be a non-negative integer.`);
+    throw toolArgumentsInvalid(`${key} must be a non-negative integer.`);
   }
   return value;
 }
@@ -1419,7 +1456,7 @@ function readOptionalStringArray(
     !Array.isArray(value) ||
     !value.every((item) => typeof item === "string")
   ) {
-    throw new Error(`${key} must be an array of strings.`);
+    throw toolArgumentsInvalid(`${key} must be an array of strings.`);
   }
   return value;
 }

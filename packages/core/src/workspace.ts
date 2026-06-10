@@ -211,6 +211,10 @@ export class ControlledWorkspace implements WorkspaceRuntime {
     this.policy = options.policy ?? createDefaultPolicy();
   }
 
+  async canonicalPath(path: string): Promise<string> {
+    return this.canonicalizePath(path);
+  }
+
   async readText(path: string): Promise<string> {
     const workspacePath = await this.canonicalizePath(path);
     await this.guardRead(workspacePath);

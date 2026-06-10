@@ -1030,6 +1030,50 @@ describe("trace", () => {
     });
   });
 
+  it("classifies recovered repeated tool calls separately from errors", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("tool.requested", {
+        id: "call_1",
+        toolName: "read_file",
+        arguments: { path: "README.md" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        status: "completed",
+        output: { path: "README.md" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_2",
+        toolName: "read_file",
+        arguments: { path: "README.md" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_2",
+        status: "failed",
+        error: { code: "REPEATED_TOOL_CALL_SKIPPED", message: "skipped" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(0);
+    expect(summary.errorCodes).toEqual({});
+    expect(summary.toolFailures).toMatchObject({
+      total: 1,
+      byCode: { REPEATED_TOOL_CALL_SKIPPED: 1 },
+      unresolved: { total: 0, byCode: {} },
+      recovered: {
+        total: 1,
+        byCode: { REPEATED_TOOL_CALL_SKIPPED: 1 },
+      },
+    });
+  });
+
   it("does not double count cumulative usage snapshots in summaries", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);

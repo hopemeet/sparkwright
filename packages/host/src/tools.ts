@@ -1,6 +1,11 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { defineTool, type ToolDefinition } from "@sparkwright/core";
+import { fileURLToPath } from "node:url";
+import {
+  defineTool,
+  type ToolDefinition,
+  type WorkspaceRuntime,
+} from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
   createApplyPatchTool as createApplyPatchToolBase,
@@ -62,14 +67,11 @@ export function createReadFileTool() {
     policy: { risk: "safe" },
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
-      const { path, offset, limit } = args as {
-        path: string;
-        offset?: number;
-        limit?: number;
-      };
+      const { path: rawPath, offset, limit } = readFileToolInput(args);
+      const path = await normalizeWorkspacePathArg(rawPath, ctx.workspace);
       if (containsGlobPattern(path)) {
         throw toolArgumentsInvalid(
-          `read_file does not support glob patterns: ${path}. Use glob_paths to find matching files, then call read_file with a concrete path.`,
+          `read_file does not support glob patterns: ${rawPath}. Use glob_paths to find matching files, then call read_file with a concrete path.`,
         );
       }
       const content = await ctx.workspace.readText(path).catch((error) => {
@@ -97,6 +99,7 @@ export function createReadFileTool() {
           endLine: startLine - 1,
           content: "",
           hasMore: false,
+          ...(rawPath !== path ? { inputPath: rawPath } : {}),
           note: `offset ${startLine} is past end of file (${totalLines} lines).`,
         };
       }
@@ -141,6 +144,7 @@ export function createReadFileTool() {
 
       return {
         path,
+        ...(rawPath !== path ? { inputPath: rawPath } : {}),
         bytes: content.length,
         totalLines,
         startLine,
@@ -165,6 +169,90 @@ function isNodeErrorCode(error: unknown, code: string): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === code
   );
+}
+
+function readFileToolInput(args: unknown): {
+  path: string;
+  offset?: number;
+  limit?: number;
+} {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    throw toolArgumentsInvalid("read_file input must be an object.");
+  }
+  const record = args as Record<string, unknown>;
+  if (typeof record.path !== "string" || record.path.trim().length === 0) {
+    throw toolArgumentsInvalid("read_file requires a non-empty string path.");
+  }
+  return {
+    path: record.path.trim(),
+    offset: readOptionalPositiveNumber(record, "offset"),
+    limit: readOptionalPositiveNumber(record, "limit"),
+  };
+}
+
+async function normalizeWorkspacePathArg(
+  path: string,
+  workspace: WorkspaceRuntime,
+): Promise<string> {
+  const decoded = normalizeFileUrlPath(path);
+  try {
+    return typeof workspace.canonicalPath === "function"
+      ? await workspace.canonicalPath(decoded)
+      : normalizeRelativeWorkspacePath(decoded);
+  } catch (error) {
+    if (
+      isNodeErrorCode(error, "WORKSPACE_PATH_ESCAPED") ||
+      /Path escapes workspace root/.test(errorMessage(error))
+    ) {
+      throw toolArgumentsInvalid(`Path escapes workspace root: ${path}`);
+    }
+    throw error;
+  }
+}
+
+function normalizeFileUrlPath(path: string): string {
+  if (!path.startsWith("file://")) return path;
+  try {
+    return fileURLToPath(path);
+  } catch {
+    throw toolArgumentsInvalid(`Invalid file URL path: ${path}`);
+  }
+}
+
+function normalizeRelativeWorkspacePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) {
+    throw toolArgumentsInvalid(`Path escapes workspace root: ${path}`);
+  }
+  const output: string[] = [];
+  for (const part of normalized.split("/").filter(Boolean)) {
+    if (part === ".") continue;
+    if (part === "..") {
+      if (output.length === 0) {
+        throw toolArgumentsInvalid(`Path escapes workspace root: ${path}`);
+      }
+      output.pop();
+      continue;
+    }
+    output.push(part);
+  }
+  return output.length > 0 ? output.join("/") : ".";
+}
+
+function readOptionalPositiveNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+    throw toolArgumentsInvalid(`${key} must be a positive number.`);
+  }
+  return value;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function createGlobPathsTool(workspaceRoot: string) {
@@ -651,11 +739,11 @@ function parseInspectAction(
   toolName: string,
 ): "list" | "validate" {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    throw new Error(`${toolName} expects an object argument.`);
+    throw toolArgumentsInvalid(`${toolName} expects an object argument.`);
   }
   const action = (args as Record<string, unknown>).action;
   if (action !== "list" && action !== "validate") {
-    throw new Error(`${toolName} action must be list or validate.`);
+    throw toolArgumentsInvalid(`${toolName} action must be list or validate.`);
   }
   return action;
 }
@@ -668,12 +756,12 @@ function parseSkillManagerArgs(args: unknown): {
   force?: boolean;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    throw new Error("manage_skill expects an object argument.");
+    throw toolArgumentsInvalid("manage_skill expects an object argument.");
   }
   const record = args as Record<string, unknown>;
   const action = record.action;
   if (action !== "create") {
-    throw new Error("manage_skill action must be create.");
+    throw toolArgumentsInvalid("manage_skill action must be create.");
   }
   return {
     action,
@@ -880,12 +968,12 @@ function parseAgentManagerArgs(args: unknown): {
   force?: boolean;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    throw new Error("manage_agent expects an object argument.");
+    throw toolArgumentsInvalid("manage_agent expects an object argument.");
   }
   const record = args as Record<string, unknown>;
   const action = record.action;
   if (action !== "create" && action !== "remove") {
-    throw new Error("manage_agent action must be create or remove.");
+    throw toolArgumentsInvalid("manage_agent action must be create or remove.");
   }
   const mode = record.mode;
   if (
@@ -894,14 +982,18 @@ function parseAgentManagerArgs(args: unknown): {
     mode !== "child" &&
     mode !== "all"
   ) {
-    throw new Error("manage_agent mode must be primary, child, or all.");
+    throw toolArgumentsInvalid(
+      "manage_agent mode must be primary, child, or all.",
+    );
   }
   const maxSteps = record.maxSteps;
   if (
     maxSteps !== undefined &&
     (!Number.isInteger(maxSteps) || (maxSteps as number) < 1)
   ) {
-    throw new Error("manage_agent maxSteps must be a positive integer.");
+    throw toolArgumentsInvalid(
+      "manage_agent maxSteps must be a positive integer.",
+    );
   }
   return {
     action,
@@ -933,7 +1025,9 @@ function stringArrayArg(value: unknown, field: string): string[] {
     !Array.isArray(value) ||
     !value.every((entry) => typeof entry === "string")
   ) {
-    throw new Error(`manage_agent ${field} must be an array of strings.`);
+    throw toolArgumentsInvalid(
+      `manage_agent ${field} must be an array of strings.`,
+    );
   }
   return value.map((entry) => entry.trim()).filter(Boolean);
 }

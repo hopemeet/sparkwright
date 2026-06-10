@@ -38,7 +38,7 @@ export function analyzeToolOutcomes(
     string,
     { toolName?: string; targetKey?: string }
   >();
-  const laterCompletedByTarget = new Map<string, number[]>();
+  const completedByTarget = new Map<string, number[]>();
 
   for (const [index, event] of events.entries()) {
     if (event.type === "tool.requested" && isRecord(event.payload)) {
@@ -58,9 +58,9 @@ export function analyzeToolOutcomes(
         stringValue(event.payload.toolCallId),
       );
       if (!targetKey) continue;
-      const indexes = laterCompletedByTarget.get(targetKey) ?? [];
+      const indexes = completedByTarget.get(targetKey) ?? [];
       indexes.push(index);
-      laterCompletedByTarget.set(targetKey, indexes);
+      completedByTarget.set(targetKey, indexes);
     }
   }
 
@@ -76,6 +76,9 @@ export function analyzeToolOutcomes(
       toolNameForCall(requested, toolCallId);
     const targetKey = targetKeyForCall(requested, toolCallId);
     const category = classifyToolFailure(code);
+    const completedIndexes = targetKey
+      ? (completedByTarget.get(targetKey) ?? [])
+      : [];
     failures.push({
       toolCallId,
       toolName,
@@ -85,12 +88,10 @@ export function analyzeToolOutcomes(
       recovered:
         category !== "policy_denial" &&
         category !== "approval_denial" &&
-        Boolean(
-          targetKey &&
-          (laterCompletedByTarget.get(targetKey) ?? []).some(
-            (completedIndex) => completedIndex > index,
-          ),
-        ),
+        Boolean(targetKey) &&
+        (completedIndexes.some((completedIndex) => completedIndex > index) ||
+          (code === "REPEATED_TOOL_CALL_SKIPPED" &&
+            completedIndexes.some((completedIndex) => completedIndex < index))),
     });
   }
 
@@ -145,16 +146,26 @@ export function classifyToolFailure(
       ? "approval_denial"
       : "policy_denial";
   }
-  if (
+  if (isToolArgumentFailure(code)) {
+    return "model_arg_error";
+  }
+  return "tool_runtime_error";
+}
+
+function isToolArgumentFailure(code: string | undefined): boolean {
+  return (
     code === "TOOL_ARGS_INVALID" ||
     code === "TOOL_ARGUMENTS_INVALID" ||
     code === "TOOL_INPUT_INVALID" ||
     code === "TOOL_OUTPUT_INVALID" ||
-    code === "REPEATED_TOOL_CALL_SKIPPED"
-  ) {
-    return "model_arg_error";
-  }
-  return "tool_runtime_error";
+    code === "REPEATED_TOOL_CALL_SKIPPED" ||
+    Boolean(
+      code &&
+      (code.endsWith("_ARGS_INVALID") ||
+        code.endsWith("_ARGUMENTS_INVALID") ||
+        code.endsWith("_INPUT_INVALID")),
+    )
+  );
 }
 
 export function toolTargetFingerprint(toolName: string, args: unknown): string {
