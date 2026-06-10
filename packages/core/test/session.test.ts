@@ -448,6 +448,41 @@ describe("session", () => {
     }
   });
 
+  it("serializes concurrent FileSessionStore session creation by id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-session-create-"));
+    try {
+      const store = new FileSessionStore({ rootDir: root });
+      const sessionId = asSessionId("session_concurrent_create");
+      const runA = runRecord("run_concurrent_a" as unknown as RunId);
+      const runB = runRecord("run_concurrent_b" as unknown as RunId);
+
+      await Promise.all([
+        ensureSessionRunMembership({
+          sessionStore: store,
+          sessionId,
+          run: runA,
+        }),
+        ensureSessionRunMembership({
+          sessionStore: store,
+          sessionId,
+          run: runB,
+        }),
+      ]);
+
+      const session = await store.get(sessionId);
+      const events = await collect(store.loadEvents(sessionId));
+      expect(session?.runIds.sort()).toEqual([runA.id, runB.id].sort());
+      expect(
+        events.filter((event) => event.type === "session.created"),
+      ).toHaveLength(1);
+      expect(
+        events.filter((event) => event.type === "session.run_appended"),
+      ).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   // Regression: lazy-constructing the inner run store on loadEvents() had
   // write side effects (bumped session.json updatedAt, rewrote run.json).
   it("loadEvents does not lazily construct the inner store", async () => {

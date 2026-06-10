@@ -18,6 +18,7 @@ import {
   createAgentInspectorTool,
   createAgentManagerTool,
   applyToolConfig,
+  createAppendFileTool,
   createGlobPathsTool,
   createReadFileTool,
   createSkillInspectorTool,
@@ -117,6 +118,20 @@ describe("host tools", () => {
       totalPaths: 2,
       hasMore: false,
     });
+  });
+
+  it("rejects append_file headings that normalize to empty text", async () => {
+    const ctx = await createWorkspace({
+      "NOTES.md": "",
+    });
+    const tool = createAppendFileTool();
+
+    await expect(
+      tool.execute({ path: "NOTES.md", heading: "## ", body: "body" }, ctx),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(
+      readFile(join(ctx.workspaceRoot, "NOTES.md"), "utf8"),
+    ).resolves.toBe("");
   });
 
   it("applies enabled, disabled, and deferred tool config", () => {
@@ -370,6 +385,18 @@ describe("host tools", () => {
     const record = await handle!.wait();
     expect(record.status).toBe("failed");
     expect(record.error?.code).toBe("UNTRACKED_WORKSPACE_MUTATION");
+    await expect(
+      readFile(join(ctx.workspaceRoot, "leak.txt")),
+    ).rejects.toThrow();
+  });
+
+  it("does not use the read-only shell fast path for redirects", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createHostShellTool(ctx.workspaceRoot);
+
+    await expect(
+      tool.execute({ command: "echo leaked > leak.txt" }, ctx),
+    ).rejects.toMatchObject({ code: "UNTRACKED_WORKSPACE_MUTATION" });
     await expect(
       readFile(join(ctx.workspaceRoot, "leak.txt")),
     ).rejects.toThrow();

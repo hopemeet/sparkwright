@@ -162,9 +162,14 @@ export class InMemorySessionStore implements AppendOnlySessionStore {
   private readonly events = new Map<string, SessionEvent[]>();
 
   async create(seed: SessionSeed = {}): Promise<SessionRecord> {
+    const id = seed.id ? asSessionId(seed.id) : createSessionId();
+    if (seed.id && this.sessions.has(id)) {
+      return this.cloneSession(this.mustGet(id));
+    }
+
     const now = new Date().toISOString();
     const session: SessionRecord = {
-      id: seed.id ? asSessionId(seed.id) : createSessionId(),
+      id,
       createdAt: seed.createdAt ?? now,
       updatedAt: seed.updatedAt ?? now,
       runIds: [...(seed.runIds ?? [])],
@@ -283,9 +288,42 @@ export class FileSessionStore implements AppendOnlySessionStore {
   }
 
   async create(seed: SessionSeed = {}): Promise<SessionRecord> {
+    const id = seed.id ? asSessionId(seed.id) : createSessionId();
+    const createNew = async (): Promise<SessionRecord> => {
+      const now = new Date().toISOString();
+      const session: SessionRecord = {
+        id,
+        createdAt: seed.createdAt ?? now,
+        updatedAt: seed.updatedAt ?? now,
+        runIds: [...(seed.runIds ?? [])],
+        metadata: seed.metadata ? { ...seed.metadata } : undefined,
+        eventCount: 0,
+      };
+
+      await mkdir(this.sessionDir(session.id), { recursive: true });
+      await writeFile(this.eventsPath(session.id), "", "utf8");
+      await this.writeSession(session);
+      await this.appendSessionEvent(session, {
+        type: "session.created",
+        timestamp: session.createdAt,
+        payload: {
+          runIds: session.runIds,
+        },
+      });
+
+      return this.mustGet(session.id);
+    };
+
+    if (seed.id) {
+      return this.withSessionMutation(id, async () => {
+        const existing = await this.get(id);
+        return existing ?? createNew();
+      });
+    }
+
     const now = new Date().toISOString();
     const session: SessionRecord = {
-      id: seed.id ? asSessionId(seed.id) : createSessionId(),
+      id,
       createdAt: seed.createdAt ?? now,
       updatedAt: seed.updatedAt ?? now,
       runIds: [...(seed.runIds ?? [])],

@@ -12,6 +12,7 @@ import {
   createEditAnchoredTextTool as createEditAnchoredTextToolBase,
   createGlobPathsTool as createGlobPathsToolBase,
   createGrepTextTool as createGrepTextToolBase,
+  createReadAnchoredTextTool as createReadAnchoredTextToolBase,
 } from "@sparkwright/coding-tools";
 import {
   createCronTool as createCronToolBase,
@@ -271,6 +272,15 @@ export function createGrepTextTool(workspaceRoot: string) {
 }
 
 /**
+ * Built-in read-only tool: read a file with stable line anchors used by
+ * edit_anchored_text. Expose both tools together so models do not invent
+ * anchors from plain read_file output.
+ */
+export function createReadAnchoredTextTool() {
+  return createReadAnchoredTextToolBase();
+}
+
+/**
  * Built-in write tool: apply verified anchored edits (replace/delete/append/
  * prepend relative to a unique text anchor) through the workspace write path.
  * Unlike append_file, this can do an in-place line replacement — needed for
@@ -307,7 +317,7 @@ export function createAppendFileTool() {
       type: "object",
       properties: {
         path: { type: "string" },
-        heading: { type: "string" },
+        heading: { type: "string", minLength: 1 },
         body: { type: "string" },
       },
       required: ["path", "heading", "body"],
@@ -335,6 +345,11 @@ export function createAppendFileTool() {
       const heading = (args as { heading: string }).heading
         .replace(/^\s*#+\s*/, "")
         .trim();
+      if (!heading) {
+        throw toolArgumentsInvalid(
+          "append_file heading must contain text after removing leading markdown heading markers.",
+        );
+      }
       // A missing file is treated as empty so append_file can CREATE the file.
       // Only ENOENT is swallowed; other read errors (permission, is-a-dir)
       // propagate.

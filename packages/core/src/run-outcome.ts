@@ -36,20 +36,25 @@ export function analyzeToolOutcomes(
 ): ToolOutcomeSummary {
   const requested = new Map<
     string,
-    { toolName?: string; targetKey?: string }
+    { toolName?: string; targetKey?: string; targetPath?: string }
   >();
   const completedByTarget = new Map<string, number[]>();
+  const completedWritesByPath = new Map<string, number[]>();
 
   for (const [index, event] of events.entries()) {
     if (event.type === "tool.requested" && isRecord(event.payload)) {
       const id = stringValue(event.payload.id);
       const toolName = stringValue(event.payload.toolName);
       if (id) {
+        const target = targetValue(event.payload.arguments);
         requested.set(id, {
           toolName,
           targetKey: toolName
-            ? toolTargetFingerprint(toolName, event.payload.arguments)
+            ? target
+              ? `${toolName}::${target.kind}::${target.value}`
+              : toolTargetFingerprint(toolName, event.payload.arguments)
             : undefined,
+          targetPath: target?.kind === "path" ? target.value : undefined,
         });
       }
     } else if (event.type === "tool.completed" && isRecord(event.payload)) {
@@ -61,6 +66,15 @@ export function analyzeToolOutcomes(
       const indexes = completedByTarget.get(targetKey) ?? [];
       indexes.push(index);
       completedByTarget.set(targetKey, indexes);
+    } else if (
+      event.type === "workspace.write.completed" &&
+      isRecord(event.payload)
+    ) {
+      const path = stringValue(event.payload.path);
+      if (!path) continue;
+      const indexes = completedWritesByPath.get(path) ?? [];
+      indexes.push(index);
+      completedWritesByPath.set(path, indexes);
     }
   }
 
@@ -75,9 +89,13 @@ export function analyzeToolOutcomes(
       stringValue(event.payload.toolName) ??
       toolNameForCall(requested, toolCallId);
     const targetKey = targetKeyForCall(requested, toolCallId);
+    const targetPath = targetPathForCall(requested, toolCallId);
     const category = classifyToolFailure(code);
     const completedIndexes = targetKey
       ? (completedByTarget.get(targetKey) ?? [])
+      : [];
+    const completedWriteIndexes = targetPath
+      ? (completedWritesByPath.get(targetPath) ?? [])
       : [];
     failures.push({
       toolCallId,
@@ -90,6 +108,9 @@ export function analyzeToolOutcomes(
         category !== "approval_denial" &&
         Boolean(targetKey) &&
         (completedIndexes.some((completedIndex) => completedIndex > index) ||
+          completedWriteIndexes.some(
+            (completedIndex) => completedIndex > index,
+          ) ||
           (code === "REPEATED_TOOL_CALL_SKIPPED" &&
             completedIndexes.some((completedIndex) => completedIndex < index))),
     });
@@ -206,6 +227,13 @@ function targetKeyForCall(
   toolCallId: string | undefined,
 ): string | undefined {
   return toolCallId ? requested.get(toolCallId)?.targetKey : undefined;
+}
+
+function targetPathForCall(
+  requested: Map<string, { targetPath?: string }>,
+  toolCallId: string | undefined,
+): string | undefined {
+  return toolCallId ? requested.get(toolCallId)?.targetPath : undefined;
 }
 
 function uniqueCodes(failures: readonly ClassifiedToolFailure[]): string[] {

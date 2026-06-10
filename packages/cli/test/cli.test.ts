@@ -1114,8 +1114,25 @@ describe("runCli", () => {
 
     expect(staticInspect.exitCode).toBe(0);
     const staticReport = JSON.parse(staticOutput.stdoutText()) as {
+      tools: {
+        available: Array<{
+          name: string;
+          source: string;
+          risk?: string;
+          origin?: string;
+        }>;
+      };
       mcp: { servers: Array<{ status?: string; tools?: unknown[] }> };
     };
+    expect(staticReport.tools.available).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "shell", risk: "risky" }),
+        expect.objectContaining({ name: "spawn_agent", risk: "safe" }),
+        expect.objectContaining({ name: "todo_write", risk: "safe" }),
+        expect.objectContaining({ name: "read_anchored_text", risk: "safe" }),
+        expect.objectContaining({ name: "edit_anchored_text", risk: "risky" }),
+      ]),
+    );
     expect(staticReport.mcp.servers[0]?.status).toBeUndefined();
     expect(staticReport.mcp.servers[0]?.tools).toBeUndefined();
 
@@ -3266,6 +3283,76 @@ describe("runCli", () => {
     );
     // resumeRunFromCheckpoint throws — runCli surfaces this as exit 1.
     expect(fallback.exitCode).toBe(1);
+  });
+
+  it("run resume --from-trace requires --force for reconstructed non-terminal checkpoints", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionId = "session_trace_force_test";
+    const runId = "run_trace_force_test";
+    const runDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "agents",
+      "main",
+      "runs",
+      runId,
+    );
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "run.json"),
+      JSON.stringify(
+        {
+          id: runId,
+          goal: "resume from reconstructed trace",
+          state: "running",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+          metadata: {},
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+      `${JSON.stringify({
+        id: "evt_trace_force_1",
+        runId,
+        sequence: 1,
+        type: "model.completed",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        payload: { step: 1 },
+      })}\n`,
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "run",
+        "resume",
+        runId,
+        "--workspace",
+        workspace,
+        "--session",
+        sessionId,
+        "--from-trace",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("Checkpoint is not fully resumable");
+    expect(output.stderrText()).toContain("--force");
   });
 
   it("rejects unsafe CLI session ids before building paths", async () => {

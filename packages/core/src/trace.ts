@@ -423,7 +423,7 @@ export function verifyTraceJsonl(
   }
 
   for (const [runId, counts] of writeCountsByRun) {
-    const terminalWrites = counts.completed + counts.denied + counts.skipped;
+    const terminalWrites = counts.completed + counts.denied;
     if (terminalWrites > counts.requested) {
       findings.push({
         severity: "error",

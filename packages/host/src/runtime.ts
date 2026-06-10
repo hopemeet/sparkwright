@@ -49,11 +49,6 @@ import {
   FileTaskStore,
   TaskManager,
   createAgentTool,
-  createTaskGet,
-  createTaskList,
-  createTaskOutput,
-  createTaskStop,
-  createTodoTools,
   deriveChildAgentProfile,
   runTodoSupervised,
   spawnSubAgent,
@@ -89,21 +84,7 @@ import {
 } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
-import {
-  createAppendFileTool,
-  createApplyPatchTool,
-  createCronTool,
-  createAgentInspectorTool,
-  createAgentManagerTool,
-  createEditAnchoredTextTool,
-  createGlobPathsTool,
-  createGrepTextTool,
-  applyToolConfig,
-  createReadFileTool,
-  createSkillInspectorTool,
-  createSkillManagerTool,
-} from "./tools.js";
-import { createHostShellTool } from "./shell.js";
+import { createMainHostTools, createReadOnlyChildTools } from "./toolset.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -169,22 +150,6 @@ function createHostRunPolicy(input: {
       confidentialPaths: input.confidentialPaths ?? [],
     }),
   ]);
-}
-
-function createHostTaskPollingTools(input: {
-  manager: TaskManager;
-  getParentRunId: () => RunId;
-}): ToolDefinition[] {
-  const options = {
-    manager: input.manager,
-    getParentRunId: input.getParentRunId,
-  };
-  return [
-    createTaskList(options),
-    createTaskGet(options),
-    createTaskStop(options),
-    createTaskOutput(options),
-  ];
 }
 
 function requireActiveRunId(value: string | null): RunId {
@@ -329,7 +294,6 @@ function summarizeCapabilitySnapshot(
 // audits once and stops.
 const MAIN_TODO_MAX_CONTINUATIONS = 4;
 const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
-const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
 const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
 const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
@@ -585,12 +549,10 @@ export class HostRuntime {
         }),
         metadata: { source: "host" },
       });
-    const baseChildTools = [
-      createReadFileTool(),
-      createGlobPathsTool(workspaceRoot),
-      createGrepTextTool(workspaceRoot),
-    ];
-    const childTools = applyToolConfig(baseChildTools, toolConfig);
+    const childTools = createReadOnlyChildTools({
+      workspaceRoot,
+      toolConfig,
+    });
     const delegateTools = createConfiguredDelegateTools({
       getParent: () => parentRunRef.current,
       delegates: agentConfig?.delegateTools ?? [],
@@ -611,41 +573,18 @@ export class HostRuntime {
       childTools,
       childRunStoreFactory,
     });
-    const tools = applyToolConfig(
-      [
-        createReadFileTool(),
-        createGlobPathsTool(workspaceRoot),
-        createGrepTextTool(workspaceRoot),
-        createEditAnchoredTextTool(),
-        createApplyPatchTool(),
-        createAppendFileTool(),
-        createCronTool(),
-        createSkillInspectorTool(workspaceRoot, skillRoots),
-        createSkillManagerTool(workspaceRoot, skillRoots),
-        createAgentInspectorTool(workspaceRoot),
-        createAgentManagerTool(workspaceRoot),
-        createHostShellTool(workspaceRoot, {
-          taskManager: this.taskManager,
-        }),
-        ...createHostTaskPollingTools({
-          manager: this.taskManager,
-          getParentRunId: () => requireActiveRunId(runIdHolder.value),
-        }),
-        // Todo ledger tools (P0): main agent only. The ledger lives in the
-        // session dir as a human-readable markdown file. Child agents do not
-        // receive these (they get `childTools`), preserving the single-writer
-        // model without a policy rule.
-        ...createTodoTools({
-          getTodoPath: () => join(sessionRootDir, input.sessionId, "todo.md"),
-          maxWritesPerRun: MAIN_TODO_MAX_WRITES_PER_RUN,
-        }).all(),
-        ...(preparedSkills?.tools ?? []),
-        ...(preparedMcp?.tools ?? []),
-        ...delegateTools,
-        dynamicSpawnTool,
-      ],
+    const tools = createMainHostTools({
+      workspaceRoot,
+      skillRoots,
       toolConfig,
-    );
+      taskManager: this.taskManager,
+      getParentRunId: () => requireActiveRunId(runIdHolder.value),
+      todoPath: join(sessionRootDir, input.sessionId, "todo.md"),
+      preparedSkills,
+      preparedMcp,
+      delegateTools,
+      dynamicSpawnTool,
+    });
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       tools,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
@@ -1057,6 +996,17 @@ export class HostRuntime {
         },
       };
     }
+    if (!checkpoint.resumability.complete && payload.force !== true) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message:
+            `Checkpoint is not fully resumable (reasons: ${checkpoint.resumability.reasons.join(", ") || "unspecified"}). ` +
+            `Retry with force=true (CLI: --force) to attempt a best-effort resume.`,
+        },
+      };
+    }
 
     const modelRef = payload.model ?? this.opts.defaultModel;
     const permissionMode =
@@ -1150,7 +1100,7 @@ export class HostRuntime {
               supervisedInput.continuation.context,
             ])
           : resumeRunFromCheckpoint(checkpoint, {
-              force: payload.force || !checkpoint.resumability.complete,
+              force: payload.force,
               workspace: env.workspace,
               approvalResolver: env.approvalResolver,
               policy: createHostRunPolicy({
@@ -1576,72 +1526,56 @@ export class HostRuntime {
         })
       : null;
     try {
+      const mainAgent = mainAgentProfile(resolvedProfiles);
+      const derivedAgents = deriveConfiguredAgents(mainAgent, resolvedProfiles);
+      const childTools = createReadOnlyChildTools({
+        workspaceRoot: this.opts.workspaceRoot,
+        toolConfig,
+      });
+      const delegateTools = createConfiguredDelegateTools({
+        getParent: () => undefined,
+        delegates: agentConfig?.delegateTools ?? [],
+        derivedAgents,
+        model: {
+          async complete() {
+            return { message: "" };
+          },
+        },
+        childTools,
+        workspaceRoot: this.opts.workspaceRoot,
+        allowReadWriteWorkspaceAccess: false,
+        // Snapshot only describes the tool; its body never runs here
+        // (getParent returns undefined and the tool throws first).
+        childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
+      });
+      const dynamicSpawnTool = createDynamicSpawnAgentTool({
+        getParent: () => undefined,
+        model: {
+          async complete() {
+            return { message: "" };
+          },
+        },
+        childTools,
+        childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
+      });
       return buildCapabilitySnapshot({
-        tools: applyToolConfig(
-          [
-            createReadFileTool(),
-            createGlobPathsTool(this.opts.workspaceRoot),
-            createGrepTextTool(this.opts.workspaceRoot),
-            createEditAnchoredTextTool(),
-            createApplyPatchTool(),
-            createAppendFileTool(),
-            createCronTool(),
-            createSkillInspectorTool(this.opts.workspaceRoot, skillRoots),
-            createSkillManagerTool(this.opts.workspaceRoot, skillRoots),
-            createAgentInspectorTool(this.opts.workspaceRoot),
-            createAgentManagerTool(this.opts.workspaceRoot),
-            createHostShellTool(this.opts.workspaceRoot, {
-              taskManager: this.taskManager,
-            }),
-            ...createHostTaskPollingTools({
-              manager: this.taskManager,
-              getParentRunId: () => "run_capability_snapshot" as RunId,
-            }),
-            ...(preparedSkills?.tools ?? []),
-            ...(preparedMcp?.tools ?? []),
-            ...createConfiguredDelegateTools({
-              getParent: () => undefined,
-              delegates: agentConfig?.delegateTools ?? [],
-              derivedAgents: deriveConfiguredAgents(
-                mainAgentProfile(resolvedProfiles),
-                resolvedProfiles,
-              ),
-              model: {
-                async complete() {
-                  return { message: "" };
-                },
-              },
-              childTools: [
-                createReadFileTool(),
-                createGlobPathsTool(this.opts.workspaceRoot),
-                createGrepTextTool(this.opts.workspaceRoot),
-              ],
-              workspaceRoot: this.opts.workspaceRoot,
-              allowReadWriteWorkspaceAccess: false,
-              // Snapshot only describes the tool; its body never runs here
-              // (getParent returns undefined and the tool throws first).
-              childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-            }),
-            createDynamicSpawnAgentTool({
-              getParent: () => undefined,
-              model: {
-                async complete() {
-                  return { message: "" };
-                },
-              },
-              childTools: applyToolConfig(
-                [
-                  createReadFileTool(),
-                  createGlobPathsTool(this.opts.workspaceRoot),
-                  createGrepTextTool(this.opts.workspaceRoot),
-                ],
-                toolConfig,
-              ),
-              childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-            }),
-          ],
+        tools: createMainHostTools({
+          workspaceRoot: this.opts.workspaceRoot,
+          skillRoots,
           toolConfig,
-        ),
+          taskManager: this.taskManager,
+          getParentRunId: () => "run_capability_snapshot" as RunId,
+          todoPath: join(
+            this.opts.sessionRootDir ??
+              defaultSessionRootDir(this.opts.workspaceRoot),
+            "capability_snapshot",
+            "todo.md",
+          ),
+          preparedSkills,
+          preparedMcp,
+          delegateTools,
+          dynamicSpawnTool,
+        }),
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
         mcpStatuses:
@@ -1656,11 +1590,8 @@ export class HostRuntime {
           ),
         mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
         agentProfiles: [
-          mainAgentProfile(resolvedProfiles),
-          ...deriveConfiguredAgents(
-            mainAgentProfile(resolvedProfiles),
-            resolvedProfiles,
-          ).map((agent) => agent.effectiveProfile),
+          mainAgent,
+          ...derivedAgents.map((agent) => agent.effectiveProfile),
         ],
         delegateTools: describeConfiguredDelegateTools({
           delegates: agentConfig?.delegateTools ?? [],

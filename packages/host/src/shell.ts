@@ -12,6 +12,8 @@ import { dirname, join } from "node:path";
 import type { TaskManager } from "@sparkwright/agent-runtime";
 import {
   createShellTool,
+  evaluateShellSafety,
+  parseCommand,
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
   type ShellPromotionHandler,
 } from "@sparkwright/shell-tool";
@@ -214,7 +216,10 @@ export function createHostShellTool(
   return {
     ...descriptor,
     async execute(args, ctx) {
-      const before = await snapshotWorkspace(workspaceRoot);
+      const readOnlyFastPath = isReadOnlyShellFastPath(args);
+      const before = readOnlyFastPath
+        ? undefined
+        : await snapshotWorkspace(workspaceRoot);
       const shell = createShellTool({
         environment,
         workspaceRoot,
@@ -230,7 +235,8 @@ export function createHostShellTool(
           : createUnavailablePromotionHandler(),
       });
       const output = await shell.execute(args, ctx);
-      if (output.promoted) return output;
+      if (output.promoted || readOnlyFastPath) return output;
+      if (!before) return output;
       const after = await snapshotWorkspace(workspaceRoot);
       const changes = diffWorkspaceSnapshots(before, after);
       if (changes.length > 0) {
@@ -246,6 +252,24 @@ export function createHostShellTool(
   };
 }
 
+function isReadOnlyShellFastPath(args: unknown): boolean {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    return false;
+  }
+  const command = (args as { command?: unknown }).command;
+  if (typeof command !== "string") return false;
+  const parsed = parseCommand(command);
+  if (
+    parsed.hasRedirect ||
+    parsed.hasPipe ||
+    parsed.hasSubshell ||
+    parsed.hasChain
+  ) {
+    return false;
+  }
+  return evaluateShellSafety(command).decision === "allow";
+}
+
 function createUnavailablePromotionHandler(): ShellPromotionHandler {
   return () => {
     throw new Error(
@@ -258,7 +282,7 @@ function createTaskPromotionHandler(input: {
   manager: TaskManager;
   parentRunId: RunId;
   workspaceRoot: string;
-  before: WorkspaceSnapshot;
+  before?: WorkspaceSnapshot;
 }): ShellPromotionHandler {
   return ({ handle, completed, request, partialStdout, partialStderr }) => {
     const rawCommand =
@@ -300,15 +324,17 @@ function createTaskPromotionHandler(input: {
 
         const final = await completed;
         await Promise.allSettled([stdoutDrain, stderrDrain]);
-        const after = await snapshotWorkspace(input.workspaceRoot);
-        const changes = diffWorkspaceSnapshots(input.before, after);
-        if (changes.length > 0) {
-          const rollback = await rollbackWorkspaceSnapshot(
-            input.workspaceRoot,
-            input.before,
-            after,
-          );
-          throw new UntrackedWorkspaceMutationError(changes, rollback);
+        if (input.before) {
+          const after = await snapshotWorkspace(input.workspaceRoot);
+          const changes = diffWorkspaceSnapshots(input.before, after);
+          if (changes.length > 0) {
+            const rollback = await rollbackWorkspaceSnapshot(
+              input.workspaceRoot,
+              input.before,
+              after,
+            );
+            throw new UntrackedWorkspaceMutationError(changes, rollback);
+          }
         }
 
         if (final.status !== "completed" || final.exitCode !== 0) {

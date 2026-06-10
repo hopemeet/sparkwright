@@ -107,6 +107,9 @@ framework, GUI workbench, RAG platform, or production sandbox by itself.
 Sparkwright currently runs from source. The npm package is not published yet, so
 `npm install -g @sparkwright/cli` is not available.
 
+Use Node.js `22.13.0` or newer LTS-compatible runtime (`^22.13.0 || >=24`).
+The repository includes `.node-version` for version managers.
+
 ```bash
 git clone <repo>
 cd SparkWright
@@ -137,6 +140,19 @@ From the source checkout, you can also run the CLI without linking:
 ```bash
 npm run cli -- run "inspect this repo" --workspace . --model deterministic
 ```
+
+Inspect the configured runtime surface before a run:
+
+```bash
+node packages/cli/dist/index.js capabilities inspect --workspace . --format text
+```
+
+The report includes the effective built-in tools (`read_file`,
+`read_anchored_text`, `grep_text`, `edit_anchored_text`, `apply_patch`, `shell`,
+`task_*`, `todo_write`, `spawn_agent`, and others), configured Skills, MCP
+servers, agent profiles, cron state, and command dirs.
+Add `--resolve-mcp` when you want the inspect command to connect to MCP servers
+and list their translated tool names.
 
 Enable workspace writes and approve them automatically:
 
@@ -217,6 +233,38 @@ sparkwright tasks get <task-id> --workspace .
 
 The same task state is available to the model through `task_list`, `task_get`,
 `task_output`, and `task_stop`.
+
+## Trace, Sessions, And Resume
+
+Every CLI and TUI run writes a JSONL trace under:
+
+```txt
+<workspace>/.sparkwright/sessions/<session-id>/trace.jsonl
+```
+
+Useful diagnostics:
+
+```bash
+sparkwright trace summary <trace.jsonl> --format text
+sparkwright trace verify <trace.jsonl> --format text
+sparkwright session check <session-id> --workspace . --format text
+```
+
+Normal resume uses the saved `checkpoint.json` for the prior run:
+
+```bash
+sparkwright run resume <run-id> --workspace . --session <session-id>
+```
+
+`--from-trace` is a best-effort recovery path for missing checkpoints. It
+reconstructs counters from `run.json` and `trace.jsonl`, but it cannot restore
+the full in-memory context, pending summaries, or in-flight tool/model work.
+For that reason, a reconstructed checkpoint requires explicit `--force`:
+
+```bash
+sparkwright run resume <run-id> --workspace . --session <session-id> \
+  --from-trace --force
+```
 
 ## ACP Agent Server
 

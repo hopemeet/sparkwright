@@ -1074,6 +1074,62 @@ describe("trace", () => {
     });
   });
 
+  it("classifies failed file edits as recovered after a later write to the same path", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("tool.requested", {
+        id: "call_bad_anchor",
+        toolName: "edit_anchored_text",
+        arguments: { path: "NOTES.md", edits: [] },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_bad_anchor",
+        status: "failed",
+        error: { code: "ANCHOR_INVALID", message: "invalid anchor" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_patch",
+        toolName: "apply_patch",
+        arguments: { path: "NOTES.md", patch: "@@\n+fixed\n" },
+      }),
+      log.emit("workspace.write.requested", {
+        id: "write_1",
+        path: "NOTES.md",
+        content: "fixed\n",
+        diff: "@@\n+fixed\n",
+        reason: "fix notes",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      log.emit("workspace.write.completed", {
+        proposalId: "write_1",
+        path: "NOTES.md",
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_patch",
+        status: "completed",
+        output: { path: "NOTES.md" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(0);
+    expect(summary.errorCodes).toEqual({});
+    expect(summary.toolFailures).toMatchObject({
+      total: 1,
+      byCode: { ANCHOR_INVALID: 1 },
+      unresolved: { total: 0, byCode: {} },
+      recovered: {
+        total: 1,
+        byCode: { ANCHOR_INVALID: 1 },
+      },
+    });
+  });
+
   it("does not double count cumulative usage snapshots in summaries", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -2128,6 +2184,26 @@ describe("trace", () => {
 
     expect(report.ok).toBe(true);
     expect(report.eventCount).toBe(3);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("does not require workspace write skipped events to pair with write requests", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "verify skipped write" }),
+      log.emit("run.started", {}),
+      log.emit("workspace.write.skipped", {
+        path: "NOTES.md",
+        reason: "desired content already present",
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = verifyTraceJsonl(jsonl);
+
+    expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);
   });
 

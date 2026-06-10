@@ -1375,7 +1375,9 @@ interface CapabilityInspectReport {
   config: {
     errors: Array<{ file: string; field: string; message: string }>;
   };
-  tools: ToolsConfigShape;
+  tools: ToolsConfigShape & {
+    available: CapabilityToolInspectEntry[];
+  };
   skills: SkillReport;
   agents: AgentReport & {
     delegateTools: DelegateCapabilityDescriptor[];
@@ -1409,6 +1411,14 @@ interface CapabilityInspectReport {
   command: {
     dirs: Array<{ layer: string; path: string; exists: boolean }>;
   };
+}
+
+interface CapabilityToolInspectEntry {
+  name: string;
+  source: "builtin" | "mcp" | "delegate";
+  risk?: "safe" | "risky" | "denied";
+  origin?: string;
+  deferred?: boolean;
 }
 
 async function handleCapabilitiesCommand(
@@ -1620,7 +1630,24 @@ async function loadCapabilityInspectReport(
   return {
     workspace: workspaceRoot,
     config: { errors: loaded.errors },
-    tools: capabilities?.tools ?? {},
+    tools: {
+      ...(capabilities?.tools ?? {}),
+      available: buildCapabilityToolInventory({
+        config: capabilities?.tools ?? {},
+        mcpServers,
+        delegateTools: (capabilities?.agents?.delegateTools ?? []).flatMap(
+          (delegate) => {
+            const profile = profileById.get(delegate.profileId);
+            if (!profile) return [];
+            const descriptor = describeExternalDelegateCapability({
+              delegate,
+              profile,
+            });
+            return descriptor ? [descriptor] : [];
+          },
+        ),
+      }),
+    },
     skills,
     agents: {
       ...agents,
@@ -1650,6 +1677,183 @@ async function loadCapabilityInspectReport(
   };
 }
 
+const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
+  {
+    name: "read_file",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "glob_paths",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "grep_text",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "read_anchored_text",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "edit_anchored_text",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "apply_patch",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "append_file",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "cron",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "inspect_skills",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "manage_skill",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "inspect_agents",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "manage_agent",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "shell",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:@sparkwright/shell-tool",
+  },
+  {
+    name: "task_list",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "task_get",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "task_stop",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "task_output",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "todo_write",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "spawn_agent",
+    source: "builtin",
+    risk: "safe",
+    origin: "local:sparkwright",
+  },
+];
+
+function buildCapabilityToolInventory(input: {
+  config: ToolsConfigShape;
+  mcpServers: CapabilityInspectReport["mcp"]["servers"];
+  delegateTools: DelegateCapabilityDescriptor[];
+}): CapabilityToolInspectEntry[] {
+  const mcpTools = input.mcpServers.flatMap((server) =>
+    (server.tools ?? []).map((tool) => ({
+      name: tool.toolName,
+      source: "mcp" as const,
+      risk: "safe" as const,
+      origin: `mcp:${server.name}`,
+    })),
+  );
+  const delegateTools = input.delegateTools.map((tool) => ({
+    name: tool.toolName,
+    source: "delegate" as const,
+    risk: "risky" as const,
+    origin: `${tool.protocol}:${tool.profileId}`,
+  }));
+  return [...BUILTIN_CAPABILITY_TOOLS, ...mcpTools, ...delegateTools]
+    .filter((tool) => toolAllowedByConfig(tool.name, input.config))
+    .map((tool) => ({
+      ...tool,
+      ...(toolDeferredByConfig(tool.name, input.config)
+        ? { deferred: true }
+        : {}),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
+  if (matchesAnyToolPattern(name, config.disabled)) return false;
+  if (config.enabled !== undefined)
+    return matchesAnyToolPattern(name, config.enabled);
+  return true;
+}
+
+function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
+  return matchesAnyToolPattern(name, config.defer);
+}
+
+function matchesAnyToolPattern(
+  toolName: string,
+  patterns: readonly string[] | undefined,
+): boolean {
+  return Boolean(
+    patterns?.some((pattern) => matchesToolPattern(toolName, pattern)),
+  );
+}
+
+function matchesToolPattern(toolName: string, pattern: string): boolean {
+  if (pattern === toolName) return true;
+  if (!pattern.includes("*")) return false;
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`).test(toolName);
+}
+
 async function pathExists(path: string): Promise<boolean> {
   const { stat } = await import("node:fs/promises");
   try {
@@ -1666,8 +1870,14 @@ function formatCapabilityInspectReport(
   const lines = [
     `workspace: ${report.workspace}`,
     `tools: enabled=${formatPatternList(report.tools.enabled, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `available tools: ${report.tools.available.length}`,
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
   ];
+  for (const tool of report.tools.available) {
+    lines.push(
+      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}` : ""}${tool.deferred ? "; deferred" : ""}${tool.risk ? ")" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
+    );
+  }
   for (const root of report.skills.roots) lines.push(`  root: ${root}`);
   for (const skill of report.skills.skills) {
     lines.push(`  - ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
@@ -3111,6 +3321,14 @@ async function handleRunResumeCommand(
     );
     return { exitCode: 1 };
   }
+  if (!checkpoint.resumability.complete && !parsed.force) {
+    writeLine(
+      io.stderr,
+      `Checkpoint is not fully resumable (reasons: ${checkpoint.resumability.reasons.join(", ") || "unspecified"}). ` +
+        `Re-run with --force to attempt a best-effort resume.`,
+    );
+    return { exitCode: 1, sessionId: resolvedSessionId };
+  }
 
   const model = await createCliModel({
     modelRef: parsed.modelName,
@@ -3161,7 +3379,7 @@ async function handleRunResumeCommand(
   let run;
   try {
     run = resumeRunFromCheckpoint(checkpoint, {
-      force: parsed.force || !checkpoint.resumability.complete,
+      force: parsed.force,
       workspace,
       approvalResolver,
       policy,
