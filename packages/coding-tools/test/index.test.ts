@@ -263,6 +263,24 @@ describe("coding tools", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("treats an empty include array as no filter, not match-nothing", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const answer = 42;\n",
+      "README.md": "answer in docs\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+
+    const result = await tool.execute({ pattern: "answer", include: [] }, ctx);
+
+    expect(result.matches.map((match) => match.path).sort()).toEqual([
+      "README.md",
+      "src/index.ts",
+    ]);
+  });
+
   it("rejects grep_text file paths with recovery guidance", async () => {
     const { root, ctx } = await createWorkspace({
       "README.md": "# Demo\nrelease:check\n",

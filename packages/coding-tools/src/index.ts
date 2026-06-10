@@ -478,10 +478,13 @@ function parseUnifiedDiff(patch: string): PatchHunk[] {
 
   for (const raw of lines) {
     if (raw.startsWith("@@")) {
+      // The line range is only a search hint — hunks are located by context
+      // (see locateHunk), so we do not require it. Models routinely emit a
+      // bare "@@" (or the "*** Begin Patch / *** Update File" envelope) with no
+      // ranges; accept that and fall back to scanning from the running cursor.
       const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(raw);
-      if (!match) throw new Error(`Malformed hunk header: ${raw}`);
       current = {
-        oldStart: Number(match[1]),
+        oldStart: match ? Number(match[1]) : 0,
         body: [],
         source: [],
       };
@@ -864,7 +867,7 @@ function normalizeGrepTextInput(
     regex: args.regex === true,
     caseSensitive: args.caseSensitive ?? true,
     includeHidden: args.includeHidden ?? options.includeHidden ?? false,
-    include: readOptionalStringArray(args, "include") ?? ["**/*"],
+    include: emptyToDefault(readOptionalStringArray(args, "include"), ["**/*"]),
     includeBuildOutput: args.includeBuildOutput === true,
     exclude: [
       ...defaultExcludeGlobs(args.includeBuildOutput === true),
@@ -1037,7 +1040,13 @@ class WorkspaceWalker {
       includeHidden: input.includeHidden,
     })) {
       if (entry.type !== "file") continue;
-      if (!matchesAny(entry.path, includeMatchers)) continue;
+      // An empty include set means "no include filter" (match every file),
+      // not "match nothing"; `matchesAny([])` is false, so guard the case.
+      if (
+        includeMatchers.length > 0 &&
+        !matchesAny(entry.path, includeMatchers)
+      )
+        continue;
       if (matchesAny(entry.path, excludeMatchers)) continue;
       paths.push(entry.path);
       if (paths.length >= input.maxPaths) {
@@ -1390,6 +1399,16 @@ function readOptionalNonNegativeInteger(
     throw new Error(`${key} must be a non-negative integer.`);
   }
   return value;
+}
+
+// Treat `undefined` and an explicit empty array identically: both mean "no
+// constraint", so fall back to the default rather than collapsing to a
+// match-nothing filter.
+function emptyToDefault(
+  value: string[] | undefined,
+  fallback: string[],
+): string[] {
+  return value && value.length > 0 ? value : fallback;
 }
 
 function readOptionalStringArray(

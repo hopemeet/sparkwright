@@ -84,9 +84,11 @@ import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
 import {
   createAppendFileTool,
+  createApplyPatchTool,
   createCronTool,
   createAgentInspectorTool,
   createAgentManagerTool,
+  createEditAnchoredTextTool,
   createGlobPathsTool,
   createGrepTextTool,
   applyToolConfig,
@@ -147,7 +149,11 @@ function createHostRunPolicy(input: {
       allowedPaths: input.targetPath ? [input.targetPath] : undefined,
       maxWriteFiles: 1,
       maxDiffLines: 200,
-      allowDeletions: false,
+      // In-place edits (edit_anchored_text / apply_patch) need to remove the
+      // lines they replace, so deletions must be permitted. The write stays
+      // bounded by the single-file budget, the 200-line diff cap, the
+      // --target path scope, and per-write approval.
+      allowDeletions: true,
     }),
   ]);
 }
@@ -557,6 +563,8 @@ export class HostRuntime {
         createReadFileTool(),
         createGlobPathsTool(workspaceRoot),
         createGrepTextTool(workspaceRoot),
+        createEditAnchoredTextTool(),
+        createApplyPatchTool(),
         createAppendFileTool(),
         createCronTool(),
         createSkillInspectorTool(workspaceRoot, skillRoots),
@@ -1512,6 +1520,8 @@ export class HostRuntime {
             createReadFileTool(),
             createGlobPathsTool(this.opts.workspaceRoot),
             createGrepTextTool(this.opts.workspaceRoot),
+            createEditAnchoredTextTool(),
+            createApplyPatchTool(),
             createAppendFileTool(),
             createCronTool(),
             createSkillInspectorTool(this.opts.workspaceRoot, skillRoots),
