@@ -263,6 +263,24 @@ describe("coding tools", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("treats an empty include array as no filter, not match-nothing", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const answer = 42;\n",
+      "README.md": "answer in docs\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+
+    const result = await tool.execute({ pattern: "answer", include: [] }, ctx);
+
+    expect(result.matches.map((match) => match.path).sort()).toEqual([
+      "README.md",
+      "src/index.ts",
+    ]);
+  });
+
   it("rejects grep_text file paths with recovery guidance", async () => {
     const { root, ctx } = await createWorkspace({
       "README.md": "# Demo\nrelease:check\n",
@@ -545,6 +563,42 @@ describe("coding tools", () => {
     await expect(tool.execute({ path: "../" }, ctx)).rejects.toThrow(
       "Path escapes workspace root",
     );
+  });
+
+  it("normalizes an absolute grep_text path inside the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const value = 1;\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep_text",
+    );
+
+    // A model routinely reuses the absolute path it saw in the skill/file
+    // index; grep_text must accept an in-workspace absolute path the same way
+    // read_text and glob_paths do, rather than rejecting it as an escape.
+    const result = await tool.execute(
+      { pattern: "value", path: `${root}/src` },
+      ctx,
+    );
+
+    expect(result.matches.map((match) => match.path)).toContain("src/index.ts");
+  });
+
+  it("normalizes an absolute list_dir path inside the workspace", async () => {
+    const { root, ctx } = await createWorkspace({
+      "README.md": "# Demo\n",
+      "src/index.ts": "export const value = 1;\n",
+    });
+    const tool = getTool<ListDirInput, ListDirResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "list_dir",
+    );
+
+    const result = await tool.execute({ path: root }, ctx);
+
+    expect(result.path).toBe(".");
+    expect(result.entries.map((entry) => entry.path)).toContain("README.md");
   });
 });
 

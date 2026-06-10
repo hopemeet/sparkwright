@@ -478,10 +478,13 @@ function parseUnifiedDiff(patch: string): PatchHunk[] {
 
   for (const raw of lines) {
     if (raw.startsWith("@@")) {
+      // The line range is only a search hint — hunks are located by context
+      // (see locateHunk), so we do not require it. Models routinely emit a
+      // bare "@@" (or the "*** Begin Patch / *** Update File" envelope) with no
+      // ranges; accept that and fall back to scanning from the running cursor.
       const match = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(raw);
-      if (!match) throw new Error(`Malformed hunk header: ${raw}`);
       current = {
-        oldStart: Number(match[1]),
+        oldStart: match ? Number(match[1]) : 0,
         body: [],
         source: [],
       };
@@ -592,8 +595,9 @@ export function createListDirTool(
     policy: { risk: "safe" },
     governance: readGovernance(),
     async execute(args, ctx) {
-      const input = normalizeListDirInput(args, options);
-      const walker = await createWorkspaceWalker(ctx, options);
+      const root = await resolveWorkspaceRoot(ctx, options);
+      const input = normalizeListDirInput(args, options, root);
+      const walker = new WorkspaceWalker(root, ctx);
       const entries = await walker.list(input);
       return {
         path: input.path,
@@ -640,8 +644,9 @@ export function createGrepTextTool(
     governance: readGovernance(),
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
-      const input = normalizeGrepTextInput(args, options);
-      const walker = await createWorkspaceWalker(ctx, options);
+      const root = await resolveWorkspaceRoot(ctx, options);
+      const input = normalizeGrepTextInput(args, options, root);
+      const walker = new WorkspaceWalker(root, ctx);
       const files = await walker.files({
         path: input.path,
         includeHidden: input.includeHidden,
@@ -828,6 +833,7 @@ function normalizeEditAnchoredTextInput(
 function normalizeListDirInput(
   args: ListDirInput,
   options: CodingToolsOptions,
+  workspaceRoot?: string,
 ): Required<ListDirInput> {
   const input = args ?? {};
   assertRecord(input, "list_dir input");
@@ -836,6 +842,7 @@ function normalizeListDirInput(
       typeof input.path === "string" && input.path.length > 0
         ? input.path
         : ".",
+      workspaceRoot,
     ),
     recursive: input.recursive === true,
     includeHidden:
@@ -852,6 +859,7 @@ function normalizeListDirInput(
 function normalizeGrepTextInput(
   args: GrepTextInput,
   options: CodingToolsOptions,
+  workspaceRoot?: string,
 ): Required<GrepTextInput> {
   assertRecord(args, "grep_text input");
   const pattern = readString(args, "pattern");
@@ -860,11 +868,12 @@ function normalizeGrepTextInput(
     pattern,
     path: normalizeWorkspacePath(
       typeof args.path === "string" && args.path.length > 0 ? args.path : ".",
+      workspaceRoot,
     ),
     regex: args.regex === true,
     caseSensitive: args.caseSensitive ?? true,
     includeHidden: args.includeHidden ?? options.includeHidden ?? false,
-    include: readOptionalStringArray(args, "include") ?? ["**/*"],
+    include: emptyToDefault(readOptionalStringArray(args, "include"), ["**/*"]),
     includeBuildOutput: args.includeBuildOutput === true,
     exclude: [
       ...defaultExcludeGlobs(args.includeBuildOutput === true),
@@ -963,14 +972,6 @@ function limitString(content: string, maxChars: number) {
   return { content: content.slice(0, maxChars), truncated: true };
 }
 
-async function createWorkspaceWalker(
-  ctx: RuntimeContext,
-  options: CodingToolsOptions,
-) {
-  const root = await resolveWorkspaceRoot(ctx, options);
-  return new WorkspaceWalker(root, ctx);
-}
-
 async function resolveWorkspaceRoot(
   ctx: RuntimeContext,
   options: CodingToolsOptions,
@@ -1037,7 +1038,13 @@ class WorkspaceWalker {
       includeHidden: input.includeHidden,
     })) {
       if (entry.type !== "file") continue;
-      if (!matchesAny(entry.path, includeMatchers)) continue;
+      // An empty include set means "no include filter" (match every file),
+      // not "match nothing"; `matchesAny([])` is false, so guard the case.
+      if (
+        includeMatchers.length > 0 &&
+        !matchesAny(entry.path, includeMatchers)
+      )
+        continue;
       if (matchesAny(entry.path, excludeMatchers)) continue;
       paths.push(entry.path);
       if (paths.length >= input.maxPaths) {
@@ -1390,6 +1397,16 @@ function readOptionalNonNegativeInteger(
     throw new Error(`${key} must be a non-negative integer.`);
   }
   return value;
+}
+
+// Treat `undefined` and an explicit empty array identically: both mean "no
+// constraint", so fall back to the default rather than collapsing to a
+// match-nothing filter.
+function emptyToDefault(
+  value: string[] | undefined,
+  fallback: string[],
+): string[] {
+  return value && value.length > 0 ? value : fallback;
 }
 
 function readOptionalStringArray(

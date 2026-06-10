@@ -3,6 +3,8 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
+  createApplyPatchTool as createApplyPatchToolBase,
+  createEditAnchoredTextTool as createEditAnchoredTextToolBase,
   createGlobPathsTool as createGlobPathsToolBase,
   createGrepTextTool as createGrepTextToolBase,
 } from "@sparkwright/coding-tools";
@@ -178,6 +180,27 @@ export function createGlobPathsTool(workspaceRoot: string) {
  */
 export function createGrepTextTool(workspaceRoot: string) {
   return createGrepTextToolBase({ workspaceRoot });
+}
+
+/**
+ * Built-in write tool: apply verified anchored edits (replace/delete/append/
+ * prepend relative to a unique text anchor) through the workspace write path.
+ * Unlike append_file, this can do an in-place line replacement — needed for
+ * "make one minimal fix" tasks where appending a new section would leave the
+ * incorrect text behind. The write itself is still scope- and approval-gated
+ * inside Workspace.writeText, so this preserves the --target / --yes contract.
+ */
+export function createEditAnchoredTextTool() {
+  return createEditAnchoredTextToolBase();
+}
+
+/**
+ * Built-in write tool: apply a unified diff. Same workspace write path (and
+ * therefore the same scope/approval gating) as edit_anchored_text; offered
+ * alongside it because models reach for one or the other depending on the edit.
+ */
+export function createApplyPatchTool() {
+  return createApplyPatchToolBase();
 }
 
 /**
