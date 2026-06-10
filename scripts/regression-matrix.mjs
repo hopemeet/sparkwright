@@ -36,6 +36,7 @@ try {
   await sessionCheckCase(approved);
   await tuiStartupCase();
   await acpStartupCase();
+  await entrypointConsistencyCase();
   printMatrix();
   const failed = cases.filter((testCase) => testCase.status === "failed");
   if (failed.length > 0) process.exitCode = 1;
@@ -549,6 +550,179 @@ async function acpStartupCase() {
   } finally {
     agentConnection.signal.throwIfAborted?.();
   }
+}
+
+// Host/runtime consistency: the same workspace + config must present the same
+// capability surface (tools, skills, mcp, agents, workspace root) across the
+// HostRuntime-backed entrypoints (CLI host runner and ACP). HostRuntime records
+// a capabilitySnapshot in run metadata before the model runs, so this parity is
+// deterministic and independent of what the model decides to do. direct-core is
+// a distinct lightweight runner (createRun, no HostRuntime) and intentionally
+// does not carry that snapshot, so it is only checked for completion.
+async function entrypointConsistencyCase() {
+  const workspace = await workspaceWithReadme("sparkwright-reg-consistency-");
+  const prompt = "Inspect README.md without modifying files.";
+  const fingerprints = {};
+  const failures = [];
+
+  // 1. CLI run via the host runner (spawned with the isolated child env).
+  try {
+    await runCli([
+      "run",
+      prompt,
+      "--workspace",
+      workspace,
+      "--model",
+      "deterministic",
+      "--trace-level",
+      "debug",
+      "--session-id",
+      "consistency_cli",
+    ]);
+    fingerprints.cli = snapshotFingerprint(
+      await readFirstRunMetadata(workspace, "consistency_cli"),
+    );
+  } catch (error) {
+    failures.push(`cli: ${error.message}`);
+  }
+
+  // 2. ACP runs in-process here, so apply the same isolated XDG env the spawned
+  // CLI uses — otherwise the ACP HostRuntime would read the developer's real
+  // user config and diverge for reasons unrelated to the entrypoint.
+  const restoreEnv = applyEnv({
+    XDG_CONFIG_HOME: childEnv.XDG_CONFIG_HOME,
+    XDG_STATE_HOME: childEnv.XDG_STATE_HOME,
+  });
+  try {
+    const clientToAgent = new TransformStream();
+    const agentToClient = new TransformStream();
+    const client = {
+      async requestPermission(params) {
+        return {
+          outcome: {
+            outcome: "selected",
+            optionId: params.options.at(-1)?.optionId ?? "reject",
+          },
+        };
+      },
+      async sessionUpdate() {},
+    };
+    const agentConnection = new AgentSideConnection(
+      createSparkwrightAcpAgentFactory({
+        defaultWorkspaceRoot: workspace,
+        defaultModel: "deterministic",
+        defaultTraceLevel: "debug",
+      }),
+      ndJsonStream(agentToClient.writable, clientToAgent.readable),
+    );
+    const clientConnection = new ClientSideConnection(
+      () => client,
+      ndJsonStream(clientToAgent.writable, agentToClient.readable),
+    );
+    try {
+      await clientConnection.initialize({
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: {},
+      });
+      const session = await clientConnection.newSession({
+        cwd: workspace,
+        mcpServers: [],
+      });
+      await clientConnection.prompt({
+        sessionId: session.sessionId,
+        prompt: [{ type: "text", text: prompt }],
+      });
+      fingerprints.acp = snapshotFingerprint(
+        await readFirstRunMetadata(workspace, session.sessionId),
+      );
+      await clientConnection.closeSession({ sessionId: session.sessionId });
+    } finally {
+      agentConnection.signal.throwIfAborted?.();
+    }
+  } catch (error) {
+    failures.push(`acp: ${error.message}`);
+  } finally {
+    restoreEnv();
+  }
+
+  // 3. direct-core: a distinct runner — only assert it completes and persists a
+  // trace (it is intentionally not capabilitySnapshot-comparable).
+  let coreCompleted = false;
+  try {
+    const result = await runCli([
+      "run",
+      "--direct-core",
+      prompt,
+      "--workspace",
+      workspace,
+      "--model",
+      "deterministic",
+      "--trace-level",
+      "debug",
+      "--session-id",
+      "consistency_core",
+    ]);
+    const { events } = await traceFromOutput(result.stdout);
+    coreCompleted = has(events, "run.completed");
+  } catch (error) {
+    failures.push(`core: ${error.message}`);
+  }
+
+  const parity =
+    Boolean(fingerprints.cli) && fingerprints.cli === fingerprints.acp;
+  const ok = failures.length === 0 && parity && coreCompleted;
+  if (!ok) {
+    console.error(`  [consistency:cli] ${fingerprints.cli ?? "(missing)"}`);
+    console.error(`  [consistency:acp] ${fingerprints.acp ?? "(missing)"}`);
+    console.error(`  [consistency:core] completed=${coreCompleted}`);
+    if (failures.length > 0) {
+      console.error(`  [consistency] ${failures.join("; ")}`);
+    }
+  }
+
+  record({
+    id: "CONSIST",
+    name: "entrypoint capability parity",
+    command: "CLI host run vs ACP capabilitySnapshot; direct-core completes",
+    prompt,
+    workspace,
+    write: "no",
+    expectedTrace:
+      "CLI host runner and ACP report an identical capabilitySnapshot (workspaceRoot, tool names, skill names, mcp, agents); direct-core run completes.",
+    failureRule:
+      "Fails if any entrypoint errors, if the CLI host and ACP capability surfaces differ, or if direct-core does not complete.",
+    harness: true,
+    ok,
+  });
+}
+
+// Temporarily override env vars on process.env; returns a restore function.
+function applyEnv(overrides) {
+  const previous = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    previous[key] = process.env[key];
+    process.env[key] = value;
+  }
+  return () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+// Reduce a run's metadata to a stable, comparable capability surface. Based on
+// the HostRuntime capabilitySnapshot so it does not depend on model behavior.
+function snapshotFingerprint(metadata) {
+  if (!metadata) return "";
+  const snapshot = metadata.capabilitySnapshot ?? {};
+  return JSON.stringify({
+    workspaceRoot: metadata.workspaceRoot ?? null,
+    tools: [...(snapshot.toolNames ?? [])].sort(),
+    skills: [...(snapshot.skills?.indexedNames ?? [])].sort(),
+    mcp: snapshot.mcp ?? {},
+    agents: snapshot.agents ?? {},
+  });
 }
 
 async function runCli(args, options = {}) {

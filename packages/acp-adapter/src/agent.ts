@@ -35,6 +35,7 @@ export interface SparkwrightAcpAgentOptions {
   defaultPermissionMode?: PermissionMode;
   defaultTraceLevel?: TraceLevel;
   defaultShouldWrite?: boolean;
+  defaultSessionRootDir?: string;
   agentName?: string;
   agentVersion?: string;
 }
@@ -64,6 +65,7 @@ export class SparkwrightAcpAgent implements Agent {
       defaultPermissionMode: options.defaultPermissionMode,
       defaultTraceLevel: options.defaultTraceLevel,
       defaultShouldWrite: options.defaultShouldWrite,
+      sessionRootDir: options.defaultSessionRootDir,
       emit: (session, event) => {
         void routeHostEventToAcp({ session, connection, event }).catch(
           () => {},

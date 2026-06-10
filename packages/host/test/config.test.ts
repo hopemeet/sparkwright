@@ -462,6 +462,55 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("merges capabilities by sub-capability so a project layer does not drop user agents", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      // User layer authors agents; project layer authors only a tools policy.
+      // A wholesale capabilities override would discard the user's agents.
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "reviewer",
+                name: "Reviewer",
+                mode: "child",
+                prompt: "Inspect files and summarize.",
+                allowedTools: ["read_file"],
+                maxSteps: 4,
+              },
+            ],
+            delegateTools: [
+              { profileId: "reviewer", toolName: "delegate_reviewer" },
+            ],
+          },
+        },
+      });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({ capabilities: { tools: { defer: [] } } }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      // Project sub-capability is present...
+      expect(loaded.config.capabilities?.tools).toBeDefined();
+      // ...and the user's agents survive the project layer.
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]?.id).toBe(
+        "reviewer",
+      );
+      expect(
+        loaded.config.capabilities?.agents?.delegateTools?.[0]?.toolName,
+      ).toBe("delegate_reviewer");
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("exposes a stable user-config relative path constant", () => {
     expect(CONFIG_USER_REL).toBe(".config/sparkwright/config.json");
   });

@@ -1595,12 +1595,22 @@ export async function loadHostConfig(
         },
       };
     }
-    // Providers merge by key (a later file adds/overrides individual entries);
-    // every other field is wholesale-overridden.
-    const { providers, ...rest } = v.config;
+    // Providers merge by key (a later file adds/overrides individual entries),
+    // and capabilities merge by sub-capability (tools/skills/mcp/agents) so a
+    // layer that sets only some sub-capabilities does not wipe the ones a
+    // weaker layer supplied — e.g. a project tools policy must not drop the
+    // user's agent profiles. Within a sub-capability the later layer still
+    // wholesale-overrides. Every other field is wholesale-overridden.
+    const { providers, capabilities: layerCapabilities, ...rest } = v.config;
     Object.assign(merged, rest);
     if (providers) {
       merged.providers = { ...(merged.providers ?? {}), ...providers };
+    }
+    if (layerCapabilities) {
+      merged.capabilities = {
+        ...(merged.capabilities ?? {}),
+        ...layerCapabilities,
+      };
     }
     const { providers: providerSources, ...fieldSources } = v.sources;
     Object.assign(sources, fieldSources);

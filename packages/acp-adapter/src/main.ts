@@ -11,6 +11,7 @@ export interface AcpMainOptions {
 
 interface ParsedArgs {
   workspaceRoot: string;
+  sessionRootDir?: string;
   model?: string;
   permissionMode: PermissionMode;
   traceLevel: TraceLevel;
@@ -45,6 +46,7 @@ export async function runAcpMain(
   const connection = new AgentSideConnection((conn) => {
     const agent = createSparkwrightAcpAgentFactory({
       defaultWorkspaceRoot: args.workspaceRoot,
+      defaultSessionRootDir: args.sessionRootDir,
       defaultModel: args.model,
       defaultPermissionMode: args.permissionMode,
       defaultTraceLevel: args.traceLevel,
@@ -65,6 +67,7 @@ type SparkwrightAcpAgentHandle = { closeAll?: () => void };
 
 function parseArgs(argv: string[], cwd: string): ParsedArgs {
   let workspaceRoot = resolve(cwd);
+  let sessionRootDir: string | undefined;
   let model: string | undefined;
   let permissionMode: PermissionMode = "default";
   let traceLevel: TraceLevel = "standard";
@@ -74,6 +77,8 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
     const arg = argv[i];
     if (arg === "--workspace" && argv[i + 1]) {
       workspaceRoot = resolve(cwd, argv[++i]!);
+    } else if (arg === "--session-root" && argv[i + 1]) {
+      sessionRootDir = resolve(cwd, argv[++i]!);
     } else if (arg === "--model" && argv[i + 1]) {
       model = argv[++i];
     } else if (arg === "--write") {
@@ -90,7 +95,14 @@ function parseArgs(argv: string[], cwd: string): ParsedArgs {
     }
   }
 
-  return { workspaceRoot, model, permissionMode, traceLevel, shouldWrite };
+  return {
+    workspaceRoot,
+    sessionRootDir,
+    model,
+    permissionMode,
+    traceLevel,
+    shouldWrite,
+  };
 }
 
 function printHelp(): void {
@@ -103,6 +115,7 @@ function printHelp(): void {
       "",
       "OPTIONS:",
       "  --workspace <path>         default workspace root (default: cwd)",
+      "  --session-root <path>      session artifact root (default: <workspace>/.sparkwright/sessions)",
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
       "  --write                    allow approval-gated workspace writes",
       "  --permission-mode <mode>   plan | default | accept_edits | dont_ask | bypass_permissions",
