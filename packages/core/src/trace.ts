@@ -365,10 +365,17 @@ export function verifyTraceJsonl(
     }
 
     if (typeof event.monotonicUs === "number") {
-      const traceKey =
+      // monotonicUs comes from a per-agent execution context's clock
+      // (e.g. performance.now()). Parent and child/delegate agents share one
+      // traceId but run in independent contexts, so their events interleave in
+      // file order without sharing a single monotonic timeline. Scope the
+      // monotonic invariant per agent within a trace; single-agent traces keep
+      // an empty agent suffix and behave exactly as before.
+      const traceScope =
         typeof event.traceId === "string" && event.traceId.length > 0
           ? event.traceId
           : event.runId;
+      const traceKey = `${traceScope}::${agentId ?? ""}`;
       const previousMonotonicUs = previousMonotonicUsByTrace.get(traceKey);
       if (
         previousMonotonicUs !== undefined &&
