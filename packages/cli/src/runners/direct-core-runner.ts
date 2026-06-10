@@ -4,6 +4,7 @@ import {
   createRun,
   createSessionRunStoreFactory,
   createWorkspaceMutationPolicy,
+  createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
   type ContextItem,
@@ -45,6 +46,7 @@ export interface DirectCoreRunInput {
   workspaceRoot: string;
   sessionRootDir: string;
   targetPath: string;
+  confidentialPaths?: readonly string[];
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -72,6 +74,7 @@ export async function startDirectCoreRun(
     workspaceRoot,
     sessionRootDir,
     targetPath,
+    confidentialPaths,
     shouldWrite,
     approveAll,
     permissionMode,
@@ -102,6 +105,9 @@ export async function startDirectCoreRun(
       maxWriteFiles: 1,
       maxDiffLines: 200,
       allowDeletions: false,
+    }),
+    createWorkspaceReadScopePolicy({
+      confidentialPaths: confidentialPaths ?? [],
     }),
   ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);

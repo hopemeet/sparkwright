@@ -10,7 +10,9 @@ import {
   asSessionId,
   buildTraceTimelineFile,
   createSessionId,
+  createLayeredPolicy,
   createPermissionModePolicy,
+  createWorkspaceReadScopePolicy,
   createRunId,
   FileSessionStore,
   loadCheckpointFromRunDir,
@@ -97,6 +99,8 @@ interface ParsedArgs {
   sessionRootDirSource: "default" | "cli";
   targetPath: string;
   targetPathSource: "default" | "cli";
+  /** Workspace-relative paths/globs whose contents the run must not read. */
+  confidentialPaths: string[];
   shouldWrite: boolean;
   approveAll: boolean;
   permissionMode: PermissionMode;
@@ -156,6 +160,7 @@ export async function runCli(
     model: cfg.config.model,
     permissionMode: cfg.config.permissionMode,
     workspace: cfg.config.workspace,
+    confidentialPaths: cfg.config.confidentialPaths,
   });
 
   if (!parsed.ok) {
@@ -379,6 +384,7 @@ interface ConfigDefaults {
   model?: string;
   permissionMode?: PermissionMode;
   workspace?: string;
+  confidentialPaths?: string[];
 }
 
 function workspaceBootstrapRoot(argv: string[], cwd: string): string {
@@ -436,6 +442,7 @@ function parseArgs(
   let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
   let targetPath = "README.md";
   let targetPathSource: ParsedArgs["targetPathSource"] = "default";
+  const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   let shouldWrite = false;
   let approveAll = false;
   let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
@@ -509,6 +516,24 @@ function parseArgs(
         };
       targetPath = value;
       targetPathSource = "cli";
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--confidential") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--"))
+        return {
+          ok: false,
+          message:
+            "Usage: --confidential requires a workspace-relative path or glob",
+        };
+      // Repeatable and comma-separated; both append to the confidential set.
+      for (const entry of value.split(",")) {
+        const trimmed = entry.trim();
+        if (trimmed) confidentialPaths.push(trimmed);
+      }
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -872,6 +897,7 @@ function parseArgs(
       sessionRootDirSource,
       targetPath,
       targetPathSource,
+      confidentialPaths,
       shouldWrite,
       approveAll,
       permissionMode,
@@ -2750,7 +2776,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
-    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
+    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
@@ -2994,6 +3020,7 @@ async function handleRunResumeCommand(
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
         targetPath: parsed.targetPath,
+        confidentialPaths: parsed.confidentialPaths,
         traceLevel: parsed.traceLevel,
         fromTrace: parsed.fromTrace,
         force: parsed.force,
@@ -3098,7 +3125,15 @@ async function handleRunResumeCommand(
     approveAll: parsed.approveAll,
     io,
   });
-  const policy = createPermissionModePolicy({ mode: parsed.permissionMode });
+  const policy =
+    parsed.confidentialPaths.length > 0
+      ? createLayeredPolicy([
+          createPermissionModePolicy({ mode: parsed.permissionMode }),
+          createWorkspaceReadScopePolicy({
+            confidentialPaths: parsed.confidentialPaths,
+          }),
+        ])
+      : createPermissionModePolicy({ mode: parsed.permissionMode });
   const tools = await createConfiguredCliTools(parsed.workspaceRoot, env);
 
   // Wire a FileRunStore pointing at the same run dir so the resumed run's
@@ -3505,7 +3540,7 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
+    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",

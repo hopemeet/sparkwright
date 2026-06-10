@@ -11,6 +11,7 @@ import {
   createPermissionModePolicy,
   createRun,
   createWorkspaceMutationPolicy,
+  createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
   EventLog,
@@ -141,6 +142,7 @@ function createHostRunPolicy(input: {
   permissionMode: PermissionMode;
   shouldWrite: boolean;
   targetPath?: string;
+  confidentialPaths?: readonly string[];
 }): Policy {
   return createLayeredPolicy([
     createPermissionModePolicy({ mode: input.permissionMode }),
@@ -154,6 +156,11 @@ function createHostRunPolicy(input: {
       // bounded by the single-file budget, the 200-line diff cap, the
       // --target path scope, and per-write approval.
       allowDeletions: true,
+    }),
+    // Opt-in read-confidentiality. Empty list is a no-op, so default runs are
+    // unaffected; when set, reads of matching files are denied at the tool layer.
+    createWorkspaceReadScopePolicy({
+      confidentialPaths: input.confidentialPaths ?? [],
     }),
   ]);
 }
@@ -1044,6 +1051,7 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
+          confidentialPaths: payload.confidentialPaths,
         }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
@@ -1097,6 +1105,7 @@ export class HostRuntime {
                 permissionMode,
                 shouldWrite,
                 targetPath: payload.targetPath,
+                confidentialPaths: payload.confidentialPaths,
               }),
               promptBuilder: buildAgentPromptBuilder({
                 cwd: env.workspaceRoot,
@@ -1226,6 +1235,7 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
+          confidentialPaths: payload.confidentialPaths,
         }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,

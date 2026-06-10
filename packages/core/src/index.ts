@@ -162,6 +162,7 @@ export type {
   PermissionModePolicyOptions,
   ToolGovernancePolicyOptions,
   WorkspaceMutationPolicyOptions,
+  WorkspaceReadScopePolicyOptions,
 } from "./policy.js";
 export {
   createDefaultPolicy,
@@ -169,6 +170,7 @@ export {
   createPermissionModePolicy,
   createToolGovernancePolicy,
   createWorkspaceMutationPolicy,
+  createWorkspaceReadScopePolicy,
 } from "./policy.js";
 
 // Execution environment boundary
