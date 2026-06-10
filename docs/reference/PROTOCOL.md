@@ -245,6 +245,7 @@ Current event types:
 - `approval.resolved`
 - `artifact.created`
 - `workspace.read`
+- `workspace.read.denied`: a read was blocked by the run's read-scope policy (confidential path)
 - `workspace.anchored_read`
 - `workspace.anchored_edit.requested`
 - `workspace.anchored_edit.verified`

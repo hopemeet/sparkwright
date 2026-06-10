@@ -5,6 +5,7 @@ import {
   createPermissionModePolicy,
   createToolGovernancePolicy,
   createWorkspaceMutationPolicy,
+  createWorkspaceReadScopePolicy,
   type Policy,
 } from "../src/policy.js";
 
@@ -373,6 +374,130 @@ describe("createWorkspaceMutationPolicy", () => {
       decision: "deny",
       reason: "Workspace write deletions are not allowed for this run.",
     });
+  });
+});
+
+describe("createWorkspaceReadScopePolicy", () => {
+  it("is a no-op when no confidential paths are configured", async () => {
+    const policy = createWorkspaceReadScopePolicy({ confidentialPaths: [] });
+
+    const decision = await policy.decide({
+      action: "workspace.read",
+      metadata: { path: "docs/private-notes.md" },
+    });
+
+    expect(decision.decision).toBe("allow");
+  });
+
+  it("denies reads of an exactly listed confidential file", async () => {
+    const policy = createWorkspaceReadScopePolicy({
+      confidentialPaths: ["docs/private-notes.md"],
+    });
+
+    const decision = await policy.decide({
+      action: "workspace.read",
+      metadata: { path: "docs/private-notes.md" },
+    });
+
+    expect(decision).toMatchObject({
+      decision: "deny",
+      metadata: {
+        path: "docs/private-notes.md",
+        pattern: "docs/private-notes.md",
+      },
+    });
+  });
+
+  it("allows reads of non-confidential files", async () => {
+    const policy = createWorkspaceReadScopePolicy({
+      confidentialPaths: ["docs/private-notes.md"],
+    });
+
+    const decision = await policy.decide({
+      action: "workspace.read",
+      metadata: { path: "README.md" },
+    });
+
+    expect(decision.decision).toBe("allow");
+  });
+
+  it("treats a bare directory as a prefix covering everything beneath it", async () => {
+    const policy = createWorkspaceReadScopePolicy({
+      confidentialPaths: ["secrets"],
+    });
+
+    expect(
+      (
+        await policy.decide({
+          action: "workspace.read",
+          metadata: { path: "secrets/key.pem" },
+        })
+      ).decision,
+    ).toBe("deny");
+    expect(
+      (
+        await policy.decide({
+          action: "workspace.read",
+          metadata: { path: "secrets" },
+        })
+      ).decision,
+    ).toBe("deny");
+    expect(
+      (
+        await policy.decide({
+          action: "workspace.read",
+          metadata: { path: "secretsXYZ/key.pem" },
+        })
+      ).decision,
+    ).toBe("allow");
+  });
+
+  it("supports * and ** glob patterns", async () => {
+    const single = createWorkspaceReadScopePolicy({
+      confidentialPaths: ["docs/*.env"],
+    });
+    expect(
+      (
+        await single.decide({
+          action: "workspace.read",
+          metadata: { path: "docs/prod.env" },
+        })
+      ).decision,
+    ).toBe("deny");
+    // `*` does not cross a path segment.
+    expect(
+      (
+        await single.decide({
+          action: "workspace.read",
+          metadata: { path: "docs/nested/prod.env" },
+        })
+      ).decision,
+    ).toBe("allow");
+
+    const deep = createWorkspaceReadScopePolicy({
+      confidentialPaths: ["**/secret.txt"],
+    });
+    expect(
+      (
+        await deep.decide({
+          action: "workspace.read",
+          metadata: { path: "a/b/secret.txt" },
+        })
+      ).decision,
+    ).toBe("deny");
+  });
+
+  it("ignores non-read actions", async () => {
+    const policy = createWorkspaceReadScopePolicy({
+      confidentialPaths: ["docs/private-notes.md"],
+    });
+
+    const decision = await policy.decide({
+      action: "workspace.write",
+      metadata: { path: "docs/private-notes.md" },
+    });
+
+    expect(decision.decision).toBe("allow");
   });
 });
 

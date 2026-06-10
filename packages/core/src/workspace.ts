@@ -213,13 +213,41 @@ export class ControlledWorkspace implements WorkspaceRuntime {
 
   async readText(path: string): Promise<string> {
     const workspacePath = await this.canonicalizePath(path);
+    await this.guardRead(workspacePath);
     const content = await this.options.workspace.readText(workspacePath);
     this.options.events.emit("workspace.read", { path: workspacePath });
     return content;
   }
 
+  /**
+   * Read-scope gate. Reads bypass the write approval/policy path, so without
+   * this a `workspace.read` of a confidential file would never reach the
+   * policy layer. Mirrors the write-denial trace shape (`workspace.read.denied`
+   * + a `READ_SCOPE_DENIED` runtime error). A no-op unless a read-scope policy
+   * layer denies the path.
+   */
+  private async guardRead(workspacePath: string): Promise<void> {
+    const decision = await this.policy.decide({
+      action: "workspace.read",
+      metadata: { path: workspacePath, resource: workspacePath },
+    });
+    if (decision.decision === "deny") {
+      this.options.events.emit("workspace.read.denied", {
+        path: workspacePath,
+        reason: decision.reason,
+        policy: decision,
+      });
+      throw new WorkspaceRuntimeError(
+        "READ_SCOPE_DENIED",
+        `Workspace read denied: ${decision.reason}`,
+        { path: workspacePath, reason: decision.reason },
+      );
+    }
+  }
+
   async readAnchoredText(path: string): Promise<AnchoredText> {
     const workspacePath = await this.canonicalizePath(path);
+    await this.guardRead(workspacePath);
     const anchored = createAnchoredText(
       workspacePath,
       await this.options.workspace.readText(workspacePath),

@@ -79,6 +79,12 @@ export interface SharedConfig {
   permissionMode?: PermissionMode;
   /** Path relative to the config file, or absolute. */
   workspace?: string;
+  /**
+   * Workspace-relative paths/globs whose contents a run must not read. Opt-in
+   * read-confidentiality: matching `read_file`/`grep_text` reads are denied at
+   * the tool layer. Empty/absent leaves the default permissive behavior.
+   */
+  confidentialPaths?: string[];
   capabilities?: CapabilityConfig;
 }
 
@@ -160,6 +166,7 @@ export interface SharedConfigSourceMap {
   model?: string;
   permissionMode?: string;
   workspace?: string;
+  confidentialPaths?: string;
   providers?: Record<string, string>;
 }
 
@@ -1495,6 +1502,23 @@ function validateShared(
         file: filePath,
         field: "workspace",
         message: "must be a non-empty string",
+      });
+    }
+  }
+  if (obj.confidentialPaths !== undefined) {
+    if (
+      Array.isArray(obj.confidentialPaths) &&
+      obj.confidentialPaths.every(
+        (entry) => typeof entry === "string" && entry.length > 0,
+      )
+    ) {
+      config.confidentialPaths = obj.confidentialPaths as string[];
+      sources.confidentialPaths = origin;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "confidentialPaths",
+        message: "must be an array of non-empty strings",
       });
     }
   }

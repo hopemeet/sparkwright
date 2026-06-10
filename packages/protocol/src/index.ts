@@ -82,6 +82,8 @@ export interface RunStartRequestPayload {
   sessionId?: string;
   /** Workspace-relative target path that the run should focus on when applicable. */
   targetPath?: string;
+  /** Workspace-relative paths/globs whose contents this run must not read. */
+  confidentialPaths?: string[];
   /** Whether this run is allowed to request workspace writes. */
   shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
@@ -103,6 +105,8 @@ export interface RunResumeRequestPayload {
   sessionId?: string;
   /** Workspace-relative target path that the resumed run should focus on when applicable. */
   targetPath?: string;
+  /** Workspace-relative paths/globs whose contents this run must not read. */
+  confidentialPaths?: string[];
   /** Whether the resumed run is allowed to request workspace writes. */
   shouldWrite?: boolean;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */

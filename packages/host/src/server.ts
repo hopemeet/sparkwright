@@ -257,6 +257,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "goal",
           "sessionId",
           "targetPath",
+          "confidentialPaths",
           "shouldWrite",
           "model",
           "permissionMode",
@@ -266,6 +267,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireString(req.payload, "goal") ??
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
+        optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "permissionMode", [
@@ -288,6 +290,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "runId",
           "sessionId",
           "targetPath",
+          "confidentialPaths",
           "shouldWrite",
           "fromTrace",
           "force",
@@ -299,6 +302,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         requireString(req.payload, "runId") ??
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
+        optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??

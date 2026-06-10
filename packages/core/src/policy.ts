@@ -60,6 +60,64 @@ export interface WorkspaceMutationPolicyOptions {
   allowDeletions?: boolean;
 }
 
+export interface WorkspaceReadScopePolicyOptions {
+  /**
+   * Workspace-relative paths or globs whose CONTENTS the run must not read.
+   * Matching `workspace.read` actions are denied outright. Patterns support
+   * `*` (single segment) and `**` (any depth) and a bare directory path
+   * (e.g. `secrets`) denies everything beneath it.
+   */
+  confidentialPaths: readonly string[];
+}
+
+/**
+ * Read-confidentiality layer. The workspace path policy enforces the workspace
+ * *boundary* (path-escape) but nothing scopes reads of sensitive files *inside*
+ * the root — so a prompt can induce the model to read a secrets file and the
+ * only thing stopping disclosure is the model's own discretion. This layer
+ * closes that gap: it is opt-in (empty `confidentialPaths` is a no-op) and
+ * denies `workspace.read` of any matching file at the tool layer.
+ */
+export function createWorkspaceReadScopePolicy(
+  options: WorkspaceReadScopePolicyOptions,
+): Policy {
+  const matchers = options.confidentialPaths
+    .map(normalizeWorkspacePolicyPath)
+    .filter((path): path is string => path !== undefined)
+    .map((pattern) => ({
+      pattern,
+      regex: confidentialPatternToRegExp(pattern),
+    }));
+
+  return {
+    decide(input): PolicyDecision {
+      if (matchers.length === 0 || input.action !== "workspace.read") {
+        return allowDecision(input, "Outside workspace read-scope policy.");
+      }
+
+      const path = workspaceWritePathFromInput(input);
+      if (!path)
+        return allowDecision(input, "No workspace read path supplied.");
+
+      const hit = matchers.find((matcher) => matcher.regex.test(path));
+      if (hit) {
+        return denyDecision(
+          input,
+          `Read denied: ${path} is a confidential path for this run.`,
+          { path, pattern: hit.pattern },
+        );
+      }
+      return allowDecision(
+        input,
+        "Workspace read is outside confidential scope.",
+        {
+          path,
+        },
+      );
+    },
+  };
+}
+
 export function createDefaultPolicy(): Policy {
   return {
     decide({ action, metadata = {} }) {
@@ -425,6 +483,44 @@ function normalizeWorkspacePolicyPath(path: string): string | undefined {
     return undefined;
   }
   return normalized;
+}
+
+/**
+ * Compile a normalized confidential pattern into an anchored RegExp.
+ * - `**` matches any number of path segments (including zero).
+ * - `*` matches within a single segment.
+ * - A pattern with no wildcard matches the exact file OR anything beneath it
+ *   when used as a directory prefix (`secrets` matches `secrets/key.txt`).
+ */
+function confidentialPatternToRegExp(pattern: string): RegExp {
+  const hasWildcard = pattern.includes("*");
+  const source = pattern
+    .split("/")
+    .map((segment) => globSegmentToRegExpSource(segment))
+    .join("/");
+  // Wildcard patterns match exactly; literal patterns also match as a directory
+  // prefix so a whole confidential folder can be named once.
+  const tail = hasWildcard ? "" : "(?:/.*)?";
+  return new RegExp(`^${source}${tail}$`);
+}
+
+/**
+ * Translate one glob path segment to a RegExp source: `**` -> any depth (`.*`),
+ * `*` -> within-segment (`[^/]*`), all other characters escaped literally.
+ */
+function globSegmentToRegExpSource(segment: string): string {
+  if (segment === "**") return ".*";
+  let out = "";
+  for (const ch of segment) {
+    if (ch === "*") {
+      out += "[^/]*";
+    } else if (/[.+^${}()|[\]\\?]/.test(ch)) {
+      out += `\\${ch}`;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 function summarizeUnifiedDiff(diff: string): {

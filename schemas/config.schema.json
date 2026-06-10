@@ -78,6 +78,11 @@
       "minLength": 1,
       "description": "Workspace root for runs. Relative paths resolve from the directory of the config file that defined them."
     },
+    "confidentialPaths": {
+      "type": "array",
+      "description": "Opt-in read-confidentiality. Workspace-relative paths or globs whose contents a run must not read; matching read_file/grep_text reads are denied at the tool layer. Supports '*' (single segment), '**' (any depth), and a bare directory name to cover everything beneath it.",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "capabilities": {
       "type": "object",
       "description": "Host-owned capability runtime settings. These settings decide what the host may prepare before createRun(); the TUI may inspect the resulting host facts but must not load capabilities itself.",

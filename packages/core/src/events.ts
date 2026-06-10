@@ -109,6 +109,7 @@ export type EventType =
   | "approval.resolved"
   | "artifact.created"
   | "workspace.read"
+  | "workspace.read.denied"
   | "workspace.anchored_read"
   | "workspace.anchored_edit.requested"
   | "workspace.anchored_edit.verified"

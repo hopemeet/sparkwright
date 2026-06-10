@@ -35,6 +35,7 @@ export interface HostRunInput {
   modelName?: string;
   sessionId: string;
   targetPath: string;
+  confidentialPaths?: readonly string[];
   traceLevel: TraceLevel;
 }
 
@@ -48,6 +49,7 @@ export interface HostResumeInput {
   modelName?: string;
   sessionId?: string;
   targetPath: string;
+  confidentialPaths?: readonly string[];
   traceLevel: TraceLevel;
   fromTrace: boolean;
   force: boolean;
@@ -90,6 +92,7 @@ async function runHostLifecycle(
     permissionMode,
     modelName,
     targetPath,
+    confidentialPaths,
     traceLevel,
   } = input;
 
@@ -231,6 +234,9 @@ async function runHostLifecycle(
           permissionMode,
           traceLevel,
           targetPath,
+          ...(confidentialPaths && confidentialPaths.length > 0
+            ? { confidentialPaths: [...confidentialPaths] }
+            : {}),
           shouldWrite,
           metadata: {
             source: "cli",
@@ -250,6 +256,9 @@ async function runHostLifecycle(
           permissionMode,
           traceLevel,
           targetPath,
+          ...(confidentialPaths && confidentialPaths.length > 0
+            ? { confidentialPaths: [...confidentialPaths] }
+            : {}),
           shouldWrite,
           metadata: {
             source: "cli",

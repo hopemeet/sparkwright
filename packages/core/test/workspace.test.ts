@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../src/events.js";
 import { createRunId } from "../src/ids.js";
+import { createWorkspaceReadScopePolicy } from "../src/policy.js";
 import type { RunRecord } from "../src/types.js";
 import { ControlledWorkspace, LocalWorkspace } from "../src/workspace.js";
 import { WorkspaceCheckpointStore } from "../src/workspace-checkpoint.js";
@@ -164,6 +165,33 @@ describe("LocalWorkspace", () => {
       diffArtifactId: result.diffArtifactId,
       summary: { lineCount: 1, lastLines: ["after"] },
     });
+  });
+
+  it("denies reads of a confidential path and emits workspace.read.denied", async () => {
+    await writeFile(join(root, "README.md"), "public\n", "utf8");
+    await writeFile(join(root, "secret.txt"), "SECRET_TOKEN=abc\n", "utf8");
+    const run = createRunRecord();
+    const events = new EventLog(run.id);
+    const workspace = new ControlledWorkspace({
+      run,
+      events,
+      workspace: new LocalWorkspace(root),
+      policy: createWorkspaceReadScopePolicy({
+        confidentialPaths: ["secret.txt"],
+      }),
+    });
+
+    // Non-confidential reads still pass.
+    await expect(workspace.readText("README.md")).resolves.toBe("public\n");
+
+    await expect(workspace.readText("secret.txt")).rejects.toThrow(
+      /READ_SCOPE_DENIED|Workspace read denied/,
+    );
+
+    const denied = events
+      .all()
+      .find((event) => event.type === "workspace.read.denied");
+    expect(denied?.payload).toMatchObject({ path: "secret.txt" });
   });
 
   it("does not write when controlled workspace approval is denied", async () => {
