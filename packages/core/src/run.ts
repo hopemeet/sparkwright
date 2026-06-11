@@ -2563,6 +2563,7 @@ export class SparkwrightRun implements RunHandle {
     const gatedResult = await this.checkToolGate(
       call.id,
       requestedCall.toolName,
+      requestedCall.arguments,
     );
     if (gatedResult) {
       span.close("tool.failed", {
@@ -2879,6 +2880,7 @@ export class SparkwrightRun implements RunHandle {
   private async checkToolGate(
     toolCallId: ToolResult["toolCallId"],
     toolName: string,
+    args: unknown,
   ): Promise<ToolResult | undefined> {
     const tool = this.tools.get(toolName);
 
@@ -2943,7 +2945,11 @@ export class SparkwrightRun implements RunHandle {
         approved = await this.requestApproval({
           action: "tool.execute",
           summary: `Run tool ${toolName}`,
-          details: { ...metadata, policy: decision },
+          details: {
+            ...metadata,
+            arguments: args,
+            policy: decision,
+          },
         });
       } catch (cause) {
         return {

@@ -999,6 +999,140 @@ describe("trace", () => {
     expect(summary.toolCalls).toEqual({ read_file: 1 });
   });
 
+  it("summarizes shell command failures and verification failures", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", {
+        goal: "Fix the CLI and verify by running it",
+      }),
+      log.emit("tool.requested", {
+        id: "call_probe",
+        toolName: "shell",
+        arguments: { command: "python3 --version" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_probe",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      log.emit("tool.requested", {
+        id: "call_verify",
+        toolName: "shell",
+        arguments: { command: "python3 -m greettool.cli --name Ada" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.commandFailures).toMatchObject({
+      total: 1,
+      byExitCode: { "1": 1 },
+      verification: {
+        total: 1,
+        unresolved: 1,
+        lastCommand: "python3 -m greettool.cli --name Ada",
+        lastExitCode: 1,
+        lastTimedOut: false,
+      },
+    });
+  });
+
+  it("summarizes approval and safety signals", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("approval.requested", {
+        id: "approval_write",
+        action: "workspace.write",
+        summary: "Write README.md",
+        details: { path: "README.md" },
+      }),
+      log.emit("approval.resolved", {
+        approvalId: "approval_write",
+        decision: "approved",
+        message: "Auto-approved by --yes-edits.",
+      }),
+      log.emit("approval.requested", {
+        id: "approval_shell",
+        action: "tool.execute",
+        summary: "Run tool shell",
+        details: { toolName: "shell" },
+      }),
+      log.emit("approval.resolved", {
+        approvalId: "approval_shell",
+        decision: "denied",
+        message: "Non-interactive stdin.",
+      }),
+      log.emit("workspace.write.requested", {
+        proposalId: "write_1",
+        path: "README.md",
+      }),
+      log.emit("workspace.write.completed", {
+        proposalId: "write_1",
+        path: "README.md",
+      }),
+      log.emit("workspace.read.denied", {
+        path: ".env",
+        reason: "Read denied: .env is a confidential path for this run.",
+      }),
+      log.emit("tool.requested", {
+        id: "call_shell",
+        toolName: "shell",
+        arguments: { command: "python -m venv .venv" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_shell",
+        toolName: "shell",
+        status: "failed",
+        error: {
+          code: "UNTRACKED_WORKSPACE_MUTATION",
+          message: "changed workspace files",
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.safety).toMatchObject({
+      approvals: {
+        requested: 2,
+        resolved: 2,
+        approved: 1,
+        denied: 1,
+        autoApproved: 1,
+        shell: 1,
+        workspaceWrite: 1,
+      },
+      workspaceWrites: {
+        requested: 1,
+        completed: 1,
+        denied: 0,
+        skipped: 0,
+      },
+      shell: {
+        requested: 1,
+        approvals: 1,
+        commandFailures: 0,
+        untrackedWorkspaceMutations: 1,
+      },
+      confidentialReadsDenied: 1,
+    });
+  });
+
   it("classifies policy and approval denials separately from unexpected errors", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);

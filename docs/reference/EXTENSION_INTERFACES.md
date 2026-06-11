@@ -575,7 +575,8 @@ Handlers return one of:
 - `continue` — optionally injects `ContextItem[]`.
 - `block` — prevents the current path from continuing. `PreToolUse` becomes a
   failed tool result; `ModelOutput` / `Stop` inject continuation context so the
-  model can correct itself; `RuntimeSignal` can stop the run with
+  model can correct itself; `PostToolUse` injects continuation context after
+  the completed tool result; `RuntimeSignal` can stop the run with
   `hook_stopped`.
 - `rewrite` — currently supported for `PreToolUse` tool arguments.
 - `skipped` — records that a hook intentionally did nothing.

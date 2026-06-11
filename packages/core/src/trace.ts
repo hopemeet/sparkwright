@@ -25,6 +25,7 @@ import type {
   RunResult,
 } from "./types.js";
 import {
+  analyzeCommandOutcomes,
   analyzeToolOutcomes,
   isPolicyOrApprovalFailure,
 } from "./run-outcome.js";
@@ -117,6 +118,43 @@ export interface TraceSummary {
       total: number;
       byCode: Record<string, number>;
     };
+  };
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  commandFailures: {
+    total: number;
+    byExitCode: Record<string, number>;
+    verification: {
+      total: number;
+      unresolved: number;
+      lastCommand?: string;
+      lastExitCode?: number | null;
+      lastTimedOut?: boolean;
+    };
+  };
+  /** @reserved Public trace-summary field consumed by diagnostics UIs. */
+  safety: {
+    approvals: {
+      requested: number;
+      resolved: number;
+      approved: number;
+      denied: number;
+      autoApproved: number;
+      shell: number;
+      workspaceWrite: number;
+    };
+    workspaceWrites: {
+      requested: number;
+      completed: number;
+      denied: number;
+      skipped: number;
+    };
+    shell: {
+      requested: number;
+      approvals: number;
+      commandFailures: number;
+      untrackedWorkspaceMutations: number;
+    };
+    confidentialReadsDenied: number;
   };
   /** @reserved Public trace-summary field consumed by diagnostics UIs. */
   workspaceReads: {
@@ -574,6 +612,38 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
         byCode: recoveredToolFailureCodes,
       },
     },
+    commandFailures: {
+      total: 0,
+      byExitCode: {},
+      verification: {
+        total: 0,
+        unresolved: 0,
+      },
+    },
+    safety: {
+      approvals: {
+        requested: 0,
+        resolved: 0,
+        approved: 0,
+        denied: 0,
+        autoApproved: 0,
+        shell: 0,
+        workspaceWrite: 0,
+      },
+      workspaceWrites: {
+        requested: 0,
+        completed: 0,
+        denied: 0,
+        skipped: 0,
+      },
+      shell: {
+        requested: 0,
+        approvals: 0,
+        commandFailures: 0,
+        untrackedWorkspaceMutations: 0,
+      },
+      confidentialReadsDenied: 0,
+    },
     workspaceReads: {
       total: 0,
       uniquePaths: 0,
@@ -653,6 +723,8 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   );
   collectClassifiedToolFailures(summary, events);
+  collectCommandFailures(summary, events);
+  collectSafetySummary(summary, events);
   return summary;
 }
 
@@ -2802,6 +2874,126 @@ function collectClassifiedToolFailures(
     summary.toolFailures.recovered.byCode[code] =
       (summary.toolFailures.recovered.byCode[code] ?? 0) + 1;
   }
+}
+
+function collectCommandFailures(
+  summary: TraceSummary,
+  events: readonly SparkwrightEvent[],
+): void {
+  const outcomes = analyzeCommandOutcomes(events);
+  const lastVerificationFailure = outcomes.verificationFailures.at(-1);
+  summary.commandFailures.total = outcomes.failures.length;
+  summary.commandFailures.byExitCode = outcomes.byExitCode;
+  summary.commandFailures.verification = {
+    total: outcomes.verificationFailures.length,
+    unresolved: outcomes.unresolvedVerificationFailures.length,
+    ...(lastVerificationFailure?.command
+      ? { lastCommand: lastVerificationFailure.command }
+      : {}),
+    ...(lastVerificationFailure
+      ? {
+          lastExitCode: lastVerificationFailure.exitCode,
+          lastTimedOut: lastVerificationFailure.timedOut,
+        }
+      : {}),
+  };
+}
+
+function collectSafetySummary(
+  summary: TraceSummary,
+  events: readonly SparkwrightEvent[],
+): void {
+  const approvals = new Map<
+    string,
+    { action?: string; toolName?: string; summary?: string }
+  >();
+
+  for (const event of events) {
+    if (!isRecord(event.payload)) continue;
+    if (event.type === "approval.requested") {
+      const id = stringValue(event.payload.id, event.payload.approvalId);
+      const action = stringValue(event.payload.action);
+      const details = isRecord(event.payload.details)
+        ? event.payload.details
+        : undefined;
+      const toolName = stringValue(details?.toolName);
+      if (id) {
+        approvals.set(id, {
+          action,
+          toolName,
+          summary: stringValue(event.payload.summary),
+        });
+      }
+      summary.safety.approvals.requested += 1;
+      if (action === "workspace.write") {
+        summary.safety.approvals.workspaceWrite += 1;
+      }
+      if (toolName === "shell") {
+        summary.safety.approvals.shell += 1;
+        summary.safety.shell.approvals += 1;
+      }
+      continue;
+    }
+
+    if (event.type === "approval.resolved") {
+      const decision = stringValue(
+        event.payload.decision,
+        isRecord(event.payload.response)
+          ? event.payload.response.decision
+          : undefined,
+      );
+      const message = stringValue(
+        event.payload.message,
+        isRecord(event.payload.response)
+          ? event.payload.response.message
+          : undefined,
+      );
+      summary.safety.approvals.resolved += 1;
+      if (decision === "approved") summary.safety.approvals.approved += 1;
+      if (decision === "denied") summary.safety.approvals.denied += 1;
+      if (message?.toLowerCase().includes("auto-approved")) {
+        summary.safety.approvals.autoApproved += 1;
+      }
+      continue;
+    }
+
+    if (event.type === "workspace.write.requested") {
+      summary.safety.workspaceWrites.requested += 1;
+      continue;
+    }
+    if (event.type === "workspace.write.completed") {
+      summary.safety.workspaceWrites.completed += 1;
+      continue;
+    }
+    if (event.type === "workspace.write.denied") {
+      summary.safety.workspaceWrites.denied += 1;
+      continue;
+    }
+    if (event.type === "workspace.write.skipped") {
+      summary.safety.workspaceWrites.skipped += 1;
+      continue;
+    }
+    if (event.type === "workspace.read.denied") {
+      summary.safety.confidentialReadsDenied += 1;
+      continue;
+    }
+    if (event.type === "tool.requested") {
+      if (event.payload.toolName === "shell") {
+        summary.safety.shell.requested += 1;
+      }
+      continue;
+    }
+    if (event.type === "tool.failed") {
+      const code = isRecord(event.payload.error)
+        ? stringValue(event.payload.error.code)
+        : undefined;
+      if (code === "UNTRACKED_WORKSPACE_MUTATION") {
+        summary.safety.shell.untrackedWorkspaceMutations += 1;
+      }
+    }
+  }
+
+  summary.safety.shell.commandFailures = summary.commandFailures.total;
 }
 
 function collectWorkspaceRead(

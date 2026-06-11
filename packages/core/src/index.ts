@@ -121,12 +121,16 @@ export {
 
 // Run outcome classification
 export type {
+  ClassifiedCommandFailure,
+  ClassifiedCommandSuccess,
   ClassifiedToolFailure,
+  CommandOutcomeSummary,
   CompletedRunOutcome,
   ToolFailureCategory,
   ToolOutcomeSummary,
 } from "./run-outcome.js";
 export {
+  analyzeCommandOutcomes,
   analyzeToolOutcomes,
   classifyToolFailure,
   completedRunOutcomeFromEvents,
@@ -165,6 +169,7 @@ export type {
   WorkspaceReadScopePolicyOptions,
 } from "./policy.js";
 export {
+  DEFAULT_CONFIDENTIAL_PATHS,
   createDefaultPolicy,
   createLayeredPolicy,
   createPermissionModePolicy,

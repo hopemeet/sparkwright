@@ -195,6 +195,25 @@ const FILE_TOOL_GUIDANCE = [
   "  `mkdir`, or write via shell redirection (`cat > file`, `tee`).",
   "- Reserve the shell tool for running commands, not for reading or writing",
   "  workspace files (use the read/append file tools for that).",
+  "- When two files disagree (for example docs vs config), choose one smallest",
+  "  source of truth to edit. After an edit is accepted, do not switch to the",
+  "  other file to reverse the same decision unless new evidence proves the",
+  "  first fix was wrong; re-read the changed file and report the conflict.",
+].join("\n");
+
+const SHELL_VALIDATION_GUIDANCE = [
+  "Command verification:",
+  "- When a task asks you to run tests or verify a CLI, run the actual command",
+  "  and treat a non-zero exit code as failed verification unless a later",
+  "  equivalent verification command succeeds.",
+  "- For Python packaging checks, avoid creating `.venv` inside the workspace.",
+  "  Use a temporary environment outside the workspace, for example:",
+  '  `venv=$(mktemp -d /tmp/sparkwright-venv.XXXXXX) && python3 -m venv "$venv"`',
+  '  then run `"$venv/bin/python" -m pip install -e .` and the installed',
+  '  console script from `"$venv/bin/..."`.',
+  "- Do not claim verification passed if package install, test execution, or",
+  "  the documented command failed. Report the exact failing command and exit",
+  "  status instead.",
 ].join("\n");
 
 /**
@@ -339,6 +358,14 @@ export function buildAgentPromptBuilder(
         tool.name === "read_file" ||
         tool.name === "glob_paths" ||
         tool.name === "grep_text",
+    }),
+  );
+
+  sections.push(
+    createToolGuidanceSection({
+      name: "command_verification",
+      guidance: SHELL_VALIDATION_GUIDANCE,
+      whenTool: (tool) => tool.name === "shell",
     }),
   );
 

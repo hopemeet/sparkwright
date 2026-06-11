@@ -70,6 +70,20 @@ export interface WorkspaceReadScopePolicyOptions {
   confidentialPaths: readonly string[];
 }
 
+export const DEFAULT_CONFIDENTIAL_PATHS = [
+  ".env",
+  ".env.*",
+  "**/.env",
+  "**/.env.*",
+  "**/*secret*",
+  "**/*token*",
+  "**/*credential*",
+  ".ssh",
+  ".aws",
+  ".gcp",
+  ".azure",
+] as const;
+
 /**
  * Read-confidentiality layer. The workspace path policy enforces the workspace
  * *boundary* (path-escape) but nothing scopes reads of sensitive files *inside*
@@ -326,6 +340,8 @@ export function createWorkspaceMutationPolicy(
               path,
               writtenPaths: [...writtenPaths],
               maxWriteFiles: options.maxWriteFiles,
+              guidance:
+                "A previous workspace write already used the distinct-file budget for this run. Re-read the changed file and explain the remaining conflict instead of switching to another source file for the same fix.",
             },
           );
         }

@@ -3,6 +3,37 @@
     "tools": {
       "defer": []
     },
+    "hooks": {
+      "workflow": [
+        {
+          "name": "project-operating-rules",
+          "hook": "SessionStart",
+          "action": {
+            "type": "context",
+            "contextType": "system",
+            "content": "Work directly in this repository. Prefer rg for search. Keep edits focused, preserve unrelated user changes, and run targeted verification for code changes. Avoid repeatedly reading or grepping the same file after you have enough evidence; use the existing context to answer instead. In the final answer, mention the verification that was run or state that it was not run."
+          }
+        },
+        {
+          "name": "protect-generated-dependency-and-vcs-paths",
+          "hook": "PreToolUse",
+          "matcher": {
+            "toolName": ["append_file", "edit_anchored_text", "apply_patch"],
+            "pathGlob": [
+              "node_modules/**",
+              "dist/**",
+              "coverage/**",
+              "packages/*/dist/**",
+              ".git/**"
+            ]
+          },
+          "action": {
+            "type": "block",
+            "reason": "Generated, dependency, build output, and VCS internals must not be edited directly."
+          }
+        }
+      ]
+    },
     "skills": {
       "includeLoaderTool": true,
       "loadSelectedSkills": false,

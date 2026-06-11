@@ -19,6 +19,7 @@ import {
   summarizeRunFailure,
   summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
+  summarizeVerificationCommandFailures,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../run-outcome.js";
@@ -31,6 +32,8 @@ export interface HostRunInput {
   sessionRootDir: string;
   shouldWrite: boolean;
   approveAll: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId: string;
@@ -45,6 +48,8 @@ export interface HostResumeInput {
   sessionRootDir: string;
   shouldWrite: boolean;
   approveAll: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId?: string;
@@ -89,6 +94,8 @@ async function runHostLifecycle(
     sessionRootDir,
     shouldWrite,
     approveAll,
+    approveEdits,
+    approveShellSafe,
     permissionMode,
     modelName,
     targetPath,
@@ -152,7 +159,12 @@ async function runHostLifecycle(
       });
 
       client.on("approval.requested", (msg) => {
-        const resolver = createCliApprovalResolver({ approveAll, io });
+        const resolver = createCliApprovalResolver({
+          approveAll,
+          approveEdits,
+          approveShellSafe,
+          io,
+        });
         const request: Parameters<ApprovalResolver>[0] = {
           id: msg.payload.approvalId as Parameters<ApprovalResolver>[0]["id"],
           runId: msg.payload.runId as Parameters<ApprovalResolver>[0]["runId"],
@@ -303,6 +315,9 @@ async function runHostLifecycle(
 
   try {
     await terminal;
+    const verificationSummary =
+      summarizeVerificationCommandFailures(eventSummary);
+    if (verificationSummary) writeLine(io.stderr, verificationSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
     return {

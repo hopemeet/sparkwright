@@ -24,11 +24,129 @@ export interface ToolOutcomeSummary {
   policyDenials: ClassifiedToolFailure[];
 }
 
+export interface ClassifiedCommandFailure {
+  toolCallId?: string;
+  command?: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  verificationRelevant: boolean;
+  sequence?: number;
+}
+
+export interface ClassifiedCommandSuccess {
+  toolCallId?: string;
+  command?: string;
+  verificationRelevant: boolean;
+  sequence?: number;
+}
+
+export interface CommandOutcomeSummary {
+  failures: ClassifiedCommandFailure[];
+  successes: ClassifiedCommandSuccess[];
+  verificationFailures: ClassifiedCommandFailure[];
+  unresolvedVerificationFailures: ClassifiedCommandFailure[];
+  byExitCode: Record<string, number>;
+}
+
 export interface CompletedRunOutcome {
   kind:
     | "completed_with_tool_failures"
     | "completed_with_recovered_tool_failures";
   toolFailures: { count: number; codes: string[] };
+}
+
+export function analyzeCommandOutcomes(
+  events: readonly SparkwrightEvent[],
+): CommandOutcomeSummary {
+  const shellCalls = new Map<string, { command?: string }>();
+  const verificationGoal = events.some((event) => {
+    if (!isRecord(event.payload)) return false;
+    if (event.type !== "run.created" && event.type !== "prompt.built") {
+      return false;
+    }
+    return isVerificationGoal(stringValue(event.payload.goal));
+  });
+  const failures: ClassifiedCommandFailure[] = [];
+  const successes: ClassifiedCommandSuccess[] = [];
+  const byExitCode: Record<string, number> = {};
+
+  for (const event of events) {
+    if (event.type === "tool.requested" && isRecord(event.payload)) {
+      const id = stringValue(event.payload.id);
+      const toolName = stringValue(event.payload.toolName);
+      if (!id || toolName !== "shell") continue;
+      const args = isRecord(event.payload.arguments)
+        ? event.payload.arguments
+        : undefined;
+      shellCalls.set(id, { command: stringValue(args?.command) });
+      continue;
+    }
+
+    if (event.type !== "tool.completed" || !isRecord(event.payload)) continue;
+    const toolCallId = stringValue(event.payload.toolCallId);
+    const call = toolCallId ? shellCalls.get(toolCallId) : undefined;
+    const toolName = stringValue(event.payload.toolName);
+    if (!call && toolName !== "shell") continue;
+    const output = isRecord(event.payload.output)
+      ? event.payload.output
+      : undefined;
+    if (!output) continue;
+
+    const exitCode = numberOrNullValue(output.exitCode);
+    const timedOut = booleanValue(output.timedOut) ?? false;
+    const command =
+      call?.command ??
+      stringValue(output.command) ??
+      (isRecord(event.payload.arguments)
+        ? stringValue(event.payload.arguments.command)
+        : undefined);
+    const verificationRelevant = isVerificationRelevantCommand(command, {
+      verificationGoal,
+    });
+
+    if (exitCode === 0 && !timedOut) {
+      successes.push({
+        toolCallId,
+        command,
+        verificationRelevant,
+        sequence: event.sequence,
+      });
+      continue;
+    }
+
+    if (exitCode !== null || timedOut) {
+      const key = timedOut ? "timed_out" : String(exitCode);
+      byExitCode[key] = (byExitCode[key] ?? 0) + 1;
+      failures.push({
+        toolCallId,
+        command,
+        exitCode,
+        timedOut,
+        verificationRelevant,
+        sequence: event.sequence,
+      });
+    }
+  }
+
+  const verificationFailures = failures.filter(
+    (failure) => failure.verificationRelevant,
+  );
+  const lastVerificationSuccess = [...successes]
+    .reverse()
+    .find((success) => success.verificationRelevant);
+  const unresolvedVerificationFailures = verificationFailures.filter(
+    (failure) =>
+      lastVerificationSuccess === undefined ||
+      (failure.sequence ?? 0) > (lastVerificationSuccess.sequence ?? 0),
+  );
+
+  return {
+    failures,
+    successes,
+    verificationFailures,
+    unresolvedVerificationFailures,
+    byExitCode,
+  };
 }
 
 export function analyzeToolOutcomes(
@@ -249,6 +367,59 @@ function uniqueCodes(failures: readonly ClassifiedToolFailure[]): string[] {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function numberOrNullValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return null;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function isVerificationGoal(goal: string | undefined): boolean {
+  if (!goal) return false;
+  const text = goal.toLowerCase();
+  return (
+    /\b(run|execute)\s+(the\s+)?(tests?|test suite|command|cli)\b/.test(text) ||
+    /\b(cargo test|pytest|npm test|pnpm test|yarn test|go test)\b/.test(text) ||
+    /\bverify\b/.test(text) ||
+    /\btest(s|ing)?\b/.test(text)
+  );
+}
+
+function isVerificationRelevantCommand(
+  command: string | undefined,
+  options: { verificationGoal: boolean },
+): boolean {
+  if (!command) return false;
+  const normalized = command.trim().toLowerCase();
+  if (isExplicitVerificationCommand(normalized)) return true;
+  if (!options.verificationGoal) return false;
+  return !isProbeCommand(normalized);
+}
+
+function isExplicitVerificationCommand(command: string): boolean {
+  return (
+    /\b(cargo\s+(nextest\s+run|test)|go\s+test|pytest|py\.test)\b/.test(
+      command,
+    ) ||
+    /\b(npm|pnpm|yarn)\s+(run\s+)?test\b/.test(command) ||
+    /\b(vitest|jest|mocha)\b/.test(command) ||
+    /\bpython(?:\d+(?:\.\d+)*)?\s+-m\s+(unittest|pytest|[^;\s]+\.cli)\b/.test(
+      command,
+    )
+  );
+}
+
+function isProbeCommand(command: string): boolean {
+  return (
+    /^(pwd|ls|find|rg|grep|cat|sed|head|tail|wc|stat)\b/.test(command) ||
+    /^(which|command\s+-v)\b/.test(command) ||
+    /\b(--version|-v)\b/.test(command) ||
+    /\bpython(?:\d+(?:\.\d+)*)?\s+--version\b/.test(command)
+  );
 }
 
 function targetValue(

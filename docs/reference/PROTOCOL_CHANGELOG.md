@@ -25,8 +25,8 @@ Conventions:
   surface. Host-created runs can now attach deterministic workflow hooks with
   `block`, `context`, or `command` actions. The hook config also supports
   optional `description`, `frequency`, matcher `excludePathGlob`, and command
-  `injectOutput` controls. Migration: none; omitted hooks keep existing
-  behavior.
+  `injectOutput` / `stdin` controls. Migration: none; omitted hooks keep
+  existing behavior.
 
 - `event.schema.json`: additive — new `skill.failed` event type. Emitted when
   one Skill source cannot be loaded while the runtime continues with other

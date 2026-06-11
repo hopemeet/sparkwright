@@ -4,6 +4,8 @@ import { write, writeLine } from "./io.js";
 
 export function createCliApprovalResolver(options: {
   approveAll: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   io: CliIO;
 }): ApprovalResolver {
   return async (request) => {
@@ -15,6 +17,29 @@ export function createCliApprovalResolver(options: {
       return {
         approvalId: request.id,
         decision: "approved",
+        message: "Auto-approved by --yes/--yes-all.",
+      };
+    }
+    if (options.approveEdits && isWorkspaceWriteApproval(request)) {
+      writeLine(
+        options.io.stderr,
+        `Approval auto-approved for workspace edit: ${request.summary}`,
+      );
+      return {
+        approvalId: request.id,
+        decision: "approved",
+        message: "Auto-approved by --yes-edits.",
+      };
+    }
+    if (options.approveShellSafe && isSafeShellApproval(request)) {
+      writeLine(
+        options.io.stderr,
+        `Approval auto-approved for safe shell: ${request.summary}`,
+      );
+      return {
+        approvalId: request.id,
+        decision: "approved",
+        message: "Auto-approved by --yes-shell-safe.",
       };
     }
 
@@ -85,6 +110,49 @@ function formatApprovalRequest(
     lines.push("", JSON.stringify(request.details, null, 2));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function isWorkspaceWriteApproval(
+  request: Parameters<ApprovalResolver>[0],
+): boolean {
+  return request.action === "workspace.write";
+}
+
+function isSafeShellApproval(
+  request: Parameters<ApprovalResolver>[0],
+): boolean {
+  if (request.action !== "tool.execute") return false;
+  if (!isRecord(request.details) || request.details.toolName !== "shell") {
+    return false;
+  }
+  const args = isRecord(request.details.arguments)
+    ? request.details.arguments
+    : undefined;
+  const command = typeof args?.command === "string" ? args.command : undefined;
+  return isSafeShellCommand(command);
+}
+
+function isSafeShellCommand(command: string | undefined): boolean {
+  if (!command) return false;
+  const normalized = command.trim();
+  if (/[|;&`$<>]/.test(normalized)) return false;
+  if (
+    /\b(curl|wget|ssh|scp|rsync|nc|netcat|rm|mv|cp|chmod|chown)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+  return (
+    /^(pwd|ls|find|rg|grep|cat|sed|head|tail|wc|stat)\b/.test(normalized) ||
+    /^(which|command\s+-v)\b/.test(normalized) ||
+    /\b(--version|-v)\b/.test(normalized) ||
+    /^(cargo\s+(test|nextest\s+run)|go\s+test|pytest|py\.test)\b/.test(
+      normalized,
+    ) ||
+    /^(npm|pnpm|yarn)\s+(run\s+)?test\b/.test(normalized) ||
+    /^python(?:\d+(?:\.\d+)*)?\s+-m\s+(unittest|pytest)\b/.test(normalized)
+  );
 }
 
 function normalizeApprovalAnswer(

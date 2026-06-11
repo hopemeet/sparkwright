@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_CONFIDENTIAL_PATHS,
   createDefaultPolicy,
   createLayeredPolicy,
   createPermissionModePolicy,
@@ -333,6 +334,9 @@ describe("createWorkspaceMutationPolicy", () => {
     ).toMatchObject({
       decision: "deny",
       reason: "Workspace write exceeds the run file budget of 1.",
+      metadata: {
+        guidance: expect.stringContaining("Re-read the changed file"),
+      },
     });
   });
 
@@ -485,6 +489,32 @@ describe("createWorkspaceReadScopePolicy", () => {
         })
       ).decision,
     ).toBe("deny");
+  });
+
+  it("default confidential patterns cover common secret files", async () => {
+    const policy = createWorkspaceReadScopePolicy({
+      confidentialPaths: DEFAULT_CONFIDENTIAL_PATHS,
+    });
+
+    for (const path of [
+      ".env",
+      "apps/api/.env.local",
+      "config/client_secret.json",
+      "tokens/api_token.txt",
+      ".ssh/config",
+      ".aws/credentials",
+    ]) {
+      expect(
+        await policy.decide({ action: "workspace.read", metadata: { path } }),
+      ).toMatchObject({ decision: "deny" });
+    }
+
+    expect(
+      await policy.decide({
+        action: "workspace.read",
+        metadata: { path: "README.md" },
+      }),
+    ).toMatchObject({ decision: "allow" });
   });
 
   it("ignores non-read actions", async () => {
