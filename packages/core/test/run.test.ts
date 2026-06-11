@@ -696,6 +696,16 @@ describe("SparkwrightRun", () => {
     // a repeat and replaced by the corrective nudge, so the tool runs only once.
     expect(executed).toBe(1);
     expect(step).toBeLessThan(8);
+    // The execute-path `tool.failed` event must carry `toolName` so trace
+    // consumers can attribute the failure without correlating back to
+    // `tool.requested` by id.
+    const toolFailed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    expect(toolFailed?.payload).toMatchObject({
+      toolName: "read",
+      status: "failed",
+    });
   });
 
   it("nudges the model one step before the doom-loop stop and lets it recover", async () => {
