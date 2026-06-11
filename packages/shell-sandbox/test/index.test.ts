@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   buildBubblewrapInvocation,
   buildMacOSSandboxProfile,
@@ -14,6 +14,14 @@ import {
   shellJoin,
   shellQuoteArg,
 } from "../src/index.js";
+
+// resolveShellSandboxConfig resolves/join()s every path against the OS path
+// rules, so expectations must be built with the same node:path helpers rather
+// than hardcoded POSIX strings — otherwise these tests fail on Windows where
+// resolve("/repo") is "D:\\repo". The sandbox backends only run on macOS/Linux
+// (where ROOT === "/repo"), but the unit tests exercise the path assembly on
+// every platform.
+const ROOT = resolve("/repo");
 
 describe("resolveShellSandboxConfig", () => {
   it("adds forced deny-write paths that user config cannot remove", () => {
@@ -33,14 +41,14 @@ describe("resolveShellSandboxConfig", () => {
 
     expect(resolved.mode).toBe("enforce");
     expect(resolved.failIfUnavailable).toBe(true);
-    expect(resolved.filesystem.allowWrite).toContain("/repo");
-    expect(resolved.filesystem.allowWrite).toContain("/repo/src");
+    expect(resolved.filesystem.allowWrite).toContain(ROOT);
+    expect(resolved.filesystem.allowWrite).toContain(join(ROOT, "src"));
     expect(resolved.filesystem.denyWrite).toEqual(
       expect.arrayContaining([
-        "/repo/build",
-        "/repo/.sparkwright/config.json",
-        "/home/me/.config/sparkwright/config.json",
-        "/repo/.sparkwright/skills",
+        join(ROOT, "build"),
+        join(ROOT, ".sparkwright", "config.json"),
+        resolve("/home/me/.config/sparkwright/config.json"),
+        join(ROOT, ".sparkwright", "skills"),
       ]),
     );
   });
@@ -52,7 +60,11 @@ describe("resolveShellSandboxConfig", () => {
     expect(resolved.failIfUnavailable).toBe(false);
     expect(resolved.network.mode).toBe("deny");
     expect(resolved.filesystem.denyRead).toEqual(
-      expect.arrayContaining(["/repo/.env", "/repo/.ssh", "/repo/.aws"]),
+      expect.arrayContaining([
+        join(ROOT, ".env"),
+        join(ROOT, ".ssh"),
+        join(ROOT, ".aws"),
+      ]),
     );
   });
 
@@ -100,11 +112,11 @@ describe("platform invocation builders", () => {
       expect.arrayContaining([
         "--unshare-net",
         "--ro-bind-try",
-        "/repo/docs",
-        "/repo/docs",
+        join(ROOT, "docs"),
+        join(ROOT, "docs"),
         "--bind-try",
-        "/repo/src",
-        "/repo/src",
+        join(ROOT, "src"),
+        join(ROOT, "src"),
         "bash",
         "-c",
         "npm test",
@@ -128,9 +140,15 @@ describe("platform invocation builders", () => {
     const profile = buildMacOSSandboxProfile(config, "/tmp/sw");
 
     expect(profile).toContain("(allow default)");
-    expect(profile).toContain('(deny file-read* (subpath "/repo/.env"))');
+    // schemeString() is JSON.stringify, so on Windows the path is emitted with
+    // escaped backslashes — match that exactly by stringifying the joined path.
     expect(profile).toContain(
-      '(deny file-write* (subpath "/repo/.sparkwright/config.json"))',
+      `(deny file-read* (subpath ${JSON.stringify(join(ROOT, ".env"))}))`,
+    );
+    expect(profile).toContain(
+      `(deny file-write* (subpath ${JSON.stringify(
+        join(ROOT, ".sparkwright", "config.json"),
+      )}))`,
     );
     expect(profile).toContain("(deny network*)");
   });
