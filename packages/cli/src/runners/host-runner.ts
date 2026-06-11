@@ -34,7 +34,7 @@ export interface HostRunInput {
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId: string;
-  targetPath: string;
+  targetPath?: string;
   confidentialPaths?: readonly string[];
   traceLevel: TraceLevel;
 }
@@ -48,7 +48,7 @@ export interface HostResumeInput {
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId?: string;
-  targetPath: string;
+  targetPath?: string;
   confidentialPaths?: readonly string[];
   traceLevel: TraceLevel;
   fromTrace: boolean;

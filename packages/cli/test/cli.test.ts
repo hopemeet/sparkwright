@@ -3234,6 +3234,66 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("does not scope host writes to README.md unless --target is explicit", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Update package.json.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt package write",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "package.json",
+                    heading: "QA",
+                    body: "write without explicit target",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "package.json"), "utf8")).toContain(
+      "write without explicit target",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "workspace.write.completed" &&
+          event.payload?.path === "package.json",
+      ),
+    ).toBeTruthy();
+  });
+
   it("rolls back shell mutations that bypass workspace.write", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

@@ -2950,6 +2950,25 @@ function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
     return approvalId ? `${event.runId}:approval:${approvalId}` : undefined;
   }
 
+  if (
+    event.type === "interaction.requested" ||
+    event.type === "interaction.resolved"
+  ) {
+    const kind = stringValue(payload.kind) ?? "interaction";
+    const request = recordValue(payload.request);
+    const response = recordValue(payload.response);
+    const notification = recordValue(payload.notification);
+    const interactionId = stringValue(
+      request?.id,
+      response?.approvalId,
+      response?.id,
+      notification?.id,
+    );
+    return interactionId
+      ? `${event.runId}:interaction:${kind}:${interactionId}`
+      : undefined;
+  }
+
   const writeId = stringValue(payload.proposalId, payload.id);
   if (event.type.startsWith("workspace.write.")) {
     return writeId ? `${event.runId}:workspace.write:${writeId}` : undefined;
@@ -3003,7 +3022,8 @@ function terminalTimelineStatus(
     event.type.endsWith(".completed") ||
     event.type.endsWith(".verified") ||
     event.type.endsWith(".skipped") ||
-    event.type === "approval.resolved"
+    event.type === "approval.resolved" ||
+    event.type === "interaction.resolved"
   ) {
     return "completed";
   }
@@ -3068,6 +3088,10 @@ function stringValue(...values: unknown[]): string | undefined {
     if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
 }
 
 function collectUsage(summary: TraceSummary, event: SparkwrightEvent): boolean {

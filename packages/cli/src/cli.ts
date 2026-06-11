@@ -250,6 +250,8 @@ export async function runCli(
           ...runInput,
           modelName:
             runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
+          targetPath:
+            runInput.targetPathSource === "cli" ? runInput.targetPath : undefined,
         },
         io,
         env,
@@ -3234,7 +3236,8 @@ async function handleRunResumeCommand(
         modelName:
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
-        targetPath: parsed.targetPath,
+        targetPath:
+          parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
         confidentialPaths: parsed.confidentialPaths,
         traceLevel: parsed.traceLevel,
         fromTrace: parsed.fromTrace,

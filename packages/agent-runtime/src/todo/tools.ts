@@ -118,7 +118,7 @@ export function createTodoTools(options: CreateTodoToolsOptions): {
  * the ledger instead of doing the next task; the no-op guard makes those cheap,
  * and this tells the model to stop and act.
  */
-const NOOP_CHURN_THRESHOLD = 2;
+const NOOP_CHURN_THRESHOLD = 1;
 
 /** @public @stability experimental v0.1 */
 export function createTodoWriteTool(
@@ -172,15 +172,6 @@ export function createTodoWriteTool(
     governance: { sideEffects: ["none"], idempotency: "idempotent" },
     async execute(args: unknown, ctx): Promise<TodoWriteResult> {
       const runId = ctx.run?.id ?? "__standalone__";
-      if (options.maxWritesPerRun !== undefined) {
-        const nextCount = (writesByRun.get(runId) ?? 0) + 1;
-        writesByRun.set(runId, nextCount);
-        if (nextCount > options.maxWritesPerRun) {
-          throw new Error(
-            `todo_write: run call limit exceeded (${options.maxWritesPerRun}). Stop updating the ledger and take a concrete non-todo action, or give your final answer with the current status.`,
-          );
-        }
-      }
       const items = parseWriteArgs(args);
       const path = options.getTodoPath();
       const entries: TodoEntry[] = items.map((item) => ({
@@ -204,6 +195,19 @@ export function createTodoWriteTool(
             "The list is unchanged from your last write — calling todo_write again accomplishes nothing. Take the next concrete action on the first unfinished item (read a file, run a command, produce output), or, if every item is genuinely done, give your final answer.";
         }
         return result;
+      }
+      if (options.maxWritesPerRun !== undefined) {
+        const nextCount = (writesByRun.get(runId) ?? 0) + 1;
+        if (nextCount > options.maxWritesPerRun) {
+          return {
+            ...echo,
+            saved: false,
+            hint:
+              `todo_write changed too many times in this run (limit: ${options.maxWritesPerRun}). ` +
+              "Do not update the ledger again. Take a concrete non-todo action on the current task, or give your final answer with the current status.",
+          };
+        }
+        writesByRun.set(runId, nextCount);
       }
       consecutiveNoops = 0;
       await mkdir(dirname(path), { recursive: true });

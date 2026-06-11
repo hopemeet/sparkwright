@@ -1376,6 +1376,53 @@ describe("trace", () => {
     );
   });
 
+  it("pairs interaction requested and resolved events by request id", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}),
+      log.emit("interaction.requested", {
+        kind: "approval",
+        request: {
+          id: "approval_1",
+          runId: run.id,
+          action: "tool.execute",
+          summary: "Run tool shell",
+          details: {},
+          createdAt: "2026-06-11T00:00:00.000Z",
+          status: "pending",
+        },
+      }),
+      log.emit("interaction.resolved", {
+        kind: "approval",
+        response: { approvalId: "approval_1", decision: "approved" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "completed",
+          eventTypes: ["interaction.requested", "interaction.resolved"],
+        }),
+      ]),
+    );
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["interaction.requested"]),
+        }),
+      ]),
+    );
+  });
+
   it("validates session trace consistency", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
     tempDirs.push(root);
