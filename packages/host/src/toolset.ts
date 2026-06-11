@@ -20,6 +20,7 @@ import {
   createEditAnchoredTextTool,
   createGlobPathsTool,
   createGrepTextTool,
+  createListDirTool,
   createReadAnchoredTextTool,
   createReadFileTool,
   createSkillInspectorTool,
@@ -41,6 +42,7 @@ export function createReadOnlyChildTools(input: {
       createReadFileTool(),
       createGlobPathsTool(input.workspaceRoot),
       createGrepTextTool(input.workspaceRoot),
+      createListDirTool(input.workspaceRoot),
     ],
     input.toolConfig,
   );
@@ -65,6 +67,7 @@ export function createMainHostTools(input: {
       createReadFileTool(),
       createGlobPathsTool(input.workspaceRoot),
       createGrepTextTool(input.workspaceRoot),
+      createListDirTool(input.workspaceRoot),
       createReadAnchoredTextTool(),
       createEditAnchoredTextTool(),
       createApplyPatchTool(),

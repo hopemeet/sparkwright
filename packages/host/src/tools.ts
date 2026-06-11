@@ -12,6 +12,7 @@ import {
   createEditAnchoredTextTool as createEditAnchoredTextToolBase,
   createGlobPathsTool as createGlobPathsToolBase,
   createGrepTextTool as createGrepTextToolBase,
+  createListDirTool as createListDirToolBase,
   createReadAnchoredTextTool as createReadAnchoredTextToolBase,
 } from "@sparkwright/coding-tools";
 import {
@@ -258,6 +259,17 @@ function errorMessage(error: unknown): string {
 
 export function createGlobPathsTool(workspaceRoot: string) {
   return createGlobPathsToolBase({ workspaceRoot });
+}
+
+/**
+ * Built-in read-only tool: enumerate the files and directories under a
+ * workspace path. `glob_paths` matches paths by pattern, but a model that just
+ * wants to see "what is in this directory" had to glob `*` and over-fetch;
+ * list_dir answers that directly and belongs in the same read-only discovery
+ * set as read_file + glob_paths + grep_text.
+ */
+export function createListDirTool(workspaceRoot: string) {
+  return createListDirToolBase({ workspaceRoot });
 }
 
 /**
