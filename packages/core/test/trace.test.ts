@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventLog, type SparkwrightEvent } from "../src/events.js";
-import { createArtifactId, createRunId, type ArtifactId } from "../src/ids.js";
+import {
+  createArtifactId,
+  createRunId,
+  createTraceId,
+  type ArtifactId,
+} from "../src/ids.js";
 import type { RunRecord } from "../src/types.js";
 import {
   createSessionRunStoreFactory,
@@ -1403,6 +1408,116 @@ describe("trace", () => {
     expect(report.findings).toEqual([]);
   });
 
+  it("flags a delegated sub-agent that never produced a terminal result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: root }),
+      sessionId: "session_orphan",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: root,
+        sessionId: "session_orphan",
+        agentId: "main",
+        traceLevel: "debug",
+      }),
+    });
+    const store = factory(run);
+
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    // Requested + started, but no subagent.completed / subagent.failed.
+    const subPayload = {
+      childRunId: "cmd_doc_reviewer_x",
+      parentRunId: run.id,
+    };
+    const subMeta = { agentProfileId: "doc_reviewer" };
+    await store.append(log.emit("subagent.requested", subPayload, subMeta));
+    await store.append(log.emit("subagent.started", subPayload, subMeta));
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_orphan"),
+    });
+
+    // Lost child result is a warning (not an error): the session still "ok"s,
+    // but the orphaned delegation and its profile are surfaced for triage.
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          code: "SUBAGENT_NOT_TERMINATED",
+          metadata: expect.objectContaining({
+            childRunId: "cmd_doc_reviewer_x",
+            parentRunId: run.id,
+            agentProfileId: "doc_reviewer",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("accepts a delegated sub-agent that reached a terminal result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: root }),
+      sessionId: "session_child_ok",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: root,
+        sessionId: "session_child_ok",
+        agentId: "main",
+        traceLevel: "debug",
+      }),
+    });
+    const store = factory(run);
+
+    const subPayload = {
+      childRunId: "cmd_doc_reviewer_y",
+      parentRunId: run.id,
+    };
+    const subMeta = { agentProfileId: "doc_reviewer" };
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    await store.append(log.emit("subagent.requested", subPayload, subMeta));
+    await store.append(log.emit("subagent.started", subPayload, subMeta));
+    await store.append(
+      log.emit(
+        "subagent.completed",
+        { ...subPayload, stopReason: "completed" },
+        subMeta,
+      ),
+    );
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_child_ok"),
+    });
+
+    expect(report.ok).toBe(true);
+    expect(
+      report.findings.filter((f) => f.code === "SUBAGENT_NOT_TERMINATED"),
+    ).toEqual([]);
+  });
+
   it("accepts collapsed stream text ranges in session trace sequence checks", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
     tempDirs.push(root);
@@ -2252,6 +2367,65 @@ describe("trace", () => {
 
     expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);
+  });
+
+  it("checks monotonic ordering per agent within a shared-trace multi-agent run", () => {
+    // Parent ("main") and child/delegate ("reviewer") agents share one traceId
+    // but run in independent execution contexts with their own monotonic clocks.
+    // Their events interleave in file order, so the child's smaller monotonicUs
+    // must not be flagged as a backward move against the parent's timeline.
+    const parent = new EventLog(createRunId());
+    const child = new EventLog(createRunId());
+    const parentStart = parent.emit("run.created", { goal: "parent" });
+    const parentDone = parent.emit("run.completed", { reason: "final_answer" });
+    const childStart = child.emit("run.created", { goal: "child" });
+    const childDone = child.emit("run.completed", { reason: "final_answer" });
+
+    const sharedTraceId = createTraceId();
+    for (const event of [parentStart, parentDone]) {
+      event.traceId = sharedTraceId;
+      event.metadata = { ...event.metadata, agentId: "main" };
+    }
+    for (const event of [childStart, childDone]) {
+      event.traceId = sharedTraceId;
+      event.metadata = { ...event.metadata, agentId: "reviewer" };
+    }
+    parentStart.monotonicUs = 100;
+    parentDone.monotonicUs = 300;
+    childStart.monotonicUs = 5;
+    childDone.monotonicUs = 10;
+
+    // File order: parent start, child start, child done, parent done.
+    const report = verifyTraceJsonl(
+      [parentStart, childStart, childDone, parentDone]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
+
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("still flags a backward monotonicUs move within the same agent", () => {
+    const log = new EventLog(createRunId());
+    const start = log.emit("run.created", { goal: "regress" });
+    const done = log.emit("run.completed", { reason: "final_answer" });
+    const sharedTraceId = createTraceId();
+    for (const event of [start, done]) {
+      event.traceId = sharedTraceId;
+      event.metadata = { ...event.metadata, agentId: "main" };
+    }
+    start.monotonicUs = 200;
+    done.monotonicUs = 100;
+
+    const report = verifyTraceJsonl(
+      [start, done].map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((finding) => finding.code)).toContain(
+      "TRACE_MONOTONIC_ORDER_INVALID",
+    );
   });
 
   it("flags half-written traces and missing terminal events", () => {

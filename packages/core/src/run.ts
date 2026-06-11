@@ -2248,7 +2248,10 @@ export class SparkwrightRun implements RunHandle {
         },
         artifacts: [],
       };
-      span.close("tool.failed", skipped);
+      span.close("tool.failed", {
+        ...skipped,
+        toolName: requestedCall.toolName,
+      });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: skipped.status,
@@ -2292,7 +2295,10 @@ export class SparkwrightRun implements RunHandle {
       requestedCall.toolName,
     );
     if (gatedResult) {
-      span.close("tool.failed", gatedResult);
+      span.close("tool.failed", {
+        ...gatedResult,
+        toolName: requestedCall.toolName,
+      });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: gatedResult.status,
@@ -2317,7 +2323,10 @@ export class SparkwrightRun implements RunHandle {
         },
         artifacts: [],
       };
-      span.close("tool.failed", aborted);
+      span.close("tool.failed", {
+        ...aborted,
+        toolName: requestedCall.toolName,
+      });
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: aborted.status,
@@ -2361,7 +2370,7 @@ export class SparkwrightRun implements RunHandle {
         : checkedResult;
     span.close(
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
-      annotatedResult,
+      { ...annotatedResult, toolName: requestedCall.toolName },
     );
     if (requestedCall.toolName === "skill_load") {
       this.emitSkillLoadedFromToolResult(annotatedResult);

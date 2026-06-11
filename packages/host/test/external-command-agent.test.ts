@@ -7,6 +7,8 @@ import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
   createExternalCommandDelegateTool,
   externalCommandConfigFromAgentProfile,
+  isSecretEnvKey,
+  redactSecretEnv,
 } from "../src/external-command-agent.js";
 
 describe("external command delegate tool", () => {
@@ -368,6 +370,130 @@ describe("external command delegate tool", () => {
       hasCustomEnv: true,
       hasPath: process.platform === "win32" ? expect.any(Boolean) : false,
     });
+  });
+
+  it("redacts credential-looking env vars from a sandboxed (workspaceAccess none) child", async () => {
+    const fixture = await createFixtureCommand(
+      'process.stdout.write("\\n" + JSON.stringify({ secret: process.env.QA_TEST_SECRET ?? null, hasPath: process.env.PATH !== undefined }));',
+    );
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_sandbox",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          // inherit (default), workspaceAccess none (default) -> sanitized.
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_sandbox",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+    });
+
+    process.env.QA_TEST_SECRET = "leak-me";
+    try {
+      const result = (await tool.execute({ goal: "inspect docs" }, {
+        run: parent.record,
+      } as never)) as { stdout: string };
+      const lines = result.stdout.trimEnd().split("\n");
+      // Secret dropped, but PATH (needed to spawn) retained.
+      expect(JSON.parse(lines[1] ?? "{}")).toEqual({
+        secret: null,
+        hasPath: true,
+      });
+    } finally {
+      delete process.env.QA_TEST_SECRET;
+    }
+  });
+
+  it("preserves inherited env for a read_write (explicitly trusted) child", async () => {
+    const fixture = await createFixtureCommand(
+      'process.stdout.write("\\n" + JSON.stringify({ secret: process.env.QA_TEST_SECRET ?? null }));',
+    );
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_trusted",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_trusted",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
+    });
+
+    process.env.QA_TEST_SECRET = "trusted-keep";
+    try {
+      const result = (await tool.execute({ goal: "inspect docs" }, {
+        run: parent.record,
+      } as never)) as { stdout: string };
+      const lines = result.stdout.trimEnd().split("\n");
+      expect(JSON.parse(lines[1] ?? "{}")).toEqual({ secret: "trusted-keep" });
+    } finally {
+      delete process.env.QA_TEST_SECRET;
+    }
+  });
+
+  it("classifies and strips secret env keys while keeping benign ones", () => {
+    for (const key of [
+      "QA_FAKE_SECRET",
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "AWS_SECRET_ACCESS_KEY",
+      "GITHUB_TOKEN",
+      "DB_PASSWORD",
+      "SSH_PRIVATE_KEY",
+      "MY_KEY",
+    ]) {
+      expect(isSecretEnvKey(key)).toBe(true);
+    }
+    for (const key of [
+      "PATH",
+      "HOME",
+      "TMPDIR",
+      "LANG",
+      "MONKEY",
+      "KEYBOARD",
+    ]) {
+      expect(isSecretEnvKey(key)).toBe(false);
+    }
+    const redacted = redactSecretEnv({
+      PATH: "/usr/bin",
+      OPENAI_API_KEY: "sk-x",
+      HOME: "/home/u",
+    });
+    expect(redacted).toEqual({ PATH: "/usr/bin", HOME: "/home/u" });
   });
 
   it("reports stdout and stderr truncation separately", async () => {

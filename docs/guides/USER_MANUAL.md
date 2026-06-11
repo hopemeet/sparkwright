@@ -211,7 +211,13 @@ Set `input` to `argument` to append the goal as the final argument, `stdin` to
 write the goal to standard input, or `none` when the configured args already
 contain all needed context. Non-zero exits fail the delegate unless listed in
 `successExitCodes`. `envMode` defaults to `inherit`; use `explicit` to pass
-only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes` set
+only the configured `env` map. Under `inherit`, a sandboxed delegate
+(`workspaceAccess: "none"`, the default) does **not** receive credential-looking
+parent env vars (names matching `*_API_KEY`/`*_TOKEN`/`*_SECRET`/`*_PASSWORD`,
+known provider prefixes, etc.) — it still gets `PATH`/`HOME` so the command can
+run, and you can re-supply a specific value through the `env` map. A delegate
+granted `workspaceAccess: "read_write"` (which already requires parent `--write`)
+inherits the full environment. `maxStdoutBytes` and `maxStderrBytes` set
 independent capture limits, while `maxOutputBytes` remains a shared fallback.
 `{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
 otherwise the process runs from an isolated temporary cwd and receives only the

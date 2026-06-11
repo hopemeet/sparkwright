@@ -389,9 +389,70 @@ async function runExternalCommand(input: {
 function buildCommandEnv(
   config: ExternalCommandAgentConfig,
 ): NodeJS.ProcessEnv {
-  return config.envMode === "explicit"
-    ? { ...(config.env ?? {}) }
-    : { ...process.env, ...(config.env ?? {}) };
+  if (config.envMode === "explicit") {
+    return { ...(config.env ?? {}) };
+  }
+  // Inherit mode. A delegate that was granted read_write workspace access has
+  // already been explicitly trusted by the parent run (`--write`), so its
+  // inherited environment is left intact. But a locked-down delegate
+  // (workspaceAccess "none", the default) runs in a throwaway cwd and must not
+  // be able to exfiltrate the parent's credentials: we still hand it a working
+  // environment (PATH/HOME/etc.) but redact env vars that look like secrets.
+  // Authors can re-add a specific value through the explicit `env` map below,
+  // which always overlays the inherited (and now redacted) base.
+  const workspaceAccess = config.workspaceAccess ?? "none";
+  const inherited =
+    workspaceAccess === "read_write"
+      ? { ...process.env }
+      : redactSecretEnv(process.env);
+  return { ...inherited, ...(config.env ?? {}) };
+}
+
+/**
+ * Returns a copy of `env` with credential-looking variables removed. Used to
+ * keep sandboxed (`workspaceAccess: "none"`) delegates from inheriting the
+ * parent process's secrets while still receiving the benign environment a
+ * subprocess needs to run (PATH, HOME, locale, …).
+ *
+ * @internal Exported for unit tests; not part of the public host API.
+ */
+export function redactSecretEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (!isSecretEnvKey(key)) out[key] = value;
+  }
+  return out;
+}
+
+/**
+ * Heuristic match for credential-bearing environment variable names. Errs on
+ * the side of redaction: a sandboxed reviewer rarely needs provider tokens, and
+ * a false positive can always be re-supplied via the delegate's explicit `env`
+ * map. Never matches PATH/HOME/locale-style names.
+ *
+ * @internal Exported for unit tests.
+ */
+export function isSecretEnvKey(key: string): boolean {
+  const k = key.toUpperCase();
+  // Common credential tokens anywhere in the name.
+  if (
+    /(SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|APIKEY|PRIVATE_KEY|ACCESS_KEY|SESSION_KEY|AUTH)/.test(
+      k,
+    )
+  ) {
+    return true;
+  }
+  // Whole-word *_KEY / API_KEY suffix (so MONKEY / KEYBOARD do not match).
+  if (/(^|_)(API_KEY|KEY)$/.test(k)) return true;
+  // Known secret-bearing provider/service prefixes.
+  if (
+    /^(AWS|AZURE|GCP|GOOGLE_CLOUD|OPENAI|ANTHROPIC|GEMINI|COHERE|MISTRAL|HF|HUGGINGFACE|GITHUB|GH|GITLAB|NPM|PYPI|SLACK|STRIPE|TWILIO|SENDGRID|CLOUDFLARE|HEROKU|VAULT|DOCKERHUB)_/.test(
+      k,
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function parseDelegateArgs(input: unknown): {
