@@ -96,6 +96,7 @@ export type {
   CapabilityHookActionConfig,
   CapabilityToolsConfig,
   CapabilitySkillsConfig,
+  ShellConfig,
   ProviderConfig,
   ProviderModelConfig,
   ModelCost,

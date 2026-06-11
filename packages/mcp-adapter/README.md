@@ -97,6 +97,13 @@ await prepareMcpToolsForRun({
 });
 ```
 
+When callers pass a resolved `shellSandbox`, stdio servers are started through
+the same experimental OS sandbox boundary as the built-in shell tool. In
+`warn` mode the adapter falls back to the normal SDK stdio transport if the
+platform runtime is unavailable; in `enforce` mode preparation fails closed.
+HTTP and SSE servers are remote transports and are not wrapped by the local
+process sandbox.
+
 ## Tool Names
 
 MCP tool names are namespaced by default:

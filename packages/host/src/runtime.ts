@@ -6,6 +6,7 @@ import {
   createBufferedEmitter,
   createRunId,
   createLayeredPolicy,
+  DEFAULT_CONFIDENTIAL_PATHS,
   createSessionId,
   createSessionRunStoreFactory,
   createPermissionModePolicy,
@@ -62,7 +63,13 @@ import {
   defaultCronRoot,
   legacyConfigCronRoot,
 } from "@sparkwright/cron";
-import type { CapabilityDelegateToolConfig } from "./config.js";
+import {
+  createPlatformShellSandboxRuntime,
+  describeShellSandboxStatus,
+  resolveShellSandboxConfig,
+  type ShellSandboxStatus,
+} from "@sparkwright/shell-sandbox";
+import type { CapabilityDelegateToolConfig, ShellConfig } from "./config.js";
 import {
   createSessionFileRunStoreFactory,
   LocalWorkspace,
@@ -149,7 +156,10 @@ function createHostRunPolicy(input: {
     // Opt-in read-confidentiality. Empty list is a no-op, so default runs are
     // unaffected; when set, reads of matching files are denied at the tool layer.
     createWorkspaceReadScopePolicy({
-      confidentialPaths: input.confidentialPaths ?? [],
+      confidentialPaths: [
+        ...DEFAULT_CONFIDENTIAL_PATHS,
+        ...(input.confidentialPaths ?? []),
+      ],
     }),
   ]);
 }
@@ -283,6 +293,7 @@ function summarizeCapabilitySnapshot(
         (delegate) => delegate.toolName,
       ),
     },
+    shell: snapshot.shell,
   };
 }
 
@@ -468,6 +479,7 @@ export class HostRuntime {
     const approvalResolver = this.createApprovalResolver(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
     const toolConfig = loadedConfig.config.capabilities?.tools;
+    const shellConfig = loadedConfig.config.shell;
     const hookConfig = loadedConfig.config.capabilities?.hooks;
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
@@ -476,6 +488,18 @@ export class HostRuntime {
       workspaceRoot,
       skillConfig?.roots,
     );
+    const shellSandbox = await inspectShellSandboxStatus({
+      workspaceRoot,
+      shellConfig,
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+    });
+    const mcpShellSandbox = resolveShellSandboxConfig({
+      workspaceRoot,
+      config: shellConfig?.sandbox,
+      skillRoots: skillRoots.map((root) => root.root),
+      extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
+    });
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     let preparedSkills: PreparedSkills | null = null;
     try {
@@ -526,6 +550,7 @@ export class HostRuntime {
           policy: mcpConfig.defaultPolicy,
           emitter: pendingExtensionEvents,
           agentId: MAIN_AGENT_ID,
+          shellSandbox: mcpShellSandbox,
         })
       : null;
     const resolvedProfiles = await resolveAgentProfiles(
@@ -564,6 +589,9 @@ export class HostRuntime {
       model: model.adapter,
       childTools,
       workspaceRoot,
+      sandbox: shellConfig?.sandbox,
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
       childRunStoreFactory,
       allowReadWriteWorkspaceAccess: input.shouldWrite,
     });
@@ -588,10 +616,15 @@ export class HostRuntime {
       preparedMcp,
       delegateTools,
       dynamicSpawnTool,
+      shell: shellConfig,
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     const workflowHooks = createConfiguredWorkflowHooks({
       hooks: hookConfig?.workflow,
       workspaceRoot,
+      sandbox: shellConfig?.sandbox,
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       tools,
@@ -604,6 +637,7 @@ export class HostRuntime {
         ...derivedAgents.map((agent) => agent.effectiveProfile),
       ],
       delegateTools: delegateDescriptors,
+      shellSandbox,
     });
 
     const runMetadata: Record<string, unknown> = {
@@ -1499,6 +1533,7 @@ export class HostRuntime {
   private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
     const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
     const toolConfig = loadedConfig.config.capabilities?.tools;
+    const shellConfig = loadedConfig.config.shell;
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
@@ -1511,6 +1546,18 @@ export class HostRuntime {
       this.opts.workspaceRoot,
       skillConfig?.roots,
     );
+    const shellSandbox = await inspectShellSandboxStatus({
+      workspaceRoot: this.opts.workspaceRoot,
+      shellConfig,
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+    });
+    const mcpShellSandbox = resolveShellSandboxConfig({
+      workspaceRoot: this.opts.workspaceRoot,
+      config: shellConfig?.sandbox,
+      skillRoots: skillRoots.map((root) => root.root),
+      extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
+    });
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     const preparedSkills =
       existingPreparedSkillRoots.length > 0
@@ -1534,6 +1581,7 @@ export class HostRuntime {
           defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
           namePrefix: mcpConfig.namePrefix,
           policy: mcpConfig.defaultPolicy,
+          shellSandbox: mcpShellSandbox,
         })
       : null;
     try {
@@ -1554,6 +1602,9 @@ export class HostRuntime {
         },
         childTools,
         workspaceRoot: this.opts.workspaceRoot,
+        sandbox: shellConfig?.sandbox,
+        skillRoots: skillRoots.map((root) => root.root),
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
         allowReadWriteWorkspaceAccess: false,
         // Snapshot only describes the tool; its body never runs here
         // (getParent returns undefined and the tool throws first).
@@ -1586,6 +1637,8 @@ export class HostRuntime {
           preparedMcp,
           delegateTools,
           dynamicSpawnTool,
+          shell: shellConfig,
+          configPaths: loadedConfig.attempted.map((entry) => entry.path),
         }),
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
@@ -1611,6 +1664,7 @@ export class HostRuntime {
             resolvedProfiles,
           ),
         }),
+        shellSandbox,
         automation,
       });
     } finally {
@@ -1934,6 +1988,7 @@ function buildCapabilitySnapshot(input: {
   mcpToolNameMap?: McpToolNameMapping[];
   agentProfiles?: AgentProfile[];
   delegateTools?: DelegateCapabilityDescriptor[];
+  shellSandbox?: ShellSandboxStatus;
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
@@ -1987,8 +2042,41 @@ function buildCapabilitySnapshot(input: {
       })),
       delegateTools: input.delegateTools ?? [],
     },
+    ...(input.shellSandbox
+      ? {
+          shell: {
+            sandbox: {
+              mode: input.shellSandbox.mode,
+              failIfUnavailable: input.shellSandbox.failIfUnavailable,
+              runtimeId: input.shellSandbox.runtimeId,
+              platform: input.shellSandbox.platform,
+              available: input.shellSandbox.available,
+              networkMode: input.shellSandbox.networkMode,
+              filesystemIsolation: input.shellSandbox.filesystemIsolation,
+            },
+          },
+        }
+      : {}),
     automation: input.automation,
   };
+}
+
+async function inspectShellSandboxStatus(input: {
+  workspaceRoot: string;
+  shellConfig?: ShellConfig;
+  skillRoots: readonly string[];
+  configPaths: readonly string[];
+}): Promise<ShellSandboxStatus> {
+  const config = resolveShellSandboxConfig({
+    workspaceRoot: input.workspaceRoot,
+    config: input.shellConfig?.sandbox,
+    skillRoots: input.skillRoots,
+    extraForcedDenyWrite: input.configPaths,
+  });
+  return describeShellSandboxStatus(
+    config,
+    createPlatformShellSandboxRuntime(),
+  );
 }
 
 async function readCronJobsForSnapshot(
@@ -2189,6 +2277,9 @@ function createConfiguredDelegateTools(input: {
   model: ModelAdapter;
   childTools: ToolDefinition[];
   workspaceRoot: string;
+  sandbox?: Parameters<typeof createExternalCommandDelegateTool>[0]["sandbox"];
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
   allowReadWriteWorkspaceAccess: boolean;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
@@ -2239,6 +2330,9 @@ function createConfiguredDelegateTools(input: {
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+          sandbox: input.sandbox,
+          skillRoots: input.skillRoots,
+          configPaths: input.configPaths,
         }),
       );
       continue;
@@ -2733,6 +2827,7 @@ function mergeCapabilitySnapshots(
         last.agents.delegateTools,
       ),
     },
+    shell: configured.shell ?? last.shell,
     automation: configured.automation ?? last.automation,
   };
 }

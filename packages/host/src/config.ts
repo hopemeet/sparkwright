@@ -10,8 +10,9 @@
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
- * files; every other field is wholesale-overridden. Callers layer CLI flags /
- * env on top.
+ * files, capabilities merge by sub-capability, and shell.sandbox merges
+ * conservatively so later layers cannot weaken an earlier sandbox policy.
+ * Callers layer CLI flags / env on top.
  */
 
 import { readFile } from "node:fs/promises";
@@ -23,6 +24,7 @@ import type {
   WorkflowHookName,
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
 export const CONFIG_USER_REL = ".config/sparkwright/config.json";
@@ -89,7 +91,12 @@ export interface SharedConfig {
    * the tool layer. Empty/absent leaves the default permissive behavior.
    */
   confidentialPaths?: string[];
+  shell?: ShellConfig;
   capabilities?: CapabilityConfig;
+}
+
+export interface ShellConfig {
+  sandbox?: ShellSandboxConfig;
 }
 
 export interface CapabilityConfig {
@@ -131,6 +138,7 @@ export type CapabilityHookActionConfig =
       blockOnFailure?: boolean;
       injectOutput?: "always" | "onFailure" | "never";
       maxOutputBytes?: number;
+      stdin?: "none" | "json";
     };
 
 export type CapabilityWorkflowHookFrequency = "always" | "oncePerTurn";
@@ -210,6 +218,7 @@ export interface SharedConfigSourceMap {
   permissionMode?: string;
   workspace?: string;
   confidentialPaths?: string;
+  shell?: string;
   providers?: Record<string, string>;
 }
 
@@ -786,6 +795,16 @@ function validateWorkflowHookAction(
           }),
           {})
       : {}),
+    ...(raw.stdin !== undefined
+      ? raw.stdin === "none" || raw.stdin === "json"
+        ? { stdin: raw.stdin }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.stdin`,
+            message: "must be none or json",
+          }),
+          {})
+      : {}),
     ...(raw.maxOutputBytes !== undefined
       ? {
           maxOutputBytes: validateOptionalPositiveInteger(
@@ -897,6 +916,194 @@ function validateCapabilities(
   return out;
 }
 
+function validateShellConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): ShellConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: ShellConfig = {};
+  const allowed = new Set(["sandbox"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.sandbox !== undefined) {
+    const sandbox = validateShellSandboxConfig(raw.sandbox, filePath, errors);
+    if (sandbox) out.sandbox = sandbox;
+  }
+  return out;
+}
+
+function validateShellSandboxConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): ShellSandboxConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell.sandbox",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: ShellSandboxConfig = {};
+  const allowed = new Set([
+    "mode",
+    "failIfUnavailable",
+    "filesystem",
+    "network",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.sandbox.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.mode !== undefined) {
+    if (raw.mode === "off" || raw.mode === "warn" || raw.mode === "enforce") {
+      out.mode = raw.mode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "shell.sandbox.mode",
+        message: "must be off, warn, or enforce",
+      });
+    }
+  }
+  if (raw.failIfUnavailable !== undefined) {
+    out.failIfUnavailable = validateOptionalBoolean(
+      raw.failIfUnavailable,
+      "shell.sandbox.failIfUnavailable",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.filesystem !== undefined) {
+    const filesystem = validateShellSandboxFilesystem(
+      raw.filesystem,
+      filePath,
+      errors,
+    );
+    if (filesystem) out.filesystem = filesystem;
+  }
+  if (raw.network !== undefined) {
+    const network = validateShellSandboxNetwork(raw.network, filePath, errors);
+    if (network) out.network = network;
+  }
+  return out;
+}
+
+function validateShellSandboxFilesystem(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): NonNullable<ShellSandboxConfig["filesystem"]> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell.sandbox.filesystem",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: NonNullable<ShellSandboxConfig["filesystem"]> = {};
+  const allowed = new Set([
+    "allowRead",
+    "allowWrite",
+    "denyRead",
+    "denyWrite",
+    "tmp",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.sandbox.filesystem.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  for (const key of [
+    "allowRead",
+    "allowWrite",
+    "denyRead",
+    "denyWrite",
+  ] as const) {
+    if (raw[key] !== undefined) {
+      out[key] = validateStringArray(
+        raw[key],
+        `shell.sandbox.filesystem.${key}`,
+        filePath,
+        errors,
+      );
+    }
+  }
+  if (raw.tmp !== undefined) {
+    out.tmp = validateOptionalBoolean(
+      raw.tmp,
+      "shell.sandbox.filesystem.tmp",
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateShellSandboxNetwork(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): NonNullable<ShellSandboxConfig["network"]> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell.sandbox.network",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: NonNullable<ShellSandboxConfig["network"]> = {};
+  const allowed = new Set(["mode"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.sandbox.network.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.mode !== undefined) {
+    if (raw.mode === "allow" || raw.mode === "deny") {
+      out.mode = raw.mode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "shell.sandbox.network.mode",
+        message: "must be allow or deny",
+      });
+    }
+  }
+  return out;
+}
+
 function validateStringRecord(
   raw: unknown,
   field: string,
@@ -915,6 +1122,104 @@ function validateStringRecord(
     message: "must be an object with string values",
   });
   return undefined;
+}
+
+function mergeShellConfig(
+  previous: ShellConfig | undefined,
+  next: ShellConfig,
+): ShellConfig {
+  return {
+    ...(previous ?? {}),
+    ...next,
+    sandbox:
+      previous?.sandbox || next.sandbox
+        ? mergeShellSandboxConfig(previous?.sandbox, next.sandbox)
+        : undefined,
+  };
+}
+
+const SHELL_SANDBOX_MODE_RANK = {
+  off: 0,
+  warn: 1,
+  enforce: 2,
+} as const satisfies Record<NonNullable<ShellSandboxConfig["mode"]>, number>;
+
+function mergeShellSandboxConfig(
+  previous: ShellSandboxConfig | undefined,
+  next: ShellSandboxConfig | undefined,
+): ShellSandboxConfig | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+
+  return {
+    mode: stricterSandboxMode(previous.mode, next.mode),
+    failIfUnavailable:
+      previous.failIfUnavailable === true || next.failIfUnavailable === true
+        ? true
+        : (previous.failIfUnavailable ?? next.failIfUnavailable),
+    filesystem: mergeShellSandboxFilesystem(
+      previous.filesystem,
+      next.filesystem,
+    ),
+    network: mergeShellSandboxNetwork(previous.network, next.network),
+  };
+}
+
+function stricterSandboxMode(
+  previous: ShellSandboxConfig["mode"],
+  next: ShellSandboxConfig["mode"],
+): ShellSandboxConfig["mode"] {
+  if (!previous) return next;
+  if (!next) return previous;
+  return SHELL_SANDBOX_MODE_RANK[next] > SHELL_SANDBOX_MODE_RANK[previous]
+    ? next
+    : previous;
+}
+
+function mergeShellSandboxFilesystem(
+  previous: ShellSandboxConfig["filesystem"],
+  next: ShellSandboxConfig["filesystem"],
+): ShellSandboxConfig["filesystem"] {
+  if (!previous) return next;
+  if (!next) return previous;
+  return {
+    allowRead: mergeUniqueStrings(previous.allowRead, next.allowRead),
+    allowWrite: mergeUniqueStrings(previous.allowWrite, next.allowWrite),
+    denyRead: mergeUniqueStrings(previous.denyRead, next.denyRead),
+    denyWrite: mergeUniqueStrings(previous.denyWrite, next.denyWrite),
+    tmp:
+      previous.tmp === false || next.tmp === false
+        ? false
+        : (previous.tmp ?? next.tmp),
+  };
+}
+
+function mergeShellSandboxNetwork(
+  previous: ShellSandboxConfig["network"],
+  next: ShellSandboxConfig["network"],
+): ShellSandboxConfig["network"] {
+  if (!previous) return next;
+  if (!next) return previous;
+  if (previous.mode === "deny" || next.mode === "deny") {
+    return { mode: "deny" };
+  }
+  return { mode: previous.mode ?? next.mode };
+}
+
+function mergeUniqueStrings(
+  previous: readonly string[] | undefined,
+  next: readonly string[] | undefined,
+): string[] | undefined {
+  if (!previous) return next ? [...next] : undefined;
+  if (!next) return [...previous];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of [...previous, ...next]) {
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  return out;
 }
 
 function validateMcpServer(
@@ -1921,6 +2226,13 @@ function validateShared(
       });
     }
   }
+  if (obj.shell !== undefined) {
+    const shell = validateShellConfig(obj.shell, filePath, errors);
+    if (shell) {
+      config.shell = shell;
+      sources.shell = origin;
+    }
+  }
   if (obj.capabilities !== undefined) {
     const capabilities = validateCapabilities(
       obj.capabilities,
@@ -1995,15 +2307,22 @@ export async function loadHostConfig(
       };
     }
     // Providers merge by key (a later file adds/overrides individual entries),
-    // and capabilities merge by sub-capability (tools/skills/mcp/agents) so a
-    // layer that sets only some sub-capabilities does not wipe the ones a
-    // weaker layer supplied — e.g. a project tools policy must not drop the
-    // user's agent profiles. Within a sub-capability the later layer still
-    // wholesale-overrides. Every other field is wholesale-overridden.
-    const { providers, capabilities: layerCapabilities, ...rest } = v.config;
+    // capabilities merge by sub-capability (tools/skills/mcp/agents), and
+    // shell.sandbox merges conservatively so a project cannot downgrade a
+    // user-defined sandbox boundary. Within a sub-capability the later layer
+    // still wholesale-overrides. Every other field is wholesale-overridden.
+    const {
+      providers,
+      capabilities: layerCapabilities,
+      shell: layerShell,
+      ...rest
+    } = v.config;
     Object.assign(merged, rest);
     if (providers) {
       merged.providers = { ...(merged.providers ?? {}), ...providers };
+    }
+    if (layerShell) {
+      merged.shell = mergeShellConfig(merged.shell, layerShell);
     }
     if (layerCapabilities) {
       merged.capabilities = {

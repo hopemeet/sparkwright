@@ -339,7 +339,20 @@ export interface CapabilitySnapshot {
     profiles: CapabilityAgentSummary[];
     delegateTools: CapabilityDelegateToolSummary[];
   };
+  shell?: {
+    sandbox: CapabilityShellSandboxSummary;
+  };
   automation?: CapabilityAutomationSummary;
+}
+
+export interface CapabilityShellSandboxSummary {
+  mode: string;
+  failIfUnavailable: boolean;
+  runtimeId: string;
+  platform: string;
+  available: boolean;
+  networkMode: string;
+  filesystemIsolation: string;
 }
 
 // ---------------------------------------------------------------------------

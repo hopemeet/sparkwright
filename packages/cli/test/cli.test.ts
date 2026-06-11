@@ -1025,6 +1025,10 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain(
       "tools: enabled=(all); disabled=shell; defer=mcp_*",
     );
+    expect(textOutput.stdoutText()).toContain(
+      "shell sandbox: mode=warn; effective=",
+    );
+    expect(textOutput.stdoutText()).toContain("network=deny");
     expect(textOutput.stdoutText()).toContain("skills:");
     expect(textOutput.stdoutText()).toContain("reviewer (legacy)");
     expect(textOutput.stdoutText()).toContain("agents: 1 effective");
@@ -1046,6 +1050,16 @@ describe("runCli", () => {
     expect(json.exitCode).toBe(0);
     const report = JSON.parse(jsonOutput.stdoutText()) as {
       tools: { disabled?: string[]; defer?: string[] };
+      shell: {
+        sandbox: {
+          mode: string;
+          runtimeId: string;
+          available: boolean;
+          networkMode: string;
+          filesystemIsolation: string;
+          effective: string;
+        };
+      };
       skills: { skills: Array<{ name: string; layer?: string }> };
       agents: {
         profiles: Array<{ id: string; layer: string }>;
@@ -1059,6 +1073,16 @@ describe("runCli", () => {
       cron: { stateRoot: string; legacyStateRoot: string };
       command: { dirs: Array<{ layer: string; exists: boolean }> };
     };
+    expect(report.shell.sandbox).toMatchObject({
+      mode: "warn",
+      runtimeId: expect.any(String),
+      available: expect.any(Boolean),
+      networkMode: "deny",
+      filesystemIsolation: expect.stringMatching(
+        /^(bind-allowlist|deny-list-guard|unsupported)$/,
+      ),
+      effective: expect.stringMatching(/^(on|fallback)$/),
+    });
     expect(report.tools.disabled).toEqual(["shell"]);
     expect(report.tools.defer).toEqual(["mcp_*"]);
     expect(report.skills.skills).toEqual(

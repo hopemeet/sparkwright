@@ -182,6 +182,19 @@ export interface ShellToolOutput {
   promoted?: boolean;
   /** Host-assigned task id returned by the promotion callback. */
   taskId?: string;
+  /** @reserved Public shell sandbox status consumed by trace and diagnostics UIs. */
+  sandbox?: ShellToolSandboxOutput;
+}
+
+export interface ShellToolSandboxOutput {
+  sandboxed: boolean;
+  mode?: string;
+  runtime?: string;
+  networkMode?: string;
+  unavailable?: string;
+  available?: boolean;
+  fallbackReason?: string;
+  enforced?: boolean;
 }
 
 const DEFAULT_NAME = "shell";
@@ -228,6 +241,21 @@ export function createShellTool(
         outputTruncated: { type: "boolean" },
         promoted: { type: "boolean" },
         taskId: { type: "string" },
+        sandbox: {
+          type: "object",
+          properties: {
+            sandboxed: { type: "boolean" },
+            mode: { type: "string" },
+            runtime: { type: "string" },
+            networkMode: { type: "string" },
+            unavailable: { type: "string" },
+            available: { type: "boolean" },
+            fallbackReason: { type: "string" },
+            enforced: { type: "boolean" },
+          },
+          required: ["sandboxed"],
+          additionalProperties: false,
+        },
       },
       required: [
         "stdout",
@@ -472,6 +500,7 @@ async function runWithPromotion(
       timedOut,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      sandbox: shellSandboxOutput(race.result.metadata),
     };
   }
 
@@ -504,6 +533,7 @@ async function runWithPromotion(
       reason: ctx.verdict.reason,
       promoted: true,
       taskId: promotion.taskId,
+      sandbox: shellSandboxOutput(handle.metadata),
     };
   } catch {
     // Promotion failed: fall back to abort + timedOut for safety.
@@ -517,8 +547,39 @@ async function runWithPromotion(
       timedOut: true,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      sandbox: shellSandboxOutput(final.metadata),
     };
   }
+}
+
+function shellSandboxOutput(
+  metadata: Record<string, unknown> | undefined,
+): ShellToolSandboxOutput | undefined {
+  if (!metadata || typeof metadata.sandboxed !== "boolean") return undefined;
+  return {
+    sandboxed: metadata.sandboxed,
+    ...(typeof metadata.sandboxMode === "string"
+      ? { mode: metadata.sandboxMode }
+      : {}),
+    ...(typeof metadata.sandboxRuntime === "string"
+      ? { runtime: metadata.sandboxRuntime }
+      : {}),
+    ...(typeof metadata.sandboxNetworkMode === "string"
+      ? { networkMode: metadata.sandboxNetworkMode }
+      : {}),
+    ...(typeof metadata.sandboxUnavailable === "string"
+      ? { unavailable: metadata.sandboxUnavailable }
+      : {}),
+    ...(typeof metadata.sandboxAvailable === "boolean"
+      ? { available: metadata.sandboxAvailable }
+      : {}),
+    ...(typeof metadata.sandboxFallbackReason === "string"
+      ? { fallbackReason: metadata.sandboxFallbackReason }
+      : {}),
+    ...(typeof metadata.sandboxEnforced === "boolean"
+      ? { enforced: metadata.sandboxEnforced }
+      : {}),
+  };
 }
 
 /**

@@ -14,6 +14,7 @@ import {
 } from "@sparkwright/core";
 import { loadHostConfig } from "./config.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
+import { resolveSkillRootsForRuntime } from "./skill-roots.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -110,6 +111,10 @@ export async function runConfiguredDelegate(
 
   const acpConfig = acpConfigFromAgentProfile(profile);
   const externalCommandConfig = externalCommandConfigFromAgentProfile(profile);
+  const skillRoots = resolveSkillRootsForRuntime(
+    input.workspaceRoot,
+    loaded.config.capabilities?.skills?.roots,
+  );
   const protocol = acpConfig
     ? "acp"
     : externalCommandConfig
@@ -196,6 +201,9 @@ export async function runConfiguredDelegate(
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
           allowReadWriteWorkspaceAccess: input.shouldWrite === true,
+          sandbox: loaded.config.shell?.sandbox,
+          skillRoots: skillRoots.map((root) => root.root),
+          configPaths: loaded.attempted.map((entry) => entry.path),
         });
 
   const requiresApproval = delegate.requiresApproval ?? true;

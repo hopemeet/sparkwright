@@ -49,6 +49,7 @@
     "@sparkwright/protocol": "0.1.0",
     "@sparkwright/provider-ai-sdk": "0.1.0",
     "@sparkwright/provider-registry": "0.1.0",
+    "@sparkwright/shell-sandbox": "0.1.0",
     "@sparkwright/shell-tool": "0.1.0",
     "@sparkwright/skills": "0.1.0",
     "ws": "^8.18.0"

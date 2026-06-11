@@ -25,7 +25,7 @@ The intended security model is still ahead of the current implementation.
 - `LocalWorkspace.writeText()` is a low-level workspace implementation and writes directly.
 - Agent runs wrap configured workspaces with a controlled runtime workspace that checks policy and approval before writes.
 - Trace and artifact persistence include default redaction for common secret keys and token-shaped strings, but callers must still avoid placing secrets in event payloads.
-- The shell tool includes allow / require-approval / deny tiers and a destructive-command blocklist, but it is not a production sandbox.
+- The shell tool, configured workflow-hook commands, external-command delegates, and local stdio MCP servers include allow / require-approval / deny tiers where applicable, a destructive-command blocklist for model-invoked shell, and an experimental OS sandbox adapter. Linux `bubblewrap` is reported as `bind-allowlist`; macOS `sandbox-exec` is reported as `deny-list-guard` and should be treated as deny-path/network hardening, not complete filesystem hiding. Treat this as defense in depth, not as a mature production sandbox.
 - Runtime schema validation currently covers a small dependency-free JSON Schema subset for tool arguments and basic model output shape validation.
 
 Do not treat the current code as a production sandbox.

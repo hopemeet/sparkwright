@@ -15,6 +15,10 @@ import {
   type TaskId,
 } from "@sparkwright/agent-runtime";
 import {
+  createPlatformShellSandboxRuntime,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
+import {
   createAgentInspectorTool,
   createAgentManagerTool,
   applyToolConfig,
@@ -337,6 +341,7 @@ describe("host tools", () => {
     const tool = createHostShellTool(ctx.workspaceRoot, {
       taskManager: manager,
       foregroundTimeoutMs: 20,
+      sandbox: { mode: "off" },
     });
 
     const result = await tool.execute(
@@ -369,6 +374,7 @@ describe("host tools", () => {
     const tool = createHostShellTool(ctx.workspaceRoot, {
       taskManager: manager,
       foregroundTimeoutMs: 20,
+      sandbox: { mode: "off" },
     });
 
     const result = await tool.execute(
@@ -392,7 +398,9 @@ describe("host tools", () => {
 
   it("does not use the read-only shell fast path for redirects", async () => {
     const ctx = await createWorkspace({});
-    const tool = createHostShellTool(ctx.workspaceRoot);
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "off" },
+    });
 
     await expect(
       tool.execute({ command: "echo leaked > leak.txt" }, ctx),
@@ -400,6 +408,105 @@ describe("host tools", () => {
     await expect(
       readFile(join(ctx.workspaceRoot, "leak.txt")),
     ).rejects.toThrow();
+  });
+
+  it("fails closed when enforce-mode sandbox is unavailable", async () => {
+    const ctx = await createWorkspace({});
+    const runtime: ShellSandboxRuntime = {
+      id: "test-unavailable",
+      platform: "unsupported",
+      isAvailable: async () => false,
+      execute: async () => {
+        throw new Error("should not execute");
+      },
+    };
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+    });
+
+    const result = await tool.execute({ command: "echo hi" }, ctx);
+
+    expect(result.exitCode).toBeNull();
+    expect(result.stderr).toContain("test-unavailable");
+    expect(result.timedOut).toBe(false);
+    expect(result.sandbox).toMatchObject({
+      sandboxed: false,
+      mode: "enforce",
+      runtime: "test-unavailable",
+      networkMode: "deny",
+      unavailable: expect.stringContaining("test-unavailable"),
+      available: false,
+      fallbackReason: expect.stringContaining("test-unavailable"),
+      enforced: true,
+    });
+  });
+
+  it("falls back in warn mode when sandbox is unavailable", async () => {
+    const ctx = await createWorkspace({});
+    const runtime: ShellSandboxRuntime = {
+      id: "test-unavailable",
+      platform: "unsupported",
+      isAvailable: async () => false,
+      execute: async () => {
+        throw new Error("should not execute");
+      },
+    };
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "warn" },
+      sandboxRuntime: runtime,
+    });
+
+    const result = await tool.execute({ command: "echo hi" }, ctx);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("hi\n");
+    expect(result.sandbox).toMatchObject({
+      sandboxed: false,
+      mode: "warn",
+      runtime: "test-unavailable",
+      networkMode: "deny",
+      unavailable: expect.stringContaining("test-unavailable"),
+      available: false,
+      fallbackReason: expect.stringContaining("test-unavailable"),
+      enforced: false,
+    });
+  });
+
+  it("keeps shell commands from writing forced deny config and skill roots when runtime is available", async () => {
+    const runtime = createPlatformShellSandboxRuntime();
+    if (!(await runtime.isAvailable())) return;
+
+    const ctx = await createWorkspace({});
+    const configPath = join(ctx.workspaceRoot, ".sparkwright", "config.json");
+    const skillRoot = join(ctx.workspaceRoot, ".sparkwright", "skills");
+    const skillPath = join(skillRoot, "guarded", "SKILL.md");
+    await mkdir(join(skillRoot, "guarded"), { recursive: true });
+    await writeFile(configPath, "original config\n", "utf8");
+    await writeFile(skillPath, "original skill\n", "utf8");
+
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+      extraForcedDenyWrite: [configPath],
+      skillRoots: [skillRoot],
+    });
+
+    const configWrite = await tool.execute(
+      { command: "echo bad > .sparkwright/config.json" },
+      ctx,
+    );
+    const skillWrite = await tool.execute(
+      { command: "echo bad > .sparkwright/skills/guarded/SKILL.md" },
+      ctx,
+    );
+
+    expect(configWrite.exitCode).not.toBe(0);
+    expect(skillWrite.exitCode).not.toBe(0);
+    await expect(readFile(configPath, "utf8")).resolves.toBe(
+      "original config\n",
+    );
+    await expect(readFile(skillPath, "utf8")).resolves.toBe("original skill\n");
   });
 });
 

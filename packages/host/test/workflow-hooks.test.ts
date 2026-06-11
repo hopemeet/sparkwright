@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRunId, EventLog, runWorkflowHooks } from "@sparkwright/core";
+import {
+  createPlatformShellSandboxRuntime,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 import { createConfiguredWorkflowHooks } from "../src/index.js";
 
 function runRecord() {
@@ -212,4 +216,225 @@ describe("createConfiguredWorkflowHooks", () => {
       await rm(workspace, { recursive: true, force: true });
     }
   });
+
+  it("can pass workflow hook input to command actions on stdin", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        hooks: [
+          {
+            name: "stdin-check",
+            hook: "Stop",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                [
+                  "let data = '';",
+                  "process.stdin.on('data', (chunk) => data += chunk);",
+                  "process.stdin.on('end', () => {",
+                  "  const input = JSON.parse(data);",
+                  "  if (input.hook !== 'Stop') process.exit(2);",
+                  "  if (input.payload.message !== 'reject me') process.exit(3);",
+                  "  console.error(input.metadata.step);",
+                  "  process.exit(4);",
+                  "});",
+                ].join("\n"),
+              ],
+              stdin: "json",
+              blockOnFailure: true,
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        step: 7,
+        payload: { message: "reject me" },
+        metadata: { step: 7 },
+        events,
+      });
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(result.block.reason).toContain("exit code 4");
+      expect(result.block.metadata).toMatchObject({
+        stderr: "7\n",
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks command hooks when enforce-mode sandbox is unavailable", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    const runtime = unavailableRuntime();
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        sandbox: { mode: "enforce" },
+        sandboxRuntime: runtime,
+        hooks: [
+          {
+            name: "sandboxed-check",
+            hook: "Stop",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: ["-e", "console.log('should not run')"],
+              blockOnFailure: true,
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(result.block.metadata).toMatchObject({
+        exitCode: null,
+        sandbox: {
+          sandboxed: false,
+          mode: "enforce",
+          runtime: "test-unavailable",
+          unavailable: expect.stringContaining("test-unavailable"),
+          available: false,
+          fallbackReason: expect.stringContaining("test-unavailable"),
+          enforced: true,
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back in warn mode and records sandbox metadata", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    const runtime = unavailableRuntime();
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        sandbox: { mode: "warn" },
+        sandboxRuntime: runtime,
+        hooks: [
+          {
+            name: "warn-check",
+            hook: "Stop",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: ["-e", "console.log('fallback')"],
+              injectOutput: "never",
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(result.status).toBe("continued");
+      expect(events.all().at(-1)?.payload).toMatchObject({
+        result: {
+          metadata: {
+            exitCode: 0,
+            stdout: "fallback\n",
+            sandbox: {
+              sandboxed: false,
+              mode: "warn",
+              runtime: "test-unavailable",
+              unavailable: expect.stringContaining("test-unavailable"),
+              available: false,
+              fallbackReason: expect.stringContaining("test-unavailable"),
+              enforced: false,
+            },
+          },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps command hooks from writing forced deny paths when runtime is available", async () => {
+    const runtime = createPlatformShellSandboxRuntime();
+    if (!(await runtime.isAvailable())) return;
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(configPath, "original\n", "utf8");
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        sandbox: { mode: "enforce" },
+        sandboxRuntime: runtime,
+        configPaths: [configPath],
+        hooks: [
+          {
+            name: "deny-config-write",
+            hook: "Stop",
+            action: {
+              type: "command",
+              command: "/bin/bash",
+              args: ["-c", "echo bad > .sparkwright/config.json"],
+              blockOnFailure: true,
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(result.status).toBe("blocked");
+      await expect(readFile(configPath, "utf8")).resolves.toBe("original\n");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
 });
+
+function unavailableRuntime(): ShellSandboxRuntime {
+  return {
+    id: "test-unavailable",
+    platform: "unsupported",
+    isAvailable: async () => false,
+    execute: async () => {
+      throw new Error("should not execute");
+    },
+  };
+}

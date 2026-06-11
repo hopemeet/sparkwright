@@ -1,14 +1,26 @@
 import { createHash } from "node:crypto";
+import { spawn, type IOType } from "node:child_process";
+import process from "node:process";
+import { PassThrough, type Stream } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import {
+  ReadBuffer,
+  serializeMessage,
+} from "@modelcontextprotocol/sdk/shared/stdio.js";
 import {
   CallToolResultSchema,
   CreateMessageRequestSchema,
   type CreateMessageRequest,
   type CreateMessageResult,
+  type JSONRPCMessage,
   type Tool as McpTool,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
@@ -25,6 +37,13 @@ import {
 } from "@sparkwright/core";
 import type { EventEmitter, ToolRisk } from "@sparkwright/core";
 import type { Policy } from "@sparkwright/core";
+import {
+  createPlatformShellSandboxRuntime,
+  prepareSandboxedProcessInvocation,
+  type ResolvedShellSandboxConfig,
+  type SandboxedProcessInvocation,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const CLIENT_NAME = "sparkwright";
@@ -98,6 +117,7 @@ export type McpPreparePhase = "policy" | "connect" | "list_tools";
 
 export type McpPrepareErrorCode =
   | "MCP_SERVER_PREPARE_DENIED"
+  | "MCP_SERVER_SANDBOX_UNAVAILABLE"
   | "MCP_SERVER_COMMAND_NOT_FOUND"
   | "MCP_SERVER_PREPARE_TIMEOUT"
   | "MCP_SERVER_CONNECT_FAILED"
@@ -115,6 +135,7 @@ export interface PreparedMcpServer {
   status: McpStatus;
   tools: ToolDefinition[];
   toolNameMap: McpToolNameMapping[];
+  sandbox?: McpSandboxSummary;
   close(): Promise<void>;
 }
 
@@ -153,6 +174,13 @@ export interface PrepareMcpToolsForRunOptions {
   /** Override the content policy used to inspect MCP tool descriptions. */
   descriptionPolicy?: ContentPolicy;
   /**
+   * Optional OS sandbox config for stdio MCP servers. HTTP/SSE transports are
+   * already remote transports and are not wrapped here.
+   */
+  shellSandbox?: ResolvedShellSandboxConfig;
+  /** Injectable runtime, primarily for tests. */
+  shellSandboxRuntime?: ShellSandboxRuntime;
+  /**
    * Enable server-initiated sampling: the server may request a completion from
    * the host LLM. When provided, the client advertises the sampling capability
    * and routes requests through a guarded handler (rate limit, lifetime cap,
@@ -184,6 +212,16 @@ export interface McpToolDescriptionWarning {
   mcpToolName: string;
   toolName: string;
   verdict: ContentPolicyVerdict;
+}
+
+export interface McpSandboxSummary {
+  sandboxed: boolean;
+  mode?: string;
+  runtime?: string;
+  networkMode?: string;
+  available?: boolean;
+  fallbackReason?: string;
+  enforced?: boolean;
 }
 
 export type McpContextDescriptor =
@@ -230,6 +268,8 @@ export async function prepareMcpToolsForRun(
         onStdioStderr: options.onStdioStderr,
         onToolDescriptionWarning: options.onToolDescriptionWarning,
         descriptionPolicy: options.descriptionPolicy,
+        shellSandbox: options.shellSandbox,
+        shellSandboxRuntime: options.shellSandboxRuntime,
         sampling: options.sampling,
         usedNames,
       }),
@@ -266,11 +306,13 @@ export async function prepareMcpToolsForRun(
                 },
               }
             : {}),
+          ...(server.sandbox ? { sandbox: server.sandbox } : {}),
         },
         {
           ...baseMeta,
           serverType: config?.type,
           toolNameMap: server.toolNameMap,
+          ...(server.sandbox ? { sandbox: server.sandbox } : {}),
           ...(server.status.status === "failed"
             ? {
                 error: server.status.error,
@@ -314,12 +356,14 @@ export async function prepareMcpServer(
       status: { status: "disabled" },
       tools: [],
       toolNameMap: [],
+      sandbox: disabledMcpSandboxSummary(config, options.shellSandbox),
       close: async () => {},
     };
   }
 
   let client: Client | undefined;
   let phase: McpPreparePhase = "policy";
+  let sandbox: McpSandboxSummary | undefined;
   const startedAt = Date.now();
 
   try {
@@ -342,6 +386,7 @@ export async function prepareMcpServer(
         },
         tools: [],
         toolNameMap: [],
+        sandbox,
         close: async () => {},
       };
     }
@@ -364,9 +409,16 @@ export async function prepareMcpServer(
           samplingHandler(request.params),
         );
       }
-      const transport = buildMcpTransport(config, name, options.onStdioStderr);
       phase = "connect";
-      await next.connect(transport, { timeout: timeoutMs });
+      const preparedTransport = await buildMcpTransport(
+        config,
+        name,
+        options.onStdioStderr,
+        options.shellSandbox,
+        options.shellSandboxRuntime,
+      );
+      sandbox = preparedTransport.sandbox;
+      await next.connect(preparedTransport.transport, { timeout: timeoutMs });
       return next;
     };
 
@@ -422,11 +474,14 @@ export async function prepareMcpServer(
       status: { status: "connected" },
       tools,
       toolNameMap,
+      sandbox,
       close: closeClient,
     };
   } catch (cause) {
     await client?.close().catch(() => {});
     const error = classifyMcpPrepareFailure(cause, phase);
+    const causeSandbox =
+      cause instanceof McpSandboxUnavailableError ? cause.sandbox : undefined;
     return {
       name,
       status: {
@@ -441,6 +496,7 @@ export async function prepareMcpServer(
       },
       tools: [],
       toolNameMap: [],
+      sandbox: sandbox ?? causeSandbox,
       close: async () => {},
     };
   }
@@ -568,6 +624,9 @@ function classifyMcpPrepareFailure(
   const rawMessage = cause instanceof Error ? cause.message : String(cause);
   const message = redactSensitiveText(rawMessage);
   const nodeCode = isRecord(cause) ? cause.code : undefined;
+  if (nodeCode === "MCP_SERVER_SANDBOX_UNAVAILABLE") {
+    return { code: "MCP_SERVER_SANDBOX_UNAVAILABLE", message };
+  }
   if (nodeCode === "ENOENT" || /\bENOENT\b/u.test(rawMessage)) {
     return { code: "MCP_SERVER_COMMAND_NOT_FOUND", message };
   }
@@ -583,12 +642,99 @@ function classifyMcpPrepareFailure(
   return { code: "MCP_SERVER_PREPARE_FAILED", message };
 }
 
-function buildMcpTransport(
+function disabledMcpSandboxSummary(
+  config: McpServerConfig,
+  shellSandbox: ResolvedShellSandboxConfig | undefined,
+): McpSandboxSummary | undefined {
+  if (config.type !== "stdio" || !shellSandbox) return undefined;
+  return {
+    sandboxed: false,
+    mode: shellSandbox.mode,
+    networkMode: shellSandbox.network.mode,
+    available: false,
+    enforced: shellSandbox.failIfUnavailable,
+  };
+}
+
+async function buildMcpTransport(
   config: McpServerConfig,
   name: string,
   onStdioStderr?: (input: McpStdioStderrChunk) => void,
-): StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
+  shellSandbox?: ResolvedShellSandboxConfig,
+  shellSandboxRuntime?: ShellSandboxRuntime,
+): Promise<{ transport: Transport; sandbox?: McpSandboxSummary }> {
   if (config.type === "stdio") {
+    if (shellSandbox && shellSandbox.mode !== "off") {
+      const runtime =
+        shellSandboxRuntime ?? createPlatformShellSandboxRuntime();
+      const available = await runtime.isAvailable();
+      if (available) {
+        const invocation = await prepareSandboxedProcessInvocation(
+          runtime,
+          {
+            command: config.command,
+            args: config.args,
+            cwd: config.cwd ?? process.cwd(),
+            env: config.env,
+            metadata: {
+              sandboxed: true,
+              sandboxRuntime: runtime.id,
+              mcpServerName: name,
+            },
+          },
+          shellSandbox,
+        );
+        const transport = new SandboxedStdioClientTransport({
+          invocation,
+          stderr: "pipe",
+        });
+        drainStdioStderr(transport, name, onStdioStderr);
+        return {
+          transport,
+          sandbox: {
+            sandboxed: true,
+            mode: shellSandbox.mode,
+            runtime: runtime.id,
+            networkMode: shellSandbox.network.mode,
+            available: true,
+            enforced: shellSandbox.failIfUnavailable,
+          },
+        };
+      }
+      const reason = `MCP stdio sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
+      if (shellSandbox.failIfUnavailable) {
+        throw new McpSandboxUnavailableError(reason, {
+          sandboxed: false,
+          mode: shellSandbox.mode,
+          runtime: runtime.id,
+          networkMode: shellSandbox.network.mode,
+          available: false,
+          fallbackReason: reason,
+          enforced: true,
+        });
+      }
+      const transport = new StdioClientTransport({
+        command: config.command,
+        args: config.args,
+        cwd: config.cwd,
+        env: config.env,
+        stderr: "pipe",
+      });
+      drainStdioStderr(transport, name, onStdioStderr);
+      return {
+        transport,
+        sandbox: {
+          sandboxed: false,
+          mode: shellSandbox.mode,
+          runtime: runtime.id,
+          networkMode: shellSandbox.network.mode,
+          available: false,
+          fallbackReason: reason,
+          enforced: false,
+        },
+      };
+    }
+
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
@@ -597,18 +743,192 @@ function buildMcpTransport(
       stderr: "pipe",
     });
     drainStdioStderr(transport, name, onStdioStderr);
-    return transport;
+    return {
+      transport,
+      sandbox: shellSandbox
+        ? {
+            sandboxed: false,
+            mode: shellSandbox.mode,
+            networkMode: shellSandbox.network.mode,
+            available: false,
+            enforced: false,
+          }
+        : undefined,
+    };
   }
   if (config.type === "sse") {
-    return new SSEClientTransport(new URL(config.url), {
+    return {
+      transport: new SSEClientTransport(new URL(config.url), {
+        requestInit: config.headers ? { headers: config.headers } : undefined,
+        authProvider: config.authProvider,
+      }),
+    };
+  }
+  return {
+    transport: new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: config.headers ? { headers: config.headers } : undefined,
       authProvider: config.authProvider,
+    }),
+  };
+}
+
+class McpSandboxUnavailableError extends Error {
+  readonly code = "MCP_SERVER_SANDBOX_UNAVAILABLE";
+
+  constructor(
+    message: string,
+    readonly sandbox: McpSandboxSummary,
+  ) {
+    super(message);
+  }
+}
+
+class SandboxedStdioClientTransport implements Transport {
+  private process?: ReturnType<typeof spawn>;
+  private readonly readBuffer = new ReadBuffer();
+  private readonly stderrStream: PassThrough | null;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: JSONRPCMessage) => void;
+
+  constructor(
+    private readonly params: {
+      invocation: SandboxedProcessInvocation;
+      stderr?: IOType | Stream | number;
+    },
+  ) {
+    this.stderrStream =
+      params.stderr === "pipe" || params.stderr === "overlapped"
+        ? new PassThrough()
+        : null;
+  }
+
+  async start(): Promise<void> {
+    if (this.process) {
+      throw new Error("SandboxedStdioClientTransport already started.");
+    }
+
+    await new Promise<void>((resolveStart, rejectStart) => {
+      const invocation = this.params.invocation;
+      this.process = spawn(invocation.command, [...invocation.args], {
+        env: {
+          ...getDefaultEnvironment(),
+          ...invocation.env,
+        },
+        stdio: ["pipe", "pipe", this.params.stderr ?? "inherit"],
+        shell: false,
+        windowsHide: process.platform === "win32",
+        cwd: invocation.cwd,
+      });
+
+      this.process.on("error", (error) => {
+        rejectStart(error);
+        this.onerror?.(error);
+        void invocation.cleanup?.();
+      });
+      this.process.on("spawn", () => resolveStart());
+      this.process.on("close", () => {
+        this.process = undefined;
+        this.onclose?.();
+        void invocation.cleanup?.();
+      });
+      this.process.stdin?.on("error", (error) => {
+        this.onerror?.(error);
+      });
+      this.process.stdout?.on("data", (chunk: Buffer | string) => {
+        this.readBuffer.append(
+          Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8"),
+        );
+        this.processReadBuffer();
+      });
+      this.process.stdout?.on("error", (error) => {
+        this.onerror?.(error);
+      });
+      if (this.stderrStream && this.process.stderr) {
+        this.process.stderr.pipe(this.stderrStream);
+      }
     });
   }
-  return new StreamableHTTPClientTransport(new URL(config.url), {
-    requestInit: config.headers ? { headers: config.headers } : undefined,
-    authProvider: config.authProvider,
-  });
+
+  get stderr(): Stream | null {
+    if (this.stderrStream) return this.stderrStream;
+    return this.process?.stderr ?? null;
+  }
+
+  get pid(): number | null {
+    return this.process?.pid ?? null;
+  }
+
+  async close(): Promise<void> {
+    if (this.process) {
+      const processToClose = this.process;
+      this.process = undefined;
+      const closePromise = new Promise<void>((resolveClose) => {
+        processToClose.once("close", () => resolveClose());
+      });
+      try {
+        processToClose.stdin?.end();
+      } catch {
+        // ignore
+      }
+      await Promise.race([
+        closePromise,
+        new Promise<void>((resolveTimeout) =>
+          setTimeout(resolveTimeout, 2000).unref(),
+        ),
+      ]);
+      if (processToClose.exitCode === null) {
+        try {
+          processToClose.kill("SIGTERM");
+        } catch {
+          // ignore
+        }
+        await Promise.race([
+          closePromise,
+          new Promise<void>((resolveTimeout) =>
+            setTimeout(resolveTimeout, 2000).unref(),
+          ),
+        ]);
+      }
+      if (processToClose.exitCode === null) {
+        try {
+          processToClose.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+      await this.params.invocation.cleanup?.();
+    }
+    this.readBuffer.clear();
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    await new Promise<void>((resolveSend) => {
+      if (!this.process?.stdin) {
+        throw new Error("Not connected");
+      }
+      const json = serializeMessage(message);
+      if (this.process.stdin.write(json)) {
+        resolveSend();
+      } else {
+        this.process.stdin.once("drain", resolveSend);
+      }
+    });
+  }
+
+  private processReadBuffer(): void {
+    while (true) {
+      try {
+        const message = this.readBuffer.readMessage();
+        if (message === null) break;
+        this.onmessage?.(message);
+      } catch (error) {
+        this.onerror?.(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    }
+  }
 }
 
 type ReconnectableClient = McpClientLike & { close?: () => Promise<void> };
@@ -865,7 +1185,7 @@ export function inspectMcpToolDescription(
 }
 
 function drainStdioStderr(
-  transport: StdioClientTransport,
+  transport: { stderr: Stream | null },
   serverName: string,
   onChunk?: (input: McpStdioStderrChunk) => void,
 ): void {

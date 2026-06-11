@@ -1110,6 +1110,17 @@ describe("host protocol", () => {
         envelope: "response",
         ok: true,
         result: {
+          shell: {
+            sandbox: {
+              mode: "warn",
+              runtimeId: expect.any(String),
+              available: expect.any(Boolean),
+              networkMode: "deny",
+              filesystemIsolation: expect.stringMatching(
+                /^(bind-allowlist|deny-list-guard|unsupported)$/,
+              ),
+            },
+          },
           skills: {
             loaded: [],
           },
@@ -1121,10 +1132,10 @@ describe("host protocol", () => {
                 status: "failed",
                 toolNames: [],
                 // A missing command spawns ENOENT on POSIX (-> COMMAND_NOT_FOUND)
-                // but on Windows the spawn error races the connect timeout and
-                // surfaces as a generic connect failure. Accept either.
+                // but the spawn error can race the connect timeout on some
+                // hosts. Accept the structured connection-class failures.
                 errorCode: expect.stringMatching(
-                  /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED)$/,
+                  /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED|PREPARE_TIMEOUT)$/,
                 ),
                 errorPhase: "connect",
                 errorMessage: expect.any(String),

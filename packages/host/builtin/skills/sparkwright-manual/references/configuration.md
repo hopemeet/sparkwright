@@ -200,6 +200,11 @@ integrations, not the usual project config surface.
 }
 ```
 
+Command actions run without a shell. Set `stdin` to `json` when the command
+needs the workflow hook input on stdin; omit it or use `none` for empty stdin.
+Use `PostToolUse` for feedback after an action. Use `Stop` when the same rule
+must gate the final answer.
+
 ## Common Fields
 
 - `model`: active model in `provider/model` form. The reserved

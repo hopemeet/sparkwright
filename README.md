@@ -354,15 +354,20 @@ For local tools that do not expose ACP, use a generic external command profile:
 }
 ```
 
-`externalCommand` uses `spawn` directly, not a shell. `args` may contain
-`{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`; `input` can be
-`argument`, `stdin`, or `none`. Non-zero exits fail the delegate unless listed
-in `successExitCodes`. `envMode` defaults to `inherit`; set it to `explicit`
-to pass only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes`
-control output capture limits independently, with `maxOutputBytes` retained as
-a shared fallback. `{{workspaceRoot}}` and `cwd` require
-`"workspaceAccess": "read_write"`; without it, the command runs from an isolated
-temporary cwd and gets only the prompt/metadata you pass.
+`externalCommand` keeps argv semantics rather than exposing shell expansion.
+`args` may contain `{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`;
+`input` can be `argument`, `stdin`, or `none`. Non-zero exits fail the delegate
+unless listed in `successExitCodes`. `envMode` defaults to `inherit`; set it to
+`explicit` to pass only the configured `env` map. `maxStdoutBytes` and
+`maxStderrBytes` control output capture limits independently, with
+`maxOutputBytes` retained as a shared fallback. `{{workspaceRoot}}` and `cwd`
+require `"workspaceAccess": "read_write"`; without it, the command runs from an
+isolated temporary cwd and gets only the prompt/metadata you pass.
+External-command delegates and local stdio MCP servers use the same
+`shell.sandbox` process boundary as the built-in shell tool. Capability
+inspection reports the filesystem boundary as `fs=bind-allowlist` on Linux or
+`fs=deny-list-guard` on macOS; the macOS adapter protects deny paths and
+network access but is not a complete filesystem allow-list sandbox.
 
 Run a configured external delegate directly while debugging:
 

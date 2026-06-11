@@ -150,6 +150,56 @@ This is intentionally not a full allowlist. Omitting `tools.enabled` lets the
 host start from its available tools, then removes `shell` and defers MCP schemas
 when supported.
 
+### Shell Sandbox
+
+The built-in `shell` tool still goes through command classification, policy,
+approval, and workspace mutation audit. `shell.sandbox` adds an experimental
+OS-level process boundary underneath that flow. The same setting is also used
+for configured workflow-hook commands, external-command delegates, and local
+stdio MCP servers:
+
+```json
+{
+  "shell": {
+    "sandbox": {
+      "mode": "warn",
+      "filesystem": {
+        "allowRead": ["."],
+        "allowWrite": ["."],
+        "denyRead": [".env", ".ssh", ".aws"],
+        "denyWrite": [".sparkwright/config.json"],
+        "tmp": true
+      },
+      "network": {
+        "mode": "deny"
+      }
+    }
+  }
+}
+```
+
+Modes:
+
+- `off`: run through the legacy unsandboxed process executors.
+- `warn`: use the platform sandbox when available; otherwise fall back and mark
+  supported command result metadata with the unavailable runtime.
+- `enforce`: fail supported local process execution when the platform sandbox
+  runtime is missing.
+
+Linux uses `bubblewrap` (`bwrap`) for bind-based filesystem isolation. macOS
+uses `sandbox-exec` for deny-list and network controls in this first adapter;
+it protects forced deny paths such as Sparkwright config state but is not yet a
+complete allow-list filesystem sandbox. Other platforms are unsupported in
+enforce mode. The host always appends forced deny-write paths for Sparkwright
+config and capability state so project config cannot remove those protections.
+`sparkwright capabilities inspect` reports this distinction as
+`fs=bind-allowlist` on Linux and `fs=deny-list-guard` on macOS. Treat the macOS
+mode as a guard for configured deny paths and network access, not as evidence
+that every unlisted filesystem path is hidden.
+Across user, project, and explicit config files, `shell.sandbox` is merged
+conservatively: stricter modes, `failIfUnavailable: true`, network deny,
+filesystem deny paths, and `tmp: false` win over later weaker settings.
+
 ### Add Workflow Hooks
 
 Project hooks live under `capabilities.hooks.workflow`. They attach
@@ -240,12 +290,20 @@ Run a command after workspace writes and feed the result back into the run:
 }
 ```
 
-Command actions use `command` plus `args`; they do not run through a shell
-string. Relative `cwd` values resolve from the workspace root. Command stdout
-and stderr are truncated before they are stored. Set `injectOutput` to
-`always`, `onFailure`, or `never` to control whether command output is added
-as workflow-hook context. Set `frequency` to `oncePerTurn` when a hook should
-run at most once for the same run step.
+Command actions use `command` plus `args`; user arguments are not shell-expanded
+by the config surface. Relative `cwd` values resolve from the workspace root.
+Command stdout and stderr are truncated before they are stored. Set
+`injectOutput` to `always`, `onFailure`, or `never` to control whether command
+output is added as workflow-hook context. Set `stdin` to `json` when the command
+should receive the workflow hook input on stdin (`hook`, `run`, `step`,
+`payload`, and `metadata`); omit it or set `none` for the default empty stdin.
+Set `frequency` to `oncePerTurn` when a hook should run at most once for the
+same run step. Command hooks use the same `shell.sandbox` process boundary as
+the built-in shell tool.
+
+`PostToolUse` command failures are fed back into the run so the model can
+correct course. Pair a post-tool check with a `Stop` hook when a condition must
+also be enforced before the final answer.
 
 ### Add A Stdio MCP Server
 
@@ -276,9 +334,11 @@ Add a server under project `capabilities.mcp.servers`:
 }
 ```
 
-MCP `cwd` resolves from the config file that declares it. Prefer
-`requiresApproval: true` for tools that can touch workspace state,
-credentials, network services, or external systems.
+MCP `cwd` resolves from the config file that declares it. Stdio MCP servers use
+the same `shell.sandbox` process boundary as the built-in shell tool; HTTP and
+SSE MCP servers are remote transports and are governed by MCP policy rather
+than local process sandboxing. Prefer `requiresApproval: true` for tools that
+can touch workspace state, credentials, network services, or external systems.
 
 ### Add A Reviewer Agent
 

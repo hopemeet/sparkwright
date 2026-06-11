@@ -501,7 +501,36 @@
             }
           },
           "additionalProperties": false
+        },
+        "shell": {
+          "type": "object",
+          "properties": {
+            "sandbox": { "$ref": "#/$defs/CapabilityShellSandboxSummary" }
+          },
+          "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityShellSandboxSummary": {
+      "type": "object",
+      "required": [
+        "mode",
+        "failIfUnavailable",
+        "runtimeId",
+        "platform",
+        "available",
+        "networkMode",
+        "filesystemIsolation"
+      ],
+      "properties": {
+        "mode": { "type": "string" },
+        "failIfUnavailable": { "type": "boolean" },
+        "runtimeId": { "type": "string" },
+        "platform": { "type": "string" },
+        "available": { "type": "boolean" },
+        "networkMode": { "type": "string" },
+        "filesystemIsolation": { "type": "string" }
       },
       "additionalProperties": false
     },
