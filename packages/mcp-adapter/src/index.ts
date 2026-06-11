@@ -220,7 +220,9 @@ export interface McpSandboxSummary {
   runtime?: string;
   networkMode?: string;
   available?: boolean;
+  /** @reserved Public MCP sandbox status consumed by trace and diagnostics UIs. */
   fallbackReason?: string;
+  /** @reserved Public MCP sandbox status consumed by trace and diagnostics UIs. */
   enforced?: boolean;
 }
 

@@ -84,9 +84,12 @@ export interface ExternalCommandSandboxSummary {
   mode?: string;
   runtime?: string;
   networkMode?: string;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
   unavailable?: string;
   available?: boolean;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
   fallbackReason?: string;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
   enforced?: boolean;
 }
 

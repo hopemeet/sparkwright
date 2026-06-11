@@ -191,9 +191,12 @@ export interface ShellToolSandboxOutput {
   mode?: string;
   runtime?: string;
   networkMode?: string;
+  /** @reserved Public shell sandbox status consumed by trace and diagnostics UIs. */
   unavailable?: string;
   available?: boolean;
+  /** @reserved Public shell sandbox status consumed by trace and diagnostics UIs. */
   fallbackReason?: string;
+  /** @reserved Public shell sandbox status consumed by trace and diagnostics UIs. */
   enforced?: boolean;
 }
 
