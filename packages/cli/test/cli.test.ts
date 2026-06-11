@@ -1025,6 +1025,10 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain(
       "tools: enabled=(all); disabled=shell; defer=mcp_*",
     );
+    expect(textOutput.stdoutText()).toContain(
+      "shell sandbox: mode=warn; effective=",
+    );
+    expect(textOutput.stdoutText()).toContain("network=deny");
     expect(textOutput.stdoutText()).toContain("skills:");
     expect(textOutput.stdoutText()).toContain("reviewer (legacy)");
     expect(textOutput.stdoutText()).toContain("agents: 1 effective");
@@ -1046,6 +1050,16 @@ describe("runCli", () => {
     expect(json.exitCode).toBe(0);
     const report = JSON.parse(jsonOutput.stdoutText()) as {
       tools: { disabled?: string[]; defer?: string[] };
+      shell: {
+        sandbox: {
+          mode: string;
+          runtimeId: string;
+          available: boolean;
+          networkMode: string;
+          filesystemIsolation: string;
+          effective: string;
+        };
+      };
       skills: { skills: Array<{ name: string; layer?: string }> };
       agents: {
         profiles: Array<{ id: string; layer: string }>;
@@ -1059,6 +1073,16 @@ describe("runCli", () => {
       cron: { stateRoot: string; legacyStateRoot: string };
       command: { dirs: Array<{ layer: string; exists: boolean }> };
     };
+    expect(report.shell.sandbox).toMatchObject({
+      mode: "warn",
+      runtimeId: expect.any(String),
+      available: expect.any(Boolean),
+      networkMode: "deny",
+      filesystemIsolation: expect.stringMatching(
+        /^(bind-allowlist|deny-list-guard|unsupported)$/,
+      ),
+      effective: expect.stringMatching(/^(on|fallback)$/),
+    });
     expect(report.tools.disabled).toEqual(["shell"]);
     expect(report.tools.defer).toEqual(["mcp_*"]);
     expect(report.skills.skills).toEqual(
@@ -1507,7 +1531,7 @@ describe("runCli", () => {
         "--allow",
         "read_file",
         "--allow",
-        "glob_paths",
+        "glob",
         "--max-steps",
         "4",
         "--delegate",
@@ -1558,7 +1582,7 @@ describe("runCli", () => {
         id: "reviewer",
         name: "Reviewer",
         prompt: "Inspect changes for correctness and risk.",
-        allowedTools: ["read_file", "glob_paths"],
+        allowedTools: ["read_file", "glob"],
         maxSteps: 4,
       }),
     ]);
@@ -2632,6 +2656,93 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("applies configured workflow hooks in host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "block-readme-append",
+                hook: "PreToolUse",
+                matcher: {
+                  toolName: "append_file",
+                  pathGlob: "README.md",
+                },
+                action: {
+                  type: "block",
+                  reason: "README appends are locked by workflow hook.",
+                },
+              },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Try to append README.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    heading: "Blocked",
+                    body: "This should not be applied.",
+                  },
+                },
+              ],
+            },
+            { message: "blocked by hook" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find((event) => event.type === "workflow_hook.blocked"),
+    ).toBeTruthy();
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+      ),
+    ).toBeTruthy();
+  });
+
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -3143,6 +3254,66 @@ describe("runCli", () => {
         (event) =>
           event.type === "workspace.write.denied" &&
           String(event.payload?.reason).includes("allowed target scope"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("does not scope host writes to README.md unless --target is explicit", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Update package.json.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt package write",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "package.json",
+                    heading: "QA",
+                    body: "write without explicit target",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "package.json"), "utf8")).toContain(
+      "write without explicit target",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "workspace.write.completed" &&
+          event.payload?.path === "package.json",
       ),
     ).toBeTruthy();
   });

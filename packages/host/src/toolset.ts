@@ -8,7 +8,7 @@ import {
 } from "@sparkwright/agent-runtime";
 import type { RunId, ToolDefinition } from "@sparkwright/core";
 import type { SkillRoot } from "@sparkwright/skills";
-import type { CapabilityToolsConfig } from "./config.js";
+import type { CapabilityToolsConfig, ShellConfig } from "./config.js";
 import { createHostShellTool } from "./shell.js";
 import {
   applyToolConfig,
@@ -20,6 +20,7 @@ import {
   createEditAnchoredTextTool,
   createGlobPathsTool,
   createGrepTextTool,
+  createListDirTool,
   createReadAnchoredTextTool,
   createReadFileTool,
   createSkillInspectorTool,
@@ -41,6 +42,7 @@ export function createReadOnlyChildTools(input: {
       createReadFileTool(),
       createGlobPathsTool(input.workspaceRoot),
       createGrepTextTool(input.workspaceRoot),
+      createListDirTool(input.workspaceRoot),
     ],
     input.toolConfig,
   );
@@ -57,12 +59,15 @@ export function createMainHostTools(input: {
   preparedMcp?: PreparedToolSource | null;
   delegateTools?: ToolDefinition[];
   dynamicSpawnTool?: ToolDefinition;
+  shell?: ShellConfig;
+  configPaths?: readonly string[];
 }): ToolDefinition[] {
   return applyToolConfig(
     [
       createReadFileTool(),
       createGlobPathsTool(input.workspaceRoot),
       createGrepTextTool(input.workspaceRoot),
+      createListDirTool(input.workspaceRoot),
       createReadAnchoredTextTool(),
       createEditAnchoredTextTool(),
       createApplyPatchTool(),
@@ -74,6 +79,9 @@ export function createMainHostTools(input: {
       createAgentManagerTool(input.workspaceRoot),
       createHostShellTool(input.workspaceRoot, {
         taskManager: input.taskManager,
+        sandbox: input.shell?.sandbox,
+        skillRoots: input.skillRoots.map((root) => root.root),
+        extraForcedDenyWrite: input.configPaths,
       }),
       ...createHostTaskPollingTools({
         manager: input.taskManager,

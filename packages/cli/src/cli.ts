@@ -11,6 +11,7 @@ import {
   buildTraceTimelineFile,
   createSessionId,
   createLayeredPolicy,
+  DEFAULT_CONFIDENTIAL_PATHS,
   createPermissionModePolicy,
   createWorkspaceReadScopePolicy,
   createRunId,
@@ -67,6 +68,11 @@ import {
   type SkillReport,
 } from "@sparkwright/host";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
+import {
+  createPlatformShellSandboxRuntime,
+  describeShellSandboxStatus,
+  resolveShellSandboxConfig,
+} from "@sparkwright/shell-sandbox";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
@@ -103,6 +109,8 @@ interface ParsedArgs {
   confidentialPaths: string[];
   shouldWrite: boolean;
   approveAll: boolean;
+  approveEdits: boolean;
+  approveShellSafe: boolean;
   permissionMode: PermissionMode;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
@@ -250,6 +258,10 @@ export async function runCli(
           ...runInput,
           modelName:
             runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
+          targetPath:
+            runInput.targetPathSource === "cli"
+              ? runInput.targetPath
+              : undefined,
         },
         io,
         env,
@@ -445,6 +457,8 @@ function parseArgs(
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   let shouldWrite = false;
   let approveAll = false;
+  let approveEdits = false;
+  let approveShellSafe = false;
   let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
   let modelName: string | undefined = defaults.model;
   let modelNameSource: ParsedArgs["modelNameSource"] = defaults.model
@@ -548,6 +562,27 @@ function parseArgs(
 
     if (arg === "--yes") {
       approveAll = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--yes-all") {
+      approveAll = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--yes-edits") {
+      approveEdits = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--yes-shell-safe") {
+      approveShellSafe = true;
       args.splice(index, 1);
       index -= 1;
       continue;
@@ -814,7 +849,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes] [--format json|text]',
+        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--format json|text]',
     };
   }
 
@@ -905,6 +940,8 @@ function parseArgs(
       confidentialPaths,
       shouldWrite,
       approveAll,
+      approveEdits,
+      approveShellSafe,
       permissionMode,
       modelName,
       modelNameSource,
@@ -1378,6 +1415,18 @@ interface CapabilityInspectReport {
   tools: ToolsConfigShape & {
     available: CapabilityToolInspectEntry[];
   };
+  shell: {
+    sandbox: {
+      mode: string;
+      failIfUnavailable: boolean;
+      runtimeId: string;
+      platform: string;
+      available: boolean;
+      networkMode: string;
+      filesystemIsolation: string;
+      effective: string;
+    };
+  };
   skills: SkillReport;
   agents: AgentReport & {
     delegateTools: DelegateCapabilityDescriptor[];
@@ -1489,6 +1538,8 @@ async function handleDelegatesCommand(
     traceLevel: parsed.traceLevel,
     approvalResolver: createCliApprovalResolver({
       approveAll: parsed.approveAll,
+      approveEdits: parsed.approveEdits,
+      approveShellSafe: parsed.approveShellSafe,
       io,
     }),
     shouldWrite: parsed.shouldWrite,
@@ -1565,6 +1616,16 @@ async function loadCapabilityInspectReport(
     capabilities?.skills?.roots,
     env,
   );
+  const shellSandboxConfig = resolveShellSandboxConfig({
+    workspaceRoot,
+    config: loaded.config.shell?.sandbox,
+    skillRoots: skillRoots.map((root) => root.root),
+    extraForcedDenyWrite: loaded.attempted.map((entry) => entry.path),
+  });
+  const shellSandbox = await describeShellSandboxStatus(
+    shellSandboxConfig,
+    createPlatformShellSandboxRuntime(),
+  );
   const skills = await loadLayeredSkillReport(skillRoots, {
     includeMissingRoots: "configured",
   });
@@ -1603,6 +1664,7 @@ async function loadCapabilityInspectReport(
       defaultTimeoutMs: capabilities.mcp.defaultTimeoutMs,
       namePrefix: capabilities.mcp.namePrefix,
       policy: capabilities.mcp.defaultPolicy,
+      shellSandbox: shellSandboxConfig,
     });
     try {
       for (const server of mcpServers) {
@@ -1648,6 +1710,18 @@ async function loadCapabilityInspectReport(
         ),
       }),
     },
+    shell: {
+      sandbox: {
+        mode: shellSandbox.mode,
+        failIfUnavailable: shellSandbox.failIfUnavailable,
+        runtimeId: shellSandbox.runtimeId,
+        platform: shellSandbox.platform,
+        available: shellSandbox.available,
+        networkMode: shellSandbox.networkMode,
+        filesystemIsolation: shellSandbox.filesystemIsolation,
+        effective: shellSandboxEffective(shellSandbox),
+      },
+    },
     skills,
     agents: {
       ...agents,
@@ -1677,6 +1751,16 @@ async function loadCapabilityInspectReport(
   };
 }
 
+function shellSandboxEffective(input: {
+  mode: string;
+  failIfUnavailable: boolean;
+  available: boolean;
+}): string {
+  if (input.mode === "off") return "off";
+  if (input.available) return "on";
+  return input.failIfUnavailable ? "enforce-unavailable" : "fallback";
+}
+
 const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
   {
     name: "read_file",
@@ -1685,13 +1769,13 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     origin: "local:sparkwright",
   },
   {
-    name: "glob_paths",
+    name: "glob",
     source: "builtin",
     risk: "safe",
     origin: "local:sparkwright",
   },
   {
-    name: "grep_text",
+    name: "grep",
     source: "builtin",
     risk: "safe",
     origin: "local:sparkwright",
@@ -1727,25 +1811,25 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     origin: "local:sparkwright",
   },
   {
-    name: "inspect_skills",
+    name: "list_skills",
     source: "builtin",
     risk: "safe",
     origin: "local:sparkwright",
   },
   {
-    name: "manage_skill",
+    name: "create_skill",
     source: "builtin",
     risk: "risky",
     origin: "local:sparkwright",
   },
   {
-    name: "inspect_agents",
+    name: "list_agents",
     source: "builtin",
     risk: "safe",
     origin: "local:sparkwright",
   },
   {
-    name: "manage_agent",
+    name: "create_agent",
     source: "builtin",
     risk: "risky",
     origin: "local:sparkwright",
@@ -1870,6 +1954,7 @@ function formatCapabilityInspectReport(
   const lines = [
     `workspace: ${report.workspace}`,
     `tools: enabled=${formatPatternList(report.tools.enabled, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
     `available tools: ${report.tools.available.length}`,
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
   ];
@@ -2699,6 +2784,8 @@ async function handleCronCommand(
         tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
         approvalResolver: createCliApprovalResolver({
           approveAll: parsed.approveAll,
+          approveEdits: parsed.approveEdits,
+          approveShellSafe: parsed.approveShellSafe,
           io,
         }),
         permissionMode: parsed.permissionMode,
@@ -2730,6 +2817,8 @@ async function handleCronCommand(
       tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
       approvalResolver: createCliApprovalResolver({
         approveAll: parsed.approveAll,
+        approveEdits: parsed.approveEdits,
+        approveShellSafe: parsed.approveShellSafe,
         io,
       }),
       permissionMode: parsed.permissionMode,
@@ -2972,8 +3061,8 @@ function cronUsage(): string {
     "       sparkwright cron list",
     "       sparkwright cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text]",
     "       sparkwright cron pause|resume|remove|status <job-id-or-name>",
-    "       sparkwright cron run <job-id-or-name> [--model provider/model] [--yes]",
-    "       sparkwright cron tick [--model provider/model] [--yes]",
+    "       sparkwright cron run <job-id-or-name> [--model provider/model] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
+    "       sparkwright cron tick [--model provider/model] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
   ].join("\n");
 }
 
@@ -2991,7 +3080,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
-    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
+    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
@@ -3230,11 +3319,14 @@ async function handleRunResumeCommand(
         sessionRootDir: parsed.sessionRootDir,
         shouldWrite: parsed.shouldWrite,
         approveAll: parsed.approveAll,
+        approveEdits: parsed.approveEdits,
+        approveShellSafe: parsed.approveShellSafe,
         permissionMode: parsed.permissionMode,
         modelName:
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
-        targetPath: parsed.targetPath,
+        targetPath:
+          parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
         confidentialPaths: parsed.confidentialPaths,
         traceLevel: parsed.traceLevel,
         fromTrace: parsed.fromTrace,
@@ -3346,17 +3438,19 @@ async function handleRunResumeCommand(
   const workspace = new LocalWorkspace(parsed.workspaceRoot);
   const approvalResolver = createCliApprovalResolver({
     approveAll: parsed.approveAll,
+    approveEdits: parsed.approveEdits,
+    approveShellSafe: parsed.approveShellSafe,
     io,
   });
-  const policy =
-    parsed.confidentialPaths.length > 0
-      ? createLayeredPolicy([
-          createPermissionModePolicy({ mode: parsed.permissionMode }),
-          createWorkspaceReadScopePolicy({
-            confidentialPaths: parsed.confidentialPaths,
-          }),
-        ])
-      : createPermissionModePolicy({ mode: parsed.permissionMode });
+  const policy = createLayeredPolicy([
+    createPermissionModePolicy({ mode: parsed.permissionMode }),
+    createWorkspaceReadScopePolicy({
+      confidentialPaths: [
+        ...DEFAULT_CONFIDENTIAL_PATHS,
+        ...parsed.confidentialPaths,
+      ],
+    }),
+  ]);
   const tools = await createConfiguredCliTools(parsed.workspaceRoot, env);
 
   // Wire a FileRunStore pointing at the same run dir so the resumed run's
@@ -3435,6 +3529,10 @@ function formatTraceSummary(summary: TraceSummary): string {
     .join(", ");
   const topToolCalls = formatTopCounts(summary.toolCalls, 8);
   const topToolFailures = formatTopCounts(summary.toolFailures?.byCode, 5);
+  const topCommandFailures = formatTopCounts(
+    summary.commandFailures?.byExitCode,
+    5,
+  );
   const unresolvedToolFailures = formatTopCounts(
     summary.toolFailures?.unresolved?.byCode,
     5,
@@ -3463,6 +3561,10 @@ function formatTraceSummary(summary: TraceSummary): string {
     `tool failures: ${summary.toolFailures?.total ?? 0} total${topToolFailures ? ` (${topToolFailures})` : ""}`,
     `unresolved tool failures: ${summary.toolFailures?.unresolved?.total ?? 0} total${unresolvedToolFailures ? ` (${unresolvedToolFailures})` : ""}`,
     `recovered tool failures: ${summary.toolFailures?.recovered?.total ?? 0} total${recoveredToolFailures ? ` (${recoveredToolFailures})` : ""}`,
+    `command failures: ${summary.commandFailures?.total ?? 0} total${topCommandFailures ? ` (${topCommandFailures})` : ""}`,
+    `verification failures: ${summary.commandFailures?.verification?.total ?? 0} total, ${summary.commandFailures?.verification?.unresolved ?? 0} unresolved${summary.commandFailures?.verification?.lastCommand ? `, last ${summary.commandFailures.verification.lastCommand}` : ""}`,
+    `approvals: ${summary.safety?.approvals?.requested ?? 0} requested, ${summary.safety?.approvals?.approved ?? 0} approved, ${summary.safety?.approvals?.denied ?? 0} denied, ${summary.safety?.approvals?.autoApproved ?? 0} auto-approved`,
+    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped`,
     `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
@@ -3766,20 +3868,20 @@ function usage(): string {
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
+    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--format json|text]",
     "       sparkwright tools enable|disable|defer <tool-pattern...>",
     "       sparkwright skills list|validate [--workspace path] [--format json|text]",
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
+    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
     "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes] [--permission-mode mode]',
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model]",
   ].join("\n");
 }
@@ -3806,7 +3908,7 @@ function capabilitiesUsage(): string {
 }
 
 function delegatesUsage(): string {
-  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
+  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
 }
 
 function skillsUsage(): string {

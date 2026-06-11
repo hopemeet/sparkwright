@@ -1,6 +1,7 @@
 import {
   createPermissionModePolicy,
   createLayeredPolicy,
+  DEFAULT_CONFIDENTIAL_PATHS,
   createRun,
   createSessionRunStoreFactory,
   createWorkspaceMutationPolicy,
@@ -22,8 +23,10 @@ import {
 import {
   applyToolConfig,
   buildConfiguredAdapter,
+  createConfiguredWorkflowHooks,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
+  resolveSkillRootsForRuntime,
   resolveModelSelection,
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
@@ -36,6 +39,7 @@ import {
   createCliRunEventSummary,
   summarizeRunFailure,
   summarizeUnhandledToolFailures,
+  summarizeVerificationCommandFailures,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../run-outcome.js";
@@ -49,6 +53,8 @@ export interface DirectCoreRunInput {
   confidentialPaths?: readonly string[];
   shouldWrite: boolean;
   approveAll: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId: string;
@@ -77,6 +83,8 @@ export async function startDirectCoreRun(
     confidentialPaths,
     shouldWrite,
     approveAll,
+    approveEdits,
+    approveShellSafe,
     permissionMode,
     modelName,
     sessionId,
@@ -96,7 +104,12 @@ export async function startDirectCoreRun(
   }
 
   const workspace = new LocalWorkspace(workspaceRoot);
-  const approvalResolver = createCliApprovalResolver({ approveAll, io });
+  const approvalResolver = createCliApprovalResolver({
+    approveAll,
+    approveEdits,
+    approveShellSafe,
+    io,
+  });
   const policy = createLayeredPolicy([
     createPermissionModePolicy({ mode: permissionMode }),
     createWorkspaceMutationPolicy({
@@ -107,10 +120,27 @@ export async function startDirectCoreRun(
       allowDeletions: false,
     }),
     createWorkspaceReadScopePolicy({
-      confidentialPaths: confidentialPaths ?? [],
+      confidentialPaths: [
+        ...DEFAULT_CONFIDENTIAL_PATHS,
+        ...(confidentialPaths ?? []),
+      ],
     }),
   ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);
+  const loadedConfig = await loadHostConfig(workspaceRoot, env);
+  const skillRoots = resolveSkillRootsForRuntime(
+    workspaceRoot,
+    loadedConfig.config.capabilities?.skills?.roots,
+    env,
+  );
+  const workflowHooks = createConfiguredWorkflowHooks({
+    hooks: loadedConfig.config.capabilities?.hooks?.workflow,
+    workspaceRoot,
+    env,
+    sandbox: loadedConfig.config.shell?.sandbox,
+    skillRoots: skillRoots.map((root) => root.root),
+    configPaths: loadedConfig.attempted.map((entry) => entry.path),
+  });
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
@@ -130,6 +160,7 @@ export async function startDirectCoreRun(
       platform: process.platform,
     }),
     tools,
+    workflowHooks,
     model: model.adapter,
     context: parsed.contextItems ?? [],
     runStore: createSessionRunStoreFactory({
@@ -172,6 +203,9 @@ export async function startDirectCoreRun(
       stopReason: result.stopReason,
     });
     if (runFailureSummary) writeLine(io.stderr, runFailureSummary);
+    const verificationSummary =
+      summarizeVerificationCommandFailures(eventSummary);
+    if (verificationSummary) writeLine(io.stderr, verificationSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
     return {

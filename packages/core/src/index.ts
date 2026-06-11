@@ -121,12 +121,16 @@ export {
 
 // Run outcome classification
 export type {
+  ClassifiedCommandFailure,
+  ClassifiedCommandSuccess,
   ClassifiedToolFailure,
+  CommandOutcomeSummary,
   CompletedRunOutcome,
   ToolFailureCategory,
   ToolOutcomeSummary,
 } from "./run-outcome.js";
 export {
+  analyzeCommandOutcomes,
   analyzeToolOutcomes,
   classifyToolFailure,
   completedRunOutcomeFromEvents,
@@ -165,6 +169,7 @@ export type {
   WorkspaceReadScopePolicyOptions,
 } from "./policy.js";
 export {
+  DEFAULT_CONFIDENTIAL_PATHS,
   createDefaultPolicy,
   createLayeredPolicy,
   createPermissionModePolicy,
@@ -516,6 +521,22 @@ export type {
   ErrorHookInput,
 } from "./hooks.js";
 export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
+
+// Deterministic workflow hooks over the standard agent lifecycle.
+export type {
+  WorkflowHookName,
+  WorkflowRuntimeSignal,
+  WorkflowHookMatchValue,
+  WorkflowHookMatcher,
+  WorkflowHookInput,
+  WorkflowHookResult,
+  WorkflowHookRewritePatch,
+  WorkflowHook,
+  RunWorkflowHooksInput,
+  WorkflowHookBlock,
+  WorkflowHookExecution,
+} from "./workflow-hooks.js";
+export { runWorkflowHooks } from "./workflow-hooks.js";
 
 // User-configurable hooks (settings.json-style; host owns execution).
 export type {

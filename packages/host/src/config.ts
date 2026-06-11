@@ -10,15 +10,21 @@
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
- * files; every other field is wholesale-overridden. Callers layer CLI flags /
- * env on top.
+ * files, capabilities merge by sub-capability, and shell.sandbox merges
+ * conservatively so later layers cannot weaken an earlier sandbox policy.
+ * Callers layer CLI flags / env on top.
  */
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { PermissionMode } from "@sparkwright/core";
+import type {
+  PermissionMode,
+  WorkflowHookMatcher,
+  WorkflowHookName,
+} from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
 export const CONFIG_USER_REL = ".config/sparkwright/config.json";
@@ -81,15 +87,21 @@ export interface SharedConfig {
   workspace?: string;
   /**
    * Workspace-relative paths/globs whose contents a run must not read. Opt-in
-   * read-confidentiality: matching `read_file`/`grep_text` reads are denied at
+   * read-confidentiality: matching `read_file`/`grep` reads are denied at
    * the tool layer. Empty/absent leaves the default permissive behavior.
    */
   confidentialPaths?: string[];
+  shell?: ShellConfig;
   capabilities?: CapabilityConfig;
+}
+
+export interface ShellConfig {
+  sandbox?: ShellSandboxConfig;
 }
 
 export interface CapabilityConfig {
   tools?: CapabilityToolsConfig;
+  hooks?: CapabilityHooksConfig;
   skills?: CapabilitySkillsConfig;
   mcp?: CapabilityMcpConfig;
   agents?: CapabilityAgentsConfig;
@@ -105,6 +117,45 @@ export interface CapabilityToolsConfig {
   disabled?: string[];
   /** Tool-name patterns prepared as deferred schemas when supported. */
   defer?: string[];
+}
+
+export type CapabilityHookActionConfig =
+  | {
+      type: "block";
+      reason: string;
+    }
+  | {
+      type: "context";
+      content: string;
+      contextType?: "system" | "user" | "summary";
+    }
+  | {
+      type: "command";
+      command: string;
+      args?: string[];
+      cwd?: string;
+      timeoutMs?: number;
+      blockOnFailure?: boolean;
+      injectOutput?: "always" | "onFailure" | "never";
+      maxOutputBytes?: number;
+      stdin?: "none" | "json";
+    };
+
+export type CapabilityWorkflowHookFrequency = "always" | "oncePerTurn";
+
+export interface CapabilityWorkflowHookConfig {
+  name: string;
+  description?: string;
+  hook: WorkflowHookName;
+  enabled?: boolean;
+  frequency?: CapabilityWorkflowHookFrequency;
+  matcher?: WorkflowHookMatcher;
+  onError?: "continue" | "block";
+  action: CapabilityHookActionConfig;
+}
+
+export interface CapabilityHooksConfig {
+  workflow?: CapabilityWorkflowHookConfig[];
 }
 
 export interface CapabilityAgentsConfig {
@@ -167,6 +218,7 @@ export interface SharedConfigSourceMap {
   permissionMode?: string;
   workspace?: string;
   confidentialPaths?: string;
+  shell?: string;
   providers?: Record<string, string>;
 }
 
@@ -455,6 +507,368 @@ function validateCapabilityTools(
   return out;
 }
 
+const WORKFLOW_HOOK_NAMES: WorkflowHookName[] = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "ModelOutput",
+  "PreToolUse",
+  "PostToolUse",
+  "Stop",
+  "SessionEnd",
+  "RuntimeSignal",
+];
+
+function validateCapabilityHooks(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityHooksConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.hooks",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: CapabilityHooksConfig = {};
+  const allowed = new Set(["workflow"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `capabilities.hooks.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.workflow !== undefined) {
+    if (Array.isArray(raw.workflow)) {
+      out.workflow = raw.workflow
+        .map((hook, i) => validateWorkflowHookConfig(hook, i, filePath, errors))
+        .filter((hook): hook is CapabilityWorkflowHookConfig => !!hook);
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities.hooks.workflow",
+        message: "must be an array",
+      });
+    }
+  }
+  return out;
+}
+
+function validateWorkflowHookConfig(
+  raw: unknown,
+  index: number,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityWorkflowHookConfig | undefined {
+  const field = `capabilities.hooks.workflow.${index}`;
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "name",
+    "description",
+    "hook",
+    "enabled",
+    "frequency",
+    "matcher",
+    "onError",
+    "action",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (typeof raw.name !== "string" || raw.name.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.name`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  if (
+    typeof raw.hook !== "string" ||
+    !(WORKFLOW_HOOK_NAMES as string[]).includes(raw.hook)
+  ) {
+    errors.push({
+      file: filePath,
+      field: `${field}.hook`,
+      message: `must be one of ${WORKFLOW_HOOK_NAMES.join(" | ")}`,
+    });
+    return undefined;
+  }
+  const action = validateWorkflowHookAction(
+    raw.action,
+    field,
+    filePath,
+    errors,
+  );
+  if (!action) return undefined;
+  const out: CapabilityWorkflowHookConfig = {
+    name: raw.name,
+    hook: raw.hook as WorkflowHookName,
+    action,
+  };
+  if (raw.description !== undefined) {
+    if (typeof raw.description === "string") {
+      out.description = raw.description;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.description`,
+        message: "must be a string",
+      });
+    }
+  }
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      `${field}.enabled`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.onError !== undefined) {
+    if (raw.onError === "continue" || raw.onError === "block") {
+      out.onError = raw.onError;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.onError`,
+        message: "must be continue or block",
+      });
+    }
+  }
+  if (raw.frequency !== undefined) {
+    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+      out.frequency = raw.frequency;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.frequency`,
+        message: "must be always or oncePerTurn",
+      });
+    }
+  }
+  if (raw.matcher !== undefined) {
+    const matcher = validateWorkflowHookMatcher(
+      raw.matcher,
+      `${field}.matcher`,
+      filePath,
+      errors,
+    );
+    if (matcher) out.matcher = matcher;
+  }
+  return out;
+}
+
+function validateWorkflowHookAction(
+  raw: unknown,
+  parentField: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityHookActionConfig | undefined {
+  const field = `${parentField}.action`;
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const type = raw.type;
+  if (type !== "block" && type !== "context" && type !== "command") {
+    errors.push({
+      file: filePath,
+      field: `${field}.type`,
+      message: "must be block, context, or command",
+    });
+    return undefined;
+  }
+  if (type === "block") {
+    if (typeof raw.reason !== "string" || raw.reason.length === 0) {
+      errors.push({
+        file: filePath,
+        field: `${field}.reason`,
+        message: "must be a non-empty string",
+      });
+      return undefined;
+    }
+    return { type, reason: raw.reason };
+  }
+  if (type === "context") {
+    if (typeof raw.content !== "string" || raw.content.length === 0) {
+      errors.push({
+        file: filePath,
+        field: `${field}.content`,
+        message: "must be a non-empty string",
+      });
+      return undefined;
+    }
+    const contextType = raw.contextType;
+    if (
+      contextType !== undefined &&
+      contextType !== "system" &&
+      contextType !== "user" &&
+      contextType !== "summary"
+    ) {
+      errors.push({
+        file: filePath,
+        field: `${field}.contextType`,
+        message: "must be system, user, or summary",
+      });
+      return undefined;
+    }
+    return {
+      type,
+      content: raw.content,
+      ...(contextType ? { contextType } : {}),
+    };
+  }
+  if (typeof raw.command !== "string" || raw.command.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.command`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  return {
+    type,
+    command: raw.command,
+    ...(raw.args !== undefined
+      ? {
+          args: validateStringArray(
+            raw.args,
+            `${field}.args`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.cwd !== undefined
+      ? typeof raw.cwd === "string"
+        ? { cwd: raw.cwd }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.cwd`,
+            message: "must be a string",
+          }),
+          {})
+      : {}),
+    ...(raw.timeoutMs !== undefined
+      ? {
+          timeoutMs: validateOptionalPositiveInteger(
+            raw.timeoutMs,
+            `${field}.timeoutMs`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.blockOnFailure !== undefined
+      ? {
+          blockOnFailure: validateOptionalBoolean(
+            raw.blockOnFailure,
+            `${field}.blockOnFailure`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.injectOutput !== undefined
+      ? raw.injectOutput === "always" ||
+        raw.injectOutput === "onFailure" ||
+        raw.injectOutput === "never"
+        ? { injectOutput: raw.injectOutput }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.injectOutput`,
+            message: "must be always, onFailure, or never",
+          }),
+          {})
+      : {}),
+    ...(raw.stdin !== undefined
+      ? raw.stdin === "none" || raw.stdin === "json"
+        ? { stdin: raw.stdin }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.stdin`,
+            message: "must be none or json",
+          }),
+          {})
+      : {}),
+    ...(raw.maxOutputBytes !== undefined
+      ? {
+          maxOutputBytes: validateOptionalPositiveInteger(
+            raw.maxOutputBytes,
+            `${field}.maxOutputBytes`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+  };
+}
+
+function validateWorkflowHookMatcher(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): WorkflowHookMatcher | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "toolName",
+    "eventType",
+    "signal",
+    "status",
+    "pathGlob",
+    "excludePathGlob",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  const matcher: WorkflowHookMatcher = {};
+  for (const key of allowed) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value === "string") {
+      matcher[key as keyof WorkflowHookMatcher] = value;
+      continue;
+    }
+    if (
+      Array.isArray(value) &&
+      value.every((entry) => typeof entry === "string")
+    ) {
+      matcher[key as keyof WorkflowHookMatcher] = value;
+      continue;
+    }
+    errors.push({
+      file: filePath,
+      field: `${field}.${key}`,
+      message: "must be a string or array of strings",
+    });
+  }
+  return matcher;
+}
+
 function validateCapabilities(
   raw: unknown,
   filePath: string,
@@ -469,7 +883,7 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set(["tools", "skills", "mcp", "agents"]);
+  const allowed = new Set(["tools", "hooks", "skills", "mcp", "agents"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -483,6 +897,10 @@ function validateCapabilities(
     const tools = validateCapabilityTools(raw.tools, filePath, errors);
     if (tools) out.tools = tools;
   }
+  if (raw.hooks !== undefined) {
+    const hooks = validateCapabilityHooks(raw.hooks, filePath, errors);
+    if (hooks) out.hooks = hooks;
+  }
   if (raw.skills !== undefined) {
     const skills = validateCapabilitySkills(raw.skills, filePath, errors);
     if (skills) out.skills = skills;
@@ -494,6 +912,194 @@ function validateCapabilities(
   if (raw.agents !== undefined) {
     const agents = validateCapabilityAgents(raw.agents, filePath, errors);
     if (agents) out.agents = agents;
+  }
+  return out;
+}
+
+function validateShellConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): ShellConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: ShellConfig = {};
+  const allowed = new Set(["sandbox"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.sandbox !== undefined) {
+    const sandbox = validateShellSandboxConfig(raw.sandbox, filePath, errors);
+    if (sandbox) out.sandbox = sandbox;
+  }
+  return out;
+}
+
+function validateShellSandboxConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): ShellSandboxConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell.sandbox",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: ShellSandboxConfig = {};
+  const allowed = new Set([
+    "mode",
+    "failIfUnavailable",
+    "filesystem",
+    "network",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.sandbox.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.mode !== undefined) {
+    if (raw.mode === "off" || raw.mode === "warn" || raw.mode === "enforce") {
+      out.mode = raw.mode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "shell.sandbox.mode",
+        message: "must be off, warn, or enforce",
+      });
+    }
+  }
+  if (raw.failIfUnavailable !== undefined) {
+    out.failIfUnavailable = validateOptionalBoolean(
+      raw.failIfUnavailable,
+      "shell.sandbox.failIfUnavailable",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.filesystem !== undefined) {
+    const filesystem = validateShellSandboxFilesystem(
+      raw.filesystem,
+      filePath,
+      errors,
+    );
+    if (filesystem) out.filesystem = filesystem;
+  }
+  if (raw.network !== undefined) {
+    const network = validateShellSandboxNetwork(raw.network, filePath, errors);
+    if (network) out.network = network;
+  }
+  return out;
+}
+
+function validateShellSandboxFilesystem(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): NonNullable<ShellSandboxConfig["filesystem"]> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell.sandbox.filesystem",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: NonNullable<ShellSandboxConfig["filesystem"]> = {};
+  const allowed = new Set([
+    "allowRead",
+    "allowWrite",
+    "denyRead",
+    "denyWrite",
+    "tmp",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.sandbox.filesystem.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  for (const key of [
+    "allowRead",
+    "allowWrite",
+    "denyRead",
+    "denyWrite",
+  ] as const) {
+    if (raw[key] !== undefined) {
+      out[key] = validateStringArray(
+        raw[key],
+        `shell.sandbox.filesystem.${key}`,
+        filePath,
+        errors,
+      );
+    }
+  }
+  if (raw.tmp !== undefined) {
+    out.tmp = validateOptionalBoolean(
+      raw.tmp,
+      "shell.sandbox.filesystem.tmp",
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateShellSandboxNetwork(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): NonNullable<ShellSandboxConfig["network"]> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "shell.sandbox.network",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: NonNullable<ShellSandboxConfig["network"]> = {};
+  const allowed = new Set(["mode"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `shell.sandbox.network.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.mode !== undefined) {
+    if (raw.mode === "allow" || raw.mode === "deny") {
+      out.mode = raw.mode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "shell.sandbox.network.mode",
+        message: "must be allow or deny",
+      });
+    }
   }
   return out;
 }
@@ -516,6 +1122,104 @@ function validateStringRecord(
     message: "must be an object with string values",
   });
   return undefined;
+}
+
+function mergeShellConfig(
+  previous: ShellConfig | undefined,
+  next: ShellConfig,
+): ShellConfig {
+  return {
+    ...(previous ?? {}),
+    ...next,
+    sandbox:
+      previous?.sandbox || next.sandbox
+        ? mergeShellSandboxConfig(previous?.sandbox, next.sandbox)
+        : undefined,
+  };
+}
+
+const SHELL_SANDBOX_MODE_RANK = {
+  off: 0,
+  warn: 1,
+  enforce: 2,
+} as const satisfies Record<NonNullable<ShellSandboxConfig["mode"]>, number>;
+
+function mergeShellSandboxConfig(
+  previous: ShellSandboxConfig | undefined,
+  next: ShellSandboxConfig | undefined,
+): ShellSandboxConfig | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+
+  return {
+    mode: stricterSandboxMode(previous.mode, next.mode),
+    failIfUnavailable:
+      previous.failIfUnavailable === true || next.failIfUnavailable === true
+        ? true
+        : (previous.failIfUnavailable ?? next.failIfUnavailable),
+    filesystem: mergeShellSandboxFilesystem(
+      previous.filesystem,
+      next.filesystem,
+    ),
+    network: mergeShellSandboxNetwork(previous.network, next.network),
+  };
+}
+
+function stricterSandboxMode(
+  previous: ShellSandboxConfig["mode"],
+  next: ShellSandboxConfig["mode"],
+): ShellSandboxConfig["mode"] {
+  if (!previous) return next;
+  if (!next) return previous;
+  return SHELL_SANDBOX_MODE_RANK[next] > SHELL_SANDBOX_MODE_RANK[previous]
+    ? next
+    : previous;
+}
+
+function mergeShellSandboxFilesystem(
+  previous: ShellSandboxConfig["filesystem"],
+  next: ShellSandboxConfig["filesystem"],
+): ShellSandboxConfig["filesystem"] {
+  if (!previous) return next;
+  if (!next) return previous;
+  return {
+    allowRead: mergeUniqueStrings(previous.allowRead, next.allowRead),
+    allowWrite: mergeUniqueStrings(previous.allowWrite, next.allowWrite),
+    denyRead: mergeUniqueStrings(previous.denyRead, next.denyRead),
+    denyWrite: mergeUniqueStrings(previous.denyWrite, next.denyWrite),
+    tmp:
+      previous.tmp === false || next.tmp === false
+        ? false
+        : (previous.tmp ?? next.tmp),
+  };
+}
+
+function mergeShellSandboxNetwork(
+  previous: ShellSandboxConfig["network"],
+  next: ShellSandboxConfig["network"],
+): ShellSandboxConfig["network"] {
+  if (!previous) return next;
+  if (!next) return previous;
+  if (previous.mode === "deny" || next.mode === "deny") {
+    return { mode: "deny" };
+  }
+  return { mode: previous.mode ?? next.mode };
+}
+
+function mergeUniqueStrings(
+  previous: readonly string[] | undefined,
+  next: readonly string[] | undefined,
+): string[] | undefined {
+  if (!previous) return next ? [...next] : undefined;
+  if (!next) return [...previous];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of [...previous, ...next]) {
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  return out;
 }
 
 function validateMcpServer(
@@ -1522,6 +2226,13 @@ function validateShared(
       });
     }
   }
+  if (obj.shell !== undefined) {
+    const shell = validateShellConfig(obj.shell, filePath, errors);
+    if (shell) {
+      config.shell = shell;
+      sources.shell = origin;
+    }
+  }
   if (obj.capabilities !== undefined) {
     const capabilities = validateCapabilities(
       obj.capabilities,
@@ -1596,15 +2307,22 @@ export async function loadHostConfig(
       };
     }
     // Providers merge by key (a later file adds/overrides individual entries),
-    // and capabilities merge by sub-capability (tools/skills/mcp/agents) so a
-    // layer that sets only some sub-capabilities does not wipe the ones a
-    // weaker layer supplied — e.g. a project tools policy must not drop the
-    // user's agent profiles. Within a sub-capability the later layer still
-    // wholesale-overrides. Every other field is wholesale-overridden.
-    const { providers, capabilities: layerCapabilities, ...rest } = v.config;
+    // capabilities merge by sub-capability (tools/skills/mcp/agents), and
+    // shell.sandbox merges conservatively so a project cannot downgrade a
+    // user-defined sandbox boundary. Within a sub-capability the later layer
+    // still wholesale-overrides. Every other field is wholesale-overridden.
+    const {
+      providers,
+      capabilities: layerCapabilities,
+      shell: layerShell,
+      ...rest
+    } = v.config;
     Object.assign(merged, rest);
     if (providers) {
       merged.providers = { ...(merged.providers ?? {}), ...providers };
+    }
+    if (layerShell) {
+      merged.shell = mergeShellConfig(merged.shell, layerShell);
     }
     if (layerCapabilities) {
       merged.capabilities = {

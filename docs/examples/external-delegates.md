@@ -43,10 +43,13 @@ Use `metadata.externalCommand` when the delegate is exposed as a normal CLI:
 }
 ```
 
-`args` are passed directly to `spawn`; shell expansion is not applied. Supported
-template values are `{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`.
-`{{workspaceRoot}}` and `cwd` require `"workspaceAccess": "read_write"`;
-without it, SparkWright runs the subprocess from an isolated temporary cwd.
+`args` keep argv semantics; shell expansion is not part of the configuration
+surface. Supported template values are `{{goal}}`, `{{metadataJson}}`, and
+`{{workspaceRoot}}`. `{{workspaceRoot}}` and `cwd` require
+`"workspaceAccess": "read_write"`; without it, SparkWright runs the subprocess
+from an isolated temporary cwd. External-command delegates use the same
+`shell.sandbox` process boundary as the built-in shell tool and workflow-hook
+commands.
 
 Use `envMode: "explicit"` when the child process should receive only the
 configured environment:

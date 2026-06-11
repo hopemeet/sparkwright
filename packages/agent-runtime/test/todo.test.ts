@@ -258,19 +258,17 @@ describe("createTodoWriteTool", () => {
       ) as Promise<TodoWriteResult>;
     // First write changes the file — no nudge.
     expect((await run(items)).hint).toBeUndefined();
-    // 1st no-op: below threshold, no nudge yet.
-    expect((await run(items)).hint).toBeUndefined();
-    // 2nd consecutive no-op: nudge.
+    // 1st no-op: nudge immediately so bookkeeping churn does not burn turns.
     const nudged = await run(items);
     expect(nudged.saved).toBe(false);
     expect(nudged.hint).toMatch(/calling todo_write again/);
     // A real change resets the counter.
     const changed = [{ title: "a", status: "completed", depth: 0 }];
     expect((await run(changed)).hint).toBeUndefined();
-    expect((await run(changed)).hint).toBeUndefined();
+    expect((await run(changed)).hint).toMatch(/calling todo_write again/);
   });
 
-  it("enforces an optional run-scoped write budget", async () => {
+  it("enforces an optional run-scoped write budget for real changes", async () => {
     const path = await tempPath();
     const write = createTodoWriteTool({
       getTodoPath: () => path,
@@ -288,10 +286,23 @@ describe("createTodoWriteTool", () => {
     );
     await expect(
       write.execute(
+        { items: [{ title: "a", status: "in_progress" }] },
+        ctx("run-1"),
+      ),
+    ).resolves.toMatchObject({
+      saved: false,
+      hint: expect.stringContaining("calling todo_write again"),
+    });
+
+    await expect(
+      write.execute(
         { items: [{ title: "a", status: "completed" }] },
         ctx("run-1"),
       ),
-    ).rejects.toThrow(/run call limit exceeded/);
+    ).resolves.toMatchObject({
+      saved: false,
+      hint: expect.stringContaining("too many times"),
+    });
 
     await expect(
       write.execute(

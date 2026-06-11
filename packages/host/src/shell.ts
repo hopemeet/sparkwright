@@ -17,6 +17,14 @@ import {
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
   type ShellPromotionHandler,
 } from "@sparkwright/shell-tool";
+import {
+  ShellSandboxExecutor,
+  createPlatformShellSandboxRuntime,
+  resolveShellSandboxConfig,
+  type ResolvedShellSandboxConfig,
+  type ShellSandboxConfig,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 import type {
   ExecutionEnvironment,
   LiveShellHandle,
@@ -128,7 +136,7 @@ function spawnStreaming(request: ShellExecutionRequest): ShellStreamingResult {
         stderr: stderr.text() || errorStderr,
         startedAt,
         completedAt: new Date().toISOString(),
-        metadata: { timedOut, pid: child.pid },
+        metadata: { ...(request.metadata ?? {}), timedOut, pid: child.pid },
       });
     };
     child.on("error", (err) => finish("failed", null, String(err)));
@@ -144,13 +152,24 @@ function spawnStreaming(request: ShellExecutionRequest): ShellStreamingResult {
       void reason;
       child.kill("SIGTERM");
     },
-    metadata: { pid: child.pid },
+    metadata: { ...(request.metadata ?? {}), pid: child.pid },
   };
 
   return { handle, completed };
 }
 
-function createHostShellEnvironment(): ExecutionEnvironment {
+function createHostShellEnvironment(options: {
+  workspaceRoot: string;
+  sandboxConfig?: ResolvedShellSandboxConfig;
+  sandboxRuntime?: ShellSandboxRuntime;
+}): ExecutionEnvironment {
+  const sandboxConfig =
+    options.sandboxConfig ??
+    resolveShellSandboxConfig({ workspaceRoot: options.workspaceRoot });
+  const sandbox = new ShellSandboxExecutor(
+    options.sandboxRuntime ?? createPlatformShellSandboxRuntime(),
+  );
+
   return {
     id: "host-local-shell",
     kind: "local-process",
@@ -177,7 +196,71 @@ function createHostShellEnvironment(): ExecutionEnvironment {
       await Promise.allSettled([co, ce]);
       return { ...result, stdout, stderr };
     },
-    executeShellStreaming: async (request) => spawnStreaming(request),
+    executeShellStreaming: async (request) => {
+      const raw =
+        typeof request.metadata?.rawCommand === "string"
+          ? (request.metadata.rawCommand as string)
+          : [request.command, ...(request.args ?? [])].join(" ");
+      const cwd = request.cwd ?? options.workspaceRoot;
+      if (sandboxConfig.mode === "off") {
+        return spawnStreaming({
+          ...request,
+          cwd,
+          metadata: {
+            ...(request.metadata ?? {}),
+            sandboxed: false,
+            sandboxMode: sandboxConfig.mode,
+            sandboxNetworkMode: sandboxConfig.network.mode,
+            sandboxAvailable: false,
+            sandboxEnforced: false,
+          },
+        });
+      }
+      const result = await sandbox.execute(
+        {
+          command: raw,
+          cwd,
+          env: process.env,
+          timeoutMs: request.timeoutMs,
+          metadata: {
+            ...(request.metadata ?? {}),
+            sandboxMode: sandboxConfig.mode,
+            sandboxNetworkMode: sandboxConfig.network.mode,
+            sandboxAvailable: true,
+            sandboxEnforced: sandboxConfig.failIfUnavailable,
+          },
+        },
+        sandboxConfig,
+      );
+      if (result.status === "started") return result.result;
+      if (!sandboxConfig.failIfUnavailable) {
+        return spawnStreaming({
+          ...request,
+          cwd,
+          metadata: {
+            ...(request.metadata ?? {}),
+            sandboxed: false,
+            sandboxMode: sandboxConfig.mode,
+            sandboxNetworkMode: sandboxConfig.network.mode,
+            sandboxUnavailable: result.reason,
+            sandboxRuntime: result.runtimeId,
+            sandboxAvailable: false,
+            sandboxFallbackReason: result.reason,
+            sandboxEnforced: false,
+          },
+        });
+      }
+      return failedStreamingResult(result.reason, {
+        sandboxed: false,
+        sandboxMode: sandboxConfig.mode,
+        sandboxNetworkMode: sandboxConfig.network.mode,
+        sandboxUnavailable: result.reason,
+        sandboxRuntime: result.runtimeId,
+        sandboxAvailable: false,
+        sandboxFallbackReason: result.reason,
+        sandboxEnforced: true,
+      });
+    },
   };
 }
 
@@ -185,6 +268,13 @@ export interface HostShellToolOptions {
   taskManager?: TaskManager;
   foregroundTimeoutMs?: number;
   defaultTimeoutMs?: number;
+  sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
+  sandboxRuntime?: ShellSandboxRuntime;
+  userConfigPath?: string;
+  projectConfigPath?: string;
+  explicitConfigPath?: string;
+  skillRoots?: readonly string[];
+  extraForcedDenyWrite?: readonly string[];
 }
 
 /**
@@ -197,7 +287,23 @@ export function createHostShellTool(
   workspaceRoot: string,
   options: HostShellToolOptions = {},
 ): ToolDefinition<ShellToolInput, ShellToolOutput> {
-  const environment = createHostShellEnvironment();
+  const sandboxConfig =
+    options.sandbox && "forcedDenyWrite" in options.sandbox
+      ? options.sandbox
+      : resolveShellSandboxConfig({
+          workspaceRoot,
+          config: options.sandbox,
+          userConfigPath: options.userConfigPath,
+          projectConfigPath: options.projectConfigPath,
+          explicitConfigPath: options.explicitConfigPath,
+          skillRoots: options.skillRoots,
+          extraForcedDenyWrite: options.extraForcedDenyWrite,
+        });
+  const environment = createHostShellEnvironment({
+    workspaceRoot,
+    sandboxConfig,
+    sandboxRuntime: options.sandboxRuntime,
+  });
   const foregroundTimeoutMs =
     options.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS;
   const defaultTimeoutMs =
@@ -276,6 +382,31 @@ function createUnavailablePromotionHandler(): ShellPromotionHandler {
       "host: background promotion is not supported; long-running shells time out.",
     );
   };
+}
+
+function failedStreamingResult(
+  stderr: string,
+  metadata: Record<string, unknown>,
+): ShellStreamingResult {
+  const now = new Date().toISOString();
+  const completed: Promise<ShellExecutionResult> = Promise.resolve({
+    status: "failed",
+    exitCode: null,
+    stdout: "",
+    stderr,
+    startedAt: now,
+    completedAt: now,
+    metadata,
+  });
+  const handle: LiveShellHandle = {
+    stdout: async function* stdout() {},
+    stderr: async function* stderrStream() {
+      yield stderr;
+    },
+    abort: () => undefined,
+    metadata,
+  };
+  return { handle, completed };
 }
 
 function createTaskPromotionHandler(input: {

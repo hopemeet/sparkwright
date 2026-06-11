@@ -148,7 +148,7 @@ node packages/cli/dist/index.js capabilities inspect --workspace . --format text
 ```
 
 The report includes the effective built-in tools (`read_file`,
-`read_anchored_text`, `grep_text`, `edit_anchored_text`, `apply_patch`, `shell`,
+`read_anchored_text`, `grep`, `edit_anchored_text`, `apply_patch`, `shell`,
 `task_*`, `todo_write`, `spawn_agent`, and others), configured Skills, MCP
 servers, agent profiles, cron state, and command dirs.
 Add `--resolve-mcp` when you want the inspect command to connect to MCP servers
@@ -216,8 +216,8 @@ Tool outputs report canonical workspace-relative paths. When a path was
 normalized from a different input form, tools such as `read_file` also include
 `inputPath` so the model can see what was accepted and how it resolved.
 
-Discovery tools and concrete-file tools are separate. Use `glob_paths` to find
-files by pattern, `grep_text` to search a directory or a concrete file, and
+Discovery tools and concrete-file tools are separate. Use `glob` to find
+files by pattern, `grep` to search a directory or a concrete file, and
 `read_file` with a concrete path. Workspace escapes are rejected before the
 filesystem is read.
 
@@ -354,15 +354,20 @@ For local tools that do not expose ACP, use a generic external command profile:
 }
 ```
 
-`externalCommand` uses `spawn` directly, not a shell. `args` may contain
-`{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`; `input` can be
-`argument`, `stdin`, or `none`. Non-zero exits fail the delegate unless listed
-in `successExitCodes`. `envMode` defaults to `inherit`; set it to `explicit`
-to pass only the configured `env` map. `maxStdoutBytes` and `maxStderrBytes`
-control output capture limits independently, with `maxOutputBytes` retained as
-a shared fallback. `{{workspaceRoot}}` and `cwd` require
-`"workspaceAccess": "read_write"`; without it, the command runs from an isolated
-temporary cwd and gets only the prompt/metadata you pass.
+`externalCommand` keeps argv semantics rather than exposing shell expansion.
+`args` may contain `{{goal}}`, `{{metadataJson}}`, and `{{workspaceRoot}}`;
+`input` can be `argument`, `stdin`, or `none`. Non-zero exits fail the delegate
+unless listed in `successExitCodes`. `envMode` defaults to `inherit`; set it to
+`explicit` to pass only the configured `env` map. `maxStdoutBytes` and
+`maxStderrBytes` control output capture limits independently, with
+`maxOutputBytes` retained as a shared fallback. `{{workspaceRoot}}` and `cwd`
+require `"workspaceAccess": "read_write"`; without it, the command runs from an
+isolated temporary cwd and gets only the prompt/metadata you pass.
+External-command delegates and local stdio MCP servers use the same
+`shell.sandbox` process boundary as the built-in shell tool. Capability
+inspection reports the filesystem boundary as `fs=bind-allowlist` on Linux or
+`fs=deny-list-guard` on macOS; the macOS adapter protects deny paths and
+network access but is not a complete filesystem allow-list sandbox.
 
 Run a configured external delegate directly while debugging:
 

@@ -222,7 +222,7 @@ Body.
 `,
     );
 
-    // loadSkills stays unfiltered so inspect_skills / CLI listing still see it.
+    // loadSkills stays unfiltered so list_skills / CLI listing still see it.
     const all = await loadSkills([root]);
     expect(all.map((s) => s.name).sort()).toEqual([
       "real-skill",

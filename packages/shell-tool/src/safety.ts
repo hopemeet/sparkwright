@@ -118,6 +118,16 @@ export function evaluateShellSafety(
     };
   }
 
+  const confidentialPath = parsed.argv.find((arg, index) =>
+    index > 0 ? isConfidentialPathArgument(arg) : false,
+  );
+  if (confidentialPath) {
+    return {
+      decision: "deny",
+      reason: `Command references confidential path "${confidentialPath}".`,
+    };
+  }
+
   if (
     parsed.hasPipe &&
     /\|\s*(?:sudo\s+)?(?:bash|sh|zsh|ksh)\b/.test(trimmed)
@@ -209,4 +219,24 @@ function matchesList(
 ): boolean {
   if (!list || list.length === 0) return false;
   return list.some((entry) => entry.toLowerCase() === program);
+}
+
+function isConfidentialPathArgument(arg: string): boolean {
+  if (arg.startsWith("-")) return false;
+  const normalized = arg
+    .replace(/^file:\/\//, "")
+    .replace(/^~(?=\/|$)/, "")
+    .replaceAll("\\", "/")
+    .toLowerCase();
+  if (!normalized || normalized === ".") return false;
+  const segments = normalized.split("/").filter(Boolean);
+  const basename = segments.at(-1) ?? normalized;
+  return (
+    basename === ".env" ||
+    basename.startsWith(".env.") ||
+    segments.some((segment) =>
+      [".ssh", ".aws", ".gcp", ".azure"].includes(segment),
+    ) ||
+    /(?:^|[^a-z0-9])(secret|token|credential)s?(?:[^a-z0-9]|$)/i.test(basename)
+  );
 }

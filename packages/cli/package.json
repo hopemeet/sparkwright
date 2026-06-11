@@ -45,6 +45,7 @@
     "@sparkwright/provider-ai-sdk": "0.1.0",
     "@sparkwright/provider-registry": "0.1.0",
     "@sparkwright/sdk-node": "0.1.0",
+    "@sparkwright/shell-sandbox": "0.1.0",
     "@sparkwright/skills": "0.1.0",
     "@sparkwright/tui": "0.1.0",
     "undici": "^7.26.0"

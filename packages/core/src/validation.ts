@@ -1,8 +1,9 @@
-// AI maintenance note: ValidationHooks are *stage-scoped* checks
-// (tool_result, post_sampling, pre_terminal, final_output) that can block or
-// continue a run. Generic lifecycle middleware lives in hooks.ts (RunHook).
-// Reach for ValidationHook when you need to assert content rules; reach for
-// RunHook when you need to observe/instrument the loop.
+// AI maintenance note: ValidationHooks are low-level, stage-scoped checks
+// (tool_result, workspace_write, post_sampling, pre_terminal, final_output)
+// for embedders that need code-level validation. Project-facing rules should
+// prefer WorkflowHook / capabilities.hooks.workflow. Keep ValidationHook for
+// workspace-write proposal checks, final-output content validation, and legacy
+// SDK integrations; keep RunHook for instrumentation.
 
 import type { EventLog } from "./events.js";
 import type { RunRecord } from "./types.js";
@@ -15,7 +16,9 @@ export type ValidationStage =
    * Runs after the model produces a final answer (no tool calls) but BEFORE
    * the run is marked completed. A failed `pre_terminal` hook can block
    * termination — the loop converts it into a continuation context item and
-   * proceeds to another turn (stop_hook_blocked). Modeled after stop-hook patterns.
+   * proceeds to another turn (stop_hook_blocked). For new project-configured
+   * stop gates, prefer WorkflowHook `Stop`; keep this stage for code-level
+   * embedders and compatibility.
    */
   | "pre_terminal"
   /**

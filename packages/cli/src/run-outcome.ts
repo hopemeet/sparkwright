@@ -1,4 +1,8 @@
-import { analyzeToolOutcomes, type SparkwrightEvent } from "@sparkwright/core";
+import {
+  analyzeCommandOutcomes,
+  analyzeToolOutcomes,
+  type SparkwrightEvent,
+} from "@sparkwright/core";
 
 export interface CliRunEventSummary {
   events: SparkwrightEvent[];
@@ -51,6 +55,13 @@ export function unhandledToolFailureCount(summary: CliRunEventSummary): number {
   return analyzeToolOutcomes(summary.events).unresolvedFailures.length;
 }
 
+export function unresolvedVerificationCommandFailureCount(
+  summary: CliRunEventSummary,
+): number {
+  return analyzeCommandOutcomes(summary.events).unresolvedVerificationFailures
+    .length;
+}
+
 export function cliExitCodeForRun(input: {
   failedMessage?: string;
   runState?: string;
@@ -58,6 +69,7 @@ export function cliExitCodeForRun(input: {
 }): number {
   if (input.failedMessage) return 1;
   if (input.runState === "failed" || input.runState === "cancelled") return 1;
+  if (unresolvedVerificationCommandFailureCount(input.events) > 0) return 1;
   return unhandledToolFailureCount(input.events) > 0 ? 1 : 0;
 }
 
@@ -86,6 +98,23 @@ export function summarizeUnhandledToolFailures(
   const count = unhandledToolFailureCount(summary);
   if (count === 0) return undefined;
   return `Run completed with ${count} unhandled tool failure${count === 1 ? "" : "s"}; see trace for details.`;
+}
+
+export function summarizeVerificationCommandFailures(
+  summary: CliRunEventSummary,
+): string | undefined {
+  const failures = analyzeCommandOutcomes(
+    summary.events,
+  ).unresolvedVerificationFailures;
+  if (failures.length === 0) return undefined;
+  const last = failures.at(-1);
+  const command = last?.command ? ` Last failed command: ${last.command}.` : "";
+  const status = last?.timedOut
+    ? "timed out"
+    : last
+      ? `exitCode=${last.exitCode}`
+      : "failed";
+  return `Run completed with failed verification (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
 }
 
 export function summarizeRunFailure(

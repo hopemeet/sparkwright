@@ -255,6 +255,28 @@ describe("buildAgentPromptBuilder", () => {
     expect(await guidanceOf([{ name: "append_file" }])).toContain(
       "append_file",
     );
+    expect(await guidanceOf([{ name: "append_file" }])).toContain(
+      "source of truth",
+    );
+  });
+
+  it("injects command verification guidance only when shell is present", async () => {
+    const builder = buildAgentPromptBuilder({
+      cwd: await tempDir(),
+      ignoreProjectInstructions: true,
+    });
+    const guidanceOf = async (tools: { name: string }[]) => {
+      const messages = await builder.build(buildInput(tools));
+      return messages.find(
+        (m) => m.metadata?.sectionName === "command_verification",
+      )?.content;
+    };
+
+    expect(await guidanceOf([])).toBeUndefined();
+    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
+    const guidance = await guidanceOf([{ name: "shell" }]);
+    expect(guidance).toContain("temporary environment outside the workspace");
+    expect(guidance).toContain("mktemp -d /tmp/sparkwright-venv");
   });
 
   it("injects repo evidence guidance when workspace read tools are present", async () => {

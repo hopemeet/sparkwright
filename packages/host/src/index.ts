@@ -21,6 +21,8 @@ export type {
   RunConfiguredDelegateResult,
 } from "./delegate-runner.js";
 export { applyToolConfig } from "./tools.js";
+export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
+export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
 export {
   projectSkillRoot,
   existingSkillRoots,
@@ -89,8 +91,12 @@ export type {
   SharedConfigError,
   LoadedSharedConfig,
   CapabilityConfig,
+  CapabilityHooksConfig,
+  CapabilityWorkflowHookConfig,
+  CapabilityHookActionConfig,
   CapabilityToolsConfig,
   CapabilitySkillsConfig,
+  ShellConfig,
   ProviderConfig,
   ProviderModelConfig,
   ModelCost,

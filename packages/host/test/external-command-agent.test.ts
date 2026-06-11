@@ -1,9 +1,13 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createRun } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import {
+  createPlatformShellSandboxRuntime,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 import {
   createExternalCommandDelegateTool,
   externalCommandConfigFromAgentProfile,
@@ -547,7 +551,149 @@ describe("external command delegate tool", () => {
       outputTruncated: true,
     });
   });
+
+  it("fails closed when enforce-mode sandbox is unavailable", async () => {
+    const fixture = await createFixtureCommand();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_enforce",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_enforce",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: unavailableRuntime(),
+    });
+
+    await expect(
+      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
+    ).rejects.toThrow("test-unavailable");
+  });
+
+  it("falls back in warn mode and returns sandbox metadata", async () => {
+    const fixture = await createFixtureCommand();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_warn",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_warn",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+      sandbox: { mode: "warn" },
+      sandboxRuntime: unavailableRuntime(),
+    });
+
+    const result = (await tool.execute({ goal: "inspect docs" }, {
+      run: parent.record,
+    } as never)) as { stdout: string; sandbox?: Record<string, unknown> };
+
+    expect(JSON.parse(result.stdout)).toMatchObject({ argv: [] });
+    expect(result.sandbox).toEqual({
+      sandboxed: false,
+      mode: "warn",
+      runtime: "test-unavailable",
+      networkMode: "deny",
+      unavailable: expect.stringContaining("test-unavailable"),
+      available: false,
+      fallbackReason: expect.stringContaining("test-unavailable"),
+      enforced: false,
+    });
+  });
+
+  it("prevents read_write delegates from changing forced deny paths when runtime is available", async () => {
+    const runtime = createPlatformShellSandboxRuntime();
+    if (!(await runtime.isAvailable())) return;
+    const fixture = await createFixtureCommand(
+      "require('node:fs').writeFileSync('.sparkwright/config.json', 'bad\\n');",
+    );
+    const configPath = join(fixture.cwd, ".sparkwright", "config.json");
+    await mkdir(join(fixture.cwd, ".sparkwright"), { recursive: true });
+    await writeFile(configPath, "original\n", "utf8");
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_deny_config",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+          workspaceAccess: "read_write",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_deny_config",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+      allowReadWriteWorkspaceAccess: true,
+      sandbox: { mode: "enforce" },
+      sandboxRuntime: runtime,
+      configPaths: [configPath],
+    });
+
+    await expect(
+      tool.execute({ goal: "inspect docs" }, { run: parent.record } as never),
+    ).rejects.toThrow("exited with exit code");
+    await expect(readFile(configPath, "utf8")).resolves.toBe("original\n");
+  });
 });
+
+function unavailableRuntime(): ShellSandboxRuntime {
+  return {
+    id: "test-unavailable",
+    platform: "unsupported",
+    isAvailable: async () => false,
+    execute: async () => {
+      throw new Error("should not execute");
+    },
+  };
+}
 
 async function createFixtureCommand(): Promise<{
   cwd: string;

@@ -44,8 +44,8 @@ describe("coding tools", () => {
       "edit_anchored_text",
       "apply_patch",
       "list_dir",
-      "grep_text",
-      "glob_paths",
+      "grep",
+      "glob",
     ]);
   });
 
@@ -103,10 +103,7 @@ describe("coding tools", () => {
       tools,
       "edit_anchored_text",
     );
-    const globPaths = getTool<GlobPathsInput, GlobPathsResult>(
-      tools,
-      "glob_paths",
-    );
+    const globPaths = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
 
     await expect(
       readText.execute({ path: "README.md", startLine: 3, endLine: 1 }, ctx),
@@ -280,7 +277,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
-      "grep_text",
+      "grep",
     );
 
     const result = await tool.execute(
@@ -317,7 +314,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
-      "grep_text",
+      "grep",
     );
 
     const result = await tool.execute({ pattern: "answer", include: [] }, ctx);
@@ -328,14 +325,14 @@ describe("coding tools", () => {
     ]);
   });
 
-  it("searches a concrete grep_text file path", async () => {
+  it("searches a concrete grep file path", async () => {
     const { root, ctx } = await createWorkspace({
       "README.md": "# Demo\nrelease:check\n",
       "src/other.md": "release:check\n",
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
-      "grep_text",
+      "grep",
     );
 
     const result = await tool.execute(
@@ -346,13 +343,13 @@ describe("coding tools", () => {
     expect(result.matches.map((match) => match.path)).toEqual(["README.md"]);
   });
 
-  it("normalizes file URL grep_text paths inside the workspace", async () => {
+  it("normalizes file URL grep paths inside the workspace", async () => {
     const { root, ctx } = await createWorkspace({
       "docs/README.md": "# Demo\nrelease:check\n",
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
-      "grep_text",
+      "grep",
     );
 
     const result = await tool.execute(
@@ -376,7 +373,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     const result = await tool.execute(
@@ -403,7 +400,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     const result = await tool.execute(
@@ -428,7 +425,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     // Default: dist/coverage mirrors are filtered out, leaving only source.
@@ -462,7 +459,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     const result = await tool.execute({ patterns: ["weird{name.ts"] }, ctx);
@@ -481,7 +478,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     const result = await tool.execute(
@@ -504,7 +501,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     const result = await tool.execute(
@@ -528,7 +525,7 @@ describe("coding tools", () => {
     });
     const tool = getTool<GlobPathsInput, GlobPathsResult>(
       createCodingTools({ workspaceRoot: root }),
-      "glob_paths",
+      "glob",
     );
 
     const first = await tool.execute(
@@ -579,13 +576,13 @@ describe("coding tools", () => {
     expect(paths).toContain("inside/keep.txt");
   });
 
-  it("rejects oversized regex patterns in grep_text", async () => {
+  it("rejects oversized regex patterns in grep", async () => {
     const { root, ctx } = await createWorkspace({
       "src/index.ts": "value = 1\n",
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
-      "grep_text",
+      "grep",
     );
     const huge = "a".repeat(2000);
     await expect(
@@ -635,18 +632,18 @@ describe("coding tools", () => {
     });
   });
 
-  it("normalizes an absolute grep_text path inside the workspace", async () => {
+  it("normalizes an absolute grep path inside the workspace", async () => {
     const { root, ctx } = await createWorkspace({
       "src/index.ts": "export const value = 1;\n",
     });
     const tool = getTool<GrepTextInput, GrepTextResult>(
       createCodingTools({ workspaceRoot: root }),
-      "grep_text",
+      "grep",
     );
 
     // A model routinely reuses the absolute path it saw in the skill/file
-    // index; grep_text must accept an in-workspace absolute path the same way
-    // read_text and glob_paths do, rather than rejecting it as an escape.
+    // index; grep must accept an in-workspace absolute path the same way
+    // read_text and glob do, rather than rejecting it as an escape.
     const result = await tool.execute(
       { pattern: "value", path: `${root}/src` },
       ctx,

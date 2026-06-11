@@ -12,6 +12,22 @@ Conventions:
 
 ## Unreleased
 
+- `event.schema.json`: additive — four new `workflow_hook.*` event types for
+  deterministic workflow hooks:
+  - `workflow_hook.started`
+  - `workflow_hook.completed`
+  - `workflow_hook.blocked`
+  - `workflow_hook.failed`
+    Migration: none; consumers that exhaustively match event types should add a
+    default ignore arm or render these as host/runtime automation evidence.
+
+- `config.schema.json`: additive — new `capabilities.hooks.workflow` config
+  surface. Host-created runs can now attach deterministic workflow hooks with
+  `block`, `context`, or `command` actions. The hook config also supports
+  optional `description`, `frequency`, matcher `excludePathGlob`, and command
+  `injectOutput` / `stdin` controls. Migration: none; omitted hooks keep
+  existing behavior.
+
 - `event.schema.json`: additive — new `skill.failed` event type. Emitted when
   one Skill source cannot be loaded while the runtime continues with other
   valid Skills. Migration: none; consumers may render it as a diagnostic

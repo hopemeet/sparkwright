@@ -2,10 +2,19 @@ import { spawn } from "node:child_process";
 import {
   createSpanId,
   defineTool,
+  type ShellStreamingResult,
   type RunHandle,
   type ToolDefinition,
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import {
+  ShellSandboxExecutor,
+  createPlatformShellSandboxRuntime,
+  resolveShellSandboxConfig,
+  type ResolvedShellSandboxConfig,
+  type ShellSandboxConfig,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
 import {
   DelegateExecutionError,
   assertReadWriteWorkspaceAccessAllowed,
@@ -42,6 +51,10 @@ export interface CreateExternalCommandDelegateToolInput {
   requiresApproval?: boolean;
   forbidNesting?: boolean;
   allowReadWriteWorkspaceAccess?: boolean;
+  sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
+  sandboxRuntime?: ShellSandboxRuntime;
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
 }
 
 export interface ExternalCommandDelegateToolResult {
@@ -62,6 +75,22 @@ export interface ExternalCommandDelegateToolResult {
   stderrTruncated: boolean;
   /** @reserved Backward-compatible aggregate truncation flag. */
   outputTruncated: boolean;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
+  sandbox?: ExternalCommandSandboxSummary;
+}
+
+export interface ExternalCommandSandboxSummary {
+  sandboxed: boolean;
+  mode?: string;
+  runtime?: string;
+  networkMode?: string;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
+  unavailable?: string;
+  available?: boolean;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
+  fallbackReason?: string;
+  /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
+  enforced?: boolean;
 }
 
 export function externalCommandConfigFromAgentProfile(
@@ -189,6 +218,10 @@ export function createExternalCommandDelegateTool(
           goal: parsed.goal,
           metadata: parsed.metadata,
           toolName: input.toolName,
+          sandbox: input.sandbox,
+          sandboxRuntime: input.sandboxRuntime,
+          skillRoots: input.skillRoots,
+          configPaths: input.configPaths,
         });
         const successExitCodes = config.successExitCodes ?? [0];
         if (
@@ -224,6 +257,7 @@ export function createExternalCommandDelegateTool(
               stdoutTruncated: result.stdoutTruncated,
               stderrTruncated: result.stderrTruncated,
               outputTruncated: result.outputTruncated,
+              sandbox: result.sandbox,
             },
           },
           meta,
@@ -259,6 +293,10 @@ async function runExternalCommand(input: {
   goal: string;
   metadata?: Record<string, unknown>;
   toolName: string;
+  sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
+  sandboxRuntime?: ShellSandboxRuntime;
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
 }): Promise<
   Pick<
     ExternalCommandDelegateToolResult,
@@ -269,6 +307,7 @@ async function runExternalCommand(input: {
     | "stdoutTruncated"
     | "stderrTruncated"
     | "outputTruncated"
+    | "sandbox"
   >
 > {
   const inputMode = input.config.input ?? "argument";
@@ -304,16 +343,62 @@ async function runExternalCommand(input: {
   });
 
   try {
-    const child = spawn(input.config.command, args, {
-      cwd: executionWorkspace.cwd,
-      env: buildCommandEnv(input.config),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
     const output = createOutputCollector({
       stdoutLimit:
         input.config.maxStdoutBytes ?? input.config.maxOutputBytes ?? 64_000,
       stderrLimit:
         input.config.maxStderrBytes ?? input.config.maxOutputBytes ?? 64_000,
+    });
+    const sandboxConfig =
+      input.sandbox && "forcedDenyWrite" in input.sandbox
+        ? input.sandbox
+        : resolveShellSandboxConfig({
+            workspaceRoot: input.workspaceRoot,
+            config: input.sandbox,
+            skillRoots: input.skillRoots,
+            extraForcedDenyWrite: input.configPaths,
+          });
+    const effectiveSandboxConfig = delegateSandboxConfig({
+      config: sandboxConfig,
+      workspaceAccess,
+      executionCwd: executionWorkspace.cwd,
+      command: input.config.command,
+      args,
+    });
+    const stdin =
+      inputMode === "stdin"
+        ? renderStdin(input.goal, input.metadata)
+        : undefined;
+    let fallbackSandbox: ExternalCommandSandboxSummary | undefined =
+      effectiveSandboxConfig.mode === "off"
+        ? {
+            sandboxed: false,
+            mode: effectiveSandboxConfig.mode,
+            networkMode: effectiveSandboxConfig.network.mode,
+            available: false,
+            enforced: false,
+          }
+        : undefined;
+    if (effectiveSandboxConfig.mode !== "off") {
+      const sandboxed = await runExternalCommandSandboxed({
+        command: input.config.command,
+        args,
+        cwd: executionWorkspace.cwd,
+        env: buildCommandEnv(input.config),
+        stdin,
+        timeoutMs: input.config.timeoutMs,
+        output,
+        config: effectiveSandboxConfig,
+        runtime: input.sandboxRuntime ?? createPlatformShellSandboxRuntime(),
+      });
+      if (sandboxed.status === "completed") return sandboxed.result;
+      fallbackSandbox = sandboxed.sandbox;
+    }
+
+    const child = spawn(input.config.command, args, {
+      cwd: executionWorkspace.cwd,
+      env: buildCommandEnv(input.config),
+      stdio: ["pipe", "pipe", "pipe"],
     });
     const timeout = createTimeout(input.config.timeoutMs);
 
@@ -371,12 +456,13 @@ async function runExternalCommand(input: {
             stderrTruncated: collected.stderrTruncated,
             outputTruncated:
               collected.stdoutTruncated || collected.stderrTruncated,
+            sandbox: fallbackSandbox,
           }),
         );
       });
 
       if (inputMode === "stdin") {
-        child.stdin?.end(renderStdin(input.goal, input.metadata), "utf8");
+        child.stdin?.end(stdin, "utf8");
       } else {
         child.stdin?.end();
       }
@@ -384,6 +470,209 @@ async function runExternalCommand(input: {
   } finally {
     await executionWorkspace.cleanup();
   }
+}
+
+async function runExternalCommandSandboxed(input: {
+  command: string;
+  args: readonly string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  stdin?: string;
+  timeoutMs?: number;
+  output: ReturnType<typeof createOutputCollector>;
+  config: ResolvedShellSandboxConfig;
+  runtime: ShellSandboxRuntime;
+}): Promise<
+  | {
+      status: "completed";
+      result: Pick<
+        ExternalCommandDelegateToolResult,
+        | "exitCode"
+        | "signal"
+        | "stdout"
+        | "stderr"
+        | "stdoutTruncated"
+        | "stderrTruncated"
+        | "outputTruncated"
+        | "sandbox"
+      >;
+    }
+  | {
+      status: "fallback";
+      sandbox: ExternalCommandSandboxSummary;
+    }
+> {
+  const sandbox = new ShellSandboxExecutor(input.runtime);
+  const started = await sandbox.execute(
+    {
+      command: shellCommand([input.command, ...input.args]),
+      cwd: input.cwd,
+      env: input.env,
+      stdin: input.stdin,
+      timeoutMs: input.timeoutMs,
+      metadata: {
+        sandboxMode: input.config.mode,
+        sandboxNetworkMode: input.config.network.mode,
+        sandboxAvailable: true,
+        sandboxEnforced: input.config.failIfUnavailable,
+      },
+    },
+    input.config,
+  );
+  if (started.status === "unavailable") {
+    if (input.config.failIfUnavailable) {
+      throw new DelegateExecutionError(
+        "DELEGATE_EXECUTION_FAILED",
+        started.reason,
+        {
+          sandbox: {
+            sandboxed: false,
+            mode: input.config.mode,
+            runtime: started.runtimeId,
+            networkMode: input.config.network.mode,
+            unavailable: started.reason,
+            available: false,
+            fallbackReason: started.reason,
+            enforced: true,
+          },
+        },
+      );
+    }
+    return {
+      status: "fallback",
+      sandbox: {
+        sandboxed: false,
+        mode: input.config.mode,
+        runtime: started.runtimeId,
+        networkMode: input.config.network.mode,
+        unavailable: started.reason,
+        available: false,
+        fallbackReason: started.reason,
+        enforced: false,
+      },
+    };
+  }
+
+  const final = await collectSandboxedOutput(started.result, input.output);
+  if (final.timedOut) {
+    throw new DelegateExecutionError(
+      "DELEGATE_TIMEOUT",
+      "External command delegate timed out.",
+      { timeoutMs: input.timeoutMs, sandbox: final.sandbox },
+    );
+  }
+  return { status: "completed", result: final };
+}
+
+async function collectSandboxedOutput(
+  streaming: ShellStreamingResult,
+  output: ReturnType<typeof createOutputCollector>,
+): Promise<
+  Pick<
+    ExternalCommandDelegateToolResult,
+    | "exitCode"
+    | "signal"
+    | "stdout"
+    | "stderr"
+    | "stdoutTruncated"
+    | "stderrTruncated"
+    | "outputTruncated"
+    | "sandbox"
+  > & { timedOut: boolean }
+> {
+  const stdoutDrain = (async () => {
+    for await (const chunk of streaming.handle.stdout()) {
+      output.appendStdout(chunk);
+    }
+  })();
+  const stderrDrain = (async () => {
+    for await (const chunk of streaming.handle.stderr()) {
+      output.appendStderr(chunk);
+    }
+  })();
+  const final = await streaming.completed;
+  await Promise.allSettled([stdoutDrain, stderrDrain]);
+  const collected = output.result();
+  return {
+    exitCode: final.exitCode,
+    signal: null,
+    stdout: collected.stdout || final.stdout,
+    stderr: collected.stderr || final.stderr,
+    stdoutTruncated: collected.stdoutTruncated,
+    stderrTruncated: collected.stderrTruncated,
+    outputTruncated: collected.stdoutTruncated || collected.stderrTruncated,
+    timedOut:
+      typeof final.metadata?.timedOut === "boolean"
+        ? final.metadata.timedOut
+        : false,
+    sandbox: sandboxSummary(final.metadata),
+  };
+}
+
+function delegateSandboxConfig(input: {
+  config: ResolvedShellSandboxConfig;
+  workspaceAccess: DelegateWorkspaceAccess;
+  executionCwd: string;
+  command: string;
+  args: readonly string[];
+}): ResolvedShellSandboxConfig {
+  if (input.config.mode === "off" || input.workspaceAccess === "read_write") {
+    return input.config;
+  }
+  return {
+    ...input.config,
+    filesystem: {
+      ...input.config.filesystem,
+      allowRead: [
+        input.executionCwd,
+        ...absoluteArgPaths([input.command, ...input.args]),
+      ],
+      allowWrite: [input.executionCwd],
+    },
+  };
+}
+
+function absoluteArgPaths(values: readonly string[]): string[] {
+  return values.filter((value) => value.startsWith("/"));
+}
+
+function shellCommand(argv: readonly string[]): string {
+  return argv.map(shellQuote).join(" ");
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(value)) return value;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function sandboxSummary(
+  metadata: Record<string, unknown> | undefined,
+): ExternalCommandSandboxSummary | undefined {
+  if (!metadata || typeof metadata.sandboxed !== "boolean") return undefined;
+  return {
+    sandboxed: metadata.sandboxed,
+    ...(typeof metadata.sandboxMode === "string"
+      ? { mode: metadata.sandboxMode }
+      : {}),
+    ...(typeof metadata.sandboxRuntime === "string"
+      ? { runtime: metadata.sandboxRuntime }
+      : {}),
+    ...(typeof metadata.sandboxNetworkMode === "string"
+      ? { networkMode: metadata.sandboxNetworkMode }
+      : {}),
+    ...(typeof metadata.sandboxUnavailable === "string"
+      ? { unavailable: metadata.sandboxUnavailable }
+      : {}),
+    ...(typeof metadata.sandboxAvailable === "boolean"
+      ? { available: metadata.sandboxAvailable }
+      : {}),
+    ...(typeof metadata.sandboxFallbackReason === "string"
+      ? { fallbackReason: metadata.sandboxFallbackReason }
+      : {}),
+    ...(typeof metadata.sandboxEnforced === "boolean"
+      ? { enforced: metadata.sandboxEnforced }
+      : {}),
+  };
 }
 
 function buildCommandEnv(

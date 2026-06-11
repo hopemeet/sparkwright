@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. model/providers/permissionMode/workspace apply to both surfaces; theme/keybindings/mouse are TUI-only. The `providers` map is merged by key across files (a later file adds or overrides individual providers without dropping the rest); all other fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. model/providers/permissionMode/workspace apply to both surfaces; theme/keybindings/mouse are TUI-only. The `providers` map is merged by key, `capabilities` merges by sub-capability, and `shell.sandbox` merges conservatively so later layers cannot weaken earlier sandbox policy; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -80,8 +80,64 @@
     },
     "confidentialPaths": {
       "type": "array",
-      "description": "Opt-in read-confidentiality. Workspace-relative paths or globs whose contents a run must not read; matching read_file/grep_text reads are denied at the tool layer. Supports '*' (single segment), '**' (any depth), and a bare directory name to cover everything beneath it.",
+      "description": "Opt-in read-confidentiality. Workspace-relative paths or globs whose contents a run must not read; matching read_file/grep reads are denied at the tool layer. Supports '*' (single segment), '**' (any depth), and a bare directory name to cover everything beneath it.",
       "items": { "type": "string", "minLength": 1 }
+    },
+    "shell": {
+      "type": "object",
+      "description": "Host shell execution boundary. The safety classifier and approval policy still run before shell execution; this config controls the OS-level sandbox used by the host shell executor.",
+      "properties": {
+        "sandbox": {
+          "type": "object",
+          "description": "OS-level process sandbox for local command execution. Forced deny-write paths such as Sparkwright config files are always appended by the host and cannot be removed by config. Linux uses bind-based allowlist isolation; macOS currently uses deny-list/network guardrails rather than complete filesystem hiding.",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["off", "warn", "enforce"],
+              "description": "off disables OS sandboxing; warn uses it when available and falls back with metadata when unavailable; enforce fails shell execution when sandboxing is unavailable."
+            },
+            "failIfUnavailable": {
+              "type": "boolean",
+              "description": "Fail closed when the platform sandbox runtime is unavailable. `mode: enforce` implies this."
+            },
+            "filesystem": {
+              "type": "object",
+              "properties": {
+                "allowRead": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "allowWrite": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "denyRead": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "denyWrite": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "tmp": { "type": "boolean" }
+              },
+              "additionalProperties": false
+            },
+            "network": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["allow", "deny"]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "capabilities": {
       "type": "object",
@@ -105,6 +161,112 @@
               "type": "array",
               "description": "Tool-name patterns prepared as deferred schemas when the tool does not force eager loading. Supports '*' as a wildcard.",
               "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "hooks": {
+          "type": "object",
+          "description": "Deterministic workflow hooks for host-created runs. Core owns lifecycle execution; the host interprets configured actions.",
+          "properties": {
+            "workflow": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "hook", "action"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "description": { "type": "string" },
+                  "hook": {
+                    "type": "string",
+                    "enum": [
+                      "SessionStart",
+                      "UserPromptSubmit",
+                      "ModelOutput",
+                      "PreToolUse",
+                      "PostToolUse",
+                      "Stop",
+                      "SessionEnd",
+                      "RuntimeSignal"
+                    ]
+                  },
+                  "enabled": { "type": "boolean" },
+                  "onError": {
+                    "type": "string",
+                    "enum": ["continue", "block"]
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "enum": ["always", "oncePerTurn"]
+                  },
+                  "matcher": {
+                    "type": "object",
+                    "properties": {
+                      "toolName": { "$ref": "#/$defs/stringOrStringArray" },
+                      "eventType": { "$ref": "#/$defs/stringOrStringArray" },
+                      "signal": { "$ref": "#/$defs/stringOrStringArray" },
+                      "status": { "$ref": "#/$defs/stringOrStringArray" },
+                      "pathGlob": { "$ref": "#/$defs/stringOrStringArray" },
+                      "excludePathGlob": {
+                        "$ref": "#/$defs/stringOrStringArray"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "action": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": ["type", "reason"],
+                        "properties": {
+                          "type": { "const": "block" },
+                          "reason": { "type": "string", "minLength": 1 }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["type", "content"],
+                        "properties": {
+                          "type": { "const": "context" },
+                          "content": { "type": "string", "minLength": 1 },
+                          "contextType": {
+                            "type": "string",
+                            "enum": ["system", "user", "summary"]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["type", "command"],
+                        "properties": {
+                          "type": { "const": "command" },
+                          "command": { "type": "string", "minLength": 1 },
+                          "args": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "cwd": { "type": "string", "minLength": 1 },
+                          "timeoutMs": { "type": "integer", "minimum": 1 },
+                          "blockOnFailure": { "type": "boolean" },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          },
+                          "stdin": {
+                            "type": "string",
+                            "enum": ["none", "json"]
+                          },
+                          "maxOutputBytes": { "type": "integer", "minimum": 1 }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
             }
           },
           "additionalProperties": false
@@ -230,6 +392,14 @@
           { "type": "null" }
         ]
       }
+    }
+  },
+  "$defs": {
+    "stringOrStringArray": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
     }
   },
   "additionalProperties": false

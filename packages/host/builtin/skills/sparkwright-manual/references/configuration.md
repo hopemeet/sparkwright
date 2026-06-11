@@ -12,8 +12,8 @@ Personal config: ~/.config/sparkwright/config.json
   TUI preferences.
 
 Project config: <workspace>/.sparkwright/config.json
-  Use for team-safe runtime defaults: permissionMode, tools, skills, MCP,
-  agents, and project convention directories.
+  Use for team-safe runtime defaults: permissionMode, tools, workflow hooks,
+  skills, MCP, agents, and project convention directories.
 
 Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
   Use for one-off runs, CI jobs, or local experiments.
@@ -151,6 +151,60 @@ MCP `cwd` resolves from the config file that declares it. Prefer
 `requiresApproval: true` for tools that can touch workspace state,
 credentials, network services, or external systems.
 
+### Workflow Hooks
+
+Use `capabilities.hooks.workflow` for checked-in project rules: block
+forbidden paths, inject project context, run tests after writes, or prevent
+final answers until verification has happened. Lower-level `RunHook`,
+`ValidationHook`, and `UserHookRunner` APIs are for SDK embedders and host
+integrations, not the usual project config surface.
+
+```json
+{
+  "capabilities": {
+    "hooks": {
+      "workflow": [
+        {
+          "name": "block-generated",
+          "description": "Generated files are produced by build tooling.",
+          "hook": "PreToolUse",
+          "matcher": {
+            "toolName": ["append_file", "edit_anchored_text", "apply_patch"],
+            "pathGlob": "src/generated/**",
+            "excludePathGlob": "src/generated/fixtures/**"
+          },
+          "action": {
+            "type": "block",
+            "reason": "Generated files under src must not be edited directly."
+          }
+        },
+        {
+          "name": "test-after-write",
+          "hook": "PostToolUse",
+          "frequency": "oncePerTurn",
+          "matcher": {
+            "toolName": ["append_file", "edit_anchored_text", "apply_patch"]
+          },
+          "action": {
+            "type": "command",
+            "command": "npm",
+            "args": ["test"],
+            "timeoutMs": 120000,
+            "blockOnFailure": true,
+            "injectOutput": "onFailure"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Command actions run without a shell. Set `stdin` to `json` when the command
+needs the workflow hook input on stdin; omit it or use `none` for empty stdin.
+Use `PostToolUse` for feedback after an action. Use `Stop` when the same rule
+must gate the final answer.
+
 ## Common Fields
 
 - `model`: active model in `provider/model` form. The reserved
@@ -160,6 +214,7 @@ credentials, network services, or external systems.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
 - `capabilities.tools`: tool enable, disable, and defer filters.
+- `capabilities.hooks.workflow`: deterministic project workflow hooks.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions and default policy.
 - `capabilities.agents`: agent profiles and delegate tools.

@@ -1,14 +1,14 @@
 {
-  "name": "@sparkwright/mcp-adapter",
+  "name": "@sparkwright/shell-sandbox",
   "version": "0.1.0",
-  "description": "MCP capability ingress helpers for Sparkwright tools.",
+  "description": "OS-level shell sandbox adapters for Sparkwright host shell execution.",
   "license": "Apache-2.0",
   "author": "hopemeet <https://x.com/hopemeet_ai>",
   "homepage": "https://github.com/hopemeet/sparkwright#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hopemeet/sparkwright.git",
-    "directory": "packages/mcp-adapter"
+    "directory": "packages/shell-sandbox"
   },
   "bugs": {
     "url": "https://github.com/hopemeet/sparkwright/issues"
@@ -31,10 +31,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@sparkwright/core": "0.1.0",
-    "@sparkwright/shell-sandbox": "0.1.0"
+  "peerDependencies": {
+    "@sparkwright/core": "0.1.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.6"
   },
   "publishConfig": {
     "access": "public"
@@ -43,8 +44,8 @@
   "sideEffects": false,
   "keywords": [
     "agents",
-    "mcp",
-    "tools",
-    "runtime"
+    "shell",
+    "sandbox",
+    "security"
   ]
 }

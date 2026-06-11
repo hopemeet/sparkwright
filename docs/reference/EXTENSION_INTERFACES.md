@@ -471,9 +471,12 @@ path.
 
 ## Run Hooks
 
-`RunHook` is the generic lifecycle-middleware seam for the run loop. Hooks
-observe model and tool boundaries and may narrowly influence execution
-without changing the loop itself.
+`RunHook` is the low-level lifecycle-middleware seam for embedders that need
+in-process observability around the run loop. Prefer `WorkflowHook` or
+`capabilities.hooks.workflow` for project-facing rules such as "do not edit
+generated files", "run tests after writes", or "do not stop until verification
+has happened". Keep `RunHook` for SDK, plugin, telemetry, and narrow
+compatibility cases where code needs direct access to model/tool boundaries.
 
 Supported callbacks:
 
@@ -483,7 +486,9 @@ Supported callbacks:
   recorded.
 - `beforeToolCall(input)` — before a tool is executed. May return
   `{ skip: { reason } }` to short-circuit the call into a `failed`
-  `ToolResult` (the only supported in-loop mutation).
+  `ToolResult` (the only supported in-loop mutation). New tool policy should
+  prefer workflow hook `PreToolUse`, which has matcher support, explicit
+  block/rewrite semantics, and `workflow_hook.*` trace events.
 - `afterToolCall(input)` — after the loop emitted `tool.completed` /
   `tool.failed` for this call.
 - `onEvent(input)` — synchronous event observer. Called for every event
@@ -504,6 +509,83 @@ const tracingHook: RunHook = {
   onEvent: ({ event }) => span.event(event.type, event.payload),
 };
 ```
+
+## Workflow Hooks
+
+`WorkflowHook` is the higher-level deterministic hook layer for rules that
+must run at named agent lifecycle points. Prefer workflow hooks over `RunHook`
+when the rule is user- or project-facing: "do not edit generated files",
+"run this check after writes", "do not stop until the final answer mentions
+tests", or "stop repeated tool calls before a doom loop".
+
+Use this decision rule:
+
+- Project configuration and checked-in workflow policy:
+  `capabilities.hooks.workflow`.
+- Code-level deterministic workflow policy:
+  `createRun({ workflowHooks })`.
+- Proposal/content validation owned by an embedder:
+  `ValidationHook`.
+- In-process telemetry or loop instrumentation:
+  `RunHook`.
+- External event subscribers owned by a host:
+  `UserHookRunner`.
+
+Supported lifecycle names:
+
+- `SessionStart`
+- `UserPromptSubmit`
+- `ModelOutput`
+- `PreToolUse`
+- `PostToolUse`
+- `Stop`
+- `SessionEnd`
+- `RuntimeSignal`
+
+Hooks are wired with `createRun({ workflowHooks: [...] })`. Each hook can
+carry a matcher so broad lifecycle names remain usable without adding many
+micro-hooks:
+
+```ts
+const blockGenerated: WorkflowHook = {
+  name: "block-generated",
+  description: "Prevent direct edits to generated files.",
+  hook: "PreToolUse",
+  matcher: {
+    toolName: "write_file",
+    pathGlob: "src/generated/**",
+    excludePathGlob: "src/generated/fixtures/**",
+  },
+  handle() {
+    return {
+      status: "block",
+      reason: "Generated files must not be edited directly.",
+    };
+  },
+};
+```
+
+Matchers can narrow by `toolName`, `eventType`, `signal`, `status`, and
+`pathGlob`. They can also use `excludePathGlob` to carve paths out of a broader
+match. Matcher values accept either one string or an array of strings; glob
+matching supports `*` for one path segment and `**` for multiple segments.
+
+Handlers return one of:
+
+- `continue` — optionally injects `ContextItem[]`.
+- `block` — prevents the current path from continuing. `PreToolUse` becomes a
+  failed tool result; `ModelOutput` / `Stop` inject continuation context so the
+  model can correct itself; `PostToolUse` injects continuation context after
+  the completed tool result; `RuntimeSignal` can stop the run with
+  `hook_stopped`.
+- `rewrite` — currently supported for `PreToolUse` tool arguments.
+- `skipped` — records that a hook intentionally did nothing.
+
+Every invocation emits `workflow_hook.started` and then exactly one terminal
+event: `workflow_hook.completed`, `workflow_hook.blocked`, or
+`workflow_hook.failed`. By default hook exceptions are logged and the run
+continues, matching `RunHook`; set `onError: "block"` for governance hooks
+that should fail closed.
 
 ## Interaction Channel
 

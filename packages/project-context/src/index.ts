@@ -195,6 +195,25 @@ const FILE_TOOL_GUIDANCE = [
   "  `mkdir`, or write via shell redirection (`cat > file`, `tee`).",
   "- Reserve the shell tool for running commands, not for reading or writing",
   "  workspace files (use the read/append file tools for that).",
+  "- When two files disagree (for example docs vs config), choose one smallest",
+  "  source of truth to edit. After an edit is accepted, do not switch to the",
+  "  other file to reverse the same decision unless new evidence proves the",
+  "  first fix was wrong; re-read the changed file and report the conflict.",
+].join("\n");
+
+const SHELL_VALIDATION_GUIDANCE = [
+  "Command verification:",
+  "- When a task asks you to run tests or verify a CLI, run the actual command",
+  "  and treat a non-zero exit code as failed verification unless a later",
+  "  equivalent verification command succeeds.",
+  "- For Python packaging checks, avoid creating `.venv` inside the workspace.",
+  "  Use a temporary environment outside the workspace, for example:",
+  '  `venv=$(mktemp -d /tmp/sparkwright-venv.XXXXXX) && python3 -m venv "$venv"`',
+  '  then run `"$venv/bin/python" -m pip install -e .` and the installed',
+  '  console script from `"$venv/bin/..."`.',
+  "- Do not claim verification passed if package install, test execution, or",
+  "  the documented command failed. Report the exact failing command and exit",
+  "  status instead.",
 ].join("\n");
 
 /**
@@ -208,7 +227,7 @@ const FILE_TOOL_GUIDANCE = [
  */
 const WORKSPACE_PATH_GUIDANCE = [
   "Workspace path resolution:",
-  "- Paths for the workspace tools (read_file, glob_paths, grep_text,",
+  "- Paths for the workspace tools (read_file, glob, grep,",
   "  append_file) are relative to the workspace root shown as `cwd` in <env>.",
   "- Do NOT prefix paths with the workspace folder's own name. If cwd ends in",
   "  `/myrepo`, read `examples/x`, not `myrepo/examples/x` — the latter resolves",
@@ -326,8 +345,8 @@ export function buildAgentPromptBuilder(
       guidance: WORKSPACE_PATH_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "read_file" ||
-        tool.name === "glob_paths" ||
-        tool.name === "grep_text",
+        tool.name === "glob" ||
+        tool.name === "grep",
     }),
   );
 
@@ -337,8 +356,16 @@ export function buildAgentPromptBuilder(
       guidance: REPO_EVIDENCE_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "read_file" ||
-        tool.name === "glob_paths" ||
-        tool.name === "grep_text",
+        tool.name === "glob" ||
+        tool.name === "grep",
+    }),
+  );
+
+  sections.push(
+    createToolGuidanceSection({
+      name: "command_verification",
+      guidance: SHELL_VALIDATION_GUIDANCE,
+      whenTool: (tool) => tool.name === "shell",
     }),
   );
 

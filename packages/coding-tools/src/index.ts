@@ -25,7 +25,7 @@ const DEFAULT_EXCLUDE_GLOBS = [
 ];
 
 // Build output and tooling caches that almost always pollute file discovery
-// (a `glob_paths`/`grep_text` over source should not return the compiled
+// (a `glob`/`grep` over source should not return the compiled
 // mirror of that source). Excluded by default; callers that genuinely need to
 // inspect generated output opt back in with `includeBuildOutput: true`.
 const DEFAULT_BUILD_OUTPUT_EXCLUDE_GLOBS = [
@@ -49,8 +49,8 @@ function defaultExcludeGlobs(includeBuildOutput: boolean): string[] {
 
 export interface CodingToolsOptions {
   /**
-   * Workspace root used by discovery tools (`list_dir`, `grep_text`,
-   * `glob_paths`). Text reads and writes still execute through
+   * Workspace root used by discovery tools (`list_dir`, `grep`,
+   * `glob`). Text reads and writes still execute through
    * `RuntimeContext.workspace`.
    */
   workspaceRoot?: string | ((ctx: RuntimeContext) => string | Promise<string>);
@@ -69,8 +69,8 @@ export type CodingToolName =
   | "edit_anchored_text"
   | "apply_patch"
   | "list_dir"
-  | "grep_text"
-  | "glob_paths";
+  | "grep"
+  | "glob";
 
 export interface ReadTextInput {
   path: string;
@@ -615,7 +615,7 @@ export function createGrepTextTool(
   options: CodingToolsOptions = {},
 ): ToolDefinition<GrepTextInput, GrepTextResult> {
   return defineTool<GrepTextInput, GrepTextResult>({
-    name: "grep_text",
+    name: "grep",
     description:
       "Search UTF-8 workspace text files for a string or regex. Skips .git, " +
       "node_modules, and build output (dist/build/coverage) by default; pass " +
@@ -687,7 +687,7 @@ export function createGlobPathsTool(
   options: CodingToolsOptions = {},
 ): ToolDefinition<GlobPathsInput, GlobPathsResult> {
   return defineTool<GlobPathsInput, GlobPathsResult>({
-    name: "glob_paths",
+    name: "glob",
     description:
       "Find workspace-relative paths matching glob patterns. Skips .git, " +
       "node_modules, and build output (dist/build/coverage) by default; pass " +
@@ -868,7 +868,7 @@ function normalizeGrepTextInput(
   options: CodingToolsOptions,
   workspaceRoot?: string,
 ): Required<GrepTextInput> {
-  assertRecord(args, "grep_text input");
+  assertRecord(args, "grep input");
   const pattern = readString(args, "pattern");
   if (pattern.length === 0) {
     throw toolArgumentsInvalid("pattern must not be empty.");
@@ -905,7 +905,7 @@ function normalizeGlobPathsInput(
   options: CodingToolsOptions,
   workspaceRoot?: string,
 ): NormalizedGlobPathsInput {
-  assertRecord(args, "glob_paths input");
+  assertRecord(args, "glob input");
   const patternsValue = args.patterns;
   const patterns =
     typeof patternsValue === "string"
@@ -993,9 +993,7 @@ async function resolveWorkspaceRoot(
       : options.workspaceRoot;
   const inferred = configured ?? inferWorkspaceRoot(ctx);
   if (!inferred) {
-    throw new Error(
-      "workspaceRoot is required for list_dir, grep_text, and glob_paths.",
-    );
+    throw new Error("workspaceRoot is required for list_dir, grep, and glob.");
   }
   return realpath(resolve(inferred));
 }

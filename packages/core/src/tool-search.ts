@@ -6,7 +6,7 @@
 //      description only in the initial prompt. Their full inputSchema is NOT
 //      sent to the provider until the model invokes `tool_search`.
 //   2. `tool_search` accepts a `query` keyword string (e.g. "notebook jupyter")
-//      or a `select:` directive ("select:read_text,grep_text") to fetch
+//      or a `select:` directive ("select:read_text,grep") to fetch
 //      specific tools by name.
 //   3. The tool emits a `tool.requested` event and returns a structured
 //      payload with `matches: [{ name, description, inputSchema, ... }]`

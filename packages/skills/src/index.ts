@@ -470,7 +470,7 @@ export function filterSkillsForAgent(
  * A skill flagged `metadata.devOnly: true` is a development/test fixture (for
  * example a smoke-test skill). It must not enter a production run's candidate
  * set, where it wastes context and can mis-trigger. `loadSkills` itself stays
- * unfiltered so `inspect_skills`/CLI listing can still see it.
+ * unfiltered so `list_skills`/CLI listing can still see it.
  */
 export function isDevSkill(skill: Pick<SkillDefinition, "metadata">): boolean {
   return skill.metadata?.devOnly === true;

@@ -139,6 +139,326 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("loads shell sandbox config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        shell: {
+          sandbox: {
+            mode: "enforce",
+            failIfUnavailable: true,
+            filesystem: {
+              allowRead: ["."],
+              allowWrite: ["."],
+              denyRead: [".env"],
+              denyWrite: [".sparkwright/config.json"],
+              tmp: true,
+            },
+            network: { mode: "deny" },
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.shell?.sandbox).toMatchObject({
+        mode: "enforce",
+        failIfUnavailable: true,
+        filesystem: {
+          allowRead: ["."],
+          allowWrite: ["."],
+          denyRead: [".env"],
+          denyWrite: [".sparkwright/config.json"],
+          tmp: true,
+        },
+        network: { mode: "deny" },
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("merges shell sandbox config conservatively so project config cannot downgrade user policy", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        shell: {
+          sandbox: {
+            mode: "enforce",
+            failIfUnavailable: true,
+            filesystem: {
+              allowRead: ["src"],
+              allowWrite: ["src"],
+              denyRead: [".env"],
+              denyWrite: [".sparkwright/config.json"],
+              tmp: false,
+            },
+            network: { mode: "deny" },
+          },
+        },
+      });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({
+          shell: {
+            sandbox: {
+              mode: "off",
+              failIfUnavailable: false,
+              filesystem: {
+                allowRead: ["."],
+                allowWrite: ["."],
+                denyRead: [],
+                denyWrite: [],
+                tmp: true,
+              },
+              network: { mode: "allow" },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.shell?.sandbox).toEqual({
+        mode: "enforce",
+        failIfUnavailable: true,
+        filesystem: {
+          allowRead: ["src", "."],
+          allowWrite: ["src", "."],
+          denyRead: [".env"],
+          denyWrite: [".sparkwright/config.json"],
+          tmp: false,
+        },
+        network: { mode: "deny" },
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("allows later sandbox config layers to tighten and append path lists", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        shell: {
+          sandbox: {
+            mode: "warn",
+            filesystem: {
+              allowRead: ["docs"],
+              denyWrite: ["generated"],
+            },
+            network: { mode: "allow" },
+          },
+        },
+      });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({
+          shell: {
+            sandbox: {
+              mode: "enforce",
+              filesystem: {
+                allowRead: ["src"],
+                denyRead: [".env.local"],
+                denyWrite: ["generated", "secrets"],
+              },
+              network: { mode: "deny" },
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.shell?.sandbox).toEqual({
+        mode: "enforce",
+        failIfUnavailable: undefined,
+        filesystem: {
+          allowRead: ["docs", "src"],
+          allowWrite: undefined,
+          denyRead: [".env.local"],
+          denyWrite: ["generated", "secrets"],
+          tmp: undefined,
+        },
+        network: { mode: "deny" },
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads configured workflow hooks", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "block-generated",
+                description:
+                  "Generated files are checked in from another tool.",
+                hook: "PreToolUse",
+                frequency: "always",
+                matcher: {
+                  toolName: "write_file",
+                  pathGlob: "generated/**",
+                  excludePathGlob: "generated/fixtures/**",
+                },
+                action: {
+                  type: "block",
+                  reason: "Generated files are locked.",
+                },
+              },
+              {
+                name: "test-after-write",
+                hook: "PostToolUse",
+                matcher: { toolName: ["write_file", "apply_patch"] },
+                action: {
+                  type: "command",
+                  command: "npm",
+                  args: ["test"],
+                  timeoutMs: 5000,
+                  blockOnFailure: true,
+                  injectOutput: "onFailure",
+                  stdin: "json",
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.hooks?.workflow).toMatchObject([
+        {
+          name: "block-generated",
+          description: "Generated files are checked in from another tool.",
+          hook: "PreToolUse",
+          frequency: "always",
+          matcher: {
+            toolName: "write_file",
+            pathGlob: "generated/**",
+            excludePathGlob: "generated/fixtures/**",
+          },
+          action: {
+            type: "block",
+            reason: "Generated files are locked.",
+          },
+        },
+        {
+          name: "test-after-write",
+          hook: "PostToolUse",
+          matcher: { toolName: ["write_file", "apply_patch"] },
+          action: {
+            type: "command",
+            command: "npm",
+            args: ["test"],
+            timeoutMs: 5000,
+            blockOnFailure: true,
+            injectOutput: "onFailure",
+            stdin: "json",
+          },
+        },
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("drops invalid configured workflow hooks with validation errors", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "bad",
+                hook: "Nope",
+                action: { type: "block", reason: "x" },
+              },
+              {
+                name: "also-bad",
+                hook: "Stop",
+                action: { type: "command", args: ["test"] },
+              },
+              {
+                name: "bad-frequency",
+                hook: "Stop",
+                frequency: "often",
+                action: { type: "context", content: "x" },
+              },
+              {
+                name: "bad-inject-output",
+                hook: "Stop",
+                action: {
+                  type: "command",
+                  command: "npm",
+                  injectOutput: "sometimes",
+                },
+              },
+              {
+                name: "bad-stdin",
+                hook: "Stop",
+                action: {
+                  type: "command",
+                  command: "npm",
+                  stdin: "payload",
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.hooks?.workflow).toHaveLength(3);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.hooks.workflow.0.hook",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.hooks.workflow.1.action.command",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.hooks.workflow.2.frequency",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) =>
+            e.field === "capabilities.hooks.workflow.3.action.injectOutput",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.hooks.workflow.4.action.stdin",
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("drops invalid capability tool fields with validation errors", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

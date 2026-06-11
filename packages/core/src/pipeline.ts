@@ -10,8 +10,9 @@
 //   relieved or all stages are exhausted). The reference sequence is
 //   cheap edits first, model-backed last:
 //   `applyToolResultBudget → snip → micro → collapse → auto`.
-// - Stop hooks are a stage of the existing ValidationHook (`pre_terminal`)
-//   that can block run completion and inject a continuation note.
+// - Legacy stop hooks are a stage of ValidationHook (`pre_terminal`) that can
+//   block run completion and inject a continuation note. New project-facing
+//   stop gates should use WorkflowHook `Stop`.
 // - Post-sampling hooks are explicitly fire-and-forget — they observe model
 //   output but cannot influence the loop. Errors are surfaced as events.
 // - The summarizer is opt-in async; the loop awaits it just before the next
