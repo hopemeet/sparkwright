@@ -517,6 +517,22 @@ export type {
 } from "./hooks.js";
 export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
 
+// Deterministic workflow hooks over the standard agent lifecycle.
+export type {
+  WorkflowHookName,
+  WorkflowRuntimeSignal,
+  WorkflowHookMatchValue,
+  WorkflowHookMatcher,
+  WorkflowHookInput,
+  WorkflowHookResult,
+  WorkflowHookRewritePatch,
+  WorkflowHook,
+  RunWorkflowHooksInput,
+  WorkflowHookBlock,
+  WorkflowHookExecution,
+} from "./workflow-hooks.js";
+export { runWorkflowHooks } from "./workflow-hooks.js";
+
 // User-configurable hooks (settings.json-style; host owns execution).
 export type {
   UserHookTrigger,

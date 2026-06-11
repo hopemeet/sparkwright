@@ -120,6 +120,10 @@ export type EventType =
   | "workspace.write.skipped"
   | "usage.updated"
   | "hook.failed"
+  | "workflow_hook.started"
+  | "workflow_hook.completed"
+  | "workflow_hook.blocked"
+  | "workflow_hook.failed"
   | "interaction.requested"
   | "interaction.resolved"
   // Prompt-cache integrity. Emitted in dev/debug trace levels when a context

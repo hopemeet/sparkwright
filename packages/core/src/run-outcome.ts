@@ -207,6 +207,7 @@ export function isPolicyOrApprovalFailure(code: string | undefined): boolean {
   const normalized = code.toLowerCase();
   return (
     normalized === "tool_denied" ||
+    normalized === "tool_blocked_by_workflow_hook" ||
     normalized === "approval_denied" ||
     normalized === "tool_approval_denied" ||
     normalized === "untracked_workspace_mutation" ||

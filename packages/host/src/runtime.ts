@@ -34,6 +34,7 @@ import {
   type TraceLevel,
   type ToolDefinition,
   type ToolOrigin,
+  type WorkflowHook,
 } from "@sparkwright/core";
 import {
   prepareSkillsForRun,
@@ -98,6 +99,7 @@ import {
   delegateToolName,
   type DelegateCapabilityDescriptor,
 } from "./delegate-capability.js";
+import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -206,6 +208,7 @@ interface PreparedHostRunEnvironment {
   preparedMcp: PreparedMcp | null;
   mainAgent: AgentProfile;
   tools: ToolDefinition[];
+  workflowHooks: WorkflowHook[];
   sessionStore: FileSessionStore;
   parentRunRef: { current?: ReturnType<typeof createRun> };
   traceLevel: TraceLevel;
@@ -465,6 +468,7 @@ export class HostRuntime {
     const approvalResolver = this.createApprovalResolver(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
     const toolConfig = loadedConfig.config.capabilities?.tools;
+    const hookConfig = loadedConfig.config.capabilities?.hooks;
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
@@ -585,6 +589,10 @@ export class HostRuntime {
       delegateTools,
       dynamicSpawnTool,
     });
+    const workflowHooks = createConfiguredWorkflowHooks({
+      hooks: hookConfig?.workflow,
+      workspaceRoot,
+    });
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       tools,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
@@ -650,6 +658,7 @@ export class HostRuntime {
         preparedMcp,
         mainAgent,
         tools,
+        workflowHooks,
         sessionStore,
         parentRunRef,
         traceLevel,
@@ -1060,6 +1069,7 @@ export class HostRuntime {
           sessionId: resumeSessionId,
         }),
         tools: env.tools,
+        workflowHooks: env.workflowHooks,
         model: env.model,
         maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
         runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
@@ -1244,6 +1254,7 @@ export class HostRuntime {
           sessionId,
         }),
         tools: env.tools,
+        workflowHooks: env.workflowHooks,
         model: env.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
         // the profile's RunBudget when set and derive the step ceiling from it.

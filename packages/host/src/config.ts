@@ -17,7 +17,11 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { PermissionMode } from "@sparkwright/core";
+import type {
+  PermissionMode,
+  WorkflowHookMatcher,
+  WorkflowHookName,
+} from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
@@ -90,6 +94,7 @@ export interface SharedConfig {
 
 export interface CapabilityConfig {
   tools?: CapabilityToolsConfig;
+  hooks?: CapabilityHooksConfig;
   skills?: CapabilitySkillsConfig;
   mcp?: CapabilityMcpConfig;
   agents?: CapabilityAgentsConfig;
@@ -105,6 +110,44 @@ export interface CapabilityToolsConfig {
   disabled?: string[];
   /** Tool-name patterns prepared as deferred schemas when supported. */
   defer?: string[];
+}
+
+export type CapabilityHookActionConfig =
+  | {
+      type: "block";
+      reason: string;
+    }
+  | {
+      type: "context";
+      content: string;
+      contextType?: "system" | "user" | "summary";
+    }
+  | {
+      type: "command";
+      command: string;
+      args?: string[];
+      cwd?: string;
+      timeoutMs?: number;
+      blockOnFailure?: boolean;
+      injectOutput?: "always" | "onFailure" | "never";
+      maxOutputBytes?: number;
+    };
+
+export type CapabilityWorkflowHookFrequency = "always" | "oncePerTurn";
+
+export interface CapabilityWorkflowHookConfig {
+  name: string;
+  description?: string;
+  hook: WorkflowHookName;
+  enabled?: boolean;
+  frequency?: CapabilityWorkflowHookFrequency;
+  matcher?: WorkflowHookMatcher;
+  onError?: "continue" | "block";
+  action: CapabilityHookActionConfig;
+}
+
+export interface CapabilityHooksConfig {
+  workflow?: CapabilityWorkflowHookConfig[];
 }
 
 export interface CapabilityAgentsConfig {
@@ -455,6 +498,358 @@ function validateCapabilityTools(
   return out;
 }
 
+const WORKFLOW_HOOK_NAMES: WorkflowHookName[] = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "ModelOutput",
+  "PreToolUse",
+  "PostToolUse",
+  "Stop",
+  "SessionEnd",
+  "RuntimeSignal",
+];
+
+function validateCapabilityHooks(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityHooksConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.hooks",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: CapabilityHooksConfig = {};
+  const allowed = new Set(["workflow"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `capabilities.hooks.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.workflow !== undefined) {
+    if (Array.isArray(raw.workflow)) {
+      out.workflow = raw.workflow
+        .map((hook, i) => validateWorkflowHookConfig(hook, i, filePath, errors))
+        .filter((hook): hook is CapabilityWorkflowHookConfig => !!hook);
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities.hooks.workflow",
+        message: "must be an array",
+      });
+    }
+  }
+  return out;
+}
+
+function validateWorkflowHookConfig(
+  raw: unknown,
+  index: number,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityWorkflowHookConfig | undefined {
+  const field = `capabilities.hooks.workflow.${index}`;
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "name",
+    "description",
+    "hook",
+    "enabled",
+    "frequency",
+    "matcher",
+    "onError",
+    "action",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (typeof raw.name !== "string" || raw.name.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.name`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  if (
+    typeof raw.hook !== "string" ||
+    !(WORKFLOW_HOOK_NAMES as string[]).includes(raw.hook)
+  ) {
+    errors.push({
+      file: filePath,
+      field: `${field}.hook`,
+      message: `must be one of ${WORKFLOW_HOOK_NAMES.join(" | ")}`,
+    });
+    return undefined;
+  }
+  const action = validateWorkflowHookAction(
+    raw.action,
+    field,
+    filePath,
+    errors,
+  );
+  if (!action) return undefined;
+  const out: CapabilityWorkflowHookConfig = {
+    name: raw.name,
+    hook: raw.hook as WorkflowHookName,
+    action,
+  };
+  if (raw.description !== undefined) {
+    if (typeof raw.description === "string") {
+      out.description = raw.description;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.description`,
+        message: "must be a string",
+      });
+    }
+  }
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      `${field}.enabled`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.onError !== undefined) {
+    if (raw.onError === "continue" || raw.onError === "block") {
+      out.onError = raw.onError;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.onError`,
+        message: "must be continue or block",
+      });
+    }
+  }
+  if (raw.frequency !== undefined) {
+    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+      out.frequency = raw.frequency;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.frequency`,
+        message: "must be always or oncePerTurn",
+      });
+    }
+  }
+  if (raw.matcher !== undefined) {
+    const matcher = validateWorkflowHookMatcher(
+      raw.matcher,
+      `${field}.matcher`,
+      filePath,
+      errors,
+    );
+    if (matcher) out.matcher = matcher;
+  }
+  return out;
+}
+
+function validateWorkflowHookAction(
+  raw: unknown,
+  parentField: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityHookActionConfig | undefined {
+  const field = `${parentField}.action`;
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const type = raw.type;
+  if (type !== "block" && type !== "context" && type !== "command") {
+    errors.push({
+      file: filePath,
+      field: `${field}.type`,
+      message: "must be block, context, or command",
+    });
+    return undefined;
+  }
+  if (type === "block") {
+    if (typeof raw.reason !== "string" || raw.reason.length === 0) {
+      errors.push({
+        file: filePath,
+        field: `${field}.reason`,
+        message: "must be a non-empty string",
+      });
+      return undefined;
+    }
+    return { type, reason: raw.reason };
+  }
+  if (type === "context") {
+    if (typeof raw.content !== "string" || raw.content.length === 0) {
+      errors.push({
+        file: filePath,
+        field: `${field}.content`,
+        message: "must be a non-empty string",
+      });
+      return undefined;
+    }
+    const contextType = raw.contextType;
+    if (
+      contextType !== undefined &&
+      contextType !== "system" &&
+      contextType !== "user" &&
+      contextType !== "summary"
+    ) {
+      errors.push({
+        file: filePath,
+        field: `${field}.contextType`,
+        message: "must be system, user, or summary",
+      });
+      return undefined;
+    }
+    return {
+      type,
+      content: raw.content,
+      ...(contextType ? { contextType } : {}),
+    };
+  }
+  if (typeof raw.command !== "string" || raw.command.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.command`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  return {
+    type,
+    command: raw.command,
+    ...(raw.args !== undefined
+      ? {
+          args: validateStringArray(
+            raw.args,
+            `${field}.args`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.cwd !== undefined
+      ? typeof raw.cwd === "string"
+        ? { cwd: raw.cwd }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.cwd`,
+            message: "must be a string",
+          }),
+          {})
+      : {}),
+    ...(raw.timeoutMs !== undefined
+      ? {
+          timeoutMs: validateOptionalPositiveInteger(
+            raw.timeoutMs,
+            `${field}.timeoutMs`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.blockOnFailure !== undefined
+      ? {
+          blockOnFailure: validateOptionalBoolean(
+            raw.blockOnFailure,
+            `${field}.blockOnFailure`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.injectOutput !== undefined
+      ? raw.injectOutput === "always" ||
+        raw.injectOutput === "onFailure" ||
+        raw.injectOutput === "never"
+        ? { injectOutput: raw.injectOutput }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.injectOutput`,
+            message: "must be always, onFailure, or never",
+          }),
+          {})
+      : {}),
+    ...(raw.maxOutputBytes !== undefined
+      ? {
+          maxOutputBytes: validateOptionalPositiveInteger(
+            raw.maxOutputBytes,
+            `${field}.maxOutputBytes`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+  };
+}
+
+function validateWorkflowHookMatcher(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): WorkflowHookMatcher | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "toolName",
+    "eventType",
+    "signal",
+    "status",
+    "pathGlob",
+    "excludePathGlob",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  const matcher: WorkflowHookMatcher = {};
+  for (const key of allowed) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value === "string") {
+      matcher[key as keyof WorkflowHookMatcher] = value;
+      continue;
+    }
+    if (
+      Array.isArray(value) &&
+      value.every((entry) => typeof entry === "string")
+    ) {
+      matcher[key as keyof WorkflowHookMatcher] = value;
+      continue;
+    }
+    errors.push({
+      file: filePath,
+      field: `${field}.${key}`,
+      message: "must be a string or array of strings",
+    });
+  }
+  return matcher;
+}
+
 function validateCapabilities(
   raw: unknown,
   filePath: string,
@@ -469,7 +864,7 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set(["tools", "skills", "mcp", "agents"]);
+  const allowed = new Set(["tools", "hooks", "skills", "mcp", "agents"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -482,6 +877,10 @@ function validateCapabilities(
   if (raw.tools !== undefined) {
     const tools = validateCapabilityTools(raw.tools, filePath, errors);
     if (tools) out.tools = tools;
+  }
+  if (raw.hooks !== undefined) {
+    const hooks = validateCapabilityHooks(raw.hooks, filePath, errors);
+    if (hooks) out.hooks = hooks;
   }
   if (raw.skills !== undefined) {
     const skills = validateCapabilitySkills(raw.skills, filePath, errors);

@@ -261,6 +261,13 @@ Current event types:
   (tokens, cost, wall time, per-tool, per-model). Payload: `UsageSnapshot`.
 - `hook.failed`: a `RunHook.*` callback threw. Payload:
   `{ phase: string, toolName?: string, message: string }`. Loop continues.
+- `workflow_hook.started` / `workflow_hook.completed` /
+  `workflow_hook.blocked` / `workflow_hook.failed`: deterministic workflow
+  hook lifecycle for `SessionStart`, `UserPromptSubmit`, `ModelOutput`,
+  `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`, and `RuntimeSignal`.
+  Payloads carry `{ hookName, hookId?, hook, step?, metadata }`; completion
+  includes the normalized hook result, blocked includes reason/findings, and
+  failed includes `{ error: { code, message } }`.
 - `interaction.requested`: the runtime asked the InteractionChannel for an
   approval / question / notification. Payload:
   `{ kind: "approval"|"question"|"notification", request|notification }`.
@@ -552,7 +559,15 @@ Provider adapters should avoid hidden internal retries when possible. The AI SDK
 
 ### Validation Events
 
-Validation hooks let applications turn checks into first-class harness evidence. v0 hooks can run at `tool_result`, `workspace_write`, and `final_output`.
+Validation hooks let applications turn code-owned checks into first-class
+harness evidence. v0 hooks can run at `tool_result`, `workspace_write`,
+`pre_terminal`, `post_sampling`, and `final_output`.
+
+For project-facing workflow rules, prefer `workflow_hook.*` through
+`capabilities.hooks.workflow` or `createRun({ workflowHooks })`: use
+`PreToolUse` for tool gates, `PostToolUse` for checks after actions, and
+`Stop` for "do not finish yet" gates. Keep validation hooks for embedder-owned
+proposal/content validation that needs code access to the subject.
 
 `validation.started` payload:
 
@@ -589,7 +604,7 @@ Validation hooks let applications turn checks into first-class harness evidence.
 }
 ```
 
-Tool-result validation failures are returned to the model as failed tool observations so the model can recover. Workspace-write validation failures emit `workspace.write.denied` and prevent mutation. Final-output validation failures fail the run with `stopReason: "validation_failed"` and failure category `validation`.
+Tool-result validation failures are returned to the model as failed tool observations so the model can recover. Workspace-write validation failures emit `workspace.write.denied` and prevent mutation. `pre_terminal` validation failures inject continuation context and keep the loop running for compatibility with older stop-hook integrations. Final-output validation failures fail the run with `stopReason: "validation_failed"` and failure category `validation`.
 
 ### Context Compaction Request
 

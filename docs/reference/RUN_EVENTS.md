@@ -43,6 +43,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                  | Stream output incrementally; cap retained inline output               |
 | Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`        | Show capability changes as environment/context evidence               |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                     | Show as host automation, not model-authored work                      |
+| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                               | Show deterministic lifecycle automation and blocking decisions        |
 
 A backend projection can materialize these rows into a read model, but the
 source of truth should remain the append-only event log plus `run.json`,

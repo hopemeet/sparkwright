@@ -150,6 +150,103 @@ This is intentionally not a full allowlist. Omitting `tools.enabled` lets the
 host start from its available tools, then removes `shell` and defers MCP schemas
 when supported.
 
+### Add Workflow Hooks
+
+Project hooks live under `capabilities.hooks.workflow`. They attach
+deterministic actions to the run lifecycle without relying on the model to
+remember a rule.
+
+Use workflow hooks for checked-in project rules: block forbidden paths, inject
+project context, run tests after writes, or prevent final answers until required
+verification has happened. Lower-level `RunHook`, `ValidationHook`, and
+`UserHookRunner` APIs remain available for SDK embedders and host integrations,
+but they are not the recommended project configuration surface.
+
+Block generated files before a write tool runs:
+
+```json
+{
+  "capabilities": {
+    "hooks": {
+      "workflow": [
+        {
+          "name": "block-generated",
+          "description": "Generated files are produced by build tooling.",
+          "hook": "PreToolUse",
+          "matcher": {
+            "toolName": ["append_file", "edit_anchored_text", "apply_patch"],
+            "pathGlob": "src/generated/**",
+            "excludePathGlob": "src/generated/fixtures/**"
+          },
+          "action": {
+            "type": "block",
+            "reason": "Generated files under src must not be edited directly."
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Inject a project rule at session start:
+
+```json
+{
+  "capabilities": {
+    "hooks": {
+      "workflow": [
+        {
+          "name": "testing-rule",
+          "hook": "SessionStart",
+          "action": {
+            "type": "context",
+            "contextType": "system",
+            "content": "Before final answer, mention which tests were run or state that tests were not run."
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Run a command after workspace writes and feed the result back into the run:
+
+```json
+{
+  "capabilities": {
+    "hooks": {
+      "workflow": [
+        {
+          "name": "test-after-write",
+          "hook": "PostToolUse",
+          "frequency": "oncePerTurn",
+          "matcher": {
+            "toolName": ["append_file", "edit_anchored_text", "apply_patch"]
+          },
+          "action": {
+            "type": "command",
+            "command": "npm",
+            "args": ["test"],
+            "timeoutMs": 120000,
+            "blockOnFailure": true,
+            "injectOutput": "onFailure"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Command actions use `command` plus `args`; they do not run through a shell
+string. Relative `cwd` values resolve from the workspace root. Command stdout
+and stderr are truncated before they are stored. Set `injectOutput` to
+`always`, `onFailure`, or `never` to control whether command output is added
+as workflow-hook context. Set `frequency` to `oncePerTurn` when a hook should
+run at most once for the same run step.
+
 ### Add A Stdio MCP Server
 
 Add a server under project `capabilities.mcp.servers`:

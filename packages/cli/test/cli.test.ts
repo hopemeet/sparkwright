@@ -2632,6 +2632,93 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("applies configured workflow hooks in host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "block-readme-append",
+                hook: "PreToolUse",
+                matcher: {
+                  toolName: "append_file",
+                  pathGlob: "README.md",
+                },
+                action: {
+                  type: "block",
+                  reason: "README appends are locked by workflow hook.",
+                },
+              },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Try to append README.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    heading: "Blocked",
+                    body: "This should not be applied.",
+                  },
+                },
+              ],
+            },
+            { message: "blocked by hook" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
+      "# Demo\n",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find((event) => event.type === "workflow_hook.blocked"),
+    ).toBeTruthy();
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+      ),
+    ).toBeTruthy();
+  });
+
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

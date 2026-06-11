@@ -1,9 +1,10 @@
 // =============================================================================
 // AI maintenance note
 //
-// RunHook is the generic lifecycle-middleware seam for the run loop. Use it
-// when you need to observe or (narrowly) influence a run without changing the
-// loop. Anything more invasive should grow a dedicated extension point.
+// RunHook is the low-level lifecycle-middleware seam for embedders that need
+// in-process observability around the run loop. Project-facing rules should
+// prefer WorkflowHook / capabilities.hooks.workflow; keep RunHook for SDK,
+// plugin, telemetry, and narrow compatibility cases.
 //
 // Wired into packages/core/src/run.ts at:
 //   - onEvent           — events.subscribe() in the constructor
@@ -16,6 +17,9 @@
 // Hooks MUST NOT mutate run state directly. The single supported mutation is
 // `beforeToolCall` returning `{ skip: { reason } }` to skip a tool call (which
 // short-circuits into a synthesized failed ToolResult so the model can react).
+// New project policy should use WorkflowHook `PreToolUse` instead; it has
+// matcher support, explicit block/rewrite semantics, and workflow_hook.* trace
+// events.
 //
 // See docs/EXTENSION_INTERFACES.md "Run Hooks".
 // =============================================================================

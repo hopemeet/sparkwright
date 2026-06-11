@@ -109,6 +109,108 @@
           },
           "additionalProperties": false
         },
+        "hooks": {
+          "type": "object",
+          "description": "Deterministic workflow hooks for host-created runs. Core owns lifecycle execution; the host interprets configured actions.",
+          "properties": {
+            "workflow": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "hook", "action"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "description": { "type": "string" },
+                  "hook": {
+                    "type": "string",
+                    "enum": [
+                      "SessionStart",
+                      "UserPromptSubmit",
+                      "ModelOutput",
+                      "PreToolUse",
+                      "PostToolUse",
+                      "Stop",
+                      "SessionEnd",
+                      "RuntimeSignal"
+                    ]
+                  },
+                  "enabled": { "type": "boolean" },
+                  "onError": {
+                    "type": "string",
+                    "enum": ["continue", "block"]
+                  },
+                  "frequency": {
+                    "type": "string",
+                    "enum": ["always", "oncePerTurn"]
+                  },
+                  "matcher": {
+                    "type": "object",
+                    "properties": {
+                      "toolName": { "$ref": "#/$defs/stringOrStringArray" },
+                      "eventType": { "$ref": "#/$defs/stringOrStringArray" },
+                      "signal": { "$ref": "#/$defs/stringOrStringArray" },
+                      "status": { "$ref": "#/$defs/stringOrStringArray" },
+                      "pathGlob": { "$ref": "#/$defs/stringOrStringArray" },
+                      "excludePathGlob": {
+                        "$ref": "#/$defs/stringOrStringArray"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "action": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "required": ["type", "reason"],
+                        "properties": {
+                          "type": { "const": "block" },
+                          "reason": { "type": "string", "minLength": 1 }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["type", "content"],
+                        "properties": {
+                          "type": { "const": "context" },
+                          "content": { "type": "string", "minLength": 1 },
+                          "contextType": {
+                            "type": "string",
+                            "enum": ["system", "user", "summary"]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": ["type", "command"],
+                        "properties": {
+                          "type": { "const": "command" },
+                          "command": { "type": "string", "minLength": 1 },
+                          "args": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "cwd": { "type": "string", "minLength": 1 },
+                          "timeoutMs": { "type": "integer", "minimum": 1 },
+                          "blockOnFailure": { "type": "boolean" },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          },
+                          "maxOutputBytes": { "type": "integer", "minimum": 1 }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "skills": {
           "type": "object",
           "description": "Skill loading settings for host-created runs.",
@@ -230,6 +332,14 @@
           { "type": "null" }
         ]
       }
+    }
+  },
+  "$defs": {
+    "stringOrStringArray": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
     }
   },
   "additionalProperties": false

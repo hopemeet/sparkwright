@@ -22,6 +22,7 @@ import {
 import {
   applyToolConfig,
   buildConfiguredAdapter,
+  createConfiguredWorkflowHooks,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
   resolveModelSelection,
@@ -111,6 +112,12 @@ export async function startDirectCoreRun(
     }),
   ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);
+  const loadedConfig = await loadHostConfig(workspaceRoot, env);
+  const workflowHooks = createConfiguredWorkflowHooks({
+    hooks: loadedConfig.config.capabilities?.hooks?.workflow,
+    workspaceRoot,
+    env,
+  });
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
@@ -130,6 +137,7 @@ export async function startDirectCoreRun(
       platform: process.platform,
     }),
     tools,
+    workflowHooks,
     model: model.adapter,
     context: parsed.contextItems ?? [],
     runStore: createSessionRunStoreFactory({

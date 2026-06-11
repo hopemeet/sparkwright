@@ -1018,6 +1018,14 @@ describe("trace", () => {
         status: "failed",
         error: { code: "TOOL_DENIED", message: "write disabled" },
       }),
+      log.emit("tool.failed", {
+        toolCallId: "call_3",
+        status: "failed",
+        error: {
+          code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+          message: "blocked by configured hook",
+        },
+      }),
       log.emit("run.completed", { reason: "final_answer" }),
     ]
       .map(serializeEventJsonl)
@@ -1027,11 +1035,12 @@ describe("trace", () => {
 
     expect(summary.errorCount).toBe(0);
     expect(summary.errorCodes).toEqual({});
-    expect(summary.expectedDenialCount).toBe(3);
+    expect(summary.expectedDenialCount).toBe(4);
     expect(summary.expectedDenialCodes).toEqual({
       "workspace.write.denied": 1,
       APPROVAL_DENIED: 1,
       TOOL_DENIED: 1,
+      TOOL_BLOCKED_BY_WORKFLOW_HOOK: 1,
     });
   });
 

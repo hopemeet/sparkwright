@@ -47,6 +47,13 @@ import {
   type RunHook,
   type ToolCallHookDecision,
 } from "./hooks.js";
+import {
+  runWorkflowHooks,
+  type WorkflowHook,
+  type WorkflowHookBlock,
+  type WorkflowHookExecution,
+  type WorkflowHookName,
+} from "./workflow-hooks.js";
 import { createUsageTracker, type UsageTracker } from "./usage.js";
 import {
   DefaultContextAssembler,
@@ -185,12 +192,23 @@ export interface CreateRunOptions {
    */
   interactionChannel?: InteractionChannel;
   /**
-   * Lifecycle middleware. Hooks observe model/tool/event boundaries and may
-   * skip a tool call via `beforeToolCall` returning `{ skip: { reason } }`.
-   * Hook errors never break the run; they emit a `hook.failed` event.
+   * Low-level lifecycle middleware for embedders and instrumentation. Hooks
+   * observe model/tool/event boundaries and may skip a tool call via
+   * `beforeToolCall` returning `{ skip: { reason } }`. Hook errors never break
+   * the run; they emit a `hook.failed` event. Project-facing rules should
+   * prefer `workflowHooks` / `capabilities.hooks.workflow`.
    * See {@link RunHook}.
    */
   hooks?: RunHook[];
+  /**
+   * Deterministic lifecycle hooks over the standard agent workflow. These are
+   * higher-level than RunHook and are intended for rules that must happen at
+   * known lifecycle points (tool gates, post-tool checks, stop gates, runtime
+   * signals). This is the preferred surface for project-facing workflow
+   * policy. Legacy `hooks` and `validationHooks` remain supported for
+   * embedders and compatibility.
+   */
+  workflowHooks?: WorkflowHook[];
   /**
    * Custom usage tracker. When omitted, an in-memory tracker is created and
    * fed automatically by the loop. Embedders that want their own aggregation
@@ -496,6 +514,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly observationFormatter: ObservationFormatter;
   private readonly promptBuilder: PromptBuilder<PromptMessage[]>;
   private readonly validationHooks: ValidationHook[];
+  private readonly workflowHooks: WorkflowHook[];
   private readonly compactionPipeline?: ReturnType<
     typeof createCompactionPipeline
   >;
@@ -634,6 +653,7 @@ export class SparkwrightRun implements RunHandle {
       options.observationFormatter ?? new DefaultObservationFormatter();
     this.promptBuilder = options.promptBuilder ?? new DefaultPromptBuilder();
     this.validationHooks = [...(options.validationHooks ?? [])];
+    this.workflowHooks = [...(options.workflowHooks ?? [])];
     // Default to deterministic, self-gating stages when the embedder does not
     // configure their own. An explicit empty array disables compaction.
     const compactionStages =
@@ -981,6 +1001,29 @@ export class SparkwrightRun implements RunHandle {
         };
     this.lastLoopState = cloneLoopState(state);
 
+    const sessionStartHooks = await this.runWorkflowHookPhase(
+      "SessionStart",
+      {
+        goal: this.record.goal,
+        resumedFromCheckpoint: this.resumedFromCheckpoint !== undefined,
+      },
+      { step: state.step },
+      state.step,
+    );
+    if (sessionStartHooks.status === "blocked") {
+      return this.failWorkflowHookBlock(
+        "hook_stopped",
+        sessionStartHooks.block,
+      );
+    }
+    if (sessionStartHooks.context.length > 0) {
+      state = {
+        ...state,
+        context: [...state.context, ...sessionStartHooks.context],
+      };
+      this.lastLoopState = cloneLoopState(state);
+    }
+
     if (this.models.length === 0) {
       return this.complete("no_model_configured", {
         message: "No model adapter configured.",
@@ -995,6 +1038,30 @@ export class SparkwrightRun implements RunHandle {
       if (commandResult) return commandResult;
       if (this.abortController.signal.aborted) {
         return this.handleAbortBetweenTurns();
+      }
+
+      const promptSubmitHooks = await this.runWorkflowHookPhase(
+        "UserPromptSubmit",
+        {
+          goal: this.record.goal,
+          transition: state.transition,
+          context: state.context,
+        },
+        { step: state.step, transition: state.transition },
+        state.step,
+      );
+      if (promptSubmitHooks.status === "blocked") {
+        return this.failWorkflowHookBlock(
+          "hook_stopped",
+          promptSubmitHooks.block,
+        );
+      }
+      if (promptSubmitHooks.context.length > 0) {
+        state = {
+          ...state,
+          context: [...state.context, ...promptSubmitHooks.context],
+        };
+        this.lastLoopState = cloneLoopState(state);
       }
 
       // --- Phase 2: budget --------------------------------------------------
@@ -1174,6 +1241,48 @@ export class SparkwrightRun implements RunHandle {
         step: state.step,
         output,
       });
+      const modelOutputHooks = await this.runWorkflowHookPhase(
+        "ModelOutput",
+        {
+          message: output.message,
+          toolCalls: output.toolCalls ?? [],
+          stopReason: output.stopReason,
+          usage: output.usage,
+        },
+        {
+          step: state.step,
+          toolCallCount: output.toolCalls?.length ?? 0,
+        },
+        state.step,
+      );
+      if (modelOutputHooks.status === "blocked") {
+        state = {
+          ...state,
+          context: [
+            ...state.context,
+            this.formatWorkflowHookBlockContinuation(
+              "ModelOutput",
+              modelOutputHooks.block,
+              state.step,
+            ),
+          ],
+          step: state.step + 1,
+          turnCount: state.turnCount + 1,
+          transition: {
+            reason: "validation_continuation",
+            metadata: { hookName: modelOutputHooks.block.hookName },
+          },
+        };
+        this.lastLoopState = cloneLoopState(state);
+        continue;
+      }
+      if (modelOutputHooks.context.length > 0) {
+        state = {
+          ...state,
+          context: [...state.context, ...modelOutputHooks.context],
+        };
+        this.lastLoopState = cloneLoopState(state);
+      }
       // Fire post_sampling hooks fire-and-forget so they observe model output
       // without blocking the loop. Failures are logged via validation events.
       kickPostSamplingHooks({
@@ -1261,6 +1370,39 @@ export class SparkwrightRun implements RunHandle {
               validation: validationFailure,
             },
           );
+        }
+
+        const stopHooks = await this.runWorkflowHookPhase(
+          "Stop",
+          {
+            message: output.message,
+            stepsUsed: state.step,
+            maxSteps: this.maxSteps,
+            events: this.events.all(),
+          },
+          { step: state.step },
+          state.step,
+        );
+        if (stopHooks.status === "blocked") {
+          state = {
+            ...state,
+            context: [
+              ...state.context,
+              this.formatWorkflowHookBlockContinuation(
+                "Stop",
+                stopHooks.block,
+                state.step,
+              ),
+            ],
+            step: state.step + 1,
+            turnCount: state.turnCount + 1,
+            transition: {
+              reason: "stop_hook_blocked",
+              metadata: { hookName: stopHooks.block.hookName },
+            },
+          };
+          this.lastLoopState = cloneLoopState(state);
+          continue;
         }
 
         // Surface step-budget context on a natural finish. A model can answer
@@ -1697,6 +1839,37 @@ export class SparkwrightRun implements RunHandle {
     };
   }
 
+  private formatWorkflowHookBlockContinuation(
+    hook: WorkflowHookName,
+    block: WorkflowHookBlock,
+    step: number,
+  ): ContextItem {
+    return {
+      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
+      type: "summary",
+      source: { kind: "validation", uri: block.hookName },
+      content: JSON.stringify({
+        stage: hook,
+        status: "blocked",
+        hookName: block.hookName,
+        hookId: block.hookId,
+        message: workflowHookBlockMessage(block),
+        findings: block.findings,
+        guidance:
+          "A workflow hook prevented this path from continuing. Address the finding and continue.",
+      }),
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        step,
+        workflowHookContinuation: true,
+        workflowHook: hook,
+        hookName: block.hookName,
+        hookId: block.hookId,
+      },
+    };
+  }
+
   async requestApproval(input: {
     action: string;
     summary: string;
@@ -2051,6 +2224,66 @@ export class SparkwrightRun implements RunHandle {
     state: RunLoopState,
     batchResults?: ToolResult[],
   ): Promise<RunResult | undefined> {
+    const preToolHooks = await this.runWorkflowHookPhase(
+      "PreToolUse",
+      {
+        toolName: requestedCall.toolName,
+        arguments: requestedCall.arguments,
+        path: extractWorkflowPath(requestedCall.arguments),
+      },
+      {
+        step: state.step,
+        toolName: requestedCall.toolName,
+        path: extractWorkflowPath(requestedCall.arguments),
+      },
+      state.step,
+    );
+    if (preToolHooks.status === "blocked") {
+      const call = createToolCall(
+        this.record.id,
+        requestedCall.toolName,
+        requestedCall.arguments,
+      );
+      const span = openSpan(this.events, {
+        startType: "tool.requested",
+        payload: call,
+      });
+      const blocked: ToolResult = {
+        toolCallId: call.id,
+        status: "failed",
+        error: {
+          code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+          message: workflowHookBlockMessage(preToolHooks.block),
+          metadata: { workflowHook: preToolHooks.block },
+        },
+        artifacts: [],
+      };
+      span.close("tool.failed", {
+        ...blocked,
+        toolName: requestedCall.toolName,
+      });
+      this.usageTracker.recordToolUsage({
+        toolName: requestedCall.toolName,
+        status: blocked.status,
+      });
+      this.appendToolResultContext(
+        state.context,
+        requestedCall.toolName,
+        blocked,
+      );
+      await this.runAfterToolCallHook(state, requestedCall, blocked);
+      batchResults?.push(blocked);
+      return undefined;
+    }
+    for (const rewrite of preToolHooks.rewrites) {
+      if ("arguments" in rewrite) {
+        requestedCall = {
+          ...requestedCall,
+          arguments: rewrite.arguments,
+        };
+      }
+    }
+
     const toolBudgetFailure = this.reserveToolCallBudget({
       step: state.step,
       toolName: requestedCall.toolName,
@@ -2092,6 +2325,43 @@ export class SparkwrightRun implements RunHandle {
     } else {
       state.previousToolCall = requestedCall;
       state.repeatedToolCallCount = 1;
+    }
+
+    if (state.repeatedToolCallCount >= 2) {
+      const signalHooks = await this.runWorkflowHookPhase(
+        "RuntimeSignal",
+        {
+          signal:
+            state.repeatedToolCallCount >= this.doomLoopRepeatLimit
+              ? "doom_loop"
+              : "repeated_tool_call",
+          toolName: requestedCall.toolName,
+          arguments: requestedCall.arguments,
+          repeatedToolCallCount: state.repeatedToolCallCount,
+          repeatLimit: this.doomLoopRepeatLimit,
+          priorFailure,
+        },
+        {
+          step: state.step,
+          signal:
+            state.repeatedToolCallCount >= this.doomLoopRepeatLimit
+              ? "doom_loop"
+              : "repeated_tool_call",
+          toolName: requestedCall.toolName,
+        },
+        state.step,
+      );
+      if (signalHooks.status === "blocked") {
+        return this.failWorkflowHookBlock("hook_stopped", signalHooks.block, {
+          toolName: requestedCall.toolName,
+          arguments: requestedCall.arguments,
+          repeatedToolCallCount: state.repeatedToolCallCount,
+          repeatLimit: this.doomLoopRepeatLimit,
+        });
+      }
+      if (signalHooks.context.length > 0) {
+        state.context.push(...signalHooks.context);
+      }
     }
 
     if (state.repeatedToolCallCount >= this.doomLoopRepeatLimit) {
@@ -2538,6 +2808,35 @@ export class SparkwrightRun implements RunHandle {
         message: err instanceof Error ? err.message : String(err),
       });
     }
+    const postToolHooks = await this.runWorkflowHookPhase(
+      "PostToolUse",
+      {
+        toolName: requestedCall.toolName,
+        arguments: requestedCall.arguments,
+        path: extractWorkflowPath(requestedCall.arguments),
+        status: result.status,
+        result,
+      },
+      {
+        step: state.step,
+        toolName: requestedCall.toolName,
+        path: extractWorkflowPath(requestedCall.arguments),
+        status: result.status,
+      },
+      state.step,
+    );
+    if (postToolHooks.status === "blocked") {
+      state.context.push(
+        this.formatWorkflowHookBlockContinuation(
+          "PostToolUse",
+          postToolHooks.block,
+          state.step,
+        ),
+      );
+    }
+    if (postToolHooks.context.length > 0) {
+      state.context.push(...postToolHooks.context);
+    }
   }
 
   private validateToolCall(
@@ -2760,6 +3059,48 @@ export class SparkwrightRun implements RunHandle {
       metadata,
       events: this.events,
     });
+  }
+
+  private runWorkflowHookPhase<TPayload>(
+    hook: WorkflowHookName,
+    payload: TPayload,
+    metadata: Record<string, unknown>,
+    step?: number,
+  ): Promise<WorkflowHookExecution> {
+    return runWorkflowHooks({
+      hooks: this.workflowHooks,
+      hook,
+      run: this.record,
+      step,
+      payload,
+      metadata,
+      events: this.events,
+    });
+  }
+
+  private kickWorkflowHookPhase<TPayload>(
+    hook: WorkflowHookName,
+    payload: TPayload,
+    metadata: Record<string, unknown> = {},
+    step?: number,
+  ): void {
+    void this.runWorkflowHookPhase(hook, payload, metadata, step);
+  }
+
+  private failWorkflowHookBlock(
+    reason: Extract<RunStopReason, "hook_stopped">,
+    block: WorkflowHookBlock,
+    metadata: Record<string, unknown> = {},
+  ): RunResult {
+    return this.fail(
+      reason,
+      "WORKFLOW_HOOK_BLOCKED",
+      workflowHookBlockMessage(block),
+      {
+        ...metadata,
+        workflowHook: block,
+      },
+    );
   }
 
   private reserveToolCallBudget(metadata: {
@@ -3277,6 +3618,11 @@ export class SparkwrightRun implements RunHandle {
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
+    this.kickWorkflowHookPhase("SessionEnd", {
+      state: "completed",
+      reason,
+      result: completedPayload,
+    });
     const { message: payloadMessage, ...rest } = payload;
     this.result = {
       signal: "completed",
@@ -3314,6 +3660,11 @@ export class SparkwrightRun implements RunHandle {
       message,
       failure,
       metadata,
+    });
+    this.kickWorkflowHookPhase("SessionEnd", {
+      state: "failed",
+      reason,
+      failure,
     });
     this.result = {
       signal: "failed",
@@ -3569,6 +3920,27 @@ function makeBudgetWrapUpContextItem(
 // custom drivers; keep a runtime sentinel so tools depending on it have a
 // nameable value. Not used by the reference loop itself.
 export const TERMINAL_TRANSITION: RunLoopTransition = { reason: "terminal" };
+
+function workflowHookBlockMessage(block: WorkflowHookBlock): string {
+  const finding = block.findings?.[0];
+  return finding
+    ? `${block.hookName}: ${finding.message}`
+    : `${block.hookName}: ${block.reason}`;
+}
+
+function extractWorkflowPath(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined;
+  const direct =
+    getStringProperty(args, "path") ??
+    getStringProperty(args, "workspacePath") ??
+    getStringProperty(args, "file") ??
+    getStringProperty(args, "targetPath");
+  if (direct) return direct;
+  const paths = args.paths;
+  return Array.isArray(paths) && typeof paths[0] === "string"
+    ? paths[0]
+    : undefined;
+}
 
 function failureCategoryFor(
   reason: RunStopReason,
