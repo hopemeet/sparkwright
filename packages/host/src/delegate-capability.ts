@@ -234,7 +234,15 @@ export async function resolveDelegateProcessWorkspace(input: {
   return {
     cwd,
     async cleanup() {
-      await rm(cwd, { recursive: true, force: true });
+      // `maxRetries`/`retryDelay` let Node retry the recursive remove on
+      // Windows, where a just-exited delegate child can still briefly hold a
+      // handle on the temp dir and make the first `rmdir` throw EBUSY/EPERM.
+      await rm(cwd, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
     },
   };
 }
