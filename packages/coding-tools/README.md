@@ -22,8 +22,8 @@ does not expose directory enumeration.
 - `read_anchored_text` returns anchored line content for verified edits.
 - `edit_anchored_text` applies anchored edit operations through the workspace.
 - `list_dir` lists workspace files and directories.
-- `grep_text` searches UTF-8 text files under the workspace.
-- `glob_paths` returns workspace-relative paths matching glob patterns.
+- `grep` searches UTF-8 text files under the workspace.
+- `glob` returns workspace-relative paths matching glob patterns.
 
 All filesystem discovery is contained to `workspaceRoot` using realpath checks.
 Writes never touch the filesystem directly from this package.

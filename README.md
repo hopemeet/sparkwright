@@ -148,7 +148,7 @@ node packages/cli/dist/index.js capabilities inspect --workspace . --format text
 ```
 
 The report includes the effective built-in tools (`read_file`,
-`read_anchored_text`, `grep_text`, `edit_anchored_text`, `apply_patch`, `shell`,
+`read_anchored_text`, `grep`, `edit_anchored_text`, `apply_patch`, `shell`,
 `task_*`, `todo_write`, `spawn_agent`, and others), configured Skills, MCP
 servers, agent profiles, cron state, and command dirs.
 Add `--resolve-mcp` when you want the inspect command to connect to MCP servers
@@ -216,8 +216,8 @@ Tool outputs report canonical workspace-relative paths. When a path was
 normalized from a different input form, tools such as `read_file` also include
 `inputPath` so the model can see what was accepted and how it resolved.
 
-Discovery tools and concrete-file tools are separate. Use `glob_paths` to find
-files by pattern, `grep_text` to search a directory or a concrete file, and
+Discovery tools and concrete-file tools are separate. Use `glob` to find
+files by pattern, `grep` to search a directory or a concrete file, and
 `read_file` with a concrete path. Workspace escapes are rejected before the
 filesystem is read.
 

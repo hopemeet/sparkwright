@@ -80,7 +80,7 @@
     },
     "confidentialPaths": {
       "type": "array",
-      "description": "Opt-in read-confidentiality. Workspace-relative paths or globs whose contents a run must not read; matching read_file/grep_text reads are denied at the tool layer. Supports '*' (single segment), '**' (any depth), and a bare directory name to cover everything beneath it.",
+      "description": "Opt-in read-confidentiality. Workspace-relative paths or globs whose contents a run must not read; matching read_file/grep reads are denied at the tool layer. Supports '*' (single segment), '**' (any depth), and a bare directory name to cover everything beneath it.",
       "items": { "type": "string", "minLength": 1 }
     },
     "shell": {

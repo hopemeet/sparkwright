@@ -1531,7 +1531,7 @@ describe("runCli", () => {
         "--allow",
         "read_file",
         "--allow",
-        "glob_paths",
+        "glob",
         "--max-steps",
         "4",
         "--delegate",
@@ -1582,7 +1582,7 @@ describe("runCli", () => {
         id: "reviewer",
         name: "Reviewer",
         prompt: "Inspect changes for correctness and risk.",
-        allowedTools: ["read_file", "glob_paths"],
+        allowedTools: ["read_file", "glob"],
         maxSteps: 4,
       }),
     ]);

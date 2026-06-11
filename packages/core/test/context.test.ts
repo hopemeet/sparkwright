@@ -1028,7 +1028,7 @@ describe("DefaultObservationFormatter", () => {
     });
 
     const item = formatter.format({
-      toolName: "glob_paths",
+      toolName: "glob",
       run: createRunRecord(),
       result: {
         toolCallId: "call_test" as never,
@@ -1065,7 +1065,7 @@ describe("DefaultObservationFormatter", () => {
     });
 
     const item = formatter.format({
-      toolName: "glob_paths",
+      toolName: "glob",
       run: createRunRecord(),
       result: {
         toolCallId: "call_test" as never,

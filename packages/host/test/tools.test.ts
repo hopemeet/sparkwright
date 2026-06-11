@@ -39,7 +39,7 @@ describe("host tools", () => {
 
     await expect(
       tool.execute({ path: "packages/*/package.json" }, ctx),
-    ).rejects.toThrow(/read_file does not support glob patterns.*glob_paths/);
+    ).rejects.toThrow(/read_file does not support glob patterns.*glob/);
     await expect(
       tool.execute({ path: "packages/*/package.json" }, ctx),
     ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
@@ -52,7 +52,7 @@ describe("host tools", () => {
     const tool = createReadFileTool();
 
     await expect(tool.execute({ path: "docs" }, ctx)).rejects.toThrow(
-      /expected a file path.*directory.*glob_paths/,
+      /expected a file path.*directory.*glob/,
     );
     await expect(tool.execute({ path: "docs" }, ctx)).rejects.toMatchObject({
       code: "TOOL_ARGUMENTS_INVALID",
@@ -101,7 +101,7 @@ describe("host tools", () => {
     });
   });
 
-  it("exposes glob_paths for safe file discovery", async () => {
+  it("exposes glob for safe file discovery", async () => {
     const ctx = await createWorkspace({
       "packages/tui/package.json": "{}\n",
       "packages/host/package.json": "{}\n",

@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   LiveShellHandle,
-  ShellExecutionRequest,
   ShellExecutionResult,
   ShellStreamingResult,
 } from "@sparkwright/core";

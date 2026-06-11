@@ -9,7 +9,7 @@
   },
   "capabilities": {
     "tools": {
-      "enabled": ["read_file", "glob_paths", "append_file", "mcp_*"],
+      "enabled": ["read_file", "glob", "append_file", "mcp_*"],
       "disabled": ["shell"],
       "defer": ["mcp_*"]
     },
@@ -58,7 +58,7 @@
             "mode": "child",
             "prompt": "Inspect changes for correctness, risk, and missing tests."
           },
-          "allowedTools": ["read_file", "glob_paths"],
+          "allowedTools": ["read_file", "glob"],
           "maxSteps": 4
         }
       ],

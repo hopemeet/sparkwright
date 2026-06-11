@@ -648,7 +648,7 @@ Long-running tools may call `RuntimeContext.reportToolProgress`, which emits
 ```json
 {
   "toolCallId": "call_01h",
-  "toolName": "grep_text",
+  "toolName": "grep",
   "label": "grep",
   "completedUnits": 25,
   "totalUnits": 100,

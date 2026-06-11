@@ -87,7 +87,7 @@ export interface SharedConfig {
   workspace?: string;
   /**
    * Workspace-relative paths/globs whose contents a run must not read. Opt-in
-   * read-confidentiality: matching `read_file`/`grep_text` reads are denied at
+   * read-confidentiality: matching `read_file`/`grep` reads are denied at
    * the tool layer. Empty/absent leaves the default permissive behavior.
    */
   confidentialPaths?: string[];

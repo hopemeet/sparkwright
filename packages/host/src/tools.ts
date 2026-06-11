@@ -48,7 +48,7 @@ export function createReadFileTool() {
       "(default 2000) starting at 1-based line `offset` (default 1). For large " +
       "files, read successive windows by passing `offset`; the result reports " +
       "`totalLines` and `hasMore` plus the next offset to use. `path` must be " +
-      "a concrete file path; glob patterns are not expanded. Use `glob_paths` " +
+      "a concrete file path; glob patterns are not expanded. Use `glob` " +
       "first when you need to discover files from a pattern.",
     inputSchema: {
       type: "object",
@@ -73,13 +73,13 @@ export function createReadFileTool() {
       const path = await normalizeWorkspacePathArg(rawPath, ctx.workspace);
       if (containsGlobPattern(path)) {
         throw toolArgumentsInvalid(
-          `read_file does not support glob patterns: ${rawPath}. Use glob_paths to find matching files, then call read_file with a concrete path.`,
+          `read_file does not support glob patterns: ${rawPath}. Use glob to find matching files, then call read_file with a concrete path.`,
         );
       }
       const content = await ctx.workspace.readText(path).catch((error) => {
         if (isNodeErrorCode(error, "EISDIR")) {
           throw toolArgumentsInvalid(
-            `read_file expected a file path but ${path} is a directory. Use glob_paths to list files inside it, then call read_file with a concrete file path.`,
+            `read_file expected a file path but ${path} is a directory. Use glob to list files inside it, then call read_file with a concrete file path.`,
           );
         }
         throw error;
@@ -263,10 +263,10 @@ export function createGlobPathsTool(workspaceRoot: string) {
 
 /**
  * Built-in read-only tool: enumerate the files and directories under a
- * workspace path. `glob_paths` matches paths by pattern, but a model that just
+ * workspace path. `glob` matches paths by pattern, but a model that just
  * wants to see "what is in this directory" had to glob `*` and over-fetch;
  * list_dir answers that directly and belongs in the same read-only discovery
- * set as read_file + glob_paths + grep_text.
+ * set as read_file + glob + grep.
  */
 export function createListDirTool(workspaceRoot: string) {
   return createListDirToolBase({ workspaceRoot });
@@ -274,10 +274,10 @@ export function createListDirTool(workspaceRoot: string) {
 
 /**
  * Built-in read-only tool: search file *contents* for a string or regex.
- * `glob_paths` only matches paths, so finding a symbol by name (e.g. "a
+ * `glob` only matches paths, so finding a symbol by name (e.g. "a
  * function named frobnicate") is impossible by globbing alone — it degenerates
- * into reading every file. grep_text answers that in one call, and belongs in
- * the same read-only discovery set as read_file + glob_paths.
+ * into reading every file. grep answers that in one call, and belongs in
+ * the same read-only discovery set as read_file + glob.
  */
 export function createGrepTextTool(workspaceRoot: string) {
   return createGrepTextToolBase({ workspaceRoot });
@@ -403,10 +403,10 @@ export function createSkillInspectorTool(
   configuredRoots: SkillRoot[] | undefined,
 ) {
   return defineTool({
-    name: "inspect_skills",
+    name: "list_skills",
     description:
       "List or validate workspace skills. Read-only: never writes. Use this " +
-      "to discover skills or check skill health; use manage_skill to create one.",
+      "to discover skills or check skill health; use create_skill to create one.",
     inputSchema: {
       type: "object",
       properties: {
@@ -423,7 +423,7 @@ export function createSkillInspectorTool(
     },
     isReplaySafe: true,
     async execute(args: unknown) {
-      const action = parseInspectAction(args, "inspect_skills");
+      const action = parseInspectAction(args, "list_skills");
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
       return loadLayeredSkillReport(roots, {
         includeMissingRoots: action === "validate",
@@ -437,10 +437,10 @@ export function createSkillManagerTool(
   _configuredRoots: SkillRoot[] | undefined,
 ) {
   return defineTool({
-    name: "manage_skill",
+    name: "create_skill",
     description:
       "Create a workspace skill. Writes a SKILL.md under an existing or " +
-      "default skill root. Use inspect_skills to list or validate skills.",
+      "default skill root. Use list_skills to list or validate skills.",
     inputSchema: {
       type: "object",
       properties: {
@@ -478,11 +478,11 @@ export function createSkillManagerTool(
       const input = parseSkillManagerArgs(args);
       if (!input.name || !isSkillName(input.name)) {
         throw new Error(
-          "manage_skill create requires a valid lowercase skill name.",
+          "create_skill create requires a valid lowercase skill name.",
         );
       }
       if (!input.description || input.description.trim().length === 0) {
-        throw new Error("manage_skill create requires description.");
+        throw new Error("create_skill create requires description.");
       }
       const root = input.root
         ? resolveWorkspacePath(workspaceRoot, input.root)
@@ -512,10 +512,10 @@ export function createSkillManagerTool(
 
 export function createAgentInspectorTool(workspaceRoot: string) {
   return defineTool({
-    name: "inspect_agents",
+    name: "list_agents",
     description:
       "List or validate project agent profiles in .sparkwright/config.json. " +
-      "Read-only: never writes. Use manage_agent to create or remove a profile.",
+      "Read-only: never writes. Use create_agent to create or remove a profile.",
     inputSchema: {
       type: "object",
       properties: {
@@ -532,7 +532,7 @@ export function createAgentInspectorTool(workspaceRoot: string) {
     },
     isReplaySafe: true,
     async execute(args: unknown) {
-      const action = parseInspectAction(args, "inspect_agents");
+      const action = parseInspectAction(args, "list_agents");
       return loadAgentReport(workspaceRoot, action);
     },
   });
@@ -540,11 +540,11 @@ export function createAgentInspectorTool(workspaceRoot: string) {
 
 export function createAgentManagerTool(workspaceRoot: string) {
   return defineTool({
-    name: "manage_agent",
+    name: "create_agent",
     description:
       "Create or remove project agent profiles in .sparkwright/config.json. " +
       "To create, pass action='create' with a unique id and a prompt (the " +
-      "system prompt used when the profile is spawned). Use inspect_agents to " +
+      "system prompt used when the profile is spawned). Use list_agents to " +
       "list or validate profiles.",
     inputSchema: {
       type: "object",
@@ -599,7 +599,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
       const agents = getAgentConfigShape(config.data);
 
       if (!input.id || !isAgentId(input.id)) {
-        throw new Error("manage_agent requires a valid agent id.");
+        throw new Error("create_agent requires a valid agent id.");
       }
 
       if (input.action === "remove") {
@@ -626,7 +626,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
       }
 
       if (!input.prompt || input.prompt.trim().length === 0) {
-        throw new Error("manage_agent create requires prompt.");
+        throw new Error("create_agent create requires prompt.");
       }
       const existingIndex = agents.profiles.findIndex(
         (profile) => profile.id === input.id,
@@ -673,7 +673,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
       const errors = validateAgentConfigShape(agents);
       if (errors.length > 0) {
         throw new Error(
-          `manage_agent create produced invalid config: ${JSON.stringify(errors)}`,
+          `create_agent create produced invalid config: ${JSON.stringify(errors)}`,
         );
       }
       setAgentConfigShape(config.data, agents);
@@ -757,8 +757,8 @@ function resolveWorkspacePath(workspaceRoot: string, path: string): string {
 }
 
 /**
- * Shared parser for the read-only inspector tools (`inspect_skills`,
- * `inspect_agents`). They only accept `list`/`validate`, which carry no write
+ * Shared parser for the read-only inspector tools (`list_skills`,
+ * `list_agents`). They only accept `list`/`validate`, which carry no write
  * side effects, so policy can allow them without an approval prompt.
  */
 function parseInspectAction(
@@ -783,12 +783,12 @@ function parseSkillManagerArgs(args: unknown): {
   force?: boolean;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    throw toolArgumentsInvalid("manage_skill expects an object argument.");
+    throw toolArgumentsInvalid("create_skill expects an object argument.");
   }
   const record = args as Record<string, unknown>;
   const action = record.action;
   if (action !== "create") {
-    throw toolArgumentsInvalid("manage_skill action must be create.");
+    throw toolArgumentsInvalid("create_skill action must be create.");
   }
   return {
     action,
@@ -965,7 +965,7 @@ function validateAgentConfigShape(
   return errors;
 }
 
-/** Read-only agent profile report shared by `inspect_agents`. */
+/** Read-only agent profile report shared by `list_agents`. */
 async function loadAgentReport(
   workspaceRoot: string,
   action: "list" | "validate",
@@ -995,12 +995,12 @@ function parseAgentManagerArgs(args: unknown): {
   force?: boolean;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
-    throw toolArgumentsInvalid("manage_agent expects an object argument.");
+    throw toolArgumentsInvalid("create_agent expects an object argument.");
   }
   const record = args as Record<string, unknown>;
   const action = record.action;
   if (action !== "create" && action !== "remove") {
-    throw toolArgumentsInvalid("manage_agent action must be create or remove.");
+    throw toolArgumentsInvalid("create_agent action must be create or remove.");
   }
   const mode = record.mode;
   if (
@@ -1010,7 +1010,7 @@ function parseAgentManagerArgs(args: unknown): {
     mode !== "all"
   ) {
     throw toolArgumentsInvalid(
-      "manage_agent mode must be primary, child, or all.",
+      "create_agent mode must be primary, child, or all.",
     );
   }
   const maxSteps = record.maxSteps;
@@ -1019,7 +1019,7 @@ function parseAgentManagerArgs(args: unknown): {
     (!Number.isInteger(maxSteps) || (maxSteps as number) < 1)
   ) {
     throw toolArgumentsInvalid(
-      "manage_agent maxSteps must be a positive integer.",
+      "create_agent maxSteps must be a positive integer.",
     );
   }
   return {
@@ -1053,7 +1053,7 @@ function stringArrayArg(value: unknown, field: string): string[] {
     !value.every((entry) => typeof entry === "string")
   ) {
     throw toolArgumentsInvalid(
-      `manage_agent ${field} must be an array of strings.`,
+      `create_agent ${field} must be an array of strings.`,
     );
   }
   return value.map((entry) => entry.trim()).filter(Boolean);

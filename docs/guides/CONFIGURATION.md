@@ -355,7 +355,7 @@ Example:
 name: Reviewer
 description: Inspect changes for correctness, risk, and missing tests.
 mode: child
-allowedTools: [read_file, glob_paths]
+allowedTools: [read_file, glob]
 deniedTools: [shell]
 maxSteps: 4
 ---
@@ -452,7 +452,7 @@ The CLI can manage user-level tool settings in
 
 ```bash
 sparkwright tools list --format text
-sparkwright tools enable read_file glob_paths
+sparkwright tools enable read_file glob
 sparkwright tools disable shell
 sparkwright tools defer "mcp_*"
 ```
@@ -484,7 +484,7 @@ sparkwright agents validate --workspace .
 sparkwright agents create reviewer \
   --prompt "Inspect changes for correctness and risk." \
   --allow read_file \
-  --allow glob_paths \
+  --allow glob \
   --delegate delegate_reviewer \
   --workspace .
 ```

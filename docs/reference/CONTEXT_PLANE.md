@@ -143,7 +143,7 @@ answer or what exact follow-up action can recover the missing detail. In
 particular:
 
 - Small lists of scalar values that are themselves the answer surface, such as
-  `glob_paths.paths`, should remain intact when they fit the observation budget.
+  `glob.paths`, should remain intact when they fit the observation budget.
 - Error blocks, exit status, failure summaries, and validation findings should
   be preserved ahead of low-value successful output.
 - A compressed observation must be explicit about incompleteness

@@ -434,7 +434,7 @@ export interface RunHandle {
    * so an orchestrator spawning a sub-agent can inherit it as the child's
    * workspace — otherwise the child's `ctx.workspace` is undefined and any
    * workspace-backed tool (e.g. `read_file`) throws "Workspace is not
-   * configured", even when factory-bound tools like `glob_paths` still work.
+   * configured", even when factory-bound tools like `glob` still work.
    *
    * @reserved Public sub-agent-protocol accessor consumed by spawn helpers.
    */

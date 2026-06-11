@@ -76,17 +76,15 @@ describe("host spawn_agent wiring", () => {
           metadata: { source: "host" },
         });
 
-      // Child model: one glob_paths call, then a final answer.
+      // Child model: one glob call, then a final answer.
       const childModel: ModelAdapter = {
         async complete(input) {
           const used = input.context.some((item) =>
-            item.content.includes("glob_paths"),
+            item.content.includes("glob"),
           );
           if (!used) {
             return {
-              toolCalls: [
-                { toolName: "glob_paths", arguments: { pattern: "*" } },
-              ],
+              toolCalls: [{ toolName: "glob", arguments: { pattern: "*" } }],
             };
           }
           return { message: "top-level: README.md, package.json" };
@@ -94,7 +92,7 @@ describe("host spawn_agent wiring", () => {
       };
 
       const globTool: ToolDefinition = defineTool({
-        name: "glob_paths",
+        name: "glob",
         description: "Fake glob for the test.",
         inputSchema: {
           type: "object",
@@ -137,8 +135,8 @@ describe("host spawn_agent wiring", () => {
         {
           goal: "list top-level files",
           role: "inspector",
-          prompt: "List the files. Use glob_paths only.",
-          allowedTools: ["glob_paths"],
+          prompt: "List the files. Use glob only.",
+          allowedTools: ["glob"],
           maxSteps: 3,
         },
         { run: parent.record } as never,
@@ -165,7 +163,7 @@ describe("host spawn_agent wiring", () => {
       );
       expect(childTrace.length).toBeGreaterThan(0);
       expect(childTrace).toContain(output.childRunId);
-      expect(childTrace).toContain("glob_paths");
+      expect(childTrace).toContain("glob");
       const promptBuilt = childTrace
         .split("\n")
         .filter((line) => line.trim().length > 0)
@@ -199,7 +197,7 @@ describe("host spawn_agent wiring", () => {
       //     even though the parent's own loop never ran here.
       const usage = parent.usage();
       expect(usage.toolCalls).toBeGreaterThanOrEqual(1);
-      expect(usage.byTool.glob_paths?.calls).toBeGreaterThanOrEqual(1);
+      expect(usage.byTool.glob?.calls).toBeGreaterThanOrEqual(1);
       expect(usage.modelCalls).toBeGreaterThanOrEqual(2);
     } finally {
       // Child session-store writes can still be flushing as the run resolves;
@@ -258,7 +256,7 @@ describe("host spawn_agent wiring", () => {
         model: childModel,
         childTools: [
           defineTool({
-            name: "glob_paths",
+            name: "glob",
             description: "Fake glob.",
             inputSchema: { type: "object", properties: {} },
             async execute() {
@@ -274,7 +272,7 @@ describe("host spawn_agent wiring", () => {
           goal: "list files",
           role: "inspector",
           prompt: "List the files.",
-          allowedTools: ["glob_paths"],
+          allowedTools: ["glob"],
           maxSteps: 1,
         },
         { run: parent.record } as never,
@@ -338,7 +336,7 @@ describe("host spawn_agent wiring", () => {
       };
       const childTools = [
         defineTool({
-          name: "glob_paths",
+          name: "glob",
           description: "Fake glob.",
           inputSchema: { type: "object", properties: {} },
           async execute() {
@@ -363,7 +361,7 @@ describe("host spawn_agent wiring", () => {
             goal: "list files",
             role: "inspector",
             prompt: "List the files.",
-            allowedTools: ["glob_paths"],
+            allowedTools: ["glob"],
             ...(maxSteps === undefined ? {} : { maxSteps }),
           },
           { run: parent.record } as never,
@@ -384,10 +382,10 @@ describe("host spawn_agent wiring", () => {
   });
 
   // A real trace showed a search child burn its whole step budget on filename
-  // globs and never find a *function named* frobnicate — because glob_paths
-  // only matches paths and the child had no content search. grep_text must be
+  // globs and never find a *function named* frobnicate — because glob
+  // only matches paths and the child had no content search. grep must be
   // an allowed, executable child tool so "find symbol X" is one call.
-  it("lets a spawned child request and run grep_text", async () => {
+  it("lets a spawned child request and run grep", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-grep-"));
     try {
       const sessionId = "session_spawn_grep";
@@ -407,7 +405,7 @@ describe("host spawn_agent wiring", () => {
 
       let grepCalls = 0;
       const grepTool = defineTool({
-        name: "grep_text",
+        name: "grep",
         description: "Fake content search.",
         inputSchema: {
           type: "object",
@@ -419,18 +417,18 @@ describe("host spawn_agent wiring", () => {
         },
       });
 
-      // Child uses grep_text once, then concludes.
+      // Child uses grep once, then concludes.
       const childModel: ModelAdapter = {
         async complete(input) {
           const used = input.context.some((item) =>
-            item.content.includes("grep_text"),
+            item.content.includes("grep"),
           );
           return used
             ? { message: "no symbol named frobnicate found" }
             : {
                 toolCalls: [
                   {
-                    toolName: "grep_text",
+                    toolName: "grep",
                     arguments: { pattern: "frobnicate" },
                   },
                 ],
@@ -461,7 +459,7 @@ describe("host spawn_agent wiring", () => {
           goal: "find frobnicate",
           role: "scout",
           prompt: "Find a function named frobnicate.",
-          allowedTools: ["grep_text"],
+          allowedTools: ["grep"],
         },
         { run: parent.record } as never,
       )) as { signal: string };
@@ -508,7 +506,7 @@ describe("host spawn_agent wiring", () => {
       };
 
       const noopTool = defineTool({
-        name: "glob_paths",
+        name: "glob",
         description: "Fake glob for the test.",
         inputSchema: { type: "object", properties: {} },
         async execute() {
@@ -539,7 +537,7 @@ describe("host spawn_agent wiring", () => {
           goal: "noop",
           role: "dynamic_inspector",
           prompt: "Answer immediately.",
-          allowedTools: ["glob_paths"],
+          allowedTools: ["glob"],
         },
         { run: parent.record } as never,
       )) as { agentId: string };
@@ -582,15 +580,13 @@ describe("host spawn_agent wiring", () => {
       const childModel: ModelAdapter = {
         async complete() {
           return {
-            toolCalls: [
-              { toolName: "glob_paths", arguments: { patterns: ["*"] } },
-            ],
+            toolCalls: [{ toolName: "glob", arguments: { patterns: ["*"] } }],
           };
         },
       };
 
       const globTool: ToolDefinition = defineTool({
-        name: "glob_paths",
+        name: "glob",
         description: "Fake glob for the test.",
         inputSchema: {
           type: "object",
@@ -627,8 +623,8 @@ describe("host spawn_agent wiring", () => {
           {
             goal: "count test files",
             role: "counter",
-            prompt: "Count test files with glob_paths.",
-            allowedTools: ["glob_paths"],
+            prompt: "Count test files with glob.",
+            allowedTools: ["glob"],
             maxSteps: 5,
           },
           { run: parent.record } as never,
@@ -660,7 +656,7 @@ describe("host spawn_agent wiring", () => {
       const observations = err.metadata?.partialObservations;
       expect(observations).toBeDefined();
       expect(observations?.length).toBeGreaterThanOrEqual(1);
-      expect(observations?.[0]?.toolName).toBe("glob_paths");
+      expect(observations?.[0]?.toolName).toBe("glob");
       expect(observations?.[0]?.output).toContain("packages/a/a.test.ts");
     } finally {
       await rm(root, {

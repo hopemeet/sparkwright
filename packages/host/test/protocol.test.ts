@@ -1173,22 +1173,22 @@ describe("host protocol", () => {
         ).toBe(true);
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "manage_skill",
+            (tool) => tool.name === "create_skill",
           ),
         ).toBe(true);
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "manage_agent",
+            (tool) => tool.name === "create_agent",
           ),
         ).toBe(true);
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "inspect_skills",
+            (tool) => tool.name === "list_skills",
           ),
         ).toBe(true);
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "inspect_agents",
+            (tool) => tool.name === "list_agents",
           ),
         ).toBe(true);
         expect(

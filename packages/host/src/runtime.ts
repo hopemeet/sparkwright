@@ -2439,7 +2439,7 @@ export function createDynamicSpawnAgentTool(input: {
   return defineTool({
     name: "spawn_agent",
     description:
-      "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files but cannot write, run shell commands, or spawn further agents. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with manage_agent and delegate to it through a delegate_* tool.",
+      "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files but cannot write, run shell commands, or spawn further agents. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2459,10 +2459,10 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Supported: read_file, glob_paths, grep_text. Defaults to all three. Use grep_text to find a symbol by name (glob_paths only matches paths, not contents).",
+            "Optional subset of read-only tools to expose. Supported: read_file, glob, grep. Defaults to all three. Use grep to find a symbol by name (glob only matches paths, not contents).",
           items: {
             type: "string",
-            enum: ["read_file", "glob_paths", "grep_text"],
+            enum: ["read_file", "glob", "grep"],
           },
         },
         maxSteps: {
@@ -2500,11 +2500,11 @@ export function createDynamicSpawnAgentTool(input: {
       }
 
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set(["read_file", "glob_paths", "grep_text"]);
+      const supportedTools = new Set(["read_file", "glob", "grep"]);
       const requestedTools = parsed.allowedTools ?? [
         "read_file",
-        "glob_paths",
-        "grep_text",
+        "glob",
+        "grep",
       ];
       const availableTools = new Map(
         input.childTools.map((tool) => [tool.name, tool]),
@@ -2605,7 +2605,7 @@ export function createDynamicSpawnAgentTool(input: {
           : {}),
         usage,
         promotionHint: {
-          action: "manage_agent.create",
+          action: "create_agent.create",
           reason:
             "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
           suggestedProfile: {

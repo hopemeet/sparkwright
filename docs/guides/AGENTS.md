@@ -34,7 +34,7 @@ sparkwright agents create reviewer \
   --name "Reviewer" \
   --prompt "Inspect changes for correctness and risk." \
   --allow read_file \
-  --allow glob_paths \
+  --allow glob \
   --max-steps 4 \
   --workspace .
 ```
@@ -49,7 +49,7 @@ You can also commit a markdown profile:
 name: Reviewer
 description: Inspect changes for correctness, risk, and missing tests.
 mode: child
-allowedTools: [read_file, glob_paths]
+allowedTools: [read_file, glob]
 deniedTools: [shell]
 maxSteps: 4
 ---
@@ -74,7 +74,7 @@ sparkwright agents create reviewer \
   --name "Reviewer" \
   --prompt "Inspect changes for correctness and risk." \
   --allow read_file \
-  --allow glob_paths \
+  --allow glob \
   --max-steps 4 \
   --delegate delegate_reviewer \
   --workspace .
@@ -92,7 +92,7 @@ The config shape is:
           "name": "Reviewer",
           "mode": "child",
           "prompt": "Inspect changes for correctness and risk.",
-          "allowedTools": ["read_file", "glob_paths"],
+          "allowedTools": ["read_file", "glob"],
           "maxSteps": 4
         }
       ],

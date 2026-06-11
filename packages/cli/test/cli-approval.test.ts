@@ -91,8 +91,8 @@ function request(input: {
 
 function captureIo(): CliIO {
   return {
-    stdout: { write() {} },
-    stderr: { write() {} },
+    stdout: { write: () => true },
+    stderr: { write: () => true },
     stdinIsTTY: false,
   };
 }

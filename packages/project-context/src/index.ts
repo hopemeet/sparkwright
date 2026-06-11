@@ -227,7 +227,7 @@ const SHELL_VALIDATION_GUIDANCE = [
  */
 const WORKSPACE_PATH_GUIDANCE = [
   "Workspace path resolution:",
-  "- Paths for the workspace tools (read_file, glob_paths, grep_text,",
+  "- Paths for the workspace tools (read_file, glob, grep,",
   "  append_file) are relative to the workspace root shown as `cwd` in <env>.",
   "- Do NOT prefix paths with the workspace folder's own name. If cwd ends in",
   "  `/myrepo`, read `examples/x`, not `myrepo/examples/x` — the latter resolves",
@@ -345,8 +345,8 @@ export function buildAgentPromptBuilder(
       guidance: WORKSPACE_PATH_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "read_file" ||
-        tool.name === "glob_paths" ||
-        tool.name === "grep_text",
+        tool.name === "glob" ||
+        tool.name === "grep",
     }),
   );
 
@@ -356,8 +356,8 @@ export function buildAgentPromptBuilder(
       guidance: REPO_EVIDENCE_GUIDANCE,
       whenTool: (tool) =>
         tool.name === "read_file" ||
-        tool.name === "glob_paths" ||
-        tool.name === "grep_text",
+        tool.name === "glob" ||
+        tool.name === "grep",
     }),
   );
 

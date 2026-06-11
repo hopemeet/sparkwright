@@ -168,12 +168,12 @@ npm exec sparkwright -- agents create reviewer --prompt "Review code changes" --
 In-run, agent profile capabilities are split across two tools so read-only
 inspection never triggers an approval prompt:
 
-- `inspect_agents` — `list` / `validate`. Read-only, no approval.
-- `manage_agent` — `create` / `remove`. Writes `.sparkwright/config.json`, so
+- `list_agents` — `list` / `validate`. Read-only, no approval.
+- `create_agent` — `create` / `remove`. Writes `.sparkwright/config.json`, so
   it requires approval. `create` needs an `id` and a `prompt`.
 
-Skills follow the same split: `inspect_skills` (`list` / `validate`, read-only)
-and `manage_skill` (`create`, writes a SKILL.md, requires approval).
+Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
+and `create_skill` (`create`, writes a SKILL.md, requires approval).
 
 Reference files:
 
