@@ -3401,6 +3401,73 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("allows a small multi-file write budget when no target is explicit", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "test.js"), "console.log('test')\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Update implementation and test.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt two writes",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    heading: "Implementation",
+                    body: "implementation update",
+                  },
+                },
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "test.js",
+                    heading: "Regression",
+                    body: "regression coverage",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toContain(
+      "implementation update",
+    );
+    expect(await readFile(join(workspace, "test.js"), "utf8")).toContain(
+      "regression coverage",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.filter((event) => event.type === "workspace.write.completed"),
+    ).toHaveLength(2);
+  });
+
   it("rolls back shell mutations that bypass workspace.write", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

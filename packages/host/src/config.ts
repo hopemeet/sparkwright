@@ -2404,6 +2404,13 @@ export function resolveModelSelection(
       message: `Provider "${providerKey}" uses npm "${npm}", which is not supported (supported: ${supported}).`,
     };
   }
+  const configuredModelIds = Object.keys(provider.models ?? {});
+  if (configuredModelIds.length > 0 && !configuredModelIds.includes(modelId)) {
+    return {
+      kind: "error",
+      message: `Model "${ref}" is not configured for provider "${providerKey}". Available models: ${configuredModelIds.join(", ")}.`,
+    };
+  }
   return {
     kind: "configured",
     providerKey,

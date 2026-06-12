@@ -2781,7 +2781,11 @@ export class SparkwrightRun implements RunHandle {
   ): Promise<void> {
     // Loop-guard bookkeeping: remember the semantic target of a failure so a
     // retry with cosmetically different arguments still counts as a repeat, and
-    // forget it on any success so legitimate progress resets the guard.
+    // forget it on any progress so legitimate work resets the guard. Idempotent
+    // tools can also complete with an explicit no-op result (for example an
+    // unchanged todo_write ledger); treat that as non-progress so repeated
+    // no-op bookkeeping can use the same nudge/doom-loop path without blocking
+    // the first harmless no-op.
     if (result.status === "failed") {
       state.lastFailedToolTarget = {
         key: semanticToolTarget(
@@ -2790,6 +2794,23 @@ export class SparkwrightRun implements RunHandle {
         ),
         code: result.error?.code ?? "TOOL_FAILED",
         message: result.error?.message ?? "Tool call failed.",
+      };
+    } else if (
+      result.status === "completed" &&
+      this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
+        "idempotent" &&
+      isIdempotentNoopToolResult(result)
+    ) {
+      const output = isRecord(result.output) ? result.output : undefined;
+      state.lastFailedToolTarget = {
+        key: semanticToolTarget(
+          requestedCall.toolName,
+          requestedCall.arguments,
+        ),
+        code: "IDEMPOTENT_NOOP",
+        message:
+          (output ? getStringProperty(output, "hint") : undefined) ??
+          "Tool completed without making progress.",
       };
     } else if (result.status === "completed") {
       state.lastFailedToolTarget = undefined;
@@ -3779,6 +3800,18 @@ function semanticToolTarget(toolName: string, args: unknown): string {
     serialized = String(args);
   }
   return `${toolName}::args::${serialized}`;
+}
+
+function isIdempotentNoopToolResult(result: ToolResult): boolean {
+  if (result.status !== "completed" || !isRecord(result.output)) return false;
+  const output = result.output;
+  const saved = output.saved;
+  const changed = output.changed;
+  const hint = getStringProperty(output, "hint");
+  return (
+    (saved === false || changed === false) &&
+    Boolean(hint && /unchanged|no[- ]?op|nothing|do not|again/i.test(hint))
+  );
 }
 
 function shouldRequestContextCompaction(

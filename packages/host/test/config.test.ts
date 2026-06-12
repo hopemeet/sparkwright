@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadHostConfig,
+  resolveModelSelection,
   userConfigPath,
   CONFIG_USER_REL,
 } from "../src/index.js";
@@ -28,6 +29,47 @@ describe("loadHostConfig", () => {
     } finally {
       await rm(xdg, { recursive: true, force: true });
     }
+  });
+
+  it("rejects model overrides that are not listed for a configured provider", () => {
+    const selection = resolveModelSelection(
+      {
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+            models: {
+              "gpt-5.4-mini": {},
+              "gpt-5.4-nano": {},
+            },
+          },
+        },
+      },
+      "openai/gpt-4o-mini",
+    );
+
+    expect(selection).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining(
+        "Available models: gpt-5.4-mini, gpt-5.4-nano",
+      ),
+    });
+  });
+
+  it("allows provider model overrides when the provider does not enumerate models", () => {
+    const selection = resolveModelSelection(
+      {
+        providers: {
+          openai: { apiKey: "sk-test" },
+        },
+      },
+      "openai/custom-model",
+    );
+
+    expect(selection).toMatchObject({
+      kind: "configured",
+      providerKey: "openai",
+      modelId: "custom-model",
+    });
   });
 
   it("reads shared fields and applies them, ignoring UI-only keys", async () => {

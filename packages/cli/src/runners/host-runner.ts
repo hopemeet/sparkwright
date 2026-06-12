@@ -10,6 +10,11 @@ import type {
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import { writeHostStartFailureTrace } from "@sparkwright/host";
 import { createCliApprovalResolver } from "../cli-approval.js";
+import {
+  checkDocumentedCommands,
+  shouldCheckDocumentedCommands,
+  summarizeDocumentedCommandIssues,
+} from "../documented-command-check.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -112,6 +117,7 @@ async function runHostLifecycle(
   let stopReason: string | undefined;
   let failedMessage: string | undefined;
   let terminalFailurePrinted = false;
+  let documentedCommandIssueCount = 0;
   const eventSummary = createCliRunEventSummary();
   const forwardHostLogs = shouldForwardHostLogs(env);
 
@@ -317,6 +323,17 @@ async function runHostLifecycle(
 
   try {
     await terminal;
+    const documentedCommandIssues = shouldCheckDocumentedCommands({
+      goal: "goal" in input ? input.goal : undefined,
+      shouldWrite,
+    })
+      ? checkDocumentedCommands(workspaceRoot)
+      : [];
+    documentedCommandIssueCount = documentedCommandIssues.length;
+    const documentedCommandSummary = summarizeDocumentedCommandIssues(
+      documentedCommandIssues,
+    );
+    if (documentedCommandSummary) writeLine(io.stderr, documentedCommandSummary);
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
@@ -324,12 +341,13 @@ async function runHostLifecycle(
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
+    const exitCode = cliExitCodeForRun({
+      failedMessage,
+      runState,
+      events: eventSummary,
+    });
     return {
-      exitCode: cliExitCodeForRun({
-        failedMessage,
-        runState,
-        events: eventSummary,
-      }),
+      exitCode: documentedCommandIssueCount > 0 ? 1 : exitCode,
       tracePath,
       sessionId,
       runState,
@@ -337,7 +355,8 @@ async function runHostLifecycle(
     };
   } finally {
     const displayState =
-      runState === "completed" && completedRunHasCliIssues(eventSummary)
+      runState === "completed" &&
+      completedRunHasCliIssues(eventSummary, documentedCommandIssueCount)
         ? "completed_with_issues"
         : (runState ?? "unknown");
     writeLine(

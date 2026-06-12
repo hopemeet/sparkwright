@@ -341,7 +341,7 @@ export function createWorkspaceMutationPolicy(
               writtenPaths: [...writtenPaths],
               maxWriteFiles: options.maxWriteFiles,
               guidance:
-                "A previous workspace write already used the distinct-file budget for this run. Re-read the changed file and explain the remaining conflict instead of switching to another source file for the same fix.",
+                "A previous workspace write already used the distinct-file budget for this run. Do not retry another workspace write for this path in the current run; re-read changed files, report the limit, or provide the remaining patch as unapplied text.",
             },
           );
         }

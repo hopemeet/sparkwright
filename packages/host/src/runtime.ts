@@ -107,6 +107,7 @@ import {
   type DelegateCapabilityDescriptor,
 } from "./delegate-capability.js";
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
+import { createDocumentedCommandStopHook } from "./documented-command-check.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -145,12 +146,12 @@ function createHostRunPolicy(input: {
     createWorkspaceMutationPolicy({
       allowWorkspaceWrites: input.shouldWrite,
       allowedPaths: input.targetPath ? [input.targetPath] : undefined,
-      maxWriteFiles: 1,
+      maxWriteFiles: input.targetPath ? 1 : 4,
       maxDiffLines: 200,
       // In-place edits (edit_anchored_text / apply_patch) need to remove the
-      // lines they replace, so deletions must be permitted. The write stays
-      // bounded by the single-file budget, the 200-line diff cap, the
-      // --target path scope, and per-write approval.
+      // lines they replace, so deletions must be permitted. Untargeted write
+      // runs get a small multi-file budget so real code+test changes can
+      // complete; explicit --target runs stay bounded to that single file.
       allowDeletions: true,
     }),
     // Opt-in read-confidentiality. Empty list is a no-op, so default runs are
@@ -619,13 +620,20 @@ export class HostRuntime {
       shell: shellConfig,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
-    const workflowHooks = createConfiguredWorkflowHooks({
-      hooks: hookConfig?.workflow,
-      workspaceRoot,
-      sandbox: shellConfig?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
-    });
+    const workflowHooks = [
+      ...createConfiguredWorkflowHooks({
+        hooks: hookConfig?.workflow,
+        workspaceRoot,
+        sandbox: shellConfig?.sandbox,
+        skillRoots: skillRoots.map((root) => root.root),
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      }),
+      ...createDocumentedCommandStopHook({
+        workspaceRoot,
+        goal: input.goal,
+        shouldWrite: input.shouldWrite,
+      }),
+    ];
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       tools,
       indexedSkills: preparedSkills?.indexedSkills ?? [],

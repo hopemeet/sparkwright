@@ -23,6 +23,7 @@ import {
 import {
   applyToolConfig,
   buildConfiguredAdapter,
+  createDocumentedCommandStopHook,
   createConfiguredWorkflowHooks,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
@@ -31,6 +32,11 @@ import {
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { createCliApprovalResolver } from "../cli-approval.js";
+import {
+  checkDocumentedCommands,
+  shouldCheckDocumentedCommands,
+  summarizeDocumentedCommandIssues,
+} from "../documented-command-check.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -142,7 +148,13 @@ export async function startDirectCoreRun(
     sandbox: loadedConfig.config.shell?.sandbox,
     skillRoots: skillRoots.map((root) => root.root),
     configPaths: loadedConfig.attempted.map((entry) => entry.path),
-  });
+  }).concat(
+    createDocumentedCommandStopHook({
+      workspaceRoot,
+      goal,
+      shouldWrite,
+    }),
+  );
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
@@ -185,6 +197,7 @@ export async function startDirectCoreRun(
   });
 
   const eventSummary = createCliRunEventSummary();
+  let documentedCommandIssueCount = 0;
 
   function recordEvent(event: SparkwrightEvent) {
     trace.append(event);
@@ -208,15 +221,27 @@ export async function startDirectCoreRun(
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const documentedCommandIssues = shouldCheckDocumentedCommands({
+      goal,
+      shouldWrite,
+    })
+      ? checkDocumentedCommands(workspaceRoot)
+      : [];
+    documentedCommandIssueCount = documentedCommandIssues.length;
+    const documentedCommandSummary = summarizeDocumentedCommandIssues(
+      documentedCommandIssues,
+    );
+    if (documentedCommandSummary) writeLine(io.stderr, documentedCommandSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
+    const exitCode = cliExitCodeForRun({
+      runState: result.state,
+      events: eventSummary,
+    });
     return {
-      exitCode: cliExitCodeForRun({
-        runState: result.state,
-        events: eventSummary,
-      }),
+      exitCode: documentedCommandIssueCount > 0 ? 1 : exitCode,
       tracePath: store?.tracePath,
       sessionId,
       runState: result.state,
@@ -224,7 +249,8 @@ export async function startDirectCoreRun(
     };
   } finally {
     const displayState =
-      run.record.state === "completed" && completedRunHasCliIssues(eventSummary)
+      run.record.state === "completed" &&
+      completedRunHasCliIssues(eventSummary, documentedCommandIssueCount)
         ? "completed_with_issues"
         : run.record.state;
     writeLine(

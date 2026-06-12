@@ -99,8 +99,8 @@ describe("SparkwrightRun", () => {
     expect(
       events.find((event) => event.type === "prompt.built")?.payload,
     ).toMatchObject({
-      messageCount: 7,
-      stableMessageCount: 5,
+      messageCount: 8,
+      stableMessageCount: 6,
       stablePrefixBlockCount: 1,
       sections: [
         {
@@ -145,6 +145,14 @@ describe("SparkwrightRun", () => {
         },
         {
           index: 5,
+          name: "development_task_contract",
+          layer: "resident",
+          stability: "stable",
+          cachePolicy: "stable",
+          chars: expect.any(Number),
+        },
+        {
+          index: 6,
           name: "tool_descriptors",
           layer: "capability",
           stability: "session",
@@ -152,7 +160,7 @@ describe("SparkwrightRun", () => {
           chars: expect.any(Number),
         },
         {
-          index: 6,
+          index: 7,
           name: "current_request",
           layer: "runtime",
           stability: "turn",
@@ -597,6 +605,55 @@ describe("SparkwrightRun", () => {
       state: "completed",
       stopReason: "final_answer",
     });
+  });
+
+  it("treats repeated idempotent no-op tool results as loop risk", async () => {
+    let executed = 0;
+    const ledger = defineTool({
+      name: "ledger",
+      description: "Idempotent no-op write.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      policy: { risk: "safe" },
+      governance: { idempotency: "idempotent" },
+      execute() {
+        executed += 1;
+        return {
+          saved: false,
+          hint:
+            "The list is unchanged from your last write — calling this again accomplishes nothing.",
+        };
+      },
+    });
+
+    const run = createRun({
+      goal: "repeat an idempotent no-op call",
+      tools: [ledger],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          return {
+            toolCalls: [{ toolName: "ledger", arguments: { text: "same" } }],
+          };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(executed).toBe(1);
+    expect(
+      run.events.all().some(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload as { error?: { code?: string } }).error?.code ===
+            "REPEATED_TOOL_CALL_SKIPPED",
+      ),
+    ).toBe(true);
+    expect(result.stopReason).toBe("tool_doom_loop");
   });
 
   it("uses deep equality for repeated tool call arguments", async () => {

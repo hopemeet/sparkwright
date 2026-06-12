@@ -297,6 +297,7 @@ describe("DefaultPromptBuilder", () => {
       "stable",
       "stable",
       "stable",
+      "stable",
       "session",
       "turn",
       "turn",
@@ -308,34 +309,35 @@ describe("DefaultPromptBuilder", () => {
       "system",
       "system",
       "system",
+      "system",
       "user",
       "user",
     ]);
     expect(messages[0]?.metadata).toMatchObject({ layer: "resident" });
-    expect(messages[5]?.metadata).toMatchObject({
+    expect(messages[6]?.metadata).toMatchObject({
       layer: "capability",
       kind: "tool_descriptors",
       sectionName: "tool_descriptors",
       cachePolicy: "session",
     });
-    expect(messages[6]?.metadata).toMatchObject({
+    expect(messages[7]?.metadata).toMatchObject({
       layer: "runtime",
       kind: "current_request",
     });
-    expect(messages[7]?.metadata).toMatchObject({
+    expect(messages[8]?.metadata).toMatchObject({
       layer: "working",
       kind: "selected_context",
     });
     expect(messages[0]?.content).toBe("Stable rules.");
     expect(messages[1]?.content).toContain("Tool use contract:");
-    expect(messages[5]?.content).toContain("Available tools:");
-    expect(messages[5]?.content).toContain("- echo (text?:string): Echo text.");
-    expect(messages[5]?.content).not.toContain("requiresApproval: false");
-    expect(messages[5]?.content).not.toContain("inputSchema:");
-    expect(messages[5]?.content).not.toContain("outputSchema:");
-    expect(messages[5]?.content).not.toContain("governance:");
-    expect(messages[6]?.content).toBe("User request:\ninspect repo");
-    expect(messages[7]?.content).toContain("selected context");
+    expect(messages[6]?.content).toContain("Available tools:");
+    expect(messages[6]?.content).toContain("- echo (text?:string): Echo text.");
+    expect(messages[6]?.content).not.toContain("requiresApproval: false");
+    expect(messages[6]?.content).not.toContain("inputSchema:");
+    expect(messages[6]?.content).not.toContain("outputSchema:");
+    expect(messages[6]?.content).not.toContain("governance:");
+    expect(messages[7]?.content).toBe("User request:\ninspect repo");
+    expect(messages[8]?.content).toContain("selected context");
     expect(messages.map((message) => message.metadata)).toMatchObject([
       {
         layer: "resident",
@@ -360,6 +362,11 @@ describe("DefaultPromptBuilder", () => {
       {
         layer: "resident",
         sectionName: "output_contract",
+        cachePolicy: "stable",
+      },
+      {
+        layer: "resident",
+        sectionName: "development_task_contract",
         cachePolicy: "stable",
       },
       {
@@ -389,12 +396,12 @@ describe("DefaultPromptBuilder", () => {
       context: [],
     });
 
-    // resident(5) + tool_descriptors(1) + current_request(1);
+    // resident(6) + tool_descriptors(1) + current_request(1);
     // selected_context is omitted (no context), capability_delta omitted (no
     // deferred tools), and long-term goal/progress are opt-in.
-    expect(messages).toHaveLength(7);
-    expect(messages[5]?.content).toBe("Available tools: none.");
-    expect(messages[6]).toMatchObject({
+    expect(messages).toHaveLength(8);
+    expect(messages[6]?.content).toBe("Available tools: none.");
+    expect(messages[7]).toMatchObject({
       role: "user",
       content: "User request:\ninspect repo",
       metadata: {
@@ -559,13 +566,14 @@ describe("DefaultPromptBuilder", () => {
       "safety_and_approval_contract",
       "context_contract",
       "output_contract",
+      "development_task_contract",
       "tool_descriptors",
       "before_runtime",
       "current_request",
       "selected_context",
       "after_context",
     ]);
-    expect(messages[6]).toMatchObject({
+    expect(messages[7]).toMatchObject({
       role: "system",
       content: "Clock step 4",
       stability: "turn",
@@ -576,7 +584,7 @@ describe("DefaultPromptBuilder", () => {
         volatileReason: "test clock",
       },
     });
-    expect(messages[9]).toMatchObject({
+    expect(messages[10]).toMatchObject({
       role: "user",
       content: "Remember project preference.",
       stability: "session",
@@ -660,6 +668,7 @@ describe("DefaultPromptBuilder", () => {
       "safety_and_approval_contract",
       "context_contract",
       "output_contract",
+      "development_task_contract",
     ]);
     expect(compiled.sessionBlocks.map((block) => block.sectionNames)).toEqual([
       ["tool_descriptors"],
