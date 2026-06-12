@@ -7,7 +7,10 @@ import {
   createPlatformShellSandboxRuntime,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
-import { createConfiguredWorkflowHooks } from "../src/index.js";
+import {
+  createConfiguredWorkflowHooks,
+  createVerificationWorkflowHooks,
+} from "../src/index.js";
 
 function runRecord() {
   const now = new Date().toISOString();
@@ -422,6 +425,145 @@ describe("createConfiguredWorkflowHooks", () => {
 
       expect(result.status).toBe("blocked");
       await expect(readFile(configPath, "utf8")).resolves.toBe("original\n");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("createVerificationWorkflowHooks", () => {
+  it("defaults to suggestion mode when mode is omitted", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const hooks = createVerificationWorkflowHooks({
+      workspaceRoot: process.cwd(),
+      verification: {
+        defaultProfile: "fast",
+        profiles: {
+          fast: [{ id: "lint", command: "npm", args: ["run", "lint"] }],
+        },
+      },
+    });
+
+    const result = await runWorkflowHooks({
+      hooks,
+      hook: "SessionStart",
+      run,
+      payload: {},
+      events,
+    });
+
+    expect(result.status).toBe("continued");
+    expect(result.context[0]?.content).toContain("npm run lint");
+    expect(hooks.some((hook) => hook.hook === "Stop")).toBe(false);
+  });
+
+  it("allows final answers when verification passed after the latest write", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-verify-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createVerificationWorkflowHooks({
+        workspaceRoot: workspace,
+        verification: {
+          mode: "require",
+          defaultProfile: "fast",
+          profiles: {
+            fast: [
+              {
+                id: "ok",
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+              },
+            ],
+          },
+        },
+      });
+
+      events.emit("workspace.write.completed", { path: "src/a.ts" });
+      await runWorkflowHooks({
+        hooks,
+        hook: "PostToolUse",
+        run,
+        step: 1,
+        payload: {
+          toolName: "apply_patch",
+          status: "completed",
+          path: "src/a.ts",
+        },
+        events,
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        step: 2,
+        payload: { events: events.all() },
+        events,
+      });
+
+      expect(stop.status).toBe("continued");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks final answers when the latest write is not verified", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-verify-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createVerificationWorkflowHooks({
+        workspaceRoot: workspace,
+        verification: {
+          mode: "require",
+          defaultProfile: "fast",
+          profiles: {
+            fast: [
+              {
+                id: "lint",
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+              },
+            ],
+          },
+        },
+      });
+
+      events.emit("workspace.write.completed", { path: "src/a.ts" });
+      await runWorkflowHooks({
+        hooks,
+        hook: "PostToolUse",
+        run,
+        step: 1,
+        payload: {
+          toolName: "apply_patch",
+          status: "completed",
+          path: "src/a.ts",
+        },
+        events,
+      });
+      events.emit("workspace.write.completed", { path: "src/b.ts" });
+
+      const stop = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        step: 2,
+        payload: { events: events.all() },
+        events,
+      });
+
+      expect(stop.status).toBe("blocked");
+      if (stop.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(stop.block.reason).toContain("latest workspace write");
+      expect(stop.block.metadata).toMatchObject({
+        profile: "fast",
+        missing: ["lint"],
+      });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

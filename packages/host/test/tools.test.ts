@@ -410,6 +410,40 @@ describe("host tools", () => {
     ).rejects.toThrow();
   });
 
+  it("sets Python shell runs to avoid bytecode cache writes", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command: 'node -e "console.log(process.env.PYTHONDONTWRITEBYTECODE)"',
+      },
+      ctx,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toBe("1");
+  });
+
+  it("ignores Python bytecode cache directories in shell mutation audits", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command:
+          "node -e \"require('fs').mkdirSync('__pycache__'); require('fs').writeFileSync('__pycache__/logic.cpython-313.pyc', 'cache')\"",
+      },
+      ctx,
+    );
+
+    expect(result.exitCode).toBe(0);
+  });
+
   it("fails closed when enforce-mode sandbox is unavailable", async () => {
     const ctx = await createWorkspace({});
     const runtime: ShellSandboxRuntime = {

@@ -40,7 +40,13 @@ const PROMOTED_SHELL_KIND = "shell.promoted";
 const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
 const SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES = 25 * 1024 * 1024;
-const AUDIT_EXCLUDED_DIRS = new Set([".git", ".sparkwright", "node_modules"]);
+const AUDIT_EXCLUDED_DIRS = new Set([
+  ".git",
+  ".sparkwright",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache",
+]);
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -100,7 +106,7 @@ function spawnStreaming(request: ShellExecutionRequest): ShellStreamingResult {
 
   const child = spawn("bash", ["-c", raw], {
     cwd: request.cwd,
-    env: process.env,
+    env: shellEnv(request.env),
   });
 
   let timedOut = false;
@@ -220,7 +226,7 @@ function createHostShellEnvironment(options: {
         {
           command: raw,
           cwd,
-          env: process.env,
+          env: shellEnv(request.env),
           timeoutMs: request.timeoutMs,
           metadata: {
             ...(request.metadata ?? {}),
@@ -261,6 +267,19 @@ function createHostShellEnvironment(options: {
         sandboxEnforced: true,
       });
     },
+  };
+}
+
+function shellEnv(
+  requestEnv?: Readonly<Record<string, string>>,
+): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONDONTWRITEBYTECODE:
+      requestEnv?.PYTHONDONTWRITEBYTECODE ??
+      process.env.PYTHONDONTWRITEBYTECODE ??
+      "1",
+    ...(requestEnv ?? {}),
   };
 }
 

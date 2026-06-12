@@ -54,6 +54,7 @@ import {
   loadLayeredSkillReport,
   loadLayeredAgentReport,
   loadHostConfig,
+  configResolutionOrder,
   resolveAgentProfiles,
   describeExternalDelegateCapability,
   existingSkillRoots,
@@ -169,6 +170,10 @@ export async function runCli(
     permissionMode: cfg.config.permissionMode,
     workspace: cfg.config.workspace,
     confidentialPaths: cfg.config.confidentialPaths,
+    traceLevel: cfg.config.traceLevel,
+    approveAll: cfg.config.approvals?.all,
+    approveEdits: cfg.config.approvals?.edits,
+    approveShellSafe: cfg.config.approvals?.shellSafe,
   });
 
   if (!parsed.ok) {
@@ -219,6 +224,10 @@ export async function runCli(
 
   if (command === "agents") {
     return handleAgentsCommand(parsed.value, io);
+  }
+
+  if (command === "config") {
+    return handleConfigCommand(parsed.value, io, env);
   }
 
   const { goal } = parsed.value;
@@ -278,6 +287,7 @@ async function validateCliRunInput(
     targetPath: parsed.targetPath,
     requireTargetExists: parsed.targetPathSource === "cli",
     approveAll: parsed.approveAll,
+    approveShellSafe: parsed.approveShellSafe,
     shouldWrite: parsed.shouldWrite,
     modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
     validateModel: parsed.modelNameSource === "cli",
@@ -397,6 +407,10 @@ interface ConfigDefaults {
   permissionMode?: PermissionMode;
   workspace?: string;
   confidentialPaths?: string[];
+  traceLevel?: TraceLevel;
+  approveAll?: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
 }
 
 function workspaceBootstrapRoot(argv: string[], cwd: string): string {
@@ -426,6 +440,7 @@ function parseArgs(
     "delegates",
     "skills",
     "agents",
+    "config",
   ]);
   const command = knownCommands.has(args[0] ?? "")
     ? (args.shift() ?? "run")
@@ -440,7 +455,8 @@ function parseArgs(
     command === "capabilities" ||
     command === "delegates" ||
     command === "skills" ||
-    command === "agents"
+    command === "agents" ||
+    command === "config"
   ) {
     subcommand = args.shift();
   } else if (command === "run" && args[0] === "resume") {
@@ -448,7 +464,7 @@ function parseArgs(
     // `sparkwright run "<goal>"` path.
     subcommand = args.shift();
   }
-  let traceLevel: TraceLevel = "standard";
+  let traceLevel: TraceLevel = defaults.traceLevel ?? "standard";
   let workspaceRoot = defaults.workspace ?? cwd;
   let sessionRootDir: string | undefined;
   let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
@@ -456,9 +472,9 @@ function parseArgs(
   let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   let shouldWrite = false;
-  let approveAll = false;
-  let approveEdits = false;
-  let approveShellSafe = false;
+  let approveAll = defaults.approveAll ?? false;
+  let approveEdits = defaults.approveEdits ?? false;
+  let approveShellSafe = defaults.approveShellSafe ?? false;
   let permissionMode: PermissionMode = defaults.permissionMode ?? "default";
   let modelName: string | undefined = defaults.model;
   let modelNameSource: ParsedArgs["modelNameSource"] = defaults.model
@@ -2364,6 +2380,209 @@ async function handleAgentsCommand(
   }
 }
 
+function configUsage(): string {
+  return [
+    "Usage: sparkwright config path [--workspace path] [--format json|text]",
+    "       sparkwright config validate [--workspace path] [--format json|text]",
+    `       sparkwright config example <${CONFIG_EXAMPLE_NAMES.join("|")}>`,
+  ].join("\n");
+}
+
+async function handleConfigCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  switch (parsed.subcommand) {
+    case "path":
+      return handleConfigPath(parsed, io, env);
+    case "validate":
+      return handleConfigValidate(parsed, io, env);
+    case "example":
+      return handleConfigExample(parsed, io);
+    default:
+      writeLine(io.stderr, configUsage());
+      return { exitCode: 1 };
+  }
+}
+
+async function handleConfigPath(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const order = configResolutionOrder(parsed.workspaceRoot, env);
+  const loaded = await loadHostConfig(parsed.workspaceRoot, env);
+  const loadedByPath = new Map(
+    loaded.attempted.map((entry) => [entry.path, entry.loaded]),
+  );
+  const layers = order.map(({ path, label }) => ({
+    label,
+    path,
+    loaded: loadedByPath.get(path) ?? false,
+  }));
+  if (parsed.format === "json") {
+    writeLine(io.stdout, JSON.stringify({ layers }, null, 2));
+  } else {
+    writeLine(io.stdout, "Config resolution order (later overrides earlier):");
+    for (const layer of layers) {
+      writeLine(
+        io.stdout,
+        `  ${layer.loaded ? "[loaded] " : "[absent] "}${layer.label}: ${layer.path}`,
+      );
+    }
+  }
+  return { exitCode: 0 };
+}
+
+async function handleConfigValidate(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const loaded = await loadHostConfig(parsed.workspaceRoot, env);
+  const loadedCount = loaded.attempted.filter((entry) => entry.loaded).length;
+  if (parsed.format === "json") {
+    writeLine(
+      io.stdout,
+      JSON.stringify(
+        {
+          ok: loaded.errors.length === 0,
+          filesLoaded: loadedCount,
+          errors: loaded.errors,
+        },
+        null,
+        2,
+      ),
+    );
+  } else if (loaded.errors.length === 0) {
+    writeLine(io.stdout, `Config OK (${loadedCount} file(s) loaded).`);
+  } else {
+    writeLine(
+      io.stdout,
+      `${loaded.errors.length} problem(s) across ${loadedCount} loaded file(s):`,
+    );
+    for (const error of loaded.errors) {
+      writeLine(
+        io.stdout,
+        `  ${error.file} (${error.field}): ${error.message}`,
+      );
+    }
+  }
+  return { exitCode: loaded.errors.length > 0 ? 1 : 0 };
+}
+
+function handleConfigExample(parsed: ParsedArgs, io: CliIO): CliRunResult {
+  const name = splitCliWords(parsed.goal)[0];
+  if (!name) {
+    writeLine(io.stderr, configUsage());
+    return { exitCode: 1 };
+  }
+  const example = CONFIG_EXAMPLES[name];
+  if (!example) {
+    writeLine(
+      io.stderr,
+      `Unknown example "${name}". Available: ${CONFIG_EXAMPLE_NAMES.join(", ")}.`,
+    );
+    return { exitCode: 1 };
+  }
+  writeLine(io.stdout, `${JSON.stringify(example, null, 2)}`);
+  return { exitCode: 0 };
+}
+
+/**
+ * Paste-ready config snippets for `sparkwright config example <name>`, in the
+ * preferred grouped form. These mirror the recipes in
+ * docs/guides/CONFIGURATION.md so the guide's examples are reachable in-product.
+ */
+const CONFIG_EXAMPLES: Record<string, unknown> = {
+  write: {
+    policy: {
+      write: { maxFiles: 1, maxDiffLines: 200, allowDeletions: false },
+    },
+  },
+  sandbox: {
+    policy: {
+      sandbox: {
+        mode: "warn",
+        filesystem: { denyRead: [".env", ".ssh", ".aws"] },
+        network: { mode: "deny" },
+      },
+    },
+  },
+  run: {
+    run: {
+      budget: { maxModelCalls: 50, maxToolCalls: 100 },
+      traceLevel: "standard",
+      approvals: { shellSafe: true },
+    },
+  },
+  hooks: {
+    capabilities: {
+      hooks: {
+        workflow: [
+          {
+            name: "block-generated",
+            hook: "PreToolUse",
+            matcher: {
+              toolName: ["append_file", "edit_anchored_text", "apply_patch"],
+              pathGlob: "src/generated/**",
+            },
+            action: {
+              type: "block",
+              reason: "Generated files are build output.",
+            },
+          },
+        ],
+      },
+    },
+  },
+  verification: {
+    capabilities: {
+      verification: {
+        mode: "require",
+        defaultProfile: "default",
+        profiles: {
+          default: [
+            { id: "test", kind: "test", command: "npm", args: ["test"] },
+          ],
+        },
+        stopGate: { enabled: true, requireCleanAfterLastWrite: true },
+      },
+    },
+  },
+  mcp: {
+    capabilities: {
+      mcp: {
+        servers: [
+          {
+            type: "stdio",
+            name: "example",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-everything"],
+          },
+        ],
+      },
+    },
+  },
+  agent: {
+    capabilities: {
+      agents: {
+        profiles: [
+          {
+            id: "reviewer",
+            mode: "child",
+            prompt: "Review the diff for correctness and clarity.",
+          },
+        ],
+        delegateTools: [{ profileId: "reviewer", toolName: "review_changes" }],
+      },
+    },
+  },
+};
+
+const CONFIG_EXAMPLE_NAMES = Object.keys(CONFIG_EXAMPLES);
+
 interface AgentProfileConfigShape {
   id: string;
   name?: string;
@@ -3101,6 +3320,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (command === "delegates") return delegatesUsage();
   if (command === "skills") return skillsUsage();
   if (command === "agents") return agentsUsage();
+  if (command === "config") return configUsage();
   return undefined;
 }
 
@@ -3633,8 +3853,16 @@ function formatTraceTimeline(timeline: TraceTimeline): string {
 function formatConsistencyReport(
   report: SessionTraceConsistencyReport,
 ): string {
+  const warningCount = report.findings.filter(
+    (finding) => finding.severity === "warning",
+  ).length;
+  const status = report.ok
+    ? warningCount > 0
+      ? "ok_with_warnings"
+      : "ok"
+    : "failed";
   const lines = [
-    `status: ${report.ok ? "ok" : "failed"}`,
+    `status: ${status}`,
     `session: ${report.sessionId ?? "(unknown)"}`,
     `runs: ${report.runIds.length}`,
     `findings: ${report.findings.length}`,
@@ -3689,37 +3917,40 @@ function parseNonNegativeInteger(
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-// NOTE: templates intentionally omit a top-level "$schema" until the schema is
-// published at a stable URL; pointing at an unhosted URL would make editors fail
-// to fetch it. The config schema still *allows* "$schema" (see
-// schemas/config.schema.json) so users can opt in once it is hosted.
+// NOTE: templates emit the preferred grouped form (identity/policy/run/ui).
+// They omit a top-level "$schema" since the schema is not hosted at a stable
+// URL; editors instead pick it up via a json.schemas mapping (see the editor
+// setup in docs/guides/CONFIGURATION.md). The schema still *allows* "$schema"
+// for anyone who points it at a local copy.
 const CONFIG_TEMPLATE = {
-  model: "openai/gpt-5.4-mini",
-  providers: {
-    openai: {
-      baseURL: "https://api.openai.com/v1",
-      apiKey: "REPLACE_WITH_YOUR_API_KEY",
-      models: {
-        "gpt-5.4-mini": {},
-        "gpt-5.4": {},
+  identity: {
+    model: "openai/gpt-5.4-mini",
+    providers: {
+      openai: {
+        baseURL: "https://api.openai.com/v1",
+        apiKey: "REPLACE_WITH_YOUR_API_KEY",
+        models: {
+          "gpt-5.4-mini": {},
+          "gpt-5.4": {},
+        },
       },
-    },
-    anthropic: {
-      npm: "@ai-sdk/anthropic",
-      baseURL: "https://api.anthropic.com/v1",
-      apiKey: "REPLACE_WITH_YOUR_API_KEY",
-      models: {
-        "claude-sonnet-4-6": {},
-        "claude-haiku-4-5": {},
+      anthropic: {
+        npm: "@ai-sdk/anthropic",
+        baseURL: "https://api.anthropic.com/v1",
+        apiKey: "REPLACE_WITH_YOUR_API_KEY",
+        models: {
+          "claude-sonnet-4-6": {},
+          "claude-haiku-4-5": {},
+        },
       },
-    },
-    google: {
-      npm: "@ai-sdk/google",
-      baseURL: "https://generativelanguage.googleapis.com/v1beta",
-      apiKey: "REPLACE_WITH_YOUR_API_KEY",
-      models: {
-        "gemini-3.1-pro": {},
-        "gemini-3-flash": {},
+      google: {
+        npm: "@ai-sdk/google",
+        baseURL: "https://generativelanguage.googleapis.com/v1beta",
+        apiKey: "REPLACE_WITH_YOUR_API_KEY",
+        models: {
+          "gemini-3.1-pro": {},
+          "gemini-3-flash": {},
+        },
       },
     },
   },
@@ -3732,7 +3963,14 @@ const CONFIG_TEMPLATE = {
  * and the convention command/agents dirs as the project config surface.
  */
 const PROJECT_CONFIG_TEMPLATE = {
-  permissionMode: "default",
+  policy: {
+    permissionMode: "default",
+    write: {
+      maxFiles: 1,
+      maxDiffLines: 200,
+      allowDeletions: false,
+    },
+  },
   capabilities: {
     tools: {
       disabled: ["shell"],
@@ -3800,11 +4038,11 @@ async function scaffoldUserConfig(
   writeLine(io.stdout, `Created ${path}`);
   writeLine(
     io.stdout,
-    'Next: set the "apiKey" for the provider you want, then run `sparkwright tui`.',
+    'Next: set the "apiKey" under identity.providers for the provider you want, then run `sparkwright tui`.',
   );
   writeLine(
     io.stdout,
-    'The template seeds openai, anthropic, and google — switch with "model": "<provider>/<model>", e.g. "anthropic/claude-haiku-4-5".',
+    'The template seeds openai, anthropic, and google — switch with "identity.model": "<provider>/<model>", e.g. "anthropic/claude-haiku-4-5".',
   );
   return { exitCode: 0 };
 }

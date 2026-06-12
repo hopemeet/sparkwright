@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadHostConfig,
+  resolveModelSelection,
   userConfigPath,
   CONFIG_USER_REL,
 } from "../src/index.js";
@@ -28,6 +29,47 @@ describe("loadHostConfig", () => {
     } finally {
       await rm(xdg, { recursive: true, force: true });
     }
+  });
+
+  it("rejects model overrides that are not listed for a configured provider", () => {
+    const selection = resolveModelSelection(
+      {
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+            models: {
+              "gpt-5.4-mini": {},
+              "gpt-5.4-nano": {},
+            },
+          },
+        },
+      },
+      "openai/gpt-4o-mini",
+    );
+
+    expect(selection).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining(
+        "Available models: gpt-5.4-mini, gpt-5.4-nano",
+      ),
+    });
+  });
+
+  it("allows provider model overrides when the provider does not enumerate models", () => {
+    const selection = resolveModelSelection(
+      {
+        providers: {
+          openai: { apiKey: "sk-test" },
+        },
+      },
+      "openai/custom-model",
+    );
+
+    expect(selection).toMatchObject({
+      kind: "configured",
+      providerKey: "openai",
+      modelId: "custom-model",
+    });
   });
 
   it("reads shared fields and applies them, ignoring UI-only keys", async () => {
@@ -242,6 +284,198 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("merges permissionMode conservatively so project config cannot escalate privilege", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { permissionMode: "default" });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({ permissionMode: "bypass_permissions" }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      // The project's looser mode is ignored; the stricter user mode wins.
+      expect(loaded.config.permissionMode).toBe("default");
+      expect(loaded.sources.permissionMode).toContain("user");
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("lets a later permissionMode layer tighten but not weaken", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { permissionMode: "default" });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({ permissionMode: "plan" }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      // plan is stricter than default, so the project layer is allowed to win.
+      expect(loaded.config.permissionMode).toBe("plan");
+      expect(loaded.sources.permissionMode).toContain("project");
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("unions confidentialPaths so project config cannot drop user entries", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { confidentialPaths: ["secrets/**", ".env"] });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        // A project config trying to blank out the user's read-confidentiality.
+        JSON.stringify({ confidentialPaths: ["internal/**"] }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.confidentialPaths).toEqual([
+        "secrets/**",
+        ".env",
+        "internal/**",
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("merges write guardrails conservatively so project config can only tighten", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        write: { maxFiles: 4, maxDiffLines: 200, allowDeletions: true },
+      });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        // Project tightens maxFiles down and forbids deletions; it tries to
+        // loosen maxDiffLines up (ignored — the smaller value wins).
+        JSON.stringify({
+          write: { maxFiles: 1, maxDiffLines: 500, allowDeletions: false },
+        }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.write).toEqual({
+        maxFiles: 1,
+        maxDiffLines: 200,
+        allowDeletions: false,
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reads the grouped config form and normalizes it to the flat shape", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        identity: {
+          model: "openai/gpt-x",
+          providers: { openai: { apiKey: "sk-test" } },
+        },
+        policy: {
+          permissionMode: "default",
+          confidentialPaths: ["secrets/**"],
+          write: { maxFiles: 2 },
+          sandbox: { mode: "warn" },
+        },
+        run: {
+          budget: { maxModelCalls: 12 },
+          maxSteps: 30,
+          traceLevel: "debug",
+          approvals: { shellSafe: true },
+        },
+        ui: { theme: "dark" },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.model).toBe("openai/gpt-x");
+      expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
+      expect(loaded.config.permissionMode).toBe("default");
+      expect(loaded.config.confidentialPaths).toEqual(["secrets/**"]);
+      expect(loaded.config.write).toEqual({ maxFiles: 2 });
+      expect(loaded.config.shell?.sandbox?.mode).toBe("warn");
+      expect(loaded.config.runBudget).toEqual({ maxModelCalls: 12 });
+      expect(loaded.config.maxSteps).toBe(30);
+      expect(loaded.config.traceLevel).toBe("debug");
+      expect(loaded.config.approvals).toEqual({ shellSafe: true });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a conflict when grouped and flat keys are both set, preferring grouped", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        model: "openai/flat-model",
+        identity: { model: "openai/grouped-model" },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.model).toBe("openai/grouped-model");
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "identity.model",
+          message: expect.stringContaining('conflicts with top-level "model"'),
+        }),
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unknown fields inside a known group", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { run: { traceLevel: "debug", bogus: 1 } });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.traceLevel).toBe("debug");
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "run.bogus",
+          message: expect.stringContaining("unknown field"),
+        }),
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("allows later sandbox config layers to tighten and append path lists", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
@@ -373,6 +607,123 @@ describe("loadHostConfig", () => {
           },
         },
       ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads verification profiles", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "fast",
+            profiles: {
+              fast: [
+                {
+                  id: "lint",
+                  kind: "lint",
+                  command: "npm",
+                  args: ["run", "lint"],
+                  timeoutMs: 120000,
+                },
+                {
+                  id: "typecheck",
+                  kind: "typecheck",
+                  command: "npm",
+                  args: ["run", "typecheck"],
+                  maxOutputBytes: 64000,
+                },
+              ],
+            },
+            afterWrites: {
+              profile: "fast",
+              frequency: "always",
+              injectOutput: "onFailure",
+            },
+            stopGate: {
+              enabled: true,
+              requireCleanAfterLastWrite: true,
+            },
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.verification).toMatchObject({
+        mode: "require",
+        defaultProfile: "fast",
+        profiles: {
+          fast: [
+            {
+              id: "lint",
+              kind: "lint",
+              command: "npm",
+              args: ["run", "lint"],
+              timeoutMs: 120000,
+            },
+            {
+              id: "typecheck",
+              kind: "typecheck",
+              command: "npm",
+              args: ["run", "typecheck"],
+              maxOutputBytes: 64000,
+            },
+          ],
+        },
+        afterWrites: {
+          profile: "fast",
+          frequency: "always",
+          injectOutput: "onFailure",
+        },
+        stopGate: {
+          enabled: true,
+          requireCleanAfterLastWrite: true,
+        },
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid verification profile references", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "missing",
+            profiles: {
+              fast: [{ id: "lint", command: "npm", args: ["run", "lint"] }],
+            },
+            afterWrites: {
+              profile: "also-missing",
+            },
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(
+        loaded.errors.some(
+          (e) =>
+            e.field === "capabilities.verification.defaultProfile" &&
+            e.message.includes("missing"),
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) =>
+            e.field === "capabilities.verification.afterWrites.profile" &&
+            e.message.includes("also-missing"),
+        ),
+      ).toBe(true);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });

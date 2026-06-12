@@ -10,8 +10,9 @@
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
- * files, capabilities merge by sub-capability, and shell.sandbox merges
- * conservatively so later layers cannot weaken an earlier sandbox policy.
+ * files, capabilities merge by sub-capability, and the security boundaries —
+ * shell.sandbox, permissionMode, and confidentialPaths — merge conservatively
+ * so later (lower-trust) layers cannot weaken an earlier layer's policy.
  * Callers layer CLI flags / env on top.
  */
 
@@ -20,6 +21,8 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type {
   PermissionMode,
+  RunBudget,
+  TraceLevel,
   WorkflowHookMatcher,
   WorkflowHookName,
 } from "@sparkwright/core";
@@ -91,8 +94,46 @@ export interface SharedConfig {
    * the tool layer. Empty/absent leaves the default permissive behavior.
    */
   confidentialPaths?: string[];
+  /**
+   * Workspace write guardrails. Overrides the built-in defaults the runtime
+   * applies to a run's workspace-mutation policy. Like the other security
+   * boundaries, this merges conservatively across layers: a later (lower-trust)
+   * layer can only tighten — lower `maxFiles`/`maxDiffLines` win and
+   * `allowDeletions: false` wins.
+   */
+  write?: WriteGuardrailsConfig;
   shell?: ShellConfig;
   capabilities?: CapabilityConfig;
+  /**
+   * Resource budget for the interactive main run. `maxModelCalls` is the
+   * tightest natural step bound; see `resolveMainAgentMaxSteps`. An explicit
+   * main agent profile (capabilities.agents) overrides this.
+   */
+  runBudget?: RunBudget;
+  /** Explicit main-run step ceiling. Overrides the derived/backstop value. */
+  maxSteps?: number;
+  /** Default trace verbosity when an entrypoint does not pass one. */
+  traceLevel?: TraceLevel;
+  /** Project/user defaults for approval auto-grants (CLI flags still override). */
+  approvals?: ApprovalDefaults;
+}
+
+export interface WriteGuardrailsConfig {
+  /** Maximum distinct files a run may write. */
+  maxFiles?: number;
+  /** Maximum changed diff lines per write. */
+  maxDiffLines?: number;
+  /** Whether in-place edits may remove lines. */
+  allowDeletions?: boolean;
+}
+
+export interface ApprovalDefaults {
+  /** Auto-approve commands the safety classifier rates safe. */
+  shellSafe?: boolean;
+  /** Auto-approve workspace edits. */
+  edits?: boolean;
+  /** Auto-approve everything the policy allows (use with care). */
+  all?: boolean;
 }
 
 export interface ShellConfig {
@@ -102,6 +143,7 @@ export interface ShellConfig {
 export interface CapabilityConfig {
   tools?: CapabilityToolsConfig;
   hooks?: CapabilityHooksConfig;
+  verification?: CapabilityVerificationConfig;
   skills?: CapabilitySkillsConfig;
   mcp?: CapabilityMcpConfig;
   agents?: CapabilityAgentsConfig;
@@ -156,6 +198,44 @@ export interface CapabilityWorkflowHookConfig {
 
 export interface CapabilityHooksConfig {
   workflow?: CapabilityWorkflowHookConfig[];
+}
+
+export type CapabilityVerificationMode = "off" | "suggest" | "require";
+
+export type CapabilityVerificationKind =
+  | "lint"
+  | "typecheck"
+  | "test"
+  | "check"
+  | "custom";
+
+export interface CapabilityVerificationCommandConfig {
+  id: string;
+  kind?: CapabilityVerificationKind;
+  command: string;
+  args?: string[];
+  cwd?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
+export interface CapabilityVerificationAfterWritesConfig {
+  profile?: string;
+  frequency?: CapabilityWorkflowHookFrequency;
+  injectOutput?: "always" | "onFailure" | "never";
+}
+
+export interface CapabilityVerificationStopGateConfig {
+  enabled?: boolean;
+  requireCleanAfterLastWrite?: boolean;
+}
+
+export interface CapabilityVerificationConfig {
+  mode?: CapabilityVerificationMode;
+  defaultProfile?: string;
+  profiles?: Record<string, CapabilityVerificationCommandConfig[]>;
+  afterWrites?: CapabilityVerificationAfterWritesConfig;
+  stopGate?: CapabilityVerificationStopGateConfig;
 }
 
 export interface CapabilityAgentsConfig {
@@ -218,7 +298,12 @@ export interface SharedConfigSourceMap {
   permissionMode?: string;
   workspace?: string;
   confidentialPaths?: string;
+  write?: string;
   shell?: string;
+  runBudget?: string;
+  maxSteps?: string;
+  traceLevel?: string;
+  approvals?: string;
   providers?: Record<string, string>;
 }
 
@@ -242,6 +327,65 @@ const VALID_PERMISSION_MODES: PermissionMode[] = [
   "dont_ask",
   "bypass_permissions",
 ];
+
+/**
+ * Permissiveness ranking for `permissionMode` (lower = more restrictive). Used
+ * to merge layers conservatively: a later (lower-trust) layer may tighten the
+ * mode but never relax it — mirroring how shell.sandbox merges. This blocks a
+ * project config from escalating a user's mode to the auto-allow modes
+ * `accept_edits`/`bypass_permissions`. The relative order of the human-gated
+ * modes (plan/dont_ask/default) carries no security weight; only the auto-allow
+ * modes ranking above them matters.
+ */
+const PERMISSION_MODE_RANK: Record<PermissionMode, number> = {
+  plan: 0,
+  dont_ask: 1,
+  default: 2,
+  accept_edits: 3,
+  bypass_permissions: 4,
+};
+
+function stricterPermissionMode(
+  previous: PermissionMode | undefined,
+  next: PermissionMode | undefined,
+): PermissionMode | undefined {
+  if (previous === undefined) return next;
+  if (next === undefined) return previous;
+  // On equal rank the later layer wins; otherwise keep the more restrictive.
+  return PERMISSION_MODE_RANK[next] <= PERMISSION_MODE_RANK[previous]
+    ? next
+    : previous;
+}
+
+/**
+ * Merge write guardrails conservatively so a later (lower-trust) layer can only
+ * tighten the boundary: the smaller `maxFiles`/`maxDiffLines` wins and
+ * `allowDeletions: false` wins. Mirrors `mergeShellSandboxConfig`.
+ */
+function mergeWriteGuardrails(
+  previous: WriteGuardrailsConfig | undefined,
+  next: WriteGuardrailsConfig | undefined,
+): WriteGuardrailsConfig | undefined {
+  if (!previous) return next;
+  if (!next) return previous;
+  return {
+    maxFiles: minDefined(previous.maxFiles, next.maxFiles),
+    maxDiffLines: minDefined(previous.maxDiffLines, next.maxDiffLines),
+    allowDeletions:
+      previous.allowDeletions === false || next.allowDeletions === false
+        ? false
+        : (previous.allowDeletions ?? next.allowDeletions),
+  };
+}
+
+function minDefined(
+  a: number | undefined,
+  b: number | undefined,
+): number | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return Math.min(a, b);
+}
 
 export function userConfigPath(
   env: Record<string, string | undefined> = process.env,
@@ -361,6 +505,21 @@ function validateOptionalPositiveInteger(
     file: filePath,
     field,
     message: "must be a positive integer",
+  });
+  return undefined;
+}
+
+function validateOptionalPositiveNumber(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): number | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  errors.push({
+    file: filePath,
+    field,
+    message: "must be a positive number",
   });
   return undefined;
 }
@@ -869,6 +1028,362 @@ function validateWorkflowHookMatcher(
   return matcher;
 }
 
+function validateCapabilityVerification(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationConfig | undefined {
+  const field = "capabilities.verification";
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "mode",
+    "defaultProfile",
+    "profiles",
+    "afterWrites",
+    "stopGate",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+
+  const out: CapabilityVerificationConfig = {};
+  if (raw.mode !== undefined) {
+    if (
+      raw.mode === "off" ||
+      raw.mode === "suggest" ||
+      raw.mode === "require"
+    ) {
+      out.mode = raw.mode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.mode`,
+        message: "must be off, suggest, or require",
+      });
+    }
+  }
+  if (raw.defaultProfile !== undefined) {
+    if (typeof raw.defaultProfile === "string" && raw.defaultProfile.length) {
+      out.defaultProfile = raw.defaultProfile;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.defaultProfile`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.profiles !== undefined) {
+    const profiles = validateVerificationProfiles(
+      raw.profiles,
+      `${field}.profiles`,
+      filePath,
+      errors,
+    );
+    if (profiles) out.profiles = profiles;
+  }
+  if (raw.afterWrites !== undefined) {
+    const afterWrites = validateVerificationAfterWrites(
+      raw.afterWrites,
+      `${field}.afterWrites`,
+      filePath,
+      errors,
+    );
+    if (afterWrites) out.afterWrites = afterWrites;
+  }
+  if (raw.stopGate !== undefined) {
+    const stopGate = validateVerificationStopGate(
+      raw.stopGate,
+      `${field}.stopGate`,
+      filePath,
+      errors,
+    );
+    if (stopGate) out.stopGate = stopGate;
+  }
+
+  validateVerificationProfileReferences(out, field, filePath, errors);
+  return out;
+}
+
+function validateVerificationProfiles(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): Record<string, CapabilityVerificationCommandConfig[]> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const profiles: Record<string, CapabilityVerificationCommandConfig[]> = {};
+  for (const [profile, value] of Object.entries(raw)) {
+    const profileField = `${field}.${profile}`;
+    if (!profile) {
+      errors.push({
+        file: filePath,
+        field,
+        message: "profile names must be non-empty strings",
+      });
+      continue;
+    }
+    if (!Array.isArray(value)) {
+      errors.push({
+        file: filePath,
+        field: profileField,
+        message: "must be an array",
+      });
+      continue;
+    }
+    profiles[profile] = value
+      .map((command, index) =>
+        validateVerificationCommand(
+          command,
+          `${profileField}.${index}`,
+          filePath,
+          errors,
+        ),
+      )
+      .filter(
+        (command): command is CapabilityVerificationCommandConfig => !!command,
+      );
+  }
+  return profiles;
+}
+
+function validateVerificationCommand(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationCommandConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "id",
+    "kind",
+    "command",
+    "args",
+    "cwd",
+    "timeoutMs",
+    "maxOutputBytes",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (typeof raw.id !== "string" || raw.id.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.id`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  if (typeof raw.command !== "string" || raw.command.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.command`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  const out: CapabilityVerificationCommandConfig = {
+    id: raw.id,
+    command: raw.command,
+  };
+  if (raw.kind !== undefined) {
+    if (isVerificationKind(raw.kind)) out.kind = raw.kind;
+    else {
+      errors.push({
+        file: filePath,
+        field: `${field}.kind`,
+        message: "must be lint, typecheck, test, check, or custom",
+      });
+    }
+  }
+  if (raw.args !== undefined) {
+    out.args = validateStringArray(raw.args, `${field}.args`, filePath, errors);
+  }
+  if (raw.cwd !== undefined) {
+    if (typeof raw.cwd === "string" && raw.cwd.length > 0) out.cwd = raw.cwd;
+    else {
+      errors.push({
+        file: filePath,
+        field: `${field}.cwd`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.timeoutMs !== undefined) {
+    out.timeoutMs = validateOptionalPositiveInteger(
+      raw.timeoutMs,
+      `${field}.timeoutMs`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.maxOutputBytes !== undefined) {
+    out.maxOutputBytes = validateOptionalPositiveInteger(
+      raw.maxOutputBytes,
+      `${field}.maxOutputBytes`,
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateVerificationAfterWrites(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationAfterWritesConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set(["profile", "frequency", "injectOutput"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  const out: CapabilityVerificationAfterWritesConfig = {};
+  if (raw.profile !== undefined) {
+    if (typeof raw.profile === "string" && raw.profile.length > 0) {
+      out.profile = raw.profile;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.profile`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.frequency !== undefined) {
+    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+      out.frequency = raw.frequency;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.frequency`,
+        message: "must be always or oncePerTurn",
+      });
+    }
+  }
+  if (raw.injectOutput !== undefined) {
+    if (
+      raw.injectOutput === "always" ||
+      raw.injectOutput === "onFailure" ||
+      raw.injectOutput === "never"
+    ) {
+      out.injectOutput = raw.injectOutput;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.injectOutput`,
+        message: "must be always, onFailure, or never",
+      });
+    }
+  }
+  return out;
+}
+
+function validateVerificationStopGate(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationStopGateConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set(["enabled", "requireCleanAfterLastWrite"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  const out: CapabilityVerificationStopGateConfig = {};
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      `${field}.enabled`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.requireCleanAfterLastWrite !== undefined) {
+    out.requireCleanAfterLastWrite = validateOptionalBoolean(
+      raw.requireCleanAfterLastWrite,
+      `${field}.requireCleanAfterLastWrite`,
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateVerificationProfileReferences(
+  config: CapabilityVerificationConfig,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  const profiles = config.profiles ?? {};
+  for (const [name, fieldSuffix] of [
+    [config.defaultProfile, "defaultProfile"],
+    [config.afterWrites?.profile, "afterWrites.profile"],
+  ] as const) {
+    if (!name) continue;
+    if (!profiles[name]) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${fieldSuffix}`,
+        message: `references unknown verification profile "${name}"`,
+      });
+    }
+  }
+}
+
+function isVerificationKind(
+  value: unknown,
+): value is CapabilityVerificationKind {
+  return (
+    value === "lint" ||
+    value === "typecheck" ||
+    value === "test" ||
+    value === "check" ||
+    value === "custom"
+  );
+}
+
 function validateCapabilities(
   raw: unknown,
   filePath: string,
@@ -883,7 +1398,14 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set(["tools", "hooks", "skills", "mcp", "agents"]);
+  const allowed = new Set([
+    "tools",
+    "hooks",
+    "verification",
+    "skills",
+    "mcp",
+    "agents",
+  ]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -901,6 +1423,14 @@ function validateCapabilities(
     const hooks = validateCapabilityHooks(raw.hooks, filePath, errors);
     if (hooks) out.hooks = hooks;
   }
+  if (raw.verification !== undefined) {
+    const verification = validateCapabilityVerification(
+      raw.verification,
+      filePath,
+      errors,
+    );
+    if (verification) out.verification = verification;
+  }
   if (raw.skills !== undefined) {
     const skills = validateCapabilitySkills(raw.skills, filePath, errors);
     if (skills) out.skills = skills;
@@ -915,6 +1445,144 @@ function validateCapabilities(
   }
   return out;
 }
+
+function validateWriteGuardrails(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): WriteGuardrailsConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "write",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: WriteGuardrailsConfig = {};
+  const allowed = new Set(["maxFiles", "maxDiffLines", "allowDeletions"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `write.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.maxFiles !== undefined) {
+    out.maxFiles = validateOptionalPositiveInteger(
+      raw.maxFiles,
+      "write.maxFiles",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.maxDiffLines !== undefined) {
+    out.maxDiffLines = validateOptionalPositiveInteger(
+      raw.maxDiffLines,
+      "write.maxDiffLines",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.allowDeletions !== undefined) {
+    out.allowDeletions = validateOptionalBoolean(
+      raw.allowDeletions,
+      "write.allowDeletions",
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateRunBudget(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): RunBudget | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const out: RunBudget = {};
+  const integerKeys = [
+    "maxDurationMs",
+    "maxModelCalls",
+    "maxToolCalls",
+    "maxTokens",
+  ] as const;
+  const allowed = new Set<string>([...integerKeys, "maxCostUsd"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  for (const key of integerKeys) {
+    if (raw[key] !== undefined) {
+      out[key] = validateOptionalPositiveInteger(
+        raw[key],
+        `${field}.${key}`,
+        filePath,
+        errors,
+      );
+    }
+  }
+  if (raw.maxCostUsd !== undefined) {
+    out.maxCostUsd = validateOptionalPositiveNumber(
+      raw.maxCostUsd,
+      `${field}.maxCostUsd`,
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateApprovals(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): ApprovalDefaults | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "approvals",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: ApprovalDefaults = {};
+  const allowed = new Set(["shellSafe", "edits", "all"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `approvals.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  for (const key of ["shellSafe", "edits", "all"] as const) {
+    if (raw[key] !== undefined) {
+      out[key] = validateOptionalBoolean(
+        raw[key],
+        `approvals.${key}`,
+        filePath,
+        errors,
+      );
+    }
+  }
+  return out;
+}
+
+const VALID_TRACE_LEVELS: TraceLevel[] = ["minimal", "standard", "debug"];
 
 function validateShellConfig(
   raw: unknown,
@@ -2116,6 +2784,93 @@ function validateProvider(
 }
 
 /**
+ * Map each grouped key to the flat internal field it normalizes to. The grouped
+ * form (`identity`/`policy`/`run`/`ui`) is the preferred on-disk surface; the
+ * loader flattens it into the historical flat `SharedConfig` so consumers are
+ * untouched and the old flat keys keep working as aliases. `policy.sandbox`
+ * remaps structurally to `shell.sandbox` and is handled specially below;
+ * `capabilities` is already its own group and passes through unchanged.
+ */
+const CONFIG_GROUP_FIELD_MAP: Record<string, Record<string, string>> = {
+  identity: { model: "model", providers: "providers" },
+  policy: {
+    permissionMode: "permissionMode",
+    confidentialPaths: "confidentialPaths",
+    write: "write",
+  },
+  run: {
+    budget: "runBudget",
+    maxSteps: "maxSteps",
+    traceLevel: "traceLevel",
+    approvals: "approvals",
+  },
+  ui: { theme: "theme", mouse: "mouse", keybindings: "keybindings" },
+};
+
+/**
+ * Flatten the grouped config form into the flat shape the field validators
+ * expect. Both the grouped key and an old flat alias may appear; the grouped
+ * value wins and the conflict is reported. Unknown keys inside a known group are
+ * errors (groups are new, so we can be strict without breaking old configs).
+ *
+ * Exported so the TUI config reader can normalize the same grouped form before
+ * reading its UI-facing fields; it shares this single source of truth rather
+ * than re-implementing the mapping.
+ */
+export function normalizeGroupedConfig(
+  raw: Record<string, unknown>,
+  filePath: string,
+  errors: SharedConfigError[],
+): Record<string, unknown> {
+  const flat: Record<string, unknown> = { ...raw };
+
+  const assign = (flatKey: string, value: unknown, groupedField: string) => {
+    if (Object.prototype.hasOwnProperty.call(raw, flatKey)) {
+      errors.push({
+        file: filePath,
+        field: groupedField,
+        message: `conflicts with top-level "${flatKey}"; the grouped value is used`,
+      });
+    }
+    flat[flatKey] = value;
+  };
+
+  for (const [group, fieldMap] of Object.entries(CONFIG_GROUP_FIELD_MAP)) {
+    const groupValue = raw[group];
+    if (groupValue === undefined) continue;
+    delete flat[group];
+    if (!isRecord(groupValue)) {
+      errors.push({
+        file: filePath,
+        field: group,
+        message: "must be an object",
+      });
+      continue;
+    }
+    const knownSub = new Set([
+      ...Object.keys(fieldMap),
+      ...(group === "policy" ? ["sandbox"] : []),
+    ]);
+    for (const subKey of Object.keys(groupValue)) {
+      if (!knownSub.has(subKey)) {
+        errors.push({
+          file: filePath,
+          field: `${group}.${subKey}`,
+          message: `unknown field (allowed: ${[...knownSub].join(", ")})`,
+        });
+        continue;
+      }
+      if (group === "policy" && subKey === "sandbox") {
+        assign("shell", { sandbox: groupValue.sandbox }, "policy.sandbox");
+        continue;
+      }
+      assign(fieldMap[subKey], groupValue[subKey], `${group}.${subKey}`);
+    }
+  }
+  return flat;
+}
+
+/**
  * Validate the shared fields of one parsed config object. Unknown keys are
  * ignored (they may be UI-only fields owned by the TUI). Wrong types produce
  * an error and the field is dropped.
@@ -2141,7 +2896,7 @@ function validateShared(
     });
     return { config, sources, errors };
   }
-  const obj = raw;
+  const obj = normalizeGroupedConfig(raw, filePath, errors);
 
   if (obj.model !== undefined) {
     if (typeof obj.model === "string" && obj.model.length > 0) {
@@ -2224,6 +2979,56 @@ function validateShared(
         field: "confidentialPaths",
         message: "must be an array of non-empty strings",
       });
+    }
+  }
+  if (obj.write !== undefined) {
+    const write = validateWriteGuardrails(obj.write, filePath, errors);
+    if (write) {
+      config.write = write;
+      sources.write = origin;
+    }
+  }
+  if (obj.runBudget !== undefined) {
+    const runBudget = validateRunBudget(
+      obj.runBudget,
+      "runBudget",
+      filePath,
+      errors,
+    );
+    if (runBudget) {
+      config.runBudget = runBudget;
+      sources.runBudget = origin;
+    }
+  }
+  if (obj.maxSteps !== undefined) {
+    const maxSteps = validateOptionalPositiveInteger(
+      obj.maxSteps,
+      "maxSteps",
+      filePath,
+      errors,
+    );
+    if (maxSteps !== undefined) {
+      config.maxSteps = maxSteps;
+      sources.maxSteps = origin;
+    }
+  }
+  if (obj.traceLevel !== undefined) {
+    if ((VALID_TRACE_LEVELS as string[]).includes(obj.traceLevel as string)) {
+      config.traceLevel = obj.traceLevel as TraceLevel;
+      sources.traceLevel = origin;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "traceLevel",
+        message: `must be one of ${VALID_TRACE_LEVELS.join(" | ")}`,
+      });
+    }
+  }
+  if (obj.approvals !== undefined) {
+    const approvals = validateApprovals(obj.approvals, filePath, errors);
+    if (approvals) {
+      config.approvals = approvals;
+      sources.approvals = origin;
     }
   }
   if (obj.shell !== undefined) {
@@ -2315,6 +3120,9 @@ export async function loadHostConfig(
       providers,
       capabilities: layerCapabilities,
       shell: layerShell,
+      permissionMode: layerPermissionMode,
+      confidentialPaths: layerConfidentialPaths,
+      write: layerWrite,
       ...rest
     } = v.config;
     Object.assign(merged, rest);
@@ -2330,7 +3138,37 @@ export async function loadHostConfig(
         ...layerCapabilities,
       };
     }
+    // permissionMode and confidentialPaths are security boundaries: merge them
+    // conservatively (like shell.sandbox) so a later, lower-trust layer (e.g. a
+    // project config) can only tighten — never weaken — an earlier layer's
+    // policy. permissionMode keeps the stricter mode; confidentialPaths unions.
+    if (layerPermissionMode !== undefined) {
+      const previous = merged.permissionMode;
+      merged.permissionMode = stricterPermissionMode(
+        previous,
+        layerPermissionMode,
+      );
+      if (merged.permissionMode !== previous) {
+        sources.permissionMode = v.sources.permissionMode;
+      }
+    }
+    if (layerConfidentialPaths !== undefined) {
+      merged.confidentialPaths = mergeUniqueStrings(
+        merged.confidentialPaths,
+        layerConfidentialPaths,
+      );
+      sources.confidentialPaths = v.sources.confidentialPaths;
+    }
+    if (layerWrite !== undefined) {
+      merged.write = mergeWriteGuardrails(merged.write, layerWrite);
+      sources.write = v.sources.write;
+    }
     const { providers: providerSources, ...fieldSources } = v.sources;
+    // These security-boundary sources are tracked above to reflect the layer
+    // that actually won the conservative merge, not just the last to set them.
+    delete fieldSources.permissionMode;
+    delete fieldSources.confidentialPaths;
+    delete fieldSources.write;
     Object.assign(sources, fieldSources);
     if (providerSources) {
       sources.providers = { ...(sources.providers ?? {}), ...providerSources };
@@ -2402,6 +3240,13 @@ export function resolveModelSelection(
     return {
       kind: "error",
       message: `Provider "${providerKey}" uses npm "${npm}", which is not supported (supported: ${supported}).`,
+    };
+  }
+  const configuredModelIds = Object.keys(provider.models ?? {});
+  if (configuredModelIds.length > 0 && !configuredModelIds.includes(modelId)) {
+    return {
+      kind: "error",
+      message: `Model "${ref}" is not configured for provider "${providerKey}". Available models: ${configuredModelIds.join(", ")}.`,
     };
   }
   return {

@@ -7,6 +7,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -347,6 +348,53 @@ describe("runCli", () => {
     ]);
   });
 
+  it("marks validation-only session checks as ok with warnings", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const runOutput = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect outside target",
+        "--workspace",
+        workspace,
+        "--target",
+        "../outside.txt",
+      ],
+      {
+        io: {
+          stdout: runOutput.stdout,
+          stderr: runOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.sessionId).toBeTruthy();
+
+    const checkOutput = createOutputCapture();
+    const check = await runCli(
+      [
+        "session",
+        "check",
+        result.sessionId!,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: checkOutput.stdout, stderr: checkOutput.stderr },
+      },
+    );
+
+    expect(check.exitCode).toBe(0);
+    expect(checkOutput.stdoutText()).toContain("status: ok_with_warnings");
+    expect(checkOutput.stdoutText()).toContain("SESSION_EVENTS_MISSING");
+  });
+
   it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
     tempDirs.push(workspace);
@@ -414,6 +462,37 @@ describe("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(output.stderrText()).toContain(
       "Warning: --yes has no effect without --write.",
+    );
+    expect(output.stdoutText()).toContain("run.completed final_answer");
+  });
+
+  it("warns when --yes-shell-safe is used without --write", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--yes-shell-safe",
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toContain(
+      "Warning: --yes-shell-safe has no effect without --write.",
     );
     expect(output.stdoutText()).toContain("run.completed final_answer");
   });
@@ -623,6 +702,10 @@ describe("runCli", () => {
     expect(output.stderrText()).toContain(
       "Approval denied because stdin is not interactive",
     );
+    expect(output.stderrText()).toContain(
+      "Run completed with 1 denied workspace write; requested mutation was not applied.",
+    );
+    expect(output.stdoutText()).toContain("Run completed_with_issues");
 
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toEqual(
@@ -852,11 +935,15 @@ describe("runCli", () => {
     expect(first.stdoutText()).toContain(configPath);
 
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      model?: string;
-      providers?: Record<string, { apiKey?: string }>;
+      identity?: {
+        model?: string;
+        providers?: Record<string, { apiKey?: string }>;
+      };
     };
-    expect(parsed.model).toBe("openai/gpt-5.4-mini");
-    expect(parsed.providers?.openai?.apiKey).toBe("REPLACE_WITH_YOUR_API_KEY");
+    expect(parsed.identity?.model).toBe("openai/gpt-5.4-mini");
+    expect(parsed.identity?.providers?.openai?.apiKey).toBe(
+      "REPLACE_WITH_YOUR_API_KEY",
+    );
     if (process.platform !== "win32") {
       // Secret-bearing file must not be group/world readable on POSIX.
       const mode = (await stat(configPath)).mode & 0o777;
@@ -887,7 +974,7 @@ describe("runCli", () => {
       "sparkwright capabilities inspect --workspace . --format text",
     );
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      permissionMode?: string;
+      policy?: { permissionMode?: string; write?: { maxFiles?: number } };
       capabilities?: {
         tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
         skills?: {
@@ -899,7 +986,8 @@ describe("runCli", () => {
         mcp?: { servers?: unknown[] };
       };
     };
-    expect(parsed.permissionMode).toBe("default");
+    expect(parsed.policy?.permissionMode).toBe("default");
+    expect(parsed.policy?.write?.maxFiles).toBe(1);
     expect(parsed.capabilities?.tools?.disabled).toEqual(["shell"]);
     expect(parsed.capabilities?.tools?.defer).toEqual(["mcp_*"]);
     expect(parsed.capabilities?.tools?.enabled).toBeUndefined();
@@ -931,6 +1019,49 @@ describe("runCli", () => {
     expect(
       (await stat(join(workspace, ".sparkwright", "agents"))).isDirectory(),
     ).toBe(true);
+  });
+
+  it("config validate reports loader errors and exits non-zero", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ policy: { permissionMode: "nope" } }),
+      "utf8",
+    );
+
+    const bad = createOutputCapture();
+    const badResult = await runCli(
+      ["config", "validate", "--workspace", workspace, "--format", "text"],
+      { io: { stdout: bad.stdout, stderr: bad.stderr } },
+    );
+    expect(badResult.exitCode).toBe(1);
+    expect(bad.stdoutText()).toContain("permissionMode");
+
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ policy: { permissionMode: "plan" } }),
+      "utf8",
+    );
+    const good = createOutputCapture();
+    const goodResult = await runCli(
+      ["config", "validate", "--workspace", workspace, "--format", "text"],
+      { io: { stdout: good.stdout, stderr: good.stderr } },
+    );
+    expect(goodResult.exitCode).toBe(0);
+    expect(good.stdoutText()).toContain("Config OK");
+  });
+
+  it("config example prints a paste-ready grouped snippet", async () => {
+    const out = createOutputCapture();
+    const result = await runCli(["config", "example", "write"], {
+      io: { stdout: out.stdout, stderr: out.stderr },
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(out.stdoutText()) as {
+      policy?: { write?: { maxFiles?: number } };
+    };
+    expect(parsed.policy?.write?.maxFiles).toBe(1);
   });
 
   it("lists tool config without creating a user config", async () => {
@@ -2743,6 +2874,109 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("prints configured verification profile results in host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "fast",
+            profiles: {
+              fast: [
+                {
+                  id: "unit",
+                  kind: "custom",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                },
+              ],
+            },
+            afterWrites: {
+              profile: "fast",
+              frequency: "always",
+              injectOutput: "onFailure",
+            },
+            stopGate: {
+              enabled: true,
+              requireCleanAfterLastWrite: true,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "write and verify README",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--permission-mode",
+        "accept_edits",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "apply_patch",
+                  arguments: {
+                    path: "README.md",
+                    reason: "Add verified section",
+                    patch: [
+                      "--- a/README.md",
+                      "+++ b/README.md",
+                      "@@ -1 +1,5 @@",
+                      " # Demo",
+                      "+",
+                      "+## Verified Write",
+                      "+",
+                      "+Verified from CLI.",
+                      "",
+                    ].join("\n"),
+                  },
+                },
+              ],
+            },
+            { message: "verified" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("Verification: 1 passed (unit).");
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toContain(
+      "## Verified Write",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "workflow_hook.completed" &&
+          (event.payload?.hookName as string | undefined) ===
+            "verification:fast:unit",
+      ),
+    ).toBeTruthy();
+  });
+
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -3318,6 +3552,73 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("allows a small multi-file write budget when no target is explicit", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, "test.js"), "console.log('test')\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Update implementation and test.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt two writes",
+              toolCalls: [
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "README.md",
+                    heading: "Implementation",
+                    body: "implementation update",
+                  },
+                },
+                {
+                  toolName: "append_file",
+                  arguments: {
+                    path: "test.js",
+                    heading: "Regression",
+                    body: "regression coverage",
+                  },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toContain(
+      "implementation update",
+    );
+    expect(await readFile(join(workspace, "test.js"), "utf8")).toContain(
+      "regression coverage",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.filter((event) => event.type === "workspace.write.completed"),
+    ).toHaveLength(2);
+  });
+
   it("rolls back shell mutations that bypass workspace.write", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
@@ -3787,7 +4088,7 @@ describe("runCli", () => {
   });
 
   function mcpEchoServerConfig(name: string) {
-    const repoRoot = resolve(process.cwd(), "../..");
+    const repoRoot = findRepoRoot(process.cwd());
     const mcpPath = resolve(
       repoRoot,
       "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
@@ -3818,6 +4119,21 @@ describe("runCli", () => {
       // runner has room to connect (not a delay on fast machines).
       timeoutMs: 15000,
     };
+  }
+
+  function findRepoRoot(start: string): string {
+    let current = resolve(start);
+    while (true) {
+      if (
+        existsSync(join(current, "packages", "cli", "test", "cli.test.ts")) &&
+        existsSync(join(current, "tools", "demo-mcp.mjs"))
+      ) {
+        return current;
+      }
+      const parent = resolve(current, "..");
+      if (parent === current) return resolve(start);
+      current = parent;
+    }
   }
 
   async function createWorkspace(readme: string): Promise<string> {

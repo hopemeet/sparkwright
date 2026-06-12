@@ -2,8 +2,11 @@ import { EventLog, createRunId } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   cliExitCodeForRun,
+  completedRunHasCliIssues,
   createCliRunEventSummary,
+  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
+  summarizeVerificationProfileResults,
   updateCliRunEventSummary,
 } from "../src/run-outcome.js";
 
@@ -65,5 +68,109 @@ describe("CLI run outcome", () => {
       0,
     );
     expect(summarizeVerificationCommandFailures(summary)).toBeUndefined();
+  });
+
+  it("summarizes configured verification profile results", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:lint",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 0, timedOut: false },
+        },
+      }),
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:typecheck",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 2, timedOut: false },
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    expect(summarizeVerificationProfileResults(summary)).toBe(
+      "Verification: 1 passed (lint); 1 failed (typecheck exitCode=2).",
+    );
+    expect(completedRunHasCliIssues(summary)).toBe(true);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      1,
+    );
+  });
+
+  it("uses the latest configured verification result per command", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:lint",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 1, timedOut: false },
+        },
+      }),
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:lint",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 0, timedOut: false },
+        },
+      }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    expect(summarizeVerificationProfileResults(summary)).toBe(
+      "Verification: 1 passed (lint).",
+    );
+    expect(completedRunHasCliIssues(summary)).toBe(false);
+  });
+
+  it("fails the run for unsupported final-answer command success claims", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("run.created", { goal: "Fix and verify" }),
+      log.emit("tool.requested", {
+        id: "call_1",
+        toolName: "shell",
+        arguments: { command: "npm run verify" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        outcome: {
+          kind: "completed_with_unsupported_final_claims",
+          unsupportedFinalClaims: {
+            count: 1,
+            claims: [
+              {
+                kind: "command_success",
+                command: "python -m unittest tests/test_config.py",
+              },
+            ],
+          },
+        },
+      }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    expect(completedRunHasCliIssues(summary)).toBe(true);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      1,
+    );
+    expect(summarizeUnsupportedFinalClaims(summary)).toContain(
+      "python -m unittest tests/test_config.py",
+    );
   });
 });

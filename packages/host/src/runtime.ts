@@ -69,7 +69,11 @@ import {
   resolveShellSandboxConfig,
   type ShellSandboxStatus,
 } from "@sparkwright/shell-sandbox";
-import type { CapabilityDelegateToolConfig, ShellConfig } from "./config.js";
+import type {
+  CapabilityDelegateToolConfig,
+  ShellConfig,
+  WriteGuardrailsConfig,
+} from "./config.js";
 import {
   createSessionFileRunStoreFactory,
   LocalWorkspace,
@@ -107,6 +111,8 @@ import {
   type DelegateCapabilityDescriptor,
 } from "./delegate-capability.js";
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
+import { createVerificationWorkflowHooks } from "./verification.js";
+import { createDocumentedCommandStopHook } from "./documented-command-check.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -139,19 +145,22 @@ function createHostRunPolicy(input: {
   shouldWrite: boolean;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  writeGuardrails?: WriteGuardrailsConfig;
 }): Policy {
+  // Config write guardrails override the built-in defaults when present. The
+  // defaults: explicit --target runs stay bounded to that single file, while
+  // untargeted write runs get a small multi-file budget so real code+test
+  // changes can complete. In-place edits (edit_anchored_text / apply_patch)
+  // need to remove the lines they replace, so deletions default to permitted.
   return createLayeredPolicy([
     createPermissionModePolicy({ mode: input.permissionMode }),
     createWorkspaceMutationPolicy({
       allowWorkspaceWrites: input.shouldWrite,
       allowedPaths: input.targetPath ? [input.targetPath] : undefined,
-      maxWriteFiles: 1,
-      maxDiffLines: 200,
-      // In-place edits (edit_anchored_text / apply_patch) need to remove the
-      // lines they replace, so deletions must be permitted. The write stays
-      // bounded by the single-file budget, the 200-line diff cap, the
-      // --target path scope, and per-write approval.
-      allowDeletions: true,
+      maxWriteFiles:
+        input.writeGuardrails?.maxFiles ?? (input.targetPath ? 1 : 4),
+      maxDiffLines: input.writeGuardrails?.maxDiffLines ?? 200,
+      allowDeletions: input.writeGuardrails?.allowDeletions ?? true,
     }),
     // Opt-in read-confidentiality. Empty list is a no-op, so default runs are
     // unaffected; when set, reads of matching files are denied at the tool layer.
@@ -222,6 +231,7 @@ interface PreparedHostRunEnvironment {
   sessionStore: FileSessionStore;
   parentRunRef: { current?: ReturnType<typeof createRun> };
   traceLevel: TraceLevel;
+  writeGuardrails?: WriteGuardrailsConfig;
   runMetadata: Record<string, unknown>;
   runStoreMetadata: Record<string, unknown>;
 }
@@ -484,6 +494,7 @@ export class HostRuntime {
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = loadedConfig.config.capabilities?.mcp;
     const agentConfig = loadedConfig.config.capabilities?.agents;
+    const writeGuardrails = loadedConfig.config.write;
     const skillRoots = resolveSkillRootsForRuntime(
       workspaceRoot,
       skillConfig?.roots,
@@ -557,8 +568,13 @@ export class HostRuntime {
       workspaceRoot,
       agentConfig?.profiles,
     );
-    const traceLevel = input.traceLevel ?? "standard";
-    const mainAgent = mainAgentProfile(resolvedProfiles);
+    const traceLevel =
+      input.traceLevel ?? loadedConfig.config.traceLevel ?? "standard";
+    const mainAgent = applyConfiguredRunBudget(
+      mainAgentProfile(resolvedProfiles),
+      loadedConfig.config.runBudget,
+      loadedConfig.config.maxSteps,
+    );
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
       resolvedProfiles,
@@ -619,13 +635,27 @@ export class HostRuntime {
       shell: shellConfig,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
-    const workflowHooks = createConfiguredWorkflowHooks({
-      hooks: hookConfig?.workflow,
-      workspaceRoot,
-      sandbox: shellConfig?.sandbox,
-      skillRoots: skillRoots.map((root) => root.root),
-      configPaths: loadedConfig.attempted.map((entry) => entry.path),
-    });
+    const workflowHooks = [
+      ...createConfiguredWorkflowHooks({
+        hooks: hookConfig?.workflow,
+        workspaceRoot,
+        sandbox: shellConfig?.sandbox,
+        skillRoots: skillRoots.map((root) => root.root),
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      }),
+      ...createVerificationWorkflowHooks({
+        verification: loadedConfig.config.capabilities?.verification,
+        workspaceRoot,
+        sandbox: shellConfig?.sandbox,
+        skillRoots: skillRoots.map((root) => root.root),
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      }),
+      ...createDocumentedCommandStopHook({
+        workspaceRoot,
+        goal: input.goal,
+        shouldWrite: input.shouldWrite,
+      }),
+    ];
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       tools,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
@@ -696,6 +726,7 @@ export class HostRuntime {
         sessionStore,
         parentRunRef,
         traceLevel,
+        writeGuardrails,
         runMetadata,
         runStoreMetadata,
       },
@@ -1097,6 +1128,7 @@ export class HostRuntime {
           shouldWrite,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
+          writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
@@ -1152,6 +1184,7 @@ export class HostRuntime {
                 shouldWrite,
                 targetPath: payload.targetPath,
                 confidentialPaths: payload.confidentialPaths,
+                writeGuardrails: env.writeGuardrails,
               }),
               promptBuilder: buildAgentPromptBuilder({
                 cwd: env.workspaceRoot,
@@ -1282,6 +1315,7 @@ export class HostRuntime {
           shouldWrite,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
+          writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
           cwd: env.workspaceRoot,
@@ -2148,6 +2182,29 @@ function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
         profile.mode === "primary",
     ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
   );
+}
+
+/**
+ * Apply the top-level `run` budget config to the main agent profile. An
+ * explicit main agent profile (capabilities.agents) is more specific, so its
+ * own `maxSteps`/`runBudget` win; the config values only fill the gaps. The
+ * existing budget resolution (`resolveMainAgentMaxSteps`) then picks them up.
+ */
+function applyConfiguredRunBudget(
+  profile: AgentProfile,
+  runBudget: RunBudget | undefined,
+  maxSteps: number | undefined,
+): AgentProfile {
+  if (runBudget === undefined && maxSteps === undefined) return profile;
+  return {
+    ...profile,
+    ...(profile.maxSteps === undefined && maxSteps !== undefined
+      ? { maxSteps }
+      : {}),
+    ...(profile.runBudget === undefined && runBudget !== undefined
+      ? { runBudget }
+      : {}),
+  };
 }
 
 /**

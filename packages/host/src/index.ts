@@ -23,6 +23,15 @@ export type {
 export { applyToolConfig } from "./tools.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
+export { createVerificationWorkflowHooks } from "./verification.js";
+export type { CreateVerificationWorkflowHooksOptions } from "./verification.js";
+export {
+  checkDocumentedCommands,
+  createDocumentedCommandStopHook,
+  shouldCheckDocumentedCommands,
+  summarizeDocumentedCommandIssues,
+} from "./documented-command-check.js";
+export type { DocumentedCommandIssue } from "./documented-command-check.js";
 export {
   projectSkillRoot,
   existingSkillRoots,
@@ -57,6 +66,7 @@ export {
 } from "./agent-profiles.js";
 export {
   loadHostConfig,
+  normalizeGroupedConfig,
   configResolutionOrder,
   userConfigPath,
   projectConfigPath,

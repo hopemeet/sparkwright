@@ -37,10 +37,12 @@ ones:
 3. `$SPARKWRIGHT_CONFIG`
 4. CLI flags and environment variables
 
-The `providers` map is merged by provider key. Most other fields are replaced
-wholesale by the later source. In particular, `capabilities` is not deep-merged
-across files; put related project capability settings in the same project
-config file when possible.
+The `providers` map is merged by provider key. The security boundaries —
+`permissionMode`, `confidentialPaths`, `write`, and `shell.sandbox` — merge
+conservatively, so a later (lower-trust) layer can only tighten them, never
+weaken them. Most other fields are replaced wholesale by the later source. In
+particular, `capabilities` is not deep-merged across files; put related project
+capability settings in the same project config file when possible.
 
 Precedence, weak to strong:
 
@@ -129,6 +131,11 @@ Put project-wide behavior in `<workspace>/.sparkwright/config.json`:
 ```json
 {
   "permissionMode": "default",
+  "write": {
+    "maxFiles": 1,
+    "maxDiffLines": 200,
+    "allowDeletions": false
+  },
   "capabilities": {
     "tools": {
       "disabled": ["shell"],
@@ -148,7 +155,11 @@ Put project-wide behavior in `<workspace>/.sparkwright/config.json`:
 
 This is intentionally not a full allowlist. Omitting `tools.enabled` lets the
 host start from its available tools, then removes `shell` and defers MCP schemas
-when supported.
+when supported. The `write` block caps a run to a single file with no line
+deletions; raise `maxFiles`/`maxDiffLines` or set `allowDeletions: true` for
+projects that expect broader edits. Because `write` merges conservatively, a
+personal config can tighten these further but a project config cannot loosen a
+stricter personal setting.
 
 ### Shell Sandbox
 
@@ -305,6 +316,72 @@ the built-in shell tool.
 correct course. Pair a post-tool check with a `Stop` hook when a condition must
 also be enforced before the final answer.
 
+### Add Verification Profiles
+
+Use `capabilities.verification` when the project wants checked-in quality gates
+without hand-writing workflow hooks. Verification commands run through the
+project toolchain exactly as configured; Sparkwright does not install missing
+linters, typecheckers, or package dependencies.
+
+```json
+{
+  "capabilities": {
+    "verification": {
+      "mode": "require",
+      "defaultProfile": "fast",
+      "profiles": {
+        "fast": [
+          {
+            "id": "lint",
+            "kind": "lint",
+            "command": "npm",
+            "args": ["run", "lint"],
+            "timeoutMs": 120000
+          },
+          {
+            "id": "typecheck",
+            "kind": "typecheck",
+            "command": "npm",
+            "args": ["run", "typecheck"],
+            "timeoutMs": 180000
+          }
+        ],
+        "full": [
+          {
+            "id": "check",
+            "kind": "check",
+            "command": "npm",
+            "args": ["run", "check"],
+            "timeoutMs": 600000
+          }
+        ]
+      },
+      "afterWrites": {
+        "profile": "fast",
+        "frequency": "always",
+        "injectOutput": "onFailure"
+      },
+      "stopGate": {
+        "enabled": true,
+        "requireCleanAfterLastWrite": true
+      }
+    }
+  }
+}
+```
+
+Modes:
+
+- `off`: disable verification hooks.
+- `suggest`: inject the configured profile as guidance, but let the model
+  choose when to run commands. This is the default when `mode` is omitted.
+- `require`: run the selected profile after write-tool calls and block final
+  answers until every command has passed after the latest workspace write.
+
+Prefer project commands such as `npm run lint`, `uv run ruff check .`, or
+`cargo clippy` over bare global tools. That keeps verification aligned with CI
+and avoids depending on whatever happens to be installed in the user's shell.
+
 ### Add A Stdio MCP Server
 
 Add a server under project `capabilities.mcp.servers`:
@@ -409,18 +486,89 @@ Put user arguments in prompt text instead.
   `deterministic` provider is built in.
 - `providers`: named provider definitions. Keep provider keys in personal
   config, not project config.
-- `permissionMode`: default run permission mode.
+- `permissionMode`: default run permission mode. Merges conservatively across
+  layers — a later layer can only tighten, never escalate, the mode.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
+- `confidentialPaths`: opt-in read-confidentiality globs. Unions across layers
+  (a later layer can only add entries, never drop them).
+- `write`: workspace write guardrails (`maxFiles`, `maxDiffLines`,
+  `allowDeletions`) that override the runtime defaults. Merges conservatively —
+  the smaller `maxFiles`/`maxDiffLines` wins and `allowDeletions: false` wins.
+- `shell.sandbox`: OS-level sandbox for the host shell executor. Merges
+  conservatively so a later layer cannot weaken an earlier sandbox policy.
+- `runBudget`: resource budget for the interactive main run (`maxModelCalls`,
+  `maxToolCalls`, `maxDurationMs`, `maxTokens`, `maxCostUsd`). `maxModelCalls`
+  is the tightest natural step bound. An explicit main agent profile under
+  `capabilities.agents` overrides this.
+- `maxSteps`: explicit main-run step ceiling. Overrides the value derived from
+  `runBudget` and the safety backstop.
+- `traceLevel`: default trace verbosity (`minimal`, `standard`, `debug`) when an
+  entrypoint does not pass one. CLI `--trace-level` overrides.
+- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`). CLI
+  flags (`--yes`, `--yes-edits`, `--yes-shell-safe`) still override.
 - `capabilities.tools`: tool enable, disable, and defer filters.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions and default policy.
 - `capabilities.agents`: agent profiles and delegate tools.
 - `theme`, `mouse`, `keybindings`: TUI-only preferences.
 
-The config schema permits a top-level `"$schema"` so editors can offer
-completion and validation, but the scaffolds do not emit one yet. Add
-`"$schema"` yourself once the schema is published.
+### Grouped Form
+
+Fields may be written flat (as above) or under the preferred groups, which make
+the layering intent obvious:
+
+```json
+{
+  "identity": { "model": "openai/gpt-x", "providers": { "openai": {} } },
+  "policy": {
+    "permissionMode": "default",
+    "confidentialPaths": ["secrets/**"],
+    "write": { "maxFiles": 1 },
+    "sandbox": { "mode": "warn" }
+  },
+  "run": {
+    "budget": { "maxModelCalls": 50 },
+    "traceLevel": "standard",
+    "approvals": { "shellSafe": true }
+  },
+  "ui": { "theme": "dark" }
+}
+```
+
+- `identity` → `model`, `providers` (belongs in the user config).
+- `policy` → `permissionMode`, `confidentialPaths`, `write`, and `sandbox`
+  (maps to `shell.sandbox`) — the conservatively-merged security boundaries.
+- `run` → `runBudget` (as `budget`), `maxSteps`, `traceLevel`, `approvals`.
+- `ui` → `theme`, `mouse`, `keybindings`.
+- `capabilities` is already its own group.
+
+The flat and grouped forms are equivalent; `sparkwright init` now emits the
+grouped form. Setting the same field both ways is an error — the grouped value
+wins and a warning is reported.
+
+### Editor autocomplete and validation
+
+A full JSON Schema ships at `schemas/config.schema.json`. Wire it to your editor
+to get completion, hovers, and validation while authoring config — no hosted URL
+required. In VS Code, add a `json.schemas` mapping to your workspace or user
+settings (`.vscode/` is gitignored here, so this stays a personal setting):
+
+```jsonc
+// .vscode/settings.json
+{
+  "json.schemas": [
+    {
+      "fileMatch": ["**/.sparkwright/config.json", "sparkwright/config.json"],
+      "url": "./schemas/config.schema.json",
+    },
+  ],
+}
+```
+
+Downstream projects can point `url` at the shipped copy under `node_modules`.
+The schema also permits a top-level `"$schema"` key if you prefer to reference a
+copy directly; the scaffolds do not emit one.
 
 ## Permission Modes
 
@@ -545,15 +693,23 @@ and workspace settings apply to both CLI and TUI surfaces.
 Use these commands before guessing:
 
 ```bash
+sparkwright config path --workspace .         # which files load, in order
+sparkwright config validate --workspace .      # report schema/load problems
+sparkwright config example hooks               # paste-ready grouped snippet
 sparkwright capabilities inspect --workspace . --format text
 sparkwright tools list --format text
 sparkwright agents validate --workspace .
 sparkwright skills validate --workspace .
 ```
 
-`capabilities inspect` is read-only. It summarizes the workspace, effective
-tool filters, Skill roots and shadows, agent roots and shadows, MCP servers,
-cron state paths, and command directories.
+`config path` lists the resolution order and whether each layer loaded.
+`config validate` loads the merged config and prints any field problems,
+exiting non-zero when there are errors. `config example <name>` prints a
+copy-pasteable snippet in the grouped form (names: `write`, `sandbox`, `run`,
+`hooks`, `verification`, `mcp`, `agent`). `capabilities inspect` is read-only.
+It summarizes the workspace, effective tool filters, Skill roots and shadows,
+agent roots and shadows, MCP servers, cron state paths, and command
+directories.
 
 Common checks:
 
@@ -564,7 +720,9 @@ Common checks:
 - If a tool disappeared, look for `tools.enabled` allowlists and
   `tools.disabled` filters.
 - If a project setting does not combine with a user setting, remember that most
-  fields other than `providers` are replaced wholesale.
+  fields other than `providers` are replaced wholesale — except the security
+  boundaries (`permissionMode`, `confidentialPaths`, `write`, `shell.sandbox`),
+  which merge conservatively and cannot be weakened by a later layer.
 - If an MCP server cannot start, verify `cwd`, command path, timeout, and
   whether `enabled` is false.
 

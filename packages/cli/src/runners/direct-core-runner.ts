@@ -23,6 +23,7 @@ import {
 import {
   applyToolConfig,
   buildConfiguredAdapter,
+  createDocumentedCommandStopHook,
   createConfiguredWorkflowHooks,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
@@ -31,15 +32,24 @@ import {
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { createCliApprovalResolver } from "../cli-approval.js";
+import {
+  checkDocumentedCommands,
+  shouldCheckDocumentedCommands,
+  summarizeDocumentedCommandIssues,
+} from "../documented-command-check.js";
 import { formatEvent } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
 import {
   cliExitCodeForRun,
+  completedRunHasCliIssues,
   createCliRunEventSummary,
+  summarizeDeniedWorkspaceWrites,
   summarizeRunFailure,
   summarizeUnhandledToolFailures,
+  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
+  summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../run-outcome.js";
@@ -110,14 +120,18 @@ export async function startDirectCoreRun(
     approveShellSafe,
     io,
   });
+  const loadedConfig = await loadHostConfig(workspaceRoot, env);
+  // Config write guardrails override the direct-core defaults (single file, no
+  // deletions). loadHostConfig has already merged them conservatively.
+  const writeGuardrails = loadedConfig.config.write;
   const policy = createLayeredPolicy([
     createPermissionModePolicy({ mode: permissionMode }),
     createWorkspaceMutationPolicy({
       allowWorkspaceWrites: shouldWrite,
       allowedPaths: [targetPath],
-      maxWriteFiles: 1,
-      maxDiffLines: 200,
-      allowDeletions: false,
+      maxWriteFiles: writeGuardrails?.maxFiles ?? 1,
+      maxDiffLines: writeGuardrails?.maxDiffLines ?? 200,
+      allowDeletions: writeGuardrails?.allowDeletions ?? false,
     }),
     createWorkspaceReadScopePolicy({
       confidentialPaths: [
@@ -127,7 +141,6 @@ export async function startDirectCoreRun(
     }),
   ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);
-  const loadedConfig = await loadHostConfig(workspaceRoot, env);
   const skillRoots = resolveSkillRootsForRuntime(
     workspaceRoot,
     loadedConfig.config.capabilities?.skills?.roots,
@@ -140,7 +153,13 @@ export async function startDirectCoreRun(
     sandbox: loadedConfig.config.shell?.sandbox,
     skillRoots: skillRoots.map((root) => root.root),
     configPaths: loadedConfig.attempted.map((entry) => entry.path),
-  });
+  }).concat(
+    createDocumentedCommandStopHook({
+      workspaceRoot,
+      goal,
+      shouldWrite,
+    }),
+  );
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
@@ -183,6 +202,7 @@ export async function startDirectCoreRun(
   });
 
   const eventSummary = createCliRunEventSummary();
+  let documentedCommandIssueCount = 0;
 
   function recordEvent(event: SparkwrightEvent) {
     trace.append(event);
@@ -206,22 +226,45 @@ export async function startDirectCoreRun(
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const unsupportedClaimSummary =
+      summarizeUnsupportedFinalClaims(eventSummary);
+    if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
+    const documentedCommandIssues = shouldCheckDocumentedCommands({
+      goal,
+      shouldWrite,
+    })
+      ? checkDocumentedCommands(workspaceRoot)
+      : [];
+    documentedCommandIssueCount = documentedCommandIssues.length;
+    const documentedCommandSummary = summarizeDocumentedCommandIssues(
+      documentedCommandIssues,
+    );
+    if (documentedCommandSummary)
+      writeLine(io.stderr, documentedCommandSummary);
+    const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
+    if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
+    const exitCode = cliExitCodeForRun({
+      runState: result.state,
+      events: eventSummary,
+    });
     return {
-      exitCode: cliExitCodeForRun({
-        runState: result.state,
-        events: eventSummary,
-      }),
+      exitCode: documentedCommandIssueCount > 0 ? 1 : exitCode,
       tracePath: store?.tracePath,
       sessionId,
       runState: result.state,
       stopReason: result.stopReason,
     };
   } finally {
+    const displayState =
+      run.record.state === "completed" &&
+      completedRunHasCliIssues(eventSummary, documentedCommandIssueCount)
+        ? "completed_with_issues"
+        : run.record.state;
     writeLine(
       io.stdout,
-      `Run ${run.record.state}${run.record.stopReason ? ` (${run.record.stopReason})` : ""}`,
+      `Run ${displayState}${run.record.stopReason ? ` (${run.record.stopReason})` : ""}`,
     );
     writeLine(
       io.stdout,
@@ -232,6 +275,10 @@ export async function startDirectCoreRun(
         denied: eventSummary.writeDenied,
       }),
     );
+    const verificationProfileSummary =
+      summarizeVerificationProfileResults(eventSummary);
+    if (verificationProfileSummary)
+      writeLine(io.stdout, verificationProfileSummary);
     if (store) writeLine(io.stdout, `Trace written to ${store.tracePath}`);
   }
 }

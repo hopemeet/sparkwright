@@ -1307,6 +1307,156 @@ describe("host protocol", () => {
     expect(runEvents.length).toBeGreaterThan(0);
   });
 
+  it("runs required verification after workspace writes before final answer", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-verification-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        message: "write then verify",
+        toolCalls: [
+          {
+            toolName: "apply_patch",
+            arguments: {
+              path: "README.md",
+              reason: "Add verified section",
+              patch: [
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1 +1,5 @@",
+                " # Demo",
+                "+",
+                "+## Verified Write",
+                "+",
+                "+This section exercises required verification.",
+                "",
+              ].join("\n"),
+            },
+          },
+        ],
+      },
+      { message: "Verified write completed." },
+    ]);
+
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify(
+          {
+            capabilities: {
+              verification: {
+                mode: "require",
+                defaultProfile: "fast",
+                profiles: {
+                  fast: [
+                    {
+                      id: "unit",
+                      kind: "custom",
+                      command: process.execPath,
+                      args: ["-e", "process.exit(0)"],
+                    },
+                  ],
+                },
+                afterWrites: {
+                  profile: "fast",
+                  frequency: "always",
+                  injectOutput: "onFailure",
+                },
+                stopGate: {
+                  enabled: true,
+                  requireCleanAfterLastWrite: true,
+                },
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "verified_run",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "write README and verify",
+          model: "scripted",
+          permissionMode: "accept_edits",
+          shouldWrite: true,
+        },
+      });
+      const startResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "verified_run",
+      );
+      expect(startResp).toMatchObject({ envelope: "response", ok: true });
+
+      const completed = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: { state: "completed", stopReason: "final_answer" },
+      });
+      await expect(
+        readFile(join(workspace, "README.md"), "utf8"),
+      ).resolves.toContain("## Verified Write");
+
+      const events = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      const write = events.find(
+        (event) => event.type === "workspace.write.completed",
+      );
+      expect(write).toBeTruthy();
+      const verification = events.find(
+        (event) =>
+          event.type === "workflow_hook.completed" &&
+          (event.payload as { hookName?: string }).hookName ===
+            "verification:fast:unit",
+      );
+      expect(verification?.sequence).toBeGreaterThan(write?.sequence ?? 0);
+      expect(verification?.payload).toMatchObject({
+        result: {
+          status: "continue",
+          metadata: {
+            exitCode: 0,
+            timedOut: false,
+          },
+        },
+      });
+    } finally {
+      if (previousScript === undefined)
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      else process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("accepts run.inject_message for an active run", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

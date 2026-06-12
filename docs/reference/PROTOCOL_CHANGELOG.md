@@ -12,6 +12,13 @@ Conventions:
 
 ## Unreleased
 
+- `config.schema.json`: additive — new optional
+  `capabilities.verification` config surface. Hosts can define named
+  verification profiles and compile them into workflow hooks that run project
+  commands after workspace writes and optionally block final answers until the
+  selected profile passes after the latest write. Migration: none; omitted
+  verification config keeps existing behavior.
+
 - `event.schema.json`: additive — four new `workflow_hook.*` event types for
   deterministic workflow hooks:
   - `workflow_hook.started`
