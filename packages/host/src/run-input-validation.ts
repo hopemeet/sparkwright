@@ -4,6 +4,7 @@ import {
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
   resolveModelSelection,
+  type SharedConfig,
 } from "./config.js";
 
 const RESERVED_MODEL_REFS = new Set([DETERMINISTIC_PROVIDER, "scripted"]);
@@ -44,8 +45,17 @@ export async function validateRunInput(
     await validateTargetPath(input, errors);
   }
 
+  // Surface non-fatal config validation errors. loadHostConfig drops malformed
+  // fields and applies the rest, so without this the run path would silently
+  // ignore a typo'd field. We report them as warnings, not errors, to preserve
+  // the best-effort load behavior.
+  const loaded = await loadHostConfig(input.workspaceRoot, input.env);
+  for (const error of loaded.errors) {
+    warnings.push(`config ${error.file} (${error.field}): ${error.message}`);
+  }
+
   if (input.validateModel && input.modelName) {
-    await validateModel(input, errors);
+    validateModel(input.modelName, loaded.config, errors);
   }
 
   return { ok: errors.length === 0, errors, warnings };
@@ -106,14 +116,13 @@ async function validateTargetPath(
   }
 }
 
-async function validateModel(
-  input: RunInputValidationInput,
+function validateModel(
+  modelName: string,
+  config: SharedConfig,
   errors: string[],
-): Promise<void> {
-  const modelName = input.modelName;
-  if (!modelName || RESERVED_MODEL_REFS.has(modelName)) return;
+): void {
+  if (RESERVED_MODEL_REFS.has(modelName)) return;
 
-  const loaded = await loadHostConfig(input.workspaceRoot, input.env);
-  const selection = resolveModelSelection(loaded.config, modelName);
+  const selection = resolveModelSelection(config, modelName);
   if (selection.kind === "error") errors.push(selection.message);
 }

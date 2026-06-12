@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import {
   CONFIG_ENV_VAR,
   DETERMINISTIC_PROVIDER,
+  normalizeGroupedConfig,
   projectConfigPath,
   userConfigPath,
   type ProviderConfig,
@@ -71,6 +72,16 @@ const KNOWN_KEYS = new Set([
   "keybindings",
   "theme",
   "mouse",
+  // Host-only flat fields the TUI does not consume but must tolerate (the
+  // grouped form normalizes into these). Listed so they are not flagged as
+  // unknown; the host loader owns their validation.
+  "confidentialPaths",
+  "write",
+  "shell",
+  "runBudget",
+  "maxSteps",
+  "traceLevel",
+  "approvals",
 ]);
 const VALID_THEMES = ["dark", "light", "mono"];
 const VALID_PERMISSION_MODES: PermissionMode[] = [
@@ -193,7 +204,14 @@ function validate(
     });
     return { config, sources, errors };
   }
-  const obj = raw as Record<string, unknown>;
+  // Accept the grouped form (identity/policy/run/ui); the shared normalizer
+  // flattens it to the same keys the TUI reads below. The host loader is the
+  // authority on these fields, so this keeps the two readers in agreement.
+  const obj = normalizeGroupedConfig(
+    raw as Record<string, unknown>,
+    filePath,
+    errors,
+  );
 
   for (const key of Object.keys(obj)) {
     if (!KNOWN_KEYS.has(key)) {

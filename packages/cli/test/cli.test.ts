@@ -935,11 +935,15 @@ describe("runCli", () => {
     expect(first.stdoutText()).toContain(configPath);
 
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      model?: string;
-      providers?: Record<string, { apiKey?: string }>;
+      identity?: {
+        model?: string;
+        providers?: Record<string, { apiKey?: string }>;
+      };
     };
-    expect(parsed.model).toBe("openai/gpt-5.4-mini");
-    expect(parsed.providers?.openai?.apiKey).toBe("REPLACE_WITH_YOUR_API_KEY");
+    expect(parsed.identity?.model).toBe("openai/gpt-5.4-mini");
+    expect(parsed.identity?.providers?.openai?.apiKey).toBe(
+      "REPLACE_WITH_YOUR_API_KEY",
+    );
     if (process.platform !== "win32") {
       // Secret-bearing file must not be group/world readable on POSIX.
       const mode = (await stat(configPath)).mode & 0o777;
@@ -970,7 +974,7 @@ describe("runCli", () => {
       "sparkwright capabilities inspect --workspace . --format text",
     );
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      permissionMode?: string;
+      policy?: { permissionMode?: string; write?: { maxFiles?: number } };
       capabilities?: {
         tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
         skills?: {
@@ -982,7 +986,8 @@ describe("runCli", () => {
         mcp?: { servers?: unknown[] };
       };
     };
-    expect(parsed.permissionMode).toBe("default");
+    expect(parsed.policy?.permissionMode).toBe("default");
+    expect(parsed.policy?.write?.maxFiles).toBe(1);
     expect(parsed.capabilities?.tools?.disabled).toEqual(["shell"]);
     expect(parsed.capabilities?.tools?.defer).toEqual(["mcp_*"]);
     expect(parsed.capabilities?.tools?.enabled).toBeUndefined();
@@ -1014,6 +1019,49 @@ describe("runCli", () => {
     expect(
       (await stat(join(workspace, ".sparkwright", "agents"))).isDirectory(),
     ).toBe(true);
+  });
+
+  it("config validate reports loader errors and exits non-zero", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ policy: { permissionMode: "nope" } }),
+      "utf8",
+    );
+
+    const bad = createOutputCapture();
+    const badResult = await runCli(
+      ["config", "validate", "--workspace", workspace, "--format", "text"],
+      { io: { stdout: bad.stdout, stderr: bad.stderr } },
+    );
+    expect(badResult.exitCode).toBe(1);
+    expect(bad.stdoutText()).toContain("permissionMode");
+
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ policy: { permissionMode: "plan" } }),
+      "utf8",
+    );
+    const good = createOutputCapture();
+    const goodResult = await runCli(
+      ["config", "validate", "--workspace", workspace, "--format", "text"],
+      { io: { stdout: good.stdout, stderr: good.stderr } },
+    );
+    expect(goodResult.exitCode).toBe(0);
+    expect(good.stdoutText()).toContain("Config OK");
+  });
+
+  it("config example prints a paste-ready grouped snippet", async () => {
+    const out = createOutputCapture();
+    const result = await runCli(["config", "example", "write"], {
+      io: { stdout: out.stdout, stderr: out.stderr },
+    });
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(out.stdoutText()) as {
+      policy?: { write?: { maxFiles?: number } };
+    };
+    expect(parsed.policy?.write?.maxFiles).toBe(1);
   });
 
   it("lists tool config without creating a user config", async () => {

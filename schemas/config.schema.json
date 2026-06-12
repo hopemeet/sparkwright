@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. model/providers/permissionMode/workspace apply to both surfaces; theme/keybindings/mouse are TUI-only. The `providers` map is merged by key, `capabilities` merges by sub-capability, and `shell.sandbox` merges conservatively so later layers cannot weaken earlier sandbox policy; other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui (capabilities is its own group); a field set both ways conflicts and the grouped value wins. The `providers` map is merged by key, `capabilities` merges by sub-capability, and the security boundaries — shell.sandbox, permissionMode, confidentialPaths, and write — merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -82,6 +82,68 @@
       "type": "array",
       "description": "Opt-in read-confidentiality. Workspace-relative paths or globs whose contents a run must not read; matching read_file/grep reads are denied at the tool layer. Supports '*' (single segment), '**' (any depth), and a bare directory name to cover everything beneath it.",
       "items": { "type": "string", "minLength": 1 }
+    },
+    "write": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Workspace write guardrails. Overrides the runtime's built-in workspace-mutation limits. Merges conservatively across layers: a later (lower-trust) layer can only tighten — the smaller maxFiles/maxDiffLines wins and allowDeletions:false wins.",
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum distinct files a run may write."
+        },
+        "maxDiffLines": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum changed diff lines per write."
+        },
+        "allowDeletions": {
+          "type": "boolean",
+          "description": "Whether in-place edits may remove lines."
+        }
+      }
+    },
+    "runBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Resource budget for the interactive main run. maxModelCalls is the tightest natural step bound. An explicit main agent profile under capabilities.agents overrides this.",
+      "properties": {
+        "maxDurationMs": { "type": "integer", "minimum": 1 },
+        "maxModelCalls": { "type": "integer", "minimum": 1 },
+        "maxToolCalls": { "type": "integer", "minimum": 1 },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "maxCostUsd": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "maxSteps": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Explicit main-run step ceiling. Overrides the value derived from runBudget and the safety backstop."
+    },
+    "traceLevel": {
+      "type": "string",
+      "enum": ["minimal", "standard", "debug"],
+      "description": "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides."
+    },
+    "approvals": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Default approval auto-grants. CLI flags (--yes, --yes-edits, --yes-shell-safe) still override.",
+      "properties": {
+        "shellSafe": {
+          "type": "boolean",
+          "description": "Auto-approve commands the safety classifier rates safe."
+        },
+        "edits": {
+          "type": "boolean",
+          "description": "Auto-approve workspace edits."
+        },
+        "all": {
+          "type": "boolean",
+          "description": "Auto-approve everything the policy allows."
+        }
+      }
     },
     "shell": {
       "type": "object",
@@ -452,6 +514,47 @@
           { "type": "array", "items": { "type": "string" } },
           { "type": "null" }
         ]
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Preferred grouping for who/what runs (belongs in the user config). Flattens to the top-level model/providers fields; either form works but not both for the same field.",
+      "properties": {
+        "model": { "$ref": "#/properties/model" },
+        "providers": { "$ref": "#/properties/providers" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Preferred grouping for security boundaries (belongs in the project config). Flattens to permissionMode/confidentialPaths/write and shell.sandbox; these merge conservatively so a later layer can only tighten.",
+      "properties": {
+        "permissionMode": { "$ref": "#/properties/permissionMode" },
+        "confidentialPaths": { "$ref": "#/properties/confidentialPaths" },
+        "write": { "$ref": "#/properties/write" },
+        "sandbox": { "$ref": "#/properties/shell/properties/sandbox" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Preferred grouping for run-shaping defaults. Flattens to runBudget/maxSteps/traceLevel/approvals.",
+      "properties": {
+        "budget": { "$ref": "#/properties/runBudget" },
+        "maxSteps": { "$ref": "#/properties/maxSteps" },
+        "traceLevel": { "$ref": "#/properties/traceLevel" },
+        "approvals": { "$ref": "#/properties/approvals" }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
+      "properties": {
+        "theme": { "$ref": "#/properties/theme" },
+        "mouse": { "$ref": "#/properties/mouse" },
+        "keybindings": { "$ref": "#/properties/keybindings" }
       }
     }
   },

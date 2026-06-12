@@ -120,14 +120,18 @@ export async function startDirectCoreRun(
     approveShellSafe,
     io,
   });
+  const loadedConfig = await loadHostConfig(workspaceRoot, env);
+  // Config write guardrails override the direct-core defaults (single file, no
+  // deletions). loadHostConfig has already merged them conservatively.
+  const writeGuardrails = loadedConfig.config.write;
   const policy = createLayeredPolicy([
     createPermissionModePolicy({ mode: permissionMode }),
     createWorkspaceMutationPolicy({
       allowWorkspaceWrites: shouldWrite,
       allowedPaths: [targetPath],
-      maxWriteFiles: 1,
-      maxDiffLines: 200,
-      allowDeletions: false,
+      maxWriteFiles: writeGuardrails?.maxFiles ?? 1,
+      maxDiffLines: writeGuardrails?.maxDiffLines ?? 200,
+      allowDeletions: writeGuardrails?.allowDeletions ?? false,
     }),
     createWorkspaceReadScopePolicy({
       confidentialPaths: [
@@ -137,7 +141,6 @@ export async function startDirectCoreRun(
     }),
   ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);
-  const loadedConfig = await loadHostConfig(workspaceRoot, env);
   const skillRoots = resolveSkillRootsForRuntime(
     workspaceRoot,
     loadedConfig.config.capabilities?.skills?.roots,

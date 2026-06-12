@@ -66,6 +66,7 @@ export {
 } from "./agent-profiles.js";
 export {
   loadHostConfig,
+  normalizeGroupedConfig,
   configResolutionOrder,
   userConfigPath,
   projectConfigPath,
