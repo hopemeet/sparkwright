@@ -418,8 +418,7 @@ describe("host tools", () => {
 
     const result = await tool.execute(
       {
-        command:
-          "node -e \"console.log(process.env.PYTHONDONTWRITEBYTECODE)\"",
+        command: 'node -e "console.log(process.env.PYTHONDONTWRITEBYTECODE)"',
       },
       ctx,
     );

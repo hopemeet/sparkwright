@@ -84,12 +84,13 @@ describe("documented command check", () => {
       ].join("\n"),
     );
 
-    expect(checkDocumentedCommands(workspace).map((issue) => issue.message))
-      .toEqual([
-        "cd target points to missing directory: missing-app",
-        "package-manager --prefix points to missing directory: missing-package",
-        "python script path points to missing file: scripts/release.py",
-      ]);
+    expect(
+      checkDocumentedCommands(workspace).map((issue) => issue.message),
+    ).toEqual([
+      "cd target points to missing directory: missing-app",
+      "package-manager --prefix points to missing directory: missing-package",
+      "python script path points to missing file: scripts/release.py",
+    ]);
   });
 
   it("only enables the check for write-enabled verification-style goals", () => {

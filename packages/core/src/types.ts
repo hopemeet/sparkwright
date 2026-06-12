@@ -155,6 +155,16 @@ export interface RunLoopState {
     code: string;
     message: string;
   };
+  /**
+   * Semantic target of the most recent idempotent tool call that completed
+   * without making progress. Kept separate from failures so bookkeeping no-ops
+   * can be nudged without polluting traces with synthetic tool failures.
+   */
+  lastNoopToolTarget?: {
+    key: string;
+    code: string;
+    message: string;
+  };
   repeatedToolCallCount: number;
   transition: RunLoopTransition;
 }

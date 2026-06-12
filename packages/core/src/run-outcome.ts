@@ -27,6 +27,7 @@ export interface ToolOutcomeSummary {
 export interface ClassifiedCommandFailure {
   toolCallId?: string;
   command?: string;
+  commandKey?: string;
   exitCode: number | null;
   timedOut: boolean;
   verificationRelevant: boolean;
@@ -36,6 +37,7 @@ export interface ClassifiedCommandFailure {
 export interface ClassifiedCommandSuccess {
   toolCallId?: string;
   command?: string;
+  commandKey?: string;
   verificationRelevant: boolean;
   sequence?: number;
 }
@@ -50,9 +52,21 @@ export interface CommandOutcomeSummary {
 
 export interface CompletedRunOutcome {
   kind:
+    | "completed_with_issues"
     | "completed_with_tool_failures"
-    | "completed_with_recovered_tool_failures";
-  toolFailures: { count: number; codes: string[] };
+    | "completed_with_recovered_tool_failures"
+    | "completed_with_verification_failures"
+    | "completed_with_unsupported_final_claims";
+  toolFailures?: { count: number; codes: string[] };
+  commandFailures?: {
+    count: number;
+    lastCommand?: string;
+    lastExitCode?: number | null;
+  };
+  unsupportedFinalClaims?: {
+    count: number;
+    claims: Array<{ kind: "command_success"; command: string }>;
+  };
 }
 
 export function analyzeCommandOutcomes(
@@ -92,7 +106,7 @@ export function analyzeCommandOutcomes(
       : undefined;
     if (!output) continue;
 
-    const exitCode = numberOrNullValue(output.exitCode);
+    const reportedExitCode = numberOrNullValue(output.exitCode);
     const timedOut = booleanValue(output.timedOut) ?? false;
     const command =
       call?.command ??
@@ -100,6 +114,9 @@ export function analyzeCommandOutcomes(
       (isRecord(event.payload.arguments)
         ? stringValue(event.payload.arguments.command)
         : undefined);
+    const exitCode =
+      effectiveShellExitCode(command, output) ?? reportedExitCode;
+    const commandKey = commandIdentity(command);
     const verificationRelevant = isVerificationRelevantCommand(command, {
       verificationGoal,
     });
@@ -108,6 +125,7 @@ export function analyzeCommandOutcomes(
       successes.push({
         toolCallId,
         command,
+        commandKey,
         verificationRelevant,
         sequence: event.sequence,
       });
@@ -120,6 +138,7 @@ export function analyzeCommandOutcomes(
       failures.push({
         toolCallId,
         command,
+        commandKey,
         exitCode,
         timedOut,
         verificationRelevant,
@@ -131,13 +150,20 @@ export function analyzeCommandOutcomes(
   const verificationFailures = failures.filter(
     (failure) => failure.verificationRelevant,
   );
-  const lastVerificationSuccess = [...successes]
-    .reverse()
-    .find((success) => success.verificationRelevant);
   const unresolvedVerificationFailures = verificationFailures.filter(
-    (failure) =>
-      lastVerificationSuccess === undefined ||
-      (failure.sequence ?? 0) > (lastVerificationSuccess.sequence ?? 0),
+    (failure) => {
+      const failureSequence = failure.sequence ?? 0;
+      const laterSuccesses = successes.filter(
+        (success) =>
+          success.verificationRelevant &&
+          (success.sequence ?? 0) > failureSequence,
+      );
+      if (laterSuccesses.length === 0) return true;
+      if (!failure.commandKey) return false;
+      return !laterSuccesses.some(
+        (success) => success.commandKey === failure.commandKey,
+      );
+    },
   );
 
   return {
@@ -257,24 +283,91 @@ export function analyzeToolOutcomes(
 
 export function completedRunOutcomeFromEvents(
   events: readonly SparkwrightEvent[],
+  finalMessage?: string,
 ): CompletedRunOutcome | undefined {
-  const summary = analyzeToolOutcomes(events);
+  const toolSummary = analyzeToolOutcomes(events);
+  const commandSummary = analyzeCommandOutcomes(events);
+  const unsupportedFinalClaims = analyzeUnsupportedFinalAnswerClaims(
+    finalMessage,
+    commandSummary,
+  );
+  const issueKinds = [
+    toolSummary.unresolvedFailures.length > 0 ||
+      toolSummary.recoveredFailures.length > 0,
+    commandSummary.unresolvedVerificationFailures.length > 0,
+    unsupportedFinalClaims.length > 0,
+  ].filter(Boolean).length;
   const relevant =
-    summary.unresolvedFailures.length > 0
-      ? summary.unresolvedFailures
-      : summary.recoveredFailures;
+    toolSummary.unresolvedFailures.length > 0
+      ? toolSummary.unresolvedFailures
+      : toolSummary.recoveredFailures;
 
-  if (relevant.length === 0) return undefined;
+  if (
+    relevant.length === 0 &&
+    commandSummary.unresolvedVerificationFailures.length === 0 &&
+    unsupportedFinalClaims.length === 0
+  ) {
+    return undefined;
+  }
+
+  const lastCommandFailure =
+    commandSummary.unresolvedVerificationFailures.at(-1);
   return {
-    kind:
-      summary.unresolvedFailures.length > 0
-        ? "completed_with_tool_failures"
-        : "completed_with_recovered_tool_failures",
-    toolFailures: {
-      count: relevant.length,
-      codes: uniqueCodes(relevant),
-    },
+    kind: completedRunOutcomeKind({
+      issueKinds,
+      hasUnresolvedToolFailures: toolSummary.unresolvedFailures.length > 0,
+      hasRecoveredToolFailures:
+        toolSummary.unresolvedFailures.length === 0 &&
+        toolSummary.recoveredFailures.length > 0,
+      hasCommandFailures:
+        commandSummary.unresolvedVerificationFailures.length > 0,
+      hasUnsupportedFinalClaims: unsupportedFinalClaims.length > 0,
+    }),
+    ...(relevant.length > 0
+      ? {
+          toolFailures: {
+            count: relevant.length,
+            codes: uniqueCodes(relevant),
+          },
+        }
+      : {}),
+    ...(commandSummary.unresolvedVerificationFailures.length > 0
+      ? {
+          commandFailures: {
+            count: commandSummary.unresolvedVerificationFailures.length,
+            ...(lastCommandFailure?.command
+              ? { lastCommand: lastCommandFailure.command }
+              : {}),
+            ...(lastCommandFailure
+              ? { lastExitCode: lastCommandFailure.exitCode }
+              : {}),
+          },
+        }
+      : {}),
+    ...(unsupportedFinalClaims.length > 0
+      ? {
+          unsupportedFinalClaims: {
+            count: unsupportedFinalClaims.length,
+            claims: unsupportedFinalClaims,
+          },
+        }
+      : {}),
   };
+}
+
+function completedRunOutcomeKind(input: {
+  issueKinds: number;
+  hasUnresolvedToolFailures: boolean;
+  hasRecoveredToolFailures: boolean;
+  hasCommandFailures: boolean;
+  hasUnsupportedFinalClaims: boolean;
+}): CompletedRunOutcome["kind"] {
+  if (input.issueKinds > 1) return "completed_with_issues";
+  if (input.hasUnresolvedToolFailures) return "completed_with_tool_failures";
+  if (input.hasRecoveredToolFailures)
+    return "completed_with_recovered_tool_failures";
+  if (input.hasCommandFailures) return "completed_with_verification_failures";
+  return "completed_with_unsupported_final_claims";
 }
 
 export function classifyToolFailure(
@@ -365,6 +458,89 @@ function uniqueCodes(failures: readonly ClassifiedToolFailure[]): string[] {
   ];
 }
 
+function analyzeUnsupportedFinalAnswerClaims(
+  finalMessage: string | undefined,
+  commandSummary: CommandOutcomeSummary,
+): Array<{ kind: "command_success"; command: string }> {
+  if (!finalMessage) return [];
+  const successfulCommandKeys = new Set(
+    commandSummary.successes
+      .map((success) => success.commandKey)
+      .filter((key): key is string => Boolean(key)),
+  );
+  const claims: Array<{ kind: "command_success"; command: string }> = [];
+  const seen = new Set<string>();
+
+  for (const command of extractClaimedSuccessfulCommands(finalMessage)) {
+    const key = commandIdentity(command);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (!successfulCommandKeys.has(key)) {
+      claims.push({ kind: "command_success", command });
+    }
+  }
+
+  return claims;
+}
+
+function extractClaimedSuccessfulCommands(message: string): string[] {
+  const commands: string[] = [];
+  const commandPattern = /`([^`\n]+)`/g;
+  for (const line of message.split(/\r?\n/)) {
+    const lower = line.toLowerCase();
+    if (!isSuccessClaimContext(lower)) continue;
+    if (isFailureClaimContext(lower)) continue;
+    commandPattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = commandPattern.exec(line)) !== null) {
+      const command = match[1]?.trim();
+      if (!command) continue;
+      if (isVerificationRelevantCommand(command, { verificationGoal: true })) {
+        commands.push(command);
+      }
+    }
+  }
+  return commands;
+}
+
+function isSuccessClaimContext(text: string): boolean {
+  return (
+    text.includes("✅") ||
+    /\b(exit\s*0|passed?|passes|success(?:ful|fully)?|succeeded|ok|green)\b/.test(
+      text,
+    )
+  );
+}
+
+function isFailureClaimContext(text: string): boolean {
+  return /\b(fail(?:ed|s|ure)?|error|blocked|not\s+(?:run|executed|available|found)|skipped)\b/.test(
+    text,
+  );
+}
+
+function effectiveShellExitCode(
+  command: string | undefined,
+  output: Record<string, unknown>,
+): number | null {
+  if (!command || !/\bEXIT:\$?/.test(command)) return null;
+  const combined = `${stringValue(output.stdout) ?? ""}\n${stringValue(output.stderr) ?? ""}`;
+  const matches = [...combined.matchAll(/(?:^|\n)EXIT:(\d+)(?:\r?\n|$)/g)];
+  const last = matches.at(-1)?.[1];
+  if (!last) return null;
+  const parsed = Number(last);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function commandIdentity(command: string | undefined): string | undefined {
+  if (!command) return undefined;
+  let normalized = command.trim();
+  normalized = normalized.replace(/\s*2>&1\s*/g, " ");
+  normalized = normalized.replace(/\s*;\s*echo\s+['"]?EXIT:\$\?['"]?\s*$/i, "");
+  normalized = normalized.replace(/^\(?\s*cd\s+(['"]?)[^&;()]+\1\s*&&\s*/i, "");
+  normalized = normalized.replace(/\s+/g, " ").trim();
+  return normalized || undefined;
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -394,7 +570,9 @@ function isVerificationRelevantCommand(
   options: { verificationGoal: boolean },
 ): boolean {
   if (!command) return false;
-  const normalized = command.trim().toLowerCase();
+  const normalized = stripLeadingEnvAssignments(
+    commandIdentity(command) ?? command,
+  ).toLowerCase();
   if (isExplicitVerificationCommand(normalized)) return true;
   if (!options.verificationGoal) return false;
   return !isProbeCommand(normalized);
@@ -405,12 +583,24 @@ function isExplicitVerificationCommand(command: string): boolean {
     /\b(cargo\s+(nextest\s+run|test)|go\s+test|pytest|py\.test)\b/.test(
       command,
     ) ||
-    /\b(npm|pnpm|yarn)\s+(run\s+)?test\b/.test(command) ||
+    /\b(npm|pnpm|yarn)\s+(run\s+)?(test|verify|check|lint)\b/.test(command) ||
     /\b(vitest|jest|mocha)\b/.test(command) ||
     /\bpython(?:\d+(?:\.\d+)*)?\s+-m\s+(unittest|pytest|[^;\s]+\.cli)\b/.test(
       command,
     )
   );
+}
+
+function stripLeadingEnvAssignments(command: string): string {
+  let rest = command.trim();
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(rest)) {
+    const match = rest.match(
+      /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S+)\s*/,
+    );
+    if (!match) break;
+    rest = rest.slice(match[0].length).trimStart();
+  }
+  return rest;
 }
 
 function isProbeCommand(command: string): boolean {

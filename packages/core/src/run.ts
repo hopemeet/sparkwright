@@ -2303,6 +2303,10 @@ export class SparkwrightRun implements RunHandle {
       state.lastFailedToolTarget?.key === targetKey
         ? state.lastFailedToolTarget
         : undefined;
+    const priorNoop =
+      state.lastNoopToolTarget?.key === targetKey
+        ? state.lastNoopToolTarget
+        : undefined;
     const verbatimRepeat = isRepeatedToolCall(
       state.previousToolCall,
       requestedCall,
@@ -2312,15 +2316,19 @@ export class SparkwrightRun implements RunHandle {
     // — not the start of a doom loop. Such tools carry their own no-op handling
     // that course-corrects the model, so the generic repeat guard must defer to
     // them rather than burning a turn on REPEATED_TOOL_CALL_SKIPPED. A repeated
-    // *failure* on the same target still counts even for idempotent tools (a
-    // tool that keeps failing is a real loop), so the exemption requires
-    // `!priorFailure`.
+    // *failure* or explicit no-progress result on the same target still counts
+    // even for idempotent tools, so the exemption requires no remembered
+    // failure/no-op target.
     const benignIdempotentRepeat =
       verbatimRepeat &&
       !priorFailure &&
+      !priorNoop &&
       this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
         "idempotent";
-    if ((verbatimRepeat || priorFailure) && !benignIdempotentRepeat) {
+    if (
+      (verbatimRepeat || priorFailure || priorNoop) &&
+      !benignIdempotentRepeat
+    ) {
       state.repeatedToolCallCount += 1;
     } else {
       state.previousToolCall = requestedCall;
@@ -2340,6 +2348,7 @@ export class SparkwrightRun implements RunHandle {
           repeatedToolCallCount: state.repeatedToolCallCount,
           repeatLimit: this.doomLoopRepeatLimit,
           priorFailure,
+          priorNoop,
         },
         {
           step: state.step,
@@ -2379,6 +2388,7 @@ export class SparkwrightRun implements RunHandle {
           repeatedToolCallCount: state.repeatedToolCallCount,
           repeatLimit: this.doomLoopRepeatLimit,
           ...(priorFailure ? { repeatedFailureCode: priorFailure.code } : {}),
+          ...(priorNoop ? { repeatedNoopCode: priorNoop.code } : {}),
         },
       );
     }
@@ -2419,6 +2429,7 @@ export class SparkwrightRun implements RunHandle {
           batchResults,
           span,
           priorFailure,
+          priorNoop,
         ),
       );
     }
@@ -2429,12 +2440,13 @@ export class SparkwrightRun implements RunHandle {
   }
 
   /**
-   * Skip a repeated identical tool call and surface a corrective failed result
-   * instead of executing it. Mirrors the synthesized-failure path used by the
-   * `beforeToolCall` skip hook (close span → record usage → append result to
-   * context → after-hook → push to batch) so the model sees the feedback on its
-   * next turn. Returns `undefined` so the run continues; the hard doom-loop stop
-   * in `processToolCall` still fires if the model repeats the call again.
+   * Skip a repeated identical tool call and surface a corrective result instead
+   * of executing it. True failures remain failed results; idempotent no-progress
+   * repeats are completed no-op results so traces do not invent a tool failure.
+   * Both paths close the span, record usage, append context, run after-hooks,
+   * and push to the current batch so the model sees the feedback on its next
+   * turn. Returns `undefined` so the run continues; the hard doom-loop stop in
+   * `processToolCall` still fires if the model repeats the call again.
    */
   private async emitRepeatedToolCallNudge(
     call: ReturnType<typeof createToolCall>,
@@ -2443,7 +2455,45 @@ export class SparkwrightRun implements RunHandle {
     batchResults: ToolResult[] | undefined,
     span: ReturnType<typeof openSpan>,
     priorFailure?: RunLoopState["lastFailedToolTarget"],
+    priorNoop?: RunLoopState["lastNoopToolTarget"],
   ): Promise<RunResult | undefined> {
+    if (priorNoop && !priorFailure) {
+      const nudged: ToolResult = {
+        toolCallId: call.id,
+        status: "completed",
+        output: {
+          saved: false,
+          changed: false,
+          skipped: true,
+          reason: "repeated_idempotent_noop",
+          hint:
+            `Skipped: \`${requestedCall.toolName}\` already completed ` +
+            `without making progress on this target (${priorNoop.code}: ` +
+            `${priorNoop.message}). Repeating it cannot produce new ` +
+            `information. Choose a different concrete action, or answer the ` +
+            `user directly if the work is done. Repeating this exact call ` +
+            `again will end the run.`,
+        },
+        artifacts: [],
+      };
+      span.close("tool.completed", {
+        ...nudged,
+        toolName: requestedCall.toolName,
+      });
+      this.usageTracker.recordToolUsage({
+        toolName: requestedCall.toolName,
+        status: nudged.status,
+      });
+      this.appendToolResultContext(
+        state.context,
+        requestedCall.toolName,
+        nudged,
+      );
+      await this.runAfterToolCallHook(state, requestedCall, nudged);
+      batchResults?.push(nudged);
+      return undefined;
+    }
+
     const nudged: ToolResult = {
       toolCallId: call.id,
       status: "failed",
@@ -2795,6 +2845,7 @@ export class SparkwrightRun implements RunHandle {
         code: result.error?.code ?? "TOOL_FAILED",
         message: result.error?.message ?? "Tool call failed.",
       };
+      state.lastNoopToolTarget = undefined;
     } else if (
       result.status === "completed" &&
       this.tools.get(requestedCall.toolName)?.governance?.idempotency ===
@@ -2802,7 +2853,8 @@ export class SparkwrightRun implements RunHandle {
       isIdempotentNoopToolResult(result)
     ) {
       const output = isRecord(result.output) ? result.output : undefined;
-      state.lastFailedToolTarget = {
+      state.lastFailedToolTarget = undefined;
+      state.lastNoopToolTarget = {
         key: semanticToolTarget(
           requestedCall.toolName,
           requestedCall.arguments,
@@ -2814,6 +2866,7 @@ export class SparkwrightRun implements RunHandle {
       };
     } else if (result.status === "completed") {
       state.lastFailedToolTarget = undefined;
+      state.lastNoopToolTarget = undefined;
     }
     try {
       await this.hook.afterToolCall?.({
@@ -3636,7 +3689,10 @@ export class SparkwrightRun implements RunHandle {
   ): RunResult {
     const outcome =
       reason === "final_answer"
-        ? completedRunOutcomeFromEvents(this.events.all())
+        ? completedRunOutcomeFromEvents(
+            this.events.all(),
+            typeof payload.message === "string" ? payload.message : undefined,
+          )
         : undefined;
     const completedPayload = {
       reason,
@@ -3860,6 +3916,12 @@ function cloneLoopState(state: RunLoopState): RunLoopState {
           toolName: state.previousToolCall.toolName,
           arguments: state.previousToolCall.arguments,
         }
+      : undefined,
+    lastFailedToolTarget: state.lastFailedToolTarget
+      ? { ...state.lastFailedToolTarget }
+      : undefined,
+    lastNoopToolTarget: state.lastNoopToolTarget
+      ? { ...state.lastNoopToolTarget }
       : undefined,
     transition: {
       reason: state.transition.reason,

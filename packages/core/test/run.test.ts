@@ -607,7 +607,7 @@ describe("SparkwrightRun", () => {
     });
   });
 
-  it("treats repeated idempotent no-op tool results as loop risk", async () => {
+  it("nudges repeated idempotent no-op tool results without recording a tool failure", async () => {
     let executed = 0;
     const ledger = defineTool({
       name: "ledger",
@@ -623,8 +623,7 @@ describe("SparkwrightRun", () => {
         executed += 1;
         return {
           saved: false,
-          hint:
-            "The list is unchanged from your last write — calling this again accomplishes nothing.",
+          hint: "The list is unchanged from your last write — calling this again accomplishes nothing.",
         };
       },
     });
@@ -646,14 +645,92 @@ describe("SparkwrightRun", () => {
 
     expect(executed).toBe(1);
     expect(
-      run.events.all().some(
-        (event) =>
-          event.type === "tool.failed" &&
-          (event.payload as { error?: { code?: string } }).error?.code ===
-            "REPEATED_TOOL_CALL_SKIPPED",
-      ),
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.failed" &&
+            (event.payload as { error?: { code?: string } }).error?.code ===
+              "REPEATED_TOOL_CALL_SKIPPED",
+        ),
+    ).toBe(false);
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.completed" &&
+            (event.payload as { output?: { reason?: string } }).output
+              ?.reason === "repeated_idempotent_noop",
+        ),
     ).toBe(true);
     expect(result.stopReason).toBe("tool_doom_loop");
+  });
+
+  it("lets the model recover from a repeated idempotent no-op nudge", async () => {
+    let executed = 0;
+    let modelCalls = 0;
+    const ledger = defineTool({
+      name: "ledger",
+      description: "Idempotent no-op write.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      policy: { risk: "safe" },
+      governance: { idempotency: "idempotent" },
+      execute() {
+        executed += 1;
+        return {
+          saved: false,
+          hint: "The list is unchanged from your last write — calling this again accomplishes nothing.",
+        };
+      },
+    });
+
+    const run = createRun({
+      goal: "repeat an idempotent no-op once, then recover",
+      tools: [ledger],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return {
+              toolCalls: [{ toolName: "ledger", arguments: { text: "same" } }],
+            };
+          }
+          return { message: "done after no-op nudge" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(run.record.state).toBe("completed");
+    expect(executed).toBe(1);
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.failed" &&
+            (event.payload as { error?: { code?: string } }).error?.code ===
+              "REPEATED_TOOL_CALL_SKIPPED",
+        ),
+    ).toBe(false);
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "tool.completed" &&
+            (event.payload as { output?: { reason?: string } }).output
+              ?.reason === "repeated_idempotent_noop",
+        ),
+    ).toBe(true);
   });
 
   it("uses deep equality for repeated tool call arguments", async () => {

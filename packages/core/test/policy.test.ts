@@ -335,7 +335,9 @@ describe("createWorkspaceMutationPolicy", () => {
       decision: "deny",
       reason: "Workspace write exceeds the run file budget of 1.",
       metadata: {
-        guidance: expect.stringContaining("Do not retry another workspace write"),
+        guidance: expect.stringContaining(
+          "Do not retry another workspace write",
+        ),
       },
     });
   });

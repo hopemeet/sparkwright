@@ -1,9 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import {
-  type ValidationFinding,
-  type WorkflowHook,
-} from "@sparkwright/core";
+import { type ValidationFinding, type WorkflowHook } from "@sparkwright/core";
 
 export interface DocumentedCommandIssue {
   file: string;
