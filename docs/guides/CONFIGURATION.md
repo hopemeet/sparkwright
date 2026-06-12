@@ -305,6 +305,72 @@ the built-in shell tool.
 correct course. Pair a post-tool check with a `Stop` hook when a condition must
 also be enforced before the final answer.
 
+### Add Verification Profiles
+
+Use `capabilities.verification` when the project wants checked-in quality gates
+without hand-writing workflow hooks. Verification commands run through the
+project toolchain exactly as configured; Sparkwright does not install missing
+linters, typecheckers, or package dependencies.
+
+```json
+{
+  "capabilities": {
+    "verification": {
+      "mode": "require",
+      "defaultProfile": "fast",
+      "profiles": {
+        "fast": [
+          {
+            "id": "lint",
+            "kind": "lint",
+            "command": "npm",
+            "args": ["run", "lint"],
+            "timeoutMs": 120000
+          },
+          {
+            "id": "typecheck",
+            "kind": "typecheck",
+            "command": "npm",
+            "args": ["run", "typecheck"],
+            "timeoutMs": 180000
+          }
+        ],
+        "full": [
+          {
+            "id": "check",
+            "kind": "check",
+            "command": "npm",
+            "args": ["run", "check"],
+            "timeoutMs": 600000
+          }
+        ]
+      },
+      "afterWrites": {
+        "profile": "fast",
+        "frequency": "always",
+        "injectOutput": "onFailure"
+      },
+      "stopGate": {
+        "enabled": true,
+        "requireCleanAfterLastWrite": true
+      }
+    }
+  }
+}
+```
+
+Modes:
+
+- `off`: disable verification hooks.
+- `suggest`: inject the configured profile as guidance, but let the model
+  choose when to run commands. This is the default when `mode` is omitted.
+- `require`: run the selected profile after write-tool calls and block final
+  answers until every command has passed after the latest workspace write.
+
+Prefer project commands such as `npm run lint`, `uv run ruff check .`, or
+`cargo clippy` over bare global tools. That keeps verification aligned with CI
+and avoids depending on whatever happens to be installed in the user's shell.
+
 ### Add A Stdio MCP Server
 
 Add a server under project `capabilities.mcp.servers`:

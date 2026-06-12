@@ -2826,6 +2826,109 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("prints configured verification profile results in host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "fast",
+            profiles: {
+              fast: [
+                {
+                  id: "unit",
+                  kind: "custom",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                },
+              ],
+            },
+            afterWrites: {
+              profile: "fast",
+              frequency: "always",
+              injectOutput: "onFailure",
+            },
+            stopGate: {
+              enabled: true,
+              requireCleanAfterLastWrite: true,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "write and verify README",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--permission-mode",
+        "accept_edits",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "apply_patch",
+                  arguments: {
+                    path: "README.md",
+                    reason: "Add verified section",
+                    patch: [
+                      "--- a/README.md",
+                      "+++ b/README.md",
+                      "@@ -1 +1,5 @@",
+                      " # Demo",
+                      "+",
+                      "+## Verified Write",
+                      "+",
+                      "+Verified from CLI.",
+                      "",
+                    ].join("\n"),
+                  },
+                },
+              ],
+            },
+            { message: "verified" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("Verification: 1 passed (unit).");
+    expect(await readFile(join(workspace, "README.md"), "utf8")).toContain(
+      "## Verified Write",
+    );
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "workflow_hook.completed" &&
+          (event.payload?.hookName as string | undefined) ===
+            "verification:fast:unit",
+      ),
+    ).toBeTruthy();
+  });
+
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

@@ -34,6 +34,46 @@
         }
       ]
     },
+    "verification": {
+      "mode": "require",
+      "defaultProfile": "fast",
+      "profiles": {
+        "fast": [
+          {
+            "id": "lint",
+            "kind": "lint",
+            "command": "npm",
+            "args": ["run", "lint"],
+            "timeoutMs": 120000
+          },
+          {
+            "id": "typecheck",
+            "kind": "typecheck",
+            "command": "npm",
+            "args": ["run", "typecheck"],
+            "timeoutMs": 300000
+          }
+        ],
+        "full": [
+          {
+            "id": "check",
+            "kind": "check",
+            "command": "npm",
+            "args": ["run", "check"],
+            "timeoutMs": 900000
+          }
+        ]
+      },
+      "afterWrites": {
+        "profile": "fast",
+        "frequency": "always",
+        "injectOutput": "onFailure"
+      },
+      "stopGate": {
+        "enabled": true,
+        "requireCleanAfterLastWrite": true
+      }
+    },
     "skills": {
       "includeLoaderTool": true,
       "loadSelectedSkills": false,

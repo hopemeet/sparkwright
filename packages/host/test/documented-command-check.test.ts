@@ -35,13 +35,14 @@ describe("documented command check", () => {
       ].join("\n"),
     );
 
-    expect(checkDocumentedCommands(workspace).map((issue) => issue.message))
-      .toEqual([
-        "cargo --manifest-path points to missing file: rust-utils/Cargo.toml",
-        "cd target points to missing directory: missing-app",
-        "package-manager --prefix points to missing directory: missing-package",
-        "python script path points to missing file: scripts/release.py",
-      ]);
+    expect(
+      checkDocumentedCommands(workspace).map((issue) => issue.message),
+    ).toEqual([
+      "cargo --manifest-path points to missing file: rust-utils/Cargo.toml",
+      "cd target points to missing directory: missing-app",
+      "package-manager --prefix points to missing directory: missing-package",
+      "python script path points to missing file: scripts/release.py",
+    ]);
   });
 
   it("provides a Stop hook that blocks finalization until stale commands are fixed", async () => {
@@ -74,6 +75,7 @@ describe("documented command check", () => {
         state: "running",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        metadata: {},
       },
       payload: { message: "done" },
       metadata: {},
@@ -100,6 +102,7 @@ describe("documented command check", () => {
           state: "running",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
+          metadata: {},
         },
         payload: { message: "done again" },
         metadata: {},
@@ -117,6 +120,7 @@ describe("documented command check", () => {
           state: "running",
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
+          metadata: {},
         },
         payload: { message: "done" },
         metadata: {},

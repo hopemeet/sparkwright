@@ -47,7 +47,9 @@ import {
   summarizeDeniedWorkspaceWrites,
   summarizeRunFailure,
   summarizeUnhandledToolFailures,
+  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
+  summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../run-outcome.js";
@@ -221,6 +223,9 @@ export async function startDirectCoreRun(
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const unsupportedClaimSummary =
+      summarizeUnsupportedFinalClaims(eventSummary);
+    if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
     const documentedCommandIssues = shouldCheckDocumentedCommands({
       goal,
       shouldWrite,
@@ -231,7 +236,8 @@ export async function startDirectCoreRun(
     const documentedCommandSummary = summarizeDocumentedCommandIssues(
       documentedCommandIssues,
     );
-    if (documentedCommandSummary) writeLine(io.stderr, documentedCommandSummary);
+    if (documentedCommandSummary)
+      writeLine(io.stderr, documentedCommandSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
@@ -266,6 +272,10 @@ export async function startDirectCoreRun(
         denied: eventSummary.writeDenied,
       }),
     );
+    const verificationProfileSummary =
+      summarizeVerificationProfileResults(eventSummary);
+    if (verificationProfileSummary)
+      writeLine(io.stdout, verificationProfileSummary);
     if (store) writeLine(io.stdout, `Trace written to ${store.tracePath}`);
   }
 }

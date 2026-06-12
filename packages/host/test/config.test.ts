@@ -421,6 +421,123 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("loads verification profiles", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "fast",
+            profiles: {
+              fast: [
+                {
+                  id: "lint",
+                  kind: "lint",
+                  command: "npm",
+                  args: ["run", "lint"],
+                  timeoutMs: 120000,
+                },
+                {
+                  id: "typecheck",
+                  kind: "typecheck",
+                  command: "npm",
+                  args: ["run", "typecheck"],
+                  maxOutputBytes: 64000,
+                },
+              ],
+            },
+            afterWrites: {
+              profile: "fast",
+              frequency: "always",
+              injectOutput: "onFailure",
+            },
+            stopGate: {
+              enabled: true,
+              requireCleanAfterLastWrite: true,
+            },
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.verification).toMatchObject({
+        mode: "require",
+        defaultProfile: "fast",
+        profiles: {
+          fast: [
+            {
+              id: "lint",
+              kind: "lint",
+              command: "npm",
+              args: ["run", "lint"],
+              timeoutMs: 120000,
+            },
+            {
+              id: "typecheck",
+              kind: "typecheck",
+              command: "npm",
+              args: ["run", "typecheck"],
+              maxOutputBytes: 64000,
+            },
+          ],
+        },
+        afterWrites: {
+          profile: "fast",
+          frequency: "always",
+          injectOutput: "onFailure",
+        },
+        stopGate: {
+          enabled: true,
+          requireCleanAfterLastWrite: true,
+        },
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid verification profile references", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "missing",
+            profiles: {
+              fast: [{ id: "lint", command: "npm", args: ["run", "lint"] }],
+            },
+            afterWrites: {
+              profile: "also-missing",
+            },
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(
+        loaded.errors.some(
+          (e) =>
+            e.field === "capabilities.verification.defaultProfile" &&
+            e.message.includes("missing"),
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) =>
+            e.field === "capabilities.verification.afterWrites.profile" &&
+            e.message.includes("also-missing"),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("drops invalid configured workflow hooks with validation errors", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

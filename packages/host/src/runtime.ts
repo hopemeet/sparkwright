@@ -107,6 +107,7 @@ import {
   type DelegateCapabilityDescriptor,
 } from "./delegate-capability.js";
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
+import { createVerificationWorkflowHooks } from "./verification.js";
 import { createDocumentedCommandStopHook } from "./documented-command-check.js";
 
 /**
@@ -623,6 +624,13 @@ export class HostRuntime {
     const workflowHooks = [
       ...createConfiguredWorkflowHooks({
         hooks: hookConfig?.workflow,
+        workspaceRoot,
+        sandbox: shellConfig?.sandbox,
+        skillRoots: skillRoots.map((root) => root.root),
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      }),
+      ...createVerificationWorkflowHooks({
+        verification: loadedConfig.config.capabilities?.verification,
         workspaceRoot,
         sandbox: shellConfig?.sandbox,
         skillRoots: skillRoots.map((root) => root.root),

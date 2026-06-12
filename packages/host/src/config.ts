@@ -102,6 +102,7 @@ export interface ShellConfig {
 export interface CapabilityConfig {
   tools?: CapabilityToolsConfig;
   hooks?: CapabilityHooksConfig;
+  verification?: CapabilityVerificationConfig;
   skills?: CapabilitySkillsConfig;
   mcp?: CapabilityMcpConfig;
   agents?: CapabilityAgentsConfig;
@@ -156,6 +157,44 @@ export interface CapabilityWorkflowHookConfig {
 
 export interface CapabilityHooksConfig {
   workflow?: CapabilityWorkflowHookConfig[];
+}
+
+export type CapabilityVerificationMode = "off" | "suggest" | "require";
+
+export type CapabilityVerificationKind =
+  | "lint"
+  | "typecheck"
+  | "test"
+  | "check"
+  | "custom";
+
+export interface CapabilityVerificationCommandConfig {
+  id: string;
+  kind?: CapabilityVerificationKind;
+  command: string;
+  args?: string[];
+  cwd?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
+export interface CapabilityVerificationAfterWritesConfig {
+  profile?: string;
+  frequency?: CapabilityWorkflowHookFrequency;
+  injectOutput?: "always" | "onFailure" | "never";
+}
+
+export interface CapabilityVerificationStopGateConfig {
+  enabled?: boolean;
+  requireCleanAfterLastWrite?: boolean;
+}
+
+export interface CapabilityVerificationConfig {
+  mode?: CapabilityVerificationMode;
+  defaultProfile?: string;
+  profiles?: Record<string, CapabilityVerificationCommandConfig[]>;
+  afterWrites?: CapabilityVerificationAfterWritesConfig;
+  stopGate?: CapabilityVerificationStopGateConfig;
 }
 
 export interface CapabilityAgentsConfig {
@@ -869,6 +908,362 @@ function validateWorkflowHookMatcher(
   return matcher;
 }
 
+function validateCapabilityVerification(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationConfig | undefined {
+  const field = "capabilities.verification";
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "mode",
+    "defaultProfile",
+    "profiles",
+    "afterWrites",
+    "stopGate",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+
+  const out: CapabilityVerificationConfig = {};
+  if (raw.mode !== undefined) {
+    if (
+      raw.mode === "off" ||
+      raw.mode === "suggest" ||
+      raw.mode === "require"
+    ) {
+      out.mode = raw.mode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.mode`,
+        message: "must be off, suggest, or require",
+      });
+    }
+  }
+  if (raw.defaultProfile !== undefined) {
+    if (typeof raw.defaultProfile === "string" && raw.defaultProfile.length) {
+      out.defaultProfile = raw.defaultProfile;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.defaultProfile`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.profiles !== undefined) {
+    const profiles = validateVerificationProfiles(
+      raw.profiles,
+      `${field}.profiles`,
+      filePath,
+      errors,
+    );
+    if (profiles) out.profiles = profiles;
+  }
+  if (raw.afterWrites !== undefined) {
+    const afterWrites = validateVerificationAfterWrites(
+      raw.afterWrites,
+      `${field}.afterWrites`,
+      filePath,
+      errors,
+    );
+    if (afterWrites) out.afterWrites = afterWrites;
+  }
+  if (raw.stopGate !== undefined) {
+    const stopGate = validateVerificationStopGate(
+      raw.stopGate,
+      `${field}.stopGate`,
+      filePath,
+      errors,
+    );
+    if (stopGate) out.stopGate = stopGate;
+  }
+
+  validateVerificationProfileReferences(out, field, filePath, errors);
+  return out;
+}
+
+function validateVerificationProfiles(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): Record<string, CapabilityVerificationCommandConfig[]> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const profiles: Record<string, CapabilityVerificationCommandConfig[]> = {};
+  for (const [profile, value] of Object.entries(raw)) {
+    const profileField = `${field}.${profile}`;
+    if (!profile) {
+      errors.push({
+        file: filePath,
+        field,
+        message: "profile names must be non-empty strings",
+      });
+      continue;
+    }
+    if (!Array.isArray(value)) {
+      errors.push({
+        file: filePath,
+        field: profileField,
+        message: "must be an array",
+      });
+      continue;
+    }
+    profiles[profile] = value
+      .map((command, index) =>
+        validateVerificationCommand(
+          command,
+          `${profileField}.${index}`,
+          filePath,
+          errors,
+        ),
+      )
+      .filter(
+        (command): command is CapabilityVerificationCommandConfig => !!command,
+      );
+  }
+  return profiles;
+}
+
+function validateVerificationCommand(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationCommandConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set([
+    "id",
+    "kind",
+    "command",
+    "args",
+    "cwd",
+    "timeoutMs",
+    "maxOutputBytes",
+  ]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (typeof raw.id !== "string" || raw.id.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.id`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  if (typeof raw.command !== "string" || raw.command.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.command`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  const out: CapabilityVerificationCommandConfig = {
+    id: raw.id,
+    command: raw.command,
+  };
+  if (raw.kind !== undefined) {
+    if (isVerificationKind(raw.kind)) out.kind = raw.kind;
+    else {
+      errors.push({
+        file: filePath,
+        field: `${field}.kind`,
+        message: "must be lint, typecheck, test, check, or custom",
+      });
+    }
+  }
+  if (raw.args !== undefined) {
+    out.args = validateStringArray(raw.args, `${field}.args`, filePath, errors);
+  }
+  if (raw.cwd !== undefined) {
+    if (typeof raw.cwd === "string" && raw.cwd.length > 0) out.cwd = raw.cwd;
+    else {
+      errors.push({
+        file: filePath,
+        field: `${field}.cwd`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.timeoutMs !== undefined) {
+    out.timeoutMs = validateOptionalPositiveInteger(
+      raw.timeoutMs,
+      `${field}.timeoutMs`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.maxOutputBytes !== undefined) {
+    out.maxOutputBytes = validateOptionalPositiveInteger(
+      raw.maxOutputBytes,
+      `${field}.maxOutputBytes`,
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateVerificationAfterWrites(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationAfterWritesConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set(["profile", "frequency", "injectOutput"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  const out: CapabilityVerificationAfterWritesConfig = {};
+  if (raw.profile !== undefined) {
+    if (typeof raw.profile === "string" && raw.profile.length > 0) {
+      out.profile = raw.profile;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.profile`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.frequency !== undefined) {
+    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+      out.frequency = raw.frequency;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.frequency`,
+        message: "must be always or oncePerTurn",
+      });
+    }
+  }
+  if (raw.injectOutput !== undefined) {
+    if (
+      raw.injectOutput === "always" ||
+      raw.injectOutput === "onFailure" ||
+      raw.injectOutput === "never"
+    ) {
+      out.injectOutput = raw.injectOutput;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.injectOutput`,
+        message: "must be always, onFailure, or never",
+      });
+    }
+  }
+  return out;
+}
+
+function validateVerificationStopGate(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityVerificationStopGateConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set(["enabled", "requireCleanAfterLastWrite"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  const out: CapabilityVerificationStopGateConfig = {};
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      `${field}.enabled`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.requireCleanAfterLastWrite !== undefined) {
+    out.requireCleanAfterLastWrite = validateOptionalBoolean(
+      raw.requireCleanAfterLastWrite,
+      `${field}.requireCleanAfterLastWrite`,
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateVerificationProfileReferences(
+  config: CapabilityVerificationConfig,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  const profiles = config.profiles ?? {};
+  for (const [name, fieldSuffix] of [
+    [config.defaultProfile, "defaultProfile"],
+    [config.afterWrites?.profile, "afterWrites.profile"],
+  ] as const) {
+    if (!name) continue;
+    if (!profiles[name]) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${fieldSuffix}`,
+        message: `references unknown verification profile "${name}"`,
+      });
+    }
+  }
+}
+
+function isVerificationKind(
+  value: unknown,
+): value is CapabilityVerificationKind {
+  return (
+    value === "lint" ||
+    value === "typecheck" ||
+    value === "test" ||
+    value === "check" ||
+    value === "custom"
+  );
+}
+
 function validateCapabilities(
   raw: unknown,
   filePath: string,
@@ -883,7 +1278,14 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set(["tools", "hooks", "skills", "mcp", "agents"]);
+  const allowed = new Set([
+    "tools",
+    "hooks",
+    "verification",
+    "skills",
+    "mcp",
+    "agents",
+  ]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -900,6 +1302,14 @@ function validateCapabilities(
   if (raw.hooks !== undefined) {
     const hooks = validateCapabilityHooks(raw.hooks, filePath, errors);
     if (hooks) out.hooks = hooks;
+  }
+  if (raw.verification !== undefined) {
+    const verification = validateCapabilityVerification(
+      raw.verification,
+      filePath,
+      errors,
+    );
+    if (verification) out.verification = verification;
   }
   if (raw.skills !== undefined) {
     const skills = validateCapabilitySkills(raw.skills, filePath, errors);

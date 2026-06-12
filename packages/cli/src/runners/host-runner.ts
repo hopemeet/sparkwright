@@ -26,7 +26,9 @@ import {
   summarizeRunFailure,
   summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
+  summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
+  summarizeVerificationProfileResults,
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../run-outcome.js";
@@ -333,10 +335,14 @@ async function runHostLifecycle(
     const documentedCommandSummary = summarizeDocumentedCommandIssues(
       documentedCommandIssues,
     );
-    if (documentedCommandSummary) writeLine(io.stderr, documentedCommandSummary);
+    if (documentedCommandSummary)
+      writeLine(io.stderr, documentedCommandSummary);
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const unsupportedClaimSummary =
+      summarizeUnsupportedFinalClaims(eventSummary);
+    if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
@@ -372,6 +378,10 @@ async function runHostLifecycle(
         denied: eventSummary.writeDenied,
       }),
     );
+    const verificationProfileSummary =
+      summarizeVerificationProfileResults(eventSummary);
+    if (verificationProfileSummary)
+      writeLine(io.stdout, verificationProfileSummary);
     if (tracePath && existsSync(tracePath))
       writeLine(io.stdout, `Trace written to ${tracePath}`);
     await closeClient(client);

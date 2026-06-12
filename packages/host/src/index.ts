@@ -23,6 +23,8 @@ export type {
 export { applyToolConfig } from "./tools.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
+export { createVerificationWorkflowHooks } from "./verification.js";
+export type { CreateVerificationWorkflowHooksOptions } from "./verification.js";
 export {
   checkDocumentedCommands,
   createDocumentedCommandStopHook,

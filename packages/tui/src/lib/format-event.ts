@@ -23,6 +23,8 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   let color = "gray";
   if (t.endsWith(".failed") || t.endsWith(".rejected") || t.endsWith(".denied"))
     color = "red";
+  else if (isVerificationHook(p))
+    color = verificationHookPassed(p) ? "green" : "red";
   else if (t.startsWith("approval.")) color = "yellow";
   else if (t.startsWith("tool.")) color = "cyan";
   else if (t.startsWith("skill.")) color = "blue";
@@ -47,6 +49,7 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     else if (t === "workspace.write.requested") detail = str(p.path);
     else if (t === "run.completed" || t === "run.failed")
       detail = str(p.reason ?? p.stopReason);
+    else if (isVerificationHook(p)) detail = verificationHookDetail(p);
     else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
     else if (t === "skill.failed") detail = str(p.source ?? p.message);
     else if (t === "skill.loaded") detail = str(p.name);
@@ -68,5 +71,31 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     }
   }
 
-  return { color, label: t, detail };
+  return { color, label: isVerificationHook(p) ? "verification" : t, detail };
+}
+
+function isVerificationHook(payload: Record<string, unknown> | null): boolean {
+  return str(payload?.hookName).startsWith("verification:");
+}
+
+function verificationHookPassed(payload: Record<string, unknown> | null) {
+  const result = rec(payload?.result);
+  const metadata = rec(result?.metadata);
+  return metadata?.exitCode === 0 && metadata?.timedOut !== true;
+}
+
+function verificationHookDetail(payload: Record<string, unknown> | null) {
+  const hookName = str(payload?.hookName);
+  const [, profile, ...idParts] = hookName.split(":");
+  const id = idParts.join(":");
+  const result = rec(payload?.result);
+  const metadata = rec(result?.metadata);
+  const status = verificationHookPassed(payload)
+    ? "passed"
+    : metadata?.timedOut === true
+      ? "timed out"
+      : metadata && "exitCode" in metadata
+        ? `failed exitCode=${String(metadata.exitCode)}`
+        : "failed";
+  return [profile, id, status].filter(Boolean).join(" ");
 }

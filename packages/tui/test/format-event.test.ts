@@ -77,4 +77,37 @@ describe("formatEvent", () => {
       formatEvent(event("subagent.failed", { goal: "audit docs" })),
     ).toMatchObject({ color: "red", detail: "audit docs" });
   });
+
+  it("formats verification workflow hooks", () => {
+    expect(
+      formatEvent(
+        event("workflow_hook.completed", {
+          hookName: "verification:fast:lint",
+          result: {
+            status: "continue",
+            metadata: { exitCode: 0, timedOut: false },
+          },
+        }),
+      ),
+    ).toMatchObject({
+      color: "green",
+      label: "verification",
+      detail: "fast lint passed",
+    });
+    expect(
+      formatEvent(
+        event("workflow_hook.completed", {
+          hookName: "verification:fast:typecheck",
+          result: {
+            status: "continue",
+            metadata: { exitCode: 2, timedOut: false },
+          },
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      label: "verification",
+      detail: "fast typecheck failed exitCode=2",
+    });
+  });
 });
