@@ -278,6 +278,7 @@ async function validateCliRunInput(
     targetPath: parsed.targetPath,
     requireTargetExists: parsed.targetPathSource === "cli",
     approveAll: parsed.approveAll,
+    approveShellSafe: parsed.approveShellSafe,
     shouldWrite: parsed.shouldWrite,
     modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
     validateModel: parsed.modelNameSource === "cli",
@@ -3633,8 +3634,16 @@ function formatTraceTimeline(timeline: TraceTimeline): string {
 function formatConsistencyReport(
   report: SessionTraceConsistencyReport,
 ): string {
+  const warningCount = report.findings.filter(
+    (finding) => finding.severity === "warning",
+  ).length;
+  const status = report.ok
+    ? warningCount > 0
+      ? "ok_with_warnings"
+      : "ok"
+    : "failed";
   const lines = [
-    `status: ${report.ok ? "ok" : "failed"}`,
+    `status: ${status}`,
     `session: ${report.sessionId ?? "(unknown)"}`,
     `runs: ${report.runIds.length}`,
     `findings: ${report.findings.length}`,

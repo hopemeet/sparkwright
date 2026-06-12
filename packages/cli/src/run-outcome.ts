@@ -62,6 +62,18 @@ export function unresolvedVerificationCommandFailureCount(
     .length;
 }
 
+export function completedRunHasCliIssues(
+  summary: CliRunEventSummary,
+  documentedCommandIssueCount = 0,
+): boolean {
+  return (
+    unhandledToolFailureCount(summary) > 0 ||
+    unresolvedVerificationCommandFailureCount(summary) > 0 ||
+    summary.writeDenied > 0 ||
+    documentedCommandIssueCount > 0
+  );
+}
+
 export function cliExitCodeForRun(input: {
   failedMessage?: string;
   runState?: string;
@@ -115,6 +127,13 @@ export function summarizeVerificationCommandFailures(
       ? `exitCode=${last.exitCode}`
       : "failed";
   return `Run completed with failed verification (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
+}
+
+export function summarizeDeniedWorkspaceWrites(
+  summary: CliRunEventSummary,
+): string | undefined {
+  if (summary.writeDenied === 0) return undefined;
+  return `Run completed with ${summary.writeDenied} denied workspace write${summary.writeDenied === 1 ? "" : "s"}; requested mutation was not applied.`;
 }
 
 export function summarizeRunFailure(

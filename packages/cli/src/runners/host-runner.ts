@@ -15,7 +15,9 @@ import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
 import {
   cliExitCodeForRun,
+  completedRunHasCliIssues,
   createCliRunEventSummary,
+  summarizeDeniedWorkspaceWrites,
   summarizeRunFailure,
   summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
@@ -318,6 +320,8 @@ async function runHostLifecycle(
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
+    if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
     if (failureSummary) writeLine(io.stderr, failureSummary);
     return {
@@ -332,9 +336,13 @@ async function runHostLifecycle(
       stopReason,
     };
   } finally {
+    const displayState =
+      runState === "completed" && completedRunHasCliIssues(eventSummary)
+        ? "completed_with_issues"
+        : (runState ?? "unknown");
     writeLine(
       io.stdout,
-      `Run ${runState ?? "unknown"}${stopReason ? ` (${stopReason})` : ""}`,
+      `Run ${displayState}${stopReason ? ` (${stopReason})` : ""}`,
     );
     writeLine(
       io.stdout,

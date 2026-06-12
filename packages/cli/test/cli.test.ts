@@ -7,6 +7,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -347,6 +348,53 @@ describe("runCli", () => {
     ]);
   });
 
+  it("marks validation-only session checks as ok with warnings", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const runOutput = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect outside target",
+        "--workspace",
+        workspace,
+        "--target",
+        "../outside.txt",
+      ],
+      {
+        io: {
+          stdout: runOutput.stdout,
+          stderr: runOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.sessionId).toBeTruthy();
+
+    const checkOutput = createOutputCapture();
+    const check = await runCli(
+      [
+        "session",
+        "check",
+        result.sessionId!,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: checkOutput.stdout, stderr: checkOutput.stderr },
+      },
+    );
+
+    expect(check.exitCode).toBe(0);
+    expect(checkOutput.stdoutText()).toContain("status: ok_with_warnings");
+    expect(checkOutput.stdoutText()).toContain("SESSION_EVENTS_MISSING");
+  });
+
   it("returns a failed exit code and clear final answer for unhandled tool failures", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cli-"));
     tempDirs.push(workspace);
@@ -414,6 +462,37 @@ describe("runCli", () => {
     expect(result.exitCode).toBe(0);
     expect(output.stderrText()).toContain(
       "Warning: --yes has no effect without --write.",
+    );
+    expect(output.stdoutText()).toContain("run.completed final_answer");
+  });
+
+  it("warns when --yes-shell-safe is used without --write", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "--direct-core",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--yes-shell-safe",
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toContain(
+      "Warning: --yes-shell-safe has no effect without --write.",
     );
     expect(output.stdoutText()).toContain("run.completed final_answer");
   });
@@ -623,6 +702,10 @@ describe("runCli", () => {
     expect(output.stderrText()).toContain(
       "Approval denied because stdin is not interactive",
     );
+    expect(output.stderrText()).toContain(
+      "Run completed with 1 denied workspace write; requested mutation was not applied.",
+    );
+    expect(output.stdoutText()).toContain("Run completed_with_issues");
 
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toEqual(
@@ -3787,7 +3870,7 @@ describe("runCli", () => {
   });
 
   function mcpEchoServerConfig(name: string) {
-    const repoRoot = resolve(process.cwd(), "../..");
+    const repoRoot = findRepoRoot(process.cwd());
     const mcpPath = resolve(
       repoRoot,
       "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
@@ -3818,6 +3901,21 @@ describe("runCli", () => {
       // runner has room to connect (not a delay on fast machines).
       timeoutMs: 15000,
     };
+  }
+
+  function findRepoRoot(start: string): string {
+    let current = resolve(start);
+    while (true) {
+      if (
+        existsSync(join(current, "packages", "cli", "test", "cli.test.ts")) &&
+        existsSync(join(current, "tools", "demo-mcp.mjs"))
+      ) {
+        return current;
+      }
+      const parent = resolve(current, "..");
+      if (parent === current) return resolve(start);
+      current = parent;
+    }
   }
 
   async function createWorkspace(readme: string): Promise<string> {
