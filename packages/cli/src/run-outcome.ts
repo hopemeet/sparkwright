@@ -71,14 +71,15 @@ export function completedRunHasCliIssues(
   summary: CliRunEventSummary,
   documentedCommandIssueCount = 0,
 ): boolean {
-  // Unsupported final-answer claims are advisory only (the prose-based detector
-  // is unreliable), so they are not part of the run's issue verdict — they are
-  // surfaced separately via summarizeUnsupportedFinalClaims.
+  // The status label projects the same failing verdict as the exit code, so the
+  // two cannot diverge. Expected-by-policy outcomes are not failures and are
+  // surfaced separately instead: denied workspace writes via
+  // summarizeDeniedWorkspaceWrites, unsupported final-answer claims (the
+  // prose-based detector is unreliable) via summarizeUnsupportedFinalClaims.
   return (
     unhandledToolFailureCount(summary) > 0 ||
     unresolvedVerificationCommandFailureCount(summary) > 0 ||
     verificationProfileFailureCount(summary) > 0 ||
-    summary.writeDenied > 0 ||
     documentedCommandIssueCount > 0
   );
 }
