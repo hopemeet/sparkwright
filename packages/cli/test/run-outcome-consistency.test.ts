@@ -9,6 +9,7 @@ import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
   createCliRunEventSummary,
+  summarizeDeniedWorkspaceWrites,
   summarizeUnsupportedFinalClaims,
   updateCliRunEventSummary,
 } from "../src/run-outcome.js";
@@ -238,6 +239,36 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
     expect(
       cliExitCodeForRun({ runState: "completed", events: recoveredSummary }),
     ).toBe(0);
+  });
+
+  it("treats a denied workspace write as advisory — label matches exit (0)", () => {
+    const log = new EventLog(createRunId());
+    const summary = createCliRunEventSummary();
+    for (const event of [
+      log.emit("run.created", { goal: "Improve the README" }),
+      log.emit("workspace.write.denied", {
+        proposalId: "p1",
+        path: "README.md",
+        reason: "blocked by validation hook",
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_1",
+        toolName: "append_file",
+        status: "failed",
+        error: { code: "WORKSPACE_WRITE_DENIED", message: "write denied" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+    // The denial is surfaced separately...
+    expect(summarizeDeniedWorkspaceWrites(summary)).toContain("denied");
+    // ...but it does not make the run an issue, and the label now agrees with
+    // the exit code (both treat it as a non-failing, expected outcome).
+    expect(completedRunHasCliIssues(summary)).toBe(false);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      0,
+    );
   });
 
   it("treats unsupported final-answer claims as advisory (non-failing)", () => {
