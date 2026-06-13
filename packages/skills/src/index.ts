@@ -600,12 +600,14 @@ export function createSkillLoaderTool(
       );
       loadedNames.add(skill.name);
 
+      // sourcePath/contentHash are deliberately omitted from this model-facing
+      // result: they are absolute host paths/hashes the model cannot use, and
+      // the same provenance is already on the skill.indexed event (joined by
+      // name) for the trace.
       return {
         status: "loaded",
         name: skill.name,
         description: skill.description,
-        sourcePath: skill.sourcePath,
-        contentHash: skill.contentHash,
         version: versionOf(skill.metadata),
         content: createSkillToolOutput(skill, resourceFiles),
         resourceFiles,

@@ -2716,6 +2716,10 @@ export class SparkwrightRun implements RunHandle {
     const name = getStringProperty(result.output, "name");
     if (!name) return;
 
+    // sourcePath/contentHash are intentionally not echoed here: the on-demand
+    // skill_load result no longer carries them (they are absolute host paths
+    // the model cannot use). The same provenance is available on the
+    // skill.indexed event, joined by skill name.
     this.events.emit(
       "skill.loaded",
       { name, status: "loaded" },
@@ -2723,8 +2727,6 @@ export class SparkwrightRun implements RunHandle {
         sourcePackage: "@sparkwright/skills",
         mode: "on_demand_tool",
         version: getStringProperty(result.output, "version"),
-        sourcePath: getStringProperty(result.output, "sourcePath"),
-        contentHash: getStringProperty(result.output, "contentHash"),
       },
     );
   }
