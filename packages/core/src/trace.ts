@@ -3112,11 +3112,31 @@ function traceErrorCode(event: SparkwrightEvent): string | undefined {
   return stringValue(
     event.payload.errorCode,
     isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    // run.failed carries its code at the payload root (e.g. a target-boundary
+    // rejection's TARGET_OUTSIDE_WORKSPACE), not under `error`.
+    event.type === "run.failed" ? event.payload.code : undefined,
+    // validation.failed (pre-flight rejections) carries codes on its findings.
+    event.type === "validation.failed"
+      ? validationFailureCode(event.payload)
+      : undefined,
     event.type === "mcp.server.prepared" && event.payload.status === "failed"
       ? "MCP_SERVER_PREPARE_FAILED"
       : undefined,
     event.type.endsWith(".denied") ? event.type : undefined,
   );
+}
+
+function validationFailureCode(
+  payload: Record<string, unknown>,
+): string | undefined {
+  const result = isRecord(payload.result) ? payload.result : undefined;
+  const findings =
+    result && Array.isArray(result.findings) ? result.findings : [];
+  const errorFinding =
+    findings.find(
+      (finding) => isRecord(finding) && finding.severity === "error",
+    ) ?? findings.find((finding) => isRecord(finding));
+  return isRecord(errorFinding) ? stringValue(errorFinding.code) : undefined;
 }
 
 function collectExpectedDenialCode(

@@ -981,6 +981,39 @@ describe("trace", () => {
     });
   });
 
+  it("records error codes for run.failed and validation.failed events", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+      log.emit("validation.failed", {
+        stage: "input",
+        hookName: "run_input",
+        result: {
+          status: "failed",
+          findings: [{ code: "TARGET_OUTSIDE_WORKSPACE", severity: "error" }],
+        },
+      }),
+      log.emit("run.failed", {
+        reason: "validation",
+        code: "RUN_INPUT_VALIDATION_FAILED",
+        message: "Target must stay inside the workspace",
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    // errorCount and errorCodes must agree: a boundary rejection is no longer
+    // counted (errors: 2) while its codes go unreported (top errors: none).
+    expect(summary.errorCount).toBe(2);
+    expect(summary.errorCodes).toEqual({
+      TARGET_OUTSIDE_WORKSPACE: 1,
+      RUN_INPUT_VALIDATION_FAILED: 1,
+    });
+  });
+
   it("counts each tool call once across requested + started events", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
