@@ -30,6 +30,8 @@ import { StashDialog } from "./components/stash-dialog.js";
 import { ModelDialog } from "./components/model-dialog.js";
 import { TimelineDialog } from "./components/timeline-dialog.js";
 import { CreateCapabilityDialog } from "./components/create-capability-dialog.js";
+import { SkillProposalDialog } from "./components/skill-proposal-dialog.js";
+import { SkillReviewDialog } from "./components/skill-review-dialog.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
@@ -47,6 +49,28 @@ import {
   type CreateCapabilityDraft,
   type CreateCapabilityKind,
 } from "./lib/create-capability.js";
+import {
+  createTuiSkillProposal,
+  createTuiSkillProposalFromInput,
+  applyTuiSkillReviewProposal,
+  formatTuiSkillProposalResult,
+  loadTuiSkillReview,
+  rejectTuiSkillReviewProposal,
+  type TuiSkillReviewDetail,
+  type TuiSkillProposalInput,
+  updateTuiSkillProposal,
+  updateTuiSkillProposalFromInput,
+} from "./lib/skill-evolution.js";
+import {
+  applySkillLearnDraftProposal,
+  createSkillLearnDraftProposal,
+  detectSkillLearnNotice,
+  detectSkillLearnTarget,
+  formatSkillLearnStatus,
+  parseSkillLearnMode,
+  readSkillLearnStatus,
+  setProjectSkillLearnMode,
+} from "./lib/skill-learn.js";
 import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
 import {
   loadProjectCommands,
@@ -263,6 +287,10 @@ function AppReady(
   const [capabilitySnapshot, setCapabilitySnapshot] =
     useState<CapabilitySnapshot | null>(null);
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
+  const [skillReviewSnapshot, setSkillReviewSnapshot] =
+    useState<TuiSkillReviewDetail | null>(null);
+  const [loadingSkillReview, setLoadingSkillReview] = useState(false);
+  const [skillReviewRest, setSkillReviewRest] = useState("");
   const [labels, setLabels] = useState<Record<string, string>>({});
   const labelsRef = useRef<SessionLabels | null>(null);
   // Ctrl+C cancels an active run; when idle it exits immediately. This keeps
@@ -283,6 +311,8 @@ function AppReady(
     modelName?: string;
   } | null>(null);
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
+  const skillLearnGoalsRef = useRef<string[]>([]);
+  const skillLearnNoticeCountRef = useRef(0);
 
   // Sync awaiting-approval status with a layer entry so the layer stack is
   // the single source of truth for "what's on top".
@@ -327,6 +357,11 @@ function AppReady(
       attention.disable();
     };
   }, [attention]);
+
+  useEffect(() => {
+    skillLearnGoalsRef.current = [];
+    skillLearnNoticeCountRef.current = 0;
+  }, [state.sessionId]);
 
   // Scroll is the terminal's job now: the transcript is committed to native
   // scrollback via <Static>, so we deliberately do NOT enable mouse reporting
@@ -396,10 +431,102 @@ function AppReady(
           title: "run done",
           message: state.stopReason ?? "completed",
         });
+        const goals = skillLearnGoalsRef.current;
+        const notice = detectSkillLearnNotice(goals);
+        if (notice && goals.length > skillLearnNoticeCountRef.current) {
+          const goalCount = goals.length;
+          const sessionId = state.sessionId;
+          const targetSkillName = detectSkillLearnTarget(goals);
+          void readSkillLearnStatus(resolved.workspaceRoot)
+            .then((status) => {
+              if (status.mode === "off") return;
+              if (sessionId !== state.sessionId) return;
+              if (status.mode === "notice") {
+                skillLearnNoticeCountRef.current = goalCount;
+                toasts.push({
+                  variant: "info",
+                  title: "skill learn",
+                  message: `${notice.reason}. Run /skill-create or /skill-update <skill-name>.`,
+                  durationMs: 9000,
+                });
+                return;
+              }
+              void createSkillLearnDraftProposal(
+                resolved.workspaceRoot,
+                notice,
+                targetSkillName ? { targetSkillName } : {},
+              )
+                .then((proposal) => {
+                  if (sessionId !== state.sessionId) return;
+                  if (status.mode === "draft") {
+                    skillLearnNoticeCountRef.current = goalCount;
+                    toasts.push({
+                      variant: "success",
+                      title: "skill learn draft",
+                      message: `${proposal.kind} ${proposal.skillName} -> ${proposal.id}`,
+                      durationMs: 9000,
+                    });
+                    return;
+                  }
+                  void applySkillLearnDraftProposal(
+                    resolved.workspaceRoot,
+                    proposal,
+                  )
+                    .then((applied) => {
+                      if (sessionId !== state.sessionId) return;
+                      skillLearnNoticeCountRef.current = goalCount;
+                      // Apply mode writes automatically (the user opted in), so
+                      // the toast must be transparent: show what was learned,
+                      // the version written, and how to inspect/undo. (We point
+                      // to `skills history` rather than a `restore --version`
+                      // one-liner: restoring to the just-written version is a
+                      // no-op, and the first apply has no prior version.)
+                      const learned =
+                        notice.evidence.length > 80
+                          ? `${notice.evidence.slice(0, 77)}...`
+                          : notice.evidence;
+                      toasts.push({
+                        variant: "success",
+                        title: "skill learn applied",
+                        message: `learned "${learned}" → ${proposal.skillName} (v ${applied.historyId}). undo: skills history ${proposal.skillName}`,
+                        durationMs: 14000,
+                      });
+                    })
+                    .catch((error: unknown) => {
+                      if (sessionId !== state.sessionId) return;
+                      skillLearnNoticeCountRef.current = goalCount;
+                      toasts.push({
+                        variant: "warning",
+                        title: "skill learn draft",
+                        message: `left draft ${proposal.id}: ${error instanceof Error ? error.message : String(error)}`,
+                        durationMs: 9000,
+                      });
+                    });
+                })
+                .catch((error: unknown) => {
+                  toasts.push({
+                    variant: "error",
+                    title: "skill learn draft failed",
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                    durationMs: 9000,
+                  });
+                });
+            })
+            .catch(() => {});
+        }
       }
     }
     lastStatus.current = state.status;
-  }, [state.status, state.lastError, state.stopReason, attention, toasts]);
+  }, [
+    state.status,
+    state.lastError,
+    state.stopReason,
+    state.sessionId,
+    resolved.workspaceRoot,
+    attention,
+    toasts,
+  ]);
 
   async function reloadConfig(verbose: boolean): Promise<void> {
     const loaded = await loadTuiConfig(props.initialCwd);
@@ -551,6 +678,230 @@ function AppReady(
       });
   }
 
+  function createSkillProposalFromSlash(rest: string): void {
+    void createTuiSkillProposal(resolved.workspaceRoot, rest)
+      .then((proposal) => {
+        toasts.push({
+          variant: "success",
+          title: "skill proposal",
+          message: formatTuiSkillProposalResult(proposal),
+        });
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "/skill-create failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  function openSkillCreateProposal(rest = ""): void {
+    if (rest.trim().length > 0) {
+      createSkillProposalFromSlash(rest);
+      return;
+    }
+    layers.push("skill-create");
+  }
+
+  function handleCreateSkillProposal(draft: TuiSkillProposalInput): void {
+    void createTuiSkillProposalFromInput(resolved.workspaceRoot, draft)
+      .then((proposal) => {
+        layers.pop("skill-create");
+        toasts.push({
+          variant: "success",
+          title: "skill proposal",
+          message: formatTuiSkillProposalResult(proposal),
+        });
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "/skill-create failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  function updateSkillProposalFromSlash(rest: string): void {
+    void updateTuiSkillProposal(resolved.workspaceRoot, rest)
+      .then((proposal) => {
+        toasts.push({
+          variant: "success",
+          title: "skill proposal",
+          message: formatTuiSkillProposalResult(proposal),
+        });
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "/skill-update failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  function openSkillUpdateProposal(rest = ""): void {
+    const trimmed = rest.trim();
+    if (!trimmed) {
+      layers.push("skill-update");
+      return;
+    }
+    if (/^[a-z0-9][a-z0-9-]{0,63}$/.test(trimmed)) {
+      layers.push("skill-update", { name: trimmed });
+      return;
+    }
+    updateSkillProposalFromSlash(rest);
+  }
+
+  function handleUpdateSkillProposal(draft: TuiSkillProposalInput): void {
+    void updateTuiSkillProposalFromInput(resolved.workspaceRoot, draft)
+      .then((proposal) => {
+        layers.pop("skill-update");
+        toasts.push({
+          variant: "success",
+          title: "skill proposal",
+          message: formatTuiSkillProposalResult(proposal),
+        });
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "/skill-update failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  function reviewSkillProposalsFromSlash(rest: string): void {
+    setSkillReviewRest(rest);
+    setLoadingSkillReview(true);
+    setSkillReviewSnapshot(null);
+    layers.push("skill-review");
+    void loadTuiSkillReview(resolved.workspaceRoot, rest)
+      .then((review) => {
+        setSkillReviewSnapshot(review);
+        setLoadingSkillReview(false);
+      })
+      .catch((error: unknown) => {
+        setLoadingSkillReview(false);
+        toasts.push({
+          variant: "error",
+          title: "/skill-review failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  function refreshSkillReview(): void {
+    setLoadingSkillReview(true);
+    void loadTuiSkillReview(resolved.workspaceRoot, skillReviewRest)
+      .then((review) => {
+        setSkillReviewSnapshot(review);
+        setLoadingSkillReview(false);
+      })
+      .catch((error: unknown) => {
+        setLoadingSkillReview(false);
+        toasts.push({
+          variant: "error",
+          title: "/skill-review refresh failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  function applySkillReviewProposal(proposalId: string): void {
+    void applyTuiSkillReviewProposal(resolved.workspaceRoot, proposalId)
+      .then((result) => {
+        toasts.push({
+          variant: "success",
+          title: "skill proposal applied",
+          message: `${result.id} -> ${result.historyId ?? "history"}`,
+          durationMs: 7000,
+        });
+        refreshSkillReview();
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "skill proposal apply failed",
+          message: error instanceof Error ? error.message : String(error),
+          durationMs: 9000,
+        });
+      });
+  }
+
+  function rejectSkillReviewProposal(proposalId: string): void {
+    void rejectTuiSkillReviewProposal(resolved.workspaceRoot, proposalId)
+      .then((result) => {
+        toasts.push({
+          variant: "success",
+          title: "skill proposal rejected",
+          message: `${result.id} ${result.skillName}`,
+          durationMs: 7000,
+        });
+        refreshSkillReview();
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "skill proposal reject failed",
+          message: error instanceof Error ? error.message : String(error),
+          durationMs: 9000,
+        });
+      });
+  }
+
+  function handleSkillLearn(rest = ""): void {
+    let mode: ReturnType<typeof parseSkillLearnMode>;
+    try {
+      mode = parseSkillLearnMode(rest);
+    } catch (error) {
+      toasts.push({
+        variant: "error",
+        title: "/skill-learn failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    if (!mode) {
+      void readSkillLearnStatus(resolved.workspaceRoot)
+        .then((status) => {
+          toasts.push({
+            variant: "info",
+            title: "skill learn",
+            message: formatSkillLearnStatus(status),
+          });
+        })
+        .catch((error: unknown) => {
+          toasts.push({
+            variant: "error",
+            title: "/skill-learn failed",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return;
+    }
+
+    void setProjectSkillLearnMode(resolved.workspaceRoot, mode)
+      .then((result) => {
+        toasts.push({
+          variant: "success",
+          title: "skill learn",
+          message: `${result.mode} -> ${result.path}`,
+        });
+        void reloadConfig(true);
+      })
+      .catch((error: unknown) => {
+        toasts.push({
+          variant: "error",
+          title: "/skill-learn failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
   // Build the command registry once per controller. App-level handlers are
   // closed over here; both the palette and `/foo` input share this list.
   const registry = useMemo(() => {
@@ -657,6 +1008,42 @@ function AppReady(
       description: "Show Skills SparkWright can discover or load.",
       category: "view",
       run: () => void openCapabilities("skills"),
+    });
+    reg.register({
+      name: "skill-create",
+      title: "Draft Skill proposal",
+      description:
+        "Create a project Skill proposal interactively or from arguments.",
+      category: "capability",
+      run: () => openSkillCreateProposal(),
+      runRaw: openSkillCreateProposal,
+    });
+    reg.register({
+      name: "skill-update",
+      title: "Draft Skill update",
+      description:
+        "Create a hash-gated update/fork proposal interactively or from arguments.",
+      category: "capability",
+      run: () => openSkillUpdateProposal(),
+      runRaw: openSkillUpdateProposal,
+    });
+    reg.register({
+      name: "skill-review",
+      title: "Review Skill proposals",
+      description:
+        "Summarize recent Skill proposals; optionally pass a state like draft.",
+      category: "capability",
+      run: () => reviewSkillProposalsFromSlash(""),
+      runRaw: reviewSkillProposalsFromSlash,
+    });
+    reg.register({
+      name: "skill-learn",
+      title: "Set Skill learning mode",
+      description:
+        "Show or set Skill Evolution mode: off, notice, draft, apply.",
+      category: "capability",
+      run: () => handleSkillLearn(""),
+      runRaw: handleSkillLearn,
     });
     reg.register({
       name: "agents",
@@ -853,10 +1240,16 @@ function AppReady(
     toasts,
     state.status,
     resolved.bindings,
+    resolved.workspaceRoot,
     resolved.theme,
     themeOverride,
     projectCommands,
   ]);
+
+  function startGoal(value: string): void {
+    skillLearnGoalsRef.current.push(value);
+    void controller.start(value);
+  }
 
   function handleSubmit(value: string): void {
     // A run accepts one goal at a time. If one's already in flight (running or
@@ -870,7 +1263,7 @@ function AppReady(
       });
       return;
     }
-    void controller.start(value);
+    startGoal(value);
   }
 
   function requestQuit(presses = 1): void {
@@ -894,7 +1287,7 @@ function AppReady(
     if (state.status !== "done" && state.status !== "idle") return;
     if (controller.isRunning() || queued.length === 0) return;
     const next = queue.dequeue();
-    if (next) void controller.start(next);
+    if (next) startGoal(next);
   }, [state.status, queued.length, controller, queue]);
 
   // Layer-aware hotkeys: when a layer owns input, the App-level hotkeys
@@ -1000,6 +1393,8 @@ function AppReady(
             loadingDiagnosticsFor={loadingDiagnosticsFor}
             capabilitySnapshot={capabilitySnapshot}
             loadingCapabilities={loadingCapabilities}
+            skillReviewSnapshot={skillReviewSnapshot}
+            loadingSkillReview={loadingSkillReview}
             onPickStash={(text) => {
               inputHandleRef.current?.setValue(text);
               layers.pop("stash");
@@ -1058,6 +1453,10 @@ function AppReady(
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
             onCreateCapability={(draft) => void handleCreateCapability(draft)}
+            onCreateSkillProposal={handleCreateSkillProposal}
+            onUpdateSkillProposal={handleUpdateSkillProposal}
+            onApplySkillReviewProposal={applySkillReviewProposal}
+            onRejectSkillReviewProposal={rejectSkillReviewProposal}
           />
         </Box>
       </ThemeProvider>
@@ -1194,6 +1593,8 @@ function AppReady(
             loadingDiagnosticsFor={loadingDiagnosticsFor}
             capabilitySnapshot={capabilitySnapshot}
             loadingCapabilities={loadingCapabilities}
+            skillReviewSnapshot={skillReviewSnapshot}
+            loadingSkillReview={loadingSkillReview}
             onPickStash={(text) => {
               inputHandleRef.current?.setValue(text);
               layers.pop("stash");
@@ -1256,6 +1657,10 @@ function AppReady(
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
             onCreateCapability={(draft) => void handleCreateCapability(draft)}
+            onCreateSkillProposal={handleCreateSkillProposal}
+            onUpdateSkillProposal={handleUpdateSkillProposal}
+            onApplySkillReviewProposal={applySkillReviewProposal}
+            onRejectSkillReviewProposal={rejectSkillReviewProposal}
           />
         ) : isRawModeSupported ? (
           <InputBox
@@ -1344,6 +1749,8 @@ function LayerRenderer(props: {
   loadingDiagnosticsFor: string | null;
   capabilitySnapshot: CapabilitySnapshot | null;
   loadingCapabilities: boolean;
+  skillReviewSnapshot: TuiSkillReviewDetail | null;
+  loadingSkillReview: boolean;
   onCloseTop: () => void;
   onInspectSession: (id: string) => void;
   onPickSession: (id: string) => void;
@@ -1354,6 +1761,10 @@ function LayerRenderer(props: {
   onFork: (forkAtSequence: number | undefined, label: string) => void;
   onApprovalDecision: (d: "approved" | "denied") => void;
   onCreateCapability: (draft: CreateCapabilityDraft) => void;
+  onCreateSkillProposal: (draft: TuiSkillProposalInput) => void;
+  onUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
+  onApplySkillReviewProposal: (proposalId: string) => void;
+  onRejectSkillReviewProposal: (proposalId: string) => void;
 }): React.ReactElement | null {
   const e = props.entry as { name: string; payload?: unknown };
   switch (e.name) {
@@ -1460,9 +1871,48 @@ function LayerRenderer(props: {
           onCommit={props.onCreateCapability}
         />
       );
+    case "skill-create":
+      return (
+        <SkillProposalDialog
+          action="create"
+          onCancel={props.onCloseTop}
+          onCommit={props.onCreateSkillProposal}
+        />
+      );
+    case "skill-update":
+      return (
+        <SkillProposalDialog
+          action="update"
+          initialName={skillNameFromPayload(e.payload)}
+          onCancel={props.onCloseTop}
+          onCommit={props.onUpdateSkillProposal}
+        />
+      );
+    case "skill-review":
+      return (
+        <SkillReviewDialog
+          review={props.skillReviewSnapshot}
+          loading={props.loadingSkillReview}
+          onApply={props.onApplySkillReviewProposal}
+          onReject={props.onRejectSkillReviewProposal}
+          onCancel={props.onCloseTop}
+        />
+      );
     default:
       return null;
   }
+}
+
+function skillNameFromPayload(payload: unknown): string | undefined {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "name" in payload &&
+    typeof payload.name === "string"
+  ) {
+    return payload.name;
+  }
+  return undefined;
 }
 
 function createKindFromRest(rest: string): CreateCapabilityKind | undefined {

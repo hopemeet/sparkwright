@@ -22,7 +22,7 @@ This directory is organized by reader intent. Start with guides, use reference d
 - [State And Trace Model](./reference/STATE_AND_TRACE_MODEL.md) - state ownership, store responsibilities, and trace behavior.
 - [Context Plane](./reference/CONTEXT_PLANE.md) - context assembly, prompt sections, cache stability, and related extension points.
 - [Provider Edge](./reference/PROVIDER_EDGE.md) - provider adapters, model routing, fallback, cancellation, and usage metadata.
-- [Skills](./reference/SKILLS.md) - supported skill shape, loading strategy, and trace reproducibility.
+- [Skills](./reference/SKILLS.md) - supported skill shape, loading strategy, Skill Evolution workflow, and trace reproducibility.
 - [Streaming Loop Requirements](./reference/STREAMING_LOOP_REQUIREMENTS.md) - after-turn streaming and cancellation requirements.
 - [Trace Extension Events](./reference/TRACE_EXTENSION_EVENTS.md) - extension event naming and metadata conventions.
 - [Protocol Changelog](./reference/PROTOCOL_CHANGELOG.md)

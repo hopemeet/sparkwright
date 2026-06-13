@@ -135,6 +135,9 @@ describe("loadHostConfig", () => {
             resourceFileLimit: 5,
             allowedSkills: ["reviewer"],
             deniedSkills: ["dangerous"],
+            evolution: {
+              mode: "draft",
+            },
           },
         },
       });
@@ -148,6 +151,9 @@ describe("loadHostConfig", () => {
         resourceFileLimit: 5,
         allowedSkills: ["reviewer"],
         deniedSkills: ["dangerous"],
+        evolution: {
+          mode: "draft",
+        },
       });
     } finally {
       await rm(xdg, { recursive: true, force: true });
@@ -849,6 +855,9 @@ describe("loadHostConfig", () => {
             roots: "skills",
             includeLoaderTool: "yes",
             maxSelectedSkills: -1,
+            evolution: {
+              mode: "always",
+            },
           },
         },
       });
@@ -865,6 +874,11 @@ describe("loadHostConfig", () => {
       expect(
         loaded.errors.some(
           (e) => e.field === "capabilities.skills.maxSelectedSkills",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.evolution.mode",
         ),
       ).toBe(true);
     } finally {

@@ -430,6 +430,17 @@
               "type": "array",
               "items": { "type": "string" },
               "description": "Optional denylist of Skill names."
+            },
+            "evolution": {
+              "type": "object",
+              "description": "Skill Evolution learning mode. Notice is the default low-cost mode when unset.",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["off", "notice", "draft", "apply"]
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
