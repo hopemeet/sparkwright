@@ -1055,19 +1055,24 @@ function renderUpdatedSkillContent(
   ].join("\n");
 }
 
+// Split SKILL.md content into unified-diff body lines. A single trailing
+// newline is dropped so the line count matches the hunk header; the Skill
+// package writers always terminate content with a newline.
+function diffBodyLines(content: string): string[] {
+  const normalized = content.endsWith("\n") ? content.slice(0, -1) : content;
+  return normalized.length === 0 ? [] : normalized.split("\n");
+}
+
 function renderCreatePatch(name: string, content: string): string {
-  const lines = content
-    .split("\n")
-    .map((line) => `+${line}`)
-    .join("\n");
+  const path = `.sparkwright/skills/${name}/SKILL.md`;
+  const lines = diffBodyLines(content);
   return [
-    `diff --git a/.sparkwright/skills/${name}/SKILL.md b/.sparkwright/skills/${name}/SKILL.md`,
+    `diff --git a/${path} b/${path}`,
     "new file mode 100644",
-    "index 0000000..0000000",
     "--- /dev/null",
-    `+++ b/.sparkwright/skills/${name}/SKILL.md`,
-    "@@",
-    lines,
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((line) => `+${line}`),
     "",
   ].join("\n");
 }
@@ -1077,19 +1082,18 @@ function renderUpdatePatch(
   beforeContent: string,
   afterContent: string,
 ): string {
+  const path = `.sparkwright/skills/${name}/SKILL.md`;
+  const before = diffBodyLines(beforeContent);
+  const after = diffBodyLines(afterContent);
+  // Whole-file replacement: not minimal, but a valid unified diff with correct
+  // hunk counts and a/b paths, so `git apply` accepts it against the base.
   return [
-    `diff --git a/.sparkwright/skills/${name}/SKILL.md b/.sparkwright/skills/${name}/SKILL.md`,
-    "--- before/SKILL.md",
-    "+++ after/SKILL.md",
-    "@@",
-    ...beforeContent
-      .trimEnd()
-      .split("\n")
-      .map((line) => `-${line}`),
-    ...afterContent
-      .trimEnd()
-      .split("\n")
-      .map((line) => `+${line}`),
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    `@@ -1,${before.length} +1,${after.length} @@`,
+    ...before.map((line) => `-${line}`),
+    ...after.map((line) => `+${line}`),
     "",
   ].join("\n");
 }
@@ -1099,10 +1103,10 @@ function renderRestorePatch(
   sourceHistory: SkillHistoryDetail,
 ): string {
   return [
-    `diff --git a/.sparkwright/skills/${name}/ b/.sparkwright/skills/${name}/`,
-    `restore from history ${sourceHistory.id}`,
-    `source proposal ${sourceHistory.proposalId}`,
-    "",
+    `# restore ${name} from history ${sourceHistory.id}`,
+    `# source proposal ${sourceHistory.proposalId}`,
+    "#",
+    "# original change being restored:",
     sourceHistory.patchDiff.trimEnd(),
     "",
   ].join("\n");

@@ -475,11 +475,21 @@ function AppReady(
                     .then((applied) => {
                       if (sessionId !== state.sessionId) return;
                       skillLearnNoticeCountRef.current = goalCount;
+                      // Apply mode writes automatically (the user opted in), so
+                      // the toast must be transparent: show what was learned,
+                      // the version written, and how to inspect/undo. (We point
+                      // to `skills history` rather than a `restore --version`
+                      // one-liner: restoring to the just-written version is a
+                      // no-op, and the first apply has no prior version.)
+                      const learned =
+                        notice.evidence.length > 80
+                          ? `${notice.evidence.slice(0, 77)}...`
+                          : notice.evidence;
                       toasts.push({
                         variant: "success",
                         title: "skill learn applied",
-                        message: `${applied.proposalId} -> ${applied.historyId}`,
-                        durationMs: 9000,
+                        message: `learned "${learned}" → ${proposal.skillName} (v ${applied.historyId}). undo: skills history ${proposal.skillName}`,
+                        durationMs: 14000,
                       });
                     })
                     .catch((error: unknown) => {
