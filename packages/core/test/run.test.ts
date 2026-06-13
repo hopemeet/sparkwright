@@ -172,6 +172,61 @@ describe("SparkwrightRun", () => {
     expect(events.at(-1)?.type).toBe("run.completed");
   });
 
+  it("persists a command-outcome verdict on run.completed", async () => {
+    const command =
+      'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"';
+    const events: SparkwrightEvent[] = [];
+
+    const shell = defineTool({
+      name: "shell",
+      description: "Run a shell command.",
+      inputSchema: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+      },
+      policy: { risk: "safe" },
+      execute() {
+        return {
+          command,
+          exitCode: 0,
+          timedOut: false,
+          stdout: "python: command not found\nEXIT:127\n",
+          stderr: "",
+        };
+      },
+    });
+
+    let modelCalls = 0;
+    const model: ModelAdapter = {
+      async complete() {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          return { toolCalls: [{ toolName: "shell", arguments: { command } }] };
+        }
+        return { message: "verification done" };
+      },
+    };
+
+    const run = createRun({
+      goal: "Run verification",
+      model,
+      tools: [shell],
+      maxSteps: 3,
+    });
+    run.events.subscribe((event) => events.push(event));
+    await run.start();
+
+    const completed = events.find((event) => event.type === "run.completed");
+    expect(completed?.payload).toMatchObject({
+      commandOutcome: {
+        total: 1,
+        byExitCode: { "127": 1 },
+        verification: { total: 1, unresolved: 1, lastExitCode: 127 },
+      },
+    });
+  });
+
   it("emits tool progress reported through the runtime context", async () => {
     const progressTool = defineTool({
       name: "progress_tool",

@@ -2,8 +2,10 @@ import {
   EventLog,
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
+  commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
   createRunId,
+  toolOutcomeSnapshot,
 } from "../src/index.js";
 import { describe, expect, it } from "vitest";
 
@@ -223,5 +225,199 @@ describe("run outcome evidence", () => {
         ],
       },
     });
+  });
+
+  it("marks a recovered + unsupported-claim run as non-failing despite the issues kind", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Fix and verify" }),
+      // A tool failure that is recovered on the same target (not a real failure).
+      log.emit("tool.requested", {
+        id: "call_fail",
+        toolName: "read_file",
+        arguments: { path: "a.txt" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_fail",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "EBUSY", message: "resource busy" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_ok",
+        toolName: "read_file",
+        arguments: { path: "a.txt" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_ok",
+        toolName: "read_file",
+        status: "completed",
+        output: { path: "a.txt", content: "ok" },
+      }),
+    ];
+
+    // An unsupported claim plus the recovered failure makes this two issue
+    // categories (kind === completed_with_issues), yet neither is a real
+    // failure, so the run must not be marked failing.
+    const outcome = completedRunOutcomeFromEvents(
+      events,
+      "| Command | Result |\n| `npm run verify` | ✅ passed |",
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "completed_with_issues",
+      failing: false,
+    });
+  });
+
+  it("snapshots command outcomes for persistence (and is undefined when clean)", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Run verification" }),
+      log.emit("tool.requested", {
+        id: "call_test",
+        toolName: "shell",
+        arguments: {
+          command:
+            'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_test",
+        toolName: "shell",
+        status: "completed",
+        output: {
+          exitCode: 0,
+          timedOut: false,
+          stdout: "python: command not found\nEXIT:127\n",
+          stderr: "",
+        },
+      }),
+    ];
+
+    expect(commandOutcomeSnapshot(events)).toMatchObject({
+      total: 1,
+      byExitCode: { "127": 1 },
+      verification: {
+        total: 1,
+        unresolved: 1,
+        lastCommand:
+          'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
+        lastExitCode: 127,
+      },
+    });
+
+    const cleanLog = new EventLog(createRunId());
+    expect(
+      commandOutcomeSnapshot([
+        cleanLog.emit("run.created", { goal: "Inspect" }),
+        cleanLog.emit("run.completed", { reason: "final_answer" }),
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("snapshots same-target tool recovery for persistence", () => {
+    const log = new EventLog(createRunId());
+    // EBUSY is neither a not-found nor a policy code, so recovery can ONLY be
+    // detected via the same target — which needs tool.requested arguments.
+    const events = [
+      log.emit("run.created", { goal: "Read the config" }),
+      log.emit("tool.requested", {
+        id: "call_fail",
+        toolName: "read_file",
+        arguments: { path: "config.json" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_fail",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "EBUSY", message: "resource busy" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_ok",
+        toolName: "read_file",
+        arguments: { path: "config.json" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_ok",
+        toolName: "read_file",
+        status: "completed",
+        output: { path: "config.json", content: "{}" },
+      }),
+    ];
+
+    expect(toolOutcomeSnapshot(events)).toEqual({
+      unresolved: { total: 0, byCode: {} },
+      recovered: { total: 1, byCode: { EBUSY: 1 } },
+    });
+  });
+
+  it("classifies a minimal-trace tool failure (flat errorCode) like the full shape", () => {
+    const log = new EventLog(createRunId());
+    // minimalPayload (trace.ts) flattens the code to `errorCode`; the analyzer
+    // must read it so classification stays trace-level invariant.
+    const events = [
+      log.emit("run.created", { goal: "Improve the README" }),
+      log.emit("tool.failed", {
+        toolCallId: "call_1",
+        status: "failed",
+        errorCode: "TOOL_APPROVAL_DENIED",
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+
+    expect(summary.unresolvedFailures).toEqual([]);
+    expect(summary.policyDenials.map((failure) => failure.code)).toEqual([
+      "TOOL_APPROVAL_DENIED",
+    ]);
+  });
+
+  it("includes a failed verification profile in the run outcome", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:lint",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 0, timedOut: false },
+        },
+      }),
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:typecheck",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 2, timedOut: false },
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ];
+
+    const outcome = completedRunOutcomeFromEvents(events);
+
+    expect(outcome).toMatchObject({
+      kind: "completed_with_verification_failures",
+      verificationProfileFailures: {
+        count: 1,
+        lastId: "typecheck",
+        lastExitCode: 2,
+      },
+    });
+  });
+
+  it("emits no outcome when all verification profiles pass", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow_hook.completed", {
+        hookName: "verification:fast:lint",
+        result: {
+          status: "continue",
+          metadata: { exitCode: 0, timedOut: false },
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ];
+
+    expect(completedRunOutcomeFromEvents(events)).toBeUndefined();
   });
 });

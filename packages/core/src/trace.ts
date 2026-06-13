@@ -25,9 +25,12 @@ import type {
   RunResult,
 } from "./types.js";
 import {
-  analyzeCommandOutcomes,
   analyzeToolOutcomes,
+  commandOutcomeSnapshot,
   isPolicyOrApprovalFailure,
+  toolOutcomeSnapshot,
+  type CommandOutcomeSnapshot,
+  type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
 
 export type TraceLevel = "minimal" | "standard" | "debug";
@@ -2232,8 +2235,17 @@ function minimalPayload(event: SparkwrightEvent): unknown {
         return pick(event.payload, ["proposalId", "path", "reason"]);
       case "run.failed":
         return pick(event.payload, ["code", "message"]);
-      case "run.created":
       case "run.completed":
+        // Keep the persisted verdict: it is the authoritative, full-event
+        // command/tool/run outcome that summaries read instead of recomputing
+        // from this (lossy) minimal trace.
+        return pick(event.payload, [
+          "reason",
+          "outcome",
+          "commandOutcome",
+          "toolOutcome",
+        ]);
+      case "run.created":
       case "run.cancelled":
       case "run.started":
       default:
@@ -2938,46 +2950,107 @@ function collectClassifiedToolFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  const outcomes = analyzeToolOutcomes(events);
-  summary.toolFailures.unresolved.total = outcomes.unresolvedFailures.length;
-  summary.toolFailures.recovered.total = outcomes.recoveredFailures.length;
+  // Prefer the snapshot the run persisted (computed over the full event
+  // stream). Recomputing here would misclassify same-target recovery on a
+  // minimal trace, where tool.requested arguments are stripped.
+  const snapshot = persistedToolOutcome(events) ?? toolOutcomeSnapshot(events);
+  if (!snapshot) return;
+  summary.toolFailures.unresolved.total = snapshot.unresolved.total;
+  summary.toolFailures.unresolved.byCode = { ...snapshot.unresolved.byCode };
+  summary.toolFailures.recovered.total = snapshot.recovered.total;
+  summary.toolFailures.recovered.byCode = { ...snapshot.recovered.byCode };
 
-  for (const failure of outcomes.unresolvedFailures) {
-    const code = failure.code ?? "unknown";
-    summary.toolFailures.unresolved.byCode[code] =
-      (summary.toolFailures.unresolved.byCode[code] ?? 0) + 1;
-    summary.errorCount += 1;
-    summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + 1;
+  for (const [code, count] of Object.entries(snapshot.unresolved.byCode)) {
+    summary.errorCount += count;
+    summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + count;
   }
+}
 
-  for (const failure of outcomes.recoveredFailures) {
-    const code = failure.code ?? "unknown";
-    summary.toolFailures.recovered.byCode[code] =
-      (summary.toolFailures.recovered.byCode[code] ?? 0) + 1;
+/** The tool-outcome snapshot persisted on `run.completed`, if present. */
+function persistedToolOutcome(
+  events: readonly SparkwrightEvent[],
+): ToolOutcomeSnapshot | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
+    const raw = event.payload.toolOutcome;
+    if (!isRecord(raw)) return undefined;
+    return {
+      unresolved: tallyFromRaw(raw.unresolved),
+      recovered: tallyFromRaw(raw.recovered),
+    };
   }
+  return undefined;
+}
+
+function tallyFromRaw(raw: unknown): {
+  total: number;
+  byCode: Record<string, number>;
+} {
+  if (!isRecord(raw)) return { total: 0, byCode: {} };
+  const byCode: Record<string, number> = {};
+  if (isRecord(raw.byCode)) {
+    for (const [code, count] of Object.entries(raw.byCode)) {
+      if (typeof count === "number") byCode[code] = count;
+    }
+  }
+  return {
+    total: typeof raw.total === "number" ? raw.total : 0,
+    byCode,
+  };
 }
 
 function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  const outcomes = analyzeCommandOutcomes(events);
-  const lastVerificationFailure = outcomes.verificationFailures.at(-1);
-  summary.commandFailures.total = outcomes.failures.length;
-  summary.commandFailures.byExitCode = outcomes.byExitCode;
-  summary.commandFailures.verification = {
-    total: outcomes.verificationFailures.length,
-    unresolved: outcomes.unresolvedVerificationFailures.length,
-    ...(lastVerificationFailure?.command
-      ? { lastCommand: lastVerificationFailure.command }
-      : {}),
-    ...(lastVerificationFailure
-      ? {
-          lastExitCode: lastVerificationFailure.exitCode,
-          lastTimedOut: lastVerificationFailure.timedOut,
-        }
-      : {}),
-  };
+  // Prefer the snapshot the run persisted (computed over the full event
+  // stream). Recomputing here would under-report on a minimal trace, where
+  // tool.completed output — and therefore command exit codes — are stripped.
+  const snapshot =
+    persistedCommandOutcome(events) ?? commandOutcomeSnapshot(events);
+  if (!snapshot) return;
+  summary.commandFailures.total = snapshot.total;
+  summary.commandFailures.byExitCode = snapshot.byExitCode;
+  summary.commandFailures.verification = snapshot.verification;
+}
+
+/** The command-outcome snapshot persisted on `run.completed`, if present. */
+function persistedCommandOutcome(
+  events: readonly SparkwrightEvent[],
+): CommandOutcomeSnapshot | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
+    const raw = event.payload.commandOutcome;
+    if (!isRecord(raw) || typeof raw.total !== "number") return undefined;
+    const verification = isRecord(raw.verification) ? raw.verification : {};
+    return {
+      total: raw.total,
+      byExitCode: isRecord(raw.byExitCode)
+        ? (raw.byExitCode as Record<string, number>)
+        : {},
+      verification: {
+        total: typeof verification.total === "number" ? verification.total : 0,
+        unresolved:
+          typeof verification.unresolved === "number"
+            ? verification.unresolved
+            : 0,
+        ...(typeof verification.lastCommand === "string"
+          ? { lastCommand: verification.lastCommand }
+          : {}),
+        ...("lastExitCode" in verification
+          ? {
+              lastExitCode: verification.lastExitCode as number | null,
+            }
+          : {}),
+        ...(typeof verification.lastTimedOut === "boolean"
+          ? { lastTimedOut: verification.lastTimedOut }
+          : {}),
+      },
+    };
+  }
+  return undefined;
 }
 
 function collectSafetySummary(
@@ -3065,10 +3138,9 @@ function collectSafetySummary(
       continue;
     }
     if (event.type === "tool.failed") {
-      const code = isRecord(event.payload.error)
-        ? stringValue(event.payload.error.code)
-        : undefined;
-      if (code === "UNTRACKED_WORKSPACE_MUTATION") {
+      // traceErrorCode reads the minimal-trace `errorCode` shape too, so this
+      // safety counter stays trace-level invariant.
+      if (traceErrorCode(event) === "UNTRACKED_WORKSPACE_MUTATION") {
         summary.safety.shell.untrackedWorkspaceMutations += 1;
       }
     }
@@ -3144,10 +3216,7 @@ function collectExpectedDenialCode(
   event: SparkwrightEvent,
 ): void {
   if (!isRecord(event.payload)) return;
-  const code = stringValue(
-    isRecord(event.payload.error) ? event.payload.error.code : undefined,
-    event.type.endsWith(".denied") ? event.type : undefined,
-  );
+  const code = traceErrorCode(event);
   if (!code) return;
   summary.expectedDenialCodes[code] =
     (summary.expectedDenialCodes[code] ?? 0) + 1;
@@ -3155,11 +3224,9 @@ function collectExpectedDenialCode(
 
 function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
   if (event.type.endsWith(".denied")) return true;
-  if (!isRecord(event.payload)) return false;
-  return (
-    isRecord(event.payload.error) &&
-    isPolicyOrApprovalFailure(stringValue(event.payload.error.code))
-  );
+  // Use traceErrorCode so this reads the minimal-trace `errorCode` shape too,
+  // keeping the expected-denial count trace-level invariant.
+  return isPolicyOrApprovalFailure(traceErrorCode(event));
 }
 
 function isTraceErrorEvent(event: SparkwrightEvent): boolean {

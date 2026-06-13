@@ -1,8 +1,13 @@
 import {
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
+  analyzeVerificationProfileResults,
+  completedRunOutcomeFromEvents,
   type SparkwrightEvent,
+  type VerificationProfileResult,
 } from "@sparkwright/core";
+
+export type { VerificationProfileResult };
 
 export interface CliRunEventSummary {
   events: SparkwrightEvent[];
@@ -24,15 +29,6 @@ export interface CliRunFailureSummary {
     retryable?: boolean;
   };
   metadata?: Record<string, unknown>;
-}
-
-export interface VerificationProfileResult {
-  hookName: string;
-  profile?: string;
-  id: string;
-  status: "passed" | "failed";
-  exitCode?: number | null;
-  timedOut?: boolean;
 }
 
 export function createCliRunEventSummary(): CliRunEventSummary {
@@ -75,11 +71,13 @@ export function completedRunHasCliIssues(
   summary: CliRunEventSummary,
   documentedCommandIssueCount = 0,
 ): boolean {
+  // Unsupported final-answer claims are advisory only (the prose-based detector
+  // is unreliable), so they are not part of the run's issue verdict — they are
+  // surfaced separately via summarizeUnsupportedFinalClaims.
   return (
     unhandledToolFailureCount(summary) > 0 ||
     unresolvedVerificationCommandFailureCount(summary) > 0 ||
     verificationProfileFailureCount(summary) > 0 ||
-    completedRunOutcomeHasCliIssue(summary) ||
     summary.writeDenied > 0 ||
     documentedCommandIssueCount > 0
   );
@@ -90,12 +88,56 @@ export function cliExitCodeForRun(input: {
   runState?: string;
   events: CliRunEventSummary;
 }): number {
+  // Terminal failures are not represented in the completed-run outcome (which
+  // is only produced on `final_answer`), so they stay as explicit checks.
   if (input.failedMessage) return 1;
   if (input.runState === "failed" || input.runState === "cancelled") return 1;
-  if (unresolvedVerificationCommandFailureCount(input.events) > 0) return 1;
-  if (verificationProfileFailureCount(input.events) > 0) return 1;
-  if (completedRunOutcomeHasCliIssue(input.events)) return 1;
-  return unhandledToolFailureCount(input.events) > 0 ? 1 : 0;
+  // Everything else is a projection of the single run outcome's `failing` flag,
+  // which core already computed (preferred) or, for callers that did not carry
+  // it, the same `completedRunOutcomeFromEvents` core uses — so the two cannot
+  // diverge. Recovered tool failures and unsupported claims are non-failing.
+  return runOutcomeFailing(input.events) ? 1 : 0;
+}
+
+/**
+ * Whether the completed run is failing, preferring the `failing` flag core
+ * already attached to `run.completed`, falling back to recomputing it from
+ * events with the same core function.
+ */
+function runOutcomeFailing(summary: CliRunEventSummary): boolean {
+  const attached = attachedRunOutcomeFailing(summary.events);
+  if (attached !== undefined) return attached;
+  return (
+    completedRunOutcomeFromEvents(
+      summary.events,
+      finalMessageFromEvents(summary.events),
+    )?.failing ?? false
+  );
+}
+
+function attachedRunOutcomeFailing(
+  events: readonly SparkwrightEvent[],
+): boolean | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
+    const outcome = isRecord(event.payload.outcome)
+      ? event.payload.outcome
+      : undefined;
+    return typeof outcome?.failing === "boolean" ? outcome.failing : undefined;
+  }
+  return undefined;
+}
+
+function finalMessageFromEvents(
+  events: readonly SparkwrightEvent[],
+): string | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
+    return stringValue(event.payload.message);
+  }
+  return undefined;
 }
 
 export function summarizeWorkspaceMutations(input: {
@@ -272,42 +314,9 @@ function verificationProfileFailureCount(summary: CliRunEventSummary): number {
 function verificationProfileResults(
   summary: CliRunEventSummary,
 ): VerificationProfileResult[] {
-  const latest = new Map<string, VerificationProfileResult>();
-  for (const event of summary.events) {
-    if (event.type !== "workflow_hook.completed" || !isRecord(event.payload)) {
-      continue;
-    }
-    const hookName = stringValue(event.payload.hookName);
-    const parsed = parseVerificationHookName(hookName);
-    if (!hookName || !parsed) continue;
-    const result = isRecord(event.payload.result)
-      ? event.payload.result
-      : undefined;
-    const metadata = isRecord(result?.metadata) ? result.metadata : undefined;
-    if (!metadata) continue;
-    const timedOut = booleanValue(metadata.timedOut) ?? false;
-    const exitCode = numberOrNullValue(metadata.exitCode);
-    latest.set(hookName, {
-      hookName,
-      profile: parsed.profile,
-      id: parsed.id,
-      status: exitCode === 0 && !timedOut ? "passed" : "failed",
-      exitCode,
-      timedOut,
-    });
-  }
-  return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
-}
-
-function parseVerificationHookName(
-  hookName: string | undefined,
-): { profile: string; id: string } | undefined {
-  if (!hookName?.startsWith("verification:")) return undefined;
-  const [, profile, ...idParts] = hookName.split(":");
-  const id = idParts.join(":");
-  if (!profile || !id) return undefined;
-  if (id === "stop-gate" || profile === "suggest") return undefined;
-  return { profile, id };
+  // Delegate to the single core parser so the CLI exit-code path and the run
+  // `outcome` can never disagree on whether a verification profile failed.
+  return analyzeVerificationProfileResults(summary.events);
 }
 
 function formatVerificationFailure(result: VerificationProfileResult): string {
@@ -347,10 +356,6 @@ function runFailureSummary(event: SparkwrightEvent): CliRunFailureSummary {
   };
 }
 
-function completedRunOutcomeHasCliIssue(summary: CliRunEventSummary): boolean {
-  return unsupportedFinalClaims(summary).length > 0;
-}
-
 function unsupportedFinalClaims(
   summary: CliRunEventSummary,
 ): Array<{ command?: string }> {
@@ -386,11 +391,6 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function numberOrNullValue(value: unknown): number | null | undefined {
-  if (value === null) return null;
-  return numberValue(value);
 }
 
 function booleanValue(value: unknown): boolean | undefined {

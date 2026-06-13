@@ -130,7 +130,7 @@ describe("CLI run outcome", () => {
     expect(completedRunHasCliIssues(summary)).toBe(false);
   });
 
-  it("fails the run for unsupported final-answer command success claims", () => {
+  it("treats unsupported final-answer command success claims as advisory", () => {
     const summary = createCliRunEventSummary();
     const log = new EventLog(createRunId());
     for (const event of [
@@ -150,6 +150,7 @@ describe("CLI run outcome", () => {
         reason: "final_answer",
         outcome: {
           kind: "completed_with_unsupported_final_claims",
+          failing: false,
           unsupportedFinalClaims: {
             count: 1,
             claims: [
@@ -165,12 +166,14 @@ describe("CLI run outcome", () => {
       updateCliRunEventSummary(summary, event);
     }
 
-    expect(completedRunHasCliIssues(summary)).toBe(true);
-    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
-      1,
-    );
+    // The prose-based detector is unreliable, so it is advisory: surfaced in the
+    // summary message but it does not fail the run.
     expect(summarizeUnsupportedFinalClaims(summary)).toContain(
       "python -m unittest tests/test_config.py",
+    );
+    expect(completedRunHasCliIssues(summary)).toBe(false);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      0,
     );
   });
 });

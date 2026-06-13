@@ -90,7 +90,11 @@ import {
   runToolBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
-import { completedRunOutcomeFromEvents } from "./run-outcome.js";
+import {
+  commandOutcomeSnapshot,
+  completedRunOutcomeFromEvents,
+  toolOutcomeSnapshot,
+} from "./run-outcome.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
@@ -3696,10 +3700,18 @@ export class SparkwrightRun implements RunHandle {
             typeof payload.message === "string" ? payload.message : undefined,
           )
         : undefined;
+    // Persist the command- and tool-outcome verdicts (computed over the full
+    // event stream) so trace summaries stay correct even when a minimal trace
+    // has stripped the tool.completed output / tool.requested arguments they
+    // would otherwise be recomputed from.
+    const commandOutcome = commandOutcomeSnapshot(this.events.all());
+    const toolOutcome = toolOutcomeSnapshot(this.events.all());
     const completedPayload = {
       reason,
       ...payload,
       ...(outcome ? { outcome } : {}),
+      ...(commandOutcome ? { commandOutcome } : {}),
+      ...(toolOutcome ? { toolOutcome } : {}),
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);

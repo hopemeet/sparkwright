@@ -124,17 +124,23 @@ export type {
   ClassifiedCommandFailure,
   ClassifiedCommandSuccess,
   ClassifiedToolFailure,
+  CommandOutcomeSnapshot,
   CommandOutcomeSummary,
   CompletedRunOutcome,
   ToolFailureCategory,
+  ToolOutcomeSnapshot,
   ToolOutcomeSummary,
+  VerificationProfileResult,
 } from "./run-outcome.js";
 export {
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
+  analyzeVerificationProfileResults,
   classifyToolFailure,
+  commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
   isPolicyOrApprovalFailure,
+  toolOutcomeSnapshot,
   toolTargetFingerprint,
 } from "./run-outcome.js";
 
