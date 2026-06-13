@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -7,15 +7,18 @@ import {
   createSkillLockfile,
   createSkillLoaderTool,
   createLoadedSkillContext,
+  computeSkillPackageHash,
   filterSkillsForAgent,
   isDevSkill,
   listSkillResourceFiles,
+  listSkillPackageFiles,
   lockSkills,
   loadSkills,
   parseSkill,
   prepareSkillsForRun,
   rankIndexedSkillsByGoal,
   selectSkills,
+  snapshotSkillPackage,
   type SkillIndexEntry,
 } from "../src/index.js";
 
@@ -97,6 +100,66 @@ Review carefully.
 
     expect(skills).toHaveLength(1);
     expect(skills[0]?.sourcePath).toBe(join(root, "reviewer", "SKILL.md"));
+  });
+
+  it("hashes and snapshots the full supported skill package deterministically", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skill-package-"));
+    const skillDir = join(root, "reviewer");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    await mkdir(join(skillDir, "templates", "nested"), { recursive: true });
+    await mkdir(join(skillDir, "scripts"), { recursive: true });
+    await mkdir(join(skillDir, "scratch"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      `---
+name: reviewer
+description: Reviews code changes.
+---
+Review carefully.
+`,
+    );
+    await writeFile(join(skillDir, "references", "guide.md"), "guide\n");
+    await writeFile(
+      join(skillDir, "templates", "nested", "note.txt"),
+      "note\n",
+    );
+    await writeFile(join(skillDir, "scripts", "check.sh"), "echo ok\n");
+    await writeFile(join(skillDir, "scratch", "ignored.txt"), "ignored\n");
+
+    const before = await computeSkillPackageHash(skillDir);
+    expect(before.packageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(before.files.map((file) => file.relativePath)).toEqual([
+      "SKILL.md",
+      "references/guide.md",
+      "scripts/check.sh",
+      "templates/nested/note.txt",
+    ]);
+
+    await writeFile(join(skillDir, "scratch", "ignored.txt"), "changed\n");
+    await expect(computeSkillPackageHash(skillDir)).resolves.toMatchObject({
+      packageHash: before.packageHash,
+    });
+
+    await writeFile(join(skillDir, "references", "guide.md"), "new guide\n");
+    const after = await computeSkillPackageHash(skillDir);
+    expect(after.packageHash).not.toBe(before.packageHash);
+
+    const snapshotDir = join(root, "snapshot");
+    const snapshot = await snapshotSkillPackage(skillDir, snapshotDir);
+    expect(snapshot.files.map((file) => file.relativePath)).toEqual(
+      after.files.map((file) => file.relativePath),
+    );
+    await expect(
+      readFile(join(snapshotDir, "references", "guide.md"), "utf8"),
+    ).resolves.toBe("new guide\n");
+    await expect(
+      access(join(snapshotDir, "scratch", "ignored.txt")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const listed = await listSkillPackageFiles(skillDir);
+    expect(listed.map((file) => file.relativePath)).toEqual(
+      after.files.map((file) => file.relativePath),
+    );
   });
 
   it("lets stronger roots shadow weaker skills with the same name", async () => {

@@ -261,6 +261,13 @@ export interface CapabilitySkillsConfig {
   resourceFileLimit?: number;
   allowedSkills?: string[];
   deniedSkills?: string[];
+  evolution?: CapabilitySkillEvolutionConfig;
+}
+
+export type CapabilitySkillEvolutionMode = "off" | "notice" | "draft" | "apply";
+
+export interface CapabilitySkillEvolutionConfig {
+  mode?: CapabilitySkillEvolutionMode;
 }
 
 export type CapabilityMcpServerConfig =
@@ -546,6 +553,7 @@ function validateCapabilitySkills(
     "resourceFileLimit",
     "allowedSkills",
     "deniedSkills",
+    "evolution",
   ]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
@@ -611,6 +619,62 @@ function validateCapabilitySkills(
       filePath,
       errors,
     );
+  }
+  if (raw.evolution !== undefined) {
+    const evolution = validateCapabilitySkillEvolution(
+      raw.evolution,
+      filePath,
+      errors,
+    );
+    if (evolution) out.evolution = evolution;
+  }
+  return out;
+}
+
+const VALID_SKILL_EVOLUTION_MODES: CapabilitySkillEvolutionMode[] = [
+  "off",
+  "notice",
+  "draft",
+  "apply",
+];
+
+function validateCapabilitySkillEvolution(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilitySkillEvolutionConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.skills.evolution",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: CapabilitySkillEvolutionConfig = {};
+  const allowed = new Set(["mode"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `capabilities.skills.evolution.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.mode !== undefined) {
+    if (
+      typeof raw.mode === "string" &&
+      (VALID_SKILL_EVOLUTION_MODES as string[]).includes(raw.mode)
+    ) {
+      out.mode = raw.mode as CapabilitySkillEvolutionMode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities.skills.evolution.mode",
+        message: `must be one of ${VALID_SKILL_EVOLUTION_MODES.join(" | ")}`,
+      });
+    }
   }
   return out;
 }

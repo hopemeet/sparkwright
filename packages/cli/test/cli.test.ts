@@ -1,4 +1,5 @@
 import {
+  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -705,7 +706,11 @@ describe("runCli", () => {
     expect(output.stderrText()).toContain(
       "Run completed with 1 denied workspace write; requested mutation was not applied.",
     );
-    expect(output.stdoutText()).toContain("Run completed_with_issues");
+    // A denied workspace write is expected-by-policy, not a failure: the label
+    // matches the (0) exit code and the denial is surfaced via the stderr
+    // advisory above (see PR #22 / run-outcome-consistency.test.ts).
+    expect(output.stdoutText()).toContain("Run completed (");
+    expect(output.stdoutText()).not.toContain("Run completed_with_issues");
 
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toEqual(
@@ -1475,6 +1480,1286 @@ describe("runCli", () => {
       ]),
     );
     expect(report.errors).toEqual([]);
+  });
+
+  it("reports read-only skill stats from recent session traces", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      [
+        "---",
+        "name: code-reviewer",
+        "description: Reviews code changes.",
+        "---",
+        "Use this skill for code review.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const sessionRoot = join(workspace, ".sparkwright", "sessions");
+    const sessionId = "session_skill_stats";
+    const runId = "run_skill_stats";
+    const sessionDir = join(sessionRoot, sessionId);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "session.json"),
+      JSON.stringify(
+        {
+          id: sessionId,
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:02.000Z",
+          runIds: [runId],
+          eventCount: 0,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(join(sessionDir, "events.jsonl"), "", "utf8");
+    await writeFile(
+      join(sessionDir, "trace.jsonl"),
+      [
+        traceEvent(
+          1,
+          runId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "code-reviewer",
+                sourcePath: skillPath,
+                contentHash: "sha256:indexed",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          2,
+          runId,
+          "skill.loaded",
+          { name: "code-reviewer" },
+          { mode: "on_demand_tool", contentHash: "sha256:loaded" },
+        ),
+        traceEvent(3, runId, "tool.failed", {
+          toolName: "read_file",
+          error: { code: "ENOENT", message: "missing" },
+        }),
+        traceEvent(4, runId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 1, byCode: { ENOENT: 1 } },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+      ].join(""),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const stats = JSON.parse(output.stdoutText()) as {
+      sessionsScanned: number;
+      tracesScanned: number;
+      skills: Array<{
+        name: string;
+        layer?: string;
+        indexedCount: number;
+        loadedCount: number;
+        explicitLoadCount: number;
+        runIds: string[];
+        sessionIds: string[];
+        associatedRuns: { completed: number };
+        associatedToolFailures: {
+          total: number;
+          unresolved: number;
+          byTool: Record<string, number>;
+        };
+      }>;
+    };
+    expect(stats.sessionsScanned).toBe(1);
+    expect(stats.tracesScanned).toBe(1);
+    expect(stats.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "code-reviewer",
+          layer: "project",
+          indexedCount: 1,
+          loadedCount: 1,
+          explicitLoadCount: 1,
+          runIds: [runId],
+          sessionIds: [sessionId],
+          associatedRuns: expect.objectContaining({ completed: 1 }),
+          associatedToolFailures: {
+            total: 1,
+            unresolved: 1,
+            byTool: { read_file: 1 },
+          },
+        }),
+      ]),
+    );
+
+    const textOutput = createOutputCapture();
+    const text = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--skill",
+        "code-reviewer",
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: textOutput.stdout, stderr: textOutput.stderr },
+      },
+    );
+    expect(text.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain("- code-reviewer (project)");
+    expect(textOutput.stdoutText()).toContain("failed tools: read_file=1");
+    expect(textOutput.stdoutText()).toContain("not causal claims");
+  });
+
+  it("doctors skills with package hashes and deterministic blockers", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: code-reviewer",
+        "description: Reviews code changes.",
+        "---",
+        "Review carefully.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(join(skillDir, "references", "guide.md"), "guide\n");
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["skills", "doctor", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      status: string;
+      blockerCount: number;
+      skills: Array<{ name: string; packageHash?: string }>;
+    };
+    expect(report.status).toBe("ok");
+    expect(report.blockerCount).toBe(0);
+    expect(report.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "code-reviewer",
+          packageHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        }),
+      ]),
+    );
+
+    const badWorkspace = await createWorkspace("# Demo\n");
+    const badSkillDir = join(badWorkspace, ".sparkwright", "skills", "bad");
+    await mkdir(badSkillDir, { recursive: true });
+    await writeFile(
+      join(badSkillDir, "SKILL.md"),
+      ["---", "name: bad", "description: Bad skill.", "---", "Bad.", ""].join(
+        "\n",
+      ),
+      "utf8",
+    );
+    await writeFile(join(badSkillDir, "references"), "not a directory\n");
+
+    const badOutput = createOutputCapture();
+    const bad = await runCli(
+      ["skills", "doctor", "--workspace", badWorkspace, "--format", "text"],
+      {
+        io: { stdout: badOutput.stdout, stderr: badOutput.stderr },
+      },
+    );
+
+    expect(bad.exitCode).toBe(1);
+    expect(badOutput.stdoutText()).toContain("status: blocked");
+    expect(badOutput.stdoutText()).toContain("SKILL_PACKAGE_INVALID");
+    expect(badOutput.stdoutText()).toContain(
+      "Skill package entry must be a directory: references",
+    );
+  });
+
+  it("creates, lists, shows, and applies skill proposals", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const createOutput = createOutputCapture();
+
+    const created = await runCli(
+      [
+        "skills",
+        "proposals",
+        "create",
+        "code-reviewer",
+        "--description",
+        "Reviews code changes for risk.",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+
+    expect(created.exitCode).toBe(0);
+    const proposal = JSON.parse(createOutput.stdoutText()) as {
+      id: string;
+      state: string;
+      kind: string;
+      skillName: string;
+      path: string;
+      afterPackageHash: string;
+    };
+    expect(proposal).toMatchObject({
+      state: "draft",
+      kind: "create",
+      skillName: "code-reviewer",
+    });
+    expect(proposal.id).toMatch(/^skillprop_/);
+    expect(proposal.afterPackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+
+    await expect(
+      access(
+        join(workspace, ".sparkwright", "skills", "code-reviewer", "SKILL.md"),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(
+        join(proposal.path, "after", "code-reviewer", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("name: code-reviewer");
+
+    const listOutput = createOutputCapture();
+    const listed = await runCli(
+      [
+        "skills",
+        "proposals",
+        "list",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: listOutput.stdout, stderr: listOutput.stderr },
+      },
+    );
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listOutput.stdoutText())).toEqual([
+      expect.objectContaining({
+        id: proposal.id,
+        kind: "create",
+        state: "draft",
+        skillName: "code-reviewer",
+      }),
+    ]);
+
+    const showOutput = createOutputCapture();
+    const shown = await runCli(
+      [
+        "skills",
+        "proposals",
+        "show",
+        proposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: showOutput.stdout, stderr: showOutput.stderr },
+      },
+    );
+    expect(shown.exitCode).toBe(0);
+    expect(showOutput.stdoutText()).toContain(`id: ${proposal.id}`);
+    expect(showOutput.stdoutText()).toContain("Skill: code-reviewer");
+    expect(showOutput.stdoutText()).toContain("patch:");
+
+    const applyOutput = createOutputCapture();
+    const applied = await runCli(
+      [
+        "skills",
+        "proposals",
+        "apply",
+        proposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: applyOutput.stdout, stderr: applyOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(0);
+    const applyResult = JSON.parse(applyOutput.stdoutText()) as {
+      proposal: { id: string; state: string };
+      history: { id: string; proposalId: string; afterPackageHash: string };
+      doctor: { status: string };
+    };
+    expect(applyResult.proposal).toMatchObject({
+      id: proposal.id,
+      state: "applied",
+    });
+    expect(applyResult.history).toMatchObject({
+      proposalId: proposal.id,
+      afterPackageHash: proposal.afterPackageHash,
+    });
+    expect(applyResult.doctor.status).toBe("ok");
+    await expect(
+      readFile(
+        join(workspace, ".sparkwright", "skills", "code-reviewer", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("name: code-reviewer");
+
+    const historyOutput = createOutputCapture();
+    const history = await runCli(
+      [
+        "skills",
+        "history",
+        "code-reviewer",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: historyOutput.stdout, stderr: historyOutput.stderr },
+      },
+    );
+    expect(history.exitCode).toBe(0);
+    expect(JSON.parse(historyOutput.stdoutText())).toEqual([
+      expect.objectContaining({
+        id: applyResult.history.id,
+        proposalId: proposal.id,
+        skillName: "code-reviewer",
+      }),
+    ]);
+
+    const historyShowOutput = createOutputCapture();
+    const historyShown = await runCli(
+      [
+        "skills",
+        "history",
+        "show",
+        "code-reviewer",
+        applyResult.history.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: historyShowOutput.stdout,
+          stderr: historyShowOutput.stderr,
+        },
+      },
+    );
+    expect(historyShown.exitCode).toBe(0);
+    expect(JSON.parse(historyShowOutput.stdoutText())).toMatchObject({
+      id: applyResult.history.id,
+      proposalId: proposal.id,
+      skillName: "code-reviewer",
+      patchDiff: expect.stringContaining("+name: code-reviewer"),
+    });
+
+    const historyDiffOutput = createOutputCapture();
+    const historyDiffed = await runCli(
+      [
+        "skills",
+        "history",
+        "diff",
+        "code-reviewer",
+        applyResult.history.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: {
+          stdout: historyDiffOutput.stdout,
+          stderr: historyDiffOutput.stderr,
+        },
+      },
+    );
+    expect(historyDiffed.exitCode).toBe(0);
+    expect(historyDiffOutput.stdoutText()).toContain("diff --git");
+    expect(historyDiffOutput.stdoutText()).toContain("+name: code-reviewer");
+
+    const reappliedOutput = createOutputCapture();
+    const reapplied = await runCli(
+      ["skills", "proposals", "apply", proposal.id, "--workspace", workspace],
+      {
+        io: { stdout: reappliedOutput.stdout, stderr: reappliedOutput.stderr },
+      },
+    );
+    expect(reapplied.exitCode).toBe(1);
+    expect(reappliedOutput.stderrText()).toContain("not draft");
+  });
+
+  it("rejects and supersedes skill proposals without applying them", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+
+    const rejectedCreateOutput = createOutputCapture();
+    const rejectedCreated = await runCli(
+      [
+        "skills",
+        "proposals",
+        "create",
+        "quick-note",
+        "--description",
+        "capture short project notes",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: rejectedCreateOutput.stdout,
+          stderr: rejectedCreateOutput.stderr,
+        },
+      },
+    );
+    expect(rejectedCreated.exitCode).toBe(0);
+    const rejectedProposal = JSON.parse(rejectedCreateOutput.stdoutText()) as {
+      id: string;
+    };
+
+    const rejectOutput = createOutputCapture();
+    const rejected = await runCli(
+      [
+        "skills",
+        "proposals",
+        "reject",
+        rejectedProposal.id,
+        "--reason",
+        "Too broad.",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: rejectOutput.stdout, stderr: rejectOutput.stderr },
+      },
+    );
+    expect(rejected.exitCode).toBe(0);
+    expect(JSON.parse(rejectOutput.stdoutText())).toMatchObject({
+      id: rejectedProposal.id,
+      state: "rejected",
+      statusReason: "Too broad.",
+    });
+
+    const rejectedApplyOutput = createOutputCapture();
+    const rejectedApply = await runCli(
+      [
+        "skills",
+        "proposals",
+        "apply",
+        rejectedProposal.id,
+        "--workspace",
+        workspace,
+      ],
+      {
+        io: {
+          stdout: rejectedApplyOutput.stdout,
+          stderr: rejectedApplyOutput.stderr,
+        },
+      },
+    );
+    expect(rejectedApply.exitCode).toBe(1);
+    expect(rejectedApplyOutput.stderrText()).toContain("not draft");
+    await expect(
+      access(join(workspace, ".sparkwright", "skills", "quick-note")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const firstOutput = createOutputCapture();
+    const firstCreated = await runCli(
+      [
+        "skills",
+        "proposals",
+        "create",
+        "daily-review",
+        "--description",
+        "review daily work",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: firstOutput.stdout, stderr: firstOutput.stderr },
+      },
+    );
+    expect(firstCreated.exitCode).toBe(0);
+    const first = JSON.parse(firstOutput.stdoutText()) as { id: string };
+
+    const secondOutput = createOutputCapture();
+    const secondCreated = await runCli(
+      [
+        "skills",
+        "proposals",
+        "create",
+        "daily-review",
+        "--description",
+        "review daily work with clearer next actions",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: secondOutput.stdout, stderr: secondOutput.stderr },
+      },
+    );
+    expect(secondCreated.exitCode).toBe(0);
+    const second = JSON.parse(secondOutput.stdoutText()) as { id: string };
+
+    const supersedeOutput = createOutputCapture();
+    const superseded = await runCli(
+      [
+        "skills",
+        "proposals",
+        "supersede",
+        first.id,
+        "--by",
+        second.id,
+        "--reason",
+        "Replaced with clearer wording.",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: supersedeOutput.stdout, stderr: supersedeOutput.stderr },
+      },
+    );
+    expect(superseded.exitCode).toBe(0);
+    expect(JSON.parse(supersedeOutput.stdoutText())).toMatchObject({
+      id: first.id,
+      state: "superseded",
+      supersededBy: second.id,
+      statusReason: "Replaced with clearer wording.",
+    });
+
+    const listOutput = createOutputCapture();
+    const listed = await runCli(
+      [
+        "skills",
+        "proposals",
+        "list",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: listOutput.stdout, stderr: listOutput.stderr },
+      },
+    );
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listOutput.stdoutText())).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: first.id,
+          state: "superseded",
+          supersededBy: second.id,
+        }),
+        expect.objectContaining({
+          id: second.id,
+          state: "draft",
+        }),
+      ]),
+    );
+  });
+
+  it("prunes closed skill proposals only when applied", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+
+    async function createProposal(name: string, description: string) {
+      const output = createOutputCapture();
+      const result = await runCli(
+        [
+          "skills",
+          "proposals",
+          "create",
+          name,
+          "--description",
+          description,
+          "--workspace",
+          workspace,
+          "--format",
+          "json",
+        ],
+        {
+          io: { stdout: output.stdout, stderr: output.stderr },
+        },
+      );
+      expect(result.exitCode).toBe(0);
+      return JSON.parse(output.stdoutText()) as { id: string; path: string };
+    }
+
+    const rejected = await createProposal("cleanup-note", "capture notes");
+    const superseded = await createProposal("cleanup-review", "review work");
+    const replacement = await createProposal(
+      "cleanup-review",
+      "review work with sharper actions",
+    );
+
+    const rejectOutput = createOutputCapture();
+    expect(
+      (
+        await runCli(
+          [
+            "skills",
+            "proposals",
+            "reject",
+            rejected.id,
+            "--reason",
+            "No longer needed.",
+            "--workspace",
+            workspace,
+            "--format",
+            "json",
+          ],
+          {
+            io: { stdout: rejectOutput.stdout, stderr: rejectOutput.stderr },
+          },
+        )
+      ).exitCode,
+    ).toBe(0);
+
+    const supersedeOutput = createOutputCapture();
+    expect(
+      (
+        await runCli(
+          [
+            "skills",
+            "proposals",
+            "supersede",
+            superseded.id,
+            "--by",
+            replacement.id,
+            "--workspace",
+            workspace,
+            "--format",
+            "json",
+          ],
+          {
+            io: {
+              stdout: supersedeOutput.stdout,
+              stderr: supersedeOutput.stderr,
+            },
+          },
+        )
+      ).exitCode,
+    ).toBe(0);
+
+    const dryRunOutput = createOutputCapture();
+    const dryRun = await runCli(
+      [
+        "skills",
+        "proposals",
+        "prune",
+        "--state",
+        "rejected,superseded",
+        "--dry-run",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: dryRunOutput.stdout, stderr: dryRunOutput.stderr },
+      },
+    );
+    expect(dryRun.exitCode).toBe(0);
+    expect(JSON.parse(dryRunOutput.stdoutText())).toMatchObject({
+      applied: false,
+      candidates: expect.arrayContaining([
+        expect.objectContaining({ id: rejected.id, state: "rejected" }),
+        expect.objectContaining({ id: superseded.id, state: "superseded" }),
+      ]),
+      deleted: [],
+    });
+    await expect(access(rejected.path)).resolves.toBeUndefined();
+    await expect(access(superseded.path)).resolves.toBeUndefined();
+
+    const appliedOutput = createOutputCapture();
+    const applied = await runCli(
+      [
+        "skills",
+        "proposals",
+        "prune",
+        "--state",
+        "rejected,superseded",
+        "--apply",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: appliedOutput.stdout, stderr: appliedOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(0);
+    expect(JSON.parse(appliedOutput.stdoutText())).toMatchObject({
+      applied: true,
+      deleted: expect.arrayContaining([
+        expect.objectContaining({ id: rejected.id }),
+        expect.objectContaining({ id: superseded.id }),
+      ]),
+    });
+    await expect(access(rejected.path)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(superseded.path)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(replacement.path)).resolves.toBeUndefined();
+  });
+
+  it("updates project skills through hash-gated proposals", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "reviewer");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: Reviews code.",
+        "---",
+        "Use this skill to review code.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const createOutput = createOutputCapture();
+    const created = await runCli(
+      [
+        "skills",
+        "proposals",
+        "update",
+        "reviewer",
+        "--description",
+        "Prefer concise findings with tests.",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+    const proposal = JSON.parse(createOutput.stdoutText()) as {
+      id: string;
+      kind: string;
+      sourceLayer: string;
+      basePackageHash: string;
+      afterPackageHash: string;
+      path: string;
+    };
+    expect(proposal).toMatchObject({
+      kind: "update",
+      sourceLayer: "project",
+    });
+    expect(proposal.basePackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(proposal.afterPackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    await expect(
+      readFile(join(proposal.path, "before", "reviewer", "SKILL.md"), "utf8"),
+    ).resolves.toContain("Use this skill to review code.");
+    await expect(
+      readFile(join(proposal.path, "after", "reviewer", "SKILL.md"), "utf8"),
+    ).resolves.toContain("Prefer concise findings with tests.");
+
+    const applyOutput = createOutputCapture();
+    const applied = await runCli(
+      [
+        "skills",
+        "proposals",
+        "apply",
+        proposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: applyOutput.stdout, stderr: applyOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(0);
+    const applyResult = JSON.parse(applyOutput.stdoutText()) as {
+      proposal: { state: string };
+      history: { beforePackageHash: string; afterPackageHash: string };
+    };
+    expect(applyResult.proposal.state).toBe("applied");
+    expect(applyResult.history.beforePackageHash).toBe(
+      proposal.basePackageHash,
+    );
+    expect(applyResult.history.afterPackageHash).toBe(
+      proposal.afterPackageHash,
+    );
+    await expect(
+      readFile(join(skillDir, "SKILL.md"), "utf8"),
+    ).resolves.toContain("Prefer concise findings with tests.");
+  });
+
+  it("restores project skills from history with dry-run by default", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillPath = join(
+      workspace,
+      ".sparkwright",
+      "skills",
+      "restorable",
+      "SKILL.md",
+    );
+
+    const createOutput = createOutputCapture();
+    const created = await runCli(
+      [
+        "skills",
+        "proposals",
+        "create",
+        "restorable",
+        "--description",
+        "preserve the first version",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+    const createProposal = JSON.parse(createOutput.stdoutText()) as {
+      id: string;
+    };
+
+    const createApplyOutput = createOutputCapture();
+    const createApplied = await runCli(
+      [
+        "skills",
+        "proposals",
+        "apply",
+        createProposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: createApplyOutput.stdout,
+          stderr: createApplyOutput.stderr,
+        },
+      },
+    );
+    expect(createApplied.exitCode).toBe(0);
+    const initialApply = JSON.parse(createApplyOutput.stdoutText()) as {
+      history: { id: string };
+    };
+
+    const updateOutput = createOutputCapture();
+    const updated = await runCli(
+      [
+        "skills",
+        "proposals",
+        "update",
+        "restorable",
+        "--description",
+        "second version marker",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: updateOutput.stdout, stderr: updateOutput.stderr },
+      },
+    );
+    expect(updated.exitCode).toBe(0);
+    const updateProposal = JSON.parse(updateOutput.stdoutText()) as {
+      id: string;
+    };
+
+    const updateApplyOutput = createOutputCapture();
+    const updateApplied = await runCli(
+      [
+        "skills",
+        "proposals",
+        "apply",
+        updateProposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: updateApplyOutput.stdout,
+          stderr: updateApplyOutput.stderr,
+        },
+      },
+    );
+    expect(updateApplied.exitCode).toBe(0);
+    await expect(readFile(skillPath, "utf8")).resolves.toContain(
+      "second version marker",
+    );
+
+    const dryRunOutput = createOutputCapture();
+    const dryRun = await runCli(
+      [
+        "skills",
+        "restore",
+        "restorable",
+        "--version",
+        initialApply.history.id,
+        "--dry-run",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: dryRunOutput.stdout, stderr: dryRunOutput.stderr },
+      },
+    );
+    expect(dryRun.exitCode).toBe(0);
+    expect(JSON.parse(dryRunOutput.stdoutText())).toMatchObject({
+      applied: false,
+      skillName: "restorable",
+      sourceHistory: { id: initialApply.history.id },
+    });
+    await expect(readFile(skillPath, "utf8")).resolves.toContain(
+      "second version marker",
+    );
+
+    const restoreOutput = createOutputCapture();
+    const restored = await runCli(
+      [
+        "skills",
+        "restore",
+        "restorable",
+        "--version",
+        initialApply.history.id,
+        "--apply",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: restoreOutput.stdout, stderr: restoreOutput.stderr },
+      },
+    );
+    expect(restored.exitCode).toBe(0);
+    const restoreResult = JSON.parse(restoreOutput.stdoutText()) as {
+      applied: boolean;
+      restoreHistory: { id: string; kind: string; sourceHistoryId: string };
+      doctor: { status: string };
+    };
+    expect(restoreResult).toMatchObject({
+      applied: true,
+      restoreHistory: {
+        kind: "restore",
+        sourceHistoryId: initialApply.history.id,
+      },
+      doctor: { status: "ok" },
+    });
+    await expect(readFile(skillPath, "utf8")).resolves.not.toContain(
+      "second version marker",
+    );
+
+    const historyOutput = createOutputCapture();
+    const history = await runCli(
+      [
+        "skills",
+        "history",
+        "restorable",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: historyOutput.stdout, stderr: historyOutput.stderr },
+      },
+    );
+    expect(history.exitCode).toBe(0);
+    expect(JSON.parse(historyOutput.stdoutText())).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: restoreResult.restoreHistory.id,
+          kind: "restore",
+          sourceHistoryId: initialApply.history.id,
+        }),
+      ]),
+    );
+  });
+
+  it("reports a friendly error when restoring an unknown history version", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "restorable");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: restorable",
+        "description: Restorable skill.",
+        "---",
+        "Body.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "skills",
+        "restore",
+        "restorable",
+        "--version",
+        "skillver_doesnotexist",
+        "--dry-run",
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "Skill history version not found: restorable:skillver_doesnotexist",
+    );
+    // the raw filesystem path must not leak in the message
+    expect(output.stderrText()).not.toContain("metadata.json");
+  });
+
+  it("marks stale update proposals when the base skill changes", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "reviewer");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: Reviews code.",
+        "---",
+        "Use this skill to review code.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const createOutput = createOutputCapture();
+    const created = await runCli(
+      [
+        "skills",
+        "proposals",
+        "update",
+        "reviewer",
+        "--description",
+        "Prefer concise findings.",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+    const proposal = JSON.parse(createOutput.stdoutText()) as { id: string };
+
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: Reviews code after drift.",
+        "---",
+        "Use this changed skill to review code.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const applyOutput = createOutputCapture();
+    const applied = await runCli(
+      ["skills", "proposals", "apply", proposal.id, "--workspace", workspace],
+      {
+        io: { stdout: applyOutput.stdout, stderr: applyOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(1);
+    expect(applyOutput.stderrText()).toContain(
+      "Project Skill changed since proposal",
+    );
+
+    const showOutput = createOutputCapture();
+    const shown = await runCli(
+      [
+        "skills",
+        "proposals",
+        "show",
+        proposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: showOutput.stdout, stderr: showOutput.stderr },
+      },
+    );
+    expect(shown.exitCode).toBe(0);
+    expect(JSON.parse(showOutput.stdoutText())).toMatchObject({
+      id: proposal.id,
+      state: "stale",
+    });
+    await expect(
+      readFile(join(skillDir, "SKILL.md"), "utf8"),
+    ).resolves.toContain("Use this changed skill");
+  });
+
+  it("forks non-project skills into project update proposals", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const userSkillDir = join(xdg, "sparkwright", "skills", "reviewer");
+    const projectSkillDir = join(
+      workspace,
+      ".sparkwright",
+      "skills",
+      "reviewer",
+    );
+    await mkdir(userSkillDir, { recursive: true });
+    await writeFile(
+      join(userSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: reviewer",
+        "description: User reviewer.",
+        "---",
+        "Use user reviewer.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const createOutput = createOutputCapture();
+    const created = await runCli(
+      [
+        "skills",
+        "proposals",
+        "update",
+        "reviewer",
+        "--description",
+        "Project-specific review style.",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: createOutput.stdout, stderr: createOutput.stderr },
+      },
+    );
+    expect(created.exitCode).toBe(0);
+    const proposal = JSON.parse(createOutput.stdoutText()) as {
+      id: string;
+      kind: string;
+      sourceLayer: string;
+      targetPath: string;
+    };
+    expect(proposal).toMatchObject({
+      kind: "update",
+      sourceLayer: "user",
+      targetPath: projectSkillDir,
+    });
+    await expect(
+      access(join(projectSkillDir, "SKILL.md")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const applyOutput = createOutputCapture();
+    const applied = await runCli(
+      [
+        "skills",
+        "proposals",
+        "apply",
+        proposal.id,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: applyOutput.stdout, stderr: applyOutput.stderr },
+      },
+    );
+    expect(applied.exitCode).toBe(0);
+    await expect(
+      readFile(join(projectSkillDir, "SKILL.md"), "utf8"),
+    ).resolves.toContain("Project-specific review style.");
+    await expect(
+      readFile(join(userSkillDir, "SKILL.md"), "utf8"),
+    ).resolves.toContain("Use user reviewer.");
   });
 
   it("reports skill source layers and shadowed skills", async () => {
@@ -4164,6 +5449,24 @@ function createOutputCapture() {
     stdoutText: () => stdout,
     stderrText: () => stderr,
   };
+}
+
+function traceEvent(
+  sequence: number,
+  runId: string,
+  type: string,
+  payload: Record<string, unknown>,
+  metadata: Record<string, unknown> = {},
+): string {
+  return `${JSON.stringify({
+    id: `evt_${sequence}`,
+    runId,
+    type,
+    timestamp: `2026-06-13T00:00:0${sequence}.000Z`,
+    sequence,
+    payload,
+    metadata,
+  })}\n`;
 }
 
 async function readTrace(path: string | undefined): Promise<

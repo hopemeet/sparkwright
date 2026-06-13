@@ -1,0 +1,290 @@
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  applyTuiSkillReviewProposal,
+  createTuiSkillProposal,
+  formatTuiSkillProposalResult,
+  formatTuiSkillReviewSummary,
+  loadTuiSkillReview,
+  parseTuiSkillProposalInput,
+  rejectTuiSkillReviewProposal,
+  reviewTuiSkillProposals,
+} from "../src/lib/skill-evolution.js";
+import {
+  applySkillLearnDraftProposal,
+  createSkillLearnDraftProposal,
+  detectSkillLearnNotice,
+  detectSkillLearnTarget,
+  formatSkillLearnStatus,
+  parseSkillLearnMode,
+  readSkillLearnStatus,
+  SKILL_LEARN_DRAFT_SKILL_NAME,
+  setProjectSkillLearnMode,
+} from "../src/lib/skill-learn.js";
+
+describe("tui skill evolution commands", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+    tempDirs.length = 0;
+  });
+
+  it("parses slash proposal input", () => {
+    expect(
+      parseTuiSkillProposalInput(
+        "code-reviewer --description Review code changes",
+      ),
+    ).toEqual({
+      name: "code-reviewer",
+      description: "Review code changes",
+    });
+    expect(parseTuiSkillProposalInput("notes Capture project notes")).toEqual({
+      name: "notes",
+      description: "Capture project notes",
+    });
+    expect(() => parseTuiSkillProposalInput("Bad Name")).toThrow(/usage/);
+  });
+
+  it("creates and reviews proposals without writing current skills", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-skill-"));
+    tempDirs.push(workspace);
+
+    const proposal = await createTuiSkillProposal(
+      workspace,
+      "code-reviewer --description Review code changes",
+    );
+    expect(proposal).toMatchObject({
+      kind: "create",
+      skillName: "code-reviewer",
+      state: "draft",
+    });
+    expect(formatTuiSkillProposalResult(proposal)).toContain(proposal.id);
+    await expect(
+      access(join(workspace, ".sparkwright", "skills", "code-reviewer")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const review = await reviewTuiSkillProposals(workspace, "draft");
+    expect(review.total).toBe(1);
+    expect(formatTuiSkillReviewSummary(review)).toContain("code-reviewer");
+
+    const detail = await loadTuiSkillReview(workspace, "draft");
+    expect(detail.total).toBe(1);
+    expect(detail.items[0]?.proposalMarkdown).toContain("code-reviewer");
+    expect(detail.items[0]?.patchDiff).toContain("+name: code-reviewer");
+  });
+
+  it("reads and writes the project skill learn mode", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-learn-"));
+    tempDirs.push(workspace);
+
+    expect(await readSkillLearnStatus(workspace)).toEqual({
+      mode: "notice",
+      source: "default",
+    });
+    expect(parseSkillLearnMode("draft")).toBe("draft");
+    expect(() => parseSkillLearnMode("always")).toThrow(/usage/);
+
+    const result = await setProjectSkillLearnMode(workspace, "draft");
+    expect(result).toMatchObject({ mode: "draft", source: "config" });
+    expect(formatSkillLearnStatus(result)).toBe("draft (config)");
+
+    expect(await readSkillLearnStatus(workspace)).toEqual({
+      mode: "draft",
+      source: "config",
+    });
+    const config = JSON.parse(await readFile(result.path, "utf8")) as {
+      capabilities?: {
+        skills?: {
+          evolution?: {
+            mode?: string;
+          };
+        };
+      };
+    };
+    expect(config.capabilities?.skills?.evolution?.mode).toBe("draft");
+  });
+
+  it("detects conservative skill learn notice signals", () => {
+    expect(
+      detectSkillLearnNotice(["Remember this: always run tests first."]),
+    ).toEqual({ reason: "explicit reuse instruction" });
+    expect(detectSkillLearnNotice(["以后这样做，先检查 proposal。"])).toEqual({
+      reason: "explicit reuse instruction",
+    });
+    expect(detectSkillLearnNotice(["Summarize this one-off task."])).toBeNull();
+    expect(
+      detectSkillLearnTarget([
+        "Remember this: skill code-reviewer should mention verification.",
+      ]),
+    ).toBe("code-reviewer");
+    expect(
+      detectSkillLearnTarget([
+        "Next time update the code-reviewer skill with this workflow.",
+      ]),
+    ).toBe("code-reviewer");
+  });
+
+  it("creates a skill learn draft proposal without writing current skills", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-draft-"));
+    tempDirs.push(workspace);
+
+    const proposal = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+    });
+    expect(proposal).toMatchObject({
+      kind: "create",
+      skillName: SKILL_LEARN_DRAFT_SKILL_NAME,
+      state: "draft",
+    });
+    await expect(
+      access(
+        join(workspace, ".sparkwright", "skills", SKILL_LEARN_DRAFT_SKILL_NAME),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const proposalMarkdown = await readFile(
+      join(proposal.path, "proposal.md"),
+      "utf8",
+    );
+    expect(proposalMarkdown).toContain("Review the session transcript");
+    expect(proposalMarkdown).toContain("Evidence: deterministic TUI learning");
+    expect(proposalMarkdown).toContain("tool output, logs, webpages");
+  });
+
+  it("targets an existing skill for learned drafts (update/fork)", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-target-"));
+    tempDirs.push(workspace);
+
+    // Seed an existing project Skill so the detected target resolves.
+    const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: code-reviewer",
+        "description: reviews code changes",
+        'version: "1.0.0"',
+        "metadata:",
+        '  version: "1.0.0"',
+        "---",
+        "",
+        "Body.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const proposal = await createSkillLearnDraftProposal(
+      workspace,
+      { reason: "explicit reuse instruction" },
+      { targetSkillName: "code-reviewer" },
+    );
+    expect(proposal).toMatchObject({
+      kind: "update",
+      skillName: "code-reviewer",
+      state: "draft",
+    });
+  });
+
+  it("ignores a target that matches no Skill and falls back to session-learnings", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-bogus-"));
+    tempDirs.push(workspace);
+
+    // "here" is a typical false-positive extraction; no such Skill exists, so
+    // the helper must NOT create a Skill named "here".
+    const proposal = await createSkillLearnDraftProposal(
+      workspace,
+      { reason: "explicit reuse instruction" },
+      { targetSkillName: "here" },
+    );
+    expect(proposal).toMatchObject({
+      skillName: SKILL_LEARN_DRAFT_SKILL_NAME,
+      state: "draft",
+    });
+    await expect(
+      access(join(workspace, ".sparkwright", "skills", "here")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("auto-applies only the skill learn draft proposal", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-apply-"));
+    tempDirs.push(workspace);
+
+    const proposal = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+    });
+    const applied = await applySkillLearnDraftProposal(workspace, proposal);
+    expect(applied).toMatchObject({
+      proposalId: proposal.id,
+      doctorStatus: "ok",
+    });
+    expect(applied.historyId).toMatch(/^skillver_/);
+
+    const skillMarkdown = await readFile(
+      join(
+        workspace,
+        ".sparkwright",
+        "skills",
+        SKILL_LEARN_DRAFT_SKILL_NAME,
+        "SKILL.md",
+      ),
+      "utf8",
+    );
+    expect(skillMarkdown).toContain(SKILL_LEARN_DRAFT_SKILL_NAME);
+
+    await expect(
+      applySkillLearnDraftProposal(workspace, {
+        ...proposal,
+        id: "skillprop-other",
+        skillName: "other",
+      }),
+    ).rejects.toThrow(/cannot apply other/);
+  });
+
+  it("applies and rejects proposals from the review helpers", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-review-"));
+    tempDirs.push(workspace);
+
+    const applyProposal = await createTuiSkillProposal(
+      workspace,
+      "review-apply --description Review apply path",
+    );
+    const applied = await applyTuiSkillReviewProposal(
+      workspace,
+      applyProposal.id,
+    );
+    expect(applied).toMatchObject({
+      id: applyProposal.id,
+      state: "applied",
+      skillName: "review-apply",
+    });
+    expect(applied.historyId).toMatch(/^skillver_/);
+
+    const rejectProposal = await createTuiSkillProposal(
+      workspace,
+      "review-reject --description Review reject path",
+    );
+    const rejected = await rejectTuiSkillReviewProposal(
+      workspace,
+      rejectProposal.id,
+    );
+    expect(rejected).toMatchObject({
+      id: rejectProposal.id,
+      state: "rejected",
+      skillName: "review-reject",
+    });
+  });
+});

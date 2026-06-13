@@ -44,6 +44,55 @@ export type {
   SkillReportEntry,
   SkillShadowDiagnostic,
 } from "./skill-report.js";
+export { collectSkillStats } from "./skill-stats.js";
+export type {
+  SkillStatsEntry,
+  SkillStatsOptions,
+  SkillStatsReport,
+} from "./skill-stats.js";
+export { runSkillDoctor } from "./skill-doctor.js";
+export type {
+  RunSkillDoctorOptions,
+  SkillDoctorEntry,
+  SkillDoctorFinding,
+  SkillDoctorReport,
+  SkillDoctorSeverity,
+  SkillDoctorStatus,
+} from "./skill-doctor.js";
+export {
+  applySkillProposal,
+  createSkillCreateProposal,
+  createSkillUpdateProposal,
+  listSkillHistory,
+  listSkillProposals,
+  pruneSkillProposals,
+  readSkillHistoryDetail,
+  readSkillProposal,
+  rejectSkillProposal,
+  skillEvolutionRoot,
+  restoreSkillFromHistory,
+  supersedeSkillProposal,
+} from "./skill-evolution.js";
+export type {
+  ApplySkillProposalResult,
+  CloseSkillProposalInput,
+  CreateSkillCreateProposalInput,
+  CreateSkillUpdateProposalInput,
+  PruneSkillProposalsInput,
+  PruneSkillProposalsResult,
+  RestoreSkillFromHistoryInput,
+  RestoreSkillFromHistoryResult,
+  SkillHistoryEntry,
+  SkillHistoryDetail,
+  SkillHistoryKind,
+  SkillHistoryMetadata,
+  SkillProposalDetail,
+  SkillProposalKind,
+  SkillProposalMetadata,
+  SkillProposalState,
+  SkillProposalSummary,
+  SupersedeSkillProposalInput,
+} from "./skill-evolution.js";
 export { loadLayeredAgentReport } from "./agent-report.js";
 export type {
   AgentReport,
@@ -101,6 +150,8 @@ export type {
   SharedConfigError,
   LoadedSharedConfig,
   CapabilityConfig,
+  CapabilitySkillEvolutionConfig,
+  CapabilitySkillEvolutionMode,
   CapabilityHooksConfig,
   CapabilityWorkflowHookConfig,
   CapabilityHookActionConfig,

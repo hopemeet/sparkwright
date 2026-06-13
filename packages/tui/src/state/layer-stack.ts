@@ -23,6 +23,9 @@ export type LayerName =
   | "config"
   | "capabilities"
   | "create"
+  | "skill-create"
+  | "skill-update"
+  | "skill-review"
   | "session-rename";
 
 export interface LayerEntry<P = unknown> {
@@ -48,6 +51,9 @@ const PRIORITY: Record<LayerName, number> = {
   timeline: 62,
   capabilities: 57,
   create: 57,
+  "skill-create": 57,
+  "skill-update": 57,
+  "skill-review": 57,
   help: 50,
   config: 50,
 };

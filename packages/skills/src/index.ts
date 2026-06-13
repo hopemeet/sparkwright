@@ -1095,3 +1095,11 @@ export {
   type SkillBundle,
   type ResolvedBundle,
 } from "./bundles.js";
+export {
+  computeSkillPackageHash,
+  listSkillPackageFiles,
+  snapshotSkillPackage,
+  type SkillPackageFile,
+  type SkillPackageHash,
+  type SnapshotSkillPackageResult,
+} from "./package.js";
