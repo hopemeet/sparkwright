@@ -50,6 +50,15 @@ export interface CommandOutcomeSummary {
   byExitCode: Record<string, number>;
 }
 
+export interface VerificationProfileResult {
+  hookName: string;
+  profile?: string;
+  id: string;
+  status: "passed" | "failed";
+  exitCode?: number | null;
+  timedOut?: boolean;
+}
+
 export interface CompletedRunOutcome {
   kind:
     | "completed_with_issues"
@@ -57,10 +66,24 @@ export interface CompletedRunOutcome {
     | "completed_with_recovered_tool_failures"
     | "completed_with_verification_failures"
     | "completed_with_unsupported_final_claims";
+  /**
+   * Whether the run should be treated as failed (non-zero exit). True only for
+   * unresolved tool failures or verification failures. Recovered tool failures
+   * and unsupported final-answer claims are annotated but advisory — they do not
+   * fail the run. This is the single authoritative source consumed by the CLI
+   * exit code and status label.
+   */
+  failing: boolean;
   toolFailures?: { count: number; codes: string[] };
   commandFailures?: {
     count: number;
     lastCommand?: string;
+    lastExitCode?: number | null;
+  };
+  /** @reserved Public outcome field consumed by trace/diagnostics readers of the serialized run.completed.outcome, not by an in-process TS reader. */
+  verificationProfileFailures?: {
+    count: number;
+    lastId?: string;
     lastExitCode?: number | null;
   };
   unsupportedFinalClaims?: {
@@ -233,9 +256,7 @@ export function analyzeToolOutcomes(
   for (const [index, event] of events.entries()) {
     if (event.type !== "tool.failed" || !isRecord(event.payload)) continue;
     const toolCallId = stringValue(event.payload.toolCallId);
-    const code = isRecord(event.payload.error)
-      ? stringValue(event.payload.error.code)
-      : undefined;
+    const code = toolFailureCodeFromPayload(event.payload);
     const toolName =
       stringValue(event.payload.toolName) ??
       toolNameForCall(requested, toolCallId);
@@ -297,6 +318,137 @@ export function analyzeToolOutcomes(
   };
 }
 
+/**
+ * Configured verification-profile results, keyed by hook name (latest wins).
+ * A non-zero exit code or a timeout marks the profile as failed. Stop-gate and
+ * suggest-only hooks are advisory and excluded.
+ *
+ * This is the single source for profile results: the CLI exit-code path and the
+ * run `outcome` both read it, so the two cannot disagree on whether a profile
+ * failed.
+ */
+export function analyzeVerificationProfileResults(
+  events: readonly SparkwrightEvent[],
+): VerificationProfileResult[] {
+  const latest = new Map<string, VerificationProfileResult>();
+  for (const event of events) {
+    if (event.type !== "workflow_hook.completed" || !isRecord(event.payload)) {
+      continue;
+    }
+    const hookName = stringValue(event.payload.hookName);
+    const parsed = parseVerificationHookName(hookName);
+    if (!hookName || !parsed) continue;
+    const result = isRecord(event.payload.result)
+      ? event.payload.result
+      : undefined;
+    const metadata = isRecord(result?.metadata) ? result.metadata : undefined;
+    if (!metadata) continue;
+    const timedOut = booleanValue(metadata.timedOut) ?? false;
+    const exitCode = numberOrNullValue(metadata.exitCode);
+    latest.set(hookName, {
+      hookName,
+      profile: parsed.profile,
+      id: parsed.id,
+      status: exitCode === 0 && !timedOut ? "passed" : "failed",
+      exitCode,
+      timedOut,
+    });
+  }
+  return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function parseVerificationHookName(
+  hookName: string | undefined,
+): { profile: string; id: string } | undefined {
+  if (!hookName?.startsWith("verification:")) return undefined;
+  const [, profile, ...idParts] = hookName.split(":");
+  const id = idParts.join(":");
+  if (!profile || !id) return undefined;
+  if (id === "stop-gate" || profile === "suggest") return undefined;
+  return { profile, id };
+}
+
+export interface CommandOutcomeSnapshot {
+  total: number;
+  byExitCode: Record<string, number>;
+  verification: {
+    total: number;
+    unresolved: number;
+    lastCommand?: string;
+    lastExitCode?: number | null;
+    lastTimedOut?: boolean;
+  };
+}
+
+/**
+ * A persistable snapshot of command outcomes, computed once at run time over the
+ * full event stream. Trace summaries prefer this over recomputing from a
+ * persisted (and possibly lossy / minimal) trace, where `tool.completed` output
+ * is stripped and command failures can no longer be derived. Returns `undefined`
+ * when no command failed, so clean runs carry nothing extra.
+ */
+export function commandOutcomeSnapshot(
+  events: readonly SparkwrightEvent[],
+): CommandOutcomeSnapshot | undefined {
+  const outcomes = analyzeCommandOutcomes(events);
+  if (outcomes.failures.length === 0) return undefined;
+  const last = outcomes.verificationFailures.at(-1);
+  return {
+    total: outcomes.failures.length,
+    byExitCode: outcomes.byExitCode,
+    verification: {
+      total: outcomes.verificationFailures.length,
+      unresolved: outcomes.unresolvedVerificationFailures.length,
+      ...(last?.command ? { lastCommand: last.command } : {}),
+      ...(last
+        ? { lastExitCode: last.exitCode, lastTimedOut: last.timedOut }
+        : {}),
+    },
+  };
+}
+
+export interface ToolOutcomeSnapshot {
+  unresolved: { total: number; byCode: Record<string, number> };
+  recovered: { total: number; byCode: Record<string, number> };
+}
+
+/**
+ * A persistable snapshot of classified tool failures (unresolved vs recovered),
+ * computed once at run time over the full event stream. Trace summaries prefer
+ * this over recomputing from a persisted (possibly minimal) trace, where
+ * `tool.requested` arguments are stripped and same-target recovery can no
+ * longer be detected. Returns `undefined` when no tool failed.
+ */
+export function toolOutcomeSnapshot(
+  events: readonly SparkwrightEvent[],
+): ToolOutcomeSnapshot | undefined {
+  const outcomes = analyzeToolOutcomes(events);
+  if (
+    outcomes.unresolvedFailures.length === 0 &&
+    outcomes.recoveredFailures.length === 0
+  ) {
+    return undefined;
+  }
+  const tallyByCode = (failures: readonly ClassifiedToolFailure[]) => {
+    const byCode: Record<string, number> = {};
+    for (const failure of failures) {
+      const code = failure.code ?? "unknown";
+      byCode[code] = (byCode[code] ?? 0) + 1;
+    }
+    return byCode;
+  };
+  return {
+    unresolved: {
+      total: outcomes.unresolvedFailures.length,
+      byCode: tallyByCode(outcomes.unresolvedFailures),
+    },
+    recovered: {
+      total: outcomes.recoveredFailures.length,
+      byCode: tallyByCode(outcomes.recoveredFailures),
+    },
+  };
+}
+
 export function completedRunOutcomeFromEvents(
   events: readonly SparkwrightEvent[],
   finalMessage?: string,
@@ -307,10 +459,18 @@ export function completedRunOutcomeFromEvents(
     finalMessage,
     commandSummary,
   );
+  const profileFailures = analyzeVerificationProfileResults(events).filter(
+    (result) => result.status === "failed",
+  );
+  // Command-verification and profile-verification are a single "verification"
+  // issue category for outcome-kind purposes.
+  const hasVerificationFailures =
+    commandSummary.unresolvedVerificationFailures.length > 0 ||
+    profileFailures.length > 0;
   const issueKinds = [
     toolSummary.unresolvedFailures.length > 0 ||
       toolSummary.recoveredFailures.length > 0,
-    commandSummary.unresolvedVerificationFailures.length > 0,
+    hasVerificationFailures,
     unsupportedFinalClaims.length > 0,
   ].filter(Boolean).length;
   const relevant =
@@ -320,7 +480,7 @@ export function completedRunOutcomeFromEvents(
 
   if (
     relevant.length === 0 &&
-    commandSummary.unresolvedVerificationFailures.length === 0 &&
+    !hasVerificationFailures &&
     unsupportedFinalClaims.length === 0
   ) {
     return undefined;
@@ -328,6 +488,7 @@ export function completedRunOutcomeFromEvents(
 
   const lastCommandFailure =
     commandSummary.unresolvedVerificationFailures.at(-1);
+  const lastProfileFailure = profileFailures.at(-1);
   return {
     kind: completedRunOutcomeKind({
       issueKinds,
@@ -335,10 +496,11 @@ export function completedRunOutcomeFromEvents(
       hasRecoveredToolFailures:
         toolSummary.unresolvedFailures.length === 0 &&
         toolSummary.recoveredFailures.length > 0,
-      hasCommandFailures:
-        commandSummary.unresolvedVerificationFailures.length > 0,
+      hasCommandFailures: hasVerificationFailures,
       hasUnsupportedFinalClaims: unsupportedFinalClaims.length > 0,
     }),
+    failing:
+      toolSummary.unresolvedFailures.length > 0 || hasVerificationFailures,
     ...(relevant.length > 0
       ? {
           toolFailures: {
@@ -356,6 +518,19 @@ export function completedRunOutcomeFromEvents(
               : {}),
             ...(lastCommandFailure
               ? { lastExitCode: lastCommandFailure.exitCode }
+              : {}),
+          },
+        }
+      : {}),
+    ...(profileFailures.length > 0
+      ? {
+          verificationProfileFailures: {
+            count: profileFailures.length,
+            ...(lastProfileFailure?.id
+              ? { lastId: lastProfileFailure.id }
+              : {}),
+            ...(lastProfileFailure
+              ? { lastExitCode: lastProfileFailure.exitCode }
               : {}),
           },
         }
@@ -384,6 +559,22 @@ function completedRunOutcomeKind(input: {
     return "completed_with_recovered_tool_failures";
   if (input.hasCommandFailures) return "completed_with_verification_failures";
   return "completed_with_unsupported_final_claims";
+}
+
+/**
+ * Read a tool.failed code regardless of trace level. Full traces carry the
+ * nested `error.code`; minimal traces flatten it to `errorCode`
+ * (see `minimalPayload` in trace.ts). Reading both keeps failure
+ * classification — and therefore the run verdict — trace-level invariant.
+ */
+function toolFailureCodeFromPayload(
+  payload: Record<string, unknown>,
+): string | undefined {
+  if (isRecord(payload.error)) {
+    const nested = stringValue(payload.error.code);
+    if (nested) return nested;
+  }
+  return stringValue(payload.errorCode);
 }
 
 export function classifyToolFailure(

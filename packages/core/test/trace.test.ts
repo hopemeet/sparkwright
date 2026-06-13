@@ -981,6 +981,171 @@ describe("trace", () => {
     });
   });
 
+  it("reads the persisted tool outcome on a minimal trace", () => {
+    const run = createRunRecord();
+    // The verdict computed over full events: the failure on a.txt is NOT
+    // recovered, because the later success is on a *different* file (b.txt) and
+    // EBUSY is not a not-found code.
+    const toolOutcome = {
+      unresolved: { total: 1, byCode: { EBUSY: 1 } },
+      recovered: { total: 0, byCode: {} },
+    };
+    const buildEvents = (withVerdict: boolean) => {
+      const log = new EventLog(run.id);
+      const events = [
+        log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+        log.emit("tool.requested", {
+          id: "call_fail",
+          toolName: "read_file",
+          arguments: { path: "a.txt" },
+        }),
+        log.emit("tool.failed", {
+          toolCallId: "call_fail",
+          toolName: "read_file",
+          status: "failed",
+          error: { code: "EBUSY", message: "resource busy" },
+        }),
+        log.emit("tool.requested", {
+          id: "call_ok",
+          toolName: "read_file",
+          arguments: { path: "b.txt" },
+        }),
+        log.emit("tool.completed", {
+          toolCallId: "call_ok",
+          toolName: "read_file",
+          status: "completed",
+          output: { path: "b.txt", content: "ok" },
+        }),
+        log.emit(
+          "run.completed",
+          withVerdict ? { reason: "final_answer", toolOutcome } : {},
+        ),
+      ];
+      return summarizeTraceJsonl(
+        events
+          .map((event) => filterTraceEvent(event, "minimal"))
+          .map(serializeEventJsonl)
+          .join(""),
+      );
+    };
+
+    // With the persisted verdict, the minimal trace reports the failure as
+    // unresolved (correct).
+    const withVerdict = buildEvents(true);
+    expect(withVerdict.toolFailures.unresolved.total).toBe(1);
+    expect(withVerdict.toolFailures.recovered.total).toBe(0);
+
+    // Regression guard: without the verdict, recomputing from the minimal trace
+    // collapses both reads to one target (arguments are stripped) and *falsely*
+    // marks the failure recovered — hiding a real unresolved failure.
+    const withoutVerdict = buildEvents(false);
+    expect(withoutVerdict.toolFailures.recovered.total).toBe(1);
+    expect(withoutVerdict.toolFailures.unresolved.total).toBe(0);
+  });
+
+  it("reads the persisted command outcome on a minimal trace", () => {
+    const run = createRunRecord();
+    const commandOutcome = {
+      total: 1,
+      byExitCode: { "254": 1 },
+      verification: {
+        total: 1,
+        unresolved: 1,
+        lastCommand: "npm test",
+        lastExitCode: 254,
+        lastTimedOut: false,
+      },
+    };
+    const log = new EventLog(run.id);
+    const minimalJsonl = [
+      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+      // tool.completed output (which command analysis needs) is stripped at
+      // minimal; only the persisted verdict survives.
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
+      }),
+      log.emit("run.completed", { reason: "final_answer", commandOutcome }),
+    ]
+      .map((event) => filterTraceEvent(event, "minimal"))
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(minimalJsonl);
+
+    expect(summary.commandFailures.total).toBe(1);
+    expect(summary.commandFailures.byExitCode).toEqual({ "254": 1 });
+    expect(summary.commandFailures.verification).toMatchObject({
+      total: 1,
+      unresolved: 1,
+      lastCommand: "npm test",
+      lastExitCode: 254,
+    });
+  });
+
+  it("under-reports command failures on a minimal trace without a persisted outcome", () => {
+    // Guards the regression the persisted snapshot fixes: with output stripped
+    // and no verdict to read, the summary cannot recover the failure.
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const minimalJsonl = [
+      log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 254, stdout: "EXIT:254\n", timedOut: false },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map((event) => filterTraceEvent(event, "minimal"))
+      .map(serializeEventJsonl)
+      .join("");
+
+    expect(summarizeTraceJsonl(minimalJsonl).commandFailures.total).toBe(0);
+  });
+
+  it("counts an approval denial the same at minimal and standard trace levels", () => {
+    const run = createRunRecord();
+    const buildJsonl = (level: "minimal" | "standard") => {
+      const log = new EventLog(run.id);
+      return [
+        log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+        log.emit("tool.requested", {
+          id: "call_1",
+          toolName: "append_file",
+          arguments: { path: "README.md", content: "x" },
+        }),
+        log.emit("tool.failed", {
+          toolCallId: "call_1",
+          toolName: "append_file",
+          status: "failed",
+          error: { code: "TOOL_APPROVAL_DENIED", message: "approval denied" },
+        }),
+        log.emit("run.completed", { state: "completed" }),
+      ]
+        .map((event) => filterTraceEvent(event, level))
+        .map(serializeEventJsonl)
+        .join("");
+    };
+
+    const minimal = summarizeTraceJsonl(buildJsonl("minimal"));
+    const standard = summarizeTraceJsonl(buildJsonl("standard"));
+
+    // The minimal trace flattens the code to `errorCode`; the denial must still
+    // be classified as an expected denial, not an unresolved tool failure.
+    expect(minimal.expectedDenialCount).toBe(1);
+    expect(minimal.expectedDenialCodes).toEqual({ TOOL_APPROVAL_DENIED: 1 });
+    expect(minimal.toolFailures.unresolved.total).toBe(0);
+    // ...and identical to the standard-level verdict.
+    expect(minimal.expectedDenialCount).toBe(standard.expectedDenialCount);
+    expect(minimal.toolFailures.unresolved.total).toBe(
+      standard.toolFailures.unresolved.total,
+    );
+  });
+
   it("records error codes for run.failed and validation.failed events", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
