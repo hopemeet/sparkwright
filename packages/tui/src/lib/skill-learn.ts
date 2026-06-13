@@ -24,6 +24,12 @@ export interface SkillLearnSetResult extends SkillLearnStatus {
 
 export interface SkillLearnNotice {
   reason: string;
+  /**
+   * The user's own instruction that triggered the notice, captured verbatim
+   * (condensed). This is the actual content a learned draft records — only the
+   * user's prompt is ever used as evidence, never tool/log/web/command output.
+   */
+  evidence: string;
 }
 
 export interface SkillLearnDraftProposal {
@@ -92,33 +98,64 @@ export function formatSkillLearnStatus(status: SkillLearnStatus): string {
     : `${status.mode} (config)`;
 }
 
+const REUSE_PATTERNS: readonly RegExp[] = [
+  /\bremember (this|that|to)\b/u,
+  /\bnext time\b/u,
+  /\bfrom now on\b/u,
+  /\balways\b.+\b(use|do|run|check|prefer)\b/u,
+  /以后.*(这样|记住|都|总是)/u,
+  /下次.*(这样|记住|都|先|不要)/u,
+  /记住(这个|这点|这样)/u,
+];
+
+const CORRECTION_PATTERNS: readonly RegExp[] = [
+  /\b(don't|do not|never)\b.+\b(next time|again)\b/u,
+  /以后不要/u,
+];
+
 export function detectSkillLearnNotice(
   goals: readonly string[],
 ): SkillLearnNotice | null {
   const combined = goals.join("\n").toLowerCase();
   if (!combined.trim()) return null;
-  if (
-    /\bremember (this|that|to)\b/u.test(combined) ||
-    /\bnext time\b/u.test(combined) ||
-    /\bfrom now on\b/u.test(combined) ||
-    /\balways\b.+\b(use|do|run|check|prefer)\b/u.test(combined)
-  ) {
-    return { reason: "explicit reuse instruction" };
+  const reuse = REUSE_PATTERNS.some((pattern) => pattern.test(combined));
+  const correction = CORRECTION_PATTERNS.some((pattern) =>
+    pattern.test(combined),
+  );
+  if (!reuse && !correction) return null;
+  const reason = reuse ? "explicit reuse instruction" : "workflow correction";
+  return {
+    reason,
+    evidence: captureEvidence(goals, [
+      ...REUSE_PATTERNS,
+      ...CORRECTION_PATTERNS,
+    ]),
+  };
+}
+
+/**
+ * Picks the user instruction that justifies the notice: the most recent goal
+ * that individually matches a trigger pattern, else the most recent non-empty
+ * goal. Returned verbatim (condensed), so the learned draft records what the
+ * user actually said rather than a placeholder.
+ */
+function captureEvidence(
+  goals: readonly string[],
+  patterns: readonly RegExp[],
+): string {
+  for (let i = goals.length - 1; i >= 0; i -= 1) {
+    const goal = goals[i]?.trim();
+    if (goal && patterns.some((pattern) => pattern.test(goal.toLowerCase()))) {
+      return condenseEvidence(goal);
+    }
   }
-  if (
-    /以后.*(这样|记住|都|总是)/u.test(combined) ||
-    /下次.*(这样|记住|都|先|不要)/u.test(combined) ||
-    /记住(这个|这点|这样)/u.test(combined)
-  ) {
-    return { reason: "explicit reuse instruction" };
-  }
-  if (
-    /\b(don't|do not|never)\b.+\b(next time|again)\b/u.test(combined) ||
-    /以后不要/u.test(combined)
-  ) {
-    return { reason: "workflow correction" };
-  }
-  return null;
+  const last = [...goals].reverse().find((goal) => goal.trim().length > 0);
+  return condenseEvidence(last?.trim() ?? "");
+}
+
+function condenseEvidence(text: string): string {
+  const collapsed = text.replace(/\s+/gu, " ").trim();
+  return collapsed.length > 280 ? `${collapsed.slice(0, 277)}...` : collapsed;
 }
 
 export function detectSkillLearnTarget(
@@ -143,7 +180,13 @@ export async function createSkillLearnDraftProposal(
   options: CreateSkillLearnDraftProposalOptions = {},
 ): Promise<SkillLearnDraftProposal> {
   const loaded = await loadHostConfig(workspaceRoot, process.env);
-  const description = skillLearnDraftDescription(notice);
+  const evidence =
+    notice.evidence.trim().length > 0
+      ? condenseEvidence(notice.evidence)
+      : "Reusable workflow guidance noticed in a TUI session.";
+  const description = learnSummaryDescription(evidence);
+  const applyEdit = (beforeContent: string): string =>
+    appendLearning(beforeContent, evidence);
   const roots = await existingSkillRoots(
     resolveSkillRootsForRuntime(
       workspaceRoot,
@@ -153,9 +196,9 @@ export async function createSkillLearnDraftProposal(
   );
 
   // A detected target name is only a hint. Honor it solely when it resolves to
-  // an existing Skill (producing an update/fork proposal). A name that matches
-  // no Skill is almost certainly a false-positive extraction from the user's
-  // prose (e.g. "use the skill here" -> "here"), so we must NOT create a
+  // an existing Skill (appending the captured learning to it). A name that
+  // matches no Skill is almost certainly a false-positive extraction from the
+  // user's prose (e.g. "use the skill here" -> "here"), so we must NOT create a
   // brand-new Skill named after it; fall back to the session-learnings draft.
   if (options.targetSkillName) {
     try {
@@ -165,6 +208,7 @@ export async function createSkillLearnDraftProposal(
           skillRoots: roots,
           name: options.targetSkillName,
           description,
+          applyEdit,
         }),
       );
     } catch (error) {
@@ -172,8 +216,8 @@ export async function createSkillLearnDraftProposal(
     }
   }
 
-  // Default target: session-learnings. Update the existing draft Skill if it
-  // already exists, otherwise create it.
+  // Default target: session-learnings. Append the learning to the existing
+  // draft Skill if it exists, otherwise create it with the captured content.
   try {
     return toDraftProposal(
       await createSkillUpdateProposal({
@@ -181,6 +225,7 @@ export async function createSkillLearnDraftProposal(
         skillRoots: roots,
         name: SKILL_LEARN_DRAFT_SKILL_NAME,
         description,
+        applyEdit,
       }),
     );
   } catch (error) {
@@ -192,6 +237,7 @@ export async function createSkillLearnDraftProposal(
       workspaceRoot,
       name: SKILL_LEARN_DRAFT_SKILL_NAME,
       description,
+      content: renderSessionLearningsSkill(evidence),
     }),
   );
 }
@@ -232,14 +278,54 @@ export async function applySkillLearnDraftProposal(
   };
 }
 
-function skillLearnDraftDescription(notice: SkillLearnNotice): string {
+const SESSION_LEARNINGS_DESCRIPTION =
+  "Reusable, project-specific workflow guidance captured from explicit user instructions in past sessions. Consult before recurring tasks to follow established conventions.";
+
+const SESSION_LEARNINGS_PREAMBLE =
+  "Captured verbatim from the user's own explicit reuse instructions during TUI sessions. Evidence is limited to the user's prompts; tool output, logs, web pages, and command output are never used as learning evidence. Review the session transcript before relying on an entry.";
+
+function learnSummaryDescription(evidence: string): string {
+  return condenseEvidence(`Capture session learning: ${evidence}`);
+}
+
+/** Full SKILL.md for a fresh session-learnings Skill seeded with one learning. */
+function renderSessionLearningsSkill(evidence: string): string {
   return [
-    "Captures explicit reusable workflow guidance noticed in a TUI session.",
-    `Trigger: ${notice.reason}.`,
-    "Evidence: deterministic TUI learning detected explicit reuse wording in the user's own prompt.",
-    "Safety: tool output, logs, webpages, and command output were not used as learning evidence.",
-    "Review the session transcript before applying.",
-  ].join(" ");
+    "---",
+    `name: ${SKILL_LEARN_DRAFT_SKILL_NAME}`,
+    `description: ${SESSION_LEARNINGS_DESCRIPTION}`,
+    'version: "1.0.0"',
+    "metadata:",
+    '  version: "1.0.0"',
+    "---",
+    "",
+    "# Session Learnings",
+    "",
+    SESSION_LEARNINGS_PREAMBLE,
+    "",
+    "## Learnings",
+    "",
+    `- ${evidence}`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * Appends the captured learning as a bullet under a "## Learnings" section,
+ * creating the section if absent. De-duplicates: an identical bullet leaves the
+ * content unchanged so repeated sessions do not pile up duplicates.
+ */
+function appendLearning(beforeContent: string, evidence: string): string {
+  const bullet = `- ${evidence}`;
+  const trimmed = beforeContent.replace(/\s+$/u, "");
+  const alreadyPresent = trimmed
+    .split("\n")
+    .some((line) => line.trim() === bullet);
+  if (alreadyPresent) return `${trimmed}\n`;
+  if (/^##\s+Learnings\s*$/mu.test(trimmed)) {
+    return `${trimmed}\n${bullet}\n`;
+  }
+  return [trimmed, "", "## Learnings", "", bullet, ""].join("\n");
 }
 
 function isReservedSkillTarget(name: string): boolean {

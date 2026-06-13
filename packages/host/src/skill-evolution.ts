@@ -149,6 +149,13 @@ export interface CreateSkillCreateProposalInput {
   name: string;
   description: string;
   createdAt?: Date | string;
+  /**
+   * Full SKILL.md content for the new Skill. When omitted, a minimal template
+   * derived from `description` is used. Callers that capture real content
+   * (e.g. the TUI learning helper) provide it here so the proposed Skill holds
+   * actual guidance rather than a placeholder.
+   */
+  content?: string;
 }
 
 export interface CreateSkillUpdateProposalInput {
@@ -157,6 +164,11 @@ export interface CreateSkillUpdateProposalInput {
   name: string;
   description: string;
   createdAt?: Date | string;
+  /**
+   * Transform applied to the current SKILL.md to produce the proposed content.
+   * When omitted, `description` is appended as a "Proposed Evolution" section.
+   */
+  applyEdit?: (beforeContent: string) => string;
 }
 
 export async function createSkillCreateProposal(
@@ -179,7 +191,8 @@ export async function createSkillCreateProposal(
     input.createdAt instanceof Date
       ? input.createdAt.toISOString()
       : (input.createdAt ?? new Date().toISOString());
-  const skillContent = renderSkillTemplate(input.name, input.description);
+  const skillContent =
+    input.content ?? renderSkillTemplate(input.name, input.description);
 
   await mkdir(afterSkillDir, { recursive: true });
   await writeFile(join(afterSkillDir, "SKILL.md"), skillContent, "utf8");
@@ -253,10 +266,9 @@ export async function createSkillUpdateProposal(
   await snapshotSkillPackage(sourceDir, afterSkillDir);
   const skillPath = join(afterSkillDir, "SKILL.md");
   const beforeContent = await readFile(skillPath, "utf8");
-  const afterContent = renderUpdatedSkillContent(
-    beforeContent,
-    input.description,
-  );
+  const afterContent = input.applyEdit
+    ? input.applyEdit(beforeContent)
+    : renderUpdatedSkillContent(beforeContent, input.description);
   await writeFile(skillPath, afterContent, "utf8");
 
   const afterHash = await computeSkillPackageHash(afterSkillDir);

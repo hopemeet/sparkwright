@@ -116,12 +116,26 @@ describe("tui skill evolution commands", () => {
     expect(config.capabilities?.skills?.evolution?.mode).toBe("draft");
   });
 
-  it("detects conservative skill learn notice signals", () => {
+  it("detects conservative skill learn notice signals and captures evidence", () => {
     expect(
       detectSkillLearnNotice(["Remember this: always run tests first."]),
-    ).toEqual({ reason: "explicit reuse instruction" });
+    ).toEqual({
+      reason: "explicit reuse instruction",
+      evidence: "Remember this: always run tests first.",
+    });
     expect(detectSkillLearnNotice(["以后这样做，先检查 proposal。"])).toEqual({
       reason: "explicit reuse instruction",
+      evidence: "以后这样做，先检查 proposal。",
+    });
+    // Evidence is the most recent triggering goal, not unrelated earlier turns.
+    expect(
+      detectSkillLearnNotice([
+        "Summarize the repo.",
+        "From now on, prefer the build script.",
+      ]),
+    ).toEqual({
+      reason: "explicit reuse instruction",
+      evidence: "From now on, prefer the build script.",
     });
     expect(detectSkillLearnNotice(["Summarize this one-off task."])).toBeNull();
     expect(
@@ -142,6 +156,7 @@ describe("tui skill evolution commands", () => {
 
     const proposal = await createSkillLearnDraftProposal(workspace, {
       reason: "explicit reuse instruction",
+      evidence: "Always run the linter before committing.",
     });
     expect(proposal).toMatchObject({
       kind: "create",
@@ -154,13 +169,20 @@ describe("tui skill evolution commands", () => {
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
 
-    const proposalMarkdown = await readFile(
-      join(proposal.path, "proposal.md"),
+    // The proposed Skill captures the user's actual instruction (not a
+    // placeholder), with a stable trigger description and the safety preamble.
+    const skillContent = await readFile(
+      join(proposal.path, "after", SKILL_LEARN_DRAFT_SKILL_NAME, "SKILL.md"),
       "utf8",
     );
-    expect(proposalMarkdown).toContain("Review the session transcript");
-    expect(proposalMarkdown).toContain("Evidence: deterministic TUI learning");
-    expect(proposalMarkdown).toContain("tool output, logs, webpages");
+    expect(skillContent).toContain("## Learnings");
+    expect(skillContent).toContain(
+      "- Always run the linter before committing.",
+    );
+    expect(skillContent).toContain(
+      "tool output, logs, web pages, and command output are never used",
+    );
+    expect(skillContent).toContain("description: Reusable, project-specific");
   });
 
   it("targets an existing skill for learned drafts (update/fork)", async () => {
@@ -189,7 +211,10 @@ describe("tui skill evolution commands", () => {
 
     const proposal = await createSkillLearnDraftProposal(
       workspace,
-      { reason: "explicit reuse instruction" },
+      {
+        reason: "explicit reuse instruction",
+        evidence: "Always mention verification steps.",
+      },
       { targetSkillName: "code-reviewer" },
     );
     expect(proposal).toMatchObject({
@@ -197,6 +222,13 @@ describe("tui skill evolution commands", () => {
       skillName: "code-reviewer",
       state: "draft",
     });
+    // The learning is appended to the existing Skill's body.
+    const after = await readFile(
+      join(proposal.path, "after", "code-reviewer", "SKILL.md"),
+      "utf8",
+    );
+    expect(after).toContain("- Always mention verification steps.");
+    expect(after).toContain("description: reviews code changes");
   });
 
   it("ignores a target that matches no Skill and falls back to session-learnings", async () => {
@@ -207,7 +239,10 @@ describe("tui skill evolution commands", () => {
     // the helper must NOT create a Skill named "here".
     const proposal = await createSkillLearnDraftProposal(
       workspace,
-      { reason: "explicit reuse instruction" },
+      {
+        reason: "explicit reuse instruction",
+        evidence: "Use the skill here.",
+      },
       { targetSkillName: "here" },
     );
     expect(proposal).toMatchObject({
@@ -225,6 +260,7 @@ describe("tui skill evolution commands", () => {
 
     const proposal = await createSkillLearnDraftProposal(workspace, {
       reason: "explicit reuse instruction",
+      evidence: "Prefer the deterministic model for QA runs.",
     });
     const applied = await applySkillLearnDraftProposal(workspace, proposal);
     expect(applied).toMatchObject({
@@ -244,6 +280,9 @@ describe("tui skill evolution commands", () => {
       "utf8",
     );
     expect(skillMarkdown).toContain(SKILL_LEARN_DRAFT_SKILL_NAME);
+    expect(skillMarkdown).toContain(
+      "- Prefer the deterministic model for QA runs.",
+    );
 
     await expect(
       applySkillLearnDraftProposal(workspace, {
@@ -252,6 +291,45 @@ describe("tui skill evolution commands", () => {
         skillName: "other",
       }),
     ).rejects.toThrow(/cannot apply other/);
+  });
+
+  it("accumulates distinct learnings and de-duplicates repeats", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-accum-"));
+    tempDirs.push(workspace);
+
+    const first = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+      evidence: "Run the linter first.",
+    });
+    await applySkillLearnDraftProposal(workspace, first);
+
+    // A new, distinct learning is appended under the same section.
+    const second = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+      evidence: "Then run the type checker.",
+    });
+    await applySkillLearnDraftProposal(workspace, second);
+
+    const skillPath = join(
+      workspace,
+      ".sparkwright",
+      "skills",
+      SKILL_LEARN_DRAFT_SKILL_NAME,
+      "SKILL.md",
+    );
+    let content = await readFile(skillPath, "utf8");
+    expect(content).toContain("- Run the linter first.");
+    expect(content).toContain("- Then run the type checker.");
+    expect((content.match(/^## Learnings$/gmu) ?? []).length).toBe(1);
+
+    // A repeat of an existing learning does not duplicate the bullet.
+    const repeat = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+      evidence: "Run the linter first.",
+    });
+    await applySkillLearnDraftProposal(workspace, repeat);
+    content = await readFile(skillPath, "utf8");
+    expect((content.match(/- Run the linter first\./gu) ?? []).length).toBe(1);
   });
 
   it("applies and rejects proposals from the review helpers", async () => {
