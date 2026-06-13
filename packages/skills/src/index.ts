@@ -10,7 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   createContextItemId,
   defineTool,
@@ -520,7 +520,7 @@ export const lockSkills = createSkillLockfile;
 export function createSkillLoaderTool(
   skills: SkillDefinition[],
   options: { resourceFileLimit?: number } = {},
-): ToolDefinition<{ name: string }> {
+): ToolDefinition<{ name: string; resource?: string }> {
   const byName = new Map(skills.map((skill) => [skill.name, skill]));
   // Names whose body has already been loaded this run. A second load of the
   // same skill cannot add information — the body is already resident in
@@ -535,15 +535,20 @@ export function createSkillLoaderTool(
     throw new Error("resourceFileLimit must be a non-negative integer.");
   }
 
-  return defineTool<{ name: string }>({
+  return defineTool<{ name: string; resource?: string }>({
     name: "skill_load",
     description:
-      "Load a Sparkwright skill body ONLY when the current task clearly falls within a skill's stated scope. Match against the skill description, not just a shared keyword — do not load a skill for tasks outside its domain. Prefer answering directly when no skill clearly applies.",
+      "Load a Sparkwright skill body ONLY when the current task clearly falls within a skill's stated scope. Match against the skill description, not just a shared keyword — do not load a skill for tasks outside its domain. Prefer answering directly when no skill clearly applies. To read one of a loaded skill's reference files, call this tool again with that skill's name plus the file's skill-relative path as `resource`.",
     inputSchema: {
       type: "object",
       properties: {
         name: {
           type: "string",
+        },
+        resource: {
+          type: "string",
+          description:
+            "Optional skill-relative path of a reference file to read (as listed in the loaded skill's <skill_files>). Returns that file's content.",
         },
       },
       required: ["name"],
@@ -571,6 +576,10 @@ export function createSkillLoaderTool(
         };
       }
 
+      if (args.resource !== undefined) {
+        return await readSkillResource(skill, args.resource);
+      }
+
       if (loadedNames.has(skill.name)) {
         return {
           status: "already_loaded",
@@ -581,13 +590,13 @@ export function createSkillLoaderTool(
         };
       }
 
+      // Resource files are reported skill-relative (never as absolute host
+      // paths): they live outside the workspace, so an absolute path both leaks
+      // the host layout and lures the model into a workspace-escaping read_file
+      // call. The model reads them back through this tool's `resource` argument.
       const resourceFiles = await listSkillResourceFiles(
         skill,
         resourceFileLimit,
-      );
-      const baseDirectory = dirname(skill.sourcePath);
-      const resourceFilePaths = resourceFiles.map((file) =>
-        normalizePath(join(baseDirectory, file)),
       );
       loadedNames.add(skill.name);
 
@@ -596,11 +605,10 @@ export function createSkillLoaderTool(
         name: skill.name,
         description: skill.description,
         sourcePath: skill.sourcePath,
-        baseDirectory,
         contentHash: skill.contentHash,
         version: versionOf(skill.metadata),
-        content: createSkillToolOutput(skill, resourceFilePaths),
-        resourceFiles: resourceFilePaths,
+        content: createSkillToolOutput(skill, resourceFiles),
+        resourceFiles,
       };
     },
   });
@@ -904,28 +912,85 @@ function versionOf(metadata: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+/**
+ * Reads a skill reference file by its skill-relative path, on behalf of the
+ * `skill_load` tool's `resource` argument. The resolved path is contained to
+ * the skill's own directory, so a model cannot use it to read arbitrary host
+ * files (e.g. via `..` or an absolute path).
+ */
+async function readSkillResource(
+  skill: SkillDefinition,
+  resource: string,
+): Promise<Record<string, unknown>> {
+  if (skill.sourcePath === "<built-in>") {
+    return {
+      status: "resource_not_found",
+      name: skill.name,
+      resource,
+      message: "This skill is built in and has no readable reference files.",
+    };
+  }
+  const baseDirectory = resolve(dirname(skill.sourcePath));
+  const requested = resolve(baseDirectory, resource);
+  if (
+    requested !== baseDirectory &&
+    !requested.startsWith(baseDirectory + sep)
+  ) {
+    return {
+      status: "resource_denied",
+      name: skill.name,
+      resource,
+      message: `Resource path escapes the skill directory: ${resource}`,
+    };
+  }
+  let content: string;
+  try {
+    content = await readFile(requested, "utf8");
+  } catch {
+    return {
+      status: "resource_not_found",
+      name: skill.name,
+      resource,
+      message: `Reference file not found in skill \`${skill.name}\`: ${resource}`,
+    };
+  }
+  return {
+    status: "resource",
+    name: skill.name,
+    resource: normalizePath(relative(baseDirectory, requested)),
+    content,
+  };
+}
+
 function createSkillToolOutput(
   skill: SkillDefinition,
-  resourceFilePaths: string[],
+  resourceFiles: string[],
 ): string {
-  const baseDirectory = dirname(skill.sourcePath);
+  const fileSection =
+    resourceFiles.length > 0
+      ? [
+          "",
+          "This skill ships reference files. To read one, call skill_load " +
+            "again with this skill's name and the file's skill-relative path " +
+            "as `resource` (for example: skill_load with name " +
+            `"${skill.name}" and resource "${resourceFiles[0]}"). These files ` +
+            "live outside the workspace — do NOT pass them to read_file or " +
+            "prepend a working directory.",
+          "",
+          "<skill_files>",
+          ...resourceFiles.map((file) => `<file>${file}</file>`),
+          "</skill_files>",
+        ]
+      : [];
   return [
     `<skill_content name="${skill.name}">`,
     `# Skill: ${skill.name}`,
     "",
     skill.body.trim(),
     "",
-    `Base directory for this skill: ${baseDirectory}`,
-    "This skill's body is now loaded — do NOT call skill_load for it again. " +
-      "To use a reference file below, call a file-reading tool (e.g. " +
-      "read_file) on its full path; that is a different action from " +
-      "skill_load. Each <file> is a full path; pass it directly. Do not " +
-      "prepend the working directory. Any other relative path this skill " +
-      "mentions resolves from the base directory above.",
-    "",
-    "<skill_files>",
-    ...resourceFilePaths.map((file) => `<file>${file}</file>`),
-    "</skill_files>",
+    "This skill's body is now loaded — do NOT call skill_load again just to " +
+      "reload the body.",
+    ...fileSection,
     "</skill_content>",
   ].join("\n");
 }
