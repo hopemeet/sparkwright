@@ -1,6 +1,7 @@
 import {
   EventLog,
   analyzeCommandOutcomes,
+  analyzeToolOutcomes,
   completedRunOutcomeFromEvents,
   createRunId,
 } from "../src/index.js";
@@ -98,6 +99,93 @@ describe("run outcome evidence", () => {
         commandKey: "python3 -m unittest tests/test_config.py",
         exitCode: 1,
       },
+    ]);
+  });
+
+  it("treats a not-found read probe as recovered when a different file is read next", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Report VALUE from the config file" }),
+      log.emit("tool.requested", {
+        id: "call_miss",
+        toolName: "read_file",
+        arguments: { path: "config.conf" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_miss",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "ENOENT", message: "ENOENT: no such file" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_glob",
+        toolName: "glob",
+        arguments: { pattern: "*.conf" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_glob",
+        toolName: "glob",
+        status: "completed",
+        output: { matches: ["settings.conf"] },
+      }),
+      log.emit("tool.requested", {
+        id: "call_read",
+        toolName: "read_file",
+        arguments: { path: "settings.conf" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_read",
+        toolName: "read_file",
+        status: "completed",
+        output: { path: "settings.conf", content: "VALUE=42\n" },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+
+    expect(summary.unresolvedFailures).toEqual([]);
+    expect(summary.recoveredFailures.map((failure) => failure.code)).toEqual([
+      "ENOENT",
+    ]);
+  });
+
+  it("does not treat a workspace path-escape failure as recovered", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Append to the target" }),
+      log.emit("tool.requested", {
+        id: "call_escape",
+        toolName: "read_file",
+        arguments: { path: "link.txt" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_escape",
+        toolName: "read_file",
+        status: "failed",
+        error: {
+          code: "WORKSPACE_PATH_ESCAPED",
+          message: "Path escapes workspace root: link.txt",
+        },
+      }),
+      // A later successful read of a different file must NOT launder the escape.
+      log.emit("tool.requested", {
+        id: "call_ok",
+        toolName: "read_file",
+        arguments: { path: "README.md" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_ok",
+        toolName: "read_file",
+        status: "completed",
+        output: { path: "README.md", content: "# Demo\n" },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+
+    expect(summary.recoveredFailures).toEqual([]);
+    expect(summary.unresolvedFailures.map((failure) => failure.code)).toEqual([
+      "WORKSPACE_PATH_ESCAPED",
     ]);
   });
 
