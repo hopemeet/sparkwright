@@ -981,6 +981,39 @@ describe("trace", () => {
     });
   });
 
+  it("records error codes for run.failed and validation.failed events", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+      log.emit("validation.failed", {
+        stage: "input",
+        hookName: "run_input",
+        result: {
+          status: "failed",
+          findings: [{ code: "TARGET_OUTSIDE_WORKSPACE", severity: "error" }],
+        },
+      }),
+      log.emit("run.failed", {
+        reason: "validation",
+        code: "RUN_INPUT_VALIDATION_FAILED",
+        message: "Target must stay inside the workspace",
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    // errorCount and errorCodes must agree: a boundary rejection is no longer
+    // counted (errors: 2) while its codes go unreported (top errors: none).
+    expect(summary.errorCount).toBe(2);
+    expect(summary.errorCodes).toEqual({
+      TARGET_OUTSIDE_WORKSPACE: 1,
+      RUN_INPUT_VALIDATION_FAILED: 1,
+    });
+  });
+
   it("counts each tool call once across requested + started events", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -1596,6 +1629,138 @@ describe("trace", () => {
       runIds: [run.id],
     });
     expect(report.findings).toEqual([]);
+  });
+
+  it("flags a workspace path-escape tool failure as an error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-escape-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: root }),
+      sessionId: "session_escape",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: root,
+        sessionId: "session_escape",
+        agentId: "main",
+        traceLevel: "debug",
+      }),
+    });
+    const store = factory(run);
+
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    await store.append(
+      log.emit("tool.requested", {
+        id: "call_escape",
+        toolName: "read_file",
+        arguments: { path: "link.txt" },
+      }),
+    );
+    await store.append(log.emit("tool.started", { toolCallId: "call_escape" }));
+    await store.append(
+      log.emit("tool.failed", {
+        toolCallId: "call_escape",
+        toolName: "read_file",
+        status: "failed",
+        error: {
+          code: "WORKSPACE_PATH_ESCAPED",
+          message: "Path escapes workspace root: link.txt",
+        },
+      }),
+    );
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_escape"),
+    });
+
+    // A structurally valid session is still not "ok" when a tool tried to
+    // escape the workspace root, even though the boundary blocked the write.
+    expect(report.ok).toBe(false);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          code: "WORKSPACE_PATH_ESCAPE_ATTEMPT",
+          metadata: expect.objectContaining({ count: 1 }),
+        }),
+      ]),
+    );
+    // The escape is reported once, not also double-counted as a generic
+    // unresolved tool failure.
+    expect(
+      report.findings.filter((f) => f.code === "UNRESOLVED_TOOL_FAILURE"),
+    ).toEqual([]);
+  });
+
+  it("surfaces an unresolved tool failure as a non-failing warning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-sessions-enoent-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const factory = createSessionRunStoreFactory({
+      sessionStore: new FileSessionStore({ rootDir: root }),
+      sessionId: "session_enoent",
+      runStoreFactory: createSessionFileRunStoreFactory({
+        sessionRootDir: root,
+        sessionId: "session_enoent",
+        agentId: "main",
+        traceLevel: "debug",
+      }),
+    });
+    const store = factory(run);
+
+    await store.append(log.emit("run.created", { goal: run.goal }));
+    await store.append(
+      log.emit("tool.requested", {
+        id: "call_enoent",
+        toolName: "read_file",
+        arguments: { path: "missing.txt" },
+      }),
+    );
+    await store.append(log.emit("tool.started", { toolCallId: "call_enoent" }));
+    await store.append(
+      log.emit("tool.failed", {
+        toolCallId: "call_enoent",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "ENOENT", message: "ENOENT: no such file" },
+      }),
+    );
+    run.state = "completed";
+    run.stopReason = "final_answer";
+    await store.append(log.emit("run.completed", { state: "completed" }));
+    await store.finish(run, {
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+      metadata: {},
+    });
+
+    const report = await validateSessionTraceConsistency({
+      sessionDir: join(root, "session_enoent"),
+    });
+
+    // A benign exploratory probe surfaces as a warning but does not fail the
+    // check (so recovered/benign runs are not misreported as broken).
+    expect(report.ok).toBe(true);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          code: "UNRESOLVED_TOOL_FAILURE",
+          metadata: expect.objectContaining({ byCode: { ENOENT: 1 } }),
+        }),
+      ]),
+    );
   });
 
   it("flags a delegated sub-agent that never produced a terminal result", async () => {

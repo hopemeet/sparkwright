@@ -537,7 +537,7 @@ Review only the requested change.
       },
     );
 
-    const expectedFile = join(
+    const absoluteFile = join(
       root,
       "reviewer",
       "references",
@@ -547,16 +547,79 @@ Review only the requested change.
       status: "loaded",
       name: "code-reviewer",
       version: "1.0.0",
-      resourceFiles: [expectedFile],
+      // Resource files are reported skill-relative, never as absolute host
+      // paths (which leak the host layout and lure a workspace-escaping read).
+      resourceFiles: ["references/rules.md"],
     });
+    expect(output).not.toHaveProperty("baseDirectory");
     expect(JSON.stringify(output)).toContain(
       "Review only the requested change",
     );
-    // Both the structured field and the model-facing content use full paths so
-    // a weak model can pass them straight to a file-reading tool.
     const loaded = output as { content: string };
-    expect(loaded.content).toContain(`<file>${expectedFile}</file>`);
-    expect(loaded.content).not.toContain("<file>references/rules.md</file>");
+    expect(loaded.content).toContain("<file>references/rules.md</file>");
+    expect(loaded.content).not.toContain(absoluteFile);
+    // Directs the model to read references via the resource argument, not by
+    // passing an absolute host path to a file-reading tool.
+    expect(loaded.content).toContain("resource");
+    expect(loaded.content).not.toContain(root);
+  });
+
+  it("reads a skill reference file through the resource argument", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    await mkdir(join(root, "reviewer", "references"), { recursive: true });
+    await writeFile(
+      join(root, "reviewer", "SKILL.md"),
+      `---
+name: code-reviewer
+description: Reviews code changes.
+metadata:
+  version: 1.0.0
+---
+Review only the requested change.
+`,
+    );
+    await writeFile(
+      join(root, "reviewer", "references", "rules.md"),
+      "Rule one.\nRule two.\n",
+    );
+
+    const [skill] = await loadSkills([root]);
+    const tool = createSkillLoaderTool([skill!]);
+    const ctx = {
+      run: {
+        id: createRunId(),
+        goal: "review",
+        state: "running" as const,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+        metadata: {},
+      },
+    };
+
+    const ok = await tool.execute(
+      { name: "code-reviewer", resource: "references/rules.md" },
+      ctx,
+    );
+    expect(ok).toMatchObject({
+      status: "resource",
+      name: "code-reviewer",
+      resource: "references/rules.md",
+      content: "Rule one.\nRule two.\n",
+    });
+
+    // Containment: a traversal path must not read outside the skill directory.
+    const escaped = await tool.execute(
+      { name: "code-reviewer", resource: "../../../../etc/hosts" },
+      ctx,
+    );
+    expect(escaped).toMatchObject({ status: "resource_denied" });
+    expect(escaped).not.toHaveProperty("content");
+
+    const missing = await tool.execute(
+      { name: "code-reviewer", resource: "references/missing.md" },
+      ctx,
+    );
+    expect(missing).toMatchObject({ status: "resource_not_found" });
   });
 
   it("short-circuits a repeated skill load as already_loaded", async () => {

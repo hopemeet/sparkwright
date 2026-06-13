@@ -184,6 +184,9 @@ export function analyzeToolOutcomes(
   >();
   const completedByTarget = new Map<string, number[]>();
   const completedWritesByPath = new Map<string, number[]>();
+  // Indexes of successful read/discovery completions, used to recognize that a
+  // model recovered from a not-found probe by reading a *different* file.
+  const completedReadIndexes: number[] = [];
 
   for (const [index, event] of events.entries()) {
     if (event.type === "tool.requested" && isRecord(event.payload)) {
@@ -202,10 +205,14 @@ export function analyzeToolOutcomes(
         });
       }
     } else if (event.type === "tool.completed" && isRecord(event.payload)) {
-      const targetKey = targetKeyForCall(
-        requested,
-        stringValue(event.payload.toolCallId),
-      );
+      const toolCallId = stringValue(event.payload.toolCallId);
+      const completedToolName =
+        stringValue(event.payload.toolName) ??
+        toolNameForCall(requested, toolCallId);
+      if (isReadFamilyTool(completedToolName)) {
+        completedReadIndexes.push(index);
+      }
+      const targetKey = targetKeyForCall(requested, toolCallId);
       if (!targetKey) continue;
       const indexes = completedByTarget.get(targetKey) ?? [];
       indexes.push(index);
@@ -241,6 +248,21 @@ export function analyzeToolOutcomes(
     const completedWriteIndexes = targetPath
       ? (completedWritesByPath.get(targetPath) ?? [])
       : [];
+    const recoveredBySameTarget =
+      Boolean(targetKey) &&
+      (completedIndexes.some((completedIndex) => completedIndex > index) ||
+        completedWriteIndexes.some(
+          (completedIndex) => completedIndex > index,
+        ) ||
+        (code === "REPEATED_TOOL_CALL_SKIPPED" &&
+          completedIndexes.some((completedIndex) => completedIndex < index)));
+    // A not-found probe (model guessed a path that does not exist) is recovered
+    // when the model subsequently completes a read/discovery of a *different*
+    // target, rather than only when it retries the same path.
+    const recoveredByLaterRead =
+      isReadFamilyTool(toolName) &&
+      isNotFoundCode(code) &&
+      completedReadIndexes.some((completedIndex) => completedIndex > index);
     failures.push({
       toolCallId,
       toolName,
@@ -250,13 +272,7 @@ export function analyzeToolOutcomes(
       recovered:
         category !== "policy_denial" &&
         category !== "approval_denial" &&
-        Boolean(targetKey) &&
-        (completedIndexes.some((completedIndex) => completedIndex > index) ||
-          completedWriteIndexes.some(
-            (completedIndex) => completedIndex > index,
-          ) ||
-          (code === "REPEATED_TOOL_CALL_SKIPPED" &&
-            completedIndexes.some((completedIndex) => completedIndex < index))),
+        (recoveredBySameTarget || recoveredByLaterRead),
     });
   }
 
@@ -382,6 +398,31 @@ export function classifyToolFailure(
     return "model_arg_error";
   }
   return "tool_runtime_error";
+}
+
+/**
+ * Read/discovery tools whose later success signals that the model worked around
+ * an earlier not-found probe (for example: `read_file` of a guessed path fails,
+ * then `glob` + `read_file` of the real path succeed).
+ */
+function isReadFamilyTool(toolName: string | undefined): boolean {
+  return (
+    toolName === "read_file" ||
+    toolName === "read_anchored_text" ||
+    toolName === "glob" ||
+    toolName === "grep"
+  );
+}
+
+function isNotFoundCode(code: string | undefined): boolean {
+  if (!code) return false;
+  const normalized = code.toUpperCase();
+  return (
+    normalized === "ENOENT" ||
+    normalized === "NOT_FOUND" ||
+    normalized === "FILE_NOT_FOUND" ||
+    normalized.endsWith("_NOT_FOUND")
+  );
 }
 
 function isToolArgumentFailure(code: string | undefined): boolean {

@@ -878,6 +878,7 @@ export async function validateSessionTraceConsistency({
 
   validateRunEventSequences(traceEvents, findings);
   validateSubagentLifecycles(traceEvents, findings);
+  validateToolFailureSafety(traceEvents, findings);
   await validateRunFiles(sessionDir, runIds, findings);
 
   return {
@@ -888,6 +889,86 @@ export async function validateSessionTraceConsistency({
     traceSummary,
     findings,
   };
+}
+
+const WORKSPACE_ESCAPE_MESSAGE =
+  /escapes workspace root|stay inside the workspace/i;
+
+/**
+ * Detects a `tool.failed` event that represents an attempt to read or write
+ * outside the workspace root. These are surfaced regardless of run outcome so a
+ * structurally-consistent session that nonetheless attempted a boundary escape
+ * is not reported as clean.
+ */
+function isWorkspaceEscapeFailure(event: SparkwrightEvent): boolean {
+  if (event.type !== "tool.failed" || !isRecord(event.payload)) return false;
+  const code = traceErrorCode(event);
+  if (code === "WORKSPACE_PATH_ESCAPED" || code?.endsWith("_PATH_ESCAPED")) {
+    return true;
+  }
+  const message = isRecord(event.payload.error)
+    ? stringValue(event.payload.error.message)
+    : undefined;
+  return Boolean(message && WORKSPACE_ESCAPE_MESSAGE.test(message));
+}
+
+/**
+ * Surfaces safety-relevant tool failures as session-consistency findings.
+ *
+ * Workspace path-escape attempts are reported as errors (a structurally valid
+ * session is still not "ok" if a tool tried to leave the workspace), while other
+ * unresolved tool failures are reported as warnings so benign exploratory probes
+ * (for example a single ENOENT on a guessed path) do not fail the check.
+ */
+function validateToolFailureSafety(
+  events: readonly SparkwrightEvent[],
+  findings: SessionTraceConsistencyFinding[],
+): void {
+  if (events.length === 0) return;
+
+  const escapeFailures = events.filter(isWorkspaceEscapeFailure);
+  const escapeCallIds = new Set(
+    escapeFailures
+      .map((event) =>
+        isRecord(event.payload)
+          ? stringValue(event.payload.toolCallId)
+          : undefined,
+      )
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  if (escapeFailures.length > 0) {
+    const byTool: Record<string, number> = {};
+    for (const event of escapeFailures) {
+      const toolName = isRecord(event.payload)
+        ? (stringValue(event.payload.toolName) ?? "unknown")
+        : "unknown";
+      byTool[toolName] = (byTool[toolName] ?? 0) + 1;
+    }
+    findings.push({
+      severity: "error",
+      code: "WORKSPACE_PATH_ESCAPE_ATTEMPT",
+      message: `Trace contains ${escapeFailures.length} workspace path-escape tool failure(s); a tool attempted to read or write outside the workspace root.`,
+      metadata: { count: escapeFailures.length, byTool },
+    });
+  }
+
+  const unresolved = analyzeToolOutcomes(events).unresolvedFailures.filter(
+    (failure) => !failure.toolCallId || !escapeCallIds.has(failure.toolCallId),
+  );
+  if (unresolved.length > 0) {
+    const byCode: Record<string, number> = {};
+    for (const failure of unresolved) {
+      const code = failure.code ?? "unknown";
+      byCode[code] = (byCode[code] ?? 0) + 1;
+    }
+    findings.push({
+      severity: "warning",
+      code: "UNRESOLVED_TOOL_FAILURE",
+      message: `Trace contains ${unresolved.length} unresolved tool failure(s) not followed by a successful retry of the same target.`,
+      metadata: { count: unresolved.length, byCode },
+    });
+  }
 }
 
 export async function repairSessionTraceConsistency({
@@ -3031,11 +3112,31 @@ function traceErrorCode(event: SparkwrightEvent): string | undefined {
   return stringValue(
     event.payload.errorCode,
     isRecord(event.payload.error) ? event.payload.error.code : undefined,
+    // run.failed carries its code at the payload root (e.g. a target-boundary
+    // rejection's TARGET_OUTSIDE_WORKSPACE), not under `error`.
+    event.type === "run.failed" ? event.payload.code : undefined,
+    // validation.failed (pre-flight rejections) carries codes on its findings.
+    event.type === "validation.failed"
+      ? validationFailureCode(event.payload)
+      : undefined,
     event.type === "mcp.server.prepared" && event.payload.status === "failed"
       ? "MCP_SERVER_PREPARE_FAILED"
       : undefined,
     event.type.endsWith(".denied") ? event.type : undefined,
   );
+}
+
+function validationFailureCode(
+  payload: Record<string, unknown>,
+): string | undefined {
+  const result = isRecord(payload.result) ? payload.result : undefined;
+  const findings =
+    result && Array.isArray(result.findings) ? result.findings : [];
+  const errorFinding =
+    findings.find(
+      (finding) => isRecord(finding) && finding.severity === "error",
+    ) ?? findings.find((finding) => isRecord(finding));
+  return isRecord(errorFinding) ? stringValue(errorFinding.code) : undefined;
 }
 
 function collectExpectedDenialCode(
