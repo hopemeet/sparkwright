@@ -84,6 +84,10 @@ export class RunController {
   // duplicate cancelRun. Reset when the next run starts.
   private cancelRequested = false;
   private currentSessionEvents: unknown[] = [];
+  // The most recent user goal submitted via start(), kept so /retry can re-run
+  // it. start() only ever receives real user goals (todo-continuation runs are
+  // driven by the host/replay path, not start()), so no filtering is needed.
+  private lastGoal: string | null = null;
 
   constructor(opts: RunControllerOptions) {
     this.opts = opts;
@@ -107,6 +111,7 @@ export class RunController {
   newSession(): string {
     this.sessionId = `session_tui_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     this.currentSessionEvents = [];
+    this.lastGoal = null;
     this.store.reset();
     this.store.setSessionId(this.sessionId);
     return this.sessionId;
@@ -115,6 +120,7 @@ export class RunController {
   setSession(id: string): void {
     this.sessionId = validateSessionId(id);
     this.currentSessionEvents = [];
+    this.lastGoal = null;
     this.store.reset();
     this.store.setSessionId(this.sessionId);
   }
@@ -136,6 +142,9 @@ export class RunController {
     const events = await loadSessionEvents(this.sessionRootDir(), safe);
     this.currentSessionEvents = events.slice();
     this.replayEvents(events);
+    // Point /retry at the resumed session's most recent goal (not the goal
+    // from whatever session we switched away from).
+    this.lastGoal = lastGoalFromEvents(events);
   }
 
   /**
@@ -200,8 +209,25 @@ export class RunController {
     return this.activeRunId !== null;
   }
 
+  /** The last user goal, or null if nothing has been run yet (for /retry). */
+  getLastGoal(): string | null {
+    return this.lastGoal;
+  }
+
+  /**
+   * Re-run the most recent goal in the same session. No-op (returns false) while
+   * a run is active or before any goal has been submitted, so the caller can
+   * surface a toast instead.
+   */
+  async retry(): Promise<boolean> {
+    if (this.activeRunId || !this.lastGoal) return false;
+    await this.start(this.lastGoal);
+    return true;
+  }
+
   async start(goal: string): Promise<void> {
     if (this.activeRunId) return;
+    this.lastGoal = goal;
     this.store.appendUserMessage(goal);
     this.store.setStatus("running");
     this.store.setStopReason(null);
@@ -583,6 +609,15 @@ function validateSessionId(id: string): string {
     throw new Error("Session id must be a safe path segment.");
   }
   return id;
+}
+
+/** The most recent goal carried by a loaded event stream, or null. */
+function lastGoalFromEvents(events: RunEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const goal = (events[i].payload as { goal?: unknown } | undefined)?.goal;
+    if (typeof goal === "string" && goal.trim()) return goal;
+  }
+  return null;
 }
 
 function formatError(err: unknown): string {

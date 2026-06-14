@@ -17,6 +17,7 @@ import {
   prevGraphemeBoundary,
   prevWordBoundary,
 } from "../lib/graphemes.js";
+import { vimKey, type VimMode, type VimState } from "../lib/vim-mode.js";
 
 /**
  * Goal input with three "intent" surfaces sharing one editor:
@@ -57,6 +58,8 @@ export function InputBox(props: {
   workspaceRoot: string;
   registry: CommandRegistry;
   onSubmit: (value: string) => void;
+  /** Enable vim modal editing (config input.vim). Starts in insert mode. */
+  vim?: boolean;
   onCommand: (cmd: Command, rest: string) => void;
   /**
    * Pressed Esc with nothing else to dismiss (no dropdown / overlay open).
@@ -85,6 +88,10 @@ export function InputBox(props: {
   // ctrl+r reverse-search overlay state — when not null, captures input.
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [searchCursor, setSearchCursor] = useState(0);
+  // Vim modal state (only consulted when props.vim). Starts in insert so a
+  // fresh prompt types immediately; Esc drops to normal.
+  const [vimMode, setVimMode] = useState<VimMode>("insert");
+  const [vimPending, setVimPending] = useState<VimState["pending"]>(null);
 
   // Lazy file index — only constructed when needed.
   const fileIndex = useMemo(
@@ -95,6 +102,10 @@ export function InputBox(props: {
   const [frecencyScores, setFrecencyScores] = useState<Map<string, number>>(
     new Map(),
   );
+  // Bumped when the async file walk resolves so the mention dropdown re-renders
+  // with the freshly-indexed files — `fileIndex.ensure()` mutates internal state
+  // without a React signal, so without this the first "@" shows "0 files".
+  const [indexTick, setIndexTick] = useState(0);
 
   // Enable bracketed paste on mount; disable on unmount so we don't leave the
   // terminal in a weird state if the app exits.
@@ -154,7 +165,7 @@ export function InputBox(props: {
   // Trigger file indexing + frecency load the first time mention activates.
   useEffect(() => {
     if (!mention) return;
-    void fileIndex.ensure();
+    void fileIndex.ensure().then(() => setIndexTick((t) => t + 1));
     if (!frecencyRef.current) {
       void loadFrecency(props.workspaceRoot).then((f) => {
         frecencyRef.current = f;
@@ -170,7 +181,7 @@ export function InputBox(props: {
   const mentionSuggestions = useMemo(
     () => (mention ? fileIndex.filter(mention.query, 10, frecencyScores) : []),
     // Re-filter when index size changes (after ensure resolves) or frecency loads.
-    [mention, fileIndex.size(), frecencyScores],
+    [mention, fileIndex.size(), indexTick, frecencyScores],
   );
 
   const [sugCursor, setSugCursor] = useState(0);
@@ -363,6 +374,42 @@ export function InputBox(props: {
       return;
     }
 
+    // --- vim modal input (config input.vim) ------------------------------
+    // INSERT mode behaves like the normal editor; Esc drops to NORMAL. In
+    // NORMAL mode, plain keys are vim commands (swallowed from text entry),
+    // while Enter / Ctrl / Meta / Tab pass through to the handlers below so
+    // submit, quit, reverse-search and word-motions keep working.
+    if (props.vim) {
+      if (vimMode === "insert") {
+        if (key.escape) {
+          const s = vimKey(
+            { mode: "insert", value, cursor, pending: null },
+            "",
+            { escape: true },
+          );
+          setVimMode("normal");
+          setCursor(s.cursor);
+          return;
+        }
+      } else if (!key.return && !key.ctrl && !key.meta && !key.tab) {
+        // Esc with no pending operator falls through to cancel an in-flight run.
+        if (key.escape && !vimPending) {
+          props.onEscape?.();
+          return;
+        }
+        const s = vimKey(
+          { mode: vimMode, value, cursor, pending: vimPending },
+          input,
+          key,
+        );
+        if (s.value !== value) update(s.value, s.cursor);
+        else setCursor(s.cursor);
+        setVimMode(s.mode);
+        setVimPending(s.pending);
+        return;
+      }
+    }
+
     // Ctrl+r enters reverse-search mode.
     if (key.ctrl && input === "r" && history.length > 0) {
       setSearchQuery("");
@@ -490,6 +537,11 @@ export function InputBox(props: {
       setHistoryIdx(null);
       setDraft("");
       setPastes(new Map());
+      // Next prompt starts fresh in insert mode so typing works immediately.
+      if (props.vim) {
+        setVimMode("insert");
+        setVimPending(null);
+      }
       return;
     }
 
@@ -614,6 +666,17 @@ export function InputBox(props: {
           />
         )}
       </Box>
+      {props.vim ? (
+        <Box paddingX={1}>
+          <Text
+            color={vimMode === "normal" ? "yellow" : "green"}
+            dimColor={vimMode === "insert"}
+          >
+            {vimMode === "normal" ? "-- NORMAL --" : "-- INSERT --"}
+          </Text>
+          {vimPending ? <Text dimColor> {vimPending}</Text> : null}
+        </Box>
+      ) : null}
       {searchQuery !== null ? (
         <ReverseSearchOverlay
           query={searchQuery}

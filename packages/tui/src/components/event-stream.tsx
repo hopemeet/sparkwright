@@ -337,6 +337,22 @@ function EventCard(props: {
           </Box>
         );
       }
+      // A `list_dir` result carries an `entries` array that oneLine would dump
+      // as truncated JSON (`{"path":".","entries":[{"path":"dist",…`). Render a
+      // compact "N entries + names" summary instead; the full listing stays
+      // inspectable via /events.
+      if (isListDirResult(result)) {
+        const { head, detail } = summarizeListDir(result);
+        return (
+          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
+            <Text color={theme.muted}>{head}</Text>
+            {detail ? <Text dimColor>{"  " + detail}</Text> : null}
+            {artifacts.length > 0 ? (
+              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
+            ) : null}
+          </Box>
+        );
+      }
       // Tool output (shell stdout especially) is the most likely carrier of
       // raw escape sequences — strip them so a `clear`/cursor-move in stdout
       // can't scramble the transcript.
@@ -595,8 +611,15 @@ function EventCard(props: {
     // as a conversation. (Full payloads are still inspectable via /events.)
     // Context-management scaffolding and span brackets are also hidden for the
     // same reason: users should see the conversation, not the machinery.
+    // The cancel/state-machine plumbing (run.cancelled / run.cancel_requested /
+    // run.state_transition.rejected) is hidden too: the user-facing cancel is
+    // surfaced by the run.completed (state=cancelled) card and the "cancelling…"
+    // toast, so these would otherwise leak as raw "[seq] type" debug rows.
     case "run.started":
     case "run.created":
+    case "run.cancelled":
+    case "run.cancel_requested":
+    case "run.state_transition.rejected":
     case "context.assembled":
     case "context.cache_break.detected":
     case "context.compaction_requested":
@@ -760,6 +783,53 @@ export function isSkillLoadResult(value: unknown): boolean {
     return typeof r.name === "string" && typeof r.content === "string";
   }
   return r.status === "not_found" && typeof r.requestedName === "string";
+}
+
+/**
+ * Recognise a `list_dir` tool result by its shape: a record with a string `path`
+ * and an `entries` array of `{ name, type }`. Like read_file/skill_load, the
+ * committed renderer has no toolCallId correlation, so this structural check is
+ * how `tool.completed` knows to render a compact directory summary instead of
+ * dumping the entries array as truncated JSON. Returns true for a list_dir result.
+ */
+export function isListDirResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  if (typeof r.path !== "string" || !Array.isArray(r.entries)) return false;
+  return r.entries.every(
+    (e) =>
+      typeof e === "object" &&
+      e !== null &&
+      typeof (e as Record<string, unknown>).name === "string" &&
+      typeof (e as Record<string, unknown>).type === "string",
+  );
+}
+
+/**
+ * Compact one-or-two-line summary of a `list_dir` result: a count headline plus
+ * a sample of entry names (directories suffixed with `/`), capped so a large
+ * directory can't flood the transcript. Pure for testing.
+ */
+export function summarizeListDir(
+  value: unknown,
+  maxNames = 8,
+): { head: string; detail: string } {
+  const r = value as { path?: unknown; entries?: unknown };
+  const path = typeof r.path === "string" && r.path ? r.path : ".";
+  const entries = Array.isArray(r.entries) ? r.entries : [];
+  const head = `list_dir ${path} → ${entries.length} ${
+    entries.length === 1 ? "entry" : "entries"
+  }`;
+  const names = entries.slice(0, maxNames).map((e) => {
+    const rec = e as Record<string, unknown>;
+    const name = String(rec.name ?? "");
+    return rec.type === "directory" ? `${name}/` : name;
+  });
+  const more = entries.length - names.length;
+  const detail = names.join(" · ") + (more > 0 ? ` · +${more} more` : "");
+  return { head, detail };
 }
 
 /** Best-effort one-line preview of a value (object → compact JSON). */

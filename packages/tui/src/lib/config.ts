@@ -36,6 +36,8 @@ export interface TuiConfigFile {
    * Set false if your terminal's text selection conflicts with mouse mode.
    */
   mouse?: boolean;
+  /** Enable vim modal editing in the input box. Default false. */
+  vim?: boolean;
 }
 
 /** Per-field origin of resolved values. Surfaced by `/config`. */
@@ -72,6 +74,7 @@ const KNOWN_KEYS = new Set([
   "keybindings",
   "theme",
   "mouse",
+  "vim",
   // Host-only flat fields the TUI does not consume but must tolerate (the
   // grouped form normalizes into these). Listed so they are not flagged as
   // unknown; the host loader owns their validation.
@@ -331,6 +334,17 @@ function validate(
       errors.push({
         file: filePath,
         field: "mouse",
+        message: "must be a boolean",
+      });
+    }
+  }
+  if (obj.vim !== undefined) {
+    if (typeof obj.vim === "boolean") {
+      config.vim = obj.vim;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "vim",
         message: "must be a boolean",
       });
     }
