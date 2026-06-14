@@ -456,6 +456,22 @@ SSE MCP servers are remote transports and are governed by MCP policy rather
 than local process sandboxing. Prefer `requiresApproval: true` for tools that
 can touch workspace state, credentials, network services, or external systems.
 
+Configured MCP servers are lazy by default during normal host runs. Capability
+inspection reports the server as `configured` and exposes the lazy
+`mcp_<server>_list_tools` / `mcp_<server>_call_tool` entrypoints without
+starting the server. The host starts a server only after the model selects one
+of those lazy MCP tools; the trace then records `mcp.server.prepared` with the
+resolved tool mapping or the structured prepare failure. Use
+`capabilities inspect --resolve-mcp` when you explicitly want inspection to
+connect to MCP servers and list concrete MCP tools.
+
+ACP clients may also pass session-scoped MCP servers in `session/new`
+`mcpServers`. SparkWright merges those servers with configured project/user MCP
+servers for that ACP session and applies the same lazy startup and policy path.
+ACP `http`, `sse`, and stdio server descriptors are supported. ACP-over-ACP MCP
+transport descriptors are rejected with `invalidParams` until that transport is
+implemented.
+
 ### Add A Reviewer Agent
 
 Project agent profiles can be committed as markdown files under:
@@ -551,6 +567,12 @@ Put user arguments in prompt text instead.
 - `capabilities.mcp`: MCP server definitions and default policy.
 - `capabilities.agents`: agent profiles and delegate tools.
 - `theme`, `mouse`, `keybindings`: TUI-only preferences.
+
+Child agents and delegate tools do not weaken the parent run. Spawned child
+agents inherit the parent run's permission mode, write guardrails, target path,
+and confidential read scope before their own agent-profile policy is layered on
+top. This means a reviewer or dynamically spawned child cannot read paths the
+parent run marks confidential or write outside the parent run's write boundary.
 
 ### Grouped Form
 

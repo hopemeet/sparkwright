@@ -363,10 +363,11 @@ async function mcpFailureCase() {
     }),
     "utf8",
   );
-  const prompt = "inspect README and tolerate missing MCP; do not modify files";
-  const result = await runCli([
+  const idlePrompt =
+    "inspect README and tolerate configured but unused MCP; do not modify files";
+  const idleResult = await runCli([
     "run",
-    prompt,
+    idlePrompt,
     "--workspace",
     workspace,
     "--target",
@@ -376,29 +377,75 @@ async function mcpFailureCase() {
     "--trace-level",
     "debug",
   ]);
-  const trace = await traceFromOutput(result.stdout);
+  const idleTrace = await traceFromOutput(idleResult.stdout);
   record({
-    id: "MCP",
-    name: "MCP failure",
-    command: commandString(result.command),
-    prompt,
+    id: "MCP_IDLE",
+    name: "MCP configured but unused",
+    command: commandString(idleResult.command),
+    prompt: idlePrompt,
     workspace,
     write: "no",
     expectedTrace:
-      "mcp.server.prepared failed MCP_SERVER_COMMAND_NOT_FOUND, run.completed",
+      "run.completed, no mcp.server.prepared because MCP is lazy until selected",
     failureRule:
-      "Fails if MCP prepare failure crashes the run or loses the specific error code.",
+      "Fails if a configured MCP server is prepared before the model selects a lazy MCP tool.",
     harness: true,
     ok:
-      result.exitCode === 0 &&
+      idleResult.exitCode === 0 &&
+      !has(idleTrace.events, "mcp.server.prepared") &&
+      has(idleTrace.events, "run.completed"),
+  });
+
+  const lazyPrompt = "explicitly list tools from the missing MCP server";
+  const lazyResult = await runCli(
+    [
+      "run",
+      lazyPrompt,
+      "--workspace",
+      workspace,
+      "--target",
+      "README.md",
+      "--model",
+      "scripted",
+      "--trace-level",
+      "debug",
+    ],
+    {
+      env: {
+        SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+          {
+            toolCalls: [{ toolName: "mcp_missing_list_tools", arguments: {} }],
+          },
+          { message: "missing MCP failed as expected" },
+        ]),
+      },
+    },
+  );
+  const lazyTrace = await traceFromOutput(lazyResult.stdout);
+  record({
+    id: "MCP_LAZY_FAIL",
+    name: "MCP lazy prepare failure",
+    command: commandString(lazyResult.command),
+    prompt: lazyPrompt,
+    workspace,
+    write: "no",
+    expectedTrace:
+      "mcp_missing_list_tools, mcp.server.prepared failed, run.completed",
+    failureRule:
+      "Fails if explicit lazy MCP selection does not prepare the server or loses the structured failure code.",
+    harness: true,
+    ok:
+      lazyResult.exitCode === 0 &&
       eventWith(
-        trace.events,
+        lazyTrace.events,
         "mcp.server.prepared",
         (event) =>
           event.payload?.status === "failed" &&
-          event.payload?.errorCode === "MCP_SERVER_COMMAND_NOT_FOUND",
+          /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED|PREPARE_TIMEOUT)$/.test(
+            String(event.payload?.errorCode ?? ""),
+          ),
       ) &&
-      has(trace.events, "run.completed"),
+      has(lazyTrace.events, "run.completed"),
   });
 }
 
@@ -469,6 +516,10 @@ async function tuiStartupCase() {
 
 async function acpStartupCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-acp-");
+  const restoreEnv = applyEnv({
+    XDG_CONFIG_HOME: childEnv.XDG_CONFIG_HOME,
+    XDG_STATE_HOME: childEnv.XDG_STATE_HOME,
+  });
   const updates = [];
   const clientToAgent = new TransformStream();
   const agentToClient = new TransformStream();
@@ -549,6 +600,7 @@ async function acpStartupCase() {
     await clientConnection.closeSession({ sessionId });
   } finally {
     agentConnection.signal.throwIfAborted?.();
+    restoreEnv();
   }
 }
 
@@ -736,7 +788,7 @@ async function runCommand(command, options = {}) {
   return await new Promise((resolve) => {
     const child = spawn(bin, args, {
       cwd: process.cwd(),
-      env: childEnv,
+      env: { ...childEnv, ...(options.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

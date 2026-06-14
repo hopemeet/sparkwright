@@ -36,6 +36,7 @@
     "@sparkwright/acp-client-adapter": "0.1.0",
     "@sparkwright/core": "0.1.0",
     "@sparkwright/host": "0.1.0",
+    "@sparkwright/mcp-adapter": "0.1.0",
     "@sparkwright/protocol": "0.1.0",
     "zod": "^4.2.0"
   },

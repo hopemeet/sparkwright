@@ -508,7 +508,7 @@ describe("runCli", () => {
     });
   });
 
-  it("warns when --yes is used without --write", async () => {
+  it("clarifies that --yes without --write still applies to risky non-write approvals", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
 
@@ -534,12 +534,12 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stderrText()).toContain(
-      "Warning: --yes has no effect without --write.",
+      "Warning: --yes does not enable workspace writes without --write; it can still approve other risky actions.",
     );
     expect(output.stdoutText()).toContain("run.completed final_answer");
   });
 
-  it("warns when --yes-shell-safe is used without --write", async () => {
+  it("does not warn that --yes-shell-safe is ineffective without --write", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
 
@@ -564,9 +564,7 @@ describe("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).toContain(
-      "Warning: --yes-shell-safe has no effect without --write.",
-    );
+    expect(output.stderrText()).not.toContain("has no effect without --write");
     expect(output.stdoutText()).toContain("run.completed final_answer");
   });
 
@@ -4139,7 +4137,73 @@ describe("runCli", () => {
     ).toBeUndefined();
   });
 
-  it("runs scripted model tool calls through the host", async () => {
+  it("does not start configured MCP servers until a lazy MCP tool is used", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const markerPath = join(workspace, "mcp-started.txt");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            servers: [
+              mcpEchoServerConfig("qa", {
+                prelude: [
+                  "import { writeFileSync } from 'node:fs';",
+                  `writeFileSync(${JSON.stringify(markerPath)}, "started", "utf8");`,
+                ].join("\n"),
+              }),
+            ],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "answer without using MCP",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            { message: "no mcp used" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    await expect(readFile(markerPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(
+      traceEvents.some((event) => event.type === "mcp.server.prepared"),
+    ).toBe(false);
+  });
+
+  it("runs scripted model lazy MCP tool calls through the host", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
@@ -4172,6 +4236,14 @@ describe("runCli", () => {
         env: {
           ...process.env,
           SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "mcp_qa_list_tools",
+                  arguments: {},
+                },
+              ],
+            },
             {
               toolCalls: [
                 {
@@ -5509,7 +5581,10 @@ describe("runCli", () => {
     );
   });
 
-  function mcpEchoServerConfig(name: string) {
+  function mcpEchoServerConfig(
+    name: string,
+    options: { prelude?: string } = {},
+  ) {
     const repoRoot = findRepoRoot(process.cwd());
     const mcpPath = resolve(
       repoRoot,
@@ -5524,6 +5599,7 @@ describe("runCli", () => {
     // (a bare `C:\...` specifier is rejected); POSIX tolerates a bare path but
     // file:// works there too, so always convert.
     const script = [
+      options.prelude ?? "",
       `import { McpServer } from ${JSON.stringify(pathToFileURL(mcpPath).href)};`,
       `import { StdioServerTransport } from ${JSON.stringify(pathToFileURL(transportPath).href)};`,
       `import { z } from ${JSON.stringify(pathToFileURL(zodPath).href)};`,

@@ -905,15 +905,9 @@ describe("host protocol", () => {
             (event.payload as { name?: string }).name === "reviewer",
         ),
       ).toBe(true);
-      expect(
-        events.some(
-          (event) =>
-            event.type === "mcp.server.prepared" &&
-            (event.payload as { name?: string; status?: string }).name ===
-              "disabled" &&
-            (event.payload as { status?: string }).status === "disabled",
-        ),
-      ).toBe(true);
+      expect(events.some((event) => event.type === "mcp.server.prepared")).toBe(
+        false,
+      );
       expect(
         events.some(
           (event) =>
@@ -1133,16 +1127,8 @@ describe("host protocol", () => {
               { serverName: "disabled", status: "disabled", toolNames: [] },
               {
                 serverName: "missing",
-                status: "failed",
+                status: "configured",
                 toolNames: [],
-                // A missing command spawns ENOENT on POSIX (-> COMMAND_NOT_FOUND)
-                // but the spawn error can race the connect timeout on some
-                // hosts. Accept the structured connection-class failures.
-                errorCode: expect.stringMatching(
-                  /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED|PREPARE_TIMEOUT)$/,
-                ),
-                errorPhase: "connect",
-                errorMessage: expect.any(String),
               },
             ],
           },
@@ -1193,6 +1179,11 @@ describe("host protocol", () => {
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
             (tool) => tool.name === "list_agents",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "mcp_missing_list_tools",
           ),
         ).toBe(true);
         expect(

@@ -182,6 +182,19 @@ MCP `cwd` resolves from the config file that declares it. Prefer
 `requiresApproval: true` for tools that can touch workspace state,
 credentials, network services, or external systems.
 
+MCP servers are lazy during normal host runs. Capability inspection reports
+configured servers and exposes lazy tools such as `mcp_<server>_list_tools` and
+`mcp_<server>_call_tool`; it does not start the server unless inspection is run
+with `--resolve-mcp` or the model explicitly selects a lazy MCP tool. Explicit
+lazy selection emits `mcp.server.prepared` with either the concrete tool map or
+a structured prepare failure.
+
+ACP `session/new` can also supply session-scoped `mcpServers`. SparkWright
+merges them with configured MCP servers for that ACP session and applies the
+same lazy startup and policy behavior. `http`, `sse`, and stdio server
+descriptors are supported; MCP-over-ACP descriptors are rejected until that
+transport exists.
+
 ### Workflow Hooks
 
 Use `capabilities.hooks.workflow` for checked-in project rules: block
@@ -345,7 +358,10 @@ over stdio and sends the delegated goal through ACP:
 
 `command` and `args` are local to the machine running the host. The ACP
 delegate receives the project cwd and prompt content, while SparkWright keeps
-policy, approval, trace, and the parent run lifecycle.
+policy, approval, trace, and the parent run lifecycle. ACP delegate `envMode`
+defaults to `explicit`: the child gets a minimal process environment
+(`PATH`/Windows process basics) plus configured `env`. Set `envMode:
+"inherit"` only when the delegate needs the parent environment.
 
 For local assistants that are exposed as normal CLI commands rather than ACP
 servers, use `metadata.externalCommand`:
@@ -460,7 +476,8 @@ Checks to make before proposing edits:
 - User and project capability settings did not combine: remember that most
   fields other than `providers` are wholesale-overridden.
 - MCP server does not start: verify `cwd`, command path, timeout, and
-  `enabled`.
+  `enabled`; if the server is only `configured`, confirm the model actually
+  selected `mcp_<server>_list_tools` or run inspection with `--resolve-mcp`.
 
 ## Agent-Written Config Changes
 

@@ -2398,6 +2398,7 @@ function validateAcpMetadata(
       "args",
       "cwd",
       "env",
+      "envMode",
       "workspaceAccess",
       "timeoutMs",
     ]),
@@ -2413,6 +2414,17 @@ function validateAcpMetadata(
   validateOptionalStringArray(acp.args, `${field}.args`, filePath, errors);
   validateOptionalString(acp.cwd, `${field}.cwd`, filePath, errors);
   validateOptionalStringRecord(acp.env, `${field}.env`, filePath, errors);
+  if (
+    acp.envMode !== undefined &&
+    acp.envMode !== "inherit" &&
+    acp.envMode !== "explicit"
+  ) {
+    errors.push({
+      file: filePath,
+      field: `${field}.envMode`,
+      message: "must be inherit or explicit",
+    });
+  }
   validateOptionalWorkspaceAccess(
     acp.workspaceAccess,
     `${field}.workspaceAccess`,

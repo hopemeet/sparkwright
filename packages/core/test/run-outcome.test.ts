@@ -227,6 +227,29 @@ describe("run outcome evidence", () => {
     });
   });
 
+  it("annotates unsupported unquoted verification command success claims", () => {
+    const log = new EventLog(createRunId());
+    const events = [log.emit("run.created", { goal: "Fix and verify" })];
+
+    const outcome = completedRunOutcomeFromEvents(
+      events,
+      "python -m unittest tests/test_config.py passed.",
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "completed_with_unsupported_final_claims",
+      unsupportedFinalClaims: {
+        count: 1,
+        claims: [
+          {
+            kind: "command_success",
+            command: "python -m unittest tests/test_config.py",
+          },
+        ],
+      },
+    });
+  });
+
   it("does not treat backticked successful output as a command success claim", () => {
     const log = new EventLog(createRunId());
     const events = [

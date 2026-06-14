@@ -732,8 +732,69 @@ function extractClaimedSuccessfulCommands(message: string): string[] {
         commands.push(command);
       }
     }
+    const unquotedLine = line.replace(/`[^`\n]*`/g, " ");
+    for (const command of extractInlineVerificationCommandClaims(
+      unquotedLine,
+    )) {
+      commands.push(command);
+    }
   }
   return commands;
+}
+
+function extractInlineVerificationCommandClaims(line: string): string[] {
+  const commands: string[] = [];
+  const successLookahead = String.raw`(?=\s+(?:passed?|passes|success(?:ful|fully)?|succeeded|ok|green)\b|[.!?)]|$)`;
+  const patterns = [
+    new RegExp(
+      String.raw`\b((?:python\d*(?:\.\d+)*)\s+-m\s+(?:unittest|pytest)(?:\s+[^\s` +
+        "`" +
+        String.raw`,;:()]+)*)` +
+        successLookahead,
+      "gi",
+    ),
+    new RegExp(
+      String.raw`\b((?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|verify|check|lint)(?:\s+[^\s` +
+        "`" +
+        String.raw`,;:()]+)*)` +
+        successLookahead,
+      "gi",
+    ),
+    new RegExp(
+      String.raw`\b((?:cargo\s+(?:nextest\s+run|test)|go\s+test)(?:\s+[^\s` +
+        "`" +
+        String.raw`,;:()]+)*)` +
+        successLookahead,
+      "gi",
+    ),
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(line)) !== null) {
+      const command = commandIdentity(stripInlineSuccessSuffix(match[1]));
+      if (
+        command &&
+        isVerificationRelevantCommand(command, { verificationGoal: true })
+      ) {
+        commands.push(command);
+      }
+    }
+  }
+  return commands;
+}
+
+function stripInlineSuccessSuffix(
+  value: string | undefined,
+): string | undefined {
+  if (!value) return undefined;
+  return value
+    .trim()
+    .replace(
+      /\s+(?:passed?|passes|success(?:ful|fully)?|succeeded|ok|green)\b\.?$/i,
+      "",
+    )
+    .replace(/[.!?)]$/u, "")
+    .trim();
 }
 
 function looksLikeCommandSnippet(command: string): boolean {

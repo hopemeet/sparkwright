@@ -13,6 +13,7 @@ import {
 } from "@sparkwright/shell-sandbox";
 import {
   createMcpSamplingHandler,
+  createLazyMcpToolsForRun,
   McpSamplingError,
   type McpSamplingRequest,
   createReconnectingMcpClient,
@@ -589,6 +590,82 @@ describe("mcp-adapter", () => {
       },
       toolNameMap: [],
     });
+  });
+
+  it("defers MCP stdio startup until a lazy MCP tool is executed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-mcp-lazy-"));
+    const markerPath = join(root, "started.txt");
+    const onServerPrepared = vi.fn();
+    const prepared = createLazyMcpToolsForRun({
+      servers: [
+        mcpEchoServerConfig("lazy", {
+          prelude: [
+            "import { writeFileSync } from 'node:fs';",
+            `writeFileSync(${JSON.stringify(markerPath)}, "started", "utf8");`,
+          ].join("\n"),
+        }),
+      ],
+      namePrefix: "mcp",
+      policy: { risk: "safe", requiresApproval: false },
+      onServerPrepared,
+    });
+    try {
+      expect(prepared.statuses.lazy).toEqual({ status: "configured" });
+      expect(prepared.tools.map((tool) => tool.name)).toEqual([
+        "mcp_lazy_list_tools",
+        "mcp_lazy_call_tool",
+      ]);
+      await expect(readFile(markerPath, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+
+      const listTool = prepared.tools.find(
+        (tool) => tool.name === "mcp_lazy_list_tools",
+      );
+      expect(listTool).toBeDefined();
+      const listed = (await listTool!.execute({}, {} as never)) as {
+        status?: string;
+        tools?: Array<{ toolName: string; mcpToolName: string }>;
+      };
+
+      expect(await readFile(markerPath, "utf8")).toBe("started");
+      expect(listed).toMatchObject({
+        serverName: "lazy",
+        status: "connected",
+        tools: [{ toolName: "mcp_lazy_echo", mcpToolName: "echo" }],
+      });
+      expect(prepared.statuses.lazy).toEqual({ status: "connected" });
+      expect(prepared.toolNameMap).toEqual([
+        { toolName: "mcp_lazy_echo", serverName: "lazy", mcpToolName: "echo" },
+      ]);
+      expect(onServerPrepared).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "lazy",
+          status: { status: "connected" },
+          toolNameMap: [
+            {
+              toolName: "mcp_lazy_echo",
+              serverName: "lazy",
+              mcpToolName: "echo",
+            },
+          ],
+        }),
+      );
+
+      const callTool = prepared.tools.find(
+        (tool) => tool.name === "mcp_lazy_call_tool",
+      );
+      const called = await callTool!.execute(
+        { toolName: "echo", arguments: { text: "hello lazy" } },
+        {} as never,
+      );
+      expect(called).toMatchObject({
+        content: [{ type: "text", text: "hello lazy" }],
+      });
+      expect(onServerPrepared).toHaveBeenCalledTimes(1);
+    } finally {
+      await prepared.close();
+    }
   });
 
   it("checks server policy before connecting to enabled MCP servers", async () => {

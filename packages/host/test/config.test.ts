@@ -1155,6 +1155,7 @@ describe("loadHostConfig", () => {
                     transport: "http",
                     command: "",
                     args: "nope",
+                    envMode: "ambient",
                     workspaceAccess: "read_only",
                   },
                   externalCommand: {
@@ -1181,6 +1182,7 @@ describe("loadHostConfig", () => {
           'capabilities.agents.profiles.0.metadata.acp.transport: must be "stdio"',
           "capabilities.agents.profiles.0.metadata.acp.command: must be a non-empty string",
           "capabilities.agents.profiles.0.metadata.acp.args: must be an array of strings",
+          "capabilities.agents.profiles.0.metadata.acp.envMode: must be inherit or explicit",
           "capabilities.agents.profiles.0.metadata.acp.workspaceAccess: must be none or read_write",
           "capabilities.agents.profiles.0.metadata.externalCommand.command: must be a non-empty string",
           "capabilities.agents.profiles.0.metadata.externalCommand.args: must be an array of strings",

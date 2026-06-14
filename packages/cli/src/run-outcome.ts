@@ -150,7 +150,7 @@ export function summarizeWorkspaceMutations(input: {
   const { shouldWrite, completed, skipped, denied } = input;
   if (completed === 0 && skipped === 0 && denied === 0) {
     return shouldWrite
-      ? "No workspace changes were made (no write was attempted)."
+      ? "No workspace changes were made (no workspace write was applied)."
       : "No workspace changes were made (read-only run).";
   }
   const parts: string[] = [];

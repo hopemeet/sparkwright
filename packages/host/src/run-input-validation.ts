@@ -34,10 +34,9 @@ export async function validateRunInput(
   const warnings: string[] = [];
 
   if (input.approveAll && !input.shouldWrite) {
-    warnings.push("--yes has no effect without --write.");
-  }
-  if (input.approveShellSafe && !input.shouldWrite) {
-    warnings.push("--yes-shell-safe has no effect without --write.");
+    warnings.push(
+      "--yes does not enable workspace writes without --write; it can still approve other risky actions.",
+    );
   }
 
   const workspaceOk = await validateWorkspace(input.workspaceRoot, errors);

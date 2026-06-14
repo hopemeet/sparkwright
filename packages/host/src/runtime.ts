@@ -5,6 +5,7 @@ import {
   asSessionId,
   createBufferedEmitter,
   createRunId,
+  createDefaultPolicy,
   createLayeredPolicy,
   DEFAULT_CONFIDENTIAL_PATHS,
   createSessionId,
@@ -46,7 +47,9 @@ import {
   type SkillIndexEntry,
 } from "@sparkwright/skills";
 import {
+  createLazyMcpToolsForRun,
   prepareMcpToolsForRun,
+  type McpServerConfig,
   type McpStatus,
   type McpToolNameMapping,
 } from "@sparkwright/mcp-adapter";
@@ -54,6 +57,7 @@ import {
   FileTaskStore,
   TaskManager,
   createAgentTool,
+  createAgentProfilePolicy,
   deriveChildAgentProfile,
   runTodoSupervised,
   spawnSubAgent,
@@ -91,7 +95,7 @@ import type {
   CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import { loadHostConfig } from "./config.js";
+import { loadHostConfig, type CapabilityMcpConfig } from "./config.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
 import {
   existingSkillRoots,
@@ -176,6 +180,25 @@ function createHostRunPolicy(input: {
   ]);
 }
 
+type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
+  servers?: McpServerConfig[];
+};
+
+function mergeRuntimeMcpConfig(
+  config: CapabilityMcpConfig | undefined,
+  extraServers: readonly McpServerConfig[] | undefined,
+): RuntimeMcpConfig | undefined {
+  const servers = [
+    ...((config?.servers ?? []) as McpServerConfig[]),
+    ...(extraServers ?? []),
+  ];
+  if (!config && servers.length === 0) return undefined;
+  return {
+    ...(config ?? {}),
+    ...(servers.length > 0 ? { servers } : {}),
+  };
+}
+
 function requireActiveRunId(value: string | null): RunId {
   if (!value) {
     throw new Error("Task tool invoked before a run id was assigned.");
@@ -196,6 +219,8 @@ export interface RuntimeOptions {
   defaultTraceLevel?: TraceLevel;
   /** Default workspace-write permission when run.start does not specify one. */
   defaultShouldWrite?: boolean;
+  /** Session-scoped MCP servers supplied by an embedding protocol (for example ACP). */
+  extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */
   emit: (event: HostEvent) => void;
 }
@@ -514,6 +539,7 @@ export class HostRuntime {
     shouldWrite: boolean;
     sessionId: string;
     targetPath?: string;
+    confidentialPaths?: readonly string[];
     traceLevel?: TraceLevel;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
@@ -547,7 +573,10 @@ export class HostRuntime {
     const shellConfig = loadedConfig.config.shell;
     const hookConfig = loadedConfig.config.capabilities?.hooks;
     const skillConfig = loadedConfig.config.capabilities?.skills;
-    const mcpConfig = loadedConfig.config.capabilities?.mcp;
+    const mcpConfig = mergeRuntimeMcpConfig(
+      loadedConfig.config.capabilities?.mcp,
+      this.opts.extraMcpServers,
+    );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const writeGuardrails = loadedConfig.config.write;
     const skillRoots = resolveSkillRootsForRuntime(
@@ -608,15 +637,37 @@ export class HostRuntime {
         error: { code: "internal_error", message },
       };
     }
+    const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
+    const mcpEventEmitter: EventEmitter = {
+      emit<TPayload>(
+        type: Parameters<EventEmitter["emit"]>[0],
+        payload: TPayload,
+        metadata?: Record<string, unknown>,
+      ) {
+        return (parentRunRef.current?.events ?? pendingExtensionEvents).emit(
+          type,
+          payload,
+          metadata,
+        );
+      },
+    };
     const preparedMcp = mcpConfig?.servers?.length
-      ? await prepareMcpToolsForRun({
+      ? createLazyMcpToolsForRun({
           servers: mcpConfig.servers,
           defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
           namePrefix: mcpConfig.namePrefix,
           policy: mcpConfig.defaultPolicy,
-          emitter: pendingExtensionEvents,
+          emitter: mcpEventEmitter,
           agentId: MAIN_AGENT_ID,
           shellSandbox: mcpShellSandbox,
+          onServerPrepared: (server) => {
+            const run = parentRunRef.current;
+            if (!run || server.status.status !== "connected") return;
+            for (const tool of server.tools) {
+              if (run.tools.get(tool.name)) run.tools.replace(tool);
+              else run.tools.register(tool);
+            }
+          },
         })
       : null;
     const resolvedProfiles = await resolveAgentProfiles(
@@ -630,12 +681,18 @@ export class HostRuntime {
       loadedConfig.config.runBudget,
       loadedConfig.config.maxSteps,
     );
+    const parentRunPolicy = createHostRunPolicy({
+      permissionMode: input.permissionMode,
+      shouldWrite: input.shouldWrite,
+      targetPath: input.targetPath,
+      confidentialPaths: input.confidentialPaths,
+      writeGuardrails,
+    });
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
       resolvedProfiles,
       pendingExtensionEvents,
     );
-    const parentRunRef: { current?: ReturnType<typeof createRun> } = {};
     const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
     const childRunStoreFactory = (childAgentId: string) =>
       createSessionRunStoreFactory({
@@ -660,6 +717,7 @@ export class HostRuntime {
       model: model.adapter,
       childTools,
       workspaceRoot,
+      parentRunPolicy,
       sandbox: shellConfig?.sandbox,
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -674,6 +732,7 @@ export class HostRuntime {
       getParent: () => parentRunRef.current,
       model: model.adapter,
       childTools,
+      parentRunPolicy,
       childRunStoreFactory,
     });
     const tools = createMainHostTools({
@@ -1153,6 +1212,7 @@ export class HostRuntime {
       shouldWrite,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
+      confidentialPaths: payload.confidentialPaths,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -1322,6 +1382,7 @@ export class HostRuntime {
       shouldWrite,
       sessionId,
       targetPath: payload.targetPath,
+      confidentialPaths: payload.confidentialPaths,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -1645,7 +1706,10 @@ export class HostRuntime {
     const toolConfig = loadedConfig.config.capabilities?.tools;
     const shellConfig = loadedConfig.config.shell;
     const skillConfig = loadedConfig.config.capabilities?.skills;
-    const mcpConfig = loadedConfig.config.capabilities?.mcp;
+    const mcpConfig = mergeRuntimeMcpConfig(
+      loadedConfig.config.capabilities?.mcp,
+      this.opts.extraMcpServers,
+    );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const automation = await this.inspectAutomationSummary();
     const resolvedProfiles = await resolveAgentProfiles(
@@ -1686,7 +1750,7 @@ export class HostRuntime {
           })
         : null;
     const preparedMcp = mcpConfig?.servers?.length
-      ? await prepareMcpToolsForRun({
+      ? createLazyMcpToolsForRun({
           servers: mcpConfig.servers,
           defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
           namePrefix: mcpConfig.namePrefix,
@@ -1712,6 +1776,7 @@ export class HostRuntime {
         },
         childTools,
         workspaceRoot: this.opts.workspaceRoot,
+        parentRunPolicy: createDefaultPolicy(),
         sandbox: shellConfig?.sandbox,
         skillRoots: skillRoots.map((root) => root.root),
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -1728,6 +1793,7 @@ export class HostRuntime {
           },
         },
         childTools,
+        parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
       });
       return buildCapabilitySnapshot({
@@ -2519,6 +2585,7 @@ function createConfiguredDelegateTools(input: {
   model: ModelAdapter;
   childTools: ToolDefinition[];
   workspaceRoot: string;
+  parentRunPolicy: Policy;
   sandbox?: Parameters<typeof createExternalCommandDelegateTool>[0]["sandbox"];
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
@@ -2579,6 +2646,7 @@ function createConfiguredDelegateTools(input: {
       );
       continue;
     }
+    const childProfile = withDelegatedAgentContract(profile);
     tools.push(
       createAgentTool(input.getParent, {
         name: toolName,
@@ -2591,7 +2659,11 @@ function createConfiguredDelegateTools(input: {
           goal: args.goal,
           model: input.model,
           tools: input.childTools,
-          childAgentProfile: withDelegatedAgentContract(profile),
+          childAgentProfile: childProfile,
+          policy: createLayeredPolicy([
+            input.parentRunPolicy,
+            createAgentProfilePolicy(childProfile),
+          ]),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
           interactionChannel: null,
@@ -2673,6 +2745,7 @@ export function createDynamicSpawnAgentTool(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   model: ModelAdapter;
   childTools: ToolDefinition[];
+  parentRunPolicy: Policy;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -2798,6 +2871,10 @@ export function createDynamicSpawnAgentTool(input: {
         model: input.model,
         tools: childTools,
         childAgentProfile: profile,
+        policy: createLayeredPolicy([
+          input.parentRunPolicy,
+          createAgentProfilePolicy(profile),
+        ]),
         maxSteps: parsed.maxSteps,
         interactionChannel: null,
         // Persist the child's own trace/transcript under
