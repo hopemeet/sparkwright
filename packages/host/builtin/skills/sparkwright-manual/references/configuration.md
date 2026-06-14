@@ -94,6 +94,37 @@ path by the CLI.
 
 Store files containing provider keys privately. Keys are plaintext in config.
 
+### Provider Request Options
+
+Use `providerOptions` for AI SDK request-level controls. Provider-level options
+apply to every model on that provider; model-level options shallow-override the
+matching provider namespace.
+
+Keep them in the same personal provider entry as the provider's `apiKey` and
+`baseURL`. A later config layer's `providers.openai` entry replaces the earlier
+provider entry instead of inheriting its secrets.
+
+OpenAI reasoning summaries:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "providerOptions": {
+        "openai": {
+          "reasoningEffort": "low",
+          "reasoningSummary": "auto"
+        }
+      }
+    }
+  }
+}
+```
+
+SparkWright forwards these options into `generateText` and `streamText`.
+Visible reasoning text still depends on the model and provider gateway; some
+OpenAI-compatible proxies omit reasoning summary deltas.
+
 ### Safe Project Defaults
 
 ```json

@@ -124,6 +124,45 @@ overrides provider `baseURL` when set.
 Store config files containing API keys privately. Provider keys are plaintext
 in config.
 
+### Provider Request Options
+
+Use `providerOptions` when an AI SDK provider exposes request-level controls
+that SparkWright does not model directly. Provider-level options apply to every
+model under that provider; model-level options shallow-override the matching
+provider namespace.
+
+Keep these options in the same personal provider entry as the provider's
+`apiKey`/`baseURL`. Across config layers, a later `providers.openai` entry
+replaces the earlier provider entry rather than inheriting its secrets.
+
+For OpenAI reasoning summaries:
+
+```json
+{
+  "model": "openai/gpt-5.4-mini",
+  "providers": {
+    "openai": {
+      "baseURL": "https://api.openai.com/v1",
+      "apiKey": "replace-me",
+      "providerOptions": {
+        "openai": {
+          "reasoningEffort": "low",
+          "reasoningSummary": "auto"
+        }
+      },
+      "models": {
+        "gpt-5.4-mini": {}
+      }
+    }
+  }
+}
+```
+
+SparkWright forwards these options to `generateText` and `streamText`. Whether
+reasoning text appears depends on the selected model and provider gateway; some
+OpenAI-compatible proxies may accept the request but omit visible reasoning
+summary deltas.
+
 ### Safe Project Defaults
 
 Put project-wide behavior in `<workspace>/.sparkwright/config.json`:

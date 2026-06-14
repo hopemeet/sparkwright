@@ -530,12 +530,13 @@ export interface ModelRetryPolicy {
 export interface ModelOutputChunk {
   type:
     | "text_delta"
+    | "reasoning_delta"
     | "tool_call_start"
     | "tool_call_delta"
     | "tool_call_end"
     | "usage"
     | "stop";
-  text?: string; // for text_delta
+  text?: string; // for text_delta/reasoning_delta
   toolName?: string; // for tool_call_start
   toolCallIndex?: number; // for tool_call_start/delta/end
   argumentsDelta?: string; // for tool_call_delta (partial JSON string)

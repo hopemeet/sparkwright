@@ -2996,6 +2996,43 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("streams reasoning chunks without folding them into the final answer", async () => {
+    const events: SparkwrightEvent[] = [];
+    const model: ModelAdapter = {
+      async complete() {
+        throw new Error("complete() should not be called when stream() exists");
+      },
+      async *stream() {
+        yield { type: "reasoning_delta" as const, text: "thinking aloud" };
+        yield { type: "text_delta" as const, text: "final answer" };
+      },
+    };
+
+    const run = createRun({
+      goal: "stream reasoning",
+      model,
+      maxSteps: 1,
+    });
+    run.events.subscribe((event) => events.push(event));
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    expect(result.message).toBe("final answer");
+    expect(
+      events
+        .filter((event) => event.type === "model.stream.chunk")
+        .map((event) => event.payload),
+    ).toEqual([
+      { type: "reasoning_delta", text: "thinking aloud" },
+      { type: "text_delta", text: "final answer" },
+    ]);
+    const completed = events.find((event) => event.type === "model.completed");
+    expect((completed?.payload as { message?: string }).message).toBe(
+      "final answer",
+    );
+  });
+
   it("persists events to runStore when provided", async () => {
     const appended: SparkwrightEvent[] = [];
     const finishCalls: Array<{ record: unknown; result: unknown }> = [];

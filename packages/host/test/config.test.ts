@@ -72,6 +72,71 @@ describe("loadHostConfig", () => {
     });
   });
 
+  it("resolves provider options from provider and model config", () => {
+    const selection = resolveModelSelection(
+      {
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+            providerOptions: {
+              openai: { reasoningEffort: "low", reasoningSummary: "auto" },
+            },
+            models: {
+              "gpt-5.4-nano": {
+                providerOptions: {
+                  openai: { reasoningEffort: "minimal" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "openai/gpt-5.4-nano",
+    );
+
+    expect(selection).toMatchObject({
+      kind: "configured",
+      providerOptions: {
+        openai: { reasoningEffort: "minimal", reasoningSummary: "auto" },
+      },
+    });
+  });
+
+  it("validates provider options as provider-keyed objects", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+            providerOptions: { openai: { reasoningSummary: "auto" } },
+            models: {
+              "gpt-5.4-nano": {
+                providerOptions: { openai: "auto" },
+              },
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.providers?.openai?.providerOptions).toEqual({
+        openai: { reasoningSummary: "auto" },
+      });
+      expect(loaded.errors).toContainEqual(
+        expect.objectContaining({
+          field: "providers.openai.models.gpt-5.4-nano.providerOptions.openai",
+          message: "must be an object",
+        }),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reads shared fields and applies them, ignoring UI-only keys", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

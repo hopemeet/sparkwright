@@ -107,6 +107,9 @@ export async function buildConfiguredAdapter(
           id: selection.modelId,
           providerId: selection.providerKey,
           pricing,
+          metadata: selection.providerOptions
+            ? { providerOptions: selection.providerOptions }
+            : undefined,
         },
       ],
     }),

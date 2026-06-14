@@ -72,12 +72,14 @@ export interface ModelCost {
 
 export interface ProviderModelConfig {
   cost?: ModelCost;
+  providerOptions?: Record<string, Record<string, unknown>>;
 }
 
 export interface ProviderConfig {
   npm?: string;
   baseURL?: string;
   apiKey?: string;
+  providerOptions?: Record<string, Record<string, unknown>>;
   models?: Record<string, ProviderModelConfig>;
 }
 
@@ -2792,6 +2794,15 @@ function validateProvider(
         message: "must be a non-empty string",
       });
   }
+  if (raw.providerOptions !== undefined) {
+    const providerOptions = validateProviderOptions(
+      raw.providerOptions,
+      `providers.${key}.providerOptions`,
+      filePath,
+      errors,
+    );
+    if (providerOptions) provider.providerOptions = providerOptions;
+  }
   if (raw.models !== undefined) {
     if (isRecord(raw.models)) {
       const models: Record<string, ProviderModelConfig> = {};
@@ -2833,6 +2844,15 @@ function validateProvider(
             });
           }
         }
+        if (entry.providerOptions !== undefined) {
+          const providerOptions = validateProviderOptions(
+            entry.providerOptions,
+            `providers.${key}.models.${modelId}.providerOptions`,
+            filePath,
+            errors,
+          );
+          if (providerOptions) modelConfig.providerOptions = providerOptions;
+        }
         models[modelId] = modelConfig;
       }
       provider.models = models;
@@ -2845,6 +2865,32 @@ function validateProvider(
     }
   }
   return provider;
+}
+
+function validateProviderOptions(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): Record<string, Record<string, unknown>> | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [providerKey, providerOptions] of Object.entries(raw)) {
+    if (!isRecord(providerOptions)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${providerKey}`,
+        message: "must be an object",
+      });
+      continue;
+    }
+    out[providerKey] = providerOptions;
+  }
+  return out;
 }
 
 /**
@@ -3264,6 +3310,7 @@ export type ModelSelection =
       baseURL?: string;
       apiKey?: string;
       cost?: ModelCost;
+      providerOptions?: Record<string, Record<string, unknown>>;
     }
   | { kind: "error"; message: string };
 
@@ -3321,7 +3368,30 @@ export function resolveModelSelection(
     baseURL: provider.baseURL,
     apiKey: provider.apiKey,
     cost: provider.models?.[modelId]?.cost,
+    providerOptions: mergeProviderOptions(
+      provider.providerOptions,
+      provider.models?.[modelId]?.providerOptions,
+    ),
   };
+}
+
+function mergeProviderOptions(
+  providerOptions: Record<string, Record<string, unknown>> | undefined,
+  modelProviderOptions: Record<string, Record<string, unknown>> | undefined,
+): Record<string, Record<string, unknown>> | undefined {
+  if (!providerOptions) return modelProviderOptions;
+  if (!modelProviderOptions) return providerOptions;
+  const merged: Record<string, Record<string, unknown>> = {};
+  for (const key of new Set([
+    ...Object.keys(providerOptions),
+    ...Object.keys(modelProviderOptions),
+  ])) {
+    merged[key] = {
+      ...(providerOptions[key] ?? {}),
+      ...(modelProviderOptions[key] ?? {}),
+    };
+  }
+  return merged;
 }
 
 /** Map a config `cost` block to the core ModelPricing shape. */

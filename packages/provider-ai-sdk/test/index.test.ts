@@ -109,6 +109,29 @@ describe("createAiSdkModelAdapter", () => {
     });
   });
 
+  it("forwards request-level provider options into complete calls", async () => {
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => ({
+        content: [{ type: "text", text: "Done." }],
+        finishReason: { unified: "stop", raw: undefined },
+        usage: usage(),
+        warnings: [],
+      }),
+    });
+    const adapter = createAiSdkModelAdapter({
+      model,
+      providerOptions: {
+        openai: { reasoningSummary: "auto" },
+      },
+    });
+
+    await adapter.complete(modelInput());
+
+    expect(model.doGenerateCalls[0]?.providerOptions).toEqual({
+      openai: { reasoningSummary: "auto" },
+    });
+  });
+
   it("annotates request timeout errors with configured timeout metadata", async () => {
     const adapter = createAiSdkModelAdapter({
       timeout: 123,
@@ -175,6 +198,101 @@ describe("createAiSdkModelAdapter streaming", () => {
     expect(chunks.find((c) => c.type === "usage")).toMatchObject({
       type: "usage",
       usage: { inputTokens: 5, outputTokens: 3 },
+    });
+  });
+
+  it("streams reasoning deltas separately from answer text", async () => {
+    const adapter = createAiSdkModelAdapter({
+      model: new MockLanguageModelV3({
+        doStream: async () => ({
+          stream: simulateReadableStream({
+            chunks: [
+              { type: "stream-start", warnings: [] },
+              { type: "reasoning-start", id: "reason_1" },
+              {
+                type: "reasoning-delta",
+                id: "reason_1",
+                delta: "checking assumptions",
+              },
+              { type: "reasoning-end", id: "reason_1" },
+              { type: "text-start", id: "txt_1" },
+              { type: "text-delta", id: "txt_1", delta: "Done." },
+              { type: "text-end", id: "txt_1" },
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: undefined },
+                usage: {
+                  inputTokens: {
+                    total: 5,
+                    noCache: 5,
+                    cacheRead: undefined,
+                    cacheWrite: undefined,
+                  },
+                  outputTokens: { total: 4, text: 1, reasoning: 3 },
+                },
+              },
+            ],
+            initialDelayInMs: null,
+            chunkDelayInMs: null,
+          }),
+        }),
+      }),
+    });
+
+    const chunks: ModelOutputChunk[] = [];
+    for await (const chunk of adapter.stream!(modelInput())) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.filter((c) => c.type === "reasoning_delta")).toEqual([
+      { type: "reasoning_delta", text: "checking assumptions" },
+    ]);
+    expect(chunks.filter((c) => c.type === "text_delta")).toEqual([
+      { type: "text_delta", text: "Done." },
+    ]);
+  });
+
+  it("forwards request-level provider options into stream calls", async () => {
+    const model = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [
+            { type: "stream-start", warnings: [] },
+            { type: "text-start", id: "txt_1" },
+            { type: "text-delta", id: "txt_1", delta: "Done." },
+            { type: "text-end", id: "txt_1" },
+            {
+              type: "finish",
+              finishReason: { unified: "stop", raw: undefined },
+              usage: {
+                inputTokens: {
+                  total: 1,
+                  noCache: 1,
+                  cacheRead: undefined,
+                  cacheWrite: undefined,
+                },
+                outputTokens: { total: 1, text: 1, reasoning: undefined },
+              },
+            },
+          ],
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+        }),
+      }),
+    });
+    const adapter = createAiSdkModelAdapter({
+      model,
+      providerOptions: {
+        openai: { reasoningSummary: "auto" },
+      },
+    });
+
+    for await (const _chunk of adapter.stream!(modelInput())) {
+      // drain stream
+    }
+
+    expect(model.doStreamCalls[0]?.providerOptions).toEqual({
+      openai: { reasoningSummary: "auto" },
     });
   });
 
