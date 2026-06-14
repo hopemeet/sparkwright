@@ -3693,6 +3693,14 @@ export class SparkwrightRun implements RunHandle {
     reason: Extract<RunStopReason, "no_model_configured" | "final_answer">,
     payload: Record<string, unknown>,
   ): RunResult {
+    // A cancel that lands just as the run finishes already emitted its terminal
+    // event (run.cancelled) and set `result`; emitting a second run.completed
+    // here would give the run two terminal events (setState rejects the
+    // transition anyway — see run.state_transition.rejected). Honor the
+    // existing terminal instead so the trace stays single-terminal per run.
+    if (isTerminalState(this.record.state) && this.result) {
+      return this.result;
+    }
     const outcome =
       reason === "final_answer"
         ? completedRunOutcomeFromEvents(
@@ -3740,6 +3748,11 @@ export class SparkwrightRun implements RunHandle {
     message: string,
     metadata: Record<string, unknown> = {},
   ): RunResult {
+    // Already-terminal (e.g. cancelled mid-flight): don't emit a second terminal
+    // event on top of the existing one.
+    if (isTerminalState(this.record.state) && this.result) {
+      return this.result;
+    }
     const failure = {
       category: failureCategoryFor(reason, code),
       code,

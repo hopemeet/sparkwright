@@ -57,6 +57,9 @@ const PROPERTY_IGNORE = new Set([
   // consumers, JSON Schema fixtures, traces, or generated declarations.
   "__brand",
   "accent2",
+  // consumed only in search-dialog.tsx (JSX); this scanner walks .ts files
+  // only, so a .tsx-only reader reads as zero references.
+  "snippet",
   "allowed",
   "approval.requested",
   "run.continuation",

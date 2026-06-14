@@ -19,6 +19,7 @@ export type LayerName =
   | "stash"
   | "model"
   | "timeline"
+  | "search"
   | "help"
   | "config"
   | "capabilities"
@@ -49,6 +50,7 @@ const PRIORITY: Record<LayerName, number> = {
   stash: 55,
   model: 58,
   timeline: 62,
+  search: 63,
   capabilities: 57,
   create: 57,
   "skill-create": 57,

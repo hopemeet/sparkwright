@@ -343,6 +343,11 @@ export function verifyTraceJsonl(
   const agentIds = new Set<string>();
   const sequencesByRun = new Map<string, number>();
   const terminalCountByRun = new Map<string, number>();
+  // run.cancelled tracked separately: a run cancelled mid-flight emits BOTH
+  // run.cancelled and a finalizing run.completed (state=cancelled), while a run
+  // cancelled before it starts emits only run.cancelled. So run.cancelled is a
+  // terminal only when no run.completed/run.failed accompanies it.
+  const cancelledCountByRun = new Map<string, number>();
   const writeCountsByRun = new Map<
     string,
     { requested: number; completed: number; denied: number; skipped: number }
@@ -442,6 +447,12 @@ export function verifyTraceJsonl(
         event.runId,
         (terminalCountByRun.get(event.runId) ?? 0) + 1,
       );
+      if (event.type === "run.cancelled") {
+        cancelledCountByRun.set(
+          event.runId,
+          (cancelledCountByRun.get(event.runId) ?? 0) + 1,
+        );
+      }
     }
     collectWriteVerificationCounts(writeCountsByRun, event);
     collectApprovalVerificationCounts(approvalCountsByRun, event);
@@ -458,7 +469,13 @@ export function verifyTraceJsonl(
   }
 
   for (const runId of runIds) {
-    const terminalCount = terminalCountByRun.get(runId) ?? 0;
+    const total = terminalCountByRun.get(runId) ?? 0;
+    const cancelled = cancelledCountByRun.get(runId) ?? 0;
+    // Collapse a mid-flight cancel's (run.cancelled + run.completed) pair into a
+    // single logical terminal: the run.completed is the canonical terminal, and
+    // run.cancelled only counts when it is the sole terminal.
+    const primary = total - cancelled;
+    const terminalCount = primary > 0 ? primary : cancelled;
     if (terminalCount !== 1) {
       findings.push({
         severity: "error",

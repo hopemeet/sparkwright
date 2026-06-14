@@ -238,6 +238,67 @@ function safeJson(value: unknown): string {
  * final text at `payload.message` for both providers; we scan backward so the
  * latest reply wins. Used by /copy to put the answer on the clipboard.
  */
+export interface TranscriptMessage {
+  role: "user" | "assistant";
+  /** Full message text (used when copying). */
+  text: string;
+}
+
+export interface TranscriptMatch extends TranscriptMessage {
+  /** One-line snippet around the first match (used for the results list). */
+  snippet: string;
+}
+
+/** Collect the conversation's user goals and assistant answers, in order. */
+export function collectTranscriptMessages(
+  events: RunEvent[],
+): TranscriptMessage[] {
+  const out: TranscriptMessage[] = [];
+  for (const ev of events) {
+    if (ev.type === "tui.user") {
+      const goal = (ev.payload as { goal?: unknown } | null)?.goal;
+      if (typeof goal === "string" && goal.trim())
+        out.push({ role: "user", text: goal });
+    } else if (
+      ev.type === "model.completed" ||
+      ev.type === "model.assistant_text"
+    ) {
+      const message = (ev.payload as { message?: unknown } | null)?.message;
+      if (typeof message === "string" && message.trim())
+        out.push({ role: "assistant", text: message });
+    }
+  }
+  return out;
+}
+
+/**
+ * Case-insensitive substring search over the conversation. An empty query
+ * returns every message (so the dialog can list them). Each match carries a
+ * one-line snippet windowed around the first hit. The committed transcript
+ * lives in terminal scrollback (can't be programmatically scrolled), so this
+ * powers "find → copy", not "find → jump".
+ */
+export function searchTranscript(
+  events: RunEvent[],
+  query: string,
+  snippetWidth = 72,
+): TranscriptMatch[] {
+  const q = query.trim().toLowerCase();
+  const out: TranscriptMatch[] = [];
+  for (const msg of collectTranscriptMessages(events)) {
+    const flat = msg.text.replace(/\s+/g, " ").trim();
+    const lower = flat.toLowerCase();
+    const hit = q ? lower.indexOf(q) : 0;
+    if (q && hit < 0) continue;
+    const start = Math.max(0, hit - Math.floor(snippetWidth / 3));
+    let snippet = flat.slice(start, start + snippetWidth);
+    if (start > 0) snippet = "…" + snippet;
+    if (start + snippetWidth < flat.length) snippet = snippet + "…";
+    out.push({ role: msg.role, text: msg.text, snippet });
+  }
+  return out;
+}
+
 export function lastAssistantMessage(events: RunEvent[]): string | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];

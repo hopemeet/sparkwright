@@ -1759,6 +1759,30 @@ async function loadCapabilityInspectReport(
     }
   }
 
+  // Split configured delegates into external (ACP / command, which carry a
+  // descriptor) and in-process (config child agents). Both become real tools at
+  // runtime; only the external ones have a DelegateCapabilityDescriptor, so the
+  // in-process ones must be surfaced separately or the inventory under-reports
+  // them (e.g. a `delegate_reviewer` that a real run actually exposes).
+  const configuredDelegates = capabilities?.agents?.delegateTools ?? [];
+  const externalDelegateDescriptors = configuredDelegates.flatMap(
+    (delegate) => {
+      const profile = profileById.get(delegate.profileId);
+      if (!profile) return [];
+      const descriptor = describeExternalDelegateCapability({
+        delegate,
+        profile,
+      });
+      return descriptor ? [descriptor] : [];
+    },
+  );
+  const inProcessDelegateTools = configuredDelegates.flatMap((delegate) => {
+    const profile = profileById.get(delegate.profileId);
+    if (!profile || !delegate.toolName) return [];
+    if (describeExternalDelegateCapability({ delegate, profile })) return [];
+    return [{ toolName: delegate.toolName, profileId: delegate.profileId }];
+  });
+
   return {
     workspace: workspaceRoot,
     config: { errors: loaded.errors },
@@ -1767,17 +1791,8 @@ async function loadCapabilityInspectReport(
       available: buildCapabilityToolInventory({
         config: capabilities?.tools ?? {},
         mcpServers,
-        delegateTools: (capabilities?.agents?.delegateTools ?? []).flatMap(
-          (delegate) => {
-            const profile = profileById.get(delegate.profileId);
-            if (!profile) return [];
-            const descriptor = describeExternalDelegateCapability({
-              delegate,
-              profile,
-            });
-            return descriptor ? [descriptor] : [];
-          },
-        ),
+        delegateTools: externalDelegateDescriptors,
+        inProcessDelegateTools,
       }),
     },
     shell: {
@@ -1952,6 +1967,8 @@ function buildCapabilityToolInventory(input: {
   config: ToolsConfigShape;
   mcpServers: CapabilityInspectReport["mcp"]["servers"];
   delegateTools: DelegateCapabilityDescriptor[];
+  /** In-process (config child-agent) delegates — real tools without an external descriptor. */
+  inProcessDelegateTools?: Array<{ toolName: string; profileId: string }>;
 }): CapabilityToolInspectEntry[] {
   const mcpTools = input.mcpServers.flatMap((server) =>
     (server.tools ?? []).map((tool) => ({
@@ -1967,7 +1984,20 @@ function buildCapabilityToolInventory(input: {
     risk: "risky" as const,
     origin: `${tool.protocol}:${tool.profileId}`,
   }));
-  return [...BUILTIN_CAPABILITY_TOOLS, ...mcpTools, ...delegateTools]
+  const inProcessDelegateTools = (input.inProcessDelegateTools ?? []).map(
+    (tool) => ({
+      name: tool.toolName,
+      source: "delegate" as const,
+      risk: "risky" as const,
+      origin: `in_process:${tool.profileId}`,
+    }),
+  );
+  return [
+    ...BUILTIN_CAPABILITY_TOOLS,
+    ...mcpTools,
+    ...delegateTools,
+    ...inProcessDelegateTools,
+  ]
     .filter((tool) => toolAllowedByConfig(tool.name, input.config))
     .map((tool) => ({
       ...tool,
@@ -2789,11 +2819,17 @@ function parseSkillsCreateArgs(
   | { ok: false; message: string } {
   const rest = [...args];
   const name = rest.shift();
-  if (!name || !isSkillName(name)) {
+  if (!name) {
     return {
       ok: false,
       message:
         "Usage: sparkwright skills create <name> --description <text> [--root path]",
+    };
+  }
+  if (!isSkillName(name)) {
+    return {
+      ok: false,
+      message: `Invalid skill name "${name}": use lowercase letters, digits, and hyphens (kebab-case), e.g. "my-skill".`,
     };
   }
   let description: string | undefined;

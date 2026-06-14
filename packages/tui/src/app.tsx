@@ -29,6 +29,7 @@ import { resolveTheme, THEMES, type Theme } from "./lib/theme.js";
 import { StashDialog } from "./components/stash-dialog.js";
 import { ModelDialog } from "./components/model-dialog.js";
 import { TimelineDialog } from "./components/timeline-dialog.js";
+import { SearchDialog } from "./components/search-dialog.js";
 import { CreateCapabilityDialog } from "./components/create-capability-dialog.js";
 import { SkillProposalDialog } from "./components/skill-proposal-dialog.js";
 import { SkillReviewDialog } from "./components/skill-review-dialog.js";
@@ -127,6 +128,7 @@ interface Resolved {
   bindings: Bindings;
   theme: Theme;
   mouse: boolean;
+  vim: boolean;
 }
 
 type CapabilityView = "all" | "tools" | "skills" | "agents" | "mcp" | "cron";
@@ -176,6 +178,7 @@ function resolveConfig(
     bindings: loaded.config.resolvedBindings ?? DEFAULT_BINDINGS,
     theme: resolveTheme(loaded.config.theme),
     mouse: loaded.config.mouse ?? true,
+    vim: loaded.config.vim ?? false,
   };
 }
 
@@ -948,6 +951,24 @@ function AppReady(
       },
     });
     reg.register({
+      name: "retry",
+      title: "Re-run last goal",
+      description: "Submit the most recent goal again in this session.",
+      category: "session",
+      run: () => {
+        void controller.retry().then((ok) => {
+          if (ok) return;
+          toasts.push({
+            title: "nothing to retry",
+            message: controller.getLastGoal()
+              ? "a run is already active"
+              : "no goal has been run yet",
+            variant: "info",
+          });
+        });
+      },
+    });
+    reg.register({
       name: "sessions",
       title: "Browse past sessions",
       description: "List, inspect diagnostics, resume.",
@@ -1167,6 +1188,14 @@ function AppReady(
       },
     });
     reg.register({
+      name: "search",
+      title: "Search transcript",
+      description: "Find text in the conversation; enter copies the match.",
+      category: "view",
+      aliases: ["find"],
+      run: () => layers.toggle("search"),
+    });
+    reg.register({
       name: "export",
       title: "Export session transcript",
       description:
@@ -1373,6 +1402,21 @@ function AppReady(
     if (topLayer.name === "session-rename") setRenameTarget(null);
   };
 
+  // Copy a transcript message picked in the search dialog, then close it.
+  const handleTranscriptCopy = (text: string): void => {
+    const ok = copyToClipboard(text);
+    layers.pop("search");
+    toasts.push(
+      ok
+        ? {
+            variant: "success",
+            title: "copied",
+            message: `${text.length} chars to clipboard`,
+          }
+        : { variant: "warning", message: "clipboard unavailable (not a TTY)" },
+    );
+  };
+
   if (topLayer?.name === "events") {
     return (
       <ThemeProvider theme={theme}>
@@ -1410,16 +1454,17 @@ function AppReady(
                 message: `${nextModelName} (next run)`,
               });
             }}
-            onFork={(seq) => {
+            onFork={(seq, label, edit) => {
               const src = state.sessionId;
               layers.pop("timeline");
               if (!src) return;
               void controller.forkSession(src, seq).then((res) => {
                 if (!res) return;
                 void controller.switchSession(res.forkedSessionId);
+                if (edit && label) inputHandleRef.current?.setValue(label);
                 toasts.push({
                   variant: "success",
-                  title: "forked",
+                  title: edit ? "forked — edit & resend" : "forked",
                   message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
                 });
               });
@@ -1452,6 +1497,7 @@ function AppReady(
               setRenameTarget(null);
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
+            onSearchCopy={handleTranscriptCopy}
             onCreateCapability={(draft) => void handleCreateCapability(draft)}
             onCreateSkillProposal={handleCreateSkillProposal}
             onUpdateSkillProposal={handleUpdateSkillProposal}
@@ -1610,7 +1656,7 @@ function AppReady(
                 message: `${nextModelName} (next run)`,
               });
             }}
-            onFork={(seq) => {
+            onFork={(seq, label, edit) => {
               const src = state.sessionId;
               layers.pop("timeline");
               if (!src) return;
@@ -1619,9 +1665,10 @@ function AppReady(
                 // Switch to the fork AND load its (copied) history so the
                 // branched conversation is visible, not a blank screen.
                 void controller.switchSession(res.forkedSessionId);
+                if (edit && label) inputHandleRef.current?.setValue(label);
                 toasts.push({
                   variant: "success",
-                  title: "forked",
+                  title: edit ? "forked — edit & resend" : "forked",
                   message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
                 });
               });
@@ -1656,6 +1703,7 @@ function AppReady(
               setRenameTarget(null);
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
+            onSearchCopy={handleTranscriptCopy}
             onCreateCapability={(draft) => void handleCreateCapability(draft)}
             onCreateSkillProposal={handleCreateSkillProposal}
             onUpdateSkillProposal={handleUpdateSkillProposal}
@@ -1675,6 +1723,7 @@ function AppReady(
             }
             workspaceRoot={resolved.workspaceRoot}
             registry={registry}
+            vim={resolved.vim}
             onSubmit={handleSubmit}
             onCommand={(cmd, rest) =>
               void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
@@ -1758,8 +1807,13 @@ function LayerRenderer(props: {
   onCommitRename: (id: string, label: string) => void;
   onPickStash: (text: string) => void;
   onCommitModel: (model: string) => void;
-  onFork: (forkAtSequence: number | undefined, label: string) => void;
+  onFork: (
+    forkAtSequence: number | undefined,
+    label: string,
+    edit?: boolean,
+  ) => void;
   onApprovalDecision: (d: "approved" | "denied") => void;
+  onSearchCopy: (text: string) => void;
   onCreateCapability: (draft: CreateCapabilityDraft) => void;
   onCreateSkillProposal: (draft: TuiSkillProposalInput) => void;
   onUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
@@ -1846,6 +1900,14 @@ function LayerRenderer(props: {
           events={props.events}
           onCancel={props.onCloseTop}
           onFork={props.onFork}
+        />
+      );
+    case "search":
+      return (
+        <SearchDialog
+          events={props.events}
+          onCancel={props.onCloseTop}
+          onCopy={props.onSearchCopy}
         />
       );
     case "help":
@@ -1947,13 +2009,29 @@ function createKindFromString(value: string): CreateCapabilityKind | undefined {
   }
 }
 
+// Input editing affordances live inside InputBox (readline-style), so they have
+// no /command entry — surface them in the help panel so they're discoverable.
+const INPUT_HELP: ReadonlyArray<{ keys: string; what: string }> = [
+  { keys: "enter", what: "run · \\↵ newline" },
+  { keys: "↑ ↓", what: "recall input history" },
+  { keys: "ctrl+r", what: "search input history" },
+  { keys: "@  /", what: "mention a file · slash commands" },
+  { keys: "ctrl+a / ctrl+e", what: "jump to line start / end" },
+  { keys: "ctrl+w / ctrl+u", what: "delete word back / to line start" },
+  { keys: "alt+← →", what: "jump by word (ctrl+← → too)" },
+  { keys: "alt+d", what: "delete word forward" },
+];
+
 function HelpPanel(props: {
   registry: CommandRegistry;
   onClose: () => void;
 }): React.ReactElement {
-  useInput((_input, key) => {
-    if (key.escape || key.return) props.onClose();
-  });
+  const { stdout } = useStdout();
+  const [scroll, setScroll] = useState(0);
+
+  // Flatten title-less body into one row per line so it can be windowed: the
+  // full panel (input-editing block + every command group) is taller than a
+  // normal terminal, and without scrolling its top silently clips off-screen.
   const cmds = props.registry.list();
   const grouped = new Map<string, typeof cmds>();
   for (const c of cmds) {
@@ -1961,6 +2039,60 @@ function HelpPanel(props: {
     g.push(c);
     grouped.set(c.category, g);
   }
+  const rows: React.ReactElement[] = [];
+  rows.push(
+    <Text key="ih-h" bold>
+      input editing
+    </Text>,
+  );
+  for (const row of INPUT_HELP) {
+    rows.push(
+      <Box key={`ih-${row.keys}`}>
+        <Text color="cyan">{row.keys}</Text>
+        <Text> </Text>
+        <Text>{row.what}</Text>
+      </Box>,
+    );
+  }
+  for (const [cat, list] of grouped.entries()) {
+    rows.push(<Text key={`sp-${cat}`}> </Text>);
+    rows.push(
+      <Text key={`h-${cat}`} bold>
+        {cat}
+      </Text>,
+    );
+    for (const c of list) {
+      rows.push(
+        <Box key={`c-${c.name}`}>
+          <Text color="cyan">/{c.name}</Text>
+          <Text> </Text>
+          <Text>{c.title}</Text>
+          {c.hint ? <Text dimColor> [{c.hint}]</Text> : null}
+        </Box>,
+      );
+    }
+  }
+
+  // Reserve rows for the border, title, footer, and the live input box below.
+  const viewport = Math.max(6, (stdout?.rows ?? 30) - 10);
+  const maxScroll = Math.max(0, rows.length - viewport);
+  const clamped = Math.min(scroll, maxScroll);
+  const visible = rows.slice(clamped, clamped + viewport);
+  const more = rows.length - (clamped + visible.length);
+
+  useInput((input, key) => {
+    if (key.escape || key.return) return props.onClose();
+    if (key.downArrow || input === "j")
+      setScroll((s) => Math.min(maxScroll, s + 1));
+    else if (key.upArrow || input === "k") setScroll((s) => Math.max(0, s - 1));
+    else if (key.pageDown || input === "d")
+      setScroll((s) => Math.min(maxScroll, s + viewport));
+    else if (key.pageUp || input === "u")
+      setScroll((s) => Math.max(0, s - viewport));
+    else if (input === "g") setScroll(0);
+    else if (input === "G") setScroll(maxScroll);
+  });
+
   return (
     <Box
       flexDirection="column"
@@ -1971,21 +2103,17 @@ function HelpPanel(props: {
       <Text color="magenta" bold>
         keyboard / commands
       </Text>
-      {[...grouped.entries()].map(([cat, list]) => (
-        <Box key={cat} flexDirection="column" marginTop={1}>
-          <Text bold>{cat}</Text>
-          {list.map((c) => (
-            <Box key={c.name}>
-              <Text color="cyan">/{c.name}</Text>
-              <Text> </Text>
-              <Text>{c.title}</Text>
-              {c.hint ? <Text dimColor> [{c.hint}]</Text> : null}
-            </Box>
-          ))}
-        </Box>
-      ))}
+      <Box flexDirection="column" marginTop={1}>
+        {visible}
+      </Box>
       <Box marginTop={1}>
-        <Text dimColor>esc / enter to close</Text>
+        <Text dimColor>esc close</Text>
+        {maxScroll > 0 ? (
+          <Text dimColor>
+            {" · ↑/↓ j/k scroll · u/d page"}
+            {more > 0 ? ` · ${more} more ↓` : " · end"}
+          </Text>
+        ) : null}
       </Box>
     </Box>
   );

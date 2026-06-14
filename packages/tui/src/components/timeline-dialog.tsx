@@ -12,7 +12,15 @@ import { useTheme } from "../lib/theme-context.js";
  */
 export function TimelineDialog(props: {
   events: RunEvent[];
-  onFork: (forkAtSequence: number | undefined, label: string) => void;
+  /**
+   * Fork at the chosen point. `edit` true means "edit & resend": fork, then
+   * prefill the input with this turn's goal so the user can tweak and re-run.
+   */
+  onFork: (
+    forkAtSequence: number | undefined,
+    label: string,
+    edit?: boolean,
+  ) => void;
   onCancel: () => void;
 }): React.ReactElement {
   const theme = useTheme();
@@ -41,6 +49,13 @@ export function TimelineDialog(props: {
       props.onFork(pick.seq, pick.label);
       return;
     }
+    // "e" = fork & edit: only meaningful for a specific user turn (not the
+    // full-clone option, which has no single goal to edit).
+    if (input === "e") {
+      const pick = options[safeCursor];
+      if (pick.seq !== undefined) props.onFork(pick.seq, pick.label, true);
+      return;
+    }
     if (key.upArrow || input === "k") {
       setCursor((c) => Math.max(0, c - 1));
     } else if (key.downArrow || input === "j") {
@@ -60,7 +75,8 @@ export function TimelineDialog(props: {
           fork session
         </Text>
         <Text color={theme.muted}>
-          {"  "}pick a point to fork from · ↑/↓ select · enter fork · esc cancel
+          {"  "}pick a point · ↑/↓ select · enter fork · e fork+edit · esc
+          cancel
         </Text>
       </Box>
       {options.map((opt, i) => {
@@ -97,13 +113,29 @@ interface Turn {
   goal: string;
 }
 
-function extractTurns(events: RunEvent[]): Turn[] {
+export function extractTurns(events: RunEvent[]): Turn[] {
+  // Fork happens at a host sequence, which only `run.started` carries — but its
+  // payload.goal is empty on some providers. The TUI's own `tui.user` event
+  // (synthetic, negative sequence) always carries the goal text and is appended
+  // just before the run starts, so we pair each run.started with the goal of the
+  // tui.user that precedes it.
   const turns: Turn[] = [];
+  let pendingGoal: string | undefined;
   for (const ev of events) {
+    if (ev.type === "tui.user") {
+      const g = (ev.payload as { goal?: unknown } | undefined)?.goal;
+      if (typeof g === "string" && g.trim()) pendingGoal = g;
+      continue;
+    }
     if (ev.type !== "run.started") continue;
     const p = (ev.payload ?? {}) as { goal?: unknown };
-    const goal = typeof p.goal === "string" ? p.goal : "(run)";
-    turns.push({ sequence: ev.sequence ?? 0, goal });
+    const ownGoal =
+      typeof p.goal === "string" && p.goal.trim() ? p.goal : undefined;
+    turns.push({
+      sequence: ev.sequence ?? 0,
+      goal: ownGoal ?? pendingGoal ?? "(run)",
+    });
+    pendingGoal = undefined;
   }
   return turns;
 }

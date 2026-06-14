@@ -242,6 +242,52 @@ function defaultSessionRootDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".sparkwright", "sessions");
 }
 
+/**
+ * Strip the decorations the context builder wraps around a user goal: the
+ * `<env>…</env>` preamble block and the leading `User request:` label (see
+ * `packages/core/src/context.ts`). Collapses whitespace so the result is a clean
+ * single-line preview.
+ */
+function stripGoalDecorations(content: string): string {
+  return content
+    .replace(/<env>[\s\S]*?<\/env>/g, "")
+    .replace(/^\s*User request:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Derive a human-readable session-browser preview from the first transcript
+ * line. That line is the opening `prompt` event whose `messages` carry the
+ * `<env>` preamble (message 0) and the user goal as `User request:\n<goal>`
+ * (last user message). We surface the goal. Falls back to a top-level `content`
+ * string, then the raw line, for other/legacy shapes.
+ */
+export function sessionPreviewFromTranscriptLine(firstLine: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(firstLine);
+  } catch {
+    return firstLine;
+  }
+  const obj = parsed as {
+    content?: unknown;
+    messages?: Array<{ role?: unknown; content?: unknown }>;
+  };
+  if (Array.isArray(obj.messages)) {
+    for (let i = obj.messages.length - 1; i >= 0; i--) {
+      const m = obj.messages[i];
+      if (!m || m.role !== "user" || typeof m.content !== "string") continue;
+      const goal = stripGoalDecorations(m.content);
+      if (goal) return goal;
+    }
+  }
+  if (typeof obj.content === "string" && obj.content.trim()) {
+    return stripGoalDecorations(obj.content);
+  }
+  return firstLine;
+}
+
 function extractSkillSourcePath(message: string): string | undefined {
   return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
 }
@@ -1853,13 +1899,7 @@ export class HostRuntime {
             );
             const firstLine = transcript.split("\n").find((l) => l.trim());
             if (firstLine) {
-              try {
-                const obj = JSON.parse(firstLine) as { content?: unknown };
-                preview =
-                  typeof obj.content === "string" ? obj.content : firstLine;
-              } catch {
-                preview = firstLine;
-              }
+              preview = sessionPreviewFromTranscriptLine(firstLine);
             }
           } catch {
             // no transcript yet
