@@ -2962,6 +2962,48 @@ describe("trace", () => {
       ]),
     );
   });
+
+  it("treats a mid-flight cancel (run.cancelled + run.completed) as one terminal", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "essay" }),
+      log.emit("run.started", {}),
+      log.emit("run.cancelled", { reason: "manual_cancelled" }),
+      log.emit("run.completed", {
+        reason: "manual_cancelled",
+        state: "cancelled",
+      }),
+    ];
+    const report = verifyTraceJsonl(events.map(serializeEventJsonl).join(""));
+    expect(report.findings.map((f) => f.code)).not.toContain(
+      "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+    );
+  });
+
+  it("treats a cancel-before-start (run.cancelled only) as one terminal", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "x" }),
+      log.emit("run.cancelled", { reason: "manual_cancelled" }),
+    ];
+    const report = verifyTraceJsonl(events.map(serializeEventJsonl).join(""));
+    expect(report.findings.map((f) => f.code)).not.toContain(
+      "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+    );
+  });
+
+  it("still flags a genuine double terminal (two run.completed)", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "x" }),
+      log.emit("run.completed", { reason: "final_answer" }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ];
+    const report = verifyTraceJsonl(events.map(serializeEventJsonl).join(""));
+    expect(report.findings.map((f) => f.code)).toContain(
+      "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+    );
+  });
 });
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {

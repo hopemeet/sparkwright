@@ -310,6 +310,78 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("Validation trace written to");
   });
 
+  it("surfaces in-process delegate tools in capabilities inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            profiles: [
+              { id: "primary", name: "Primary", mode: "primary" },
+              {
+                id: "reviewer",
+                name: "Reviewer",
+                mode: "child",
+                prompt: "Review files.",
+                allowedTools: ["read_file"],
+                maxSteps: 3,
+              },
+            ],
+            delegateTools: [
+              { profileId: "reviewer", toolName: "delegate_reviewer" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText());
+    const tool = (report.tools?.available ?? []).find(
+      (t: { name: string }) => t.name === "delegate_reviewer",
+    );
+    // A real run materializes this in-process child-agent delegate as a tool,
+    // so the inventory must list it (regression: it was dropped because only
+    // external ACP/command delegates had a descriptor).
+    expect(tool).toBeTruthy();
+    expect(tool.source).toBe("delegate");
+    expect(tool.origin).toBe("in_process:reviewer");
+  });
+
+  it("rejects an invalid skill name with a clear, specific message", async () => {
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["skills", "create", "my_skill", "--description", "Test. Use when X."],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    // Regression: an underscore name used to return the generic usage string,
+    // which looked like the syntax was fine. Name format must be called out.
+    expect(output.stderrText()).toContain('Invalid skill name "my_skill"');
+    expect(output.stderrText()).toContain("kebab-case");
+  });
+
   it("rejects an explicit missing target before starting a run", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

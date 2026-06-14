@@ -1709,6 +1709,38 @@ describe("SparkwrightRun", () => {
     ]);
   });
 
+  it("does not emit a second terminal when a cancel lands as the run completes", async () => {
+    // Race: a cancel arrives while the model is producing its final answer. The
+    // model cancels mid-completion, then returns — the loop must not emit a
+    // run.completed on top of the run.cancelled (which would give the run two
+    // terminal events and fail trace verification).
+    let runRef: { cancel: () => unknown } | null = null;
+    const run = createRun({
+      goal: "cancel as it finishes",
+      model: {
+        async complete() {
+          runRef?.cancel();
+          return { message: "final answer despite cancel" };
+        },
+      },
+    });
+    runRef = run;
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("cancelled");
+    const terminals = run.events
+      .all()
+      .map((event) => event.type)
+      .filter(
+        (type) =>
+          type === "run.completed" ||
+          type === "run.failed" ||
+          type === "run.cancelled",
+      );
+    expect(terminals).toEqual(["run.cancelled"]);
+  });
+
   it("does not restart after cancellation", async () => {
     const run = createRun({
       goal: "cancel then start",
