@@ -644,6 +644,15 @@ sparkwright tools disable shell
 sparkwright tools defer "mcp_*"
 ```
 
+Add `--workspace <path>` to manage project defaults in
+`<workspace>/.sparkwright/config.json` instead:
+
+```bash
+sparkwright tools list --workspace . --format text
+sparkwright tools disable shell --workspace .
+sparkwright tools defer "mcp_*" --workspace .
+```
+
 ## Skill Loading
 
 Skill roots and MCP `cwd` values resolve from the config file that declares

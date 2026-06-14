@@ -727,12 +727,27 @@ function extractClaimedSuccessfulCommands(message: string): string[] {
     while ((match = commandPattern.exec(line)) !== null) {
       const command = match[1]?.trim();
       if (!command) continue;
+      if (!looksLikeCommandSnippet(command)) continue;
       if (isVerificationRelevantCommand(command, { verificationGoal: true })) {
         commands.push(command);
       }
     }
   }
   return commands;
+}
+
+function looksLikeCommandSnippet(command: string): boolean {
+  const normalized = stripLeadingEnvAssignments(
+    commandIdentity(command) ?? command,
+  ).toLowerCase();
+  return (
+    isExplicitVerificationCommand(normalized) ||
+    /^(?:\.{0,2}\/|~\/)/.test(normalized) ||
+    /^(?:node|npx|bun|deno|make|cmake|gradle|mvn|bazel|ruby|bundle|rspec|swift|xcodebuild)\b/.test(
+      normalized,
+    ) ||
+    /\s(?:&&|\|\||;)\s/.test(normalized)
+  );
 }
 
 function isSuccessClaimContext(text: string): boolean {

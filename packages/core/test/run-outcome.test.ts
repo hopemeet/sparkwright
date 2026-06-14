@@ -227,6 +227,36 @@ describe("run outcome evidence", () => {
     });
   });
 
+  it("does not treat backticked successful output as a command success claim", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Fix and run tests" }),
+      log.emit("tool.requested", {
+        id: "call_test",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_test",
+        toolName: "shell",
+        status: "completed",
+        output: {
+          exitCode: 0,
+          timedOut: false,
+          stdout: "tests passed\n",
+          stderr: "",
+        },
+      }),
+    ];
+
+    const outcome = completedRunOutcomeFromEvents(
+      events,
+      "`npm test` passed (`tests passed`).",
+    );
+
+    expect(outcome?.unsupportedFinalClaims).toBeUndefined();
+  });
+
   it("marks a recovered + unsupported-claim run as non-failing despite the issues kind", () => {
     const log = new EventLog(createRunId());
     const events = [

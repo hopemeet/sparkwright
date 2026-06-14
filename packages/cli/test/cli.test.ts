@@ -1474,6 +1474,71 @@ describe("runCli", () => {
     }
   });
 
+  it("updates workspace tool config when --workspace is explicit", async () => {
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const workspace = await createWorkspace("# Demo\n");
+    const userConfigPath = join(xdg, "sparkwright", "config.json");
+    const projectConfigPath = join(workspace, ".sparkwright", "config.json");
+
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        capabilities: {
+          skills: { roots: ["skills"] },
+          tools: { disabled: ["shell"] },
+        },
+      }),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["tools", "defer", "mcp_*", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(projectConfigPath);
+    await expect(stat(userConfigPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const parsed = JSON.parse(await readFile(projectConfigPath, "utf8")) as {
+      capabilities?: {
+        skills?: { roots?: string[] };
+        tools?: { disabled?: string[]; defer?: string[] };
+      };
+    };
+    expect(parsed.capabilities?.skills?.roots).toEqual(["skills"]);
+    expect(parsed.capabilities?.tools).toEqual({
+      disabled: ["shell"],
+      defer: ["mcp_*"],
+    });
+  });
+
+  it("lists workspace tool config without creating project config", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const projectConfigPath = join(workspace, ".sparkwright", "config.json");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["tools", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(projectConfigPath);
+    expect(output.stdoutText()).toContain("enabled: (all)");
+    expect(output.stdoutText()).toContain("disabled: (none)");
+    await expect(stat(projectConfigPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("marks missing command capability dirs as optional in inspect output", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

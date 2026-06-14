@@ -273,6 +273,15 @@ npm exec sparkwright -- tools disable <pattern...>
 npm exec sparkwright -- tools defer <pattern...>
 ```
 
+Add `--workspace <path>` to manage project defaults in
+`<workspace>/.sparkwright/config.json` instead:
+
+```bash
+npm exec sparkwright -- tools list --workspace . --format text
+npm exec sparkwright -- tools disable shell --workspace .
+npm exec sparkwright -- tools defer "mcp_*" --workspace .
+```
+
 Use `defer` for tools that should be discovered lazily instead of being loaded
 into the initial prompt.
 

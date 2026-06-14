@@ -125,6 +125,7 @@ interface ParsedArgs {
   target?: string;
   traceLevel: TraceLevel;
   workspaceRoot: string;
+  workspaceRootSource: "default" | "config" | "cli";
   sessionRootDir: string;
   sessionRootDirSource: "default" | "cli";
   targetPath: string;
@@ -490,6 +491,8 @@ function parseArgs(
   }
   let traceLevel: TraceLevel = defaults.traceLevel ?? "standard";
   let workspaceRoot = defaults.workspace ?? cwd;
+  let workspaceRootSource: ParsedArgs["workspaceRootSource"] =
+    defaults.workspace ? "config" : "default";
   let sessionRootDir: string | undefined;
   let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
   let targetPath = "README.md";
@@ -543,6 +546,7 @@ function parseArgs(
       if (!value)
         return { ok: false, message: "Usage: --workspace requires a path" };
       workspaceRoot = resolve(cwd, value);
+      workspaceRootSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1002,6 +1006,7 @@ function parseArgs(
       target,
       traceLevel,
       workspaceRoot,
+      workspaceRootSource,
       sessionRootDir: resolvedSessionRootDir,
       sessionRootDirSource,
       targetPath,
@@ -1057,15 +1062,21 @@ async function handleToolsCommand(
   }
 
   try {
-    const path = userConfigPath(env);
-    const loaded = await readUserConfigObject(path);
+    const target =
+      parsed.workspaceRootSource === "cli"
+        ? {
+            path: projectConfigPathForWorkspace(parsed.workspaceRoot),
+            privateFile: false,
+          }
+        : { path: userConfigPath(env), privateFile: true };
+    const loaded = await readConfigObject(target.path);
     const before = getToolsConfig(loaded.value);
 
     if (subcommand === "list") {
       writeLine(
         io.stdout,
         formatToolsConfig({
-          path,
+          path: target.path,
           exists: loaded.exists,
           tools: before,
           format: parsed.format,
@@ -1076,11 +1087,13 @@ async function handleToolsCommand(
 
     const next = updateToolsConfig(before, subcommand, patterns);
     setToolsConfig(loaded.value, next);
-    await writeUserConfigObject(path, loaded.value);
+    await writeConfigObject(target.path, loaded.value, {
+      privateFile: target.privateFile,
+    });
     writeLine(
       io.stdout,
       formatToolsConfig({
-        path,
+        path: target.path,
         exists: true,
         tools: next,
         format: parsed.format,
@@ -1387,7 +1400,7 @@ function removeEntries(
   return current.filter((entry) => !remove.has(entry));
 }
 
-async function readUserConfigObject(path: string): Promise<{
+async function readConfigObject(path: string): Promise<{
   exists: boolean;
   value: Record<string, unknown>;
 }> {
@@ -1410,16 +1423,19 @@ async function readUserConfigObject(path: string): Promise<{
   }
 }
 
-async function writeUserConfigObject(
+async function writeConfigObject(
   path: string,
   value: Record<string, unknown>,
+  options: { privateFile?: boolean } = {},
 ): Promise<void> {
   const { mkdir, writeFile, chmod } = await import("node:fs/promises");
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, {
-    mode: 0o600,
+    ...(options.privateFile !== false ? { mode: 0o600 } : {}),
   });
-  await chmod(path, 0o600);
+  if (options.privateFile !== false) {
+    await chmod(path, 0o600);
+  }
 }
 
 function getToolsConfig(config: Record<string, unknown>): ToolsConfigShape {
@@ -3149,7 +3165,7 @@ async function handleAgentsCommand(
 
   const configPath = projectConfigPathForWorkspace(parsed.workspaceRoot);
   try {
-    const loaded = await readUserConfigObject(configPath);
+    const loaded = await readConfigObject(configPath);
     const agents = getAgentsConfig(loaded.value);
 
     if (subcommand === "create") {
@@ -3180,7 +3196,7 @@ async function handleAgentsCommand(
         agents.delegateTools.push(input.value.delegateTool);
       }
       setAgentsConfig(loaded.value, agents);
-      await writeUserConfigObject(configPath, loaded.value);
+      await writeConfigObject(configPath, loaded.value);
       writeLine(io.stdout, `Updated ${configPath}`);
       writeLine(
         io.stdout,
@@ -4969,8 +4985,8 @@ function usage(): string {
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
-    "       sparkwright tools list [--format json|text]",
-    "       sparkwright tools enable|disable|defer <tool-pattern...>",
+    "       sparkwright tools list [--workspace path] [--format json|text]",
+    "       sparkwright tools enable|disable|defer <tool-pattern...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
@@ -4992,10 +5008,10 @@ function usage(): string {
 
 function toolsUsage(): string {
   return [
-    "Usage: sparkwright tools list [--format json|text]",
-    "       sparkwright tools enable <tool-pattern...>",
-    "       sparkwright tools disable <tool-pattern...>",
-    "       sparkwright tools defer <tool-pattern...>",
+    "Usage: sparkwright tools list [--workspace path] [--format json|text]",
+    "       sparkwright tools enable <tool-pattern...> [--workspace path]",
+    "       sparkwright tools disable <tool-pattern...> [--workspace path]",
+    "       sparkwright tools defer <tool-pattern...> [--workspace path]",
   ].join("\n");
 }
 

@@ -298,11 +298,11 @@ export function createEditAnchoredTextTool(): ToolDefinition<
   return defineTool<EditAnchoredTextInput, EditAnchoredTextResult>({
     name: "edit_anchored_text",
     description:
-      "Apply verified anchored text edits through the workspace write path.",
+      "Apply verified per-line anchored text edits through the workspace write path. `replace` replaces only the anchored line; to replace a block, include delete edits for the old interior lines or use apply_patch.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string" },
+        path: { type: "string", description: "Workspace-relative file path." },
         edits: {
           type: "array",
           items: {
@@ -311,18 +311,25 @@ export function createEditAnchoredTextTool(): ToolDefinition<
               op: {
                 type: "string",
                 enum: ["replace", "delete", "append", "prepend"],
+                description:
+                  "Line operation. `replace` affects only the single line named by `anchor`; it does not replace a surrounding function or block.",
               },
-              anchor: { type: "string" },
+              anchor: {
+                type: "string",
+                description:
+                  "Exact line anchor from read_anchored_text, for example `12#ABCD`.",
+              },
               lines: {
                 type: "array",
                 items: { type: "string" },
+                description: "Replacement or inserted lines. Omit for delete.",
               },
             },
             required: ["op", "anchor"],
             additionalProperties: false,
           },
         },
-        reason: { type: "string" },
+        reason: { type: "string", description: "Why this edit is needed." },
       },
       required: ["path", "edits"],
       additionalProperties: false,

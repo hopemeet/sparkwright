@@ -246,6 +246,21 @@ function EventCard(props: {
       );
     }
 
+    case "workspace.anchored_read": {
+      const path = str(p.path) || "?";
+      const lineCount =
+        typeof p.lineCount === "number" ? ` · ${p.lineCount} lines` : "";
+      return (
+        <Box paddingLeft={childPad} paddingRight={1}>
+          <Text color={theme.muted}>{"read anchors "}</Text>
+          <Text dimColor>
+            {path}
+            {lineCount}
+          </Text>
+        </Box>
+      );
+    }
+
     case "tool.requested": {
       const name = str(p.toolName) || "tool";
       const args = p.arguments ?? p.input ?? p.args;
@@ -280,6 +295,32 @@ function EventCard(props: {
         return artifacts.length > 0 ? (
           <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
         ) : null;
+      }
+      if (isAnchoredReadResult(result)) {
+        return artifacts.length > 0 ? (
+          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
+        ) : null;
+      }
+      if (isWorkspaceWriteToolResult(result)) {
+        return artifacts.length > 0 ? (
+          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
+        ) : null;
+      }
+      if (isShellResult(result)) {
+        const { head, lines, timedOut } = summarizeShellResult(result);
+        return (
+          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
+            <Text color={timedOut ? theme.warning : theme.muted}>{head}</Text>
+            {lines.map((line, i) => (
+              <Text key={i} dimColor>
+                {"  " + line}
+              </Text>
+            ))}
+            {artifacts.length > 0 ? (
+              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
+            ) : null}
+          </Box>
+        );
       }
       // A sub-agent tool (delegate_* / spawn_agent) returns a structured
       // envelope { childRunId, signal, stopReason, message, usage, … }. Dumping
@@ -640,6 +681,7 @@ function EventCard(props: {
     case "tool.started":
     case "tool.progress":
     case "workspace.write.requested":
+    case "artifact.created":
     case "approval.requested":
     case "interaction.requested":
     case "interaction.resolved":
@@ -743,6 +785,71 @@ export function isFileReadResult(value: unknown): boolean {
     typeof r.totalLines === "number" &&
     typeof r.bytes === "number"
   );
+}
+
+export function isAnchoredReadResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.path === "string" &&
+    typeof r.content === "string" &&
+    typeof r.anchorSetId === "string" &&
+    typeof r.lineCount === "number" &&
+    Array.isArray(r.lines)
+  );
+}
+
+export function isWorkspaceWriteToolResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.path === "string" &&
+    (typeof r.changed === "boolean" ||
+      typeof r.hunksApplied === "number" ||
+      typeof r.proposalId === "string") &&
+    ("content" in r || "diff" in r || "summary" in r)
+  );
+}
+
+export function isShellResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.stdout === "string" &&
+    typeof r.stderr === "string" &&
+    (typeof r.exitCode === "number" || r.exitCode === null) &&
+    typeof r.timedOut === "boolean"
+  );
+}
+
+export function summarizeShellResult(
+  value: unknown,
+  maxLines = 4,
+): { head: string; lines: string[]; timedOut: boolean } {
+  const r = value as Record<string, unknown>;
+  const exitCode =
+    typeof r.exitCode === "number" ? String(r.exitCode) : String(r.exitCode);
+  const timedOut = r.timedOut === true;
+  const head = timedOut
+    ? `shell timed out exit ${exitCode}`
+    : `shell exit ${exitCode}`;
+  const stdout = sanitizeAnsiForRender(str(r.stdout));
+  const stderr = sanitizeAnsiForRender(str(r.stderr));
+  const combined = [stdout, stderr ? `stderr: ${stderr}` : ""]
+    .filter(Boolean)
+    .join("\n");
+  const lines = combined
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, maxLines);
+  return { head, lines, timedOut };
 }
 
 /**

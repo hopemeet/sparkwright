@@ -23,8 +23,8 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   let color = "gray";
   if (t.endsWith(".failed") || t.endsWith(".rejected") || t.endsWith(".denied"))
     color = "red";
-  else if (isVerificationHook(p))
-    color = verificationHookPassed(p) ? "green" : "red";
+  else if (isVerificationHook(p)) color = verificationHookColor(t, p);
+  else if (isWorkflowHook(t)) color = workflowHookColor(t, p);
   else if (t.startsWith("approval.")) color = "yellow";
   else if (t.startsWith("tool.")) color = "cyan";
   else if (t.startsWith("skill.")) color = "blue";
@@ -49,7 +49,8 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     else if (t === "workspace.write.requested") detail = str(p.path);
     else if (t === "run.completed" || t === "run.failed")
       detail = str(p.reason ?? p.stopReason);
-    else if (isVerificationHook(p)) detail = verificationHookDetail(p);
+    else if (isVerificationHook(p)) detail = verificationHookDetail(t, p);
+    else if (isWorkflowHook(t)) detail = workflowHookDetail(t, p);
     else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
     else if (t === "skill.failed") detail = str(p.source ?? p.message);
     else if (t === "skill.loaded") detail = str(p.name);
@@ -71,31 +72,92 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     }
   }
 
-  return { color, label: isVerificationHook(p) ? "verification" : t, detail };
+  return {
+    color,
+    label: isVerificationHook(p)
+      ? "verification"
+      : isWorkflowHook(t)
+        ? "workflow hook"
+        : t,
+    detail,
+  };
 }
 
 function isVerificationHook(payload: Record<string, unknown> | null): boolean {
   return str(payload?.hookName).startsWith("verification:");
 }
 
-function verificationHookPassed(payload: Record<string, unknown> | null) {
-  const result = rec(payload?.result);
-  const metadata = rec(result?.metadata);
-  return metadata?.exitCode === 0 && metadata?.timedOut !== true;
+function isWorkflowHook(type: string): boolean {
+  return type.startsWith("workflow_hook.");
 }
 
-function verificationHookDetail(payload: Record<string, unknown> | null) {
+function verificationHookColor(
+  type: string,
+  payload: Record<string, unknown> | null,
+): string {
+  if (type.endsWith(".started")) return "gray";
+  return verificationHookPassed(payload) ? "green" : "red";
+}
+
+function workflowHookColor(
+  type: string,
+  payload: Record<string, unknown> | null,
+): string {
+  if (type.endsWith(".started")) return "gray";
+  const status = hookStatus(type, payload);
+  if (status === "blocked" || status.startsWith("failed")) return "red";
+  if (status === "ok" || status === "passed") return "green";
+  return "gray";
+}
+
+function verificationHookPassed(payload: Record<string, unknown> | null) {
+  const result = rec(payload?.result);
+  if (result?.status === "continue" && !rec(result.metadata)) return true;
+  if (result?.status === "block") return false;
+  const metadata = rec(result?.metadata);
+  if (!metadata) return false;
+  if (!("exitCode" in metadata)) return result?.status === "continue";
+  return metadata.exitCode === 0 && metadata.timedOut !== true;
+}
+
+function verificationHookStatus(
+  type: string,
+  payload: Record<string, unknown> | null,
+) {
+  return hookStatus(type, payload);
+}
+
+function hookStatus(type: string, payload: Record<string, unknown> | null) {
+  if (type.endsWith(".started")) return "started";
+  const result = rec(payload?.result);
+  const metadata = rec(result?.metadata);
+  if (metadata?.timedOut === true) return "timed out";
+  if (metadata && "exitCode" in metadata) {
+    return metadata.exitCode === 0
+      ? "passed"
+      : `failed exitCode=${String(metadata.exitCode)}`;
+  }
+  if (result?.status === "block") return "blocked";
+  if (result?.status === "continue") return "ok";
+  return "unknown";
+}
+
+function verificationHookDetail(
+  type: string,
+  payload: Record<string, unknown> | null,
+) {
   const hookName = str(payload?.hookName);
   const [, profile, ...idParts] = hookName.split(":");
   const id = idParts.join(":");
-  const result = rec(payload?.result);
-  const metadata = rec(result?.metadata);
-  const status = verificationHookPassed(payload)
-    ? "passed"
-    : metadata?.timedOut === true
-      ? "timed out"
-      : metadata && "exitCode" in metadata
-        ? `failed exitCode=${String(metadata.exitCode)}`
-        : "failed";
+  const status = verificationHookStatus(type, payload);
   return [profile, id, status].filter(Boolean).join(" ");
+}
+
+function workflowHookDetail(
+  type: string,
+  payload: Record<string, unknown> | null,
+) {
+  const hookName = str(payload?.hookName) || str(payload?.hook);
+  const status = hookStatus(type, payload);
+  return [hookName, status].filter(Boolean).join(" ");
 }

@@ -1,5 +1,5 @@
-import React from "react";
-import { Box, Text, useInput } from "ink";
+import React, { useEffect, useState } from "react";
+import { Box, Text, useInput, useStdout } from "ink";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { useTheme } from "../lib/theme-context.js";
 import type { CapabilityView } from "../lib/layer-payload.js";
@@ -11,9 +11,8 @@ export function CapabilitiesPanel(props: {
   onClose: () => void;
 }): React.ReactElement {
   const theme = useTheme();
-  useInput((_input, key) => {
-    if (key.escape || key.return) props.onClose();
-  });
+  const { stdout } = useStdout();
+  const [scroll, setScroll] = useState(0);
 
   const snapshot = props.snapshot;
   const tools = snapshot?.tools ?? [];
@@ -25,6 +24,48 @@ export function CapabilitiesPanel(props: {
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
   );
+  const rows = snapshot
+    ? capabilityRows({
+        view: props.view,
+        tools,
+        indexedSkills,
+        loadedSkills,
+        agents,
+        delegateTools,
+        mcpServers,
+        cronTools,
+        automation: snapshot.automation,
+        theme: {
+          accent: theme.accent,
+          error: theme.error,
+          muted: theme.muted,
+          success: theme.success,
+        },
+      })
+    : [];
+  const viewport = Math.max(6, (stdout?.rows ?? 30) - 10);
+  const maxScroll = Math.max(0, rows.length - viewport);
+  const clamped = Math.min(scroll, maxScroll);
+  const visible = rows.slice(clamped, clamped + viewport);
+  const more = rows.length - (clamped + visible.length);
+
+  useEffect(() => {
+    setScroll(0);
+  }, [props.view, snapshot]);
+
+  useInput((input, key) => {
+    if (key.escape || key.return) return props.onClose();
+    if (key.downArrow || input === "j")
+      setScroll((value) => Math.min(maxScroll, value + 1));
+    else if (key.upArrow || input === "k")
+      setScroll((value) => Math.max(0, value - 1));
+    else if (key.pageDown || input === "d")
+      setScroll((value) => Math.min(maxScroll, value + viewport));
+    else if (key.pageUp || input === "u")
+      setScroll((value) => Math.max(0, value - viewport));
+    else if (input === "g") setScroll(0);
+    else if (input === "G") setScroll(maxScroll);
+  });
 
   return (
     <Box
@@ -45,45 +86,60 @@ export function CapabilitiesPanel(props: {
         <Text color={theme.muted}>no snapshot available</Text>
       ) : null}
       {snapshot ? (
-        <>
-          <CapabilityOverview
-            tools={tools}
-            indexedSkills={indexedSkills}
-            loadedSkills={loadedSkills}
-            agents={agents}
-            delegateTools={delegateTools}
-            mcp={mcpServers}
-            cronTools={cronTools}
-            automation={snapshot.automation}
-          />
-          {props.view === "all" || props.view === "tools" ? (
-            <ToolsCapabilitySection tools={tools} />
-          ) : null}
-          {props.view === "all" || props.view === "skills" ? (
-            <SkillsCapabilitySection
-              indexed={indexedSkills}
-              loaded={loadedSkills}
-            />
-          ) : null}
-          {props.view === "all" || props.view === "agents" ? (
-            <AgentsCapabilitySection
-              agents={agents}
-              delegateTools={delegateTools}
-            />
-          ) : null}
-          {props.view === "all" || props.view === "mcp" ? (
-            <McpCapabilitySection mcp={mcpServers} />
-          ) : null}
-          {props.view === "cron" ? (
-            <CronCapabilitySection
-              tools={cronTools}
-              automation={snapshot.automation}
-            />
-          ) : null}
-        </>
+        <Box flexDirection="column" marginTop={1}>
+          {visible}
+          <Box marginTop={1}>
+            <Text color={theme.muted}>esc close</Text>
+            {maxScroll > 0 ? (
+              <Text color={theme.muted}>
+                {" · ↑/↓ j/k scroll · u/d page"}
+                {more > 0 ? ` · ${more} more ↓` : " · end"}
+              </Text>
+            ) : null}
+          </Box>
+        </Box>
       ) : null}
     </Box>
   );
+}
+
+function capabilityRows(input: {
+  view: CapabilityView;
+  theme: CapabilityRowTheme;
+  tools: CapabilitySnapshot["tools"];
+  indexedSkills: CapabilitySnapshot["skills"]["indexed"];
+  loadedSkills: CapabilitySnapshot["skills"]["loaded"];
+  agents: CapabilitySnapshot["agents"]["profiles"];
+  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
+  mcpServers: CapabilitySnapshot["mcp"]["statuses"];
+  cronTools: CapabilitySnapshot["tools"];
+  automation?: CapabilitySnapshot["automation"];
+}): React.ReactElement[] {
+  const rows: React.ReactElement[] = [];
+  addOverviewRows(rows, input);
+  if (input.view === "all" || input.view === "tools") {
+    addToolsRows(rows, input.tools, input.theme);
+  }
+  if (input.view === "all" || input.view === "skills") {
+    addSkillsRows(rows, input.indexedSkills, input.loadedSkills, input.theme);
+  }
+  if (input.view === "all" || input.view === "agents") {
+    addAgentsRows(rows, input.agents, input.delegateTools, input.theme);
+  }
+  if (input.view === "all" || input.view === "mcp") {
+    addMcpRows(rows, input.mcpServers, input.theme);
+  }
+  if (input.view === "cron") {
+    addCronRows(rows, input.cronTools, input.automation, input.theme);
+  }
+  return rows;
+}
+
+interface CapabilityRowTheme {
+  accent: string;
+  error: string;
+  muted: string;
+  success: string;
 }
 
 function capabilityPanelTitle(view: CapabilityView): string {
@@ -104,317 +160,357 @@ function capabilityPanelTitle(view: CapabilityView): string {
   }
 }
 
-function CapabilityOverview(props: {
-  tools: CapabilitySnapshot["tools"];
-  indexedSkills: CapabilitySnapshot["skills"]["indexed"];
-  loadedSkills: CapabilitySnapshot["skills"]["loaded"];
-  agents: CapabilitySnapshot["agents"]["profiles"];
-  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
-  mcp: CapabilitySnapshot["mcp"]["statuses"];
-  cronTools: CapabilitySnapshot["tools"];
-  automation?: CapabilitySnapshot["automation"];
-}): React.ReactElement {
-  const theme = useTheme();
+function addOverviewRows(
+  rows: React.ReactElement[],
+  props: {
+    theme: CapabilityRowTheme;
+    tools: CapabilitySnapshot["tools"];
+    indexedSkills: CapabilitySnapshot["skills"]["indexed"];
+    loadedSkills: CapabilitySnapshot["skills"]["loaded"];
+    agents: CapabilitySnapshot["agents"]["profiles"];
+    delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
+    mcpServers: CapabilitySnapshot["mcp"]["statuses"];
+    cronTools: CapabilitySnapshot["tools"];
+    automation?: CapabilitySnapshot["automation"];
+  },
+): void {
   const unloadedSkills = Math.max(
     0,
     props.indexedSkills.length - props.loadedSkills.length,
   );
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text>
-        <Text color={theme.success}>Available now: </Text>
-        {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
-        {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
-        {props.mcp.length} MCP servers
-      </Text>
-      <Text color={theme.muted}>
-        Indexed Skills are discoverable examples; loaded Skills were selected
-        for the current run context.
-      </Text>
-      {unloadedSkills > 0 ? (
-        <Text color={theme.muted}>
-          {unloadedSkills} more Skill{unloadedSkills === 1 ? "" : "s"} can be
-          loaded when relevant.
-        </Text>
-      ) : null}
-      {props.cronTools.length > 0 ? (
-        <Text color={theme.muted}>
-          Cron support is present through {props.cronTools.length} prepared tool
-          {props.cronTools.length === 1 ? "" : "s"}.
-        </Text>
-      ) : null}
-      {props.automation ? (
-        <Text color={theme.muted}>
-          Automation state: {props.automation.cron.total} cron job
-          {props.automation.cron.total === 1 ? "" : "s"},{" "}
-          {props.automation.tasks.total} background task
-          {props.automation.tasks.total === 1 ? "" : "s"}.
-        </Text>
-      ) : null}
-    </Box>
+  rows.push(
+    <Text key="overview-available">
+      <Text color={props.theme.success}>Available now: </Text>
+      {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
+      {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
+      {props.mcpServers.length} MCP servers
+    </Text>,
+    <Text key="overview-skills" color={props.theme.muted}>
+      Indexed Skills are discoverable examples; loaded Skills were selected for
+      the current run context.
+    </Text>,
   );
+  if (unloadedSkills > 0) {
+    rows.push(
+      <Text key="overview-unloaded" color={props.theme.muted}>
+        {unloadedSkills} more Skill{unloadedSkills === 1 ? "" : "s"} can be
+        loaded when relevant.
+      </Text>,
+    );
+  }
+  if (props.cronTools.length > 0) {
+    rows.push(
+      <Text key="overview-cron" color={props.theme.muted}>
+        Cron support is present through {props.cronTools.length} prepared tool
+        {props.cronTools.length === 1 ? "" : "s"}.
+      </Text>,
+    );
+  }
+  if (props.automation) {
+    rows.push(
+      <Text key="overview-automation" color={props.theme.muted}>
+        Automation state: {props.automation.cron.total} cron job
+        {props.automation.cron.total === 1 ? "" : "s"},{" "}
+        {props.automation.tasks.total} background task
+        {props.automation.tasks.total === 1 ? "" : "s"}.
+      </Text>,
+    );
+  }
 }
 
-function ToolsCapabilitySection(props: {
-  tools: CapabilitySnapshot["tools"];
-}): React.ReactElement {
-  const theme = useTheme();
-  return (
-    <CapabilitySection
-      title={`tools (${props.tools.length})`}
-      empty="no tools reported"
-      count={props.tools.length}
-    >
-      {props.tools.slice(0, 24).map((tool) => (
-        <Text key={tool.name}>
-          <Text color={theme.success}>• </Text>
-          {tool.name}
-          {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-          {tool.origin ? (
-            <Text color={theme.muted}> · {tool.origin}</Text>
-          ) : null}
-        </Text>
-      ))}
-      {props.tools.length > 24 ? (
-        <Text color={theme.muted}>… {props.tools.length - 24} more</Text>
-      ) : null}
-    </CapabilitySection>
-  );
+function addToolsRows(
+  rows: React.ReactElement[],
+  tools: CapabilitySnapshot["tools"],
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(rows, `tools (${tools.length})`, "no tools reported");
+  for (const tool of tools.slice(0, 24)) {
+    rows.push(
+      <Text key={`tool:${tool.name}`}>
+        <Text color={theme.success}>• </Text>
+        {tool.name}
+        {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+        {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
+      </Text>,
+    );
+  }
+  if (tools.length > 24) {
+    rows.push(
+      <Text key="tools-more" color={theme.muted}>
+        … {tools.length - 24} more
+      </Text>,
+    );
+  }
 }
 
-function SkillsCapabilitySection(props: {
-  indexed: CapabilitySnapshot["skills"]["indexed"];
-  loaded: CapabilitySnapshot["skills"]["loaded"];
-}): React.ReactElement {
-  const theme = useTheme();
-  return (
-    <CapabilitySection
-      title={`skills (${props.loaded.length} loaded / ${props.indexed.length} indexed)`}
-      empty="no skills reported"
-      count={props.loaded.length + props.indexed.length}
-    >
-      {props.loaded.map((skill) => (
-        <Text key={`loaded:${skill.name}`}>
-          <Text color={theme.success}>loaded </Text>
+function addSkillsRows(
+  rows: React.ReactElement[],
+  indexed: CapabilitySnapshot["skills"]["indexed"],
+  loaded: CapabilitySnapshot["skills"]["loaded"],
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(
+    rows,
+    `skills (${loaded.length} loaded / ${indexed.length} indexed)`,
+    "no skills reported",
+    loaded.length + indexed.length,
+  );
+  for (const skill of loaded) {
+    rows.push(
+      <Text key={`loaded:${skill.name}`}>
+        <Text color={theme.success}>loaded </Text>
+        {skill.name}
+        {skill.selectionReason ? (
+          <Text color={theme.muted}> · {skill.selectionReason}</Text>
+        ) : null}
+      </Text>,
+    );
+  }
+  if (loaded.length === 0) {
+    for (const skill of indexed.slice(0, 16)) {
+      rows.push(
+        <Text key={`indexed:${skill.name}`}>
+          <Text color={theme.muted}>indexed </Text>
           {skill.name}
-          {skill.selectionReason ? (
-            <Text color={theme.muted}> · {skill.selectionReason}</Text>
+          {skill.sourcePath ? (
+            <Text color={theme.muted}> · {skill.sourcePath}</Text>
           ) : null}
-        </Text>
-      ))}
-      {props.loaded.length === 0
-        ? props.indexed.slice(0, 16).map((skill) => (
-            <Text key={`indexed:${skill.name}`}>
-              <Text color={theme.muted}>indexed </Text>
-              {skill.name}
-              {skill.sourcePath ? (
-                <Text color={theme.muted}> · {skill.sourcePath}</Text>
-              ) : null}
-            </Text>
-          ))
-        : null}
-      {props.loaded.length === 0 && props.indexed.length > 16 ? (
-        <Text color={theme.muted}>… {props.indexed.length - 16} more</Text>
-      ) : null}
-    </CapabilitySection>
-  );
+        </Text>,
+      );
+    }
+    if (indexed.length > 16) {
+      rows.push(
+        <Text key="skills-more" color={theme.muted}>
+          … {indexed.length - 16} more
+        </Text>,
+      );
+    }
+  }
 }
 
-function AgentsCapabilitySection(props: {
-  agents: CapabilitySnapshot["agents"]["profiles"];
-  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
-}): React.ReactElement {
-  const theme = useTheme();
-  const count = props.agents.length + props.delegateTools.length;
-  return (
-    <CapabilitySection
-      title={`agents (${props.agents.length} / ${props.delegateTools.length} delegates)`}
-      empty="no agents reported"
-      count={count}
-    >
-      {props.agents.map((agent) => (
-        <Text key={agent.id}>
-          <Text color={theme.success}>• </Text>
-          {agent.name ?? agent.id}
-          {agent.mode ? <Text color={theme.muted}> · {agent.mode}</Text> : null}
+function addAgentsRows(
+  rows: React.ReactElement[],
+  agents: CapabilitySnapshot["agents"]["profiles"],
+  delegateTools: CapabilitySnapshot["agents"]["delegateTools"],
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(
+    rows,
+    `agents (${agents.length} / ${delegateTools.length} delegates)`,
+    "no agents reported",
+    agents.length + delegateTools.length,
+  );
+  for (const agent of agents) {
+    rows.push(
+      <Text key={`agent:${agent.id}`}>
+        <Text color={theme.success}>• </Text>
+        {agent.name ?? agent.id}
+        {agent.mode ? <Text color={theme.muted}> · {agent.mode}</Text> : null}
+      </Text>,
+    );
+  }
+  for (const tool of delegateTools) {
+    rows.push(
+      <Text key={`delegate:${tool.toolName}`}>
+        <Text color={theme.success}>delegate </Text>
+        {tool.toolName}
+        <Text color={theme.muted}>
+          {" "}
+          → {tool.profileId} · {tool.protocol} ·{" "}
+          {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
+          {tool.workspaceAccess}
         </Text>
-      ))}
-      {props.delegateTools.map((tool) => (
-        <Text key={tool.toolName}>
-          <Text color={theme.success}>delegate </Text>
-          {tool.toolName}
-          <Text color={theme.muted}>
+      </Text>,
+    );
+  }
+}
+
+function addMcpRows(
+  rows: React.ReactElement[],
+  mcp: CapabilitySnapshot["mcp"]["statuses"],
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(rows, `mcp (${mcp.length})`, "no MCP servers reported");
+  for (const server of mcp) {
+    rows.push(
+      <Text key={`mcp:${server.serverName}`}>
+        <Text color={theme.success}>• </Text>
+        {server.serverName}
+        <Text color={theme.muted}>
+          {" "}
+          · {server.status} · {server.toolNames.length} tools
+        </Text>
+        {server.errorCode ? (
+          <Text color={theme.error}>
             {" "}
-            → {tool.profileId} · {tool.protocol} ·{" "}
-            {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
-            {tool.workspaceAccess}
+            · {server.errorCode}
+            {server.errorPhase ? ` (${server.errorPhase})` : ""}
           </Text>
+        ) : null}
+      </Text>,
+    );
+    if (server.toolNames.length > 0) {
+      rows.push(
+        <Text key={`mcp-tools:${server.serverName}`} color={theme.muted}>
+          {server.toolNames.join(", ")}
+        </Text>,
+      );
+    }
+    if (server.errorMessage) {
+      rows.push(
+        <Text key={`mcp-error:${server.serverName}`} color={theme.muted}>
+          {server.errorMessage}
+        </Text>,
+      );
+    }
+  }
+}
+
+function addCronRows(
+  rows: React.ReactElement[],
+  tools: CapabilitySnapshot["tools"],
+  automation: CapabilitySnapshot["automation"] | undefined,
+  theme: CapabilityRowTheme,
+): void {
+  const cron = automation?.cron;
+  const tasks = automation?.tasks;
+  pushSectionHeader(
+    rows,
+    `cron jobs (${cron?.total ?? 0})`,
+    "no cron jobs recorded",
+    cron?.total ?? 0,
+  );
+  for (const job of cron?.jobs ?? []) {
+    rows.push(
+      <Text key={`cron:${job.id}`}>
+        <Text color={job.enabled ? theme.success : theme.muted}>• </Text>
+        {job.name}
+        <Text color={theme.muted}>
+          {" "}
+          · {job.state} · {job.schedule}
         </Text>
-      ))}
-    </CapabilitySection>
-  );
-}
-
-function McpCapabilitySection(props: {
-  mcp: CapabilitySnapshot["mcp"]["statuses"];
-}): React.ReactElement {
-  const theme = useTheme();
-  return (
-    <CapabilitySection
-      title={`mcp (${props.mcp.length})`}
-      empty="no MCP servers reported"
-      count={props.mcp.length}
-    >
-      {props.mcp.map((server) => (
-        <Box key={server.serverName} flexDirection="column">
-          <Text>
-            <Text color={theme.success}>• </Text>
-            {server.serverName}
-            <Text color={theme.muted}>
-              {" "}
-              · {server.status} · {server.toolNames.length} tools
-            </Text>
-            {server.errorCode ? (
-              <Text color={theme.error}>
-                {" "}
-                · {server.errorCode}
-                {server.errorPhase ? ` (${server.errorPhase})` : ""}
-              </Text>
-            ) : null}
-          </Text>
-          {server.toolNames.length > 0 ? (
-            <Text color={theme.muted}> {server.toolNames.join(", ")}</Text>
-          ) : null}
-          {server.errorMessage ? (
-            <Text color={theme.muted}> {server.errorMessage}</Text>
-          ) : null}
-        </Box>
-      ))}
-    </CapabilitySection>
-  );
-}
-
-function CronCapabilitySection(props: {
-  tools: CapabilitySnapshot["tools"];
-  automation?: CapabilitySnapshot["automation"];
-}): React.ReactElement {
-  const theme = useTheme();
-  const cron = props.automation?.cron;
-  const tasks = props.automation?.tasks;
-  return (
-    <>
-      <CapabilitySection
-        title={`cron jobs (${cron?.total ?? 0})`}
-        empty="no cron jobs recorded"
-        count={cron?.total ?? 0}
-      >
-        {cron?.jobs.map((job) => (
-          <Box key={job.id} flexDirection="column">
-            <Text>
-              <Text color={job.enabled ? theme.success : theme.muted}>• </Text>
-              {job.name}
-              <Text color={theme.muted}>
-                {" "}
-                · {job.state} · {job.schedule}
-              </Text>
-              {job.lastStatus ? (
-                <Text
-                  color={job.lastStatus === "ok" ? theme.success : theme.error}
-                >
-                  {" "}
-                  · last {job.lastStatus}
-                </Text>
-              ) : null}
-            </Text>
-            <Text color={theme.muted}>
-              next {job.nextRunAt ?? "none"} · last {job.lastRunAt ?? "never"}
-            </Text>
-            {job.lastError ? (
-              <Text color={theme.error}> {job.lastError}</Text>
-            ) : null}
-          </Box>
-        ))}
-        {cron && cron.total > cron.jobs.length ? (
-          <Text color={theme.muted}>
-            … {cron.total - cron.jobs.length} more
+        {job.lastStatus ? (
+          <Text color={job.lastStatus === "ok" ? theme.success : theme.error}>
+            {" "}
+            · last {job.lastStatus}
           </Text>
         ) : null}
-        {cron ? <Text color={theme.muted}>state: {cron.rootDir}</Text> : null}
-      </CapabilitySection>
+      </Text>,
+      <Text key={`cron-time:${job.id}`} color={theme.muted}>
+        next {job.nextRunAt ?? "none"} · last {job.lastRunAt ?? "never"}
+      </Text>,
+    );
+    if (job.lastError) {
+      rows.push(
+        <Text key={`cron-error:${job.id}`} color={theme.error}>
+          {job.lastError}
+        </Text>,
+      );
+    }
+  }
+  if (cron && cron.total > cron.jobs.length) {
+    rows.push(
+      <Text key="cron-more" color={theme.muted}>
+        … {cron.total - cron.jobs.length} more
+      </Text>,
+    );
+  }
+  if (cron) {
+    rows.push(
+      <Text key="cron-state" color={theme.muted}>
+        state: {cron.rootDir}
+      </Text>,
+    );
+  }
 
-      <CapabilitySection
-        title={`background tasks (${tasks?.total ?? 0})`}
-        empty="no durable background tasks recorded"
-        count={tasks?.total ?? 0}
-      >
-        {tasks?.tasks.map((task) => (
-          <Box key={task.id} flexDirection="column">
-            <Text>
-              <Text
-                color={
-                  task.status === "failed"
-                    ? theme.error
-                    : task.status === "completed"
-                      ? theme.success
-                      : theme.accent
-                }
-              >
-                •{" "}
-              </Text>
-              {task.kind}
-              <Text color={theme.muted}>
-                {" "}
-                · {task.status} · {task.id}
-              </Text>
-            </Text>
-            <Text color={theme.muted}>
-              {task.title ?? "untitled"} · output {task.outputChunks ?? 0}
-            </Text>
-            {task.error ? (
-              <Text color={theme.error}>
-                {task.error.code}: {task.error.message}
-              </Text>
-            ) : null}
-          </Box>
-        ))}
-        {tasks && tasks.total > tasks.tasks.length ? (
-          <Text color={theme.muted}>
-            … {tasks.total - tasks.tasks.length} more
-          </Text>
-        ) : null}
-        {tasks ? <Text color={theme.muted}>state: {tasks.rootDir}</Text> : null}
-      </CapabilitySection>
-
-      <CapabilitySection
-        title={`cron tools (${props.tools.length})`}
-        empty="cron tool is not prepared for this host"
-        count={props.tools.length}
-      >
-        {props.tools.map((tool) => (
-          <Text key={tool.name}>
-            <Text color={theme.success}>• </Text>
-            {tool.name}
-            {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-            {tool.origin ? (
-              <Text color={theme.muted}> · {tool.origin}</Text>
-            ) : null}
-          </Text>
-        ))}
-      </CapabilitySection>
-    </>
+  pushSectionHeader(
+    rows,
+    `background tasks (${tasks?.total ?? 0})`,
+    "no durable background tasks recorded",
+    tasks?.total ?? 0,
   );
+  for (const task of tasks?.tasks ?? []) {
+    rows.push(
+      <Text key={`task:${task.id}`}>
+        <Text
+          color={
+            task.status === "failed"
+              ? theme.error
+              : task.status === "completed"
+                ? theme.success
+                : theme.accent
+          }
+        >
+          •{" "}
+        </Text>
+        {task.kind}
+        <Text color={theme.muted}>
+          {" "}
+          · {task.status} · {task.id}
+        </Text>
+      </Text>,
+      <Text key={`task-title:${task.id}`} color={theme.muted}>
+        {task.title ?? "untitled"} · output {task.outputChunks ?? 0}
+      </Text>,
+    );
+    if (task.error) {
+      rows.push(
+        <Text key={`task-error:${task.id}`} color={theme.error}>
+          {task.error.code}: {task.error.message}
+        </Text>,
+      );
+    }
+  }
+  if (tasks && tasks.total > tasks.tasks.length) {
+    rows.push(
+      <Text key="tasks-more" color={theme.muted}>
+        … {tasks.total - tasks.tasks.length} more
+      </Text>,
+    );
+  }
+  if (tasks) {
+    rows.push(
+      <Text key="tasks-state" color={theme.muted}>
+        state: {tasks.rootDir}
+      </Text>,
+    );
+  }
+
+  pushSectionHeader(
+    rows,
+    `cron tools (${tools.length})`,
+    "cron tool is not prepared for this host",
+    tools.length,
+  );
+  for (const tool of tools) {
+    rows.push(
+      <Text key={`cron-tool:${tool.name}`}>
+        <Text color={theme.success}>• </Text>
+        {tool.name}
+        {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+        {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
+      </Text>,
+    );
+  }
 }
 
-function CapabilitySection(props: {
-  title: string;
-  empty: string;
-  count: number;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text bold>{props.title}</Text>
-      {props.count > 0 ? props.children : <Text dimColor>{props.empty}</Text>}
-    </Box>
+function pushSectionHeader(
+  rows: React.ReactElement[],
+  title: string,
+  empty: string,
+  count = 1,
+): void {
+  rows.push(<Text key={`space:${title}`}> </Text>);
+  rows.push(
+    <Text key={`heading:${title}`} bold>
+      {title}
+    </Text>,
   );
+  if (count === 0) {
+    rows.push(
+      <Text key={`empty:${title}`} dimColor>
+        {empty}
+      </Text>,
+    );
+  }
 }
