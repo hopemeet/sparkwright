@@ -3,7 +3,7 @@
 This is a reference contract. If you are new to Sparkwright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-**Version:** 1.2
+**Version:** 1.3
 **Schema:** [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 **Changelog:** [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md)
 
@@ -334,6 +334,32 @@ the session directory; clients should treat it as read-only observability data.
   "summary": { "eventCount": 12 },
   "consistency": { "ok": true, "findings": [] },
   "timeline": { "phases": [] }
+}
+```
+
+### `session.compact`
+
+Write a host-owned compact context artifact for a persisted session. The
+canonical transcript and trace remain intact; future runs in the same session
+may seed prior context from the compact artifact plus later un-compacted turns.
+
+**Payload**
+
+| Field       | Type   | Required | Notes                                  |
+| ----------- | ------ | -------- | -------------------------------------- |
+| `sessionId` | string | yes      | Session id.                            |
+| `reason`    | string | no       | Optional caller label for diagnostics. |
+
+**Response result**
+
+```json
+{
+  "sessionId": "session_abc",
+  "compactedRunCount": 3,
+  "throughRunId": "run_123",
+  "originalCharCount": 12000,
+  "summaryCharCount": 2400,
+  "artifactPath": "/workspace/.sparkwright/sessions/session_abc/compact.json"
 }
 ```
 

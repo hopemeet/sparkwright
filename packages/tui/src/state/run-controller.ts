@@ -318,6 +318,31 @@ export class RunController {
     }
   }
 
+  async compactSession(): Promise<{
+    compactedRunCount: number;
+    throughRunId: string | null;
+    originalCharCount: number;
+    summaryCharCount: number;
+    artifactPath: string | null;
+  } | null> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.compactSession({
+        sessionId: this.sessionId,
+        reason: "tui /compact",
+      });
+      this.store.appendNotice(
+        result.compactedRunCount > 0
+          ? `compacted ${result.compactedRunCount} prior turn${result.compactedRunCount === 1 ? "" : "s"} for future context`
+          : "compact skipped: no completed turns yet",
+      );
+      return result;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return null;
+    }
+  }
+
   async inspectSession(sessionId: string): Promise<SessionDiagnostics | null> {
     try {
       const client = await this.ensureClient();

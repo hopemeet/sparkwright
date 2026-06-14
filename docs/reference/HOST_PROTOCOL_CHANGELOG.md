@@ -7,6 +7,14 @@ major; breaking changes bump the major.
 ## Unreleased
 
 - Add optional `traceLevel` to `run.start` and `run.resume` payloads.
+- Add `session.compact` request for host-owned manual session context
+  compaction.
+
+## 1.3 (2026-06-14)
+
+- Add `session.compact` request shape and SDK client `compactSession()`.
+- Host runtime writes `compact.json` session artifacts and uses them to seed
+  future runs with a compacted summary plus any later un-compacted turns.
 
 ## 1.2 (2026-06-06)
 

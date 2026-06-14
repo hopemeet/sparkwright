@@ -9,6 +9,7 @@ import {
   DEFAULT_CONFIDENTIAL_PATHS,
   createSessionId,
   createSessionRunStoreFactory,
+  loadSessionCompactArtifact,
   createPermissionModePolicy,
   createRun,
   createWorkspaceMutationPolicy,
@@ -20,7 +21,9 @@ import {
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
   summarizeTraceFile,
+  sessionCompactArtifactToContextItem,
   validateSessionTraceConsistency,
+  writeSessionCompactArtifact,
   type ApprovalResolver,
   type ContextItem,
   type EventEmitter,
@@ -209,6 +212,12 @@ interface ActiveRun {
   trace: MemoryTrace;
   sessionId: string;
   closeCapabilities?: () => Promise<void>;
+}
+
+interface CompletedConversationTurn {
+  runId: RunId;
+  goal: string;
+  message: string;
 }
 
 type PreparedSkills = Awaited<ReturnType<typeof prepareSkillsForRun>>;
@@ -1569,7 +1578,39 @@ export class HostRuntime {
     sessionRootDir: string,
     sessionId: string,
   ): Promise<ContextItem[]> {
-    let runIds: string[];
+    const turns = await this.loadCompletedConversationTurns(
+      sessionRootDir,
+      sessionId,
+    );
+    if (turns.length === 0) return [];
+
+    const compact = await loadSessionCompactArtifact({
+      sessionRootDir,
+      sessionId,
+    });
+    const items: ContextItem[] = [];
+    let startAt = 0;
+    if (compact) {
+      const compactedThrough = turns.findIndex(
+        (turn) => turn.runId === compact.throughRunId,
+      );
+      if (compactedThrough >= 0) {
+        items.push(sessionCompactArtifactToContextItem(compact));
+        startAt = compactedThrough + 1;
+      }
+    }
+
+    for (const turn of turns.slice(startAt)) {
+      items.push(...conversationTurnContextItems(turn));
+    }
+    return items;
+  }
+
+  private async loadCompletedConversationTurns(
+    sessionRootDir: string,
+    sessionId: string,
+  ): Promise<CompletedConversationTurn[]> {
+    let runIds: RunId[];
     try {
       const store = new FileSessionStore({ rootDir: sessionRootDir });
       const session = await store.get(sessionId);
@@ -1580,7 +1621,7 @@ export class HostRuntime {
     if (runIds.length === 0) return [];
 
     const runsDir = join(sessionRootDir, sessionId, "agents", "main", "runs");
-    const items: ContextItem[] = [];
+    const turns: CompletedConversationTurn[] = [];
     for (const runId of runIds) {
       const goal = await this.readJsonField(
         join(runsDir, runId, "run.json"),
@@ -1594,20 +1635,9 @@ export class HostRuntime {
       // exchange; a still-running or failed run with no final message is
       // skipped so we never thread a dangling half-turn.
       if (!goal || !message) continue;
-      items.push({
-        id: `ctx_${runId}_user` as ContextItem["id"],
-        type: "user",
-        content: goal.trim(),
-        metadata: { layer: "conversation", stability: "session" },
-      });
-      items.push({
-        id: `ctx_${runId}_assistant` as ContextItem["id"],
-        type: "assistant",
-        content: message.trim(),
-        metadata: { layer: "conversation", stability: "session" },
-      });
+      turns.push({ runId, goal, message });
     }
-    return items;
+    return turns;
   }
 
   private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
@@ -1930,7 +1960,7 @@ export class HostRuntime {
       }
     | { ok: false; error: ProtocolError }
   > {
-    let safeSessionId: string;
+    let safeSessionId: ReturnType<typeof asSessionId>;
     try {
       safeSessionId = asSessionId(sessionId);
     } catch (error) {
@@ -1982,6 +2012,121 @@ export class HostRuntime {
         summary: summary as unknown as Record<string, unknown>,
         consistency: consistency as unknown as Record<string, unknown>,
         timeline: timeline as unknown as Record<string, unknown>,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+  }
+
+  async compactSession(
+    sessionId: string,
+    reason?: string,
+  ): Promise<
+    | {
+        ok: true;
+        sessionId: string;
+        compactedRunCount: number;
+        throughRunId: string | null;
+        originalCharCount: number;
+        summaryCharCount: number;
+        artifactPath: string | null;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    let safeSessionId: string;
+    try {
+      safeSessionId = asSessionId(sessionId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    const sessionRootDir =
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
+    const sessionDir = join(sessionRootDir, safeSessionId);
+    try {
+      const st = await stat(sessionDir);
+      if (!st.isDirectory()) {
+        return {
+          ok: false,
+          error: {
+            code: "session_not_found",
+            message: `session not found: ${sessionId}`,
+          },
+        };
+      }
+    } catch {
+      return {
+        ok: false,
+        error: {
+          code: "session_not_found",
+          message: `session not found: ${sessionId}`,
+        },
+      };
+    }
+
+    const turns = await this.loadCompletedConversationTurns(
+      sessionRootDir,
+      safeSessionId,
+    );
+    if (turns.length === 0) {
+      return {
+        ok: true,
+        sessionId: safeSessionId,
+        compactedRunCount: 0,
+        throughRunId: null,
+        originalCharCount: 0,
+        summaryCharCount: 0,
+        artifactPath: null,
+      };
+    }
+
+    const content = renderSessionCompactSummary(turns);
+    const originalCharCount = turns.reduce(
+      (sum, turn) => sum + turn.goal.length + turn.message.length,
+      0,
+    );
+    const throughRunId = turns[turns.length - 1].runId;
+    try {
+      const artifactPath = await writeSessionCompactArtifact({
+        sessionRootDir,
+        artifact: {
+          schemaVersion: "session-compact.v1",
+          sessionId: asSessionId(safeSessionId),
+          createdAt: new Date().toISOString(),
+          throughRunId,
+          compactedRunCount: turns.length,
+          sourceRunIds: turns.map((turn) => turn.runId),
+          content,
+          originalCharCount,
+          summaryCharCount: content.length,
+          metadata: {
+            source: "host",
+            mode: "deterministic",
+            ...(reason ? { reason } : {}),
+          },
+        },
+      });
+      return {
+        ok: true,
+        sessionId: safeSessionId,
+        compactedRunCount: turns.length,
+        throughRunId,
+        originalCharCount,
+        summaryCharCount: content.length,
+        artifactPath,
       };
     } catch (error) {
       return {
@@ -2831,6 +2976,50 @@ function objectField(
 function sanitizeToolSegment(value: string): string {
   const clean = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
   return clean.replace(/^_+|_+$/g, "") || "agent";
+}
+
+function conversationTurnContextItems(
+  turn: CompletedConversationTurn,
+): ContextItem[] {
+  return [
+    {
+      id: `ctx_${turn.runId}_user` as ContextItem["id"],
+      type: "user",
+      content: turn.goal.trim(),
+      metadata: { layer: "conversation", stability: "session" },
+    },
+    {
+      id: `ctx_${turn.runId}_assistant` as ContextItem["id"],
+      type: "assistant",
+      content: turn.message.trim(),
+      metadata: { layer: "conversation", stability: "session" },
+    },
+  ];
+}
+
+function renderSessionCompactSummary(
+  turns: CompletedConversationTurn[],
+): string {
+  const lines = [
+    "Manual compacted session summary.",
+    `Compacted turns: ${turns.length}`,
+    `Through run: ${turns[turns.length - 1]?.runId ?? "unknown"}`,
+    "",
+  ];
+  for (let i = 0; i < turns.length; i += 1) {
+    const turn = turns[i];
+    lines.push(`Turn ${i + 1} (${turn.runId})`);
+    lines.push(`User: ${compactLine(turn.goal, 800)}`);
+    lines.push(`Assistant: ${compactLine(turn.message, 1200)}`);
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+function compactLine(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
 /** A summarized successful tool result salvaged from a child run's events. */

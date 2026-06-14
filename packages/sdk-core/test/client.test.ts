@@ -192,6 +192,47 @@ describe("@sparkwright/sdk-core Client", () => {
     });
   });
 
+  it("sends session.compact requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const compacted = client.compactSession({
+      sessionId: "session_1",
+      reason: "test",
+    });
+    const request = transport.sent[0];
+
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "session.compact",
+      payload: { sessionId: "session_1", reason: "test" },
+    });
+
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: {
+        sessionId: "session_1",
+        compactedRunCount: 2,
+        throughRunId: "run_2",
+        originalCharCount: 1000,
+        summaryCharCount: 200,
+        artifactPath: "/tmp/compact.json",
+      },
+    });
+
+    await expect(compacted).resolves.toMatchObject({
+      sessionId: "session_1",
+      compactedRunCount: 2,
+      throughRunId: "run_2",
+    });
+  });
+
   it("starts a run and collects stable lifecycle evidence", async () => {
     const transport = new FakeTransport();
     const client = new Client({

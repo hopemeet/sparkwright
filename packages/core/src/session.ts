@@ -31,6 +31,7 @@ import type { SparkwrightEvent } from "./events.js";
 import type { RunStore } from "./storage.js";
 import type { Artifact, ContextItem, RunRecord, RunResult } from "./types.js";
 import { isRecord } from "./record-utils.js";
+import { COMPACTION_SAFETY_PREFIX } from "./context-safety.js";
 
 /**
  * A session record aggregating an ordered list of run ids plus arbitrary
@@ -749,6 +750,120 @@ export interface SessionTranscript {
 export interface ProjectSessionReplayToTranscriptOptions extends ReplaySessionEventsInput {
   /** @reserved Public replay-projection limit consumed by resume UIs. */
   maxEvents?: number;
+}
+
+export const SESSION_COMPACT_FILENAME = "compact.json" as const;
+
+export interface SessionCompactArtifact {
+  schemaVersion: "session-compact.v1";
+  sessionId: SessionId;
+  createdAt: string;
+  throughRunId: RunId;
+  compactedRunCount: number;
+  sourceRunIds: RunId[];
+  content: string;
+  originalCharCount: number;
+  summaryCharCount: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WriteSessionCompactArtifactInput {
+  sessionRootDir: string;
+  /** @reserved Public compact artifact payload consumed by session stores. */
+  artifact: SessionCompactArtifact;
+}
+
+export interface LoadSessionCompactArtifactInput {
+  sessionRootDir: string;
+  sessionId: string;
+}
+
+export async function writeSessionCompactArtifact({
+  sessionRootDir,
+  artifact,
+}: WriteSessionCompactArtifactInput): Promise<string> {
+  const sessionId = asSessionId(artifact.sessionId);
+  const path = join(sessionRootDir, sessionId, SESSION_COMPACT_FILENAME);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(artifact, null, 2) + "\n", "utf8");
+  return path;
+}
+
+export async function loadSessionCompactArtifact({
+  sessionRootDir,
+  sessionId,
+}: LoadSessionCompactArtifactInput): Promise<SessionCompactArtifact | null> {
+  const safeSessionId = asSessionId(sessionId);
+  const path = join(sessionRootDir, safeSessionId, SESSION_COMPACT_FILENAME);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+  return parseSessionCompactArtifact(raw, safeSessionId);
+}
+
+export function sessionCompactArtifactToContextItem(
+  artifact: SessionCompactArtifact,
+): ContextItem {
+  const content = artifact.content.startsWith(COMPACTION_SAFETY_PREFIX)
+    ? artifact.content
+    : `${COMPACTION_SAFETY_PREFIX}\n\n${artifact.content}`;
+  return {
+    id: createContextItemId(),
+    type: "summary",
+    source: {
+      kind: "session_compact",
+      uri: artifact.sessionId,
+    },
+    content,
+    metadata: {
+      layer: "conversation",
+      stability: "session",
+      sessionId: artifact.sessionId,
+      throughRunId: artifact.throughRunId,
+      compactedRunCount: artifact.compactedRunCount,
+      sourceRunIds: artifact.sourceRunIds,
+      originalCharCount: artifact.originalCharCount,
+      summaryCharCount: artifact.summaryCharCount,
+      compactionSafetyPrefix: true,
+    },
+  };
+}
+
+function parseSessionCompactArtifact(
+  value: unknown,
+  sessionId: SessionId,
+): SessionCompactArtifact | null {
+  if (!isRecord(value)) return null;
+  if (value.schemaVersion !== "session-compact.v1") return null;
+  if (value.sessionId !== sessionId) return null;
+  if (typeof value.createdAt !== "string") return null;
+  if (typeof value.throughRunId !== "string") return null;
+  if (typeof value.compactedRunCount !== "number") return null;
+  if (!Array.isArray(value.sourceRunIds)) return null;
+  if (typeof value.content !== "string" || !value.content.trim()) return null;
+  if (typeof value.originalCharCount !== "number") return null;
+  if (typeof value.summaryCharCount !== "number") return null;
+  const sourceRunIds: RunId[] = [];
+  for (const runId of value.sourceRunIds) {
+    if (typeof runId !== "string") return null;
+    sourceRunIds.push(runId as RunId);
+  }
+  if (!sourceRunIds.includes(value.throughRunId as RunId)) return null;
+  return {
+    schemaVersion: "session-compact.v1",
+    sessionId,
+    createdAt: value.createdAt,
+    throughRunId: value.throughRunId as RunId,
+    compactedRunCount: value.compactedRunCount,
+    sourceRunIds,
+    content: value.content,
+    originalCharCount: value.originalCharCount,
+    summaryCharCount: value.summaryCharCount,
+    metadata: isRecord(value.metadata) ? { ...value.metadata } : undefined,
+  };
 }
 
 /**

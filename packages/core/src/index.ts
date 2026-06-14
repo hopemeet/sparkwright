@@ -491,6 +491,9 @@ export type {
   ReplaySessionEventsInput,
   ProjectSessionReplayToContextOptions,
   ProjectSessionReplayToTranscriptOptions,
+  SessionCompactArtifact,
+  WriteSessionCompactArtifactInput,
+  LoadSessionCompactArtifactInput,
   SessionTranscript,
   SessionTranscriptEntry,
   EnsureSessionRunMembershipOptions,
@@ -501,10 +504,14 @@ export {
   InMemorySessionStore,
   createSessionRunStoreFactory,
   ensureSessionRunMembership,
+  loadSessionCompactArtifact,
   projectSessionReplayToContextItems,
   projectSessionReplayToTranscript,
   replaySessionEventsFromRunStore,
   forkSessionFromEvent,
+  sessionCompactArtifactToContextItem,
+  writeSessionCompactArtifact,
+  SESSION_COMPACT_FILENAME,
 } from "./session.js";
 export type { ForkSessionInput, ForkSessionResult } from "./session.js";
 export type {

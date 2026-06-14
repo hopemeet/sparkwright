@@ -9,7 +9,7 @@ import {
 
 describe("@sparkwright/protocol", () => {
   it("exports the current host protocol version", () => {
-    expect(PROTOCOL_VERSION).toBe("1.2");
+    expect(PROTOCOL_VERSION).toBe("1.3");
   });
 
   it("narrows host message envelopes", () => {

@@ -38,6 +38,7 @@
             "session.list",
             "session.inspect",
             "session.fork",
+            "session.compact",
             "capability.inspect"
           ]
         },
@@ -117,6 +118,14 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/SessionForkRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "session.compact" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/SessionCompactRequestPayload" }
             }
           }
         },
@@ -439,6 +448,19 @@
       "properties": {
         "sourceSessionId": { "type": "string", "minLength": 1 },
         "forkAtSequence": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "SessionCompactRequestPayload": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": {
+        "sessionId": { "type": "string", "minLength": 1 },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional caller label recorded in compaction diagnostics."
+        }
       },
       "additionalProperties": false
     },

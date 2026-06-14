@@ -85,6 +85,48 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
+  it("compacts the current session through the host", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.start("compact smoke");
+    await waitForDone(store);
+    const result = await controller.compactSession();
+
+    expect(result).toMatchObject({
+      compactedRunCount: 1,
+      throughRunId: expect.any(String),
+    });
+    const events = store.getSnapshot().events;
+    expect(events[events.length - 1]).toMatchObject({
+      type: "tui.notice",
+      payload: { text: expect.stringContaining("compacted 1 prior turn") },
+    });
+    const artifact = JSON.parse(
+      await readFile(
+        join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          controller.getSessionId(),
+          "compact.json",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(artifact).toMatchObject({
+      schemaVersion: "session-compact.v1",
+      compactedRunCount: 1,
+    });
+    controller.shutdown();
+  }, 30_000);
+
   it("does not pass config-sourced model as a request override", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
