@@ -1,20 +1,17 @@
 import { createId, assertSafePathSegment } from "@sparkwright/core";
 import {
   computeSkillPackageHash,
-  snapshotSkillPackage,
+  parseSkill,
   type SkillRoot,
 } from "@sparkwright/skills";
-import {
-  cp,
-  mkdir,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  createFileCapabilityPackageWriter,
+  type CapabilityPackageMutationReporter,
+  type CapabilityPackageMutationWriter,
+} from "./capability-package-mutation.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { runSkillDoctor, type SkillDoctorReport } from "./skill-doctor.js";
 import {
@@ -156,6 +153,7 @@ export interface CreateSkillCreateProposalInput {
    * actual guidance rather than a placeholder.
    */
   content?: string;
+  mutationReporter?: CapabilityPackageMutationReporter;
 }
 
 export interface CreateSkillUpdateProposalInput {
@@ -169,11 +167,16 @@ export interface CreateSkillUpdateProposalInput {
    * When omitted, `description` is appended as a "Proposed Evolution" section.
    */
   applyEdit?: (beforeContent: string) => string;
+  mutationReporter?: CapabilityPackageMutationReporter;
 }
 
 export async function createSkillCreateProposal(
   input: CreateSkillCreateProposalInput,
 ): Promise<SkillProposalDetail> {
+  const mutations = createFileCapabilityPackageWriter(
+    input.workspaceRoot,
+    input.mutationReporter,
+  );
   validateSkillName(input.name);
   if (input.description.trim().length === 0) {
     throw new Error("Skill proposal create requires description.");
@@ -193,9 +196,18 @@ export async function createSkillCreateProposal(
       : (input.createdAt ?? new Date().toISOString());
   const skillContent =
     input.content ?? renderSkillTemplate(input.name, input.description);
+  assertSkillMarkdownName(
+    skillContent,
+    input.name,
+    join(afterSkillDir, "SKILL.md"),
+  );
 
-  await mkdir(afterSkillDir, { recursive: true });
-  await writeFile(join(afterSkillDir, "SKILL.md"), skillContent, "utf8");
+  await mutations.ensureDirectory(afterSkillDir, {
+    reason: `Create proposal package ${proposalId}`,
+  });
+  await mutations.writeText(join(afterSkillDir, "SKILL.md"), skillContent, {
+    reason: `Write proposed Skill ${input.name}`,
+  });
 
   const afterHash = await computeSkillPackageHash(afterSkillDir);
   const metadata: SkillProposalMetadata = {
@@ -217,14 +229,22 @@ export async function createSkillCreateProposal(
   );
   const patchDiff = renderCreatePatch(input.name, skillContent);
 
-  await mkdir(join(proposalPath, "before"), { recursive: true });
-  await writeFile(
-    join(proposalPath, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-    "utf8",
+  await mutations.ensureDirectory(join(proposalPath, "before"), {
+    reason: `Create empty proposal base ${proposalId}`,
+  });
+  await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
+    reason: `Write proposal metadata ${proposalId}`,
+  });
+  await mutations.writeText(
+    join(proposalPath, "proposal.md"),
+    proposalMarkdown,
+    {
+      reason: `Write proposal markdown ${proposalId}`,
+    },
   );
-  await writeFile(join(proposalPath, "proposal.md"), proposalMarkdown, "utf8");
-  await writeFile(join(proposalPath, "patch.diff"), patchDiff, "utf8");
+  await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
+    reason: `Write proposal patch ${proposalId}`,
+  });
 
   return {
     ...metadata,
@@ -237,6 +257,10 @@ export async function createSkillCreateProposal(
 export async function createSkillUpdateProposal(
   input: CreateSkillUpdateProposalInput,
 ): Promise<SkillProposalDetail> {
+  const mutations = createFileCapabilityPackageWriter(
+    input.workspaceRoot,
+    input.mutationReporter,
+  );
   validateSkillName(input.name);
   if (input.description.trim().length === 0) {
     throw new Error("Skill proposal update requires description.");
@@ -262,14 +286,21 @@ export async function createSkillUpdateProposal(
       ? input.createdAt.toISOString()
       : (input.createdAt ?? new Date().toISOString());
 
-  await snapshotSkillPackage(sourceDir, beforeSkillDir);
-  await snapshotSkillPackage(sourceDir, afterSkillDir);
+  await mutations.snapshotSkillPackage(sourceDir, beforeSkillDir, {
+    reason: `Snapshot proposal base ${proposalId}`,
+  });
+  await mutations.snapshotSkillPackage(sourceDir, afterSkillDir, {
+    reason: `Snapshot proposal after package ${proposalId}`,
+  });
   const skillPath = join(afterSkillDir, "SKILL.md");
   const beforeContent = await readFile(skillPath, "utf8");
   const afterContent = input.applyEdit
     ? input.applyEdit(beforeContent)
     : renderUpdatedSkillContent(beforeContent, input.description);
-  await writeFile(skillPath, afterContent, "utf8");
+  assertSkillMarkdownName(afterContent, input.name, skillPath);
+  await mutations.writeText(skillPath, afterContent, {
+    reason: `Write proposed Skill update ${input.name}`,
+  });
 
   const afterHash = await computeSkillPackageHash(afterSkillDir);
   const metadata: SkillProposalMetadata = {
@@ -296,13 +327,19 @@ export async function createSkillUpdateProposal(
   );
   const patchDiff = renderUpdatePatch(input.name, beforeContent, afterContent);
 
-  await writeFile(
-    join(proposalPath, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-    "utf8",
+  await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
+    reason: `Write proposal metadata ${proposalId}`,
+  });
+  await mutations.writeText(
+    join(proposalPath, "proposal.md"),
+    proposalMarkdown,
+    {
+      reason: `Write proposal markdown ${proposalId}`,
+    },
   );
-  await writeFile(join(proposalPath, "proposal.md"), proposalMarkdown, "utf8");
-  await writeFile(join(proposalPath, "patch.diff"), patchDiff, "utf8");
+  await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
+    reason: `Write proposal patch ${proposalId}`,
+  });
 
   return {
     ...metadata,
@@ -363,8 +400,11 @@ export async function pruneSkillProposals(
 
   const deleted: SkillProposalSummary[] = [];
   if (input.apply) {
+    const mutations = createFileCapabilityPackageWriter(input.workspaceRoot);
     for (const proposal of candidates) {
-      await rm(proposal.path, { recursive: true, force: true });
+      await mutations.removeTree(proposal.path, {
+        reason: `Prune Skill proposal ${proposal.id}`,
+      });
       deleted.push(proposal);
     }
   }
@@ -383,7 +423,14 @@ export async function readSkillProposal(
   proposalId: string,
 ): Promise<SkillProposalDetail> {
   assertSafePathSegment(proposalId, "proposal id");
-  return readSkillProposalFromPath(proposalDir(workspaceRoot, proposalId));
+  const proposal = await readSkillProposalFromPath(
+    proposalDir(workspaceRoot, proposalId),
+  );
+  if (proposal.id !== proposalId) {
+    throw new Error(`Skill proposal id mismatch: ${proposalId}`);
+  }
+  validateProposalTarget(workspaceRoot, proposal);
+  return proposal;
 }
 
 async function readSkillProposalFromPath(
@@ -405,36 +452,45 @@ export async function applySkillProposal(
   proposalId: string,
   options: { appliedAt?: Date | string } = {},
 ): Promise<ApplySkillProposalResult> {
+  const mutations = createFileCapabilityPackageWriter(workspaceRoot);
   const proposal = await readSkillProposal(workspaceRoot, proposalId);
   if (proposal.state !== "draft") {
     throw new Error(`Skill proposal is not draft: ${proposal.id}`);
   }
+  validateProposalTarget(workspaceRoot, proposal);
 
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
+  await verifyProposalAfterSkillName(proposal, afterSkillDir, mutations);
   const currentAfterHash = await computeSkillPackageHash(afterSkillDir);
   if (currentAfterHash.packageHash !== proposal.afterPackageHash) {
-    await updateProposalState(proposal, "stale");
+    await updateProposalState(proposal, "stale", mutations);
     throw new Error(
       `Skill proposal after package hash changed: ${proposal.id}`,
     );
   }
 
-  await verifyProposalBase(proposal);
+  await verifyProposalBase(proposal, mutations);
 
-  await mkdir(projectSkillRoot(workspaceRoot), { recursive: true });
+  await mutations.ensureDirectory(projectSkillRoot(workspaceRoot), {
+    reason: "Ensure project Skill root before applying proposal",
+  });
   const restoreProjectBefore = proposalCreatesFromProject(proposal);
   if (proposal.kind === "update") {
-    await rm(proposal.targetPath, { recursive: true, force: true });
+    await mutations.removeTree(proposal.targetPath, {
+      reason: `Remove current Skill ${proposal.skillName} before applying proposal`,
+    });
   }
-  await cp(afterSkillDir, proposal.targetPath, { recursive: true });
+  await mutations.replaceWithSkillPackage(afterSkillDir, proposal.targetPath, {
+    reason: `Apply Skill proposal ${proposal.id}`,
+  });
 
   const roots = [
     { root: projectSkillRoot(workspaceRoot), layer: "project" as const },
   ];
   const doctor = await runSkillDoctor({ skillRoots: roots });
   if (doctor.status === "blocked") {
-    await rollbackAppliedProposal(proposal, restoreProjectBefore);
-    await updateProposalState(proposal, "failed");
+    await rollbackAppliedProposal(proposal, restoreProjectBefore, mutations);
+    await updateProposalState(proposal, "failed", mutations);
     throw new Error(
       `Applied Skill proposal failed doctor checks: ${proposal.id}`,
     );
@@ -446,8 +502,14 @@ export async function applySkillProposal(
       : (options.appliedAt ?? new Date().toISOString());
   let history: SkillHistoryEntry | undefined;
   try {
-    history = await writeHistoryEntry(workspaceRoot, proposal, now);
-    const applied = await updateProposalState(proposal, "applied", now);
+    history = await writeHistoryEntry(workspaceRoot, proposal, now, mutations);
+    const applied = await updateProposalState(
+      proposal,
+      "applied",
+      mutations,
+      now,
+      {},
+    );
 
     return {
       proposal: applied,
@@ -456,8 +518,12 @@ export async function applySkillProposal(
       changed: true,
     };
   } catch (error) {
-    if (history) await rm(history.path, { recursive: true, force: true });
-    await rollbackAppliedProposal(proposal, restoreProjectBefore);
+    if (history) {
+      await mutations.removeTree(history.path, {
+        reason: `Rollback Skill history ${history.id}`,
+      });
+    }
+    await rollbackAppliedProposal(proposal, restoreProjectBefore, mutations);
     throw error;
   }
 }
@@ -465,13 +531,14 @@ export async function applySkillProposal(
 export async function rejectSkillProposal(
   input: CloseSkillProposalInput,
 ): Promise<SkillProposalDetail> {
+  const mutations = createFileCapabilityPackageWriter(input.workspaceRoot);
   const proposal = await readSkillProposal(
     input.workspaceRoot,
     input.proposalId,
   );
   ensureClosableProposal(proposal, "reject");
   const closedAt = normalizeDateInput(input.closedAt);
-  return updateProposalState(proposal, "rejected", closedAt, {
+  return updateProposalState(proposal, "rejected", mutations, closedAt, {
     closedAt,
     statusReason: cleanOptionalText(input.reason),
   });
@@ -480,6 +547,7 @@ export async function rejectSkillProposal(
 export async function supersedeSkillProposal(
   input: SupersedeSkillProposalInput,
 ): Promise<SkillProposalDetail> {
+  const mutations = createFileCapabilityPackageWriter(input.workspaceRoot);
   const proposal = await readSkillProposal(
     input.workspaceRoot,
     input.proposalId,
@@ -509,7 +577,7 @@ export async function supersedeSkillProposal(
   }
 
   const closedAt = normalizeDateInput(input.closedAt);
-  return updateProposalState(proposal, "superseded", closedAt, {
+  return updateProposalState(proposal, "superseded", mutations, closedAt, {
     closedAt,
     statusReason: cleanOptionalText(input.reason),
     supersededBy: replacement.id,
@@ -576,6 +644,7 @@ export async function readSkillHistoryDetail(
 export async function restoreSkillFromHistory(
   input: RestoreSkillFromHistoryInput,
 ): Promise<RestoreSkillFromHistoryResult> {
+  const mutations = createFileCapabilityPackageWriter(input.workspaceRoot);
   validateSkillName(input.skillName);
   const sourceHistory = await readSkillHistoryDetail(
     input.workspaceRoot,
@@ -615,14 +684,28 @@ export async function restoreSkillFromHistory(
   try {
     hadCurrentSkill = existsSync(join(targetPath, "SKILL.md"));
     if (hadCurrentSkill) {
-      await snapshotSkillPackage(targetPath, restoreBeforeSkill);
+      await mutations.snapshotSkillPackage(targetPath, restoreBeforeSkill, {
+        reason: `Snapshot current Skill ${input.skillName} before restore`,
+      });
     } else {
-      await mkdir(restoreBeforeSkill, { recursive: true });
+      await mutations.ensureDirectory(restoreBeforeSkill, {
+        reason: `Create empty restore base for ${input.skillName}`,
+      });
     }
 
-    await mkdir(projectSkillRoot(input.workspaceRoot), { recursive: true });
-    await rm(targetPath, { recursive: true, force: true });
-    await cp(sourceHistory.afterPath, targetPath, { recursive: true });
+    await mutations.ensureDirectory(projectSkillRoot(input.workspaceRoot), {
+      reason: "Ensure project Skill root before restoring Skill",
+    });
+    await mutations.removeTree(targetPath, {
+      reason: `Remove current Skill ${input.skillName} before restore`,
+    });
+    await mutations.replaceWithSkillPackage(
+      sourceHistory.afterPath,
+      targetPath,
+      {
+        reason: `Restore Skill ${input.skillName} from history ${input.historyId}`,
+      },
+    );
 
     const roots = [
       {
@@ -636,6 +719,7 @@ export async function restoreSkillFromHistory(
         targetPath,
         restoreBeforeSkill,
         hadCurrentSkill,
+        mutations,
       );
       throw new Error(
         `Restored Skill failed doctor checks: ${input.skillName}`,
@@ -652,6 +736,7 @@ export async function restoreSkillFromHistory(
       beforePackageHash: currentPackageHash,
       afterPackageHash: restorePackageHash,
       createdAt: restoredAt,
+      mutations,
     });
 
     return {
@@ -666,18 +751,23 @@ export async function restoreSkillFromHistory(
     };
   } catch (error) {
     if (restoreHistory) {
-      await rm(restoreHistory.path, { recursive: true, force: true });
+      await mutations.removeTree(restoreHistory.path, {
+        reason: `Rollback restore history ${restoreHistory.id}`,
+      });
     }
     if (existsSync(restoreBeforeRoot)) {
       await rollbackRestoredSkill(
         targetPath,
         restoreBeforeSkill,
         hadCurrentSkill,
+        mutations,
       );
     }
     throw error;
   } finally {
-    await rm(restoreBeforeRoot, { recursive: true, force: true });
+    await mutations.removeTree(restoreBeforeRoot, {
+      reason: `Remove restore temp for ${input.skillName}`,
+    });
   }
 }
 
@@ -704,6 +794,7 @@ function historySkillRoot(workspaceRoot: string, skillName: string): string {
 async function updateProposalState(
   proposal: SkillProposalDetail,
   state: SkillProposalState,
+  mutations: CapabilityPackageMutationWriter,
   updatedAt = new Date().toISOString(),
   extra: Partial<
     Pick<SkillProposalMetadata, "closedAt" | "statusReason" | "supersededBy">
@@ -727,11 +818,9 @@ async function updateProposalState(
     statusReason: extra.statusReason ?? proposal.statusReason,
     supersededBy: extra.supersededBy ?? proposal.supersededBy,
   };
-  await writeFile(
-    join(proposal.path, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-    "utf8",
-  );
+  await mutations.writeJson(join(proposal.path, "metadata.json"), metadata, {
+    reason: `Update proposal state ${proposal.id} to ${state}`,
+  });
   return readSkillProposalFromPath(proposal.path);
 }
 
@@ -784,22 +873,35 @@ async function writeHistoryEntry(
   workspaceRoot: string,
   proposal: SkillProposalDetail,
   createdAt: string,
+  mutations: CapabilityPackageMutationWriter,
 ): Promise<SkillHistoryEntry> {
   const id = createId("skillver") as string;
   const path = join(historySkillRoot(workspaceRoot, proposal.skillName), id);
   const afterSkillDir = join(proposal.path, "after", proposal.skillName);
   const beforeSkillDir = join(proposal.path, "before", proposal.skillName);
   if (proposal.basePackageHash) {
-    await cp(beforeSkillDir, join(path, "before", proposal.skillName), {
-      recursive: true,
-    });
+    await mutations.snapshotSkillPackage(
+      beforeSkillDir,
+      join(path, "before", proposal.skillName),
+      {
+        reason: `Write history before package ${id}`,
+      },
+    );
   } else {
-    await mkdir(join(path, "before"), { recursive: true });
+    await mutations.ensureDirectory(join(path, "before"), {
+      reason: `Create empty history base ${id}`,
+    });
   }
-  await cp(afterSkillDir, join(path, "after", proposal.skillName), {
-    recursive: true,
+  await mutations.snapshotSkillPackage(
+    afterSkillDir,
+    join(path, "after", proposal.skillName),
+    {
+      reason: `Write history after package ${id}`,
+    },
+  );
+  await mutations.writeText(join(path, "patch.diff"), proposal.patchDiff, {
+    reason: `Write history patch ${id}`,
   });
-  await writeFile(join(path, "patch.diff"), proposal.patchDiff, "utf8");
   const metadata: SkillHistoryMetadata = {
     id,
     skillName: proposal.skillName,
@@ -810,11 +912,9 @@ async function writeHistoryEntry(
     afterPackageHash: proposal.afterPackageHash,
     targetPath: proposal.targetPath,
   };
-  await writeFile(
-    join(path, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-    "utf8",
-  );
+  await mutations.writeJson(join(path, "metadata.json"), metadata, {
+    reason: `Write history metadata ${id}`,
+  });
   return { ...metadata, path };
 }
 
@@ -827,25 +927,34 @@ async function writeRestoreHistoryEntry(input: {
   beforePackageHash: string | null;
   afterPackageHash: string;
   createdAt: string;
+  mutations: CapabilityPackageMutationWriter;
 }): Promise<SkillHistoryEntry> {
   const id = createId("skillver") as string;
   const path = join(historySkillRoot(input.workspaceRoot, input.skillName), id);
   if (input.beforeSkillDir) {
-    await cp(input.beforeSkillDir, join(path, "before", input.skillName), {
-      recursive: true,
-    });
+    await input.mutations.snapshotSkillPackage(
+      input.beforeSkillDir,
+      join(path, "before", input.skillName),
+      {
+        reason: `Write restore history before package ${id}`,
+      },
+    );
   } else {
-    await mkdir(join(path, "before"), { recursive: true });
+    await input.mutations.ensureDirectory(join(path, "before"), {
+      reason: `Create empty restore history base ${id}`,
+    });
   }
-  await cp(
+  await input.mutations.snapshotSkillPackage(
     input.sourceHistory.afterPath,
     join(path, "after", input.skillName),
     {
-      recursive: true,
+      reason: `Write restore history after package ${id}`,
     },
   );
   const patchDiff = renderRestorePatch(input.skillName, input.sourceHistory);
-  await writeFile(join(path, "patch.diff"), patchDiff, "utf8");
+  await input.mutations.writeText(join(path, "patch.diff"), patchDiff, {
+    reason: `Write restore history patch ${id}`,
+  });
   const metadata: SkillHistoryMetadata = {
     id,
     skillName: input.skillName,
@@ -857,11 +966,9 @@ async function writeRestoreHistoryEntry(input: {
     targetPath: input.targetPath,
     sourceHistoryId: input.sourceHistory.id,
   };
-  await writeFile(
-    join(path, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-    "utf8",
-  );
+  await input.mutations.writeJson(join(path, "metadata.json"), metadata, {
+    reason: `Write restore history metadata ${id}`,
+  });
   return { ...metadata, path };
 }
 
@@ -874,10 +981,11 @@ async function readHistoryEntry(path: string): Promise<SkillHistoryEntry> {
 
 async function verifyProposalBase(
   proposal: SkillProposalDetail,
+  mutations: CapabilityPackageMutationWriter,
 ): Promise<void> {
   if (proposal.kind === "create") {
     if (existsSync(join(proposal.targetPath, "SKILL.md"))) {
-      await updateProposalState(proposal, "stale");
+      await updateProposalState(proposal, "stale", mutations);
       throw new Error(`Project Skill already exists: ${proposal.targetPath}`);
     }
     return;
@@ -887,14 +995,14 @@ async function verifyProposalBase(
     throw new Error(`Unsupported Skill proposal kind: ${proposal.kind}`);
   }
   if (!proposal.basePackageHash) {
-    await updateProposalState(proposal, "stale");
+    await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Skill proposal missing base package hash: ${proposal.id}`);
   }
 
   if (proposalCreatesFromProject(proposal)) {
     const current = await computeSkillPackageHash(proposal.targetPath).catch(
       async (error) => {
-        await updateProposalState(proposal, "stale");
+        await updateProposalState(proposal, "stale", mutations);
         throw new Error(
           `Project Skill changed since proposal: ${proposal.id}: ${
             error instanceof Error ? error.message : String(error)
@@ -903,24 +1011,24 @@ async function verifyProposalBase(
       },
     );
     if (current.packageHash !== proposal.basePackageHash) {
-      await updateProposalState(proposal, "stale");
+      await updateProposalState(proposal, "stale", mutations);
       throw new Error(`Project Skill changed since proposal: ${proposal.id}`);
     }
     return;
   }
 
   if (existsSync(join(proposal.targetPath, "SKILL.md"))) {
-    await updateProposalState(proposal, "stale");
+    await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Project Skill already exists: ${proposal.targetPath}`);
   }
   if (!proposal.sourcePath) {
-    await updateProposalState(proposal, "stale");
+    await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Skill proposal missing source path: ${proposal.id}`);
   }
   const sourceHash = await computeSkillPackageHash(
     dirname(proposal.sourcePath),
   ).catch(async (error) => {
-    await updateProposalState(proposal, "stale");
+    await updateProposalState(proposal, "stale", mutations);
     throw new Error(
       `Source Skill changed since proposal: ${proposal.id}: ${
         error instanceof Error ? error.message : String(error)
@@ -928,8 +1036,52 @@ async function verifyProposalBase(
     );
   });
   if (sourceHash.packageHash !== proposal.basePackageHash) {
-    await updateProposalState(proposal, "stale");
+    await updateProposalState(proposal, "stale", mutations);
     throw new Error(`Source Skill changed since proposal: ${proposal.id}`);
+  }
+}
+
+function validateProposalTarget(
+  workspaceRoot: string,
+  proposal: SkillProposalDetail,
+): void {
+  validateSkillName(proposal.skillName);
+  if (proposal.targetLayer !== "project") {
+    throw new Error(
+      `Skill proposal target layer must be project: ${proposal.id}`,
+    );
+  }
+  const expected = join(projectSkillRoot(workspaceRoot), proposal.skillName);
+  if (proposal.targetPath !== expected) {
+    throw new Error(`Skill proposal target path mismatch: ${proposal.id}`);
+  }
+}
+
+async function verifyProposalAfterSkillName(
+  proposal: SkillProposalDetail,
+  afterSkillDir: string,
+  mutations: CapabilityPackageMutationWriter,
+): Promise<void> {
+  const skillPath = join(afterSkillDir, "SKILL.md");
+  const content = await readFile(skillPath, "utf8");
+  try {
+    assertSkillMarkdownName(content, proposal.skillName, skillPath);
+  } catch (error) {
+    await updateProposalState(proposal, "stale", mutations);
+    throw error;
+  }
+}
+
+function assertSkillMarkdownName(
+  content: string,
+  expectedName: string,
+  sourcePath: string,
+): void {
+  const parsed = parseSkill(content, sourcePath);
+  if (parsed.name !== expectedName) {
+    throw new Error(
+      `Skill proposal content name mismatch: expected ${expectedName}, found ${parsed.name}`,
+    );
   }
 }
 
@@ -940,13 +1092,18 @@ function proposalCreatesFromProject(proposal: SkillProposalDetail): boolean {
 async function rollbackAppliedProposal(
   proposal: SkillProposalDetail,
   restoreProjectBefore: boolean,
+  mutations: CapabilityPackageMutationWriter,
 ): Promise<void> {
-  await rm(proposal.targetPath, { recursive: true, force: true });
+  await mutations.removeTree(proposal.targetPath, {
+    reason: `Rollback applied Skill ${proposal.skillName}`,
+  });
   if (!restoreProjectBefore) return;
-  await cp(
+  await mutations.replaceWithSkillPackage(
     join(proposal.path, "before", proposal.skillName),
     proposal.targetPath,
-    { recursive: true },
+    {
+      reason: `Restore project Skill ${proposal.skillName} after failed apply`,
+    },
   );
 }
 
@@ -954,10 +1111,15 @@ async function rollbackRestoredSkill(
   targetPath: string,
   restoreBeforeSkill: string,
   hadCurrentSkill: boolean,
+  mutations: CapabilityPackageMutationWriter,
 ): Promise<void> {
-  await rm(targetPath, { recursive: true, force: true });
+  await mutations.removeTree(targetPath, {
+    reason: "Rollback restored Skill",
+  });
   if (hadCurrentSkill) {
-    await cp(restoreBeforeSkill, targetPath, { recursive: true });
+    await mutations.replaceWithSkillPackage(restoreBeforeSkill, targetPath, {
+      reason: "Restore Skill before failed restore",
+    });
   }
 }
 

@@ -116,20 +116,21 @@ const CORRECTION_PATTERNS: readonly RegExp[] = [
 export function detectSkillLearnNotice(
   goals: readonly string[],
 ): SkillLearnNotice | null {
-  const combined = goals.join("\n").toLowerCase();
-  if (!combined.trim()) return null;
-  const reuse = REUSE_PATTERNS.some((pattern) => pattern.test(combined));
+  const goal = latestGoal(goals);
+  if (!goal) return null;
+  const normalized = goal.toLowerCase();
+  const reuse = REUSE_PATTERNS.some((pattern) => pattern.test(normalized));
   const correction = CORRECTION_PATTERNS.some((pattern) =>
-    pattern.test(combined),
+    pattern.test(normalized),
   );
   if (!reuse && !correction) return null;
   const reason = reuse ? "explicit reuse instruction" : "workflow correction";
   return {
     reason,
-    evidence: captureEvidence(goals, [
-      ...REUSE_PATTERNS,
-      ...CORRECTION_PATTERNS,
-    ]),
+    evidence: captureEvidence(
+      [goal],
+      [...REUSE_PATTERNS, ...CORRECTION_PATTERNS],
+    ),
   };
 }
 
@@ -161,7 +162,9 @@ function condenseEvidence(text: string): string {
 export function detectSkillLearnTarget(
   goals: readonly string[],
 ): string | undefined {
-  const combined = goals.join("\n").toLowerCase();
+  const goal = latestGoal(goals);
+  if (!goal) return undefined;
+  const combined = goal.toLowerCase();
   const patterns = [
     /\bskill\s+([a-z0-9][a-z0-9-]{0,63})\b/u,
     /\b([a-z0-9][a-z0-9-]{0,63})\s+skill\b/u,
@@ -170,6 +173,14 @@ export function detectSkillLearnTarget(
     const match = pattern.exec(combined);
     const name = match?.[1];
     if (name && !isReservedSkillTarget(name)) return name;
+  }
+  return undefined;
+}
+
+function latestGoal(goals: readonly string[]): string | undefined {
+  for (let i = goals.length - 1; i >= 0; i -= 1) {
+    const goal = goals[i]?.trim();
+    if (goal) return goal;
   }
   return undefined;
 }

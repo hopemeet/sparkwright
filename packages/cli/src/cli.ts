@@ -125,6 +125,7 @@ interface ParsedArgs {
   target?: string;
   traceLevel: TraceLevel;
   workspaceRoot: string;
+  workspaceRootSource: "default" | "config" | "cli";
   sessionRootDir: string;
   sessionRootDirSource: "default" | "cli";
   targetPath: string;
@@ -490,6 +491,8 @@ function parseArgs(
   }
   let traceLevel: TraceLevel = defaults.traceLevel ?? "standard";
   let workspaceRoot = defaults.workspace ?? cwd;
+  let workspaceRootSource: ParsedArgs["workspaceRootSource"] =
+    defaults.workspace ? "config" : "default";
   let sessionRootDir: string | undefined;
   let sessionRootDirSource: ParsedArgs["sessionRootDirSource"] = "default";
   let targetPath = "README.md";
@@ -543,6 +546,7 @@ function parseArgs(
       if (!value)
         return { ok: false, message: "Usage: --workspace requires a path" };
       workspaceRoot = resolve(cwd, value);
+      workspaceRootSource = "cli";
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1002,6 +1006,7 @@ function parseArgs(
       target,
       traceLevel,
       workspaceRoot,
+      workspaceRootSource,
       sessionRootDir: resolvedSessionRootDir,
       sessionRootDirSource,
       targetPath,
@@ -1057,15 +1062,21 @@ async function handleToolsCommand(
   }
 
   try {
-    const path = userConfigPath(env);
-    const loaded = await readUserConfigObject(path);
+    const target =
+      parsed.workspaceRootSource === "cli"
+        ? {
+            path: projectConfigPathForWorkspace(parsed.workspaceRoot),
+            privateFile: false,
+          }
+        : { path: userConfigPath(env), privateFile: true };
+    const loaded = await readConfigObject(target.path);
     const before = getToolsConfig(loaded.value);
 
     if (subcommand === "list") {
       writeLine(
         io.stdout,
         formatToolsConfig({
-          path,
+          path: target.path,
           exists: loaded.exists,
           tools: before,
           format: parsed.format,
@@ -1076,11 +1087,13 @@ async function handleToolsCommand(
 
     const next = updateToolsConfig(before, subcommand, patterns);
     setToolsConfig(loaded.value, next);
-    await writeUserConfigObject(path, loaded.value);
+    await writeConfigObject(target.path, loaded.value, {
+      privateFile: target.privateFile,
+    });
     writeLine(
       io.stdout,
       formatToolsConfig({
-        path,
+        path: target.path,
         exists: true,
         tools: next,
         format: parsed.format,
@@ -1387,7 +1400,7 @@ function removeEntries(
   return current.filter((entry) => !remove.has(entry));
 }
 
-async function readUserConfigObject(path: string): Promise<{
+async function readConfigObject(path: string): Promise<{
   exists: boolean;
   value: Record<string, unknown>;
 }> {
@@ -1410,16 +1423,19 @@ async function readUserConfigObject(path: string): Promise<{
   }
 }
 
-async function writeUserConfigObject(
+async function writeConfigObject(
   path: string,
   value: Record<string, unknown>,
+  options: { privateFile?: boolean } = {},
 ): Promise<void> {
   const { mkdir, writeFile, chmod } = await import("node:fs/promises");
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, {
-    mode: 0o600,
+    ...(options.privateFile !== false ? { mode: 0o600 } : {}),
   });
-  await chmod(path, 0o600);
+  if (options.privateFile !== false) {
+    await chmod(path, 0o600);
+  }
 }
 
 function getToolsConfig(config: Record<string, unknown>): ToolsConfigShape {
@@ -1908,6 +1924,12 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     origin: "local:sparkwright",
   },
   {
+    name: "update_skill",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
     name: "list_agents",
     source: "builtin",
     risk: "safe",
@@ -2010,9 +2032,25 @@ function buildCapabilityToolInventory(input: {
 
 function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
   if (matchesAnyToolPattern(name, config.disabled)) return false;
-  if (config.enabled !== undefined)
-    return matchesAnyToolPattern(name, config.enabled);
+  if (config.enabled !== undefined) {
+    return (
+      matchesAnyToolPattern(name, config.enabled) ||
+      isManagedCapabilityTool(name)
+    );
+  }
   return true;
+}
+
+const MANAGED_CAPABILITY_TOOLS = new Set([
+  "list_skills",
+  "create_skill",
+  "update_skill",
+  "list_agents",
+  "create_agent",
+]);
+
+function isManagedCapabilityTool(name: string): boolean {
+  return MANAGED_CAPABILITY_TOOLS.has(name);
 }
 
 function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
@@ -3149,7 +3187,7 @@ async function handleAgentsCommand(
 
   const configPath = projectConfigPathForWorkspace(parsed.workspaceRoot);
   try {
-    const loaded = await readUserConfigObject(configPath);
+    const loaded = await readConfigObject(configPath);
     const agents = getAgentsConfig(loaded.value);
 
     if (subcommand === "create") {
@@ -3180,7 +3218,7 @@ async function handleAgentsCommand(
         agents.delegateTools.push(input.value.delegateTool);
       }
       setAgentsConfig(loaded.value, agents);
-      await writeUserConfigObject(configPath, loaded.value);
+      await writeConfigObject(configPath, loaded.value);
       writeLine(io.stdout, `Updated ${configPath}`);
       writeLine(
         io.stdout,
@@ -4646,7 +4684,7 @@ function formatTraceSummary(summary: TraceSummary): string {
     `command failures: ${summary.commandFailures?.total ?? 0} total${topCommandFailures ? ` (${topCommandFailures})` : ""}`,
     `verification failures: ${summary.commandFailures?.verification?.total ?? 0} total, ${summary.commandFailures?.verification?.unresolved ?? 0} unresolved${summary.commandFailures?.verification?.lastCommand ? `, last ${summary.commandFailures.verification.lastCommand}` : ""}`,
     `approvals: ${summary.safety?.approvals?.requested ?? 0} requested, ${summary.safety?.approvals?.approved ?? 0} approved, ${summary.safety?.approvals?.denied ?? 0} denied, ${summary.safety?.approvals?.autoApproved ?? 0} auto-approved`,
-    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped`,
+    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped, capability mutations ${summary.safety?.capabilityMutations?.completed ?? 0} completed`,
     `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
@@ -4969,8 +5007,8 @@ function usage(): string {
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
-    "       sparkwright tools list [--format json|text]",
-    "       sparkwright tools enable|disable|defer <tool-pattern...>",
+    "       sparkwright tools list [--workspace path] [--format json|text]",
+    "       sparkwright tools enable|disable|defer <tool-pattern...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
@@ -4992,10 +5030,10 @@ function usage(): string {
 
 function toolsUsage(): string {
   return [
-    "Usage: sparkwright tools list [--format json|text]",
-    "       sparkwright tools enable <tool-pattern...>",
-    "       sparkwright tools disable <tool-pattern...>",
-    "       sparkwright tools defer <tool-pattern...>",
+    "Usage: sparkwright tools list [--workspace path] [--format json|text]",
+    "       sparkwright tools enable <tool-pattern...> [--workspace path]",
+    "       sparkwright tools disable <tool-pattern...> [--workspace path]",
+    "       sparkwright tools defer <tool-pattern...> [--workspace path]",
   ].join("\n");
 }
 

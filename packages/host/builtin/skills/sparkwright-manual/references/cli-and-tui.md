@@ -143,6 +143,10 @@ npm exec sparkwright -- tools disable shell_*
 npm exec sparkwright -- tools defer mcp_*
 ```
 
+Add `--workspace <path>` to inspect or update project tool defaults in
+`<workspace>/.sparkwright/config.json`; without it, tools commands operate on
+the user config.
+
 ```bash
 npm exec sparkwright -- skills list --workspace .
 npm exec sparkwright -- skills validate --workspace . --format text

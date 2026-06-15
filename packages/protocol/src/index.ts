@@ -10,7 +10,7 @@
  * the full specification, lifecycle, and error semantics.
  */
 
-export const PROTOCOL_VERSION = "1.2" as const;
+export const PROTOCOL_VERSION = "1.3" as const;
 
 // ---------------------------------------------------------------------------
 // Envelope discriminator
@@ -61,6 +61,7 @@ export type RequestKind =
   | "session.list"
   | "session.inspect"
   | "session.fork"
+  | "session.compact"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -160,6 +161,17 @@ export interface SessionForkRequestPayload {
   forkAtSequence?: number;
 }
 
+export interface SessionCompactRequestPayload {
+  /** Session whose completed prior turns should be compacted. */
+  sessionId: string;
+  /**
+   * Optional caller label recorded in the artifact metadata for diagnostics.
+   *
+   * @reserved Public session-compaction field consumed by host diagnostics.
+   */
+  reason?: string;
+}
+
 export interface CapabilityInspectRequestPayload {
   /**
    * Reserved for future scoped inspection. Omit to inspect the host/session
@@ -178,6 +190,7 @@ export type HostRequest =
   | HostRequestBase<"session.list", SessionListRequestPayload>
   | HostRequestBase<"session.inspect", SessionInspectRequestPayload>
   | HostRequestBase<"session.fork", SessionForkRequestPayload>
+  | HostRequestBase<"session.compact", SessionCompactRequestPayload>
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -227,6 +240,14 @@ export interface ResponseResults {
     forkedSessionId: string;
     copiedEventCount: number;
     truncatedAtSequence: number | null;
+  };
+  "session.compact": {
+    sessionId: string;
+    compactedRunCount: number;
+    throughRunId: string | null;
+    originalCharCount: number;
+    summaryCharCount: number;
+    artifactPath: string | null;
   };
   "capability.inspect": CapabilitySnapshot;
 }

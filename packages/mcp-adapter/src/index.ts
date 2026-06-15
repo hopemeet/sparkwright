@@ -102,6 +102,7 @@ export type McpServerConfig =
     });
 
 export type McpStatus =
+  | { status: "configured" }
   | { status: "connected" }
   | { status: "disabled" }
   | {
@@ -187,6 +188,22 @@ export interface PrepareMcpToolsForRunOptions {
    * model allowlist). Omit to leave sampling disabled.
    */
   sampling?: McpSamplingConfig;
+}
+
+export interface LazyMcpServerPrepared {
+  name: string;
+  status: McpStatus;
+  tools: ToolDefinition[];
+  toolNameMap: McpToolNameMapping[];
+}
+
+export interface CreateLazyMcpToolsForRunOptions extends PrepareMcpToolsForRunOptions {
+  /**
+   * Called exactly once after an enabled server is explicitly prepared. Hosts
+   * can register the discovered concrete MCP tools into the live run registry
+   * so subsequent turns expose precise schemas and direct tool names.
+   */
+  onServerPrepared?: (server: LazyMcpServerPrepared) => void;
 }
 
 type McpClientLike = Pick<Client, "callTool">;
@@ -278,56 +295,7 @@ export async function prepareMcpToolsForRun(
     ),
   );
 
-  if (options.emitter) {
-    const baseMeta = {
-      experimental: true,
-      schemaVersion: "edge-trace.v0.1",
-      sourcePackage: "@sparkwright/mcp-adapter",
-      ...(options.agentId ? { agentId: options.agentId } : {}),
-    };
-    for (let i = 0; i < prepared.length; i += 1) {
-      const server = prepared[i];
-      const config = options.servers[i];
-      const status = server.status.status;
-      const failure =
-        server.status.status === "failed" ? server.status : undefined;
-      options.emitter.emit(
-        "mcp.server.prepared",
-        {
-          name: server.name,
-          status,
-          toolCount: server.tools.length,
-          ...(failure
-            ? {
-                errorCode: failure.errorCode,
-                errorPhase: failure.phase,
-                error: {
-                  code: failure.errorCode,
-                  message: failure.error,
-                  phase: failure.phase,
-                },
-              }
-            : {}),
-          ...(server.sandbox ? { sandbox: server.sandbox } : {}),
-        },
-        {
-          ...baseMeta,
-          serverType: config?.type,
-          toolNameMap: server.toolNameMap,
-          ...(server.sandbox ? { sandbox: server.sandbox } : {}),
-          ...(server.status.status === "failed"
-            ? {
-                error: server.status.error,
-                errorCode: server.status.errorCode,
-                errorPhase: server.status.phase,
-                timeoutMs: server.status.timeoutMs,
-                durationMs: server.status.durationMs,
-              }
-            : {}),
-        },
-      );
-    }
-  }
+  emitMcpServerPreparedEvents(options, prepared);
 
   return {
     tools: prepared.flatMap((server) => server.tools),
@@ -339,6 +307,358 @@ export async function prepareMcpToolsForRun(
       await Promise.all(prepared.map((server) => server.close()));
     },
   };
+}
+
+export function createLazyMcpToolsForRun(
+  options: CreateLazyMcpToolsForRunOptions,
+): PreparedMcpTools {
+  const usedNames = new Set<string>();
+  const statusEntries = options.servers.map((server) => [
+    validateServerName(server.name),
+    server.enabled === false
+      ? ({ status: "disabled" } as const)
+      : ({ status: "configured" } as const),
+  ]);
+  const statuses = Object.fromEntries(statusEntries) as Record<
+    string,
+    McpStatus
+  >;
+  const toolNameMap: McpToolNameMapping[] = [];
+  const preparedByName = new Map<string, Promise<PreparedMcpServer>>();
+  const closeByName = new Map<string, () => Promise<void>>();
+
+  const lazyTools = options.servers.flatMap((server) => {
+    const name = validateServerName(server.name);
+    if (server.enabled === false) return [];
+
+    const listToolName = makeMcpToolName({
+      serverName: name,
+      mcpToolName: "list_tools",
+      namePrefix: options.namePrefix,
+      usedNames,
+    });
+    const callToolName = makeMcpToolName({
+      serverName: name,
+      mcpToolName: "call_tool",
+      namePrefix: options.namePrefix,
+      usedNames,
+    });
+
+    return [
+      defineTool({
+        name: listToolName,
+        description:
+          `Connect to MCP server "${name}" on demand and list its available tools. ` +
+          "Use this before calling MCP tools from that server.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        policy: { risk: "safe", requiresApproval: false },
+        governance: {
+          origin: {
+            kind: "mcp",
+            name,
+            metadata: { serverName: name, lazy: true, operation: "list_tools" },
+          },
+          sideEffects: ["read", "external", "network"],
+          idempotency: "conditional",
+          dataSensitivity: "internal",
+          audit: { level: "metadata" },
+        },
+        isReplaySafe: false,
+        async execute() {
+          const prepared = await ensureLazyMcpServerPrepared({
+            server,
+            name,
+            options,
+            usedNames,
+            statuses,
+            toolNameMap,
+            preparedByName,
+            closeByName,
+          });
+          return lazyListToolsResult(prepared);
+        },
+      }),
+      defineTool({
+        name: callToolName,
+        description:
+          `Call a tool on MCP server "${name}" on demand. Prefer calling ` +
+          `${listToolName} first so the exact tool names and schemas are known.`,
+        inputSchema: {
+          type: "object",
+          properties: {
+            toolName: {
+              type: "string",
+              description:
+                "MCP tool name to call. Accepts either the raw MCP tool name or the registered SparkWright MCP tool name.",
+            },
+            arguments: {
+              type: "object",
+              description: "Arguments to pass to the MCP tool.",
+              additionalProperties: true,
+            },
+          },
+          required: ["toolName"],
+          additionalProperties: false,
+        },
+        policy: lazyMcpCallPolicy(options.policy),
+        governance: {
+          origin: {
+            kind: "mcp",
+            name,
+            metadata: { serverName: name, lazy: true, operation: "call_tool" },
+          },
+          sideEffects: ["external", "network"],
+          idempotency: "conditional",
+          dataSensitivity: "internal",
+          audit: { level: "metadata" },
+        },
+        isReplaySafe: false,
+        async execute(args, ctx) {
+          const prepared = await ensureLazyMcpServerPrepared({
+            server,
+            name,
+            options,
+            usedNames,
+            statuses,
+            toolNameMap,
+            preparedByName,
+            closeByName,
+          });
+          if (prepared.status.status !== "connected") {
+            return lazyListToolsResult(prepared);
+          }
+          const parsed = parseLazyMcpCallArgs(args);
+          const mapping = prepared.toolNameMap.find(
+            (candidate) =>
+              candidate.mcpToolName === parsed.toolName ||
+              candidate.toolName === parsed.toolName,
+          );
+          if (!mapping) {
+            throw {
+              code: "MCP_TOOL_NOT_FOUND",
+              message:
+                `MCP server "${name}" does not expose tool "${parsed.toolName}". ` +
+                `Call ${listToolName} to inspect available tools.`,
+              metadata: {
+                serverName: name,
+                requestedToolName: parsed.toolName,
+                availableTools: prepared.toolNameMap.map((tool) => ({
+                  toolName: tool.toolName,
+                  mcpToolName: tool.mcpToolName,
+                })),
+              },
+            };
+          }
+          const tool = prepared.tools.find(
+            (candidate) => candidate.name === mapping.toolName,
+          );
+          if (!tool) {
+            throw {
+              code: "MCP_TOOL_NOT_FOUND",
+              message: `Prepared MCP tool not found: ${mapping.toolName}`,
+              metadata: {
+                serverName: name,
+                requestedToolName: parsed.toolName,
+                toolName: mapping.toolName,
+              },
+            };
+          }
+          return tool.execute(parsed.arguments ?? {}, ctx);
+        },
+      }),
+    ];
+  });
+
+  return {
+    tools: lazyTools,
+    statuses,
+    toolNameMap,
+    async close() {
+      await Promise.all([...closeByName.values()].map((close) => close()));
+    },
+  };
+}
+
+async function ensureLazyMcpServerPrepared(input: {
+  server: McpServerConfig;
+  name: string;
+  options: CreateLazyMcpToolsForRunOptions;
+  usedNames: Set<string>;
+  statuses: Record<string, McpStatus>;
+  toolNameMap: McpToolNameMapping[];
+  preparedByName: Map<string, Promise<PreparedMcpServer>>;
+  closeByName: Map<string, () => Promise<void>>;
+}): Promise<PreparedMcpServer> {
+  const existing = input.preparedByName.get(input.name);
+  if (existing) return existing;
+
+  const pending = (async () => {
+    const prepared = await prepareMcpServer(input.server, {
+      defaultTimeoutMs: input.options.defaultTimeoutMs,
+      namePrefix: input.options.namePrefix,
+      policy: input.options.policy,
+      serverPolicy: input.options.serverPolicy,
+      onStdioStderr: input.options.onStdioStderr,
+      onToolDescriptionWarning: input.options.onToolDescriptionWarning,
+      descriptionPolicy: input.options.descriptionPolicy,
+      shellSandbox: input.options.shellSandbox,
+      shellSandboxRuntime: input.options.shellSandboxRuntime,
+      sampling: input.options.sampling,
+      usedNames: input.usedNames,
+    });
+    input.statuses[input.name] = prepared.status;
+    input.toolNameMap.push(...prepared.toolNameMap);
+    input.closeByName.set(input.name, prepared.close);
+    emitMcpServerPreparedEvents(
+      {
+        ...input.options,
+        servers: [input.server],
+      },
+      [prepared],
+    );
+    input.options.onServerPrepared?.({
+      name: prepared.name,
+      status: prepared.status,
+      tools: prepared.tools,
+      toolNameMap: prepared.toolNameMap,
+    });
+    return prepared;
+  })();
+  input.preparedByName.set(input.name, pending);
+  return pending;
+}
+
+function lazyListToolsResult(
+  prepared: PreparedMcpServer,
+): Record<string, unknown> {
+  return {
+    serverName: prepared.name,
+    status: prepared.status.status,
+    tools: prepared.toolNameMap.map((tool) => {
+      const definition = prepared.tools.find(
+        (candidate) => candidate.name === tool.toolName,
+      );
+      return {
+        toolName: tool.toolName,
+        mcpToolName: tool.mcpToolName,
+        description: definition?.description ?? "",
+        inputSchema: definition?.inputSchema,
+        outputSchema: definition?.outputSchema,
+      };
+    }),
+    ...(prepared.status.status === "failed"
+      ? {
+          error: {
+            code: prepared.status.errorCode,
+            message: prepared.status.error,
+            phase: prepared.status.phase,
+          },
+        }
+      : {}),
+  };
+}
+
+function lazyMcpCallPolicy(policy: PrepareMcpToolsForRunOptions["policy"]): {
+  risk?: ToolRisk;
+  requiresApproval?: boolean;
+} {
+  if (typeof policy === "function") {
+    return { risk: "risky", requiresApproval: true };
+  }
+  return policy ?? { risk: "risky", requiresApproval: true };
+}
+
+function parseLazyMcpCallArgs(args: unknown): {
+  toolName: string;
+  arguments?: Record<string, unknown>;
+} {
+  if (!isRecord(args)) {
+    throw {
+      code: "MCP_TOOL_ARGUMENTS_INVALID",
+      message: "Lazy MCP call input must be an object.",
+    };
+  }
+  if (typeof args.toolName !== "string" || args.toolName.trim() === "") {
+    throw {
+      code: "MCP_TOOL_ARGUMENTS_INVALID",
+      message: "Lazy MCP call requires a non-empty toolName.",
+    };
+  }
+  const toolArguments = args.arguments;
+  if (
+    toolArguments !== undefined &&
+    (!isRecord(toolArguments) || Array.isArray(toolArguments))
+  ) {
+    throw {
+      code: "MCP_TOOL_ARGUMENTS_INVALID",
+      message: "Lazy MCP call arguments must be an object when provided.",
+    };
+  }
+  return {
+    toolName: args.toolName.trim(),
+    arguments: toolArguments as Record<string, unknown> | undefined,
+  };
+}
+
+function emitMcpServerPreparedEvents(
+  options: Pick<PrepareMcpToolsForRunOptions, "emitter" | "agentId"> & {
+    servers: readonly McpServerConfig[];
+  },
+  prepared: readonly PreparedMcpServer[],
+): void {
+  if (!options.emitter) return;
+  const baseMeta = {
+    experimental: true,
+    schemaVersion: "edge-trace.v0.1",
+    sourcePackage: "@sparkwright/mcp-adapter",
+    ...(options.agentId ? { agentId: options.agentId } : {}),
+  };
+  for (let i = 0; i < prepared.length; i += 1) {
+    const server = prepared[i];
+    const config = options.servers[i];
+    const status = server.status.status;
+    const failure =
+      server.status.status === "failed" ? server.status : undefined;
+    options.emitter.emit(
+      "mcp.server.prepared",
+      {
+        name: server.name,
+        status,
+        toolCount: server.tools.length,
+        ...(failure
+          ? {
+              errorCode: failure.errorCode,
+              errorPhase: failure.phase,
+              error: {
+                code: failure.errorCode,
+                message: failure.error,
+                phase: failure.phase,
+              },
+            }
+          : {}),
+        ...(server.sandbox ? { sandbox: server.sandbox } : {}),
+      },
+      {
+        ...baseMeta,
+        serverType: config?.type,
+        toolNameMap: server.toolNameMap,
+        ...(server.sandbox ? { sandbox: server.sandbox } : {}),
+        ...(server.status.status === "failed"
+          ? {
+              error: server.status.error,
+              errorCode: server.status.errorCode,
+              errorPhase: server.status.phase,
+              timeoutMs: server.status.timeoutMs,
+              durationMs: server.status.durationMs,
+            }
+          : {}),
+      },
+    );
+  }
 }
 
 export async function prepareMcpServer(

@@ -227,6 +227,59 @@ describe("run outcome evidence", () => {
     });
   });
 
+  it("annotates unsupported unquoted verification command success claims", () => {
+    const log = new EventLog(createRunId());
+    const events = [log.emit("run.created", { goal: "Fix and verify" })];
+
+    const outcome = completedRunOutcomeFromEvents(
+      events,
+      "python -m unittest tests/test_config.py passed.",
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "completed_with_unsupported_final_claims",
+      unsupportedFinalClaims: {
+        count: 1,
+        claims: [
+          {
+            kind: "command_success",
+            command: "python -m unittest tests/test_config.py",
+          },
+        ],
+      },
+    });
+  });
+
+  it("does not treat backticked successful output as a command success claim", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Fix and run tests" }),
+      log.emit("tool.requested", {
+        id: "call_test",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_test",
+        toolName: "shell",
+        status: "completed",
+        output: {
+          exitCode: 0,
+          timedOut: false,
+          stdout: "tests passed\n",
+          stderr: "",
+        },
+      }),
+    ];
+
+    const outcome = completedRunOutcomeFromEvents(
+      events,
+      "`npm test` passed (`tests passed`).",
+    );
+
+    expect(outcome?.unsupportedFinalClaims).toBeUndefined();
+  });
+
   it("marks a recovered + unsupported-claim run as non-failing despite the issues kind", () => {
     const log = new EventLog(createRunId());
     const events = [

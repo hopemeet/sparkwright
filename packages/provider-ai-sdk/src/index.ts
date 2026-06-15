@@ -24,6 +24,10 @@ import type {
   ProviderDefinition,
 } from "@sparkwright/provider-registry";
 
+type ProviderOptions = NonNullable<
+  Parameters<typeof generateText>[0]["providerOptions"]
+>;
+
 export interface AiSdkModelAdapterOptions {
   model: LanguageModel;
   maxRetries?: number;
@@ -32,6 +36,8 @@ export interface AiSdkModelAdapterOptions {
   id?: string;
   /** Per-million-token pricing used to attach `costUsd` to emitted usage. */
   pricing?: ModelPricing;
+  /** Request-level AI SDK provider options forwarded to generate/stream calls. */
+  providerOptions?: ProviderOptions;
 }
 
 export function createAiSdkModelAdapter(
@@ -52,6 +58,7 @@ export function createAiSdkModelAdapter(
           tools: toAiSdkTools(input.tools),
           maxRetries: options.maxRetries ?? 0,
           timeout: options.timeout,
+          providerOptions: options.providerOptions,
           // Forward the run-scoped abort signal so cancel() aborts the in-flight
           // HTTP request instead of letting it run to completion.
           abortSignal: input.abortSignal,
@@ -85,6 +92,7 @@ export function createAiSdkModelAdapter(
           tools: toAiSdkTools(input.tools),
           maxRetries: options.maxRetries ?? 0,
           timeout: options.timeout,
+          providerOptions: options.providerOptions,
           // Forward the run-scoped abort signal so cancel() tears down the SSE
           // stream mid-flight rather than draining the full response.
           abortSignal: input.abortSignal,
@@ -112,6 +120,8 @@ export function createAiSdkModelAdapter(
           }
           if (chunk.type === "text-delta") {
             yield { type: "text_delta", text: chunk.text };
+          } else if (chunk.type === "reasoning-delta") {
+            yield { type: "reasoning_delta", text: chunk.text };
           } else if (chunk.type === "tool-input-start") {
             const index = nextToolCallIndex++;
             toolCallIdToIndex.set(chunk.id, index);
@@ -493,6 +503,20 @@ export function createOpenAiProvider(
         pricing: input.model.pricing,
         maxRetries: options.adapter?.maxRetries ?? 0,
         timeout: options.adapter?.timeout,
+        providerOptions: providerOptionsFromMetadata(input.model.metadata),
       }),
   };
+}
+
+function providerOptionsFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): ProviderOptions | undefined {
+  const providerOptions = metadata?.["providerOptions"];
+  if (!isProviderOptions(providerOptions)) return undefined;
+  return providerOptions;
+}
+
+function isProviderOptions(value: unknown): value is ProviderOptions {
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(isRecord);
 }

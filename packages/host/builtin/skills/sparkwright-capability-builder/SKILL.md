@@ -18,14 +18,22 @@ asks what a command or config field means, use `sparkwright-manual` instead.
 
 ## First Move
 
-Read `references/build-capabilities.md` before making edits. It contains the
-decision tree, current command shapes, and safe write rules.
+If you need the full decision tree, load this Skill's
+`references/build-capabilities.md` resource through the Skill resource loader.
+Do not read `references/build-capabilities.md` as a workspace file; it belongs
+to this Skill package, not necessarily to the user's project.
 
 Before writing files:
 
+- For new project Skills, prefer `list_skills` followed by `create_skill`.
+  Do not probe `.sparkwright/skills/<name>/SKILL.md` first; the file is
+  expected to be missing before creation.
+- For existing project Skill evolution, prefer `list_skills` followed by the
+  deferred `update_skill` tool when available. That creates a draft proposal
+  without applying it.
 - Inspect the current workspace capability state with
   `npm exec sparkwright -- capabilities inspect --workspace . --format text`
-  when the workspace is this repo or a local checkout.
+  only when you are operating through the CLI rather than runtime tools.
 - Prefer existing CLI scaffolds (`skills create`, `agents create`,
   `cron create`, `init --project`) over hand-authored files when they fit.
 - Read the existing `.sparkwright/config.json` before modifying project config.

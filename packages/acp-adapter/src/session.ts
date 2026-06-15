@@ -6,12 +6,14 @@ import {
   type TraceLevel,
 } from "@sparkwright/core";
 import { HostRuntime } from "@sparkwright/host";
+import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import type { AgentSideConnection, SessionId } from "@agentclientprotocol/sdk";
 import type { HostEvent } from "@sparkwright/protocol";
 
 export interface AcpSessionInfo {
   sessionId: SessionId;
   cwd: string;
+  mcpServers?: readonly McpServerConfig[];
   runtime: HostRuntime;
   activeRunId?: string;
 }
@@ -37,10 +39,14 @@ export class AcpSessionStore {
 
   constructor(private readonly options: AcpSessionStoreOptions) {}
 
-  create(input: { cwd: string; sessionId?: string }): AcpSessionInfo {
+  create(input: {
+    cwd: string;
+    sessionId?: string;
+    mcpServers?: readonly McpServerConfig[];
+  }): AcpSessionInfo {
     const cwd = normalizeCwd(input.cwd);
     const sessionId = normalizeSessionId(input.sessionId);
-    const session = this.buildSession(sessionId, cwd);
+    const session = this.buildSession(sessionId, cwd, input.mcpServers);
     this.sessions.set(sessionId, session);
     return session;
   }
@@ -76,14 +82,22 @@ export class AcpSessionStore {
     this.sessions.clear();
   }
 
-  private buildSession(sessionId: SessionId, cwd: string): AcpSessionInfo {
+  private buildSession(
+    sessionId: SessionId,
+    cwd: string,
+    mcpServers?: readonly McpServerConfig[],
+  ): AcpSessionInfo {
     const session: AcpSessionInfo = {
       sessionId,
       cwd,
+      ...(mcpServers && mcpServers.length > 0 ? { mcpServers } : {}),
       runtime: new HostRuntime({
         workspaceRoot: cwd,
         ...(this.options.sessionRootDir
           ? { sessionRootDir: this.options.sessionRootDir }
+          : {}),
+        ...(mcpServers && mcpServers.length > 0
+          ? { extraMcpServers: mcpServers }
           : {}),
         defaultModel: this.options.defaultModel,
         defaultPermissionMode: this.options.defaultPermissionMode,

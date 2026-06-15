@@ -727,12 +727,88 @@ function extractClaimedSuccessfulCommands(message: string): string[] {
     while ((match = commandPattern.exec(line)) !== null) {
       const command = match[1]?.trim();
       if (!command) continue;
+      if (!looksLikeCommandSnippet(command)) continue;
       if (isVerificationRelevantCommand(command, { verificationGoal: true })) {
+        commands.push(command);
+      }
+    }
+    const unquotedLine = line.replace(/`[^`\n]*`/g, " ");
+    for (const command of extractInlineVerificationCommandClaims(
+      unquotedLine,
+    )) {
+      commands.push(command);
+    }
+  }
+  return commands;
+}
+
+function extractInlineVerificationCommandClaims(line: string): string[] {
+  const commands: string[] = [];
+  const successLookahead = String.raw`(?=\s+(?:passed?|passes|success(?:ful|fully)?|succeeded|ok|green)\b|[.!?)]|$)`;
+  const patterns = [
+    new RegExp(
+      String.raw`\b((?:python\d*(?:\.\d+)*)\s+-m\s+(?:unittest|pytest)(?:\s+[^\s` +
+        "`" +
+        String.raw`,;:()]+)*)` +
+        successLookahead,
+      "gi",
+    ),
+    new RegExp(
+      String.raw`\b((?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|verify|check|lint)(?:\s+[^\s` +
+        "`" +
+        String.raw`,;:()]+)*)` +
+        successLookahead,
+      "gi",
+    ),
+    new RegExp(
+      String.raw`\b((?:cargo\s+(?:nextest\s+run|test)|go\s+test)(?:\s+[^\s` +
+        "`" +
+        String.raw`,;:()]+)*)` +
+        successLookahead,
+      "gi",
+    ),
+  ];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(line)) !== null) {
+      const command = commandIdentity(stripInlineSuccessSuffix(match[1]));
+      if (
+        command &&
+        isVerificationRelevantCommand(command, { verificationGoal: true })
+      ) {
         commands.push(command);
       }
     }
   }
   return commands;
+}
+
+function stripInlineSuccessSuffix(
+  value: string | undefined,
+): string | undefined {
+  if (!value) return undefined;
+  return value
+    .trim()
+    .replace(
+      /\s+(?:passed?|passes|success(?:ful|fully)?|succeeded|ok|green)\b\.?$/i,
+      "",
+    )
+    .replace(/[.!?)]$/u, "")
+    .trim();
+}
+
+function looksLikeCommandSnippet(command: string): boolean {
+  const normalized = stripLeadingEnvAssignments(
+    commandIdentity(command) ?? command,
+  ).toLowerCase();
+  return (
+    isExplicitVerificationCommand(normalized) ||
+    /^(?:\.{0,2}\/|~\/)/.test(normalized) ||
+    /^(?:node|npx|bun|deno|make|cmake|gradle|mvn|bazel|ruby|bundle|rspec|swift|xcodebuild)\b/.test(
+      normalized,
+    ) ||
+    /\s(?:&&|\|\||;)\s/.test(normalized)
+  );
 }
 
 function isSuccessClaimContext(text: string): boolean {

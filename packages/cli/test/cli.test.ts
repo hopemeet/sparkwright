@@ -18,6 +18,7 @@ import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import type { RunId } from "@sparkwright/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
+import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
 
 describe("runCli", () => {
   let tempDirs: string[] = [];
@@ -508,7 +509,7 @@ describe("runCli", () => {
     });
   });
 
-  it("warns when --yes is used without --write", async () => {
+  it("clarifies that --yes without --write still applies to risky non-write approvals", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
 
@@ -534,12 +535,12 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stderrText()).toContain(
-      "Warning: --yes has no effect without --write.",
+      "Warning: --yes does not enable workspace writes without --write; it can still approve other risky actions.",
     );
     expect(output.stdoutText()).toContain("run.completed final_answer");
   });
 
-  it("warns when --yes-shell-safe is used without --write", async () => {
+  it("does not warn that --yes-shell-safe is ineffective without --write", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
 
@@ -564,9 +565,7 @@ describe("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stderrText()).toContain(
-      "Warning: --yes-shell-safe has no effect without --write.",
-    );
+    expect(output.stderrText()).not.toContain("has no effect without --write");
     expect(output.stdoutText()).toContain("run.completed final_answer");
   });
 
@@ -1160,6 +1159,43 @@ describe("runCli", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("exposes discovery tools in direct-core CLI runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+
+    const tools = await createConfiguredCliTools(workspace, process.env);
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "glob",
+      "grep",
+      "list_dir",
+      "append_file",
+    ]);
+  });
+
+  it("applies tool config to direct-core discovery tools", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          tools: { disabled: ["grep"] },
+        },
+      }),
+      "utf8",
+    );
+
+    const tools = await createConfiguredCliTools(workspace, process.env);
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "glob",
+      "list_dir",
+      "append_file",
+    ]);
+  });
+
   it("inspects configured capability layers", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
@@ -1319,6 +1355,36 @@ describe("runCli", () => {
     );
   });
 
+  it("keeps managed capability tools visible when enabled config only names shell", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          tools: { enabled: ["shell"] },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("tools: enabled=shell");
+    expect(output.stdoutText()).toContain("tool: shell");
+    expect(output.stdoutText()).toContain("tool: list_skills");
+    expect(output.stdoutText()).toContain("tool: create_skill");
+    expect(output.stdoutText()).toContain("tool: update_skill");
+    expect(output.stdoutText()).not.toContain("tool: read_file");
+  });
+
   it("resolves MCP tools during capability inspect only when requested", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
@@ -1472,6 +1538,71 @@ describe("runCli", () => {
       const mode = (await stat(configPath)).mode & 0o777;
       expect(mode).toBe(0o600);
     }
+  });
+
+  it("updates workspace tool config when --workspace is explicit", async () => {
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const workspace = await createWorkspace("# Demo\n");
+    const userConfigPath = join(xdg, "sparkwright", "config.json");
+    const projectConfigPath = join(workspace, ".sparkwright", "config.json");
+
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        capabilities: {
+          skills: { roots: ["skills"] },
+          tools: { disabled: ["shell"] },
+        },
+      }),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["tools", "defer", "mcp_*", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(projectConfigPath);
+    await expect(stat(userConfigPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const parsed = JSON.parse(await readFile(projectConfigPath, "utf8")) as {
+      capabilities?: {
+        skills?: { roots?: string[] };
+        tools?: { disabled?: string[]; defer?: string[] };
+      };
+    };
+    expect(parsed.capabilities?.skills?.roots).toEqual(["skills"]);
+    expect(parsed.capabilities?.tools).toEqual({
+      disabled: ["shell"],
+      defer: ["mcp_*"],
+    });
+  });
+
+  it("lists workspace tool config without creating project config", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const projectConfigPath = join(workspace, ".sparkwright", "config.json");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["tools", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(projectConfigPath);
+    expect(output.stdoutText()).toContain("enabled: (all)");
+    expect(output.stdoutText()).toContain("disabled: (none)");
+    await expect(stat(projectConfigPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("marks missing command capability dirs as optional in inspect output", async () => {
@@ -4074,7 +4205,73 @@ describe("runCli", () => {
     ).toBeUndefined();
   });
 
-  it("runs scripted model tool calls through the host", async () => {
+  it("does not start configured MCP servers until a lazy MCP tool is used", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const markerPath = join(workspace, "mcp-started.txt");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            servers: [
+              mcpEchoServerConfig("qa", {
+                prelude: [
+                  "import { writeFileSync } from 'node:fs';",
+                  `writeFileSync(${JSON.stringify(markerPath)}, "started", "utf8");`,
+                ].join("\n"),
+              }),
+            ],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "answer without using MCP",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            { message: "no mcp used" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    await expect(readFile(markerPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(
+      traceEvents.some((event) => event.type === "mcp.server.prepared"),
+    ).toBe(false);
+  });
+
+  it("runs scripted model lazy MCP tool calls through the host", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
@@ -4107,6 +4304,14 @@ describe("runCli", () => {
         env: {
           ...process.env,
           SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "mcp_qa_list_tools",
+                  arguments: {},
+                },
+              ],
+            },
             {
               toolCalls: [
                 {
@@ -5444,7 +5649,10 @@ describe("runCli", () => {
     );
   });
 
-  function mcpEchoServerConfig(name: string) {
+  function mcpEchoServerConfig(
+    name: string,
+    options: { prelude?: string } = {},
+  ) {
     const repoRoot = findRepoRoot(process.cwd());
     const mcpPath = resolve(
       repoRoot,
@@ -5459,6 +5667,7 @@ describe("runCli", () => {
     // (a bare `C:\...` specifier is rejected); POSIX tolerates a bare path but
     // file:// works there too, so always convert.
     const script = [
+      options.prelude ?? "",
       `import { McpServer } from ${JSON.stringify(pathToFileURL(mcpPath).href)};`,
       `import { StdioServerTransport } from ${JSON.stringify(pathToFileURL(transportPath).href)};`,
       `import { z } from ${JSON.stringify(pathToFileURL(zodPath).href)};`,

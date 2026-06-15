@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 import type { StoreState } from "../state/event-store.js";
 import { useTheme } from "../lib/theme-context.js";
 import { Spinner } from "./spinner.js";
@@ -16,7 +16,16 @@ export function StatusBar(props: {
   focused: boolean;
 }): React.ReactElement {
   const theme = useTheme();
+  const { stdout } = useStdout();
   const elapsedMs = useElapsed(props.state);
+  const compact = (stdout?.columns ?? 120) < 100;
+  const statusLabel =
+    props.state.status === "awaiting-approval"
+      ? "approval"
+      : props.state.status;
+  const modelLabel = compact
+    ? compactModelLabel(props.modelLabel)
+    : props.modelLabel;
   const statusColor =
     props.state.status === "error"
       ? theme.statusError
@@ -40,10 +49,10 @@ export function StatusBar(props: {
       {isRunning ? (
         <>
           <Spinner color={statusColor} />
-          <Text color={statusColor}> {props.state.status}</Text>
+          <Text color={statusColor}> {statusLabel}</Text>
         </>
       ) : (
-        <Text color={statusColor}>● {props.state.status}</Text>
+        <Text color={statusColor}>● {statusLabel}</Text>
       )}
       {props.state.stopReason ? (
         <Text color={theme.muted}> ({props.state.stopReason})</Text>
@@ -57,7 +66,7 @@ export function StatusBar(props: {
       ) : null}
       {!props.focused ? <Text color={theme.muted}> · ⊙ blurred</Text> : null}
       <Box flexGrow={1} />
-      <Text color={theme.accent}>{props.modelLabel}</Text>
+      <Text color={theme.accent}>{modelLabel}</Text>
       <Text color={theme.muted}> · {props.permissionMode}</Text>
     </Box>
   );
@@ -88,4 +97,9 @@ function formatTokens(n: number): string {
   if (n < 1000) return `${n} tok`;
   if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k tok`;
   return `${(n / 1_000_000).toFixed(2)}M tok`;
+}
+
+function compactModelLabel(label: string): string {
+  const slash = label.lastIndexOf("/");
+  return slash >= 0 ? label.slice(slash + 1) : label;
 }

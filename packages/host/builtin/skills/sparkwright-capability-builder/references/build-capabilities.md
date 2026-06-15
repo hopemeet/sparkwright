@@ -175,7 +175,9 @@ npm exec sparkwright -- tools disable <pattern...>
 npm exec sparkwright -- tools defer <pattern...>
 ```
 
-For project defaults, edit `.sparkwright/config.json`:
+Add `--workspace <path>` to update project defaults in
+`<workspace>/.sparkwright/config.json` instead. You can also edit the file
+directly:
 
 ```json
 {

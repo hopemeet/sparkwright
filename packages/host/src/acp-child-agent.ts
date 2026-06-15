@@ -22,6 +22,7 @@ export interface AcpChildAgentConfig {
   args?: string[];
   cwd?: string;
   env?: Record<string, string>;
+  envMode?: "inherit" | "explicit";
   workspaceAccess?: DelegateWorkspaceAccess;
   timeoutMs?: number;
 }
@@ -66,6 +67,7 @@ export function acpConfigFromAgentProfile(
     args: stringArrayField(acp, "args"),
     cwd: stringField(acp, "cwd"),
     env: stringRecordField(acp, "env"),
+    envMode: envModeField(acp, "envMode"),
     workspaceAccess: workspaceAccessField(acp),
     timeoutMs: numberField(acp, "timeoutMs"),
   };
@@ -176,7 +178,7 @@ export function createAcpDelegateTool(
           command: config.command,
           args: config.args,
           cwd: executionWorkspace.cwd,
-          env: config.env ? { ...process.env, ...config.env } : process.env,
+          env: resolveAcpWorkerEnv(config),
           timeoutMs: config.timeoutMs,
         });
         const result = await worker.run({
@@ -293,6 +295,14 @@ function numberField(
     : undefined;
 }
 
+function envModeField(
+  record: Record<string, unknown>,
+  key: string,
+): "inherit" | "explicit" | undefined {
+  const value = record[key];
+  return value === "inherit" || value === "explicit" ? value : undefined;
+}
+
 function stringArrayField(
   record: Record<string, unknown>,
   key: string,
@@ -316,6 +326,24 @@ function stringRecordField(
     return undefined;
   }
   return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function resolveAcpWorkerEnv(
+  config: Pick<AcpChildAgentConfig, "env" | "envMode">,
+): NodeJS.ProcessEnv {
+  if (config.envMode === "inherit") {
+    return config.env ? { ...process.env, ...config.env } : process.env;
+  }
+  return { ...minimalProcessEnv(), ...(config.env ?? {}) };
+}
+
+function minimalProcessEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["PATH", "Path", "SystemRoot", "COMSPEC"]) {
+    const value = process.env[key];
+    if (value) env[key] = value;
+  }
+  return env;
 }
 
 function sanitizeSegment(value: string): string {

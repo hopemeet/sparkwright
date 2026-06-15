@@ -1,8 +1,9 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
+  type RuntimeContext,
   type ToolDefinition,
   type WorkspaceRuntime,
 } from "@sparkwright/core";
@@ -20,7 +21,15 @@ import {
   defaultCronRoot,
 } from "@sparkwright/cron";
 import { type SkillRoot } from "@sparkwright/skills";
+import {
+  canonicalWorkspacePath,
+  readWorkspaceTextIfExists,
+  writeCapabilityJson,
+  writeCapabilityText,
+  type CapabilityWriteResult,
+} from "./capability-mutation.js";
 import type { CapabilityToolsConfig } from "./config.js";
+import { createSkillUpdateProposal } from "./skill-evolution.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
 
@@ -457,7 +466,7 @@ export function createSkillManagerTool(
         root: {
           type: "string",
           description:
-            "Optional skill root for create. Relative paths resolve from the workspace.",
+            "Optional project skill root. Omit for the default .sparkwright/skills root.",
         },
         force: {
           type: "boolean",
@@ -474,7 +483,8 @@ export function createSkillManagerTool(
       idempotency: "conditional",
     },
     isReplaySafe: false,
-    async execute(args: unknown) {
+    async execute(args: unknown, ctx) {
+      if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const input = parseSkillManagerArgs(args);
       if (!input.name || !isSkillName(input.name)) {
         throw new Error(
@@ -484,27 +494,110 @@ export function createSkillManagerTool(
       if (!input.description || input.description.trim().length === 0) {
         throw new Error("create_skill create requires description.");
       }
-      const root = input.root
-        ? resolveWorkspacePath(workspaceRoot, input.root)
-        : projectSkillRoot(workspaceRoot);
+      const root = resolveSkillCreateRoot(workspaceRoot, input.root);
       const skillDir = join(root, input.name);
       const skillPath = join(skillDir, "SKILL.md");
-      if ((await pathExists(skillPath)) && !input.force) {
+      const content = renderSkillTemplate(input.name, input.description);
+      const outputPath = await canonicalWorkspacePath(ctx, skillPath);
+      const existing = await readWorkspaceTextIfExists(ctx, skillPath);
+
+      if (existing === content) {
+        ctx.reportWorkspaceWriteSkipped?.({
+          path: outputPath,
+          reason: `Skill ${input.name} already matches requested content.`,
+        });
+        return {
+          action: "create",
+          name: input.name,
+          path: outputPath,
+          changed: false,
+          status: "already_exists",
+        };
+      }
+
+      if (existing !== undefined && !input.force) {
         throw new Error(
-          `Skill already exists: ${skillPath}. Pass force=true to overwrite.`,
+          `Skill already exists with different content: ${outputPath}. Use a Skill proposal/update flow or pass force=true to overwrite.`,
         );
       }
-      await mkdir(skillDir, { recursive: true });
-      await writeFile(
+      const write = await writeCapabilityText(
+        ctx,
         skillPath,
-        renderSkillTemplate(input.name, input.description),
-        "utf8",
+        content,
+        `Create Skill ${input.name}`,
       );
       return {
         action: "create",
         name: input.name,
-        path: skillPath,
+        path: write.path,
         changed: true,
+        diffArtifactId: write.diffArtifactId,
+        writeSummary: write.summary,
+      };
+    },
+  });
+}
+
+export function createSkillUpdateTool(
+  workspaceRoot: string,
+  configuredRoots: SkillRoot[] | undefined,
+) {
+  return defineTool({
+    name: "update_skill",
+    description:
+      "Draft an evolution proposal for an existing skill. Creates a proposal only; " +
+      "it does not apply the update. Use list_skills first to find the skill.",
+    deferLoading: true,
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["draft"] },
+        name: {
+          type: "string",
+          description:
+            "Existing skill name. Use lowercase letters, numbers, and hyphens.",
+        },
+        description: {
+          type: "string",
+          description: "Short reason and intent for the proposed evolution.",
+        },
+      },
+      required: ["action", "name", "description"],
+      additionalProperties: false,
+    },
+    policy: { risk: "risky" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read", "write"],
+      idempotency: "non_idempotent",
+    },
+    isReplaySafe: false,
+    async execute(args: unknown, ctx) {
+      const input = parseSkillUpdateArgs(args);
+      const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
+      const proposalInput = {
+        workspaceRoot,
+        skillRoots: roots,
+        name: input.name,
+        description: input.description,
+        mutationReporter: ctx,
+      };
+      const proposal = await createSkillUpdateProposal(proposalInput);
+
+      return {
+        action: "draft",
+        changed: true,
+        proposalId: proposal.id,
+        proposalPath: proposal.path,
+        state: proposal.state,
+        kind: proposal.kind,
+        skillName: proposal.skillName,
+        sourceLayer: proposal.sourceLayer,
+        sourcePath: proposal.sourcePath,
+        targetPath: proposal.targetPath,
+        basePackageHash: proposal.basePackageHash,
+        afterPackageHash: proposal.afterPackageHash,
+        summary: proposal.summary,
       };
     },
   });
@@ -593,7 +686,8 @@ export function createAgentManagerTool(workspaceRoot: string) {
       idempotency: "conditional",
     },
     isReplaySafe: false,
-    async execute(args: unknown) {
+    async execute(args: unknown, ctx) {
+      if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const input = parseAgentManagerArgs(args);
       const config = await readProjectConfig(workspaceRoot);
       const agents = getAgentConfigShape(config.data);
@@ -614,12 +708,14 @@ export function createAgentManagerTool(workspaceRoot: string) {
           throw new Error(`Agent profile not found: ${input.id}`);
         }
         setAgentConfigShape(config.data, agents);
-        await writeProjectConfig(config.path, config.data);
+        const write = await writeProjectConfig(ctx, config.path, config.data);
         return {
           action: "remove",
           id: input.id,
-          path: config.path,
+          path: write.path,
           changed: true,
+          diffArtifactId: write.diffArtifactId,
+          writeSummary: write.summary,
           agents,
           errors: validateAgentConfigShape(agents),
         };
@@ -631,11 +727,6 @@ export function createAgentManagerTool(workspaceRoot: string) {
       const existingIndex = agents.profiles.findIndex(
         (profile) => profile.id === input.id,
       );
-      if (existingIndex >= 0 && !input.force) {
-        throw new Error(
-          `Agent profile already exists: ${input.id}. Pass force=true to replace it.`,
-        );
-      }
       const mode = input.mode ?? "child";
       const profile: AgentProfile = {
         id: input.id,
@@ -651,18 +742,19 @@ export function createAgentManagerTool(workspaceRoot: string) {
         ...(input.deniedTools ? { deniedTools: input.deniedTools } : {}),
         ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
       };
+      const nextAgents = cloneAgentConfigShape(agents);
       if (existingIndex >= 0) {
-        agents.profiles[existingIndex] = profile;
+        nextAgents.profiles[existingIndex] = profile;
       } else {
-        agents.profiles.push(profile);
+        nextAgents.profiles.push(profile);
       }
       if (input.delegateToolName) {
-        agents.delegateTools = agents.delegateTools.filter(
+        nextAgents.delegateTools = nextAgents.delegateTools.filter(
           (tool) =>
             tool.profileId !== input.id &&
             tool.toolName !== input.delegateToolName,
         );
-        agents.delegateTools.push({
+        nextAgents.delegateTools.push({
           profileId: input.id,
           toolName: input.delegateToolName,
           requiresApproval: true,
@@ -670,21 +762,47 @@ export function createAgentManagerTool(workspaceRoot: string) {
           ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
         });
       }
-      const errors = validateAgentConfigShape(agents);
+      const errors = validateAgentConfigShape(nextAgents);
       if (errors.length > 0) {
         throw new Error(
           `create_agent create produced invalid config: ${JSON.stringify(errors)}`,
         );
       }
-      setAgentConfigShape(config.data, agents);
-      await writeProjectConfig(config.path, config.data);
+
+      if (existingIndex >= 0 && !input.force) {
+        if (agentConfigShapesEqual(agents, nextAgents)) {
+          const path = await canonicalWorkspacePath(ctx, config.path);
+          ctx.reportWorkspaceWriteSkipped?.({
+            path,
+            reason: `Agent profile ${input.id} already matches requested config.`,
+          });
+          return {
+            action: "create",
+            id: input.id,
+            path,
+            changed: false,
+            status: "already_exists",
+            profile,
+            agents,
+            errors,
+          };
+        }
+        throw new Error(
+          `Agent profile already exists with different config: ${input.id}. Pass force=true to replace it.`,
+        );
+      }
+
+      setAgentConfigShape(config.data, nextAgents);
+      const write = await writeProjectConfig(ctx, config.path, config.data);
       return {
         action: "create",
         id: input.id,
-        path: config.path,
+        path: write.path,
         changed: true,
+        diffArtifactId: write.diffArtifactId,
+        writeSummary: write.summary,
         profile,
-        agents,
+        agents: nextAgents,
         errors,
       };
     },
@@ -700,7 +818,10 @@ export function applyToolConfig<T extends ToolDefinition>(
     .filter((tool) => {
       if (matchesAnyToolPattern(tool.name, config.disabled)) return false;
       if (config.enabled !== undefined) {
-        return matchesAnyToolPattern(tool.name, config.enabled);
+        return (
+          matchesAnyToolPattern(tool.name, config.enabled) ||
+          isManagedCapabilityTool(tool.name)
+        );
       }
       return true;
     })
@@ -713,6 +834,18 @@ export function applyToolConfig<T extends ToolDefinition>(
       }
       return { ...tool, deferLoading: true };
     }) as T[];
+}
+
+const MANAGED_CAPABILITY_TOOLS = new Set([
+  "list_skills",
+  "create_skill",
+  "update_skill",
+  "list_agents",
+  "create_agent",
+]);
+
+function isManagedCapabilityTool(toolName: string): boolean {
+  return MANAGED_CAPABILITY_TOOLS.has(toolName);
 }
 
 function containsGlobPattern(path: string): boolean {
@@ -754,6 +887,23 @@ function resolveSkillRoots(
 
 function resolveWorkspacePath(workspaceRoot: string, path: string): string {
   return isAbsolute(path) ? path : resolve(workspaceRoot, path);
+}
+
+function resolveSkillCreateRoot(
+  workspaceRoot: string,
+  root: string | undefined,
+): string {
+  const projectRoot = projectSkillRoot(workspaceRoot);
+  const value = root?.trim();
+  if (!value || value === ".") return projectRoot;
+
+  const resolved = resolveWorkspacePath(workspaceRoot, value);
+  if (resolved !== projectRoot) {
+    throw toolArgumentsInvalid(
+      "create_skill root must be omitted or point to the project Skill root .sparkwright/skills.",
+    );
+  }
+  return projectRoot;
 }
 
 /**
@@ -798,6 +948,37 @@ function parseSkillManagerArgs(args: unknown): {
       : {}),
     ...(typeof record.root === "string" ? { root: record.root } : {}),
     ...(typeof record.force === "boolean" ? { force: record.force } : {}),
+  };
+}
+
+function parseSkillUpdateArgs(args: unknown): {
+  action: "draft";
+  name: string;
+  description: string;
+} {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw toolArgumentsInvalid("update_skill expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  const action = record.action;
+  if (action !== "draft") {
+    throw toolArgumentsInvalid("update_skill action must be draft.");
+  }
+  const name = typeof record.name === "string" ? record.name.trim() : "";
+  if (!isSkillName(name)) {
+    throw toolArgumentsInvalid(
+      "update_skill draft requires a valid lowercase skill name.",
+    );
+  }
+  const description =
+    typeof record.description === "string" ? record.description.trim() : "";
+  if (description.length === 0) {
+    throw toolArgumentsInvalid("update_skill draft requires description.");
+  }
+  return {
+    action,
+    name,
+    description,
   };
 }
 
@@ -853,11 +1034,16 @@ async function readProjectConfig(workspaceRoot: string): Promise<{
 }
 
 async function writeProjectConfig(
+  ctx: RuntimeContext,
   path: string,
   data: Record<string, unknown>,
-): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+): Promise<CapabilityWriteResult> {
+  return writeCapabilityJson(
+    ctx,
+    path,
+    data,
+    "Update project agent capability config",
+  );
 }
 
 function getAgentConfigShape(
@@ -879,6 +1065,42 @@ function getAgentConfigShape(
         }))
       : [],
   };
+}
+
+function cloneAgentConfigShape(agents: AgentConfigShape): AgentConfigShape {
+  return {
+    profiles: agents.profiles.map((profile) => ({
+      ...profile,
+      ...(profile.experimental
+        ? { experimental: { ...profile.experimental } }
+        : {}),
+      ...(profile.allowedTools
+        ? { allowedTools: [...profile.allowedTools] }
+        : {}),
+      ...(profile.deniedTools ? { deniedTools: [...profile.deniedTools] } : {}),
+    })),
+    delegateTools: agents.delegateTools.map((tool) => ({ ...tool })),
+  };
+}
+
+function agentConfigShapesEqual(
+  left: AgentConfigShape,
+  right: AgentConfigShape,
+): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
+  }
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function setAgentConfigShape(
@@ -1071,14 +1293,4 @@ function isStringArray(value: unknown): value is string[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
 }

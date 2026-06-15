@@ -91,6 +91,7 @@
           "type": "object",
           "additionalProperties": { "type": "string" }
         },
+        "envMode": { "type": "string", "enum": ["inherit", "explicit"] },
         "workspaceAccess": { "$ref": "#/$defs/workspaceAccess" },
         "timeoutMs": { "type": "number" }
       },

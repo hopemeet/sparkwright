@@ -12,6 +12,13 @@ Conventions:
 
 ## Unreleased
 
+- `event.schema.json`: additive — new `capability.mutation.completed` event
+  type. Emitted when a higher-level capability package mutation completes
+  outside the single-file `workspace.write.*` path, such as writing a draft
+  Skill proposal package. Migration: none; consumers may render it as
+  capability/package mutation evidence and keep workspace-write handling
+  unchanged.
+
 - `config.schema.json`: additive — new optional
   `capabilities.verification` config surface. Hosts can define named
   verification profiles and compile them into workflow hooks that run project

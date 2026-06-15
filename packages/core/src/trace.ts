@@ -151,6 +151,9 @@ export interface TraceSummary {
       denied: number;
       skipped: number;
     };
+    capabilityMutations: {
+      completed: number;
+    };
     shell: {
       requested: number;
       approvals: number;
@@ -655,6 +658,9 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
         completed: 0,
         denied: 0,
         skipped: 0,
+      },
+      capabilityMutations: {
+        completed: 0,
       },
       shell: {
         requested: 0,
@@ -2250,6 +2256,14 @@ function minimalPayload(event: SparkwrightEvent): unknown {
       case "workspace.write.denied":
       case "workspace.write.skipped":
         return pick(event.payload, ["proposalId", "path", "reason"]);
+      case "capability.mutation.completed":
+        return pick(event.payload, [
+          "action",
+          "path",
+          "reason",
+          "sourcePath",
+          "fileCount",
+        ]);
       case "run.failed":
         return pick(event.payload, ["code", "message"]);
       case "run.completed":
@@ -3142,6 +3156,10 @@ function collectSafetySummary(
     }
     if (event.type === "workspace.write.skipped") {
       summary.safety.workspaceWrites.skipped += 1;
+      continue;
+    }
+    if (event.type === "capability.mutation.completed") {
+      summary.safety.capabilityMutations.completed += 1;
       continue;
     }
     if (event.type === "workspace.read.denied") {

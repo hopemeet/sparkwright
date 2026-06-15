@@ -10,6 +10,7 @@ import {
   type CloseSessionResponse,
   type InitializeRequest,
   type InitializeResponse,
+  type McpServer,
   type ListSessionsRequest,
   type ListSessionsResponse,
   type NewSessionRequest,
@@ -21,6 +22,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { PermissionMode, TraceLevel } from "@sparkwright/core";
 import { HostRuntime } from "@sparkwright/host";
+import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import { contentBlocksToText } from "./content.js";
 import {
   AcpSessionStore,
@@ -55,6 +57,7 @@ export class SparkwrightAcpAgent implements Agent {
       reject: (error: Error) => void;
     }
   >();
+  private readonly eventQueues = new Map<string, Promise<void>>();
 
   constructor(
     private readonly connection: AcpClientConnection,
@@ -67,16 +70,18 @@ export class SparkwrightAcpAgent implements Agent {
       defaultShouldWrite: options.defaultShouldWrite,
       sessionRootDir: options.defaultSessionRootDir,
       emit: (session, event) => {
-        void routeHostEventToAcp({ session, connection, event }).catch(
-          () => {},
-        );
+        const routed = this.enqueueHostEvent(session, event);
         if (event.kind === "run.completed") {
-          this.finishTurn(session, {
-            stopReason:
-              event.payload.state === "cancelled" ? "cancelled" : "end_turn",
+          void routed.finally(() => {
+            this.finishTurn(session, {
+              stopReason:
+                event.payload.state === "cancelled" ? "cancelled" : "end_turn",
+            });
           });
         } else if (event.kind === "run.failed") {
-          this.failTurn(session, new Error(event.payload.error.message));
+          void routed.finally(() => {
+            this.failTurn(session, new Error(event.payload.error.message));
+          });
         }
       },
     });
@@ -100,6 +105,10 @@ export class SparkwrightAcpAgent implements Agent {
           list: {},
           resume: {},
         },
+        mcpCapabilities: {
+          http: true,
+          sse: true,
+        },
       },
       authMethods: [],
     };
@@ -114,6 +123,7 @@ export class SparkwrightAcpAgent implements Agent {
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const session = this.sessions.create({
       cwd: params.cwd || this.options.defaultWorkspaceRoot,
+      mcpServers: acpMcpServersToHostConfig(params.mcpServers ?? []),
     });
     return { sessionId: session.sessionId };
   }
@@ -124,6 +134,7 @@ export class SparkwrightAcpAgent implements Agent {
     this.sessions.create({
       sessionId: params.sessionId,
       cwd: params.cwd || this.options.defaultWorkspaceRoot,
+      mcpServers: acpMcpServersToHostConfig(params.mcpServers ?? []),
     });
     return {};
   }
@@ -239,6 +250,31 @@ export class SparkwrightAcpAgent implements Agent {
     this.activeTurns.get(session.sessionId)?.reject(error);
   }
 
+  private enqueueHostEvent(
+    session: AcpSessionInfo,
+    event: Parameters<typeof routeHostEventToAcp>[0]["event"],
+  ): Promise<void> {
+    const sessionId = session.sessionId;
+    const previous = this.eventQueues.get(sessionId) ?? Promise.resolve();
+    const routed = previous
+      .catch(() => {})
+      .then(() =>
+        routeHostEventToAcp({
+          session,
+          connection: this.connection,
+          event,
+        }),
+      )
+      .catch(() => {});
+    const queued = routed.finally(() => {
+      if (this.eventQueues.get(sessionId) === queued) {
+        this.eventQueues.delete(sessionId);
+      }
+    });
+    this.eventQueues.set(sessionId, queued);
+    return queued;
+  }
+
   private async inspectCapabilities(
     params: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
@@ -285,4 +321,58 @@ function stringParam(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value
     : undefined;
+}
+
+function acpMcpServersToHostConfig(
+  servers: readonly McpServer[],
+): McpServerConfig[] {
+  return servers.map((server) => acpMcpServerToHostConfig(server));
+}
+
+function acpMcpServerToHostConfig(server: McpServer): McpServerConfig {
+  if ("command" in server) {
+    return {
+      type: "stdio",
+      name: server.name,
+      command: server.command,
+      args: server.args,
+      env: pairsToRecord(server.env),
+    };
+  }
+
+  if (server.type === "http") {
+    return {
+      type: "http",
+      name: server.name,
+      url: server.url,
+      headers: pairsToRecord(server.headers),
+    };
+  }
+
+  if (server.type === "sse") {
+    return {
+      type: "sse",
+      name: server.name,
+      url: server.url,
+      headers: pairsToRecord(server.headers),
+    };
+  }
+
+  if (server.type === "acp") {
+    throw RequestError.invalidParams({
+      message: `ACP MCP transport is not supported yet: ${server.name}`,
+    });
+  }
+
+  const unsupported = server as { type?: unknown; name?: unknown };
+  throw RequestError.invalidParams({
+    message: `Unsupported MCP server type: ${String(unsupported.type)}`,
+  });
+}
+
+function pairsToRecord(
+  values: readonly { name: string; value: string }[] | undefined,
+): Record<string, string> | undefined {
+  if (!values || values.length === 0) return undefined;
+  return Object.fromEntries(values.map((entry) => [entry.name, entry.value]));
 }

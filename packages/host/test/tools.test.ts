@@ -7,6 +7,7 @@ import {
   defineTool,
   createRunId,
   LocalWorkspace,
+  type CapabilityMutationEvent,
   type RuntimeContext,
 } from "@sparkwright/core";
 import {
@@ -27,6 +28,7 @@ import {
   createReadFileTool,
   createSkillInspectorTool,
   createSkillManagerTool,
+  createSkillUpdateTool,
 } from "../src/tools.js";
 import { createHostShellTool } from "../src/shell.js";
 
@@ -187,6 +189,61 @@ describe("host tools", () => {
     ).toBeUndefined();
   });
 
+  it("keeps managed capability tools available through enabled allowlists", () => {
+    const shell = defineTool({
+      name: "shell",
+      description: "shell",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const read = defineTool({
+      name: "read_file",
+      description: "read",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const updateSkill = defineTool({
+      name: "update_skill",
+      description: "update",
+      inputSchema: { type: "object" },
+      deferLoading: true,
+      execute: () => ({}),
+    });
+
+    const tools = applyToolConfig(
+      [
+        read,
+        shell,
+        createSkillInspectorTool("/tmp/ws", undefined),
+        createSkillManagerTool("/tmp/ws", undefined),
+        updateSkill,
+      ],
+      { enabled: ["shell"] },
+    );
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "shell",
+      "list_skills",
+      "create_skill",
+      "update_skill",
+    ]);
+    expect(tools.find((tool) => tool.name === "update_skill")).toMatchObject({
+      deferLoading: true,
+    });
+  });
+
+  it("lets disabled config remove managed capability tools explicitly", () => {
+    const tools = applyToolConfig(
+      [
+        createSkillInspectorTool("/tmp/ws", undefined),
+        createSkillManagerTool("/tmp/ws", undefined),
+      ],
+      { enabled: ["shell"], disabled: ["create_skill"] },
+    );
+
+    expect(tools.map((tool) => tool.name)).toEqual(["list_skills"]);
+  });
+
   it("creates and lists workspace skills", async () => {
     const ctx = await createWorkspace({});
     const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
@@ -218,6 +275,203 @@ describe("host tools", () => {
       shadows: [],
       errors: [],
     });
+  });
+
+  it("treats duplicate skill creation as an idempotent skip", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+      },
+      ctx,
+    );
+    const duplicate = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+      },
+      ctx,
+    );
+
+    expect(duplicate).toMatchObject({
+      action: "create",
+      name: "repo-review",
+      path: ".sparkwright/skills/repo-review/SKILL.md",
+      changed: false,
+      status: "already_exists",
+    });
+    expect(ctx.skippedWrites).toEqual([
+      {
+        path: ".sparkwright/skills/repo-review/SKILL.md",
+        reason: "Skill repo-review already matches requested content.",
+      },
+    ]);
+  });
+
+  it("rejects duplicate skill creation with different content unless forced", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+      },
+      ctx,
+    );
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          name: "repo-review",
+          description: "review repository changes with test gaps",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/Skill already exists with different content/);
+  });
+
+  it("normalizes create_skill root to the project skill root", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    const created = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        root: ".",
+      },
+      ctx,
+    );
+
+    expect(created).toMatchObject({
+      path: ".sparkwright/skills/repo-review/SKILL.md",
+      changed: true,
+    });
+    await expect(
+      readFile(
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright",
+          "skills",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toContain("name: repo-review");
+    await expect(
+      readFile(join(ctx.workspaceRoot, "repo-review", "SKILL.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects create_skill roots outside the project skill root", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          name: "repo-review",
+          description: "review repository changes",
+          root: "custom-skills",
+        },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+  });
+
+  it("keeps update_skill deferred by default", () => {
+    const tool = createSkillUpdateTool("/tmp/ws", []);
+
+    expect(tool.deferLoading).toBe(true);
+  });
+
+  it("drafts skill update proposals without applying them", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/skills/repo-review/SKILL.md": [
+        "---",
+        "name: repo-review",
+        "description: review repository changes",
+        "---",
+        "",
+        "Review changes.",
+        "",
+      ].join("\n"),
+    });
+    const tool = createSkillUpdateTool(ctx.workspaceRoot, undefined);
+
+    const drafted = await tool.execute(
+      {
+        action: "draft",
+        name: "repo-review",
+        description: "Add missing-test guidance",
+      },
+      ctx,
+    );
+
+    expect(drafted).toMatchObject({
+      action: "draft",
+      changed: true,
+      state: "draft",
+      kind: "update",
+      skillName: "repo-review",
+      sourceLayer: "project",
+      targetPath: join(
+        ctx.workspaceRoot,
+        ".sparkwright",
+        "skills",
+        "repo-review",
+      ),
+    });
+    const proposal = drafted as { proposalPath: string };
+    await expect(
+      readFile(
+        join(proposal.proposalPath, "after", "repo-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("## Proposed Evolution");
+    await expect(
+      readFile(
+        join(proposal.proposalPath, "after", "repo-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("Add missing-test guidance");
+    expect(ctx.capabilityMutations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "snapshot_skill_package",
+          fileCount: 1,
+        }),
+        expect.objectContaining({
+          action: "write_text",
+          path: expect.stringContaining(
+            ".sparkwright/skill-evolution/proposals/",
+          ),
+        }),
+      ]),
+    );
+    await expect(
+      readFile(
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright",
+          "skills",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toContain("Review changes.");
   });
 
   it("creates project agent profiles and delegate tools", async () => {
@@ -273,6 +527,61 @@ describe("host tools", () => {
       },
       errors: [],
     });
+  });
+
+  it("treats duplicate agent creation as an idempotent skip", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+
+    const input = {
+      action: "create",
+      id: "reviewer",
+      name: "Reviewer",
+      mode: "child",
+      prompt: "Review changes and report concrete risks.",
+      allowedTools: ["read_file"],
+      maxSteps: 2,
+      delegateToolName: "delegate_reviewer",
+    };
+    await tool.execute(input, ctx);
+    const duplicate = await tool.execute(input, ctx);
+
+    expect(duplicate).toMatchObject({
+      action: "create",
+      id: "reviewer",
+      path: ".sparkwright/config.json",
+      changed: false,
+      status: "already_exists",
+    });
+    expect(ctx.skippedWrites).toContainEqual({
+      path: ".sparkwright/config.json",
+      reason: "Agent profile reviewer already matches requested config.",
+    });
+  });
+
+  it("rejects duplicate agent creation with different config unless forced", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+
+    await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        prompt: "Review changes and report concrete risks.",
+      },
+      ctx,
+    );
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          id: "reviewer",
+          prompt: "Review changes and report missing tests.",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/Agent profile already exists with different config/);
   });
 
   it("keeps inspector tools read-only and managers write-scoped", () => {
@@ -410,6 +719,48 @@ describe("host tools", () => {
     ).rejects.toThrow();
   });
 
+  it("rolls back shell writes to managed skill packages", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "off" },
+    });
+
+    await expect(
+      tool.execute(
+        {
+          command:
+            "mkdir -p .sparkwright/skills/release-reviewer && echo bad > .sparkwright/skills/release-reviewer/skill.md",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/dedicated SparkWright capability tools/);
+    await expect(
+      readFile(
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright/skills/release-reviewer/skill.md",
+        ),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("still ignores runtime session files in shell mutation audits", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command:
+          "mkdir -p .sparkwright/sessions/session-test && echo runtime > .sparkwright/sessions/session-test/log.txt",
+      },
+      ctx,
+    );
+
+    expect(result.exitCode).toBe(0);
+  });
+
   it("sets Python shell runs to avoid bytecode cache writes", async () => {
     const ctx = await createWorkspace({});
     const tool = createHostShellTool(ctx.workspaceRoot, {
@@ -544,15 +895,21 @@ describe("host tools", () => {
   });
 });
 
-async function createWorkspace(
-  files: Record<string, string>,
-): Promise<RuntimeContext & { workspaceRoot: string }> {
+async function createWorkspace(files: Record<string, string>): Promise<
+  RuntimeContext & {
+    workspaceRoot: string;
+    skippedWrites: Array<{ path: string; reason?: string }>;
+    capabilityMutations: CapabilityMutationEvent[];
+  }
+> {
   const root = await mkdtemp(join(tmpdir(), "sparkwright-host-tools-"));
   for (const [path, content] of Object.entries(files)) {
     const fullPath = join(root, path);
     await mkdir(join(fullPath, ".."), { recursive: true });
     await writeFile(fullPath, content, "utf8");
   }
+  const skippedWrites: Array<{ path: string; reason?: string }> = [];
+  const capabilityMutations: CapabilityMutationEvent[] = [];
 
   return {
     workspaceRoot: root,
@@ -565,5 +922,13 @@ async function createWorkspace(
       metadata: {},
     },
     workspace: new LocalWorkspace(root),
+    skippedWrites,
+    capabilityMutations,
+    reportWorkspaceWriteSkipped(payload) {
+      skippedWrites.push(payload);
+    },
+    reportCapabilityMutationCompleted(payload) {
+      capabilityMutations.push(payload);
+    },
   };
 }

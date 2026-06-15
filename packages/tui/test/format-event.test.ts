@@ -39,6 +39,18 @@ describe("formatEvent", () => {
       color: "red",
       detail: "skills SKILL_INDEX_FAILED /tmp/bad/SKILL.md",
     });
+    expect(
+      formatEvent(
+        event("capability.mutation.completed", {
+          action: "write_text",
+          path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail:
+        "write_text .sparkwright/skill-evolution/proposals/p1/proposal.md",
+    });
   });
 
   it("formats MCP and agent lifecycle events", () => {
@@ -81,6 +93,29 @@ describe("formatEvent", () => {
   it("formats verification workflow hooks", () => {
     expect(
       formatEvent(
+        event("workflow_hook.started", {
+          hookName: "verification:stop-gate",
+        }),
+      ),
+    ).toMatchObject({
+      color: "gray",
+      label: "verification",
+      detail: "stop-gate started",
+    });
+    expect(
+      formatEvent(
+        event("workflow_hook.completed", {
+          hookName: "verification:stop-gate",
+          result: { status: "continue" },
+        }),
+      ),
+    ).toMatchObject({
+      color: "green",
+      label: "verification",
+      detail: "stop-gate ok",
+    });
+    expect(
+      formatEvent(
         event("workflow_hook.completed", {
           hookName: "verification:fast:lint",
           result: {
@@ -108,6 +143,44 @@ describe("formatEvent", () => {
       color: "red",
       label: "verification",
       detail: "fast typecheck failed exitCode=2",
+    });
+    expect(
+      formatEvent(
+        event("workflow_hook.completed", {
+          hookName: "verification:stop-gate",
+          result: { status: "block" },
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      label: "verification",
+      detail: "stop-gate blocked",
+    });
+  });
+
+  it("formats non-verification workflow hooks", () => {
+    expect(
+      formatEvent(
+        event("workflow_hook.started", {
+          hookName: "project-operating-rules",
+        }),
+      ),
+    ).toMatchObject({
+      color: "gray",
+      label: "workflow hook",
+      detail: "project-operating-rules started",
+    });
+    expect(
+      formatEvent(
+        event("workflow_hook.completed", {
+          hookName: "project-operating-rules",
+          result: { status: "continue" },
+        }),
+      ),
+    ).toMatchObject({
+      color: "green",
+      label: "workflow hook",
+      detail: "project-operating-rules ok",
     });
   });
 });

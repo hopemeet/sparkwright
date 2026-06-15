@@ -20,7 +20,7 @@ export function resolveSkillRootsForRuntime(
   if (!configuredRoots || configuredRoots.length === 0) return layered;
 
   return [
-    ...layered.filter((dir) => dir.layer === "builtin" || dir.layer === "user"),
+    ...layered,
     ...configuredRoots.map((root) => ({
       root,
       layer: "legacy" as const,

@@ -222,6 +222,9 @@ Current event types:
 - `context.compaction.completed`
 - `context.compaction.failed`
 - `capability.index.failed`
+- `capability.mutation.completed`: a capability package operation completed
+  outside the single-file `workspace.write.*` path. Payload includes
+  `{ action, path, reason?, sourcePath?, fileCount?, files? }`.
 - `skill.indexed`
 - `skill.failed`
 - `skill.loaded`

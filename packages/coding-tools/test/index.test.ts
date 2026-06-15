@@ -452,6 +452,46 @@ describe("coding tools", () => {
     ]);
   });
 
+  it("excludes runtime session state from glob and grep by default", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const marker = 'source-only';\n",
+      ".sparkwright/sessions/session_1/trace.jsonl":
+        '{"type":"tool.completed","payload":"source-only"}\n',
+      ".sparkwright/runs/run_1/result.json": '{"summary":"source-only"}\n',
+    });
+    const tools = createCodingTools({ workspaceRoot: root });
+    const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
+    const grep = getTool<GrepTextInput, GrepTextResult>(tools, "grep");
+
+    const globResult = await glob.execute(
+      {
+        patterns: ["**/*"],
+        includeHidden: true,
+        includeBuildOutput: true,
+      },
+      ctx,
+    );
+    expect(globResult.paths).toContain("src/index.ts");
+    expect(globResult.paths).not.toContain(".sparkwright/sessions");
+    expect(globResult.paths).not.toContain(
+      ".sparkwright/sessions/session_1/trace.jsonl",
+    );
+    expect(globResult.paths).not.toContain(".sparkwright/runs");
+    expect(globResult.paths).not.toContain(
+      ".sparkwright/runs/run_1/result.json",
+    );
+
+    const result = await grep.execute(
+      {
+        pattern: "source-only",
+        includeHidden: true,
+        includeBuildOutput: true,
+      },
+      ctx,
+    );
+    expect(result.matches.map((match) => match.path)).toEqual(["src/index.ts"]);
+  });
+
   it("treats unbalanced braces as literal characters", async () => {
     const { root, ctx } = await createWorkspace({
       "weird{name.ts": "export const value = 1;\n",

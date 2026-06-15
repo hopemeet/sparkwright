@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createDefaultPolicy,
   createRun,
   createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
+  createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
+  LocalWorkspace,
   type ModelAdapter,
   type ToolDefinition,
 } from "@sparkwright/core";
 import { createDynamicSpawnAgentTool } from "../src/runtime.js";
+import { createReadFileTool } from "../src/tools.js";
 
 /**
  * The session run store flushes to disk asynchronously, so a trace/session file
@@ -128,6 +132,7 @@ describe("host spawn_agent wiring", () => {
         getParent: () => parent,
         model: childModel,
         childTools: [globTool],
+        parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory,
       });
 
@@ -214,6 +219,82 @@ describe("host spawn_agent wiring", () => {
     // taking >5s). The test budget must exceed the helper's own 12s deadline.
   }, 20000);
 
+  it("applies parent read-scope policy to dynamic child workspace reads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-read-"));
+    try {
+      await writeFile(join(root, "secret.txt"), "child-must-not-see\n", "utf8");
+      const sessionId = "session_spawn_read_scope";
+      const childRunStoreFactory = (childAgentId: string) =>
+        createSessionFileRunStoreFactory({
+          sessionRootDir: root,
+          sessionId,
+          agentId: childAgentId,
+          traceLevel: "standard",
+        });
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "secret.txt" } },
+              ],
+            };
+          }
+          return { message: "read denied" };
+        },
+      };
+      const parentPolicy = createWorkspaceReadScopePolicy({
+        confidentialPaths: ["secret.txt"],
+      });
+      const parent = createRun({
+        goal: "ask a child to read a confidential file",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        workspace: new LocalWorkspace(root),
+        policy: parentPolicy,
+        maxSteps: 1,
+      });
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools: [createReadFileTool()],
+        parentRunPolicy: parentPolicy,
+        childRunStoreFactory,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "read secret.txt",
+          role: "reader",
+          prompt: "Read secret.txt and report what happens.",
+          allowedTools: ["read_file"],
+          maxSteps: 3,
+        },
+        { run: parent.record } as never,
+      )) as { message?: string };
+
+      expect(output.message).toBe("read denied");
+      const childTrace = await readFileWhenReady(
+        join(root, sessionId, "agents", "dynamic_reader", "trace.jsonl"),
+        "READ_SCOPE_DENIED",
+      );
+      expect(childTrace).toContain("workspace.read.denied");
+      expect(childTrace).not.toContain("child-must-not-see");
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      });
+    }
+  }, 20000);
+
   it("flags stepLimitReached when the child answers on its last allowed step", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-cap-"));
     try {
@@ -264,6 +345,7 @@ describe("host spawn_agent wiring", () => {
             },
           }),
         ],
+        parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory,
       });
 
@@ -354,6 +436,7 @@ describe("host spawn_agent wiring", () => {
           getParent: () => parent,
           model: childModel,
           childTools,
+          parentRunPolicy: createDefaultPolicy(),
           childRunStoreFactory,
         });
         const output = (await spawnTool.execute(
@@ -451,6 +534,7 @@ describe("host spawn_agent wiring", () => {
         getParent: () => parent,
         model: childModel,
         childTools: [grepTool],
+        parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory,
       });
 
@@ -529,6 +613,7 @@ describe("host spawn_agent wiring", () => {
         getParent: () => parent,
         model: childModel,
         childTools: [noopTool],
+        parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory,
       });
 
@@ -614,6 +699,7 @@ describe("host spawn_agent wiring", () => {
         getParent: () => parent,
         model: childModel,
         childTools: [globTool],
+        parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory,
       });
 

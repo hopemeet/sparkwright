@@ -37,9 +37,17 @@
             "minLength": 1,
             "description": "API key for this provider. Overridden by the OPENAI_API_KEY env var when set. Stored in plaintext — keep this file private (chmod 600)."
           },
+          "providerOptions": {
+            "type": "object",
+            "description": "Request-level AI SDK providerOptions forwarded to generateText/streamText for every model on this provider. Keys are provider namespaces such as \"openai\" or \"anthropic\"; model-level providerOptions shallow-override matching provider namespaces.",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
           "models": {
             "type": "object",
-            "description": "Optional per-model metadata. Models not listed here still work; the metadata only attaches cost reporting.",
+            "description": "Optional per-model metadata. When any models are listed, model overrides must use one of those ids. Metadata attaches cost reporting and provider-specific request options.",
             "additionalProperties": {
               "type": "object",
               "properties": {
@@ -53,6 +61,14 @@
                     "cacheWrite": { "type": "number" }
                   },
                   "additionalProperties": false
+                },
+                "providerOptions": {
+                  "type": "object",
+                  "description": "Request-level AI SDK providerOptions for this model. Shallow-overrides provider-level providerOptions per provider namespace.",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
                 }
               },
               "additionalProperties": false

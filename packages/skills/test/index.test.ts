@@ -102,6 +102,30 @@ Review carefully.
     expect(skills[0]?.sourcePath).toBe(join(root, "reviewer", "SKILL.md"));
   });
 
+  it("loads nested SKILL.md packages during run preparation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-nested-"));
+    await mkdir(join(root, "nested", "deep"), { recursive: true });
+    await writeFile(
+      join(root, "nested", "deep", "SKILL.md"),
+      `---
+name: deep-skill
+description: Handles deeply nested skill packages.
+---
+Deep body.
+`,
+    );
+
+    const prepared = await prepareSkillsForRun({
+      goal: "deep skill",
+      skillRoots: [root],
+      loadSelectedSkills: false,
+    });
+
+    expect(prepared.indexedSkills.map((skill) => skill.name)).toEqual([
+      "deep-skill",
+    ]);
+  });
+
   it("hashes and snapshots the full supported skill package deterministically", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-skill-package-"));
     const skillDir = join(root, "reviewer");

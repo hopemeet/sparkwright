@@ -1018,6 +1018,8 @@ describe("DefaultObservationFormatter", () => {
     expect(item.metadata).toMatchObject({
       layer: "working",
       stability: "turn",
+      toolName: "search",
+      status: "completed",
       summarized: true,
       artifactRefs: [
         {
@@ -1098,6 +1100,65 @@ describe("DefaultObservationFormatter", () => {
         },
       },
     });
+  });
+
+  it("extracts path metadata from file-read observations for compaction", () => {
+    const formatter = new DefaultObservationFormatter();
+
+    const item = formatter.format({
+      toolName: "read_file",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_test" as never,
+        status: "completed",
+        output: {
+          path: "packages/core/src/context.ts",
+          content: "context source",
+          startLine: 1,
+          endLine: 1,
+          lineCount: 1,
+          truncated: false,
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.metadata).toMatchObject({
+      toolName: "read_file",
+      status: "completed",
+      path: "packages/core/src/context.ts",
+      filePath: "packages/core/src/context.ts",
+      truncated: false,
+    });
+  });
+
+  it("extracts common recovery metadata from paginated observations", () => {
+    const formatter = new DefaultObservationFormatter();
+
+    const item = formatter.format({
+      toolName: "glob",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_test" as never,
+        status: "completed",
+        output: {
+          paths: ["a.ts"],
+          truncated: true,
+          hasMore: true,
+          nextOffset: 1,
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.metadata).toMatchObject({
+      toolName: "glob",
+      status: "completed",
+      truncated: true,
+      hasMore: true,
+      nextOffset: 1,
+    });
+    expect(item.metadata).not.toHaveProperty("filePath");
   });
 });
 

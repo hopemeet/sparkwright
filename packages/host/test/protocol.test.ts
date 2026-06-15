@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
-import type { RunId, SparkwrightEvent } from "@sparkwright/core";
+import {
+  FileSessionStore,
+  type RunId,
+  type SparkwrightEvent,
+} from "@sparkwright/core";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import type { Connection } from "../src/connection.js";
@@ -252,7 +256,7 @@ describe("host protocol", () => {
           stopReason: "final_answer",
           outcome: {
             kind: "completed_with_tool_failures",
-            toolFailures: { count: 1, codes: ["ENOENT"] },
+            toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
           },
         },
       });
@@ -901,15 +905,9 @@ describe("host protocol", () => {
             (event.payload as { name?: string }).name === "reviewer",
         ),
       ).toBe(true);
-      expect(
-        events.some(
-          (event) =>
-            event.type === "mcp.server.prepared" &&
-            (event.payload as { name?: string; status?: string }).name ===
-              "disabled" &&
-            (event.payload as { status?: string }).status === "disabled",
-        ),
-      ).toBe(true);
+      expect(events.some((event) => event.type === "mcp.server.prepared")).toBe(
+        false,
+      );
       expect(
         events.some(
           (event) =>
@@ -1129,16 +1127,8 @@ describe("host protocol", () => {
               { serverName: "disabled", status: "disabled", toolNames: [] },
               {
                 serverName: "missing",
-                status: "failed",
+                status: "configured",
                 toolNames: [],
-                // A missing command spawns ENOENT on POSIX (-> COMMAND_NOT_FOUND)
-                // but the spawn error can race the connect timeout on some
-                // hosts. Accept the structured connection-class failures.
-                errorCode: expect.stringMatching(
-                  /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED|PREPARE_TIMEOUT)$/,
-                ),
-                errorPhase: "connect",
-                errorMessage: expect.any(String),
               },
             ],
           },
@@ -1189,6 +1179,11 @@ describe("host protocol", () => {
         expect(
           (resp.result.tools as Array<{ name: string }>).some(
             (tool) => tool.name === "list_agents",
+          ),
+        ).toBe(true);
+        expect(
+          (resp.result.tools as Array<{ name: string }>).some(
+            (tool) => tool.name === "mcp_missing_list_tools",
           ),
         ).toBe(true);
         expect(
@@ -1311,8 +1306,10 @@ describe("host protocol", () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-verification-"),
     );
+    const xdg = await mkdtemp(join(tmpdir(), "sparkwright-host-config-"));
     const pair = createConnectionPair();
     const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    const previousXdg = process.env.XDG_CONFIG_HOME;
     process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
       {
         message: "write then verify",
@@ -1339,6 +1336,7 @@ describe("host protocol", () => {
       },
       { message: "Verified write completed." },
     ]);
+    process.env.XDG_CONFIG_HOME = xdg;
 
     try {
       await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
@@ -1420,14 +1418,14 @@ describe("host protocol", () => {
         kind: "run.completed",
         payload: { state: "completed", stopReason: "final_answer" },
       });
-      await expect(
-        readFile(join(workspace, "README.md"), "utf8"),
-      ).resolves.toContain("## Verified Write");
-
       const events = pair
         .clientMessages()
         .filter((m) => m.envelope === "event" && m.kind === "run.event")
         .map((m) => m.payload.event as SparkwrightEvent);
+      await expect(
+        readFile(join(workspace, "README.md"), "utf8"),
+      ).resolves.toContain("## Verified Write");
+
       const write = events.find(
         (event) => event.type === "workspace.write.completed",
       );
@@ -1452,7 +1450,10 @@ describe("host protocol", () => {
       if (previousScript === undefined)
         delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
       else process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = previousXdg;
       pair.close();
+      await rm(xdg, { recursive: true, force: true });
       await rm(workspace, { recursive: true, force: true });
     }
   });
@@ -1588,6 +1589,91 @@ describe("host protocol", () => {
           timeline: { phases: expect.any(Array) },
         },
       });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("compacts completed session turns through the host protocol", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+      const sessionId = "session_compact_protocol";
+      const runId = "run_compact_protocol" as RunId;
+      const store = new FileSessionStore({ rootDir: sessionRootDir });
+      await store.create({ id: sessionId });
+      await store.append(sessionId, runId);
+      const runDir = join(
+        sessionRootDir,
+        sessionId,
+        "agents",
+        "main",
+        "runs",
+        runId,
+      );
+      await mkdir(runDir, { recursive: true });
+      await writeFile(
+        join(runDir, "run.json"),
+        JSON.stringify({ id: runId, goal: "please refactor the TUI" }),
+        "utf8",
+      );
+      await writeFile(
+        join(runDir, "result.json"),
+        JSON.stringify({
+          message:
+            "Refactored the TUI layer renderer and extracted the capabilities panel.",
+        }),
+        "utf8",
+      );
+
+      const pair = createConnectionPair();
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "compact",
+        kind: "session.compact",
+        timestamp: TIMESTAMP,
+        payload: { sessionId, reason: "test" },
+      });
+      const compactResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "compact",
+      );
+
+      expect(compactResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          sessionId,
+          compactedRunCount: 1,
+          throughRunId: runId,
+          artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+        },
+      });
+      const artifact = JSON.parse(
+        await readFile(join(sessionRootDir, sessionId, "compact.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(artifact).toMatchObject({
+        schemaVersion: "session-compact.v1",
+        sessionId,
+        throughRunId: runId,
+        compactedRunCount: 1,
+      });
+      expect(String(artifact.content)).toContain("please refactor the TUI");
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

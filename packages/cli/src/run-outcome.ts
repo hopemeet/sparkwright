@@ -15,6 +15,8 @@ export interface CliRunEventSummary {
   writeCompleted: number;
   writeSkipped: number;
   writeDenied: number;
+  capabilityMutationCompleted: number;
+  toolReportedChanges: number;
   runFailure?: CliRunFailureSummary;
 }
 
@@ -38,6 +40,8 @@ export function createCliRunEventSummary(): CliRunEventSummary {
     writeCompleted: 0,
     writeSkipped: 0,
     writeDenied: 0,
+    capabilityMutationCompleted: 0,
+    toolReportedChanges: 0,
   };
 }
 
@@ -48,6 +52,10 @@ export function updateCliRunEventSummary(
   summary.events.push(event);
   if (event.type === "tool.failed") {
     summary.toolFailures.push({ code: toolFailureCode(event) });
+  } else if (event.type === "tool.completed") {
+    if (toolCompletedChanged(event)) summary.toolReportedChanges += 1;
+  } else if (event.type === "capability.mutation.completed") {
+    summary.capabilityMutationCompleted += 1;
   } else if (event.type === "workspace.write.completed")
     summary.writeCompleted += 1;
   else if (event.type === "workspace.write.skipped") summary.writeSkipped += 1;
@@ -146,11 +154,21 @@ export function summarizeWorkspaceMutations(input: {
   completed: number;
   skipped: number;
   denied: number;
+  capabilityMutations?: number;
+  toolReportedChanges?: number;
 }): string {
   const { shouldWrite, completed, skipped, denied } = input;
+  const capabilityMutations = input.capabilityMutations ?? 0;
+  const toolReportedChanges = input.toolReportedChanges ?? 0;
   if (completed === 0 && skipped === 0 && denied === 0) {
+    if (capabilityMutations > 0) {
+      return `Capability mutations: ${capabilityMutations} completed; no workspace write was applied.`;
+    }
+    if (toolReportedChanges > 0) {
+      return `Capability changes: ${toolReportedChanges} tool-reported; no workspace write was applied.`;
+    }
     return shouldWrite
-      ? "No workspace changes were made (no write was attempted)."
+      ? "No workspace changes were made (no workspace write was applied)."
       : "No workspace changes were made (read-only run).";
   }
   const parts: string[] = [];
@@ -334,6 +352,14 @@ function toolFailureCode(event: SparkwrightEvent): string | undefined {
     error?: { code?: string };
   };
   return payload.error?.code;
+}
+
+function toolCompletedChanged(event: SparkwrightEvent): boolean {
+  if (!isRecord(event.payload)) return false;
+  const output = isRecord(event.payload.output)
+    ? event.payload.output
+    : undefined;
+  return output?.changed === true;
 }
 
 function runFailureSummary(event: SparkwrightEvent): CliRunFailureSummary {

@@ -120,6 +120,13 @@ sparkwright acp --workspace /path/to/project
 The ACP server communicates over stdio. It maps ACP sessions and permission
 requests onto the normal Sparkwright host runtime, so policy, approval,
 workspace mutation, artifacts, and trace remain governed by Sparkwright.
+ACP `session/new` may include `mcpServers`; SparkWright merges those
+session-scoped MCP servers with configured MCP servers for that session. They
+remain lazy: capability inspection exposes the lazy MCP entrypoints and reports
+servers as configured, but the server process or remote transport is prepared
+only when the model selects a lazy MCP tool. ACP `http`, `sse`, and stdio MCP
+server descriptors are supported. MCP-over-ACP descriptors are rejected until
+that transport is implemented.
 
 ## External ACP Delegates
 
@@ -164,7 +171,10 @@ delegate tool is risky and approval-gated by default; the external agent does
 not receive SparkWright file-system or terminal capabilities unless a host
 explicitly adds them through a governed bridge. Omit `workspaceAccess` to avoid
 passing the project cwd; set `"workspaceAccess": "read_write"` only when the
-external agent should receive direct workspace access.
+external agent should receive direct workspace access. ACP delegates default to
+`envMode: "explicit"`, which passes only a minimal process environment
+(`PATH`/Windows process basics) plus configured `env`. Set
+`envMode: "inherit"` only when the child must see the parent environment.
 
 ## External Command Delegates
 

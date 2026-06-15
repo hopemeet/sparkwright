@@ -85,6 +85,48 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
+  it("compacts the current session through the host", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.start("compact smoke");
+    await waitForDone(store);
+    const result = await controller.compactSession();
+
+    expect(result).toMatchObject({
+      compactedRunCount: 1,
+      throughRunId: expect.any(String),
+    });
+    const events = store.getSnapshot().events;
+    expect(events[events.length - 1]).toMatchObject({
+      type: "tui.notice",
+      payload: { text: expect.stringContaining("compacted 1 prior turn") },
+    });
+    const artifact = JSON.parse(
+      await readFile(
+        join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          controller.getSessionId(),
+          "compact.json",
+        ),
+        "utf8",
+      ),
+    ) as Record<string, unknown>;
+    expect(artifact).toMatchObject({
+      schemaVersion: "session-compact.v1",
+      compactedRunCount: 1,
+    });
+    controller.shutdown();
+  }, 30_000);
+
   it("does not pass config-sourced model as a request override", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
@@ -189,6 +231,61 @@ describe("TUI ↔ host via sdk-node", () => {
 
     controller.shutdown();
   }, 30_000);
+
+  it("replays an existing session trace when switching sessions", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    const sessionRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-tui-sessions-"),
+    );
+    const sessionId = "session_existing";
+    await mkdir(join(sessionRoot, sessionId), { recursive: true });
+    await writeFile(
+      join(sessionRoot, sessionId, "trace.jsonl"),
+      [
+        JSON.stringify({
+          id: "evt_1",
+          runId: "run_1",
+          type: "run.started",
+          sequence: 1,
+          payload: { goal: "review existing proposal" },
+        }),
+        JSON.stringify({
+          id: "evt_2",
+          runId: "run_1",
+          type: "model.stream.chunk",
+          sequence: 2,
+          payload: { text: "stream-only" },
+        }),
+        JSON.stringify({
+          id: "evt_3",
+          runId: "run_1",
+          type: "run.completed",
+          sequence: 3,
+          payload: { stopReason: "final_answer" },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      sessionRootDir: sessionRoot,
+      modelName: "deterministic",
+      store,
+    });
+
+    await controller.switchSession(sessionId);
+
+    expect(controller.getSessionId()).toBe(sessionId);
+    expect(store.getSnapshot().events.map((event) => event.type)).toEqual([
+      "tui.user",
+      "run.started",
+      "run.completed",
+    ]);
+    expect(controller.getLastGoal()).toBe("review existing proposal");
+
+    controller.shutdown();
+  });
 
   it("surfaces skill load failures from the host event stream", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));

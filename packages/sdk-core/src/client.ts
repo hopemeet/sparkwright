@@ -11,6 +11,7 @@ import {
   type ResponseResults,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
+  type SessionCompactRequestPayload,
   type CapabilityInspectRequestPayload,
 } from "@sparkwright/protocol";
 import { TypedEmitter } from "./emitter.js";
@@ -346,6 +347,15 @@ export class Client extends TypedEmitter<ClientEventMap> {
     return this.request("session.fork", payload) as Promise<
       ResponseResults["session.fork"]
     >;
+  }
+
+  compactSession(
+    payload: SessionCompactRequestPayload,
+  ): Promise<ResponseResults["session.compact"]> {
+    return this.request(
+      "session.compact",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["session.compact"]>;
   }
 
   inspectCapabilities(

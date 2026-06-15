@@ -792,15 +792,32 @@ async function findSkillFiles(root: string): Promise<string[]> {
   const directSkill = join(fullRoot, SKILL_FILE_NAME);
   if (await exists(directSkill)) return [directSkill];
 
-  const entries = await readdir(fullRoot, { withFileTypes: true });
-  const nested = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(fullRoot, entry.name, SKILL_FILE_NAME));
-  const existing = await Promise.all(
-    nested.map(async (path) => ((await exists(path)) ? path : undefined)),
-  );
+  const files: string[] = [];
+  await collectNestedSkillFiles(fullRoot, files, 4, 0);
+  return files;
+}
 
-  return existing.filter((path): path is string => path !== undefined);
+async function collectNestedSkillFiles(
+  root: string,
+  files: string[],
+  maxDepth: number,
+  depth: number,
+): Promise<void> {
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    if (!entry.isDirectory()) continue;
+    const path = join(root, entry.name);
+    const skillPath = join(path, SKILL_FILE_NAME);
+    if (await exists(skillPath)) {
+      files.push(skillPath);
+      continue;
+    }
+    if (depth < maxDepth) {
+      await collectNestedSkillFiles(path, files, maxDepth, depth + 1);
+    }
+  }
 }
 
 async function collectSkillFiles(

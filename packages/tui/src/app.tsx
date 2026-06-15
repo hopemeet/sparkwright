@@ -14,25 +14,12 @@ import { ToastStore } from "./state/toast-store.js";
 import { QueueStore } from "./state/queue-store.js";
 import { LayerStack } from "./state/layer-stack.js";
 import { EventStream } from "./components/event-stream.js";
-import { ApprovalPrompt } from "./components/approval-prompt.js";
 import { InputBox } from "./components/input-box.js";
 import { StreamingMessage } from "./components/streaming-message.js";
-import { SessionListDialog } from "./components/session-list-dialog.js";
-import { SessionRenameDialog } from "./components/session-rename-dialog.js";
-import { CommandPalette } from "./components/command-palette.js";
-import { EventDetailPanel } from "./components/event-detail.js";
-import { QuickSwitchDialog } from "./components/quick-switch-dialog.js";
 import { ToastView } from "./components/toast.js";
 import { loadSessionLabels, type SessionLabels } from "./lib/session-labels.js";
-import { ThemeProvider, useTheme } from "./lib/theme-context.js";
+import { ThemeProvider } from "./lib/theme-context.js";
 import { resolveTheme, THEMES, type Theme } from "./lib/theme.js";
-import { StashDialog } from "./components/stash-dialog.js";
-import { ModelDialog } from "./components/model-dialog.js";
-import { TimelineDialog } from "./components/timeline-dialog.js";
-import { SearchDialog } from "./components/search-dialog.js";
-import { CreateCapabilityDialog } from "./components/create-capability-dialog.js";
-import { SkillProposalDialog } from "./components/skill-proposal-dialog.js";
-import { SkillReviewDialog } from "./components/skill-review-dialog.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
@@ -40,6 +27,7 @@ import { TodoBand } from "./components/todo-band.js";
 import { StatusBar } from "./components/status-bar.js";
 import { Spinner } from "./components/spinner.js";
 import { QueuedMessages } from "./components/queued-messages.js";
+import { LayerRenderer } from "./components/layer-renderer.js";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { copyToClipboard } from "./lib/clipboard.js";
 import { lastAssistantMessage } from "./lib/transcript.js";
@@ -48,7 +36,6 @@ import { CommandRegistry } from "./lib/commands.js";
 import {
   createCapability,
   type CreateCapabilityDraft,
-  type CreateCapabilityKind,
 } from "./lib/create-capability.js";
 import {
   createTuiSkillProposal,
@@ -86,6 +73,10 @@ import {
   type Bindings,
 } from "./lib/keybindings.js";
 import type { SessionDiagnostics, SessionSummary } from "./lib/sessions.js";
+import {
+  createKindFromRest,
+  type CapabilityView,
+} from "./lib/layer-payload.js";
 import type { PermissionMode, TraceLevel } from "./state/run-controller.js";
 import {
   loadTuiConfig,
@@ -130,8 +121,6 @@ interface Resolved {
   mouse: boolean;
   vim: boolean;
 }
-
-type CapabilityView = "all" | "tools" | "skills" | "agents" | "mcp" | "cron";
 
 function resolveConfig(
   loaded: LoadedTuiConfig,
@@ -254,6 +243,14 @@ function AppReady(
       }),
     [resolved.workspaceRoot, resolved.sessionRootDir, store],
   );
+  const initialSessionLoadedRef = useRef(false);
+
+  useEffect(() => {
+    const initialSessionId = props.cliOverrides.sessionId;
+    if (!initialSessionId || initialSessionLoadedRef.current) return;
+    initialSessionLoadedRef.current = true;
+    void controller.switchSession(initialSessionId);
+  }, [controller, props.cliOverrides.sessionId]);
 
   // Track the terminal height only to cap the live (in-flight) stream panel so
   // a long streaming message can't push the input box off-screen. Committed
@@ -969,6 +966,36 @@ function AppReady(
       },
     });
     reg.register({
+      name: "compact",
+      title: "Compact prior context",
+      description: "Summarize completed turns for future runs in this session.",
+      category: "session",
+      run: () => {
+        void controller.compactSession().then((result) => {
+          if (!result) return;
+          if (result.compactedRunCount === 0) {
+            toasts.push({
+              variant: "info",
+              title: "compact",
+              message: "no completed turns yet",
+            });
+            return;
+          }
+          const before = result.originalCharCount;
+          const after = result.summaryCharCount;
+          const pct =
+            before > 0
+              ? ` · ${Math.max(0, Math.round((1 - after / before) * 100))}% smaller`
+              : "";
+          toasts.push({
+            variant: "success",
+            title: "context compacted",
+            message: `${result.compactedRunCount} turn${result.compactedRunCount === 1 ? "" : "s"}${pct}`,
+          });
+        });
+      },
+    });
+    reg.register({
       name: "sessions",
       title: "Browse past sessions",
       description: "List, inspect diagnostics, resume.",
@@ -1424,7 +1451,6 @@ function AppReady(
           <LayerRenderer
             entry={topLayer}
             registry={registry}
-            controller={controller}
             resolved={resolved}
             sessionList={sessionList}
             currentSessionId={state.sessionId}
@@ -1433,6 +1459,7 @@ function AppReady(
             renameTarget={renameTarget}
             stashList={stashList}
             effModel={effModel}
+            modelCandidates={modelCandidates(resolved.providers)}
             sessionDiagnostics={sessionDiagnostics}
             loadingDiagnosticsFor={loadingDiagnosticsFor}
             capabilitySnapshot={capabilitySnapshot}
@@ -1626,7 +1653,6 @@ function AppReady(
           <LayerRenderer
             entry={topLayer}
             registry={registry}
-            controller={controller}
             resolved={resolved}
             sessionList={sessionList}
             currentSessionId={state.sessionId}
@@ -1635,6 +1661,7 @@ function AppReady(
             renameTarget={renameTarget}
             stashList={stashList}
             effModel={effModel}
+            modelCandidates={modelCandidates(resolved.providers)}
             sessionDiagnostics={sessionDiagnostics}
             loadingDiagnosticsFor={loadingDiagnosticsFor}
             capabilitySnapshot={capabilitySnapshot}
@@ -1776,823 +1803,4 @@ function inputFooterText(bindings: Bindings): string {
     if (binding) items.push(`${binding} ${label}`);
   }
   return items.join(" · ");
-}
-
-/**
- * Renders the topmost layer. Kept inline (not a separate file) because the
- * mapping is tiny and the layer payloads are tightly coupled to App state.
- */
-function LayerRenderer(props: {
-  entry: { name: string };
-  registry: CommandRegistry;
-  controller: RunController;
-  resolved: Resolved;
-  sessionList: SessionSummary[];
-  currentSessionId: string | null;
-  events: import("./lib/event-type.js").RunEvent[];
-  labels: Record<string, string>;
-  renameTarget: string | null;
-  stashList: StashFile["list"];
-  effModel?: string;
-  sessionDiagnostics: SessionDiagnostics | null;
-  loadingDiagnosticsFor: string | null;
-  capabilitySnapshot: CapabilitySnapshot | null;
-  loadingCapabilities: boolean;
-  skillReviewSnapshot: TuiSkillReviewDetail | null;
-  loadingSkillReview: boolean;
-  onCloseTop: () => void;
-  onInspectSession: (id: string) => void;
-  onPickSession: (id: string) => void;
-  onRequestRename: (id: string) => void;
-  onCommitRename: (id: string, label: string) => void;
-  onPickStash: (text: string) => void;
-  onCommitModel: (model: string) => void;
-  onFork: (
-    forkAtSequence: number | undefined,
-    label: string,
-    edit?: boolean,
-  ) => void;
-  onApprovalDecision: (d: "approved" | "denied") => void;
-  onSearchCopy: (text: string) => void;
-  onCreateCapability: (draft: CreateCapabilityDraft) => void;
-  onCreateSkillProposal: (draft: TuiSkillProposalInput) => void;
-  onUpdateSkillProposal: (draft: TuiSkillProposalInput) => void;
-  onApplySkillReviewProposal: (proposalId: string) => void;
-  onRejectSkillReviewProposal: (proposalId: string) => void;
-}): React.ReactElement | null {
-  const e = props.entry as { name: string; payload?: unknown };
-  switch (e.name) {
-    case "approval":
-      return (
-        <ApprovalPrompt
-          pending={e.payload as Parameters<typeof ApprovalPrompt>[0]["pending"]}
-          onDecision={props.onApprovalDecision}
-        />
-      );
-    case "palette":
-      return (
-        <CommandPalette
-          registry={props.registry}
-          onCancel={props.onCloseTop}
-          onPick={(cmd) => {
-            props.onCloseTop();
-            void cmd.run();
-          }}
-        />
-      );
-    case "sessions":
-      return (
-        <SessionListDialog
-          sessions={props.sessionList}
-          labels={props.labels}
-          diagnostics={props.sessionDiagnostics}
-          loadingDiagnosticsFor={props.loadingDiagnosticsFor}
-          onCancel={props.onCloseTop}
-          onInspect={props.onInspectSession}
-          onPick={props.onPickSession}
-          onRename={props.onRequestRename}
-        />
-      );
-    case "quick-switch":
-      return (
-        <QuickSwitchDialog
-          sessions={props.sessionList}
-          currentSessionId={props.currentSessionId}
-          labels={props.labels}
-          onCancel={props.onCloseTop}
-          onPick={props.onPickSession}
-        />
-      );
-    case "session-rename":
-      if (!props.renameTarget) return null;
-      return (
-        <SessionRenameDialog
-          sessionId={props.renameTarget}
-          initialLabel={props.labels[props.renameTarget] ?? ""}
-          onCancel={props.onCloseTop}
-          onCommit={(label) => props.onCommitRename(props.renameTarget!, label)}
-        />
-      );
-    case "events":
-      return (
-        <EventDetailPanel events={props.events} onClose={props.onCloseTop} />
-      );
-    case "stash":
-      return (
-        <StashDialog
-          entries={[...props.stashList].reverse()}
-          onCancel={props.onCloseTop}
-          onPick={props.onPickStash}
-        />
-      );
-    case "model":
-      return (
-        <ModelDialog
-          model={props.effModel ?? ""}
-          candidates={modelCandidates(props.resolved.providers)}
-          onCancel={props.onCloseTop}
-          onCommit={props.onCommitModel}
-        />
-      );
-    case "timeline":
-      return (
-        <TimelineDialog
-          events={props.events}
-          onCancel={props.onCloseTop}
-          onFork={props.onFork}
-        />
-      );
-    case "search":
-      return (
-        <SearchDialog
-          events={props.events}
-          onCancel={props.onCloseTop}
-          onCopy={props.onSearchCopy}
-        />
-      );
-    case "help":
-      return <HelpPanel registry={props.registry} onClose={props.onCloseTop} />;
-    case "config":
-      return (
-        <ConfigPanel resolved={props.resolved} onClose={props.onCloseTop} />
-      );
-    case "capabilities":
-      return (
-        <CapabilitiesPanel
-          snapshot={props.capabilitySnapshot}
-          loading={props.loadingCapabilities}
-          view={capabilityViewFromPayload(e.payload)}
-          onClose={props.onCloseTop}
-        />
-      );
-    case "create":
-      return (
-        <CreateCapabilityDialog
-          initialKind={createKindFromPayload(e.payload)}
-          onCancel={props.onCloseTop}
-          onCommit={props.onCreateCapability}
-        />
-      );
-    case "skill-create":
-      return (
-        <SkillProposalDialog
-          action="create"
-          onCancel={props.onCloseTop}
-          onCommit={props.onCreateSkillProposal}
-        />
-      );
-    case "skill-update":
-      return (
-        <SkillProposalDialog
-          action="update"
-          initialName={skillNameFromPayload(e.payload)}
-          onCancel={props.onCloseTop}
-          onCommit={props.onUpdateSkillProposal}
-        />
-      );
-    case "skill-review":
-      return (
-        <SkillReviewDialog
-          review={props.skillReviewSnapshot}
-          loading={props.loadingSkillReview}
-          onApply={props.onApplySkillReviewProposal}
-          onReject={props.onRejectSkillReviewProposal}
-          onCancel={props.onCloseTop}
-        />
-      );
-    default:
-      return null;
-  }
-}
-
-function skillNameFromPayload(payload: unknown): string | undefined {
-  if (
-    payload &&
-    typeof payload === "object" &&
-    "name" in payload &&
-    typeof payload.name === "string"
-  ) {
-    return payload.name;
-  }
-  return undefined;
-}
-
-function createKindFromRest(rest: string): CreateCapabilityKind | undefined {
-  const value = rest.trim().toLowerCase().split(/\s+/u)[0];
-  return createKindFromString(value);
-}
-
-function createKindFromPayload(
-  payload: unknown,
-): CreateCapabilityKind | undefined {
-  if (
-    payload &&
-    typeof payload === "object" &&
-    "kind" in payload &&
-    typeof payload.kind === "string"
-  ) {
-    return createKindFromString(payload.kind);
-  }
-  return undefined;
-}
-
-function createKindFromString(value: string): CreateCapabilityKind | undefined {
-  switch (value) {
-    case "skill":
-    case "agent":
-    case "cron":
-    case "command":
-    case "mcp":
-      return value;
-    default:
-      return undefined;
-  }
-}
-
-// Input editing affordances live inside InputBox (readline-style), so they have
-// no /command entry — surface them in the help panel so they're discoverable.
-const INPUT_HELP: ReadonlyArray<{ keys: string; what: string }> = [
-  { keys: "enter", what: "run · \\↵ newline" },
-  { keys: "↑ ↓", what: "recall input history" },
-  { keys: "ctrl+r", what: "search input history" },
-  { keys: "@  /", what: "mention a file · slash commands" },
-  { keys: "ctrl+a / ctrl+e", what: "jump to line start / end" },
-  { keys: "ctrl+w / ctrl+u", what: "delete word back / to line start" },
-  { keys: "alt+← →", what: "jump by word (ctrl+← → too)" },
-  { keys: "alt+d", what: "delete word forward" },
-];
-
-function HelpPanel(props: {
-  registry: CommandRegistry;
-  onClose: () => void;
-}): React.ReactElement {
-  const { stdout } = useStdout();
-  const [scroll, setScroll] = useState(0);
-
-  // Flatten title-less body into one row per line so it can be windowed: the
-  // full panel (input-editing block + every command group) is taller than a
-  // normal terminal, and without scrolling its top silently clips off-screen.
-  const cmds = props.registry.list();
-  const grouped = new Map<string, typeof cmds>();
-  for (const c of cmds) {
-    const g = grouped.get(c.category) ?? [];
-    g.push(c);
-    grouped.set(c.category, g);
-  }
-  const rows: React.ReactElement[] = [];
-  rows.push(
-    <Text key="ih-h" bold>
-      input editing
-    </Text>,
-  );
-  for (const row of INPUT_HELP) {
-    rows.push(
-      <Box key={`ih-${row.keys}`}>
-        <Text color="cyan">{row.keys}</Text>
-        <Text> </Text>
-        <Text>{row.what}</Text>
-      </Box>,
-    );
-  }
-  for (const [cat, list] of grouped.entries()) {
-    rows.push(<Text key={`sp-${cat}`}> </Text>);
-    rows.push(
-      <Text key={`h-${cat}`} bold>
-        {cat}
-      </Text>,
-    );
-    for (const c of list) {
-      rows.push(
-        <Box key={`c-${c.name}`}>
-          <Text color="cyan">/{c.name}</Text>
-          <Text> </Text>
-          <Text>{c.title}</Text>
-          {c.hint ? <Text dimColor> [{c.hint}]</Text> : null}
-        </Box>,
-      );
-    }
-  }
-
-  // Reserve rows for the border, title, footer, and the live input box below.
-  const viewport = Math.max(6, (stdout?.rows ?? 30) - 10);
-  const maxScroll = Math.max(0, rows.length - viewport);
-  const clamped = Math.min(scroll, maxScroll);
-  const visible = rows.slice(clamped, clamped + viewport);
-  const more = rows.length - (clamped + visible.length);
-
-  useInput((input, key) => {
-    if (key.escape || key.return) return props.onClose();
-    if (key.downArrow || input === "j")
-      setScroll((s) => Math.min(maxScroll, s + 1));
-    else if (key.upArrow || input === "k") setScroll((s) => Math.max(0, s - 1));
-    else if (key.pageDown || input === "d")
-      setScroll((s) => Math.min(maxScroll, s + viewport));
-    else if (key.pageUp || input === "u")
-      setScroll((s) => Math.max(0, s - viewport));
-    else if (input === "g") setScroll(0);
-    else if (input === "G") setScroll(maxScroll);
-  });
-
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="magenta"
-      paddingX={1}
-    >
-      <Text color="magenta" bold>
-        keyboard / commands
-      </Text>
-      <Box flexDirection="column" marginTop={1}>
-        {visible}
-      </Box>
-      <Box marginTop={1}>
-        <Text dimColor>esc close</Text>
-        {maxScroll > 0 ? (
-          <Text dimColor>
-            {" · ↑/↓ j/k scroll · u/d page"}
-            {more > 0 ? ` · ${more} more ↓` : " · end"}
-          </Text>
-        ) : null}
-      </Box>
-    </Box>
-  );
-}
-
-function ConfigPanel(props: {
-  resolved: Resolved;
-  onClose: () => void;
-}): React.ReactElement {
-  useInput((_input, key) => {
-    if (key.escape || key.return) props.onClose();
-  });
-  const r = props.resolved;
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-    >
-      <Text color="cyan" bold>
-        resolved config (esc to close)
-      </Text>
-      <Text>
-        <Text dimColor>workspace: </Text>
-        {r.workspaceRoot}
-        <Text dimColor> ({r.sources.workspace ?? "?"})</Text>
-      </Text>
-      <Text>
-        <Text dimColor>model: </Text>
-        {r.modelName ?? "—"}
-        <Text dimColor> ({r.sources.model ?? "?"})</Text>
-      </Text>
-      <Text>
-        <Text dimColor>permissionMode: </Text>
-        {r.permissionMode}
-        <Text dimColor> ({r.sources.permissionMode ?? "?"})</Text>
-      </Text>
-      {r.providers && Object.keys(r.providers).length > 0 ? (
-        <Text>
-          <Text dimColor>providers: </Text>
-          {Object.keys(r.providers).join(", ")}
-        </Text>
-      ) : null}
-      <Text> </Text>
-      <Text color="cyan">files attempted</Text>
-      {r.attempted.map((a) => (
-        <Text key={a.path} color={a.loaded ? "green" : undefined}>
-          {a.loaded ? "✓ " : "  "}
-          <Text dimColor={!a.loaded}>{a.path}</Text>
-        </Text>
-      ))}
-    </Box>
-  );
-}
-
-function capabilityViewFromPayload(payload: unknown): CapabilityView {
-  if (
-    payload &&
-    typeof payload === "object" &&
-    "view" in payload &&
-    typeof payload.view === "string" &&
-    ["all", "tools", "skills", "agents", "mcp", "cron"].includes(payload.view)
-  ) {
-    return payload.view as CapabilityView;
-  }
-  return "all";
-}
-
-function CapabilitiesPanel(props: {
-  snapshot: CapabilitySnapshot | null;
-  loading: boolean;
-  view: CapabilityView;
-  onClose: () => void;
-}): React.ReactElement {
-  const theme = useTheme();
-  useInput((_input, key) => {
-    if (key.escape || key.return) props.onClose();
-  });
-  const s = props.snapshot;
-  const tools = s?.tools ?? [];
-  const indexed = s?.skills.indexed ?? [];
-  const loaded = s?.skills.loaded ?? [];
-  const mcp = s?.mcp.statuses ?? [];
-  const agents = s?.agents.profiles ?? [];
-  const delegateTools = s?.agents.delegateTools ?? [];
-  const cronTools = tools.filter((tool) =>
-    tool.name.toLowerCase().includes("cron"),
-  );
-  const automation = s?.automation;
-  const title = capabilityPanelTitle(props.view);
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
-      <Text color={theme.accent} bold>
-        {title}
-        <Text color={theme.muted}>
-          {" "}
-          available to this run · esc/enter close
-        </Text>
-      </Text>
-      {props.loading ? <Text color={theme.muted}>loading…</Text> : null}
-      {!props.loading && !s ? (
-        <Text color={theme.muted}>no snapshot available</Text>
-      ) : null}
-      {s ? (
-        <>
-          <CapabilityOverview
-            tools={tools}
-            indexedSkills={indexed}
-            loadedSkills={loaded}
-            agents={agents}
-            delegateTools={delegateTools}
-            mcp={mcp}
-            cronTools={cronTools}
-            automation={automation}
-          />
-
-          {props.view === "all" || props.view === "tools" ? (
-            <ToolsCapabilitySection tools={tools} />
-          ) : null}
-
-          {props.view === "all" || props.view === "skills" ? (
-            <SkillsCapabilitySection indexed={indexed} loaded={loaded} />
-          ) : null}
-
-          {props.view === "all" || props.view === "agents" ? (
-            <AgentsCapabilitySection
-              agents={agents}
-              delegateTools={delegateTools}
-            />
-          ) : null}
-
-          {props.view === "all" || props.view === "mcp" ? (
-            <McpCapabilitySection mcp={mcp} />
-          ) : null}
-
-          {props.view === "cron" ? (
-            <CronCapabilitySection tools={cronTools} automation={automation} />
-          ) : null}
-        </>
-      ) : null}
-    </Box>
-  );
-}
-
-function capabilityPanelTitle(view: CapabilityView): string {
-  switch (view) {
-    case "tools":
-      return "tools";
-    case "skills":
-      return "skills";
-    case "agents":
-      return "agents";
-    case "mcp":
-      return "mcp";
-    case "cron":
-      return "cron";
-    case "all":
-    default:
-      return "capabilities";
-  }
-}
-
-function CapabilityOverview(props: {
-  tools: CapabilitySnapshot["tools"];
-  indexedSkills: CapabilitySnapshot["skills"]["indexed"];
-  loadedSkills: CapabilitySnapshot["skills"]["loaded"];
-  agents: CapabilitySnapshot["agents"]["profiles"];
-  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
-  mcp: CapabilitySnapshot["mcp"]["statuses"];
-  cronTools: CapabilitySnapshot["tools"];
-  automation?: CapabilitySnapshot["automation"];
-}): React.ReactElement {
-  const theme = useTheme();
-  const unloadedSkills = Math.max(
-    0,
-    props.indexedSkills.length - props.loadedSkills.length,
-  );
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text>
-        <Text color={theme.success}>Available now: </Text>
-        {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
-        {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
-        {props.mcp.length} MCP servers
-      </Text>
-      <Text color={theme.muted}>
-        Indexed Skills are discoverable examples; loaded Skills were selected
-        for the current run context.
-      </Text>
-      {unloadedSkills > 0 ? (
-        <Text color={theme.muted}>
-          {unloadedSkills} more Skill{unloadedSkills === 1 ? "" : "s"} can be
-          loaded when relevant.
-        </Text>
-      ) : null}
-      {props.cronTools.length > 0 ? (
-        <Text color={theme.muted}>
-          Cron support is present through {props.cronTools.length} prepared tool
-          {props.cronTools.length === 1 ? "" : "s"}.
-        </Text>
-      ) : null}
-      {props.automation ? (
-        <Text color={theme.muted}>
-          Automation state: {props.automation.cron.total} cron job
-          {props.automation.cron.total === 1 ? "" : "s"},{" "}
-          {props.automation.tasks.total} background task
-          {props.automation.tasks.total === 1 ? "" : "s"}.
-        </Text>
-      ) : null}
-    </Box>
-  );
-}
-
-function ToolsCapabilitySection(props: {
-  tools: CapabilitySnapshot["tools"];
-}): React.ReactElement {
-  const theme = useTheme();
-  return (
-    <CapabilitySection
-      title={`tools (${props.tools.length})`}
-      empty="no tools reported"
-      count={props.tools.length}
-    >
-      {props.tools.slice(0, 24).map((tool) => (
-        <Text key={tool.name}>
-          <Text color={theme.success}>• </Text>
-          {tool.name}
-          {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-          {tool.origin ? (
-            <Text color={theme.muted}> · {tool.origin}</Text>
-          ) : null}
-        </Text>
-      ))}
-      {props.tools.length > 24 ? (
-        <Text color={theme.muted}>… {props.tools.length - 24} more</Text>
-      ) : null}
-    </CapabilitySection>
-  );
-}
-
-function SkillsCapabilitySection(props: {
-  indexed: CapabilitySnapshot["skills"]["indexed"];
-  loaded: CapabilitySnapshot["skills"]["loaded"];
-}): React.ReactElement {
-  const theme = useTheme();
-  return (
-    <CapabilitySection
-      title={`skills (${props.loaded.length} loaded / ${props.indexed.length} indexed)`}
-      empty="no skills reported"
-      count={props.loaded.length + props.indexed.length}
-    >
-      {props.loaded.map((skill) => (
-        <Text key={`loaded:${skill.name}`}>
-          <Text color={theme.success}>loaded </Text>
-          {skill.name}
-          {skill.selectionReason ? (
-            <Text color={theme.muted}> · {skill.selectionReason}</Text>
-          ) : null}
-        </Text>
-      ))}
-      {props.loaded.length === 0
-        ? props.indexed.slice(0, 16).map((skill) => (
-            <Text key={`indexed:${skill.name}`}>
-              <Text color={theme.muted}>indexed </Text>
-              {skill.name}
-              {skill.sourcePath ? (
-                <Text color={theme.muted}> · {skill.sourcePath}</Text>
-              ) : null}
-            </Text>
-          ))
-        : null}
-      {props.loaded.length === 0 && props.indexed.length > 16 ? (
-        <Text color={theme.muted}>… {props.indexed.length - 16} more</Text>
-      ) : null}
-    </CapabilitySection>
-  );
-}
-
-function AgentsCapabilitySection(props: {
-  agents: CapabilitySnapshot["agents"]["profiles"];
-  delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
-}): React.ReactElement {
-  const theme = useTheme();
-  const count = props.agents.length + props.delegateTools.length;
-  return (
-    <CapabilitySection
-      title={`agents (${props.agents.length} / ${props.delegateTools.length} delegates)`}
-      empty="no agents reported"
-      count={count}
-    >
-      {props.agents.map((agent) => (
-        <Text key={agent.id}>
-          <Text color={theme.success}>• </Text>
-          {agent.name ?? agent.id}
-          {agent.mode ? <Text color={theme.muted}> · {agent.mode}</Text> : null}
-        </Text>
-      ))}
-      {props.delegateTools.map((tool) => (
-        <Text key={tool.toolName}>
-          <Text color={theme.success}>delegate </Text>
-          {tool.toolName}
-          <Text color={theme.muted}>
-            {" "}
-            → {tool.profileId} · {tool.protocol} ·{" "}
-            {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
-            {tool.workspaceAccess}
-          </Text>
-        </Text>
-      ))}
-    </CapabilitySection>
-  );
-}
-
-function McpCapabilitySection(props: {
-  mcp: CapabilitySnapshot["mcp"]["statuses"];
-}): React.ReactElement {
-  const theme = useTheme();
-  return (
-    <CapabilitySection
-      title={`mcp (${props.mcp.length})`}
-      empty="no MCP servers reported"
-      count={props.mcp.length}
-    >
-      {props.mcp.map((server) => (
-        <Box key={server.serverName} flexDirection="column">
-          <Text>
-            <Text color={theme.success}>• </Text>
-            {server.serverName}
-            <Text color={theme.muted}>
-              {" "}
-              · {server.status} · {server.toolNames.length} tools
-            </Text>
-            {server.errorCode ? (
-              <Text color={theme.error}>
-                {" "}
-                · {server.errorCode}
-                {server.errorPhase ? ` (${server.errorPhase})` : ""}
-              </Text>
-            ) : null}
-          </Text>
-          {server.toolNames.length > 0 ? (
-            <Text color={theme.muted}> {server.toolNames.join(", ")}</Text>
-          ) : null}
-          {server.errorMessage ? (
-            <Text color={theme.muted}> {server.errorMessage}</Text>
-          ) : null}
-        </Box>
-      ))}
-    </CapabilitySection>
-  );
-}
-
-function CronCapabilitySection(props: {
-  tools: CapabilitySnapshot["tools"];
-  automation?: CapabilitySnapshot["automation"];
-}): React.ReactElement {
-  const theme = useTheme();
-  const cron = props.automation?.cron;
-  const tasks = props.automation?.tasks;
-  return (
-    <>
-      <CapabilitySection
-        title={`cron jobs (${cron?.total ?? 0})`}
-        empty="no cron jobs recorded"
-        count={cron?.total ?? 0}
-      >
-        {cron?.jobs.map((job) => (
-          <Box key={job.id} flexDirection="column">
-            <Text>
-              <Text color={job.enabled ? theme.success : theme.muted}>• </Text>
-              {job.name}
-              <Text color={theme.muted}>
-                {" "}
-                · {job.state} · {job.schedule}
-              </Text>
-              {job.lastStatus ? (
-                <Text
-                  color={job.lastStatus === "ok" ? theme.success : theme.error}
-                >
-                  {" "}
-                  · last {job.lastStatus}
-                </Text>
-              ) : null}
-            </Text>
-            <Text color={theme.muted}>
-              next {job.nextRunAt ?? "none"} · last {job.lastRunAt ?? "never"}
-            </Text>
-            {job.lastError ? (
-              <Text color={theme.error}> {job.lastError}</Text>
-            ) : null}
-          </Box>
-        ))}
-        {cron && cron.total > cron.jobs.length ? (
-          <Text color={theme.muted}>
-            … {cron.total - cron.jobs.length} more
-          </Text>
-        ) : null}
-        {cron ? <Text color={theme.muted}>state: {cron.rootDir}</Text> : null}
-      </CapabilitySection>
-
-      <CapabilitySection
-        title={`background tasks (${tasks?.total ?? 0})`}
-        empty="no durable background tasks recorded"
-        count={tasks?.total ?? 0}
-      >
-        {tasks?.tasks.map((task) => (
-          <Box key={task.id} flexDirection="column">
-            <Text>
-              <Text
-                color={
-                  task.status === "failed"
-                    ? theme.error
-                    : task.status === "completed"
-                      ? theme.success
-                      : theme.accent
-                }
-              >
-                •{" "}
-              </Text>
-              {task.kind}
-              <Text color={theme.muted}>
-                {" "}
-                · {task.status} · {task.id}
-              </Text>
-            </Text>
-            <Text color={theme.muted}>
-              {task.title ?? "untitled"} · output {task.outputChunks ?? 0}
-            </Text>
-            {task.error ? (
-              <Text color={theme.error}>
-                {task.error.code}: {task.error.message}
-              </Text>
-            ) : null}
-          </Box>
-        ))}
-        {tasks && tasks.total > tasks.tasks.length ? (
-          <Text color={theme.muted}>
-            … {tasks.total - tasks.tasks.length} more
-          </Text>
-        ) : null}
-        {tasks ? <Text color={theme.muted}>state: {tasks.rootDir}</Text> : null}
-      </CapabilitySection>
-
-      <CapabilitySection
-        title={`cron tools (${props.tools.length})`}
-        empty="cron tool is not prepared for this host"
-        count={props.tools.length}
-      >
-        {props.tools.map((tool) => (
-          <Text key={tool.name}>
-            <Text color={theme.success}>• </Text>
-            {tool.name}
-            {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-            {tool.origin ? (
-              <Text color={theme.muted}> · {tool.origin}</Text>
-            ) : null}
-          </Text>
-        ))}
-      </CapabilitySection>
-    </>
-  );
-}
-
-function CapabilitySection(props: {
-  title: string;
-  empty: string;
-  count: number;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text bold>{props.title}</Text>
-      {props.count > 0 ? props.children : <Text dimColor>{props.empty}</Text>}
-    </Box>
-  );
 }

@@ -86,6 +86,12 @@ Server descriptors support:
 
 Default policy for MCP capabilities should be conservative. Record server name,
 tool origin, policy decision, approval result, and execution result in trace.
+Configured MCP servers stay lazy during normal runs: the host exposes lazy
+entrypoint tools and reports the server as `configured`, then prepares the
+server only when a lazy MCP tool is selected. ACP sessions may add
+session-scoped MCP servers; those are merged with configured servers for that
+session and follow the same lazy/policy path. ACP-over-ACP MCP transport is not
+implemented and should be rejected rather than silently ignored.
 
 ## Agent Profiles
 
@@ -126,7 +132,14 @@ External ACP delegates use `metadata.acp` on a profile:
 
 Expose the profile with `capabilities.agents.delegateTools` to create a
 risky, approval-gated delegate tool. Use the command and args for the installed
-ACP-compatible agent process on the host machine.
+ACP-compatible agent process on the host machine. ACP delegates default to
+`envMode: "explicit"`; they receive only a minimal process environment plus
+configured `env` unless `envMode: "inherit"` is set.
+
+Child agents inherit the parent run's permission mode, write guardrails, target
+path, and confidential read scope before their own profile policy is applied.
+Agent profiles can narrow behavior, but they do not grant authority outside the
+parent run boundary.
 
 For local assistants that run as regular CLI commands, use
 `metadata.externalCommand` instead:

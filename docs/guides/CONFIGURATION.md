@@ -124,6 +124,45 @@ overrides provider `baseURL` when set.
 Store config files containing API keys privately. Provider keys are plaintext
 in config.
 
+### Provider Request Options
+
+Use `providerOptions` when an AI SDK provider exposes request-level controls
+that SparkWright does not model directly. Provider-level options apply to every
+model under that provider; model-level options shallow-override the matching
+provider namespace.
+
+Keep these options in the same personal provider entry as the provider's
+`apiKey`/`baseURL`. Across config layers, a later `providers.openai` entry
+replaces the earlier provider entry rather than inheriting its secrets.
+
+For OpenAI reasoning summaries:
+
+```json
+{
+  "model": "openai/gpt-5.4-mini",
+  "providers": {
+    "openai": {
+      "baseURL": "https://api.openai.com/v1",
+      "apiKey": "replace-me",
+      "providerOptions": {
+        "openai": {
+          "reasoningEffort": "low",
+          "reasoningSummary": "auto"
+        }
+      },
+      "models": {
+        "gpt-5.4-mini": {}
+      }
+    }
+  }
+}
+```
+
+SparkWright forwards these options to `generateText` and `streamText`. Whether
+reasoning text appears depends on the selected model and provider gateway; some
+OpenAI-compatible proxies may accept the request but omit visible reasoning
+summary deltas.
+
 ### Safe Project Defaults
 
 Put project-wide behavior in `<workspace>/.sparkwright/config.json`:
@@ -417,6 +456,22 @@ SSE MCP servers are remote transports and are governed by MCP policy rather
 than local process sandboxing. Prefer `requiresApproval: true` for tools that
 can touch workspace state, credentials, network services, or external systems.
 
+Configured MCP servers are lazy by default during normal host runs. Capability
+inspection reports the server as `configured` and exposes the lazy
+`mcp_<server>_list_tools` / `mcp_<server>_call_tool` entrypoints without
+starting the server. The host starts a server only after the model selects one
+of those lazy MCP tools; the trace then records `mcp.server.prepared` with the
+resolved tool mapping or the structured prepare failure. Use
+`capabilities inspect --resolve-mcp` when you explicitly want inspection to
+connect to MCP servers and list concrete MCP tools.
+
+ACP clients may also pass session-scoped MCP servers in `session/new`
+`mcpServers`. SparkWright merges those servers with configured project/user MCP
+servers for that ACP session and applies the same lazy startup and policy path.
+ACP `http`, `sse`, and stdio server descriptors are supported. ACP-over-ACP MCP
+transport descriptors are rejected with `invalidParams` until that transport is
+implemented.
+
 ### Add A Reviewer Agent
 
 Project agent profiles can be committed as markdown files under:
@@ -513,6 +568,12 @@ Put user arguments in prompt text instead.
 - `capabilities.agents`: agent profiles and delegate tools.
 - `theme`, `mouse`, `keybindings`: TUI-only preferences.
 
+Child agents and delegate tools do not weaken the parent run. Spawned child
+agents inherit the parent run's permission mode, write guardrails, target path,
+and confidential read scope before their own agent-profile policy is layered on
+top. This means a reviewer or dynamically spawned child cannot read paths the
+parent run marks confidential or write outside the parent run's write boundary.
+
 ### Grouped Form
 
 Fields may be written flat (as above) or under the preferred groups, which make
@@ -603,6 +664,15 @@ sparkwright tools list --format text
 sparkwright tools enable read_file glob
 sparkwright tools disable shell
 sparkwright tools defer "mcp_*"
+```
+
+Add `--workspace <path>` to manage project defaults in
+`<workspace>/.sparkwright/config.json` instead:
+
+```bash
+sparkwright tools list --workspace . --format text
+sparkwright tools disable shell --workspace .
+sparkwright tools defer "mcp_*" --workspace .
 ```
 
 ## Skill Loading

@@ -20,6 +20,10 @@
 // =============================================================================
 
 import { createContextItemId } from "./ids.js";
+import {
+  createFileReadDedupStage,
+  createObservationOneLineStage,
+} from "./context-dedup.js";
 import type { EventEmitter } from "./events.js";
 import type {
   ContextHints,
@@ -535,12 +539,14 @@ export function createSnipStage(options: {
  * Default deterministic (no-LLM) compaction stages used by the run loop when
  * the embedder does not supply its own `compactionStages`.
  *
- * Layered cheapest-first: a per-item tool-result budget, then a coarse `snip`
- * of the middle. Both are self-gating — they only fire when an item or the
- * whole context genuinely overflows — so normal runs keep an append-only,
- * cache-stable prefix and compaction only kicks in late, collapsing a big
- * chunk at once. Model-backed summarization is intentionally NOT included
- * here; that requires provider access and is the embedder's responsibility.
+ * Layered cheapest-first: a per-item tool-result budget, deterministic
+ * micro-compaction for redundant/old tool observations, then a coarse `snip`
+ * of the middle. All stages are self-gating — they only fire when they find
+ * owned redundancy or genuine overflow — so normal runs keep an append-only,
+ * cache-stable prefix while repeated reads and stale observations stop
+ * accumulating unboundedly. Model-backed summarization is intentionally NOT
+ * included here; that requires provider access and is the embedder's
+ * responsibility.
  *
  * Pass `compactionStages: []` to disable compaction entirely.
  *
@@ -549,20 +555,48 @@ export function createSnipStage(options: {
  */
 export function createDefaultCompactionStages(options?: {
   maxCharsPerItem?: number;
+  /**
+   * Collapse superseded reads of the same file before coarser snipping.
+   * Enabled by default because it is deterministic and preserves an id
+   * reference to the latest retained read.
+   */
+  fileReadDedup?: boolean;
+  /**
+   * Collapse older tool observations to one-line summaries before coarser
+   * snipping. Enabled by default because it is deterministic and preserves the
+   * newest observations intact.
+   */
+  observationOneLine?: boolean;
+  observationKeepRecent?: number;
+  observationMinCharsToCollapse?: number;
   triggerChars?: number;
   keepHead?: number;
   keepTail?: number;
 }): CompactionStage[] {
-  return [
+  const stages: CompactionStage[] = [
     createToolResultBudgetStage({
       maxCharsPerItem: options?.maxCharsPerItem ?? 8_000,
     }),
+  ];
+  if (options?.fileReadDedup !== false) {
+    stages.push(createFileReadDedupStage());
+  }
+  if (options?.observationOneLine !== false) {
+    stages.push(
+      createObservationOneLineStage({
+        keepRecent: options?.observationKeepRecent,
+        minCharsToCollapse: options?.observationMinCharsToCollapse,
+      }),
+    );
+  }
+  stages.push(
     createSnipStage({
       triggerChars: options?.triggerChars ?? 96_000,
       keepHead: options?.keepHead ?? 2,
       keepTail: options?.keepTail ?? 12,
     }),
-  ];
+  );
+  return stages;
 }
 
 export function startPrefetch(

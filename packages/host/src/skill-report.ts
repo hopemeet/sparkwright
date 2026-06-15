@@ -1,8 +1,9 @@
 import { stat } from "node:fs/promises";
+import type { EventEmitter } from "@sparkwright/core";
 import {
-  loadSkillsFromDirectory,
+  prepareSkillsForRun,
   type SkillLoadError,
-  type SkillManifest,
+  type SkillIndexEntry,
   type SkillRoot,
 } from "@sparkwright/skills";
 
@@ -61,9 +62,17 @@ export async function loadLayeredSkillReport(
       continue;
     }
 
-    const loaded = await loadSkillsFromDirectory(root.root);
-    errors.push(...loaded.loadErrors);
-    for (const skill of loaded.skills) {
+    const loadErrors: SkillLoadError[] = [];
+    const prepared = await prepareSkillsForRun({
+      goal: "",
+      skillRoots: [root],
+      loadSelectedSkills: false,
+      includeDevSkills: true,
+      emitter: createSkillReportEmitter(loadErrors),
+    });
+    errors.push(...loadErrors);
+
+    for (const skill of prepared.indexedSkills) {
       const entry = toReportEntry(skill, root);
       const existing = byName.get(entry.name);
       if (existing) {
@@ -97,15 +106,42 @@ function shouldReportMissingRoot(
 }
 
 function toReportEntry(
-  skill: SkillManifest,
+  skill: SkillIndexEntry,
   root: SkillRoot,
 ): SkillReportEntry {
   return {
     name: skill.name,
     description: skill.description,
     version: skill.version,
-    source: skill.source,
+    source: skill.sourcePath,
     layer: root.layer,
     root: root.root,
+  };
+}
+
+function createSkillReportEmitter(errors: SkillLoadError[]): EventEmitter {
+  return {
+    emit(type, payload) {
+      if (type === "skill.failed") {
+        const failure = payload as Partial<SkillLoadError>;
+        errors.push({
+          source:
+            typeof failure.source === "string" ? failure.source : "unknown",
+          message:
+            typeof failure.message === "string"
+              ? failure.message
+              : "failed to load skill",
+        });
+      }
+      return {
+        id: "",
+        runId: "",
+        type,
+        timestamp: new Date(0).toISOString(),
+        sequence: 0,
+        payload,
+        metadata: {},
+      } as never;
+    },
   };
 }

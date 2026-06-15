@@ -282,6 +282,10 @@ export class DefaultObservationFormatter implements ObservationFormatter {
           metadata: input.result.error.metadata,
         }
       : undefined;
+    const extractedMetadata = extractObservationMetadata(
+      input.toolName,
+      input.result.output,
+    );
 
     return {
       id: createContextItemId(),
@@ -299,13 +303,65 @@ export class DefaultObservationFormatter implements ObservationFormatter {
       }),
       metadata: {
         toolCallId: input.result.toolCallId,
+        toolName: input.toolName,
+        status: input.result.status,
         layer: "working",
         stability: "turn",
         artifactRefs,
         summarized: true,
+        ...extractedMetadata,
       },
     };
   }
+}
+
+function extractObservationMetadata(
+  toolName: string,
+  output: unknown,
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+  if (!isRecord(output)) return metadata;
+
+  const path = firstString(output, ["path", "filePath"]);
+  if (path) {
+    metadata.path = path;
+    if (isFileReadLikeTool(toolName)) metadata.filePath = path;
+  }
+
+  const exitCode = output["exitCode"];
+  if (typeof exitCode === "number" && Number.isFinite(exitCode)) {
+    metadata.exitCode = exitCode;
+  }
+
+  const truncated = output["truncated"];
+  if (typeof truncated === "boolean") metadata.truncated = truncated;
+
+  const hasMore = output["hasMore"];
+  if (typeof hasMore === "boolean") metadata.hasMore = hasMore;
+
+  const nextOffset = output["nextOffset"];
+  if (typeof nextOffset === "number" && Number.isFinite(nextOffset)) {
+    metadata.nextOffset = nextOffset;
+  }
+
+  return metadata;
+}
+
+function firstString(
+  value: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.length > 0) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function isFileReadLikeTool(toolName: string): boolean {
+  return toolName === "read_file" || toolName === "read_anchored_text";
 }
 
 export interface DefaultContextAssemblerOptions {

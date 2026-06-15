@@ -530,12 +530,13 @@ export interface ModelRetryPolicy {
 export interface ModelOutputChunk {
   type:
     | "text_delta"
+    | "reasoning_delta"
     | "tool_call_start"
     | "tool_call_delta"
     | "tool_call_end"
     | "usage"
     | "stop";
-  text?: string; // for text_delta
+  text?: string; // for text_delta/reasoning_delta
   toolName?: string; // for tool_call_start
   toolCallIndex?: number; // for tool_call_start/delta/end
   argumentsDelta?: string; // for tool_call_delta (partial JSON string)
@@ -612,6 +613,16 @@ export interface RuntimeContext {
     reason?: string;
   }): void;
   /**
+   * Tools that mutate a higher-level capability package (for example a Skill
+   * proposal directory) SHOULD report the completed operation here. This is
+   * distinct from workspace.write.*: package mutations may involve multiple
+   * files and may intentionally produce a draft/artifact rather than applying
+   * a direct workspace edit.
+   *
+   * @reserved Public runtime-context helper consumed by capability package tools.
+   */
+  reportCapabilityMutationCompleted?(payload: CapabilityMutationEvent): void;
+  /**
    * Tools that receive artifacts from helper APIs can attach them to the
    * current tool result so traces and later context preserve the mutation
    * evidence chain.
@@ -619,6 +630,20 @@ export interface RuntimeContext {
    * @reserved Public runtime-context helper consumed by artifact-producing tools.
    */
   reportToolArtifact?(artifact: Artifact): void;
+}
+
+export interface CapabilityMutationEvent {
+  action: string;
+  path: string;
+  reason?: string;
+  sourcePath?: string;
+  /** @reserved Public capability-mutation count consumed by traces and diagnostics. */
+  fileCount?: number;
+  files?: Array<{
+    relativePath: string;
+    size?: number;
+  }>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface WorkspaceRuntime {

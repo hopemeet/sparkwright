@@ -125,6 +125,7 @@ async function handleRequest(
             "approvals",
             "sessions",
             "session.inspect",
+            "session.compact",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -205,6 +206,25 @@ async function handleRequest(
           forkedSessionId: r.forkedSessionId,
           copiedEventCount: r.copiedEventCount,
           truncatedAtSequence: r.truncatedAtSequence,
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "session.compact": {
+      const r = await runtime.compactSession(
+        req.payload.sessionId,
+        req.payload.reason,
+      );
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          sessionId: r.sessionId,
+          compactedRunCount: r.compactedRunCount,
+          throughRunId: r.throughRunId,
+          originalCharCount: r.originalCharCount,
+          summaryCharCount: r.summaryCharCount,
+          artifactPath: r.artifactPath,
         });
       } else {
         respondError(conn, req.id, r.error);
@@ -361,6 +381,12 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "forkAtSequence",
           Number.MAX_SAFE_INTEGER,
         )
+      );
+    case "session.compact":
+      return (
+        requireOnly(req.payload, ["sessionId", "reason"]) ??
+        requireString(req.payload, "sessionId") ??
+        optionalString(req.payload, "reason")
       );
     case "capability.inspect":
       return (

@@ -127,3 +127,8 @@ Use `metadata.acp` when the delegate speaks ACP over stdio:
   }
 }
 ```
+
+ACP delegates default to `envMode: "explicit"`: the child receives only a
+minimal process environment plus configured `env`. Add `envMode: "inherit"` to
+the `metadata.acp` block only when the ACP worker must see the parent
+environment.

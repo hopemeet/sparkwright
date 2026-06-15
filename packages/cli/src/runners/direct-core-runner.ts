@@ -25,6 +25,9 @@ import {
   buildConfiguredAdapter,
   createDocumentedCommandStopHook,
   createConfiguredWorkflowHooks,
+  createGlobPathsTool,
+  createGrepTextTool,
+  createListDirTool,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
   resolveSkillRootsForRuntime,
@@ -273,6 +276,8 @@ export async function startDirectCoreRun(
         completed: eventSummary.writeCompleted,
         skipped: eventSummary.writeSkipped,
         denied: eventSummary.writeDenied,
+        capabilityMutations: eventSummary.capabilityMutationCompleted,
+        toolReportedChanges: eventSummary.toolReportedChanges,
       }),
     );
     const verificationProfileSummary =
@@ -289,7 +294,13 @@ export async function createConfiguredCliTools(
 ) {
   const cfg = await loadHostConfig(workspaceRoot, env);
   return applyToolConfig(
-    [createReadFileTool(), createAppendFileTool()],
+    [
+      createReadFileTool(),
+      createGlobPathsTool(workspaceRoot),
+      createGrepTextTool(workspaceRoot),
+      createListDirTool(workspaceRoot),
+      createAppendFileTool(),
+    ],
     cfg.config.capabilities?.tools,
   );
 }

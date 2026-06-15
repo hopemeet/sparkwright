@@ -119,16 +119,19 @@ describe("createSnipStage", () => {
 });
 
 describe("createDefaultCompactionStages", () => {
-  it("layers the tool-result budget before the snip", () => {
+  it("layers deterministic stages from local edits to coarse snip", () => {
     const stages = createDefaultCompactionStages();
     expect(stages.map((s) => s.trigger)).toEqual([
       "tool_result_budget",
+      "micro",
+      "micro",
       "snip",
     ]);
   });
 
   it("stays inert on small contexts (cache-stable prefix preserved)", async () => {
-    const [budget, snip] = createDefaultCompactionStages();
+    const [budget, fileDedup, observationOneLine, snip] =
+      createDefaultCompactionStages();
     const input = {
       items: [item("tool_result", "ok"), item("file", "small")],
       hints: {} as never,
@@ -136,6 +139,8 @@ describe("createDefaultCompactionStages", () => {
       reactive: false,
     };
     expect(await budget.shouldRun(input)).toBe(false);
+    expect(await fileDedup.shouldRun(input)).toBe(false);
+    expect(await observationOneLine.shouldRun(input)).toBe(false);
     expect(await snip.shouldRun(input)).toBe(false);
   });
 
@@ -148,6 +153,50 @@ describe("createDefaultCompactionStages", () => {
       reactive: false,
     };
     expect(await budget.shouldRun(input)).toBe(true);
+  });
+
+  it("can disable deterministic micro stages for strict legacy behavior", () => {
+    const stages = createDefaultCompactionStages({
+      fileReadDedup: false,
+      observationOneLine: false,
+    });
+    expect(stages.map((s) => s.trigger)).toEqual([
+      "tool_result_budget",
+      "snip",
+    ]);
+  });
+
+  it("micro-compacts repeated file reads before coarse snip is needed", async () => {
+    const [, fileDedup, observationOneLine, snip] =
+      createDefaultCompactionStages({
+        triggerChars: 100_000,
+        observationKeepRecent: 1,
+        observationMinCharsToCollapse: 2_000,
+      });
+    const firstRead = {
+      ...item("tool_result", "a".repeat(500)),
+      source: { kind: "tool", path: "README.md" },
+      metadata: { layer: "working", stability: "turn", filePath: "README.md" },
+    } satisfies ContextItem;
+    const latestRead = {
+      ...item("tool_result", "b".repeat(500)),
+      source: { kind: "tool", path: "README.md" },
+      metadata: { layer: "working", stability: "turn", filePath: "README.md" },
+    } satisfies ContextItem;
+    const input = {
+      items: [firstRead, latestRead],
+      hints: {} as never,
+      totalChars: 1_000,
+      reactive: false,
+    };
+
+    expect(await fileDedup.shouldRun(input)).toBe(true);
+    expect(await observationOneLine.shouldRun(input)).toBe(false);
+    expect(await snip.shouldRun(input)).toBe(false);
+
+    const result = await fileDedup.apply(input);
+    expect(result.items[0]?.content).toContain("superseded by later read");
+    expect(result.items[1]?.content).toBe(latestRead.content);
   });
 });
 

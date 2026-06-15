@@ -981,6 +981,27 @@ describe("trace", () => {
     });
   });
 
+  it("summarizes capability mutation events", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "draft skill proposal" }),
+      log.emit("capability.mutation.completed", {
+        action: "replace_skill_package",
+        path: ".sparkwright/skill-evolution/proposals/skillprop_1/after/demo",
+        sourcePath: ".sparkwright/skills/demo",
+        fileCount: 2,
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.byType["capability.mutation.completed"]).toBe(1);
+    expect(summary.safety.capabilityMutations.completed).toBe(1);
+  });
+
   it("reads the persisted tool outcome on a minimal trace", () => {
     const run = createRunRecord();
     // The verdict computed over full events: the failure on a.txt is NOT

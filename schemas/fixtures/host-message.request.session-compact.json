@@ -1,0 +1,10 @@
+{
+  "envelope": "request",
+  "id": "req_session_compact_1",
+  "kind": "session.compact",
+  "timestamp": "2026-06-14T00:00:00.000Z",
+  "payload": {
+    "sessionId": "session_abc",
+    "reason": "manual"
+  }
+}
