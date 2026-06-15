@@ -42,11 +42,17 @@ const SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES = 2 * 1024 * 1024;
 const SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES = 25 * 1024 * 1024;
 const AUDIT_EXCLUDED_DIRS = new Set([
   ".git",
-  ".sparkwright",
   "node_modules",
   "__pycache__",
   ".pytest_cache",
 ]);
+const AUDIT_EXCLUDED_PATHS = new Set([".sparkwright/sessions"]);
+const MANAGED_CAPABILITY_PREFIXES = [
+  ".sparkwright/skills/",
+  ".sparkwright/agents/",
+  ".sparkwright/command/",
+  ".sparkwright/cron/",
+];
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -340,6 +346,11 @@ export function createHostShellTool(
 
   return {
     ...descriptor,
+    description:
+      `${descriptor.description} Do not use shell to create or update ` +
+      "managed capability files under .sparkwright/skills, .sparkwright/agents, " +
+      ".sparkwright/command, or .sparkwright/cron; use the dedicated " +
+      "SparkWright capability tools or CLI subcommands instead.",
     async execute(args, ctx) {
       const readOnlyFastPath = isReadOnlyShellFastPath(args);
       const before = readOnlyFastPath
@@ -545,10 +556,15 @@ class UntrackedWorkspaceMutationError extends Error {
     changes: WorkspaceMutationChange[],
     rollback: WorkspaceRollbackResult,
   ) {
+    const capabilityGuidance = changes.some((change) =>
+      isManagedCapabilityPath(change.path),
+    )
+      ? " Use dedicated SparkWright capability tools or CLI subcommands for .sparkwright capability packages."
+      : "";
     super(
       `Shell command changed workspace files outside the controlled write path: ${changes
         .map((change) => change.path)
-        .join(", ")}`,
+        .join(", ")}.${capabilityGuidance}`,
     );
     this.name = "UntrackedWorkspaceMutationError";
     this.metadata = { changes, rollback };
@@ -570,7 +586,7 @@ async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
         ? `${relativeDir}/${entry.name}`
         : entry.name;
       if (entry.isDirectory()) {
-        if (AUDIT_EXCLUDED_DIRS.has(entry.name)) continue;
+        if (shouldSkipAuditDirectory(relativePath, entry.name)) continue;
         await visit(relativePath);
         continue;
       }
@@ -596,6 +612,17 @@ async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
 
   await visit("");
   return snapshot;
+}
+
+function shouldSkipAuditDirectory(
+  relativePath: string,
+  name: string,
+): boolean {
+  return AUDIT_EXCLUDED_DIRS.has(name) || AUDIT_EXCLUDED_PATHS.has(relativePath);
+}
+
+function isManagedCapabilityPath(path: string): boolean {
+  return MANAGED_CAPABILITY_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
 function diffWorkspaceSnapshots(

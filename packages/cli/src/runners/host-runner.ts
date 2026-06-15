@@ -376,6 +376,8 @@ async function runHostLifecycle(
         completed: eventSummary.writeCompleted,
         skipped: eventSummary.writeSkipped,
         denied: eventSummary.writeDenied,
+        capabilityMutations: eventSummary.capabilityMutationCompleted,
+        toolReportedChanges: eventSummary.toolReportedChanges,
       }),
     );
     const verificationProfileSummary =

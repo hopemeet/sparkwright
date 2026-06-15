@@ -2206,6 +2206,9 @@ export class SparkwrightRun implements RunHandle {
       reportWorkspaceWriteSkipped: (payload) => {
         this.events.emit("workspace.write.skipped", payload);
       },
+      reportCapabilityMutationCompleted: (payload) => {
+        this.events.emit("capability.mutation.completed", payload);
+      },
       reportToolArtifact: (artifact) => {
         // Workspace write helpers already emit artifact.created for their diff
         // artifacts before returning them to the tool. `reportToolArtifact`

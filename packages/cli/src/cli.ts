@@ -1924,6 +1924,12 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     origin: "local:sparkwright",
   },
   {
+    name: "update_skill",
+    source: "builtin",
+    risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
     name: "list_agents",
     source: "builtin",
     risk: "safe",
@@ -2026,9 +2032,25 @@ function buildCapabilityToolInventory(input: {
 
 function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
   if (matchesAnyToolPattern(name, config.disabled)) return false;
-  if (config.enabled !== undefined)
-    return matchesAnyToolPattern(name, config.enabled);
+  if (config.enabled !== undefined) {
+    return (
+      matchesAnyToolPattern(name, config.enabled) ||
+      isManagedCapabilityTool(name)
+    );
+  }
   return true;
+}
+
+const MANAGED_CAPABILITY_TOOLS = new Set([
+  "list_skills",
+  "create_skill",
+  "update_skill",
+  "list_agents",
+  "create_agent",
+]);
+
+function isManagedCapabilityTool(name: string): boolean {
+  return MANAGED_CAPABILITY_TOOLS.has(name);
 }
 
 function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
@@ -4662,7 +4684,7 @@ function formatTraceSummary(summary: TraceSummary): string {
     `command failures: ${summary.commandFailures?.total ?? 0} total${topCommandFailures ? ` (${topCommandFailures})` : ""}`,
     `verification failures: ${summary.commandFailures?.verification?.total ?? 0} total, ${summary.commandFailures?.verification?.unresolved ?? 0} unresolved${summary.commandFailures?.verification?.lastCommand ? `, last ${summary.commandFailures.verification.lastCommand}` : ""}`,
     `approvals: ${summary.safety?.approvals?.requested ?? 0} requested, ${summary.safety?.approvals?.approved ?? 0} approved, ${summary.safety?.approvals?.denied ?? 0} denied, ${summary.safety?.approvals?.autoApproved ?? 0} auto-approved`,
-    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped`,
+    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped, capability mutations ${summary.safety?.capabilityMutations?.completed ?? 0} completed`,
     `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");

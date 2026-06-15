@@ -18,6 +18,7 @@ import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import type { RunId } from "@sparkwright/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
+import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
 
 describe("runCli", () => {
   let tempDirs: string[] = [];
@@ -1158,6 +1159,43 @@ describe("runCli", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("exposes discovery tools in direct-core CLI runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+
+    const tools = await createConfiguredCliTools(workspace, process.env);
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "glob",
+      "grep",
+      "list_dir",
+      "append_file",
+    ]);
+  });
+
+  it("applies tool config to direct-core discovery tools", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          tools: { disabled: ["grep"] },
+        },
+      }),
+      "utf8",
+    );
+
+    const tools = await createConfiguredCliTools(workspace, process.env);
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "glob",
+      "list_dir",
+      "append_file",
+    ]);
+  });
+
   it("inspects configured capability layers", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
@@ -1315,6 +1353,36 @@ describe("runCli", () => {
         expect.objectContaining({ layer: "project", exists: true }),
       ]),
     );
+  });
+
+  it("keeps managed capability tools visible when enabled config only names shell", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          tools: { enabled: ["shell"] },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("tools: enabled=shell");
+    expect(output.stdoutText()).toContain("tool: shell");
+    expect(output.stdoutText()).toContain("tool: list_skills");
+    expect(output.stdoutText()).toContain("tool: create_skill");
+    expect(output.stdoutText()).toContain("tool: update_skill");
+    expect(output.stdoutText()).not.toContain("tool: read_file");
   });
 
   it("resolves MCP tools during capability inspect only when requested", async () => {

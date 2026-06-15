@@ -7,6 +7,7 @@ import {
   summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
   summarizeVerificationProfileResults,
+  summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../src/run-outcome.js";
 
@@ -68,6 +69,67 @@ describe("CLI run outcome", () => {
       0,
     );
     expect(summarizeVerificationCommandFailures(summary)).toBeUndefined();
+  });
+
+  it("summarizes tool-reported capability changes separately from workspace writes", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    updateCliRunEventSummary(
+      summary,
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "update_skill",
+        status: "completed",
+        output: { changed: true, proposalId: "skillprop_1" },
+      }),
+    );
+
+    expect(summary.toolReportedChanges).toBe(1);
+    expect(
+      summarizeWorkspaceMutations({
+        shouldWrite: true,
+        completed: summary.writeCompleted,
+        skipped: summary.writeSkipped,
+        denied: summary.writeDenied,
+        toolReportedChanges: summary.toolReportedChanges,
+      }),
+    ).toBe(
+      "Capability changes: 1 tool-reported; no workspace write was applied.",
+    );
+  });
+
+  it("summarizes capability mutation events before tool-output fallback", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("capability.mutation.completed", {
+        action: "replace_skill_package",
+        path: ".sparkwright/skill-evolution/proposals/skillprop_1",
+        fileCount: 2,
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "update_skill",
+        status: "completed",
+        output: { changed: true, proposalId: "skillprop_1" },
+      }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    expect(summary.capabilityMutationCompleted).toBe(1);
+    expect(
+      summarizeWorkspaceMutations({
+        shouldWrite: true,
+        completed: summary.writeCompleted,
+        skipped: summary.writeSkipped,
+        denied: summary.writeDenied,
+        capabilityMutations: summary.capabilityMutationCompleted,
+        toolReportedChanges: summary.toolReportedChanges,
+      }),
+    ).toBe(
+      "Capability mutations: 1 completed; no workspace write was applied.",
+    );
   });
 
   it("summarizes configured verification profile results", () => {

@@ -20,7 +20,12 @@ export type {
   RunConfiguredDelegateInput,
   RunConfiguredDelegateResult,
 } from "./delegate-runner.js";
-export { applyToolConfig } from "./tools.js";
+export {
+  applyToolConfig,
+  createGlobPathsTool,
+  createGrepTextTool,
+  createListDirTool,
+} from "./tools.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
 export { createVerificationWorkflowHooks } from "./verification.js";
@@ -50,6 +55,12 @@ export type {
   SkillStatsOptions,
   SkillStatsReport,
 } from "./skill-stats.js";
+export { createFileCapabilityPackageWriter } from "./capability-package-mutation.js";
+export type {
+  CapabilityPackageMutationAction,
+  CapabilityPackageMutationResult,
+  CapabilityPackageMutationWriter,
+} from "./capability-package-mutation.js";
 export { runSkillDoctor } from "./skill-doctor.js";
 export type {
   RunSkillDoctorOptions,

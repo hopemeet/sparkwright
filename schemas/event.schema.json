@@ -57,6 +57,7 @@
         "context.compaction.completed",
         "context.compaction.failed",
         "capability.index.failed",
+        "capability.mutation.completed",
         "skill.indexed",
         "skill.failed",
         "skill.loaded",

@@ -25,6 +25,7 @@ import {
   createReadFileTool,
   createSkillInspectorTool,
   createSkillManagerTool,
+  createSkillUpdateTool,
 } from "./tools.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
@@ -75,6 +76,7 @@ export function createMainHostTools(input: {
       createCronTool(),
       createSkillInspectorTool(input.workspaceRoot, input.skillRoots),
       createSkillManagerTool(input.workspaceRoot, input.skillRoots),
+      createSkillUpdateTool(input.workspaceRoot, input.skillRoots),
       createAgentInspectorTool(input.workspaceRoot),
       createAgentManagerTool(input.workspaceRoot),
       createHostShellTool(input.workspaceRoot, {
