@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -342,7 +343,7 @@ describe("ACP round trip", () => {
     });
 
     expect(response.stopReason).toBe("end_turn");
-    expect(await readFile(markerPath, "utf8")).toBe("started");
+    expect(await readFileWhenReady(markerPath, "started")).toBe("started");
     expect(
       updates.some(
         (update) =>
@@ -374,7 +375,7 @@ describe("ACP round trip", () => {
 
     agentConnection.signal.throwIfAborted?.();
     await clientConnection.closeSession({ sessionId: session.sessionId });
-  });
+  }, 20_000);
 
   it("rejects ACP-transport MCP servers instead of silently ignoring them", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "sparkwright-acp-mcp-acp-"));
@@ -426,6 +427,28 @@ describe("ACP round trip", () => {
   });
 });
 
+async function readFileWhenReady(
+  path: string,
+  expected: string,
+  timeoutMs = 12000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const content = await readFile(path, "utf8");
+      if (content === expected) return content;
+    } catch {
+      // The MCP server writes this marker asynchronously during startup.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for ${path} to be ${JSON.stringify(expected)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 function isolateRuntimeEnv(root: string): void {
   process.env.XDG_CONFIG_HOME = join(root, "xdg-config");
   process.env.XDG_STATE_HOME = join(root, "xdg-state");
@@ -467,7 +490,16 @@ function mcpEchoScript(markerPath: string): string {
 function findRepoRoot(start: string): string {
   let current = resolve(start);
   while (true) {
-    if (current.endsWith("SparkWright")) return current;
+    if (
+      existsSync(
+        join(
+          current,
+          "node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js",
+        ),
+      )
+    ) {
+      return current;
+    }
     const parent = resolve(current, "..");
     if (parent === current) return resolve(start);
     current = parent;

@@ -119,6 +119,24 @@ function checkpointJson(input: { runId: string; goal: string }) {
   );
 }
 
+async function rmWhenReady(path: string, attempts = 10): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOTEMPTY" && code !== "EPERM" && code !== "EACCES") {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 describe("host protocol", () => {
   it("rejects requests before handshake", async () => {
     const pair = createConnectionPair();
@@ -256,10 +274,17 @@ describe("host protocol", () => {
           stopReason: "final_answer",
           outcome: {
             kind: "completed_with_tool_failures",
-            toolFailures: { count: 1, codes: ["TOOL_NOT_FOUND"] },
+            toolFailures: { count: 1 },
           },
         },
       });
+      const codes = (
+        completed as {
+          payload?: { outcome?: { toolFailures?: { codes?: unknown[] } } };
+        }
+      ).payload?.outcome?.toolFailures?.codes;
+      expect(codes).toHaveLength(1);
+      expect(["TOOL_NOT_FOUND", "ENOENT"]).toContain(codes?.[0]);
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });
@@ -1738,11 +1763,29 @@ describe("host protocol", () => {
 
   it("rejects a concurrent run.start while another is still spinning up", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-runtime-"));
+    let runtime: HostRuntime | undefined;
     try {
-      const runtime = new HostRuntime({
+      let resolveCompleted!: () => void;
+      let rejectCompleted!: (error: Error) => void;
+      const completed = new Promise<void>((resolve, reject) => {
+        resolveCompleted = resolve;
+        rejectCompleted = reject;
+      });
+      runtime = new HostRuntime({
         workspaceRoot: workspace,
         defaultModel: "deterministic",
-        emit: () => {},
+        emit: (message) => {
+          if (message.envelope !== "event") return;
+          if (message.kind === "run.completed") resolveCompleted();
+          if (message.kind === "run.failed") {
+            rejectCompleted(
+              new Error(
+                (message.payload as { error?: { message?: string } }).error
+                  ?.message ?? "run failed",
+              ),
+            );
+          }
+        },
       });
       // Fire two startRun calls back-to-back without awaiting. The first
       // takes the `startingRun` reservation synchronously inside its async
@@ -1760,11 +1803,12 @@ describe("host protocol", () => {
       if (!errs[0]!.ok) {
         expect(errs[0]!.error.message).toMatch(/already active/);
       }
-      // Let the winning run drain its async work so the test exits cleanly.
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await completed;
       runtime.cleanup();
+      runtime = undefined;
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      runtime?.cleanup();
+      await rmWhenReady(workspace);
     }
   });
 

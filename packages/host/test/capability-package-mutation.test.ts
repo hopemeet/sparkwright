@@ -20,6 +20,10 @@ function skillMarkdown(name: string): string {
   ].join("\n");
 }
 
+function slashPath(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 describe("capability package mutation", () => {
   it("rejects mutation targets outside the workspace", async () => {
     const workspace = await makeWorkspace();
@@ -54,7 +58,7 @@ describe("capability package mutation", () => {
 
       expect(result).toMatchObject({
         action: "replace_skill_package",
-        path: target,
+        path: slashPath(target),
       });
       expect(result.files?.map((file) => file.relativePath)).toEqual([
         "SKILL.md",
@@ -63,7 +67,7 @@ describe("capability package mutation", () => {
       expect(mutations).toContainEqual(
         expect.objectContaining({
           action: "replace_skill_package",
-          path: target,
+          path: slashPath(target),
           sourcePath: source,
           fileCount: 2,
           files: expect.arrayContaining([
