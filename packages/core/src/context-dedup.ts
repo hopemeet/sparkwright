@@ -252,7 +252,7 @@ export function createObservationOneLineStage(
 
   return {
     name: options.name ?? "observation_one_line",
-    trigger: "snip",
+    trigger: "micro",
     shouldRun(input: CompactionStageInput): boolean {
       // Identify tool_result indices; if any older-than-keepRecent item
       // exceeds the min threshold, there is work to do.
