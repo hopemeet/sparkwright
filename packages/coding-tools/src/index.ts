@@ -22,6 +22,14 @@ const DEFAULT_EXCLUDE_GLOBS = [
   "**/.git/**",
   "node_modules/**",
   "**/node_modules/**",
+  ".sparkwright/sessions",
+  ".sparkwright/sessions/**",
+  "**/.sparkwright/sessions",
+  "**/.sparkwright/sessions/**",
+  ".sparkwright/runs",
+  ".sparkwright/runs/**",
+  "**/.sparkwright/runs",
+  "**/.sparkwright/runs/**",
 ];
 
 // Build output and tooling caches that almost always pollute file discovery
