@@ -356,7 +356,9 @@ function toolFailureCode(event: SparkwrightEvent): string | undefined {
 
 function toolCompletedChanged(event: SparkwrightEvent): boolean {
   if (!isRecord(event.payload)) return false;
-  const output = isRecord(event.payload.output) ? event.payload.output : undefined;
+  const output = isRecord(event.payload.output)
+    ? event.payload.output
+    : undefined;
   return output?.changed === true;
 }
 

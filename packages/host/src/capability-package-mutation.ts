@@ -63,9 +63,7 @@ export function createFileCapabilityPackageWriter(
   return new FileCapabilityPackageMutationWriter(workspaceRoot, reporter);
 }
 
-class FileCapabilityPackageMutationWriter
-  implements CapabilityPackageMutationWriter
-{
+class FileCapabilityPackageMutationWriter implements CapabilityPackageMutationWriter {
   private readonly workspaceRoot: string;
   private readonly reporter: CapabilityPackageMutationReporter | undefined;
 
@@ -196,16 +194,22 @@ class FileCapabilityPackageMutationWriter
     path: string,
     options: { allowWorkspaceRoot?: boolean } = {},
   ): string {
-    const target = isAbsolute(path) ? resolve(path) : resolve(this.workspaceRoot, path);
+    const target = isAbsolute(path)
+      ? resolve(path)
+      : resolve(this.workspaceRoot, path);
     const relativePath = relative(this.workspaceRoot, target);
     const inside =
       relativePath === "" ||
       (!relativePath.startsWith("..") && !isAbsolute(relativePath));
     if (!inside) {
-      throw new Error(`Capability package mutation target escapes workspace: ${path}`);
+      throw new Error(
+        `Capability package mutation target escapes workspace: ${path}`,
+      );
     }
     if (relativePath === "" && !options.allowWorkspaceRoot) {
-      throw new Error("Capability package mutation target cannot be workspace root.");
+      throw new Error(
+        "Capability package mutation target cannot be workspace root.",
+      );
     }
     return target.split(sep).join("/");
   }

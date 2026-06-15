@@ -637,6 +637,7 @@ export interface CapabilityMutationEvent {
   path: string;
   reason?: string;
   sourcePath?: string;
+  /** @reserved Public capability-mutation count consumed by traces and diagnostics. */
   fileCount?: number;
   files?: Array<{
     relativePath: string;

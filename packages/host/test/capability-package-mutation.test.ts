@@ -75,9 +75,9 @@ describe("capability package mutation", () => {
       await expect(
         readFile(join(target, "references", "guide.md"), "utf8"),
       ).resolves.toBe("guide\n");
-      await expect(readFile(join(target, "stale.txt"), "utf8")).rejects.toMatchObject(
-        { code: "ENOENT" },
-      );
+      await expect(
+        readFile(join(target, "stale.txt"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

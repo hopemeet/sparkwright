@@ -462,7 +462,13 @@ describe("host tools", () => {
     );
     await expect(
       readFile(
-        join(ctx.workspaceRoot, ".sparkwright", "skills", "repo-review", "SKILL.md"),
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright",
+          "skills",
+          "repo-review",
+          "SKILL.md",
+        ),
         "utf8",
       ),
     ).resolves.toContain("Review changes.");
@@ -730,7 +736,10 @@ describe("host tools", () => {
     ).rejects.toThrow(/dedicated SparkWright capability tools/);
     await expect(
       readFile(
-        join(ctx.workspaceRoot, ".sparkwright/skills/release-reviewer/skill.md"),
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright/skills/release-reviewer/skill.md",
+        ),
       ),
     ).rejects.toThrow();
   });
@@ -886,9 +895,7 @@ describe("host tools", () => {
   });
 });
 
-async function createWorkspace(
-  files: Record<string, string>,
-): Promise<
+async function createWorkspace(files: Record<string, string>): Promise<
   RuntimeContext & {
     workspaceRoot: string;
     skippedWrites: Array<{ path: string; reason?: string }>;

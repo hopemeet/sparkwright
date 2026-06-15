@@ -1074,7 +1074,9 @@ function cloneAgentConfigShape(agents: AgentConfigShape): AgentConfigShape {
       ...(profile.experimental
         ? { experimental: { ...profile.experimental } }
         : {}),
-      ...(profile.allowedTools ? { allowedTools: [...profile.allowedTools] } : {}),
+      ...(profile.allowedTools
+        ? { allowedTools: [...profile.allowedTools] }
+        : {}),
       ...(profile.deniedTools ? { deniedTools: [...profile.deniedTools] } : {}),
     })),
     delegateTools: agents.delegateTools.map((tool) => ({ ...tool })),

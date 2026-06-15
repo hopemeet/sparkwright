@@ -235,9 +235,13 @@ export async function createSkillCreateProposal(
   await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
     reason: `Write proposal metadata ${proposalId}`,
   });
-  await mutations.writeText(join(proposalPath, "proposal.md"), proposalMarkdown, {
-    reason: `Write proposal markdown ${proposalId}`,
-  });
+  await mutations.writeText(
+    join(proposalPath, "proposal.md"),
+    proposalMarkdown,
+    {
+      reason: `Write proposal markdown ${proposalId}`,
+    },
+  );
   await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
     reason: `Write proposal patch ${proposalId}`,
   });
@@ -326,9 +330,13 @@ export async function createSkillUpdateProposal(
   await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
     reason: `Write proposal metadata ${proposalId}`,
   });
-  await mutations.writeText(join(proposalPath, "proposal.md"), proposalMarkdown, {
-    reason: `Write proposal markdown ${proposalId}`,
-  });
+  await mutations.writeText(
+    join(proposalPath, "proposal.md"),
+    proposalMarkdown,
+    {
+      reason: `Write proposal markdown ${proposalId}`,
+    },
+  );
   await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
     reason: `Write proposal patch ${proposalId}`,
   });
@@ -530,16 +538,10 @@ export async function rejectSkillProposal(
   );
   ensureClosableProposal(proposal, "reject");
   const closedAt = normalizeDateInput(input.closedAt);
-  return updateProposalState(
-    proposal,
-    "rejected",
-    mutations,
+  return updateProposalState(proposal, "rejected", mutations, closedAt, {
     closedAt,
-    {
-      closedAt,
-      statusReason: cleanOptionalText(input.reason),
-    },
-  );
+    statusReason: cleanOptionalText(input.reason),
+  });
 }
 
 export async function supersedeSkillProposal(
@@ -575,17 +577,11 @@ export async function supersedeSkillProposal(
   }
 
   const closedAt = normalizeDateInput(input.closedAt);
-  return updateProposalState(
-    proposal,
-    "superseded",
-    mutations,
+  return updateProposalState(proposal, "superseded", mutations, closedAt, {
     closedAt,
-    {
-      closedAt,
-      statusReason: cleanOptionalText(input.reason),
-      supersededBy: replacement.id,
-    },
-  );
+    statusReason: cleanOptionalText(input.reason),
+    supersededBy: replacement.id,
+  });
 }
 
 export async function listSkillHistory(
@@ -703,9 +699,13 @@ export async function restoreSkillFromHistory(
     await mutations.removeTree(targetPath, {
       reason: `Remove current Skill ${input.skillName} before restore`,
     });
-    await mutations.replaceWithSkillPackage(sourceHistory.afterPath, targetPath, {
-      reason: `Restore Skill ${input.skillName} from history ${input.historyId}`,
-    });
+    await mutations.replaceWithSkillPackage(
+      sourceHistory.afterPath,
+      targetPath,
+      {
+        reason: `Restore Skill ${input.skillName} from history ${input.historyId}`,
+      },
+    );
 
     const roots = [
       {
@@ -1047,7 +1047,9 @@ function validateProposalTarget(
 ): void {
   validateSkillName(proposal.skillName);
   if (proposal.targetLayer !== "project") {
-    throw new Error(`Skill proposal target layer must be project: ${proposal.id}`);
+    throw new Error(
+      `Skill proposal target layer must be project: ${proposal.id}`,
+    );
   }
   const expected = join(projectSkillRoot(workspaceRoot), proposal.skillName);
   if (proposal.targetPath !== expected) {

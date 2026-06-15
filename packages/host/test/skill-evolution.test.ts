@@ -57,7 +57,10 @@ describe("skill proposal application", () => {
       const sourceRoot = join(workspace, "user-skills");
       const sourceSkill = join(sourceRoot, "asset-skill");
       await mkdir(join(sourceSkill, "references"), { recursive: true });
-      await writeFile(join(sourceSkill, "SKILL.md"), skillMarkdown("asset-skill"));
+      await writeFile(
+        join(sourceSkill, "SKILL.md"),
+        skillMarkdown("asset-skill"),
+      );
       await writeFile(join(sourceSkill, "references", "guide.md"), "guide\n");
 
       const proposal = await createSkillUpdateProposal({
@@ -81,13 +84,7 @@ describe("skill proposal application", () => {
 
       await expect(
         readFile(
-          join(
-            workspace,
-            ".sparkwright",
-            "skills",
-            "asset-skill",
-            "SKILL.md",
-          ),
+          join(workspace, ".sparkwright", "skills", "asset-skill", "SKILL.md"),
           "utf8",
         ),
       ).resolves.toContain("Updated body.");
@@ -207,10 +204,7 @@ describe("skill proposal application", () => {
         { includeMissingRoots: false },
       );
 
-      expect(report.skills.map((skill) => skill.name)).toEqual([
-        "deep",
-        "one",
-      ]);
+      expect(report.skills.map((skill) => skill.name)).toEqual(["deep", "one"]);
       expect(report.errors).toHaveLength(1);
       expect(report.errors[0]?.source).toBe(join(root, "bad", "SKILL.md"));
     } finally {

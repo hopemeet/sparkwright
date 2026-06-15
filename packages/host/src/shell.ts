@@ -614,11 +614,10 @@ async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
   return snapshot;
 }
 
-function shouldSkipAuditDirectory(
-  relativePath: string,
-  name: string,
-): boolean {
-  return AUDIT_EXCLUDED_DIRS.has(name) || AUDIT_EXCLUDED_PATHS.has(relativePath);
+function shouldSkipAuditDirectory(relativePath: string, name: string): boolean {
+  return (
+    AUDIT_EXCLUDED_DIRS.has(name) || AUDIT_EXCLUDED_PATHS.has(relativePath)
+  );
 }
 
 function isManagedCapabilityPath(path: string): boolean {
