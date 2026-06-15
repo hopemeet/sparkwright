@@ -35,6 +35,8 @@ README.internal.md
 **/.sparkwright/test-iface-runs/
 **/.sparkwright/tui-history.jsonl
 **/.sparkwright/tui-stash.json
+**/.sparkwright/session-labels.json
+**/.sparkwright/exports/
 
 # Personal, local-only dev notes (never committed; survives switching tools)
 *.local.md
