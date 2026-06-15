@@ -4,7 +4,7 @@
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Skill Manifest",
   "type": "object",
-  "required": ["name", "description"],
+  "required": ["name", "description", "instructions"],
   "properties": {
     "name": {
       "type": "string",
@@ -14,6 +14,10 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 1024
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1
     },
     "license": { "type": "string" },
     "compatibility": {
