@@ -137,6 +137,12 @@ describe("tui skill evolution commands", () => {
       reason: "explicit reuse instruction",
       evidence: "From now on, prefer the build script.",
     });
+    expect(
+      detectSkillLearnNotice([
+        "Remember this: always run tests first.",
+        "Summarize this one-off task.",
+      ]),
+    ).toBeNull();
     expect(detectSkillLearnNotice(["Summarize this one-off task."])).toBeNull();
     expect(
       detectSkillLearnTarget([
@@ -148,6 +154,12 @@ describe("tui skill evolution commands", () => {
         "Next time update the code-reviewer skill with this workflow.",
       ]),
     ).toBe("code-reviewer");
+    expect(
+      detectSkillLearnTarget([
+        "Remember this: skill code-reviewer should mention verification.",
+        "Summarize this one-off task.",
+      ]),
+    ).toBeUndefined();
   });
 
   it("creates a skill learn draft proposal without writing current skills", async () => {
@@ -330,6 +342,48 @@ describe("tui skill evolution commands", () => {
     await applySkillLearnDraftProposal(workspace, repeat);
     content = await readFile(skillPath, "utf8");
     expect((content.match(/- Run the linter first\./gu) ?? []).length).toBe(1);
+  });
+
+  it("accumulates learnings when legacy skill roots are configured", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-roots-"));
+    tempDirs.push(workspace);
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          skills: {
+            roots: ["legacy-skills"],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const first = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+      evidence: "Run the linter first.",
+    });
+    await applySkillLearnDraftProposal(workspace, first);
+
+    const second = await createSkillLearnDraftProposal(workspace, {
+      reason: "explicit reuse instruction",
+      evidence: "Then run the type checker.",
+    });
+    await applySkillLearnDraftProposal(workspace, second);
+
+    const content = await readFile(
+      join(
+        workspace,
+        ".sparkwright",
+        "skills",
+        SKILL_LEARN_DRAFT_SKILL_NAME,
+        "SKILL.md",
+      ),
+      "utf8",
+    );
+    expect(content).toContain("- Run the linter first.");
+    expect(content).toContain("- Then run the type checker.");
   });
 
   it("applies and rejects proposals from the review helpers", async () => {
