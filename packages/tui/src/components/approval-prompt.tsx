@@ -136,12 +136,12 @@ function Body(props: {
           <Text dimColor>tool: </Text>
           <Text color={theme.accent}>{pending.toolName ?? "?"}</Text>
         </Text>
-        {pending.toolArgs ? (
-          <Text>
-            <Text dimColor>args: </Text>
-            <Text>{truncateJson(pending.toolArgs, props.viewportCols)}</Text>
-          </Text>
-        ) : null}
+        <ToolArgs
+          toolName={pending.toolName}
+          args={pending.toolArgs}
+          theme={theme}
+          viewportCols={props.viewportCols}
+        />
       </Box>
     );
   }
@@ -177,9 +177,95 @@ function Footer(props: { hasDiff: boolean; theme: Theme }): React.ReactElement {
   );
 }
 
+function ToolArgs(props: {
+  toolName?: string;
+  args: unknown;
+  theme: Theme;
+  viewportCols: number;
+}): React.ReactElement | null {
+  const args = rec(props.args);
+  if (
+    args &&
+    (props.toolName === "create_skill" || props.toolName === "update_skill")
+  ) {
+    return (
+      <SkillToolArgs
+        toolName={props.toolName}
+        args={args}
+        theme={props.theme}
+      />
+    );
+  }
+  if (!props.args) return null;
+  return (
+    <Text>
+      <Text dimColor>args: </Text>
+      <Text>{truncateJson(props.args, props.viewportCols)}</Text>
+    </Text>
+  );
+}
+
+function SkillToolArgs(props: {
+  toolName: "create_skill" | "update_skill";
+  args: Record<string, unknown>;
+  theme: Theme;
+}): React.ReactElement {
+  const action = str(props.args.action) || "?";
+  const name = str(props.args.name) || "?";
+  const root = str(props.args.root);
+  const force = props.args.force === true;
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text dimColor>skill: </Text>
+        <Text color={props.theme.accent2}>{name}</Text>
+      </Text>
+      <Text>
+        <Text dimColor>action: </Text>
+        {action}
+        {force ? <Text color={props.theme.warning}> · force</Text> : null}
+      </Text>
+      {root ? (
+        <Text>
+          <Text dimColor>root: </Text>
+          {root}
+        </Text>
+      ) : null}
+      <Text dimColor>{skillEffect(props.toolName, action, name)}</Text>
+    </Box>
+  );
+}
+
+function skillEffect(
+  toolName: "create_skill" | "update_skill",
+  action: string,
+  name: string,
+): string {
+  if (toolName === "create_skill") {
+    return `effect: create .sparkwright/skills/${name}/SKILL.md`;
+  }
+  if (action === "draft") {
+    return "effect: draft proposal only; original Skill package is unchanged";
+  }
+  if (action === "apply") {
+    return "effect: apply an existing proposal to the Skill package";
+  }
+  return "effect: update Skill package through the managed Skill tool";
+}
+
 function riskColor(risk: string | undefined, theme: Theme): string {
   if (risk === "risky" || risk === "high") return theme.error;
   return theme.warning;
+}
+
+function rec(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function truncateJson(value: unknown, maxCols: number): string {

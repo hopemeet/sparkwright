@@ -243,6 +243,14 @@ function AppReady(
       }),
     [resolved.workspaceRoot, resolved.sessionRootDir, store],
   );
+  const initialSessionLoadedRef = useRef(false);
+
+  useEffect(() => {
+    const initialSessionId = props.cliOverrides.sessionId;
+    if (!initialSessionId || initialSessionLoadedRef.current) return;
+    initialSessionLoadedRef.current = true;
+    void controller.switchSession(initialSessionId);
+  }, [controller, props.cliOverrides.sessionId]);
 
   // Track the terminal height only to cap the live (in-flight) stream panel so
   // a long streaming message can't push the input box off-screen. Committed

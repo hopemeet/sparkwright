@@ -225,6 +225,7 @@ function addToolsRows(
 ): void {
   pushSectionHeader(rows, `tools (${tools.length})`, "no tools reported");
   for (const tool of tools.slice(0, 24)) {
+    const hint = skillToolHint(tool.name);
     rows.push(
       <Text key={`tool:${tool.name}`}>
         <Text color={theme.success}>• </Text>
@@ -233,6 +234,13 @@ function addToolsRows(
         {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
       </Text>,
     );
+    if (hint) {
+      rows.push(
+        <Text key={`tool-hint:${tool.name}`} color={theme.muted}>
+          {"  " + hint}
+        </Text>,
+      );
+    }
   }
   if (tools.length > 24) {
     rows.push(
@@ -240,6 +248,19 @@ function addToolsRows(
         … {tools.length - 24} more
       </Text>,
     );
+  }
+}
+
+function skillToolHint(name: string): string {
+  switch (name) {
+    case "list_skills":
+      return "managed Skill inventory; shows built-in, user, and project packages";
+    case "create_skill":
+      return "managed Skill package create; writes SKILL.md through approval";
+    case "update_skill":
+      return "managed Skill evolution; draft proposal first, apply only when requested";
+    default:
+      return "";
   }
 }
 

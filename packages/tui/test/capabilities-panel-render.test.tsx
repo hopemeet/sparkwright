@@ -4,11 +4,14 @@ import { render } from "ink";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { CapabilitiesPanel } from "../src/components/capabilities-panel.js";
 
-async function renderToText(element: React.ReactElement): Promise<string> {
+async function renderToText(
+  element: React.ReactElement,
+  rows = 16,
+): Promise<string> {
   const writes: string[] = [];
   const fakeStdout = {
     columns: 100,
-    rows: 16,
+    rows,
     write: (s: string) => {
       writes.push(s);
       return true;
@@ -79,5 +82,38 @@ describe("CapabilitiesPanel rendering", () => {
     } finally {
       err.mockRestore();
     }
+  });
+
+  it("explains managed skill mutation tools", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          tools: [
+            { name: "list_skills", origin: "local:sparkwright", risk: "safe" },
+            {
+              name: "create_skill",
+              origin: "local:sparkwright",
+              risk: "risky",
+            },
+            {
+              name: "update_skill",
+              origin: "local:sparkwright",
+              risk: "risky",
+            },
+          ],
+          skills: { indexed: [], loaded: [] },
+          mcp: { statuses: [] },
+          agents: { profiles: [], delegateTools: [] },
+        }}
+        loading={false}
+        view="tools"
+        onClose={() => {}}
+      />,
+      28,
+    );
+
+    expect(text).toContain("managed Skill package create");
+    expect(text).toContain("draft proposal first");
+    expect(text).toContain("apply only when requested");
   });
 });

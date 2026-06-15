@@ -39,6 +39,18 @@ describe("formatEvent", () => {
       color: "red",
       detail: "skills SKILL_INDEX_FAILED /tmp/bad/SKILL.md",
     });
+    expect(
+      formatEvent(
+        event("capability.mutation.completed", {
+          action: "write_text",
+          path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
+        }),
+      ),
+    ).toMatchObject({
+      color: "red",
+      detail:
+        "write_text .sparkwright/skill-evolution/proposals/p1/proposal.md",
+    });
   });
 
   it("formats MCP and agent lifecycle events", () => {

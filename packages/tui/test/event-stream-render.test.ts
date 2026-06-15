@@ -145,6 +145,61 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("hunksApplied");
   });
 
+  it("renders skill mutation tool requests as short summaries", async () => {
+    const events = [
+      ev("tool.requested", 1, {
+        toolName: "update_skill",
+        arguments: {
+          action: "draft",
+          name: "repo-reviewer",
+          description:
+            "A long proposal description that should not leak raw JSON",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("update_skill");
+    expect(text).toContain("draft repo-reviewer");
+    expect(text).not.toContain('"description"');
+  });
+
+  it("renders capability mutations with action and compact path", async () => {
+    const events = [
+      ev("capability.mutation.completed", 1, {
+        action: "write_text",
+        path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
+        reason: "Write proposal markdown p1",
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("capability mutation");
+    expect(text).toContain("write_text");
+    expect(text).toContain(
+      ".sparkwright/skill-evolution/proposals/p1/proposal.md",
+    );
+    expect(text).toContain("Write proposal markdown p1");
+    expect(text).not.toContain('"action"');
+  });
+
+  it("renders skill mutation tool results as compact summaries", async () => {
+    const events = [
+      ev("tool.completed", 1, {
+        result: {
+          action: "draft",
+          changed: true,
+          proposalId: "skillprop_123",
+          proposalPath:
+            "/tmp/project/.sparkwright/skill-evolution/proposals/skillprop_123",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("skill proposal");
+    expect(text).toContain("skillprop_123");
+    expect(text).toContain("draft only; original Skill package unchanged");
+    expect(text).not.toContain('"proposalPath"');
+  });
+
   it("renders shell results as compact output summaries", async () => {
     const events = [
       ev("tool.completed", 1, {

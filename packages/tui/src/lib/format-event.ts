@@ -49,7 +49,11 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     else if (t === "workspace.write.requested") detail = str(p.path);
     else if (t === "run.completed" || t === "run.failed")
       detail = str(p.reason ?? p.stopReason);
-    else if (isVerificationHook(p)) detail = verificationHookDetail(t, p);
+    else if (t === "capability.mutation.completed") {
+      detail = [str(p.action), compactCapabilityPath(str(p.path))]
+        .filter(Boolean)
+        .join(" ");
+    } else if (isVerificationHook(p)) detail = verificationHookDetail(t, p);
     else if (isWorkflowHook(t)) detail = workflowHookDetail(t, p);
     else if (t === "skill.indexed") detail = `${p.count ?? 0} skills`;
     else if (t === "skill.failed") detail = str(p.source ?? p.message);
@@ -81,6 +85,16 @@ export function formatEvent(event: RunEvent): FormattedEvent {
         : t,
     detail,
   };
+}
+
+function compactCapabilityPath(path: string): string {
+  if (!path) return "";
+  const normalized = path.replaceAll("\\", "/");
+  const idx = normalized.indexOf("/.sparkwright/");
+  if (idx >= 0) return normalized.slice(idx + 1);
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 4) return normalized;
+  return `…/${parts.slice(-4).join("/")}`;
 }
 
 function isVerificationHook(payload: Record<string, unknown> | null): boolean {

@@ -562,7 +562,7 @@ export class RunController {
         reason: pickString("reason"),
         diff: pickString("diff"),
         toolName: pickString("toolName") ?? pickString("name"),
-        toolArgs: details.args ?? details.toolArgs,
+        toolArgs: details.arguments ?? details.args ?? details.toolArgs,
         command: pickString("command"),
         policy: policyRaw
           ? {

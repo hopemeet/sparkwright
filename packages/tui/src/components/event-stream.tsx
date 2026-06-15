@@ -264,7 +264,7 @@ function EventCard(props: {
     case "tool.requested": {
       const name = str(p.toolName) || "tool";
       const args = p.arguments ?? p.input ?? p.args;
-      const preview = args !== undefined ? oneLine(args, 80) : "";
+      const preview = formatToolRequestPreview(name, args);
       return (
         <Box
           paddingLeft={childPad}
@@ -305,6 +305,15 @@ function EventCard(props: {
         return artifacts.length > 0 ? (
           <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
         ) : null;
+      }
+      if (isSkillMutationToolResult(result)) {
+        return (
+          <SkillMutationToolSummary
+            result={result}
+            artifacts={artifacts}
+            paddingLeft={childPad}
+          />
+        );
       }
       if (isShellResult(result)) {
         const { head, lines, timedOut } = summarizeShellResult(result);
@@ -468,6 +477,25 @@ function EventCard(props: {
         <Box paddingX={1}>
           <Text color={theme.error}>🚫 write denied </Text>
           <Text bold>{path}</Text>
+          {reason ? <Text dimColor>{"  " + reason}</Text> : null}
+        </Box>
+      );
+    }
+
+    case "capability.mutation.completed": {
+      const action = str(p.action) || "mutation";
+      const path = compactMutationPath(str(p.path));
+      const reason = str(p.reason);
+      const fileCount =
+        typeof p.fileCount === "number" ? ` · ${p.fileCount} files` : "";
+      return (
+        <Box flexDirection="column" paddingX={1}>
+          <Text>
+            <Text color={theme.warning}>◇ capability mutation </Text>
+            <Text bold>{action}</Text>
+            {path ? <Text dimColor>{" " + path}</Text> : null}
+            {fileCount ? <Text dimColor>{fileCount}</Text> : null}
+          </Text>
           {reason ? <Text dimColor>{"  " + reason}</Text> : null}
         </Box>
       );
@@ -744,6 +772,69 @@ function CompactDiff(props: { diff: string }): React.ReactElement {
   );
 }
 
+function formatToolRequestPreview(name: string, args: unknown): string {
+  const r = rec(args);
+  if (r && (name === "create_skill" || name === "update_skill")) {
+    const action = str(r.action);
+    const skill = str(r.name);
+    const force = r.force === true ? " · force" : "";
+    return [action, skill].filter(Boolean).join(" ") + force;
+  }
+  return args !== undefined ? oneLine(args, 80) : "";
+}
+
+function compactMutationPath(path: string): string {
+  if (!path) return "";
+  const marker = `${path.includes("\\") ? "\\" : "/"}.sparkwright${
+    path.includes("\\") ? "\\" : "/"
+  }`;
+  const idx = path.indexOf(marker);
+  if (idx >= 0) return path.slice(idx + 1);
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  if (parts.length <= 4) return path;
+  return `…/${parts.slice(-4).join("/")}`;
+}
+
+function SkillMutationToolSummary(props: {
+  result: unknown;
+  artifacts: unknown[];
+  paddingLeft: number;
+}): React.ReactElement {
+  const theme = useTheme();
+  const r = rec(props.result);
+  const action = str(r.action) || "skill";
+  const name = str(r.name);
+  const path = compactMutationPath(str(r.path) || str(r.proposalPath));
+  const proposalId = str(r.proposalId);
+  const changed = r.changed === false ? "unchanged" : "changed";
+  const label =
+    action === "draft"
+      ? "skill proposal"
+      : action === "apply"
+        ? "skill proposal applied"
+        : "skill mutation";
+  return (
+    <Box
+      flexDirection="column"
+      paddingLeft={props.paddingLeft}
+      paddingRight={1}
+    >
+      <Text>
+        <Text color={theme.success}>{label} </Text>
+        <Text bold>{proposalId || name || action}</Text>
+        <Text dimColor>{` · ${changed}`}</Text>
+      </Text>
+      {path ? <Text dimColor>{"  " + path}</Text> : null}
+      {action === "draft" ? (
+        <Text dimColor>{"  draft only; original Skill package unchanged"}</Text>
+      ) : null}
+      {props.artifacts.length > 0 ? (
+        <ArtifactHint artifacts={props.artifacts} paddingLeft={0} />
+      ) : null}
+    </Box>
+  );
+}
+
 function ArtifactHint(props: {
   artifacts: unknown[];
   paddingLeft: number;
@@ -813,6 +904,28 @@ export function isWorkspaceWriteToolResult(value: unknown): boolean {
       typeof r.proposalId === "string") &&
     ("content" in r || "diff" in r || "summary" in r)
   );
+}
+
+export function isSkillMutationToolResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  if (typeof r.action !== "string" || typeof r.changed !== "boolean") {
+    return false;
+  }
+  if (r.action === "create") {
+    return typeof r.name === "string" && typeof r.path === "string";
+  }
+  if (r.action === "draft") {
+    return (
+      typeof r.proposalId === "string" && typeof r.proposalPath === "string"
+    );
+  }
+  if (r.action === "apply") {
+    return typeof r.proposalId === "string";
+  }
+  return false;
 }
 
 export function isShellResult(value: unknown): boolean {
