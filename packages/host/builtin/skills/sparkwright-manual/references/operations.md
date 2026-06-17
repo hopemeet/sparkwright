@@ -110,7 +110,7 @@ Use background tasks when a command may outlive the foreground turn:
 
 `@sparkwright/shell-tool` can promote a long-running foreground command when
 the host provides `foregroundTimeoutMs` and `onPromote`. The promoted task can
-be observed through task tools such as `task_get` and `task_output`.
+be observed through `task(action="get")` and `task(action="output")`.
 
 Durable hosts should wire:
 

@@ -23,7 +23,6 @@ import {
   createAgentInspectorTool,
   createAgentManagerTool,
   applyToolConfig,
-  createAppendFileTool,
   createGlobPathsTool,
   createReadFileTool,
   createSkillInspectorTool,
@@ -126,21 +125,7 @@ describe("host tools", () => {
     });
   });
 
-  it("rejects append_file headings that normalize to empty text", async () => {
-    const ctx = await createWorkspace({
-      "NOTES.md": "",
-    });
-    const tool = createAppendFileTool();
-
-    await expect(
-      tool.execute({ path: "NOTES.md", heading: "## ", body: "body" }, ctx),
-    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
-    await expect(
-      readFile(join(ctx.workspaceRoot, "NOTES.md"), "utf8"),
-    ).resolves.toBe("");
-  });
-
-  it("applies enabled, disabled, and deferred tool config", () => {
+  it("applies disabled and deferred tool config", () => {
     const read = defineTool({
       name: "read_file",
       description: "read",
@@ -168,9 +153,8 @@ describe("host tools", () => {
     });
 
     const tools = applyToolConfig([read, mcpSearch, shell, eager], {
-      enabled: ["read_file", "mcp_*", "shell"],
       disabled: ["shell"],
-      defer: ["mcp_*"],
+      defer: ["mcp_docs_search"],
     });
 
     expect(tools.map((tool) => tool.name)).toEqual([
@@ -189,10 +173,16 @@ describe("host tools", () => {
     ).toBeUndefined();
   });
 
-  it("keeps managed capability tools available through enabled allowlists", () => {
-    const shell = defineTool({
-      name: "shell",
-      description: "shell",
+  it("marks low-frequency edit helpers as deferred by default", () => {
+    const todo = defineTool({
+      name: "todo_write",
+      description: "todo",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const anchoredRead = defineTool({
+      name: "read_anchored_text",
+      description: "read anchored",
       inputSchema: { type: "object" },
       execute: () => ({}),
     });
@@ -202,43 +192,29 @@ describe("host tools", () => {
       inputSchema: { type: "object" },
       execute: () => ({}),
     });
-    const updateSkill = defineTool({
-      name: "update_skill",
-      description: "update",
-      inputSchema: { type: "object" },
-      deferLoading: true,
-      execute: () => ({}),
-    });
 
-    const tools = applyToolConfig(
-      [
-        read,
-        shell,
-        createSkillInspectorTool("/tmp/ws", undefined),
-        createSkillManagerTool("/tmp/ws", undefined),
-        updateSkill,
-      ],
-      { enabled: ["shell"] },
-    );
-
-    expect(tools.map((tool) => tool.name)).toEqual([
-      "shell",
-      "list_skills",
-      "create_skill",
-      "update_skill",
-    ]);
-    expect(tools.find((tool) => tool.name === "update_skill")).toMatchObject({
+    const defaults = applyToolConfig([todo, anchoredRead, read], undefined);
+    expect(defaults.find((tool) => tool.name === "todo_write")).toMatchObject({
       deferLoading: true,
     });
+    expect(
+      defaults.find((tool) => tool.name === "read_anchored_text"),
+    ).toMatchObject({ deferLoading: true });
+    expect(
+      defaults.find((tool) => tool.name === "read_file")?.deferLoading,
+    ).toBeUndefined();
+
+    const eager = applyToolConfig([todo, anchoredRead, read], { defer: [] });
+    expect(eager.some((tool) => tool.deferLoading === true)).toBe(false);
   });
 
-  it("lets disabled config remove managed capability tools explicitly", () => {
+  it("lets disabled config remove capability tools explicitly", () => {
     const tools = applyToolConfig(
       [
         createSkillInspectorTool("/tmp/ws", undefined),
         createSkillManagerTool("/tmp/ws", undefined),
       ],
-      { enabled: ["shell"], disabled: ["create_skill"] },
+      { disabled: ["create_skill"] },
     );
 
     expect(tools.map((tool) => tool.name)).toEqual(["list_skills"]);
@@ -507,10 +483,7 @@ describe("host tools", () => {
             id: "reviewer",
             name: "Reviewer",
             mode: "child",
-            experimental: {
-              mode: "child",
-              prompt: "Review changes and report concrete risks.",
-            },
+            prompt: "Review changes and report concrete risks.",
             allowedTools: ["read_file"],
             maxSteps: 2,
           },

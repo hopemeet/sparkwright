@@ -21,6 +21,7 @@ const childEnv = {
   XDG_CONFIG_HOME: join(envRoot, "xdg"),
   XDG_STATE_HOME: join(envRoot, "state"),
   SPARKWRIGHT_HOST_SOURCE: "1",
+  SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
 };
 await mkdir(childEnv.XDG_CONFIG_HOME, { recursive: true });
 await mkdir(childEnv.XDG_STATE_HOME, { recursive: true });
@@ -67,7 +68,7 @@ async function readOnlyCase() {
   const trace = await traceFromOutput(result.stdout);
   record({
     id: "RO",
-    name: "read-only direct-core",
+    name: "diagnostics: read-only direct-core",
     command: commandString(result.command),
     prompt,
     workspace,
@@ -89,6 +90,7 @@ async function readOnlyCase() {
 
 async function writeApprovedCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-approved-");
+  await enableDirectCoreAppendFile(workspace);
   const prompt = "Append deterministic golden-path section.";
   const result = await runCli([
     "run",
@@ -109,7 +111,7 @@ async function writeApprovedCase() {
   const readme = await readFile(join(workspace, "README.md"), "utf8");
   record({
     id: "WA",
-    name: "write approved",
+    name: "diagnostics: write approved direct-core",
     command: commandString(result.command),
     prompt,
     workspace,
@@ -137,6 +139,7 @@ async function writeApprovedCase() {
 
 async function writeDeniedCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-denied-");
+  await enableDirectCoreAppendFile(workspace);
   const prompt = "Attempt deterministic write and deny approval.";
   const result = await runCli(
     [
@@ -158,7 +161,7 @@ async function writeDeniedCase() {
   const trace = await traceFromOutput(result.stdout);
   record({
     id: "WD",
-    name: "write denied",
+    name: "diagnostics: write denied direct-core",
     command: `printf 'n\\n' | ${commandString(result.command)}`,
     prompt,
     workspace,
@@ -245,7 +248,7 @@ async function invalidTargetCase() {
   const trace = await traceFromOutput(result.stdout);
   record({
     id: "TARGET",
-    name: "invalid target",
+    name: "diagnostics: invalid target direct-core",
     command: commandString(result.command),
     prompt,
     workspace,
@@ -697,7 +700,7 @@ async function entrypointConsistencyCase() {
     restoreEnv();
   }
 
-  // 3. direct-core: a distinct runner — only assert it completes and persists a
+  // 3. diagnostics direct-core: a distinct runner — only assert it completes and persists a
   // trace (it is intentionally not capabilitySnapshot-comparable).
   let coreCompleted = false;
   try {
@@ -735,14 +738,15 @@ async function entrypointConsistencyCase() {
   record({
     id: "CONSIST",
     name: "entrypoint capability parity",
-    command: "CLI host run vs ACP capabilitySnapshot; direct-core completes",
+    command:
+      "CLI host run vs ACP capabilitySnapshot; diagnostics direct-core completes",
     prompt,
     workspace,
     write: "no",
     expectedTrace:
-      "CLI host runner and ACP report an identical capabilitySnapshot (workspaceRoot, tool names, skill names, mcp, agents); direct-core run completes.",
+      "CLI host runner and ACP report an identical capabilitySnapshot (workspaceRoot, tool names, skill names, mcp, agents); diagnostics direct-core run completes.",
     failureRule:
-      "Fails if any entrypoint errors, if the CLI host and ACP capability surfaces differ, or if direct-core does not complete.",
+      "Fails if any entrypoint errors, if the CLI host and ACP capability surfaces differ, or if diagnostics direct-core does not complete.",
     harness: true,
     ok,
   });
@@ -868,6 +872,20 @@ async function workspaceWithReadme(prefix) {
   const workspace = await tempDir(prefix);
   await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
   return workspace;
+}
+
+async function enableDirectCoreAppendFile(workspace) {
+  const configDir = join(workspace, ".sparkwright");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(
+    join(configDir, "config.json"),
+    JSON.stringify({
+      capabilities: {
+        tools: { enabled: ["read_file", "append_file"] },
+      },
+    }),
+    "utf8",
+  );
 }
 
 async function tempDir(prefix) {

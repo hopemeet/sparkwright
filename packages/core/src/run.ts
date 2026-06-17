@@ -103,6 +103,7 @@ import {
   ToolRegistry,
   validateToolArguments,
   type ToolDefinition,
+  type ToolDescriptor,
 } from "./tools.js";
 import {
   kickPostSamplingHooks,
@@ -533,6 +534,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly maxOutputRecoveries: number;
   private outputRecoveriesUsed = 0;
   private readonly commandQueue: RunCommand[] = [];
+  private readonly loadedDeferredTools = new Set<string>();
   private startedAtMs?: number;
   private readonly budgetUsage: Omit<RunBudgetUsage, "elapsedMs"> = {
     modelCalls: 0,
@@ -1686,7 +1688,7 @@ export class SparkwrightRun implements RunHandle {
       run: this.record,
       context: contextItems,
       prompt,
-      tools: await this.tools.listModelDescriptors(),
+      tools: this.modelRequestTools(await this.tools.listModelDescriptors()),
       events: this.events.all(),
       step: state.step,
       abortSignal: this.abortController.signal,
@@ -1776,6 +1778,15 @@ export class SparkwrightRun implements RunHandle {
 
       throw cause;
     }
+  }
+
+  private modelRequestTools(tools: ToolDescriptor[]): ToolDescriptor[] {
+    return tools.filter(
+      (tool) =>
+        !tool.loading?.defer ||
+        tool.loading.alwaysLoad === true ||
+        this.loadedDeferredTools.has(tool.name),
+    );
   }
 
   // Awaits any pending prefetch + tool-batch summary and merges their results
@@ -2703,6 +2714,9 @@ export class SparkwrightRun implements RunHandle {
     if (requestedCall.toolName === "skill_load") {
       this.emitSkillLoadedFromToolResult(annotatedResult);
     }
+    if (requestedCall.toolName === "tool_search") {
+      this.loadDeferredToolsFromToolSearch(annotatedResult);
+    }
     this.usageTracker.recordToolUsage({
       toolName: requestedCall.toolName,
       status: annotatedResult.status,
@@ -2736,6 +2750,20 @@ export class SparkwrightRun implements RunHandle {
         version: getStringProperty(result.output, "version"),
       },
     );
+  }
+
+  private loadDeferredToolsFromToolSearch(result: ToolResult): void {
+    if (result.status !== "completed" || !isRecord(result.output)) return;
+    const matches = result.output.matches;
+    if (!Array.isArray(matches)) return;
+    for (const match of matches) {
+      if (!isRecord(match)) continue;
+      const name = getStringProperty(match, "name");
+      if (!name) continue;
+      const tool = this.tools.get(name);
+      if (!tool?.deferLoading || tool.alwaysLoad === true) continue;
+      this.loadedDeferredTools.add(name);
+    }
   }
 
   /**
@@ -2969,12 +2997,15 @@ export class SparkwrightRun implements RunHandle {
 
     if (!tool) return undefined;
 
-    const risk = tool.policy?.risk ?? "safe";
+    const argPolicy = tool.policyForArgs?.(args as never);
+    const effectivePolicy = argPolicy?.policy ?? tool.policy;
+    const effectiveGovernance = argPolicy?.governance ?? tool.governance;
+    const risk = effectivePolicy?.risk ?? "safe";
     const metadata = {
       toolName,
       risk,
-      governance: tool.governance,
-      toolOrigin: tool.governance?.origin,
+      governance: effectiveGovernance,
+      toolOrigin: effectiveGovernance?.origin,
     };
 
     if (risk === "denied") {
@@ -2997,8 +3028,8 @@ export class SparkwrightRun implements RunHandle {
         name: toolName,
         metadata: {
           risk,
-          governance: tool.governance,
-          toolOrigin: tool.governance?.origin,
+          governance: effectiveGovernance,
+          toolOrigin: effectiveGovernance?.origin,
         },
       },
       metadata,
@@ -3019,7 +3050,7 @@ export class SparkwrightRun implements RunHandle {
 
     if (
       risk === "risky" ||
-      tool.policy?.requiresApproval === true ||
+      effectivePolicy?.requiresApproval === true ||
       decision.decision === "requires_approval"
     ) {
       let approved = false;
@@ -3646,6 +3677,14 @@ export class SparkwrightRun implements RunHandle {
           continue;
         }
         const raw = builder.argumentsParts.join("");
+        if (raw === "") {
+          // Some models emit tool-call start/end without any argument deltas
+          // when invoking a zero-argument tool (e.g. an MCP list gateway).
+          // Treat the empty payload as `{}`; argument schema validation
+          // downstream still rejects calls that require parameters.
+          toolCalls.push({ toolName: builder.toolName, arguments: {} });
+          continue;
+        }
         try {
           toolCalls.push({
             toolName: builder.toolName,

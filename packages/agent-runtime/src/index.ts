@@ -47,20 +47,6 @@ import {
 export type PermissionEffect = "allow" | "deny" | "requires_approval";
 export type AgentMode = "primary" | "child" | "all";
 
-export interface ExperimentalAgentProfileOptions {
-  /** Experimental only. Stored on derived profiles; not applied to runs. */
-  mode?: AgentMode;
-  /** Experimental only. Stored on derived profiles; not applied to model selection. */
-  model?: unknown;
-  /**
-   * Application/domain-specific system prompt for this agent. When present, it
-   * is compiled into a `promptBuilder` via `promptBuilderForAgentProfile` and
-   * applied to runs spawned from this profile (see `spawnSubAgent` and
-   * `compileAgentProfileRunOptions`).
-   */
-  prompt?: string;
-}
-
 export interface CapabilityRule {
   action: string;
   resource?: string;
@@ -74,20 +60,21 @@ export interface AgentProfile {
   id: string;
   name?: string;
   description?: string;
-  experimental?: ExperimentalAgentProfileOptions;
   /**
-   * @deprecated Not applied by agent-runtime. Use `experimental.mode` when you
-   * need to carry this value for application-level orchestration.
+   * Profile role. Carried on derived profiles for application-level
+   * orchestration; not applied to runs by agent-runtime itself.
    */
   mode?: AgentMode;
   /**
-   * @deprecated Not applied by agent-runtime. Use `experimental.model` when you
-   * need to carry this value for application-level orchestration.
+   * Preferred model for this profile. Carried for application-level
+   * orchestration; not applied to model selection by agent-runtime itself.
    */
   model?: unknown;
   /**
-   * @deprecated Compatibility fallback for profile role guidance. New callers
-   * should use `experimental.prompt`.
+   * Application/domain-specific system prompt for this agent. When present, it
+   * is compiled into a `promptBuilder` via `promptBuilderForAgentProfile` and
+   * applied to runs spawned from this profile (see `spawnSubAgent` and
+   * `compileAgentProfileRunOptions`).
    */
   prompt?: string;
   allowedTools?: string[];
@@ -126,16 +113,14 @@ export type AgentProfileRunOptions = Pick<
 
 /**
  * Compile a profile's application system prompt into a `PromptBuilder`.
- * `experimental.prompt` is preferred; top-level `prompt` remains a
- * compatibility fallback for existing configs. Returns `undefined` when the
- * profile carries no prompt, so callers can fall back to the run's default
- * builder (the harness resident contracts still apply either way — the app
- * prompt is layered on top via `additionalSections`).
+ * Returns `undefined` when the profile carries no prompt, so callers can fall
+ * back to the run's default builder (the harness resident contracts still apply
+ * either way — the app prompt is layered on top via `additionalSections`).
  */
 export function promptBuilderForAgentProfile(
   profile: AgentProfile,
 ): PromptBuilder<PromptMessage[]> | undefined {
-  const prompt = profile.experimental?.prompt ?? profile.prompt;
+  const prompt = profile.prompt;
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
     return undefined;
   }
@@ -538,8 +523,7 @@ export interface SpawnSubAgentInput {
   policy?: Policy;
   /**
    * Prompt builder for the child run. When omitted, the helper derives one
-   * from the child profile prompt (`experimental.prompt`, then top-level
-   * `prompt` for compatibility) so the child carries its own application
+   * from the child profile `prompt` so the child carries its own application
    * system prompt; otherwise the child uses core's default builder. Pass an
    * explicit builder to override.
    */

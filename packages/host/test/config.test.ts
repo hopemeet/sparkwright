@@ -226,26 +226,100 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("loads capability tool config", async () => {
+  it("rejects the removed legacy capabilities.tools surface", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
         capabilities: {
           tools: {
-            enabled: ["read_file", "mcp_*"],
             disabled: ["shell"],
-            defer: ["mcp_*"],
           },
         },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-      expect(loaded.errors).toEqual([]);
-      expect(loaded.config.capabilities?.tools).toEqual({
-        enabled: ["read_file", "mcp_*"],
-        disabled: ["shell"],
-        defer: ["mcp_*"],
+      expect(
+        loaded.errors.some(
+          (error) =>
+            error.field === "capabilities.tools" &&
+            error.message.includes("unknown field"),
+        ),
+      ).toBe(true);
+      expect(loaded.config.tools).toBeUndefined();
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects wildcard patterns in top-level tool config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tools: { disabled: ["mcp_*"] },
       });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(
+        loaded.errors.some(
+          (error) =>
+            error.field === "tools.disabled" &&
+            error.message.includes("wildcard patterns are not supported"),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads top-level tool config with replace defer and union disabled semantics", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tools: {
+          disabled: ["shell"],
+          defer: ["todo_write", "read_anchored_text"],
+        },
+      });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({
+          tools: {
+            disabled: ["grep"],
+            defer: ["edit_anchored_text"],
+          },
+        }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.tools).toEqual({
+        disabled: ["shell", "grep"],
+        defer: ["edit_anchored_text"],
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects wildcard patterns in top-level tool config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tools: {
+          defer: ["mcp_*"],
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.tools?.defer).toBeUndefined();
+      expect(loaded.errors.some((e) => e.field === "tools.defer")).toBe(true);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -881,29 +955,24 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("drops invalid capability tool fields with validation errors", async () => {
+  it("drops invalid top-level tool fields with validation errors", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        capabilities: {
-          tools: {
-            enabled: "read_file",
-            disabled: [false],
-            defer: ["mcp_*"],
-          },
+        tools: {
+          enabled: ["read_file"],
+          disabled: [false],
+          defer: ["read_anchored_text"],
         },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
-      expect(loaded.config.capabilities?.tools?.enabled).toBeUndefined();
-      expect(loaded.config.capabilities?.tools?.disabled).toBeUndefined();
-      expect(loaded.config.capabilities?.tools?.defer).toEqual(["mcp_*"]);
-      expect(
-        loaded.errors.some((e) => e.field === "capabilities.tools.enabled"),
-      ).toBe(true);
-      expect(
-        loaded.errors.some((e) => e.field === "capabilities.tools.disabled"),
-      ).toBe(true);
+      expect(loaded.config.tools?.disabled).toBeUndefined();
+      expect(loaded.config.tools?.defer).toEqual(["read_anchored_text"]);
+      expect(loaded.errors.some((e) => e.field === "tools.enabled")).toBe(true);
+      expect(loaded.errors.some((e) => e.field === "tools.disabled")).toBe(
+        true,
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -961,6 +1030,8 @@ describe("loadHostConfig", () => {
           mcp: {
             defaultTimeoutMs: 5000,
             namePrefix: "mcp",
+            startup: "lazy",
+            toolSchemaLoad: "defer",
             defaultPolicy: { risk: "safe", requiresApproval: false },
             servers: [
               {
@@ -971,6 +1042,7 @@ describe("loadHostConfig", () => {
                 cwd: "mcp/docs",
                 env: { NODE_ENV: "test" },
                 enabled: false,
+                toolSchemaLoad: "eager",
               },
               {
                 type: "http",
@@ -988,11 +1060,14 @@ describe("loadHostConfig", () => {
         risk: "safe",
         requiresApproval: false,
       });
+      expect(loaded.config.capabilities?.mcp?.toolSchemaLoad).toBe("defer");
+      expect(loaded.config.capabilities?.mcp?.startup).toBe("lazy");
       expect(loaded.config.capabilities?.mcp?.servers?.[0]).toMatchObject({
         type: "stdio",
         name: "docs",
         cwd: join(xdg, "sparkwright", "mcp", "docs"),
         enabled: false,
+        toolSchemaLoad: "eager",
       });
       expect(loaded.config.capabilities?.mcp?.servers?.[1]).toMatchObject({
         type: "http",
@@ -1022,10 +1097,7 @@ describe("loadHostConfig", () => {
                 id: "reviewer",
                 name: "Reviewer",
                 mode: "child",
-                experimental: {
-                  mode: "child",
-                  prompt: "Review the current run.",
-                },
+                prompt: "Review the current run.",
                 allowedTools: ["read_file"],
                 policy: [
                   {
@@ -1056,10 +1128,7 @@ describe("loadHostConfig", () => {
           id: "reviewer",
           name: "Reviewer",
           mode: "child",
-          experimental: {
-            mode: "child",
-            prompt: "Review the current run.",
-          },
+          prompt: "Review the current run.",
         },
       ]);
       expect(loaded.config.capabilities?.agents?.delegateTools).toEqual([
@@ -1092,7 +1161,7 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("reports invalid experimental agent profile fields", async () => {
+  it("reports invalid agent profile fields", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
@@ -1103,11 +1172,8 @@ describe("loadHostConfig", () => {
               {
                 id: "reviewer",
                 owner: "runtime",
-                experimental: {
-                  mode: "other",
-                  prompt: 42,
-                  owner: "runtime",
-                },
+                mode: "other",
+                prompt: 42,
               },
             ],
           },
@@ -1116,18 +1182,14 @@ describe("loadHostConfig", () => {
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.capabilities?.agents?.profiles?.[0]).toMatchObject({
         id: "reviewer",
-        experimental: {},
       });
       expect(loaded.errors).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            field: "capabilities.agents.profiles.0.experimental.mode",
+            field: "capabilities.agents.profiles.0.mode",
           }),
           expect.objectContaining({
-            field: "capabilities.agents.profiles.0.experimental.prompt",
-          }),
-          expect.objectContaining({
-            field: "capabilities.agents.profiles.0.experimental.owner",
+            field: "capabilities.agents.profiles.0.prompt",
           }),
           expect.objectContaining({
             field: "capabilities.agents.profiles.0.owner",
@@ -1218,7 +1280,7 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      // User layer authors agents; project layer authors only a tools policy.
+      // User layer authors agents; project layer authors only an mcp policy.
       // A wholesale capabilities override would discard the user's agents.
       await writeUserConfig(xdg, {
         capabilities: {
@@ -1242,14 +1304,14 @@ describe("loadHostConfig", () => {
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ capabilities: { tools: { defer: [] } } }),
+        JSON.stringify({ capabilities: { mcp: { servers: [] } } }),
         "utf8",
       );
 
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
       // Project sub-capability is present...
-      expect(loaded.config.capabilities?.tools).toBeDefined();
+      expect(loaded.config.capabilities?.mcp).toBeDefined();
       // ...and the user's agents survive the project layer.
       expect(loaded.config.capabilities?.agents?.profiles?.[0]?.id).toBe(
         "reviewer",

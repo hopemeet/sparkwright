@@ -42,7 +42,7 @@ the tool calls `ShellToolOptions.onPromote({ handle, partialStdout,
 partialStderr, ... })`, which is expected to adopt the process (typically by
 registering it with `@sparkwright/agent-runtime`'s `TaskManager`) and return a
 `taskId`. The tool resolves with `{ promoted: true, taskId }` so the agent
-can monitor completion via `task_get` / `task_output`.
+can monitor completion via `task(action="get")` / `task(action="output")`.
 
 Pair the promotion bridge with `TaskNotificationSink`
 (`@sparkwright/agent-runtime`) so the agent's next turn observes terminal

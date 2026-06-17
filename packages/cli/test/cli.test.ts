@@ -24,6 +24,7 @@ describe("runCli", () => {
   let tempDirs: string[] = [];
   let prevXdg: string | undefined;
   let prevHostSource: string | undefined;
+  let prevDirectCore: string | undefined;
 
   beforeEach(async () => {
     tempDirs = [];
@@ -31,10 +32,12 @@ describe("runCli", () => {
     // tests that rely on process.env can't pick up the developer's own config.
     prevXdg = process.env.XDG_CONFIG_HOME;
     prevHostSource = process.env.SPARKWRIGHT_HOST_SOURCE;
+    prevDirectCore = process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE;
     const xdg = await mkdtemp(join(tmpdir(), "sparkwright-xdg-"));
     tempDirs.push(xdg);
     process.env.XDG_CONFIG_HOME = xdg;
     process.env.SPARKWRIGHT_HOST_SOURCE = "1";
+    process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE = "1";
   });
 
   afterEach(async () => {
@@ -43,6 +46,9 @@ describe("runCli", () => {
     if (prevHostSource === undefined)
       delete process.env.SPARKWRIGHT_HOST_SOURCE;
     else process.env.SPARKWRIGHT_HOST_SOURCE = prevHostSource;
+    if (prevDirectCore === undefined)
+      delete process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE;
+    else process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE = prevDirectCore;
     await Promise.all(
       tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
     );
@@ -86,6 +92,31 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
+  });
+
+  it("keeps direct-core behind an internal diagnostics switch", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["run", "--direct-core", "inspect", "--workspace", workspace],
+      {
+        env: {
+          ...process.env,
+          NODE_ENV: undefined,
+          SPARKWRIGHT_ENABLE_DIRECT_CORE: undefined,
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain("SPARKWRIGHT_ENABLE_DIRECT_CORE=1");
+    expect(output.stdoutText()).not.toContain("run.started");
   });
 
   it("prints cron status for a stored job", async () => {
@@ -745,6 +776,7 @@ describe("runCli", () => {
 
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -806,6 +838,7 @@ describe("runCli", () => {
 
   it("auto-approves writes with --yes and records the write path", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -852,6 +885,7 @@ describe("runCli", () => {
 
   it("allows workspace writes without approval in accept_edits mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -892,6 +926,7 @@ describe("runCli", () => {
 
   it("denies approval-gated writes in dont_ask mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -955,7 +990,10 @@ describe("runCli", () => {
       {
         // Point the user-config dir at the temp workspace so the host config
         // loader picks up the provider we just wrote (no apiKey set).
-        env: { XDG_CONFIG_HOME: workspace },
+        env: {
+          XDG_CONFIG_HOME: workspace,
+          SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
+        },
         io: {
           stdout: output.stdout,
           stderr: output.stderr,
@@ -984,7 +1022,11 @@ describe("runCli", () => {
         "barename",
       ],
       {
-        env: { XDG_CONFIG_HOME: workspace, OPENAI_API_KEY: "sk-x" },
+        env: {
+          XDG_CONFIG_HOME: workspace,
+          OPENAI_API_KEY: "sk-x",
+          SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
+        },
         io: {
           stdout: output.stdout,
           stderr: output.stderr,
@@ -1051,6 +1093,7 @@ describe("runCli", () => {
     );
     const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
       policy?: { permissionMode?: string; write?: { maxFiles?: number } };
+      tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
       capabilities?: {
         tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
         skills?: {
@@ -1059,19 +1102,30 @@ describe("runCli", () => {
           loadSelectedSkills?: boolean;
           resourceFileLimit?: number;
         };
-        mcp?: { servers?: unknown[] };
+        mcp?: {
+          servers?: unknown[];
+          startup?: string;
+          toolSchemaLoad?: string;
+        };
       };
     };
     expect(parsed.policy?.permissionMode).toBe("default");
     expect(parsed.policy?.write?.maxFiles).toBe(1);
-    expect(parsed.capabilities?.tools?.disabled).toEqual(["shell"]);
-    expect(parsed.capabilities?.tools?.defer).toEqual(["mcp_*"]);
-    expect(parsed.capabilities?.tools?.enabled).toBeUndefined();
+    expect(parsed.tools?.disabled).toBeUndefined();
+    expect(parsed.tools?.defer).toEqual([
+      "todo_write",
+      "read_anchored_text",
+      "edit_anchored_text",
+    ]);
+    expect(parsed.tools?.enabled).toBeUndefined();
+    expect(parsed.capabilities?.tools).toBeUndefined();
     expect(parsed.capabilities?.skills?.includeLoaderTool).toBe(true);
     expect(parsed.capabilities?.skills?.loadSelectedSkills).toBe(false);
     expect(parsed.capabilities?.skills?.resourceFileLimit).toBe(8);
     expect(parsed.capabilities?.skills?.roots).toBeUndefined();
     expect(parsed.capabilities?.mcp?.servers).toEqual([]);
+    expect(parsed.capabilities?.mcp?.startup).toBe("lazy");
+    expect(parsed.capabilities?.mcp?.toolSchemaLoad).toBe("defer");
     for (const dir of ["skills", "agents", "command"]) {
       expect(
         (await stat(join(workspace, ".sparkwright", dir))).isDirectory(),
@@ -1128,6 +1182,71 @@ describe("runCli", () => {
     expect(good.stdoutText()).toContain("Config OK");
   });
 
+  it("config inspect and explain report effective config without leaking secrets", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        identity: {
+          model: "openai/gpt-5.4-mini",
+          providers: {
+            openai: {
+              apiKey: "sk-secret",
+              models: { "gpt-5.4-mini": {} },
+            },
+          },
+        },
+        tools: { defer: ["todo_write"] },
+      }),
+      "utf8",
+    );
+
+    const inspect = createOutputCapture();
+    const inspectResult = await runCli(
+      ["config", "inspect", "--workspace", workspace, "--format", "json"],
+      { io: { stdout: inspect.stdout, stderr: inspect.stderr } },
+    );
+    expect(inspectResult.exitCode).toBe(0);
+    expect(inspect.stdoutText()).not.toContain("sk-secret");
+    const report = JSON.parse(inspect.stdoutText()) as {
+      ok: boolean;
+      config: { providers?: { openai?: { apiKey?: string } } };
+      sources: { model?: string; tools?: string };
+    };
+    expect(report.ok).toBe(true);
+    expect(report.config.providers?.openai?.apiKey).toBe("<redacted>");
+    expect(report.sources.model).toContain(".sparkwright/config.json");
+    expect(report.sources.tools).toContain(".sparkwright/config.json");
+
+    const explain = createOutputCapture();
+    const explainResult = await runCli(
+      ["config", "explain", "--workspace", workspace, "--format", "text"],
+      { io: { stdout: explain.stdout, stderr: explain.stderr } },
+    );
+    expect(explainResult.exitCode).toBe(0);
+    expect(explain.stdoutText()).toContain("model:");
+    expect(explain.stdoutText()).toContain("tools:");
+    expect(explain.stdoutText()).not.toContain("sk-secret");
+  });
+
+  it("prints a first-run config hint for interactive runs", async () => {
+    const workspace = await createWorkspace("");
+    const output = createOutputCapture();
+
+    const result = await runCli(["run", "hello", "--workspace", workspace], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: true,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stderrText()).toContain("No Sparkwright config found yet");
+    expect(output.stderrText()).toContain("sparkwright init");
+  });
+
   it("config example prints a paste-ready grouped snippet", async () => {
     const out = createOutputCapture();
     const result = await runCli(["config", "example", "write"], {
@@ -1152,8 +1271,8 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain(
       join(xdg, "sparkwright", "config.json"),
     );
-    expect(output.stdoutText()).toContain("enabled: (all)");
     expect(output.stdoutText()).toContain("disabled: (none)");
+    expect(output.stdoutText()).toContain("defer: (none)");
     await expect(
       stat(join(xdg, "sparkwright", "config.json")),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -1179,9 +1298,7 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        capabilities: {
-          tools: { disabled: ["grep"] },
-        },
+        tools: { disabled: ["grep"] },
       }),
       "utf8",
     );
@@ -1236,8 +1353,8 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
+        tools: { disabled: ["shell"], defer: ["read_anchored_text"] },
         capabilities: {
-          tools: { disabled: ["shell"], defer: ["mcp_*"] },
           skills: { roots: ["skills"] },
           agents: {
             profiles: [{ id: "reviewer", name: "Config Reviewer" }],
@@ -1267,7 +1384,7 @@ describe("runCli", () => {
 
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain(
-      "tools: enabled=(all); disabled=shell; defer=mcp_*",
+      "tools: disabled=shell; defer=read_anchored_text",
     );
     expect(textOutput.stdoutText()).toContain(
       "shell sandbox: mode=warn; effective=",
@@ -1293,7 +1410,11 @@ describe("runCli", () => {
 
     expect(json.exitCode).toBe(0);
     const report = JSON.parse(jsonOutput.stdoutText()) as {
-      tools: { disabled?: string[]; defer?: string[] };
+      tools: {
+        disabled?: string[];
+        defer?: string[];
+        available: Array<{ name: string }>;
+      };
       shell: {
         sandbox: {
           mode: string;
@@ -1328,7 +1449,10 @@ describe("runCli", () => {
       effective: expect.stringMatching(/^(on|fallback)$/),
     });
     expect(report.tools.disabled).toEqual(["shell"]);
-    expect(report.tools.defer).toEqual(["mcp_*"]);
+    expect(report.tools.defer).toEqual(["read_anchored_text"]);
+    expect(report.tools.available.map((tool) => tool.name)).not.toContain(
+      "append_file",
+    );
     expect(report.skills.skills).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "reviewer", layer: "legacy" }),
@@ -1345,7 +1469,13 @@ describe("runCli", () => {
       }),
     ]);
     expect(report.mcp.servers).toEqual([
-      { name: "docs", type: "http", enabled: true },
+      {
+        name: "docs",
+        type: "http",
+        enabled: true,
+        startup: "lazy",
+        toolSchemaLoad: "defer",
+      },
     ]);
     expect(report.cron.stateRoot).toBe(join(stateHome, "sparkwright", "cron"));
     expect(report.command.dirs).toEqual(
@@ -1355,18 +1485,8 @@ describe("runCli", () => {
     );
   });
 
-  it("keeps managed capability tools visible when enabled config only names shell", async () => {
+  it("shows the default tool set in capability inspect", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
-    await writeFile(
-      join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({
-        capabilities: {
-          tools: { enabled: ["shell"] },
-        },
-      }),
-      "utf8",
-    );
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1377,12 +1497,14 @@ describe("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain("tools: enabled=shell");
+    expect(output.stdoutText()).toContain(
+      "tools: disabled=(none); defer=(none)",
+    );
     expect(output.stdoutText()).toContain("tool: shell");
+    expect(output.stdoutText()).toContain("tool: read_file");
     expect(output.stdoutText()).toContain("tool: list_skills");
-    expect(output.stdoutText()).toContain("tool: create_skill");
-    expect(output.stdoutText()).toContain("tool: update_skill");
-    expect(output.stdoutText()).not.toContain("tool: read_file");
+    // append_file was retired in favor of edit_anchored_text / apply_patch.
+    expect(output.stdoutText()).not.toContain("tool: append_file");
   });
 
   it("resolves MCP tools during capability inspect only when requested", async () => {
@@ -1498,16 +1620,15 @@ describe("runCli", () => {
         model: "deterministic/demo",
         capabilities: {
           skills: { roots: ["./skills"] },
-          tools: { disabled: ["shell"] },
         },
+        tools: { disabled: ["shell"] },
       }),
       "utf8",
     );
 
     for (const argv of [
-      ["tools", "enable", "read_file", "mcp_*"],
       ["tools", "disable", "read_file"],
-      ["tools", "defer", "mcp_*"],
+      ["tools", "defer", "todo_write"],
     ]) {
       const output = createOutputCapture();
       const result = await runCli(argv, {
@@ -1520,19 +1641,17 @@ describe("runCli", () => {
       model?: string;
       capabilities?: {
         skills?: { roots?: string[] };
-        tools?: {
-          enabled?: string[];
-          disabled?: string[];
-          defer?: string[];
-        };
+      };
+      tools?: {
+        disabled?: string[];
+        defer?: string[];
       };
     };
     expect(parsed.model).toBe("deterministic/demo");
     expect(parsed.capabilities?.skills?.roots).toEqual(["./skills"]);
-    expect(parsed.capabilities?.tools).toEqual({
-      enabled: ["mcp_*"],
+    expect(parsed.tools).toEqual({
       disabled: ["shell", "read_file"],
-      defer: ["mcp_*"],
+      defer: ["todo_write"],
     });
     if (process.platform !== "win32") {
       const mode = (await stat(configPath)).mode & 0o777;
@@ -1552,15 +1671,23 @@ describe("runCli", () => {
       JSON.stringify({
         capabilities: {
           skills: { roots: ["skills"] },
-          tools: { disabled: ["shell"] },
         },
+        tools: { disabled: ["shell"] },
       }),
       "utf8",
     );
 
     const output = createOutputCapture();
     const result = await runCli(
-      ["tools", "defer", "mcp_*", "--workspace", workspace, "--format", "text"],
+      [
+        "tools",
+        "defer",
+        "todo_write",
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
       {
         io: { stdout: output.stdout, stderr: output.stderr },
       },
@@ -1574,14 +1701,28 @@ describe("runCli", () => {
     const parsed = JSON.parse(await readFile(projectConfigPath, "utf8")) as {
       capabilities?: {
         skills?: { roots?: string[] };
-        tools?: { disabled?: string[]; defer?: string[] };
       };
+      tools?: { disabled?: string[]; defer?: string[] };
     };
     expect(parsed.capabilities?.skills?.roots).toEqual(["skills"]);
-    expect(parsed.capabilities?.tools).toEqual({
+    expect(parsed.tools).toEqual({
       disabled: ["shell"],
-      defer: ["mcp_*"],
+      defer: ["todo_write"],
     });
+  });
+
+  it("rejects wildcard defer patterns in new tool config commands", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["tools", "defer", "mcp_*"], {
+      io: { stdout: output.stdout, stderr: output.stderr },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "configure MCP schema loading with capabilities.mcp.toolSchemaLoad",
+    );
+    expect(output.stdoutText()).toBe("");
   });
 
   it("lists workspace tool config without creating project config", async () => {
@@ -1598,8 +1739,8 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain(projectConfigPath);
-    expect(output.stdoutText()).toContain("enabled: (all)");
     expect(output.stdoutText()).toContain("disabled: (none)");
+    expect(output.stdoutText()).toContain("defer: (none)");
     await expect(stat(projectConfigPath)).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -3292,7 +3433,10 @@ describe("runCli", () => {
       ["run", "--direct-core", "inspect temp", "--workspace", workspace],
       {
         // Explicit env (no OPENAI_API_KEY) so a dev shell key can't leak in.
-        env: { XDG_CONFIG_HOME: xdg },
+        env: {
+          XDG_CONFIG_HOME: xdg,
+          SPARKWRIGHT_ENABLE_DIRECT_CORE: "1",
+        },
         io: { stdout: output.stdout, stderr: output.stderr, stdinIsTTY: false },
       },
     );
@@ -4205,7 +4349,7 @@ describe("runCli", () => {
     ).toBeUndefined();
   });
 
-  it("does not start configured MCP servers until a lazy MCP tool is used", async () => {
+  it("does not start configured MCP servers in lazy startup mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const markerPath = join(workspace, "mcp-started.txt");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
@@ -4271,7 +4415,7 @@ describe("runCli", () => {
     ).toBe(false);
   });
 
-  it("runs scripted model lazy MCP tool calls through the host", async () => {
+  it("runs scripted model deferred MCP concrete-tool calls through the host", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
@@ -4280,6 +4424,7 @@ describe("runCli", () => {
         capabilities: {
           mcp: {
             namePrefix: "mcp",
+            startup: "prepare",
             servers: [mcpEchoServerConfig("qa")],
             defaultPolicy: { risk: "safe", requiresApproval: false },
           },
@@ -4307,8 +4452,8 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "mcp_qa_list_tools",
-                  arguments: {},
+                  toolName: "tool_search",
+                  arguments: { query: "select:mcp_qa_echo" },
                 },
               ],
             },
@@ -4343,6 +4488,20 @@ describe("runCli", () => {
       traceEvents.find(
         (event) =>
           event.type === "tool.completed" &&
+          (
+            event.payload as {
+              toolName?: string;
+              output?: { matches?: unknown[] };
+            }
+          ).toolName === "tool_search" &&
+          (event.payload as { output?: { matches?: unknown[] } }).output
+            ?.matches?.length === 1,
+      ),
+    ).toBeTruthy();
+    expect(
+      traceEvents.find(
+        (event) =>
+          event.type === "tool.completed" &&
           (event.payload as { output?: { content?: Array<{ text?: string }> } })
             .output?.content?.[0]?.text === "sparkwright cli host model smoke",
       ),
@@ -4359,15 +4518,15 @@ describe("runCli", () => {
           hooks: {
             workflow: [
               {
-                name: "block-readme-append",
+                name: "block-readme-edit",
                 hook: "PreToolUse",
                 matcher: {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   pathGlob: "README.md",
                 },
                 action: {
                   type: "block",
-                  reason: "README appends are locked by workflow hook.",
+                  reason: "README edits are locked by workflow hook.",
                 },
               },
             ],
@@ -4381,7 +4540,7 @@ describe("runCli", () => {
     const run = await runCli(
       [
         "run",
-        "Try to append README.",
+        "Try to edit README.",
         "--workspace",
         workspace,
         "--model",
@@ -4398,11 +4557,11 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "README.md",
-                    heading: "Blocked",
-                    body: "This should not be applied.",
+                    patch:
+                      "@@ -1,1 +1,2 @@\n # Demo\n+This should not be applied.\n",
                   },
                 },
               ],
@@ -4594,6 +4753,7 @@ describe("runCli", () => {
 
   it("denies scripted host writes when --write is not enabled", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["append_file"]);
     const output = createOutputCapture();
 
     const run = await runCli(
@@ -4616,11 +4776,10 @@ describe("runCli", () => {
               message: "attempt write without write flag",
               toolCalls: [
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "README.md",
-                    heading: "No Write Flag",
-                    body: "This should not be applied.",
+                    patch: "@@ -1,1 +1,2 @@\n # Demo\n+No write flag.\n",
                   },
                 },
               ],
@@ -4656,6 +4815,7 @@ describe("runCli", () => {
 
   it("rejects scripted model tool calls with invalid args before execution or approval", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
     const output = createOutputCapture();
 
     const run = await runCli(
@@ -4686,10 +4846,9 @@ describe("runCli", () => {
                   arguments: {},
                 },
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "README.md",
-                    body: "Missing heading should fail validation.",
                   },
                 },
               ],
@@ -4707,7 +4866,7 @@ describe("runCli", () => {
 
     expect(run.exitCode).toBe(1);
     expect(output.stdoutText()).toContain("tool.failed read_file");
-    expect(output.stdoutText()).toContain("tool.failed append_file");
+    expect(output.stdoutText()).toContain("tool.failed apply_patch");
     expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
       "# Demo\n",
     );
@@ -4730,7 +4889,7 @@ describe("runCli", () => {
     );
     expect(
       invalidFailures.map((event) => event.payload?.toolName).sort(),
-    ).toEqual(["append_file", "read_file", "read_file"]);
+    ).toEqual(["apply_patch", "read_file", "read_file"]);
     expect(
       invalidFailures.map(
         (event) =>
@@ -4740,7 +4899,7 @@ describe("runCli", () => {
               | undefined
           )?.metadata?.toolName,
       ),
-    ).toEqual(["read_file", "read_file", "append_file"]);
+    ).toEqual(["read_file", "read_file", "apply_patch"]);
     expect(
       invalidFailures.map(
         (event) => (event.payload?.error as { message?: string }).message,
@@ -4748,7 +4907,7 @@ describe("runCli", () => {
     ).toEqual([
       "$.path: expected string.",
       "$.path: required property is missing.",
-      "$.heading: required property is missing.",
+      "$.patch: required property is missing.",
     ]);
   });
 
@@ -4989,8 +5148,68 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("allows simple read-only shell commands in read-only host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "Print the current working directory.",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "inspect cwd",
+              toolCalls: [
+                {
+                  toolName: "shell",
+                  arguments: { command: "pwd" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    const traceEvents = await readTrace(run.tracePath);
+    expect(
+      traceEvents.some(
+        (event) =>
+          event.type === "tool.completed" &&
+          event.payload?.toolName === "shell",
+      ),
+    ).toBe(true);
+    expect(
+      traceEvents.some((event) => event.type === "approval.requested"),
+    ).toBe(false);
+    expect(
+      traceEvents.some(
+        (event) =>
+          event.type === "tool.failed" && event.payload?.toolName === "shell",
+      ),
+    ).toBe(false);
+  });
+
   it("denies host writes outside the requested target scope", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["append_file"]);
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
     const output = createOutputCapture();
 
@@ -5017,11 +5236,17 @@ describe("runCli", () => {
               message: "attempt out of scope write",
               toolCalls: [
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "package.json",
-                    heading: "Out Of Scope",
-                    body: "This should not be applied.",
+                    patch: [
+                      "--- a/package.json",
+                      "+++ b/package.json",
+                      "@@ -1 +1,2 @@",
+                      ' {"name":"demo"}',
+                      "+out of scope",
+                      "",
+                    ].join("\n"),
                   },
                 },
               ],
@@ -5056,6 +5281,7 @@ describe("runCli", () => {
 
   it("does not scope host writes to README.md unless --target is explicit", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["append_file"]);
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
     const output = createOutputCapture();
 
@@ -5080,11 +5306,17 @@ describe("runCli", () => {
               message: "attempt package write",
               toolCalls: [
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "package.json",
-                    heading: "QA",
-                    body: "write without explicit target",
+                    patch: [
+                      "--- a/package.json",
+                      "+++ b/package.json",
+                      "@@ -1 +1,2 @@",
+                      ' {"name":"demo"}',
+                      "+write without explicit target",
+                      "",
+                    ].join("\n"),
                   },
                 },
               ],
@@ -5116,6 +5348,7 @@ describe("runCli", () => {
 
   it("allows a small multi-file write budget when no target is explicit", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    await enableWorkspaceTools(workspace, ["append_file"]);
     await writeFile(join(workspace, "test.js"), "console.log('test')\n");
     const output = createOutputCapture();
 
@@ -5140,19 +5373,31 @@ describe("runCli", () => {
               message: "attempt two writes",
               toolCalls: [
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "README.md",
-                    heading: "Implementation",
-                    body: "implementation update",
+                    patch: [
+                      "--- a/README.md",
+                      "+++ b/README.md",
+                      "@@ -1 +1,2 @@",
+                      " # Demo",
+                      "+implementation update",
+                      "",
+                    ].join("\n"),
                   },
                 },
                 {
-                  toolName: "append_file",
+                  toolName: "apply_patch",
                   arguments: {
                     path: "test.js",
-                    heading: "Regression",
-                    body: "regression coverage",
+                    patch: [
+                      "--- a/test.js",
+                      "+++ b/test.js",
+                      "@@ -1 +1,2 @@",
+                      " console.log('test')",
+                      "+regression coverage",
+                      "",
+                    ].join("\n"),
                   },
                 },
               ],
@@ -5708,6 +5953,15 @@ describe("runCli", () => {
     await writeFile(join(workspace, "README.md"), readme, "utf8");
     return workspace;
   }
+
+  // Read/write tools (read_file, edit_anchored_text/apply_patch, and the
+  // direct-core harness append_file) are available by default, so the write
+  // smokes no longer need to opt tools in. Kept as a no-op so call sites stay
+  // declarative about which tools the scenario exercises.
+  async function enableWorkspaceTools(
+    _workspace: string,
+    _tools: string[],
+  ): Promise<void> {}
 });
 
 function createOutputCapture() {

@@ -23,17 +23,21 @@ import {
   resumeRunFromCheckpoint,
   summarizeTraceFile,
   validateSessionTraceConsistency,
-  type PermissionMode,
   type RunRecord,
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
   type TraceSummary,
   type TraceVerificationReport,
   type TraceTimeline,
-  type TraceLevel,
   EventLog,
   verifyTraceFile,
 } from "@sparkwright/core";
+import {
+  isPermissionMode,
+  isTraceLevel,
+  type PermissionMode,
+  type TraceLevel,
+} from "@sparkwright/protocol";
 import {
   createSessionFileRunStoreFactory,
   FileRunStore,
@@ -205,6 +209,13 @@ export async function runCli(
     writeLine(io.stderr, parsed.message);
     return { exitCode: 1 };
   }
+  if (parsed.value.directCore && !directCoreEnabled(env)) {
+    writeLine(
+      io.stderr,
+      "--direct-core is an internal diagnostics option. Set SPARKWRIGHT_ENABLE_DIRECT_CORE=1 to use it.",
+    );
+    return { exitCode: 1 };
+  }
 
   const { command } = parsed.value;
 
@@ -268,6 +279,13 @@ export async function runCli(
     return { exitCode: 1 };
   }
 
+  maybePrintFirstRunConfigHint({
+    cfg,
+    cwd: parsed.value.workspaceRoot,
+    env,
+    io,
+  });
+
   const sessionId = parsed.value.sessionId ?? createSessionId();
   const runInput = { ...parsed.value, sessionId };
   const validation = await validateCliRunInput(runInput, io, env);
@@ -300,6 +318,35 @@ export async function runCli(
         io,
         env,
       );
+}
+
+function directCoreEnabled(env: Record<string, string | undefined>): boolean {
+  return env.SPARKWRIGHT_ENABLE_DIRECT_CORE === "1";
+}
+
+function maybePrintFirstRunConfigHint(input: {
+  cfg: Awaited<ReturnType<typeof loadHostConfig>>;
+  cwd: string;
+  env: Record<string, string | undefined>;
+  io: CliIO;
+}): void {
+  if (input.io.stdinIsTTY !== true) return;
+  if (input.cfg.errors.length > 0) return;
+  if (input.cfg.attempted.some((entry) => entry.loaded)) return;
+
+  const order = configResolutionOrder(input.cwd, input.env);
+  const user = order.find((entry) => entry.label === "user")?.path;
+  const project = order.find((entry) => entry.label === "project")?.path;
+  writeLine(
+    input.io.stderr,
+    [
+      "No Sparkwright config found yet.",
+      ...(user ? [`User config: ${user}`] : []),
+      ...(project ? [`Project config: ${project}`] : []),
+      "Create one with `sparkwright init` or `sparkwright init --project`.",
+      "Inspect config with `sparkwright config inspect --format text`.",
+    ].join("\n"),
+  );
 }
 
 async function validateCliRunInput(
@@ -881,14 +928,12 @@ function parseArgs(
   if (
     command === "tools" &&
     subcommand !== "list" &&
-    subcommand !== "enable" &&
     subcommand !== "disable" &&
     subcommand !== "defer"
   ) {
     return {
       ok: false,
-      message:
-        "Usage: sparkwright tools <list|enable|disable|defer> [tool-pattern ...]",
+      message: "Usage: sparkwright tools <list|disable|defer> [tool-name ...]",
     };
   }
 
@@ -950,6 +995,17 @@ function parseArgs(
       message:
         "Usage: sparkwright agents <list|create|validate> [id] [--prompt text]",
     };
+  }
+
+  if (
+    command === "config" &&
+    subcommand !== "path" &&
+    subcommand !== "validate" &&
+    subcommand !== "inspect" &&
+    subcommand !== "explain" &&
+    subcommand !== "example"
+  ) {
+    return { ok: false, message: configUsage() };
   }
 
   const goal =
@@ -1047,7 +1103,6 @@ async function handleToolsCommand(
   const subcommand = parsed.subcommand;
   if (
     subcommand !== "list" &&
-    subcommand !== "enable" &&
     subcommand !== "disable" &&
     subcommand !== "defer"
   ) {
@@ -1057,7 +1112,17 @@ async function handleToolsCommand(
 
   const patterns = splitCliWords(parsed.goal);
   if (subcommand !== "list" && patterns.length === 0) {
-    writeLine(io.stderr, `Usage: sparkwright tools ${subcommand} <pattern...>`);
+    writeLine(
+      io.stderr,
+      `Usage: sparkwright tools ${subcommand} <tool-name...>`,
+    );
+    return { exitCode: 1 };
+  }
+  if (patterns.some((pattern) => pattern.includes("*"))) {
+    writeLine(
+      io.stderr,
+      "Wildcard tool patterns are not supported. Use concrete tool names; configure MCP schema loading with capabilities.mcp.toolSchemaLoad.",
+    );
     return { exitCode: 1 };
   }
 
@@ -1338,10 +1403,9 @@ function formatTaskList(input: {
   return lines.join("\n");
 }
 
-type ToolConfigAction = "enable" | "disable" | "defer";
+type ToolConfigAction = "disable" | "defer";
 
 interface ToolsConfigShape {
-  enabled?: string[];
   disabled?: string[];
   defer?: string[];
 }
@@ -1352,16 +1416,11 @@ function updateToolsConfig(
   patterns: string[],
 ): ToolsConfigShape {
   const next: ToolsConfigShape = {
-    enabled: current.enabled ? [...current.enabled] : undefined,
     disabled: current.disabled ? [...current.disabled] : undefined,
     defer: current.defer ? [...current.defer] : undefined,
   };
-  if (action === "enable") {
-    next.enabled = addUnique(next.enabled ?? [], patterns);
-    next.disabled = removeEntries(next.disabled, patterns);
-  } else if (action === "disable") {
+  if (action === "disable") {
     next.disabled = addUnique(next.disabled ?? [], patterns);
-    next.enabled = removeEntries(next.enabled, patterns);
   } else {
     next.defer = addUnique(next.defer ?? [], patterns);
   }
@@ -1370,9 +1429,6 @@ function updateToolsConfig(
 
 function pruneEmptyToolConfig(config: ToolsConfigShape): ToolsConfigShape {
   return {
-    ...(config.enabled && config.enabled.length > 0
-      ? { enabled: config.enabled }
-      : {}),
     ...(config.disabled && config.disabled.length > 0
       ? { disabled: config.disabled }
       : {}),
@@ -1389,15 +1445,6 @@ function addUnique(current: string[], additions: string[]): string[] {
     }
   }
   return current;
-}
-
-function removeEntries(
-  current: string[] | undefined,
-  removals: string[],
-): string[] | undefined {
-  if (!current) return undefined;
-  const remove = new Set(removals);
-  return current.filter((entry) => !remove.has(entry));
 }
 
 async function readConfigObject(path: string): Promise<{
@@ -1439,26 +1486,20 @@ async function writeConfigObject(
 }
 
 function getToolsConfig(config: Record<string, unknown>): ToolsConfigShape {
-  const capabilities = config.capabilities;
-  if (!isPlainObject(capabilities)) return {};
-  const tools = capabilities.tools;
-  if (!isPlainObject(tools)) return {};
-  return {
-    enabled: stringArrayOrUndefined(tools.enabled),
-    disabled: stringArrayOrUndefined(tools.disabled),
-    defer: stringArrayOrUndefined(tools.defer),
-  };
+  if (isPlainObject(config.tools)) {
+    return {
+      disabled: stringArrayOrUndefined(config.tools.disabled),
+      defer: stringArrayOrUndefined(config.tools.defer),
+    };
+  }
+  return {};
 }
 
 function setToolsConfig(
   config: Record<string, unknown>,
   tools: ToolsConfigShape,
 ): void {
-  const capabilities = isPlainObject(config.capabilities)
-    ? config.capabilities
-    : {};
-  capabilities.tools = tools;
-  config.capabilities = capabilities;
+  config.tools = { ...tools };
 }
 
 function formatToolsConfig(input: {
@@ -1480,7 +1521,6 @@ function formatToolsConfig(input: {
   }
   return [
     `config: ${input.path}${input.exists ? "" : " (not created yet)"}`,
-    `enabled: ${formatPatternList(input.tools.enabled, "(all)")}`,
     `disabled: ${formatPatternList(input.tools.disabled, "(none)")}`,
     `defer: ${formatPatternList(input.tools.defer, "(none)")}`,
   ].join("\n");
@@ -1522,6 +1562,8 @@ interface CapabilityInspectReport {
       name: string;
       type: string;
       enabled: boolean;
+      startup?: "lazy" | "prepare" | "eager";
+      toolSchemaLoad?: "eager" | "defer";
       status?: string;
       toolCount?: number;
       tools?: Array<{
@@ -1537,6 +1579,8 @@ interface CapabilityInspectReport {
     }>;
     defaultTimeoutMs?: number;
     namePrefix?: string;
+    startup?: "lazy" | "prepare" | "eager";
+    toolSchemaLoad?: "eager" | "defer";
     resolved?: boolean;
   };
   cron: {
@@ -1626,6 +1670,7 @@ async function handleDelegatesCommand(
       approveAll: parsed.approveAll,
       approveEdits: parsed.approveEdits,
       approveShellSafe: parsed.approveShellSafe,
+      permissionMode: parsed.permissionMode,
       io,
     }),
     shouldWrite: parsed.shouldWrite,
@@ -1742,6 +1787,9 @@ async function loadCapabilityInspectReport(
     name: server.name,
     type: server.type,
     enabled: server.enabled !== false,
+    startup: capabilities?.mcp?.startup ?? "lazy",
+    toolSchemaLoad:
+      server.toolSchemaLoad ?? capabilities?.mcp?.toolSchemaLoad ?? "defer",
   }));
 
   if (options.resolveMcp && capabilities?.mcp?.servers?.length) {
@@ -1749,6 +1797,7 @@ async function loadCapabilityInspectReport(
       servers: capabilities.mcp.servers,
       defaultTimeoutMs: capabilities.mcp.defaultTimeoutMs,
       namePrefix: capabilities.mcp.namePrefix,
+      toolSchemaLoad: capabilities.mcp.toolSchemaLoad,
       policy: capabilities.mcp.defaultPolicy,
       shellSandbox: shellSandboxConfig,
     });
@@ -1803,9 +1852,9 @@ async function loadCapabilityInspectReport(
     workspace: workspaceRoot,
     config: { errors: loaded.errors },
     tools: {
-      ...(capabilities?.tools ?? {}),
+      ...(loaded.config.tools ?? {}),
       available: buildCapabilityToolInventory({
-        config: capabilities?.tools ?? {},
+        config: loaded.config.tools ?? {},
         mcpServers,
         delegateTools: externalDelegateDescriptors,
         inProcessDelegateTools,
@@ -1842,6 +1891,8 @@ async function loadCapabilityInspectReport(
       servers: mcpServers,
       defaultTimeoutMs: capabilities?.mcp?.defaultTimeoutMs,
       namePrefix: capabilities?.mcp?.namePrefix,
+      startup: capabilities?.mcp?.startup,
+      toolSchemaLoad: capabilities?.mcp?.toolSchemaLoad,
       resolved: options.resolveMcp || undefined,
     },
     cron: {
@@ -1900,12 +1951,6 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     origin: "local:sparkwright",
   },
   {
-    name: "append_file",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
     name: "cron",
     source: "builtin",
     risk: "risky",
@@ -1948,27 +1993,9 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     origin: "local:@sparkwright/shell-tool",
   },
   {
-    name: "task_list",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "task_get",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "task_stop",
+    name: "task",
     source: "builtin",
     risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "task_output",
-    source: "builtin",
-    risk: "safe",
     origin: "local:sparkwright",
   },
   {
@@ -1992,29 +2019,33 @@ function buildCapabilityToolInventory(input: {
   /** In-process (config child-agent) delegates — real tools without an external descriptor. */
   inProcessDelegateTools?: Array<{ toolName: string; profileId: string }>;
 }): CapabilityToolInspectEntry[] {
-  const mcpTools = input.mcpServers.flatMap((server) =>
-    (server.tools ?? []).map((tool) => ({
-      name: tool.toolName,
-      source: "mcp" as const,
-      risk: "safe" as const,
-      origin: `mcp:${server.name}`,
-    })),
+  const mcpTools: CapabilityToolInspectEntry[] = input.mcpServers.flatMap(
+    (server) =>
+      (server.tools ?? []).map((tool) => ({
+        name: tool.toolName,
+        source: "mcp" as const,
+        risk: "safe" as const,
+        origin: `mcp:${server.name}`,
+        ...(server.toolSchemaLoad === "defer" ? { deferred: true } : {}),
+      })),
   );
-  const delegateTools = input.delegateTools.map((tool) => ({
-    name: tool.toolName,
-    source: "delegate" as const,
-    risk: "risky" as const,
-    origin: `${tool.protocol}:${tool.profileId}`,
-  }));
-  const inProcessDelegateTools = (input.inProcessDelegateTools ?? []).map(
+  const delegateTools: CapabilityToolInspectEntry[] = input.delegateTools.map(
     (tool) => ({
       name: tool.toolName,
       source: "delegate" as const,
       risk: "risky" as const,
-      origin: `in_process:${tool.profileId}`,
+      origin: `${tool.protocol}:${tool.profileId}`,
     }),
   );
-  return [
+  const inProcessDelegateTools: CapabilityToolInspectEntry[] = (
+    input.inProcessDelegateTools ?? []
+  ).map((tool) => ({
+    name: tool.toolName,
+    source: "delegate" as const,
+    risk: "risky" as const,
+    origin: `in_process:${tool.profileId}`,
+  }));
+  const available = [
     ...BUILTIN_CAPABILITY_TOOLS,
     ...mcpTools,
     ...delegateTools,
@@ -2023,57 +2054,43 @@ function buildCapabilityToolInventory(input: {
     .filter((tool) => toolAllowedByConfig(tool.name, input.config))
     .map((tool) => ({
       ...tool,
-      ...(toolDeferredByConfig(tool.name, input.config)
+      ...(tool.deferred === true ||
+      toolDeferredByConfig(tool.name, input.config)
         ? { deferred: true }
         : {}),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    }));
+  if (available.some((tool) => tool.deferred === true)) {
+    available.push({
+      name: "tool_search",
+      source: "builtin",
+      risk: "safe",
+      origin: "local:@sparkwright/core",
+    });
+  }
+  return available.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
-  if (matchesAnyToolPattern(name, config.disabled)) return false;
-  if (config.enabled !== undefined) {
-    return (
-      matchesAnyToolPattern(name, config.enabled) ||
-      isManagedCapabilityTool(name)
-    );
-  }
-  return true;
-}
-
-const MANAGED_CAPABILITY_TOOLS = new Set([
-  "list_skills",
-  "create_skill",
-  "update_skill",
-  "list_agents",
-  "create_agent",
-]);
-
-function isManagedCapabilityTool(name: string): boolean {
-  return MANAGED_CAPABILITY_TOOLS.has(name);
+  return !isToolNameListed(name, config.disabled);
 }
 
 function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
-  return matchesAnyToolPattern(name, config.defer);
+  return isToolNameListed(name, config.defer ?? DEFAULT_DEFERRED_TOOLS);
 }
 
-function matchesAnyToolPattern(
+const DEFAULT_DEFERRED_TOOLS = [
+  "todo_write",
+  "read_anchored_text",
+  "edit_anchored_text",
+];
+
+const PROJECT_CONFIG_DEFERRED_TOOLS = [...DEFAULT_DEFERRED_TOOLS];
+
+function isToolNameListed(
   toolName: string,
-  patterns: readonly string[] | undefined,
+  names: readonly string[] | undefined,
 ): boolean {
-  return Boolean(
-    patterns?.some((pattern) => matchesToolPattern(toolName, pattern)),
-  );
-}
-
-function matchesToolPattern(toolName: string, pattern: string): boolean {
-  if (pattern === toolName) return true;
-  if (!pattern.includes("*")) return false;
-  const escaped = pattern
-    .split("*")
-    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${escaped}$`).test(toolName);
+  return Boolean(names?.includes(toolName));
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -2091,7 +2108,7 @@ function formatCapabilityInspectReport(
 ): string {
   const lines = [
     `workspace: ${report.workspace}`,
-    `tools: enabled=${formatPatternList(report.tools.enabled, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `tools: disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
     `available tools: ${report.tools.available.length}`,
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
@@ -2137,7 +2154,7 @@ function formatCapabilityInspectReport(
   lines.push(`mcp: ${report.mcp.servers.length} servers`);
   for (const server of report.mcp.servers) {
     lines.push(
-      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"}${server.status ? ` ${server.status}` : ""}${server.toolCount !== undefined ? ` tools=${server.toolCount}` : ""}`,
+      `  - ${server.name}: ${server.type}${server.enabled ? "" : " disabled"} startup=${server.startup ?? report.mcp.startup ?? "lazy"} schema=${server.toolSchemaLoad ?? report.mcp.toolSchemaLoad ?? "defer"}${server.status ? ` ${server.status}` : ""}${server.toolCount !== undefined ? ` tools=${server.toolCount}` : ""}`,
     );
     if (server.error) {
       const code = server.error.code ? `${server.error.code}: ` : "";
@@ -3284,6 +3301,8 @@ function configUsage(): string {
   return [
     "Usage: sparkwright config path [--workspace path] [--format json|text]",
     "       sparkwright config validate [--workspace path] [--format json|text]",
+    "       sparkwright config inspect [--workspace path] [--format json|text]",
+    "       sparkwright config explain [--workspace path] [--format json|text]",
     `       sparkwright config example <${CONFIG_EXAMPLE_NAMES.join("|")}>`,
   ].join("\n");
 }
@@ -3298,6 +3317,10 @@ async function handleConfigCommand(
       return handleConfigPath(parsed, io, env);
     case "validate":
       return handleConfigValidate(parsed, io, env);
+    case "inspect":
+      return handleConfigInspect(parsed, io, env);
+    case "explain":
+      return handleConfigExplain(parsed, io, env);
     case "example":
       return handleConfigExample(parsed, io);
     default:
@@ -3372,6 +3395,176 @@ async function handleConfigValidate(
   return { exitCode: loaded.errors.length > 0 ? 1 : 0 };
 }
 
+async function handleConfigInspect(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const loaded = await loadHostConfig(parsed.workspaceRoot, env);
+  const report = buildConfigInspectReport(loaded);
+  if (parsed.format === "json") {
+    writeLine(io.stdout, JSON.stringify(report, null, 2));
+  } else {
+    writeLine(io.stdout, formatConfigInspectReport(report));
+  }
+  return { exitCode: loaded.errors.length > 0 ? 1 : 0 };
+}
+
+async function handleConfigExplain(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const loaded = await loadHostConfig(parsed.workspaceRoot, env);
+  const report = buildConfigInspectReport(loaded);
+  if (parsed.format === "json") {
+    writeLine(
+      io.stdout,
+      JSON.stringify(
+        {
+          ok: report.ok,
+          layers: report.layers,
+          fields: report.fields,
+          errors: report.errors,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    writeLine(io.stdout, formatConfigExplainReport(report));
+  }
+  return { exitCode: loaded.errors.length > 0 ? 1 : 0 };
+}
+
+function buildConfigInspectReport(
+  loaded: Awaited<ReturnType<typeof loadHostConfig>>,
+): {
+  ok: boolean;
+  layers: Array<{ path: string; loaded: boolean }>;
+  config: unknown;
+  sources: Awaited<ReturnType<typeof loadHostConfig>>["sources"];
+  fields: Array<{ field: string; source: string; value?: unknown }>;
+  errors: Awaited<ReturnType<typeof loadHostConfig>>["errors"];
+} {
+  return {
+    ok: loaded.errors.length === 0,
+    layers: loaded.attempted,
+    config: redactConfigForDisplay(loaded.config),
+    sources: loaded.sources,
+    fields: describeConfigFields(loaded),
+    errors: loaded.errors,
+  };
+}
+
+function describeConfigFields(
+  loaded: Awaited<ReturnType<typeof loadHostConfig>>,
+): Array<{ field: string; source: string; value?: unknown }> {
+  const config = loaded.config;
+  const sources = loaded.sources;
+  const fields: Array<{ field: string; source: string; value?: unknown }> = [];
+  const add = (field: string, source: string | undefined, value: unknown) => {
+    if (value === undefined) return;
+    fields.push({
+      field,
+      source: source ?? "default",
+      value: redactConfigForDisplay(value),
+    });
+  };
+
+  add("model", sources.model, config.model);
+  add("permissionMode", sources.permissionMode, config.permissionMode);
+  add("workspace", sources.workspace, config.workspace);
+  add("confidentialPaths", sources.confidentialPaths, config.confidentialPaths);
+  add("write", sources.write, config.write);
+  add("shell", sources.shell, config.shell);
+  add("tools", sources.tools, config.tools);
+  add("runBudget", sources.runBudget, config.runBudget);
+  add("maxSteps", sources.maxSteps, config.maxSteps);
+  add("traceLevel", sources.traceLevel, config.traceLevel);
+  add("approvals", sources.approvals, config.approvals);
+  for (const key of Object.keys(config.providers ?? {}).sort()) {
+    add(`providers.${key}`, sources.providers?.[key], config.providers?.[key]);
+  }
+  return fields;
+}
+
+function redactConfigForDisplay(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactConfigForDisplay);
+  if (!isPlainObject(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isSecretConfigKey(key)) {
+      out[key] = "<redacted>";
+    } else {
+      out[key] = redactConfigForDisplay(entry);
+    }
+  }
+  return out;
+}
+
+function isSecretConfigKey(key: string): boolean {
+  return /api[_-]?key|token|secret|password/i.test(key);
+}
+
+function formatConfigInspectReport(
+  report: ReturnType<typeof buildConfigInspectReport>,
+): string {
+  return [
+    report.ok ? "Config OK." : `Config has ${report.errors.length} problem(s).`,
+    "Layers:",
+    ...report.layers.map(
+      (layer) => `  ${layer.loaded ? "[loaded] " : "[absent] "}${layer.path}`,
+    ),
+    "Effective config:",
+    JSON.stringify(report.config, null, 2),
+    ...(report.errors.length > 0
+      ? [
+          "Errors:",
+          ...report.errors.map(
+            (error) => `  ${error.file} (${error.field}): ${error.message}`,
+          ),
+        ]
+      : []),
+  ].join("\n");
+}
+
+function formatConfigExplainReport(
+  report: ReturnType<typeof buildConfigInspectReport>,
+): string {
+  const lines = [
+    report.ok ? "Config OK." : `Config has ${report.errors.length} problem(s).`,
+    "Layers:",
+    ...report.layers.map(
+      (layer) => `  ${layer.loaded ? "[loaded] " : "[absent] "}${layer.path}`,
+    ),
+    "Fields:",
+  ];
+  if (report.fields.length === 0) {
+    lines.push("  (none configured; built-in defaults apply)");
+  } else {
+    for (const field of report.fields) {
+      lines.push(
+        `  ${field.field}: ${field.source} = ${formatConfigFieldValue(field.value)}`,
+      );
+    }
+  }
+  if (report.errors.length > 0) {
+    lines.push(
+      "Errors:",
+      ...report.errors.map(
+        (error) => `  ${error.file} (${error.field}): ${error.message}`,
+      ),
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatConfigFieldValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
 function handleConfigExample(parsed: ParsedArgs, io: CliIO): CliRunResult {
   const name = splitCliWords(parsed.goal)[0];
   if (!name) {
@@ -3425,7 +3618,7 @@ const CONFIG_EXAMPLES: Record<string, unknown> = {
             name: "block-generated",
             hook: "PreToolUse",
             matcher: {
-              toolName: ["append_file", "edit_anchored_text", "apply_patch"],
+              toolName: ["edit_anchored_text", "apply_patch"],
               pathGlob: "src/generated/**",
             },
             action: {
@@ -3905,6 +4098,7 @@ async function handleCronCommand(
           approveAll: parsed.approveAll,
           approveEdits: parsed.approveEdits,
           approveShellSafe: parsed.approveShellSafe,
+          permissionMode: parsed.permissionMode,
           io,
         }),
         permissionMode: parsed.permissionMode,
@@ -3938,6 +4132,7 @@ async function handleCronCommand(
         approveAll: parsed.approveAll,
         approveEdits: parsed.approveEdits,
         approveShellSafe: parsed.approveShellSafe,
+        permissionMode: parsed.permissionMode,
         io,
       }),
       permissionMode: parsed.permissionMode,
@@ -4199,7 +4394,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
-    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]';
+    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]';
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
@@ -4560,6 +4755,7 @@ async function handleRunResumeCommand(
     approveAll: parsed.approveAll,
     approveEdits: parsed.approveEdits,
     approveShellSafe: parsed.approveShellSafe,
+    permissionMode: parsed.permissionMode,
     io,
   });
   const policy = createLayeredPolicy([
@@ -4871,17 +5067,18 @@ const PROJECT_CONFIG_TEMPLATE = {
       allowDeletions: false,
     },
   },
+  tools: {
+    defer: PROJECT_CONFIG_DEFERRED_TOOLS,
+  },
   capabilities: {
-    tools: {
-      disabled: ["shell"],
-      defer: ["mcp_*"],
-    },
     skills: {
       includeLoaderTool: true,
       loadSelectedSkills: false,
       resourceFileLimit: 8,
     },
     mcp: {
+      startup: "lazy",
+      toolSchemaLoad: "defer",
       servers: [],
     },
   },
@@ -5008,7 +5205,7 @@ function usage(): string {
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
     "       sparkwright tools list [--workspace path] [--format json|text]",
-    "       sparkwright tools enable|disable|defer <tool-pattern...> [--workspace path]",
+    "       sparkwright tools disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
@@ -5017,7 +5214,7 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model] [--direct-core]',
+    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
@@ -5031,9 +5228,8 @@ function usage(): string {
 function toolsUsage(): string {
   return [
     "Usage: sparkwright tools list [--workspace path] [--format json|text]",
-    "       sparkwright tools enable <tool-pattern...> [--workspace path]",
-    "       sparkwright tools disable <tool-pattern...> [--workspace path]",
-    "       sparkwright tools defer <tool-pattern...> [--workspace path]",
+    "       sparkwright tools disable <tool-name...> [--workspace path]",
+    "       sparkwright tools defer <tool-name...> [--workspace path]",
   ].join("\n");
 }
 
@@ -5094,18 +5290,4 @@ function agentsUsage(): string {
     "       sparkwright agents validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
   ].join("\n");
-}
-
-function isPermissionMode(value: string | undefined): value is PermissionMode {
-  return (
-    value === "plan" ||
-    value === "default" ||
-    value === "accept_edits" ||
-    value === "dont_ask" ||
-    value === "bypass_permissions"
-  );
-}
-
-function isTraceLevel(value: string | undefined): value is TraceLevel {
-  return value === "minimal" || value === "standard" || value === "debug";
 }

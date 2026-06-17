@@ -30,8 +30,11 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
 
 const CORE_INTERNAL_IMPORT_PATTERN =
   /\b(?:import|export)\b[\s\S]*?\bfrom\s+["']@sparkwright\/core\/internal["']|import\s*\(\s*["']@sparkwright\/core\/internal["']\s*\)/;
+const CORE_IMPORT_PATTERN =
+  /\b(?:import|export)\b[\s\S]*?\bfrom\s+["']@sparkwright\/core(?:\/internal)?["']|import\s*\(\s*["']@sparkwright\/core(?:\/internal)?["']\s*\)/;
 
 const violations = [];
+const tuiCoreViolations = [];
 
 for (const file of walk(root)) {
   const relative = path.relative(root, file).split(path.sep).join("/");
@@ -46,10 +49,27 @@ for (const file of walk(root)) {
   if (!/\.[cm]?[jt]sx?$/.test(relative)) continue;
 
   const source = readFileSync(file, "utf8");
+  if (
+    relative.startsWith("packages/tui/src/") &&
+    CORE_IMPORT_PATTERN.test(source)
+  ) {
+    tuiCoreViolations.push(relative);
+  }
   if (!CORE_INTERNAL_IMPORT_PATTERN.test(source)) continue;
   if (!ALLOWED_CORE_INTERNAL_IMPORTS.has(relative)) {
     violations.push(relative);
   }
+}
+
+if (tuiCoreViolations.length > 0) {
+  console.error("Unexpected @sparkwright/core imports in TUI source:");
+  for (const violation of tuiCoreViolations) {
+    console.error(`- ${violation}`);
+  }
+  console.error(
+    "\nTUI must stay a host/protocol client. Use @sparkwright/protocol, @sparkwright/sdk-node, or @sparkwright/host client helpers instead.",
+  );
+  process.exit(1);
 }
 
 if (violations.length > 0) {

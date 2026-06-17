@@ -170,9 +170,8 @@ For user-level changes:
 
 ```bash
 npm exec sparkwright -- tools list --format text
-npm exec sparkwright -- tools enable <pattern...>
-npm exec sparkwright -- tools disable <pattern...>
-npm exec sparkwright -- tools defer <pattern...>
+npm exec sparkwright -- tools disable <tool-name...>
+npm exec sparkwright -- tools defer <tool-name...>
 ```
 
 Add `--workspace <path>` to update project defaults in

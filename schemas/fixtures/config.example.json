@@ -7,12 +7,10 @@
       "apiKey": "replace-me"
     }
   },
+  "tools": {
+    "defer": ["todo_write", "read_anchored_text", "edit_anchored_text"]
+  },
   "capabilities": {
-    "tools": {
-      "enabled": ["read_file", "glob", "append_file", "mcp_*"],
-      "disabled": ["shell"],
-      "defer": ["mcp_*"]
-    },
     "skills": {
       "includeLoaderTool": true,
       "loadSelectedSkills": true,
@@ -32,6 +30,8 @@
       ],
       "defaultTimeoutMs": 30000,
       "namePrefix": "mcp",
+      "startup": "lazy",
+      "toolSchemaLoad": "defer",
       "defaultPolicy": {
         "risk": "risky",
         "requiresApproval": true
@@ -43,21 +43,13 @@
           "id": "primary",
           "name": "Primary",
           "mode": "primary",
-          "prompt": "Coordinate the run and call delegate tools only when useful.",
-          "experimental": {
-            "mode": "primary",
-            "prompt": "Coordinate the run and call delegate tools only when useful."
-          }
+          "prompt": "Coordinate the run and call delegate tools only when useful."
         },
         {
           "id": "reviewer",
           "name": "Reviewer",
           "mode": "child",
           "prompt": "Inspect changes for correctness, risk, and missing tests.",
-          "experimental": {
-            "mode": "child",
-            "prompt": "Inspect changes for correctness, risk, and missing tests."
-          },
           "allowedTools": ["read_file", "glob"],
           "maxSteps": 4
         }

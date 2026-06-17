@@ -123,6 +123,22 @@ bypasses the gate, since the model already reported the context is too large.
 A missing `usage` never opens a cost gate — cost-aware compaction is
 intentionally conservative and waits for measured pressure.
 
+#### Tool-result clearing
+
+The default deterministic compaction pipeline includes a `clear_tool_uses`
+stage. Once prompt-bound context grows past its trigger, the stage keeps the
+most recent tool results intact and replaces older tool-result bodies with
+stable placeholders that identify the tool, status, tool call id, and original
+size. This mirrors provider-side context editing semantics: the run still
+retains the full original context and trace, while the model-visible prompt
+knows that earlier observations existed but their bodies were intentionally
+cleared.
+
+Use `createClearToolUsesStage({ keepRecent, clearAtLeastChars, excludeTools })`
+to configure this stage directly. Use
+`createDefaultCompactionStages({ clearToolUses: false })` when an embedder needs
+strict legacy behavior without placeholder clearing.
+
 ### SkillLoader
 
 Loads optional knowledge on demand.

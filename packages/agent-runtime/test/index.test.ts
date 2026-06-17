@@ -336,23 +336,19 @@ describe("agent-runtime", () => {
     });
   });
 
-  it("keeps experimental profile fields explicit on derived profiles", () => {
+  it("keeps role/model/prompt profile fields explicit on derived profiles", () => {
     const derived = deriveChildAgentProfile({
       childAgent: {
         id: "worker",
-        experimental: {
-          mode: "child",
-          model: "example-model",
-          prompt: "application-owned prompt",
-        },
+        mode: "child",
+        model: "example-model",
+        prompt: "application-owned prompt",
       },
     });
 
-    expect(derived.effectiveProfile.experimental).toEqual({
-      mode: "child",
-      model: "example-model",
-      prompt: "application-owned prompt",
-    });
+    expect(derived.effectiveProfile.mode).toBe("child");
+    expect(derived.effectiveProfile.model).toBe("example-model");
+    expect(derived.effectiveProfile.prompt).toBe("application-owned prompt");
   });
 
   it("treats an explicit empty allowedTools list as no tools allowed", async () => {
@@ -1062,7 +1058,7 @@ describe("createAgentTool / mountAgentTool", () => {
       maxSteps: 1,
       childAgentProfile: {
         id: "specialist",
-        experimental: { prompt: "You are the specialist sub-agent." },
+        prompt: "You are the specialist sub-agent.",
       },
     });
     await spawned.run.start();
@@ -1072,10 +1068,10 @@ describe("createAgentTool / mountAgentTool", () => {
     expect(childPromptText).toContain("Tool use contract:");
   });
 
-  it("lets an explicit promptBuilder override the profile-derived one", () => {
+  it("derives a prompt builder from the profile prompt", () => {
     const profile: AgentProfile = {
       id: "specialist",
-      experimental: { prompt: "App prompt." },
+      prompt: "App prompt.",
     };
 
     const builder = promptBuilderForAgentProfile(profile);
@@ -1085,18 +1081,10 @@ describe("createAgentTool / mountAgentTool", () => {
     expect(noPrompt).toBeUndefined();
   });
 
-  it("uses top-level profile prompt as a compatibility fallback", () => {
-    const builder = promptBuilderForAgentProfile({
-      id: "legacy",
-      prompt: "Legacy profile prompt.",
-    });
-    expect(builder).toBeDefined();
-  });
-
   it("includes a profile-derived prompt builder in compiled run options", () => {
     const withPrompt = compileAgentProfileRunOptions({
       id: "specialist",
-      experimental: { prompt: "App prompt." },
+      prompt: "App prompt.",
     });
     expect(withPrompt.promptBuilder).toBeDefined();
 

@@ -9,7 +9,11 @@ import {
   userConfigPath,
   type ProviderConfig,
 } from "@sparkwright/host";
-import type { PermissionMode } from "../state/run-controller.js";
+import {
+  PERMISSION_MODES,
+  isPermissionMode,
+  type PermissionMode,
+} from "@sparkwright/protocol";
 import { mergeBindings, type Bindings } from "./keybindings.js";
 
 export interface TuiConfigFile {
@@ -71,6 +75,7 @@ const KNOWN_KEYS = new Set([
   "providers",
   "workspace",
   "capabilities",
+  "tools",
   "keybindings",
   "theme",
   "mouse",
@@ -87,13 +92,6 @@ const KNOWN_KEYS = new Set([
   "approvals",
 ]);
 const VALID_THEMES = ["dark", "light", "mono"];
-const VALID_PERMISSION_MODES: PermissionMode[] = [
-  "plan",
-  "default",
-  "accept_edits",
-  "dont_ask",
-  "bypass_permissions",
-];
 
 async function readJson(
   path: string,
@@ -239,17 +237,14 @@ function validate(
     }
   }
   if (obj.permissionMode !== undefined) {
-    if (
-      typeof obj.permissionMode === "string" &&
-      (VALID_PERMISSION_MODES as string[]).includes(obj.permissionMode)
-    ) {
-      config.permissionMode = obj.permissionMode as PermissionMode;
+    if (isPermissionMode(obj.permissionMode)) {
+      config.permissionMode = obj.permissionMode;
       sources.permissionMode = origin;
     } else {
       errors.push({
         file: filePath,
         field: "permissionMode",
-        message: `must be one of ${VALID_PERMISSION_MODES.join(" | ")}`,
+        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
       });
     }
   }

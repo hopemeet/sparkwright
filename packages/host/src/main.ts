@@ -3,7 +3,12 @@ import { installLogPipe, attachLogSink } from "./log-pipe.js";
 import { createStdioConnection } from "./transport-stdio.js";
 import { startWsServer } from "./transport-ws.js";
 import { serveConnection } from "./server.js";
-import type { PermissionMode, TraceLevel } from "@sparkwright/core";
+import {
+  isPermissionMode,
+  isTraceLevel,
+  type PermissionMode,
+  type TraceLevel,
+} from "@sparkwright/protocol";
 import { join } from "node:path";
 
 interface ParsedArgs {
@@ -170,20 +175,6 @@ export async function runHostMain(argv: string[]): Promise<void> {
       });
     },
   });
-}
-
-function isPermissionMode(value: string): value is PermissionMode {
-  return (
-    value === "plan" ||
-    value === "default" ||
-    value === "accept_edits" ||
-    value === "dont_ask" ||
-    value === "bypass_permissions"
-  );
-}
-
-function isTraceLevel(value: string): value is TraceLevel {
-  return value === "minimal" || value === "standard" || value === "debug";
 }
 
 function isLoopbackHost(host: string): boolean {

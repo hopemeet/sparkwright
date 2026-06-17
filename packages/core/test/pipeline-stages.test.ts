@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createClearToolUsesStage,
   createToolResultBudgetStage,
   createSnipStage,
   createDefaultCompactionStages,
@@ -69,6 +70,90 @@ describe("createToolResultBudgetStage", () => {
   });
 });
 
+describe("createClearToolUsesStage", () => {
+  it("replaces older tool results with stable placeholders", async () => {
+    const old = {
+      ...item("tool_result", "old output".repeat(100)),
+      source: { kind: "tool", uri: "read_file" },
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        toolName: "read_file",
+        status: "completed",
+        toolCallId: "call_old",
+      },
+    } satisfies ContextItem;
+    const recent = {
+      ...item("tool_result", "recent output"),
+      source: { kind: "tool", uri: "shell" },
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        toolName: "shell",
+        status: "completed",
+        toolCallId: "call_recent",
+      },
+    } satisfies ContextItem;
+    const stage = createClearToolUsesStage({ triggerChars: 0, keepRecent: 1 });
+    const input = {
+      items: [old, recent],
+      hints: {} as never,
+      totalChars: old.content.length + recent.content.length,
+      reactive: false,
+    };
+
+    expect(await stage.shouldRun(input)).toBe(true);
+    const result = await stage.apply(input);
+
+    expect(result.items[0]?.id).toBe(old.id);
+    expect(result.items[0]?.content).toContain(
+      "tool result cleared by clear_tool_uses",
+    );
+    expect(result.items[0]?.content).toContain("tool=read_file");
+    expect(result.items[0]?.metadata.clearToolUsesCleared).toBe(true);
+    expect(result.items[1]?.content).toBe(recent.content);
+    expect(result.freedChars).toBeGreaterThan(0);
+  });
+
+  it("honors clearAtLeastChars and excluded tools", async () => {
+    const configRead = {
+      ...item("tool_result", "config".repeat(200)),
+      source: { kind: "tool", uri: "read_config" },
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        toolName: "read_config",
+      },
+    } satisfies ContextItem;
+    const old = {
+      ...item("tool_result", "old".repeat(100)),
+      source: { kind: "tool", uri: "grep" },
+      metadata: { layer: "working", stability: "turn", toolName: "grep" },
+    } satisfies ContextItem;
+    const recent = item("tool_result", "recent");
+    const stage = createClearToolUsesStage({
+      triggerChars: 0,
+      keepRecent: 1,
+      clearAtLeastChars: 10_000,
+      excludeTools: ["read_config"],
+    });
+    const input = {
+      items: [configRead, old, recent],
+      hints: {} as never,
+      totalChars: configRead.content.length + old.content.length + 6,
+      reactive: false,
+    };
+
+    expect(await stage.shouldRun(input)).toBe(false);
+    const result = await stage.apply(input);
+    expect(result.items).toEqual(input.items);
+    expect(result.metadata).toMatchObject({
+      skipped: true,
+      potentialFreedChars: expect.any(Number),
+    });
+  });
+});
+
 describe("createSnipStage", () => {
   it("drops the middle when the trigger threshold is crossed", async () => {
     const items = Array.from({ length: 10 }, (_, i) =>
@@ -125,12 +210,13 @@ describe("createDefaultCompactionStages", () => {
       "tool_result_budget",
       "micro",
       "micro",
+      "clear_tool_uses",
       "snip",
     ]);
   });
 
   it("stays inert on small contexts (cache-stable prefix preserved)", async () => {
-    const [budget, fileDedup, observationOneLine, snip] =
+    const [budget, fileDedup, observationOneLine, clearToolUses, snip] =
       createDefaultCompactionStages();
     const input = {
       items: [item("tool_result", "ok"), item("file", "small")],
@@ -141,6 +227,7 @@ describe("createDefaultCompactionStages", () => {
     expect(await budget.shouldRun(input)).toBe(false);
     expect(await fileDedup.shouldRun(input)).toBe(false);
     expect(await observationOneLine.shouldRun(input)).toBe(false);
+    expect(await clearToolUses.shouldRun(input)).toBe(false);
     expect(await snip.shouldRun(input)).toBe(false);
   });
 
@@ -159,6 +246,7 @@ describe("createDefaultCompactionStages", () => {
     const stages = createDefaultCompactionStages({
       fileReadDedup: false,
       observationOneLine: false,
+      clearToolUses: false,
     });
     expect(stages.map((s) => s.trigger)).toEqual([
       "tool_result_budget",
@@ -167,7 +255,7 @@ describe("createDefaultCompactionStages", () => {
   });
 
   it("micro-compacts repeated file reads before coarse snip is needed", async () => {
-    const [, fileDedup, observationOneLine, snip] =
+    const [, fileDedup, observationOneLine, clearToolUses, snip] =
       createDefaultCompactionStages({
         triggerChars: 100_000,
         observationKeepRecent: 1,
@@ -192,6 +280,7 @@ describe("createDefaultCompactionStages", () => {
 
     expect(await fileDedup.shouldRun(input)).toBe(true);
     expect(await observationOneLine.shouldRun(input)).toBe(false);
+    expect(await clearToolUses.shouldRun(input)).toBe(false);
     expect(await snip.shouldRun(input)).toBe(false);
 
     const result = await fileDedup.apply(input);

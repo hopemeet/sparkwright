@@ -29,7 +29,7 @@ Use a background task when work may outlive the foreground turn:
 
 `@sparkwright/shell-tool` can promote a long-running command into a task when
 the host provides `foregroundTimeoutMs` and `onPromote`. The task can then be
-observed with `task_get` and `task_output`.
+observed with `task(action="get")` and `task(action="output")`.
 
 Read [Environment Notes](../maintainer/ENVIRONMENT.md) for the durable wiring example.
 

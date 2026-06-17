@@ -55,6 +55,10 @@ That means markdown files are a team-default convenience layer, while
 
 ## Scaffold
 
+Installing Sparkwright does not write config files. The first interactive CLI
+or TUI run prints the user and project config paths if no config exists yet.
+Create files only when you choose to scaffold them:
+
 Scaffold the two common layers separately:
 
 ```bash
@@ -75,9 +79,16 @@ convention directories:
 .sparkwright/command
 ```
 
+Both init commands are non-destructive: they refuse to overwrite an existing
+config file. `init --project` may recreate missing convention directories, but
+it does not replace existing Skills, agents, commands, sessions, tasks, or
+config content.
+
 Inspect what the host will actually prepare:
 
 ```bash
+sparkwright config inspect --workspace . --format text
+sparkwright config explain --workspace . --format text
 sparkwright capabilities inspect --workspace . --format text
 ```
 
@@ -169,36 +180,40 @@ Put project-wide behavior in `<workspace>/.sparkwright/config.json`:
 
 ```json
 {
-  "permissionMode": "default",
-  "write": {
-    "maxFiles": 1,
-    "maxDiffLines": 200,
-    "allowDeletions": false
+  "policy": {
+    "permissionMode": "default",
+    "write": {
+      "maxFiles": 1,
+      "maxDiffLines": 200,
+      "allowDeletions": false
+    }
+  },
+  "tools": {
+    "defer": ["todo_write", "read_anchored_text", "edit_anchored_text"]
   },
   "capabilities": {
-    "tools": {
-      "disabled": ["shell"],
-      "defer": ["mcp_*"]
-    },
     "skills": {
       "includeLoaderTool": true,
       "loadSelectedSkills": false,
       "resourceFileLimit": 8
     },
     "mcp": {
+      "startup": "lazy",
+      "toolSchemaLoad": "defer",
       "servers": []
     }
   }
 }
 ```
 
-This is intentionally not a full allowlist. Omitting `tools.enabled` lets the
-host start from its available tools, then removes `shell` and defers MCP schemas
-when supported. The `write` block caps a run to a single file with no line
-deletions; raise `maxFiles`/`maxDiffLines` or set `allowDeletions: true` for
-projects that expect broader edits. Because `write` merges conservatively, a
-personal config can tighten these further but a project config cannot loosen a
-stricter personal setting.
+Standard tools are enabled by default. `tools.disabled` is the only project
+setting that closes tools; `tools.defer` only delays provider schema loading for
+the listed built-in tools. MCP tools use `capabilities.mcp.toolSchemaLoad`
+instead of wildcard tool names. The `write` block caps a run to a single file
+with no line deletions; raise `maxFiles`/`maxDiffLines` or set
+`allowDeletions: true` for projects that expect broader edits. Because `write`
+merges conservatively, a personal config can tighten these further but a
+project config cannot loosen a stricter personal setting.
 
 ### Shell Sandbox
 
@@ -274,7 +289,7 @@ Block generated files before a write tool runs:
           "description": "Generated files are produced by build tooling.",
           "hook": "PreToolUse",
           "matcher": {
-            "toolName": ["append_file", "edit_anchored_text", "apply_patch"],
+            "toolName": ["edit_anchored_text", "apply_patch"],
             "pathGlob": "src/generated/**",
             "excludePathGlob": "src/generated/fixtures/**"
           },
@@ -323,7 +338,7 @@ Run a command after workspace writes and feed the result back into the run:
           "hook": "PostToolUse",
           "frequency": "oncePerTurn",
           "matcher": {
-            "toolName": ["append_file", "edit_anchored_text", "apply_patch"]
+            "toolName": ["edit_anchored_text", "apply_patch"]
           },
           "action": {
             "type": "command",
@@ -441,6 +456,7 @@ Add a server under project `capabilities.mcp.servers`:
       ],
       "defaultTimeoutMs": 30000,
       "namePrefix": "mcp",
+      "startup": "lazy",
       "defaultPolicy": {
         "risk": "risky",
         "requiresApproval": true
@@ -456,18 +472,21 @@ SSE MCP servers are remote transports and are governed by MCP policy rather
 than local process sandboxing. Prefer `requiresApproval: true` for tools that
 can touch workspace state, credentials, network services, or external systems.
 
-Configured MCP servers are lazy by default during normal host runs. Capability
-inspection reports the server as `configured` and exposes the lazy
-`mcp_<server>_list_tools` / `mcp_<server>_call_tool` entrypoints without
-starting the server. The host starts a server only after the model selects one
-of those lazy MCP tools; the trace then records `mcp.server.prepared` with the
-resolved tool mapping or the structured prepare failure. Use
-`capabilities inspect --resolve-mcp` when you explicitly want inspection to
+Configured MCP servers default to `startup: "lazy"`: a normal run records the
+server as configured but does not connect to it until an MCP gateway tool is
+used. Set `startup: "prepare"` when you want host-run startup to connect and
+list concrete tool names such as `mcp_<server>_<tool>` for
+`tool_search select:<tool-name>`. Set `startup: "eager"` when you also want
+provider schemas loaded eagerly by default. The trace records
+`mcp.server.prepared` only when a server is actually prepared, either by an MCP
+gateway tool, startup prepare/eager, or `capabilities inspect --resolve-mcp`.
+Use `capabilities inspect --resolve-mcp` when you explicitly want inspection to
 connect to MCP servers and list concrete MCP tools.
 
 ACP clients may also pass session-scoped MCP servers in `session/new`
 `mcpServers`. SparkWright merges those servers with configured project/user MCP
-servers for that ACP session and applies the same lazy startup and policy path.
+servers for that ACP session and applies the same prepare, deferred-schema, and
+policy path.
 ACP `http`, `sse`, and stdio server descriptors are supported. ACP-over-ACP MCP
 transport descriptors are rejected with `invalidParams` until that transport is
 implemented.
@@ -562,9 +581,10 @@ Put user arguments in prompt text instead.
   entrypoint does not pass one. CLI `--trace-level` overrides.
 - `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`). CLI
   flags (`--yes`, `--yes-edits`, `--yes-shell-safe`) still override.
-- `capabilities.tools`: tool enable, disable, and defer filters.
+- `tools`: preferred tool disable/defer settings.
 - `capabilities.skills`: Skill roots and loading behavior.
-- `capabilities.mcp`: MCP server definitions and default policy.
+- `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
+  schema loading.
 - `capabilities.agents`: agent profiles and delegate tools.
 - `theme`, `mouse`, `keybindings`: TUI-only preferences.
 
@@ -644,14 +664,37 @@ do not grant authority by themselves.
 
 ## Tool Filters
 
-`tools.enabled`, `tools.disabled`, and `tools.defer` accept tool names or `*`
-wildcard patterns.
+Top-level `tools` is the preferred tool configuration surface.
 
-- `enabled`: optional allowlist. Omit it to allow all host-assembled tools
-  before other filters apply.
-- `disabled`: removes matching tools.
-- `defer`: keeps matching tools discoverable while delaying their full schemas
-  when the tool does not force eager loading.
+- `disabled`: concrete tool names removed from the prepared run tool set.
+- `defer`: concrete built-in tool names kept available but omitted from the
+  initial provider tool schema until discovered through `tool_search`.
+
+When `defer` is omitted, SparkWright applies a small default defer list for
+low-frequency tools (`todo_write`, `read_anchored_text`,
+`edit_anchored_text`). Use an explicit empty list (`"defer": []`) to disable
+that default. `tools.disabled` and `tools.defer` accept only concrete tool
+names (no wildcards); inspect available names before editing. The legacy
+`capabilities.tools` surface (including its `enabled` allowlist and wildcard
+patterns) has been removed — move any such config to top-level `tools`.
+
+MCP server tools are controlled under `capabilities.mcp`:
+
+```json
+{
+  "capabilities": {
+    "mcp": {
+      "startup": "lazy",
+      "toolSchemaLoad": "defer",
+      "servers": []
+    }
+  }
+}
+```
+
+Set `startup: "prepare"` to connect to MCP servers at run startup, or
+`startup: "eager"` to prepare them and default schema loading to eager. Set a
+server's own `toolSchemaLoad` to override the MCP default for that server.
 
 These settings only decide which tools the host prepares before a run. Tool
 execution still goes through policy, approval, validation, and trace.
@@ -661,9 +704,8 @@ The CLI can manage user-level tool settings in
 
 ```bash
 sparkwright tools list --format text
-sparkwright tools enable read_file glob
 sparkwright tools disable shell
-sparkwright tools defer "mcp_*"
+sparkwright tools defer todo_write
 ```
 
 Add `--workspace <path>` to manage project defaults in
@@ -672,7 +714,7 @@ Add `--workspace <path>` to manage project defaults in
 ```bash
 sparkwright tools list --workspace . --format text
 sparkwright tools disable shell --workspace .
-sparkwright tools defer "mcp_*" --workspace .
+sparkwright tools defer todo_write --workspace .
 ```
 
 ## Skill Loading
@@ -765,6 +807,8 @@ Use these commands before guessing:
 ```bash
 sparkwright config path --workspace .         # which files load, in order
 sparkwright config validate --workspace .      # report schema/load problems
+sparkwright config inspect --workspace .       # effective config, redacted
+sparkwright config explain --workspace .       # field origins and values
 sparkwright config example hooks               # paste-ready grouped snippet
 sparkwright capabilities inspect --workspace . --format text
 sparkwright tools list --format text
@@ -774,21 +818,38 @@ sparkwright skills validate --workspace .
 
 `config path` lists the resolution order and whether each layer loaded.
 `config validate` loads the merged config and prints any field problems,
-exiting non-zero when there are errors. `config example <name>` prints a
+exiting non-zero when there are errors. `config inspect` prints the effective
+merged config with secret-looking fields redacted. `config explain` focuses on
+where each resolved field came from. `config example <name>` prints a
 copy-pasteable snippet in the grouped form (names: `write`, `sandbox`, `run`,
 `hooks`, `verification`, `mcp`, `agent`). `capabilities inspect` is read-only.
 It summarizes the workspace, effective tool filters, Skill roots and shadows,
 agent roots and shadows, MCP servers, cron state paths, and command
 directories.
 
-Common checks:
+## Install And Upgrade Safety
+
+Sparkwright treats config and project capabilities as user-owned assets:
+
+- Package installation does not create or modify config files.
+- First interactive use points at the expected config paths and suggests
+  `sparkwright init` or `sparkwright init --project`.
+- `init` and `init --project` do not overwrite existing config files.
+- Project upgrade or reinstall must not overwrite existing Skills, agents,
+  commands, sessions, tasks, or config.
+- Commands that can replace an existing user asset require an explicit
+  `--force` or a dedicated apply/approval flow.
+- Future config migrations should be inspectable and preferably dry-run before
+  writing.
+
+## Common Troubleshooting Checks
 
 - If a provider model is unknown, confirm `model` uses `provider/model` form
   and that the provider key exists under `providers`.
 - If an API key is ignored, check whether the matching environment variable is
   overriding config.
-- If a tool disappeared, look for `tools.enabled` allowlists and
-  `tools.disabled` filters.
+- If a tool disappeared, look for `tools.disabled`, legacy allowlists, and MCP
+  server `enabled` settings.
 - If a project setting does not combine with a user setting, remember that most
   fields other than `providers` are replaced wholesale — except the security
   boundaries (`permissionMode`, `confidentialPaths`, `write`, `shell.sandbox`),

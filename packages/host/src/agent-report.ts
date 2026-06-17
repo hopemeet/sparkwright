@@ -104,7 +104,7 @@ function toReportEntry(
   return {
     id: profile.id,
     name: profile.name,
-    mode: profile.experimental?.mode ?? profile.mode,
+    mode: profile.mode,
     layer,
     ...(root ? { root } : {}),
     ...(source ? { source } : {}),

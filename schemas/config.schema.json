@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui (capabilities is its own group); a field set both ways conflicts and the grouped value wins. The `providers` map is merged by key, `capabilities` merges by sub-capability, and the security boundaries — shell.sandbox, permissionMode, confidentialPaths, and write — merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The `providers` map is merged by key, `tools.disabled` unions while `tools.defer` is replaced by later layers, `capabilities` merges by sub-capability, and the security boundaries — shell.sandbox, permissionMode, confidentialPaths, and write — merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -217,32 +217,27 @@
       },
       "additionalProperties": false
     },
+    "tools": {
+      "type": "object",
+      "description": "Preferred tool exposure/loading settings. Standard tools are enabled by default; `disabled` closes tools and `defer` only delays provider schema loading.",
+      "properties": {
+        "disabled": {
+          "type": "array",
+          "description": "Concrete tool names removed from the prepared run tool set.",
+          "items": { "type": "string" }
+        },
+        "defer": {
+          "type": "array",
+          "description": "Concrete built-in tool names prepared as deferred schemas when the tool does not force eager loading.",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
     "capabilities": {
       "type": "object",
       "description": "Host-owned capability runtime settings. These settings decide what the host may prepare before createRun(); the TUI may inspect the resulting host facts but must not load capabilities itself.",
       "properties": {
-        "tools": {
-          "type": "object",
-          "description": "Tool availability settings for host-created runs. These settings only affect which tools the host prepares before createRun(); execution still goes through policy and approval.",
-          "properties": {
-            "enabled": {
-              "type": "array",
-              "description": "Optional allowlist of tool-name patterns. Omit to allow all host-assembled tools before other filters apply. Supports '*' as a wildcard.",
-              "items": { "type": "string" }
-            },
-            "disabled": {
-              "type": "array",
-              "description": "Tool-name patterns removed from the prepared run tool set. Supports '*' as a wildcard.",
-              "items": { "type": "string" }
-            },
-            "defer": {
-              "type": "array",
-              "description": "Tool-name patterns prepared as deferred schemas when the tool does not force eager loading. Supports '*' as a wildcard.",
-              "items": { "type": "string" }
-            }
-          },
-          "additionalProperties": false
-        },
         "hooks": {
           "type": "object",
           "description": "Deterministic workflow hooks for host-created runs. Core owns lifecycle execution; the host interprets configured actions.",
@@ -476,6 +471,16 @@
               "minimum": 1
             },
             "namePrefix": { "type": "string" },
+            "startup": {
+              "type": "string",
+              "enum": ["lazy", "prepare", "eager"],
+              "description": "When configured MCP servers are connected. lazy does not start servers until an MCP gateway tool is used; prepare connects and lists tools at run startup; eager also defaults provider schema loading to eager."
+            },
+            "toolSchemaLoad": {
+              "type": "string",
+              "enum": ["eager", "defer"],
+              "description": "Default provider-schema loading behavior for concrete tools discovered from MCP servers."
+            },
             "defaultPolicy": {
               "type": "object",
               "properties": {

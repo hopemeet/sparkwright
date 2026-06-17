@@ -121,12 +121,14 @@ The ACP server communicates over stdio. It maps ACP sessions and permission
 requests onto the normal Sparkwright host runtime, so policy, approval,
 workspace mutation, artifacts, and trace remain governed by Sparkwright.
 ACP `session/new` may include `mcpServers`; SparkWright merges those
-session-scoped MCP servers with configured MCP servers for that session. They
-remain lazy: capability inspection exposes the lazy MCP entrypoints and reports
-servers as configured, but the server process or remote transport is prepared
-only when the model selects a lazy MCP tool. ACP `http`, `sse`, and stdio MCP
-server descriptors are supported. MCP-over-ACP descriptors are rejected until
-that transport is implemented.
+session-scoped MCP servers with configured MCP servers for that session.
+Configured MCP servers default to lazy startup, so ordinary runs do not connect
+until an MCP gateway tool is used. Session-scoped MCP servers supplied by ACP
+are explicit for that session and may be prepared immediately so concrete MCP
+tool names are discoverable; when schema loading is deferred, the model fetches
+those concrete tools through `tool_search select:<tool-name>`. ACP `http`,
+`sse`, and stdio MCP server descriptors are supported. MCP-over-ACP descriptors
+are rejected until that transport is implemented.
 
 ## External ACP Delegates
 

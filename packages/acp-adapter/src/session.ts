@@ -1,14 +1,13 @@
 import { isAbsolute } from "node:path";
-import {
-  asSessionId,
-  createSessionId,
-  type PermissionMode,
-  type TraceLevel,
-} from "@sparkwright/core";
+import { asSessionId, createSessionId } from "@sparkwright/core";
 import { HostRuntime } from "@sparkwright/host";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import type { AgentSideConnection, SessionId } from "@agentclientprotocol/sdk";
-import type { HostEvent } from "@sparkwright/protocol";
+import type {
+  HostEvent,
+  PermissionMode,
+  TraceLevel,
+} from "@sparkwright/protocol";
 
 export interface AcpSessionInfo {
   sessionId: SessionId;

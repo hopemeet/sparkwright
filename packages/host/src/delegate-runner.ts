@@ -10,8 +10,8 @@ import {
   type ApprovalResolver,
   type RunResult,
   type SparkwrightEvent,
-  type TraceLevel,
 } from "@sparkwright/core";
+import type { TraceLevel } from "@sparkwright/protocol";
 import { loadHostConfig } from "./config.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
 import { resolveSkillRootsForRuntime } from "./skill-roots.js";

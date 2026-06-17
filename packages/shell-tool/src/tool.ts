@@ -15,6 +15,7 @@ import {
   type ShellExecutionRequest,
   type ShellExecutionResult,
   type ToolDefinition,
+  type ToolGovernance,
 } from "@sparkwright/core";
 
 import { parseCommand } from "./command-parser.js";
@@ -203,6 +204,28 @@ export interface ShellToolSandboxOutput {
 const DEFAULT_NAME = "shell";
 const DEFAULT_DESCRIPTION =
   "Execute a shell command after safety classification and policy approval.";
+const SHELL_ORIGIN = {
+  kind: "local",
+  name: "@sparkwright/shell-tool",
+} as const;
+const RISKY_SHELL_GOVERNANCE: ToolGovernance = {
+  sideEffects: ["write", "external"],
+  idempotency: "non_idempotent",
+  dataSensitivity: "confidential",
+  origin: SHELL_ORIGIN,
+};
+const SAFETY_DENIED_SHELL_GOVERNANCE: ToolGovernance = {
+  sideEffects: ["external"],
+  idempotency: "non_idempotent",
+  dataSensitivity: "confidential",
+  origin: SHELL_ORIGIN,
+};
+const READ_ONLY_SHELL_GOVERNANCE: ToolGovernance = {
+  sideEffects: ["read"],
+  idempotency: "conditional",
+  dataSensitivity: "internal",
+  origin: SHELL_ORIGIN,
+};
 
 /**
  * Create the opt-in shell tool. The returned definition advertises `risky`
@@ -272,11 +295,9 @@ export function createShellTool(
     },
     timeoutMs: options.defaultTimeoutMs,
     policy: { risk: "risky", requiresApproval: true },
-    governance: {
-      sideEffects: ["write", "external"],
-      idempotency: "non_idempotent",
-      dataSensitivity: "confidential",
-      origin: { kind: "local", name: "@sparkwright/shell-tool" },
+    governance: RISKY_SHELL_GOVERNANCE,
+    policyForArgs(args) {
+      return shellPolicyForArgs(args, options.safety);
     },
     resultSize: { maxChars: SHELL_INLINE_CHARS },
     resultPresentation: {
@@ -330,6 +351,43 @@ export function createShellTool(
       });
     },
   });
+}
+
+function shellPolicyForArgs(
+  args: ShellToolInput,
+  safety: ShellSafetyOptions | undefined,
+): {
+  policy: ToolDefinition<ShellToolInput, ShellToolOutput>["policy"];
+  governance: ToolGovernance;
+} {
+  const input = normalizeShellInput(args);
+  const verdict = evaluateShellSafety(input.command, safety);
+  if (verdict.decision === "allow" && isSimpleReadOnlyShellCommand(input)) {
+    return {
+      policy: { risk: "safe", requiresApproval: false },
+      governance: READ_ONLY_SHELL_GOVERNANCE,
+    };
+  }
+  if (verdict.decision === "deny") {
+    return {
+      policy: { risk: "risky", requiresApproval: true },
+      governance: SAFETY_DENIED_SHELL_GOVERNANCE,
+    };
+  }
+  return {
+    policy: { risk: "risky", requiresApproval: true },
+    governance: RISKY_SHELL_GOVERNANCE,
+  };
+}
+
+function isSimpleReadOnlyShellCommand(input: ShellToolInput): boolean {
+  const parsed = parseCommand(input.command);
+  return (
+    !parsed.hasRedirect &&
+    !parsed.hasSubshell &&
+    !parsed.hasChain &&
+    parsed.leadingProgram.length > 0
+  );
 }
 
 const SHELL_INLINE_CHARS = 4_000;

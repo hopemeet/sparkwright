@@ -41,6 +41,7 @@ import type { ContextItem, RunRecord, ToolResult } from "./types.js";
  */
 export type CompactionTrigger =
   | "tool_result_budget" // shrink oversize tool_result items
+  | "clear_tool_uses" // replace stale tool results with explicit placeholders
   | "snip" // drop middle redundant items
   | "micro" // replace stale tool results with id refs
   | "collapse" // fold older blocks into summaries
@@ -479,6 +480,154 @@ export function createToolResultBudgetStage(options: {
   };
 }
 
+export interface ClearToolUsesStageOptions {
+  /**
+   * Run only once the current context reaches this size. Reactive overflow
+   * recovery bypasses this gate. Defaults to 60k chars.
+   */
+  triggerChars?: number;
+  /** Keep the most recent N tool results intact. Defaults to 3. */
+  keepRecent?: number;
+  /**
+   * If set, skip the rewrite unless it would free at least this many chars.
+   * Mirrors provider-side "clear_at_least" behavior to avoid small cache
+   * breaks that do not buy meaningful room.
+   */
+  clearAtLeastChars?: number;
+  /** Tool names whose results should never be cleared. */
+  excludeTools?: string[];
+  name?: string;
+}
+
+/**
+ * `clear_tool_uses` stage: replaces older tool results with stable placeholder
+ * observations while keeping recent tool results intact. The runtime still
+ * retains the original context; this only edits the prompt-bound copy so the
+ * model can see that earlier observations existed but their bodies were
+ * intentionally cleared.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export function createClearToolUsesStage(
+  options: ClearToolUsesStageOptions = {},
+): CompactionStage {
+  const triggerChars = options.triggerChars ?? 60_000;
+  const keepRecent = Math.max(0, options.keepRecent ?? 3);
+  const clearAtLeastChars = Math.max(0, options.clearAtLeastChars ?? 0);
+  const excludeTools = new Set(options.excludeTools ?? []);
+
+  return {
+    name: options.name ?? "clear_tool_uses",
+    trigger: "clear_tool_uses",
+    shouldRun(input) {
+      if (!input.reactive && input.totalChars < triggerChars) return false;
+      const plan = planClearToolUses(input.items, {
+        keepRecent,
+        excludeTools,
+      });
+      return (
+        plan.replaced > 0 &&
+        (clearAtLeastChars === 0 || plan.freedChars >= clearAtLeastChars)
+      );
+    },
+    apply(input) {
+      const plan = planClearToolUses(input.items, {
+        keepRecent,
+        excludeTools,
+      });
+      if (
+        plan.replaced === 0 ||
+        (clearAtLeastChars > 0 && plan.freedChars < clearAtLeastChars)
+      ) {
+        return {
+          items: input.items,
+          freedChars: 0,
+          metadata: {
+            replaced: 0,
+            skipped: true,
+            clearAtLeastChars,
+            potentialFreedChars: plan.freedChars,
+          },
+        };
+      }
+      return {
+        items: plan.items,
+        freedChars: plan.freedChars,
+        metadata: {
+          replaced: plan.replaced,
+          keepRecent,
+          excludedTools: [...excludeTools],
+        },
+      };
+    },
+  };
+}
+
+function planClearToolUses(
+  items: ContextItem[],
+  options: { keepRecent: number; excludeTools: Set<string> },
+): { items: ContextItem[]; freedChars: number; replaced: number } {
+  const toolResultIndexes = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.type === "tool_result")
+    .map(({ index }) => index);
+  const keep = new Set(
+    toolResultIndexes.slice(
+      Math.max(0, toolResultIndexes.length - options.keepRecent),
+    ),
+  );
+
+  let freedChars = 0;
+  let replaced = 0;
+  const next = items.map((item, index) => {
+    if (item.type !== "tool_result") return item;
+    if (keep.has(index)) return item;
+    if (item.metadata["clearToolUsesCleared"] === true) return item;
+    const toolName = contextToolName(item);
+    if (toolName && options.excludeTools.has(toolName)) return item;
+
+    const placeholder = renderClearedToolUsePlaceholder(item, toolName);
+    freedChars += Math.max(0, item.content.length - placeholder.length);
+    replaced += 1;
+    return {
+      ...item,
+      content: placeholder,
+      metadata: {
+        ...item.metadata,
+        clearToolUsesCleared: true,
+        originalChars: item.content.length,
+      },
+    };
+  });
+
+  return { items: next, freedChars, replaced };
+}
+
+function contextToolName(item: ContextItem): string | undefined {
+  const fromMetadata =
+    typeof item.metadata["toolName"] === "string"
+      ? item.metadata["toolName"]
+      : undefined;
+  return fromMetadata ?? item.source?.uri;
+}
+
+function renderClearedToolUsePlaceholder(
+  item: ContextItem,
+  toolName: string | undefined,
+): string {
+  const status =
+    typeof item.metadata["status"] === "string"
+      ? ` status=${item.metadata["status"]}`
+      : "";
+  const tool = toolName ? ` tool=${toolName}` : "";
+  const toolCallId =
+    typeof item.metadata["toolCallId"] === "string"
+      ? ` toolCallId=${item.metadata["toolCallId"]}`
+      : "";
+  return `[tool result cleared by clear_tool_uses:${tool}${status}${toolCallId} originalChars=${item.content.length}]`;
+}
+
 /**
  * `snip` stage: drops the middle of an over-long context, keeping the head
  * and tail. Useful as a coarse second-tier reduction before invoking
@@ -567,6 +716,12 @@ export function createDefaultCompactionStages(options?: {
    * newest observations intact.
    */
   observationOneLine?: boolean;
+  /**
+   * Replace stale tool results with explicit placeholders once context grows.
+   * Enabled by default because it preserves chronology while avoiding silent
+   * loss of older tool observations.
+   */
+  clearToolUses?: boolean;
   observationKeepRecent?: number;
   observationMinCharsToCollapse?: number;
   triggerChars?: number;
@@ -588,6 +743,9 @@ export function createDefaultCompactionStages(options?: {
         minCharsToCollapse: options?.observationMinCharsToCollapse,
       }),
     );
+  }
+  if (options?.clearToolUses !== false) {
+    stages.push(createClearToolUsesStage());
   }
   stages.push(
     createSnipStage({

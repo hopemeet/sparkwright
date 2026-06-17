@@ -1,12 +1,13 @@
-// AI maintenance note: These five ToolDefinitions expose the TaskManager
+// AI maintenance note: These ToolDefinitions expose the TaskManager
 // surface to LLMs. They are intentionally thin — argument parsing and
 // translation to TaskManager calls. Risk classification:
 //   task_create -> external (host runs arbitrary registered kinds)
+//   task(action="stop") -> write
 //   task_stop   -> write    (mutates lifecycle state)
-//   task_list / task_get / task_output -> read
+//   task(action="list"|"get"|"output") / task_list / task_get / task_output -> read
 //
-// All five are eagerly loaded; deferred-loading does not apply because the
-// model only learns about them via the host's registration anyway.
+// The host defaults to the compressed task(action=...) surface and keeps the
+// legacy task_* tools opt-in for compatibility.
 
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
 import type { RunId } from "@sparkwright/core";
@@ -47,6 +48,7 @@ const DEFAULT_MAX_OUTPUT_CHUNKS = 200;
  */
 export function createTaskTools(options: CreateTaskToolsOptions): {
   taskCreate: ToolDefinition;
+  task: ToolDefinition;
   taskList: ToolDefinition;
   taskGet: ToolDefinition;
   taskStop: ToolDefinition;
@@ -54,17 +56,19 @@ export function createTaskTools(options: CreateTaskToolsOptions): {
   all(): ToolDefinition[];
 } {
   const taskCreate = createTaskCreate(options);
+  const task = createTaskControl(options);
   const taskList = createTaskList(options);
   const taskGet = createTaskGet(options);
   const taskStop = createTaskStop(options);
   const taskOutput = createTaskOutput(options);
   return {
     taskCreate,
+    task,
     taskList,
     taskGet,
     taskStop,
     taskOutput,
-    all: () => [taskCreate, taskList, taskGet, taskStop, taskOutput],
+    all: () => [taskCreate, task, taskList, taskGet, taskStop, taskOutput],
   };
 }
 
@@ -75,7 +79,7 @@ export function createTaskCreate(
   return defineTool({
     name: "task_create",
     description:
-      "Spawn a long-running background task by kind. Returns the task id; use task_get / task_output to monitor.",
+      "Spawn a long-running background task by kind. Returns the task id; use task(action=get) / task(action=output) to monitor.",
     inputSchema: {
       type: "object",
       properties: {
@@ -104,6 +108,75 @@ export function createTaskCreate(
         payload: parsed.payload,
       });
       return { taskId: handle.record.id };
+    },
+  });
+}
+
+/** @public @stability experimental v0.1 */
+export function createTaskControl(
+  options: CreateTaskToolsOptions,
+): ToolDefinition {
+  const taskList = createTaskList(options);
+  const taskGet = createTaskGet(options);
+  const taskStop = createTaskStop(options);
+  const taskOutput = createTaskOutput(options);
+  return defineTool({
+    name: "task",
+    description:
+      "Manage background tasks. Use action=list to inspect tasks, get for one task record, output for buffered task output, and stop to request cancellation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "get", "output", "stop"],
+        },
+        taskId: { type: "string" },
+        status: { type: "string" },
+        kind: { type: "string" },
+        fromSequence: { type: "integer" },
+        maxChunks: { type: "integer" },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    deferLoading: false,
+    policy: { risk: "risky", requiresApproval: false },
+    governance: { sideEffects: ["read", "write"] },
+    policyForArgs(args: unknown) {
+      const record = args && typeof args === "object" ? args : {};
+      if ((record as Record<string, unknown>).action === "stop") {
+        return {
+          policy: { risk: "risky", requiresApproval: false },
+          governance: { sideEffects: ["write"] },
+        };
+      }
+      return {
+        policy: { risk: "safe", requiresApproval: false },
+        governance: { sideEffects: ["read"] },
+      };
+    },
+    isReadOnly(args: unknown): boolean {
+      const record = args && typeof args === "object" ? args : {};
+      return (record as Record<string, unknown>).action !== "stop";
+    },
+    async execute(args: unknown, ctx) {
+      const record = requireRecord(args, "task");
+      switch (record.action) {
+        case "list":
+          return taskList.execute(args, ctx);
+        case "get":
+          return taskGet.execute(args, ctx);
+        case "output":
+          return taskOutput.execute(args, ctx);
+        case "stop":
+          return taskStop.execute(args, ctx);
+        default:
+          throw makeToolError(
+            "TASK_ARGUMENTS_INVALID",
+            "task: action must be one of list, get, output, or stop.",
+          );
+      }
     },
   });
 }

@@ -77,7 +77,7 @@ import {
   createKindFromRest,
   type CapabilityView,
 } from "./lib/layer-payload.js";
-import type { PermissionMode, TraceLevel } from "./state/run-controller.js";
+import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import {
   loadTuiConfig,
   watchTuiConfig,
