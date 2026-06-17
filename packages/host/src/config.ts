@@ -10,9 +10,11 @@
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
- * files, capabilities merge by sub-capability, and the security boundaries —
- * shell.sandbox, permissionMode, and confidentialPaths — merge conservatively
- * so later (lower-trust) layers cannot weaken an earlier layer's policy.
+ * files, top-level tool config merges with disabled as a tightening union and
+ * defer as a later-layer replacement, capabilities merge by sub-capability, and
+ * the security boundaries — shell.sandbox, permissionMode, and
+ * confidentialPaths — merge conservatively so later (lower-trust) layers cannot
+ * weaken an earlier layer's policy.
  * Callers layer CLI flags / env on top.
  */
 
@@ -20,12 +22,16 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type {
-  PermissionMode,
   RunBudget,
-  TraceLevel,
   WorkflowHookMatcher,
   WorkflowHookName,
 } from "@sparkwright/core";
+import {
+  PERMISSION_MODES,
+  isPermissionMode,
+  type PermissionMode,
+  type TraceLevel,
+} from "@sparkwright/protocol";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 
@@ -105,6 +111,8 @@ export interface SharedConfig {
    */
   write?: WriteGuardrailsConfig;
   shell?: ShellConfig;
+  /** Preferred top-level tool exposure/loading config. */
+  tools?: CapabilityToolsConfig;
   capabilities?: CapabilityConfig;
   /**
    * Resource budget for the interactive main run. `maxModelCalls` is the
@@ -143,7 +151,6 @@ export interface ShellConfig {
 }
 
 export interface CapabilityConfig {
-  tools?: CapabilityToolsConfig;
   hooks?: CapabilityHooksConfig;
   verification?: CapabilityVerificationConfig;
   skills?: CapabilitySkillsConfig;
@@ -152,14 +159,9 @@ export interface CapabilityConfig {
 }
 
 export interface CapabilityToolsConfig {
-  /**
-   * Optional allowlist of tool-name patterns prepared for a run. Omit to allow
-   * all host-assembled tools before other filters apply.
-   */
-  enabled?: string[];
-  /** Tool-name patterns removed from the prepared run tool set. */
+  /** Concrete tool names removed from the prepared run tool set. */
   disabled?: string[];
-  /** Tool-name patterns prepared as deferred schemas when supported. */
+  /** Concrete tool names prepared as deferred schemas when supported. */
   defer?: string[];
 }
 
@@ -282,6 +284,7 @@ export type CapabilityMcpServerConfig =
       env?: Record<string, string>;
       timeoutMs?: number;
       enabled?: boolean;
+      toolSchemaLoad?: CapabilityMcpToolSchemaLoad;
     }
   | {
       type: "http";
@@ -290,12 +293,23 @@ export type CapabilityMcpServerConfig =
       headers?: Record<string, string>;
       timeoutMs?: number;
       enabled?: boolean;
+      toolSchemaLoad?: CapabilityMcpToolSchemaLoad;
     };
+
+export type CapabilityMcpToolSchemaLoad = "eager" | "defer";
+export type CapabilityMcpStartup = "lazy" | "prepare" | "eager";
 
 export interface CapabilityMcpConfig {
   servers?: CapabilityMcpServerConfig[];
   defaultTimeoutMs?: number;
   namePrefix?: string;
+  /**
+   * When configured MCP servers are connected. File config defaults to lazy;
+   * embedders may opt session-scoped servers into prepare.
+   */
+  startup?: CapabilityMcpStartup;
+  /** Default provider-schema loading behavior for concrete MCP tools. */
+  toolSchemaLoad?: CapabilityMcpToolSchemaLoad;
   defaultPolicy?: {
     risk?: "safe" | "risky" | "denied";
     requiresApproval?: boolean;
@@ -309,6 +323,7 @@ export interface SharedConfigSourceMap {
   confidentialPaths?: string;
   write?: string;
   shell?: string;
+  tools?: string;
   runBudget?: string;
   maxSteps?: string;
   traceLevel?: string;
@@ -328,14 +343,6 @@ export interface LoadedSharedConfig {
   attempted: { path: string; loaded: boolean }[];
   errors: SharedConfigError[];
 }
-
-const VALID_PERMISSION_MODES: PermissionMode[] = [
-  "plan",
-  "default",
-  "accept_edits",
-  "dont_ask",
-  "bypass_permissions",
-];
 
 /**
  * Permissiveness ranking for `permissionMode` (lower = more restrictive). Used
@@ -681,55 +688,68 @@ function validateCapabilitySkillEvolution(
   return out;
 }
 
-function validateCapabilityTools(
+function validateToolsConfig(
   raw: unknown,
+  field: string,
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityToolsConfig | undefined {
   if (!isRecord(raw)) {
     errors.push({
       file: filePath,
-      field: "capabilities.tools",
+      field,
       message: "must be an object",
     });
     return undefined;
   }
   const out: CapabilityToolsConfig = {};
-  const allowed = new Set(["enabled", "disabled", "defer"]);
+  const allowed = new Set(["disabled", "defer"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
         file: filePath,
-        field: `capabilities.tools.${key}`,
+        field: `${field}.${key}`,
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
   }
-  if (raw.enabled !== undefined) {
-    out.enabled = validateStringArray(
-      raw.enabled,
-      "capabilities.tools.enabled",
-      filePath,
-      errors,
-    );
-  }
   if (raw.disabled !== undefined) {
-    out.disabled = validateStringArray(
+    out.disabled = validateToolNameArray(
       raw.disabled,
-      "capabilities.tools.disabled",
+      `${field}.disabled`,
       filePath,
       errors,
     );
   }
   if (raw.defer !== undefined) {
-    out.defer = validateStringArray(
+    out.defer = validateToolNameArray(
       raw.defer,
-      "capabilities.tools.defer",
+      `${field}.defer`,
       filePath,
       errors,
     );
   }
   return out;
+}
+
+function validateToolNameArray(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): string[] | undefined {
+  const values = validateStringArray(raw, field, filePath, errors);
+  if (!values) return undefined;
+  const invalid = values.find((value) => value.includes("*"));
+  if (invalid !== undefined) {
+    errors.push({
+      file: filePath,
+      field,
+      message: `must contain concrete tool names; wildcard patterns are not supported (${invalid})`,
+    });
+    return undefined;
+  }
+  return values;
 }
 
 const WORKFLOW_HOOK_NAMES: WorkflowHookName[] = [
@@ -1464,14 +1484,7 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set([
-    "tools",
-    "hooks",
-    "verification",
-    "skills",
-    "mcp",
-    "agents",
-  ]);
+  const allowed = new Set(["hooks", "verification", "skills", "mcp", "agents"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1480,10 +1493,6 @@ function validateCapabilities(
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
-  }
-  if (raw.tools !== undefined) {
-    const tools = validateCapabilityTools(raw.tools, filePath, errors);
-    if (tools) out.tools = tools;
   }
   if (raw.hooks !== undefined) {
     const hooks = validateCapabilityHooks(raw.hooks, filePath, errors);
@@ -1956,6 +1965,35 @@ function mergeUniqueStrings(
   return out;
 }
 
+function mergeToolConfig(
+  previous: CapabilityToolsConfig | undefined,
+  next: CapabilityToolsConfig | undefined,
+): CapabilityToolsConfig | undefined {
+  if (!previous) return next ? { ...next } : undefined;
+  if (!next) return { ...previous };
+  return pruneToolConfig({
+    // Disabled tools are a tightening boundary, so layers union.
+    disabled: mergeUniqueStrings(previous.disabled, next.disabled),
+    // Defer is a loading preference, not a safety boundary. A later explicit
+    // value replaces the prior one so users can remove a default defer entry.
+    defer:
+      next.defer !== undefined
+        ? [...next.defer]
+        : previous.defer
+          ? [...previous.defer]
+          : undefined,
+  });
+}
+
+function pruneToolConfig(config: CapabilityToolsConfig): CapabilityToolsConfig {
+  return {
+    ...(config.disabled && config.disabled.length > 0
+      ? { disabled: config.disabled }
+      : {}),
+    ...(config.defer !== undefined ? { defer: config.defer } : {}),
+  };
+}
+
 function validateMcpServer(
   raw: unknown,
   index: number,
@@ -2002,6 +2040,16 @@ function validateMcpServer(
           enabled: validateOptionalBoolean(
             raw.enabled,
             `${field}.enabled`,
+            filePath,
+            errors,
+          ),
+        }
+      : {}),
+    ...(raw.toolSchemaLoad !== undefined
+      ? {
+          toolSchemaLoad: validateMcpToolSchemaLoad(
+            raw.toolSchemaLoad,
+            `${field}.toolSchemaLoad`,
             filePath,
             errors,
           ),
@@ -2078,6 +2126,36 @@ function validateMcpServer(
   };
 }
 
+function validateMcpToolSchemaLoad(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityMcpToolSchemaLoad | undefined {
+  if (raw === "eager" || raw === "defer") return raw;
+  errors.push({
+    file: filePath,
+    field,
+    message: "must be eager or defer",
+  });
+  return undefined;
+}
+
+function validateMcpStartup(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityMcpStartup | undefined {
+  if (raw === "lazy" || raw === "prepare" || raw === "eager") return raw;
+  errors.push({
+    file: filePath,
+    field,
+    message: "must be lazy, prepare, or eager",
+  });
+  return undefined;
+}
+
 function validateCapabilityMcp(
   raw: unknown,
   filePath: string,
@@ -2096,6 +2174,8 @@ function validateCapabilityMcp(
     "servers",
     "defaultTimeoutMs",
     "namePrefix",
+    "startup",
+    "toolSchemaLoad",
     "defaultPolicy",
   ]);
   for (const key of Object.keys(raw)) {
@@ -2136,6 +2216,22 @@ function validateCapabilityMcp(
         field: "capabilities.mcp.namePrefix",
         message: "must be a string",
       });
+  }
+  if (raw.startup !== undefined) {
+    out.startup = validateMcpStartup(
+      raw.startup,
+      "capabilities.mcp.startup",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.toolSchemaLoad !== undefined) {
+    out.toolSchemaLoad = validateMcpToolSchemaLoad(
+      raw.toolSchemaLoad,
+      "capabilities.mcp.toolSchemaLoad",
+      filePath,
+      errors,
+    );
   }
   if (raw.defaultPolicy !== undefined) {
     if (isRecord(raw.defaultPolicy)) {
@@ -2194,7 +2290,6 @@ function validateAgentProfile(
     "id",
     "name",
     "description",
-    "experimental",
     "mode",
     "model",
     "prompt",
@@ -2235,57 +2330,6 @@ function validateAgentProfile(
         field: `${field}.mode`,
         message: "must be primary, child, or all",
       });
-  }
-  if (raw.experimental !== undefined) {
-    if (isRecord(raw.experimental)) {
-      const experimental: AgentProfile["experimental"] = {};
-      const allowedExperimental = new Set(["mode", "model", "prompt"]);
-      for (const key of Object.keys(raw.experimental)) {
-        if (!allowedExperimental.has(key)) {
-          errors.push({
-            file: filePath,
-            field: `${field}.experimental.${key}`,
-            message: "unknown field",
-          });
-        }
-      }
-      if (raw.experimental.mode !== undefined) {
-        if (
-          raw.experimental.mode === "primary" ||
-          raw.experimental.mode === "child" ||
-          raw.experimental.mode === "all"
-        ) {
-          experimental.mode = raw.experimental.mode;
-        } else {
-          errors.push({
-            file: filePath,
-            field: `${field}.experimental.mode`,
-            message: "must be primary, child, or all",
-          });
-        }
-      }
-      if (raw.experimental.model !== undefined) {
-        experimental.model = raw.experimental.model;
-      }
-      if (raw.experimental.prompt !== undefined) {
-        if (typeof raw.experimental.prompt === "string") {
-          experimental.prompt = raw.experimental.prompt;
-        } else {
-          errors.push({
-            file: filePath,
-            field: `${field}.experimental.prompt`,
-            message: "must be a string",
-          });
-        }
-      }
-      profile.experimental = experimental;
-    } else {
-      errors.push({
-        file: filePath,
-        field: `${field}.experimental`,
-        message: "must be an object",
-      });
-    }
   }
   if (raw.model !== undefined) profile.model = raw.model;
   for (const key of ["allowedTools", "deniedTools"] as const) {
@@ -3060,17 +3104,14 @@ function validateShared(
     }
   }
   if (obj.permissionMode !== undefined) {
-    if (
-      typeof obj.permissionMode === "string" &&
-      (VALID_PERMISSION_MODES as string[]).includes(obj.permissionMode)
-    ) {
-      config.permissionMode = obj.permissionMode as PermissionMode;
+    if (isPermissionMode(obj.permissionMode)) {
+      config.permissionMode = obj.permissionMode;
       sources.permissionMode = origin;
     } else {
       errors.push({
         file: filePath,
         field: "permissionMode",
-        message: `must be one of ${VALID_PERMISSION_MODES.join(" | ")}`,
+        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
       });
     }
   }
@@ -3160,13 +3201,22 @@ function validateShared(
       sources.shell = origin;
     }
   }
+  if (obj.tools !== undefined) {
+    const tools = validateToolsConfig(obj.tools, "tools", filePath, errors);
+    if (tools) {
+      config.tools = tools;
+      sources.tools = origin;
+    }
+  }
   if (obj.capabilities !== undefined) {
     const capabilities = validateCapabilities(
       obj.capabilities,
       filePath,
       errors,
     );
-    if (capabilities) config.capabilities = capabilities;
+    if (capabilities) {
+      config.capabilities = capabilities;
+    }
   }
   return { config, sources, errors };
 }
@@ -3234,14 +3284,16 @@ export async function loadHostConfig(
       };
     }
     // Providers merge by key (a later file adds/overrides individual entries),
-    // capabilities merge by sub-capability (tools/skills/mcp/agents), and
-    // shell.sandbox merges conservatively so a project cannot downgrade a
-    // user-defined sandbox boundary. Within a sub-capability the later layer
-    // still wholesale-overrides. Every other field is wholesale-overridden.
+    // top-level tools merge by explicit set semantics, capabilities merge by
+    // sub-capability (skills/mcp/agents), and shell.sandbox merges
+    // conservatively so a project cannot downgrade a user-defined sandbox
+    // boundary. Within a sub-capability the later layer still
+    // wholesale-overrides. Every other field is wholesale-overridden.
     const {
       providers,
       capabilities: layerCapabilities,
       shell: layerShell,
+      tools: layerTools,
       permissionMode: layerPermissionMode,
       confidentialPaths: layerConfidentialPaths,
       write: layerWrite,
@@ -3259,6 +3311,10 @@ export async function loadHostConfig(
         ...(merged.capabilities ?? {}),
         ...layerCapabilities,
       };
+    }
+    if (layerTools) {
+      merged.tools = mergeToolConfig(merged.tools, layerTools);
+      sources.tools = v.sources.tools;
     }
     // permissionMode and confidentialPaths are security boundaries: merge them
     // conservatively (like shell.sandbox) so a later, lower-trust layer (e.g. a

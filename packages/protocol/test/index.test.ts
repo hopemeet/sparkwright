@@ -1,15 +1,34 @@
 import { describe, expect, it } from "vitest";
 import {
+  PERMISSION_MODES,
   PROTOCOL_VERSION,
+  TRACE_LEVELS,
   isEvent,
+  isPermissionMode,
   isRequest,
   isResponse,
+  isTraceLevel,
   type HostMessage,
 } from "../src/index.js";
 
 describe("@sparkwright/protocol", () => {
   it("exports the current host protocol version", () => {
     expect(PROTOCOL_VERSION).toBe("1.3");
+  });
+
+  it("exports stable permission mode and trace level guards", () => {
+    expect([...PERMISSION_MODES]).toEqual([
+      "plan",
+      "default",
+      "accept_edits",
+      "dont_ask",
+      "bypass_permissions",
+    ]);
+    expect([...TRACE_LEVELS]).toEqual(["minimal", "standard", "debug"]);
+    expect(isPermissionMode("accept_edits")).toBe(true);
+    expect(isPermissionMode("unknown")).toBe(false);
+    expect(isTraceLevel("debug")).toBe(true);
+    expect(isTraceLevel("verbose")).toBe(false);
   });
 
   it("narrows host message envelopes", () => {

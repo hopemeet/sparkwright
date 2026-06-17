@@ -34,10 +34,11 @@ npm exec sparkwright -- run "inspect this repo and suggest a README improvement"
   --trace-level standard
 ```
 
-Direct-core deterministic smoke test for development/diagnostics:
+Direct-core deterministic smoke test for development/diagnostics. This bypasses
+the host and is intentionally hidden behind an explicit internal switch:
 
 ```bash
-npm exec sparkwright -- run --direct-core "inspect this repo and suggest a README improvement" \
+SPARKWRIGHT_ENABLE_DIRECT_CORE=1 npm exec sparkwright -- run --direct-core "inspect this repo and suggest a README improvement" \
   --workspace examples/repo-pilot \
   --target README.md \
   --write \
@@ -88,8 +89,8 @@ SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read_file","argumen
   `SPARKWRIGHT_SCRIPTED_MODEL_JSON` or `SPARKWRIGHT_SCRIPTED_MODEL_FILE` for
   repeatable tool-call diagnostics.
 - `--direct-core`: bypass the host and run the legacy in-process deterministic
-  harness. Keep this for core regression tests and diagnostics, not the default
-  product path.
+  harness. Requires `SPARKWRIGHT_ENABLE_DIRECT_CORE=1`; keep this for core
+  regression tests and diagnostics, not the default product path.
 
 ## Command Groups
 
@@ -109,8 +110,9 @@ Use `npm run cli -- <command>` during development. Use
 `npm exec sparkwright -- <command>` for the local workspace package after build.
 
 `run resume <run-id>` uses the host by default (`cli -> sdk-node -> host`).
-Use `--direct-core` only for diagnostics or core regression coverage; it keeps
-checkpoint lookup and resume in the CLI process.
+Use `--direct-core` with `SPARKWRIGHT_ENABLE_DIRECT_CORE=1` only for diagnostics
+or core regression coverage; it keeps checkpoint lookup and resume in the CLI
+process.
 
 ## Trace Commands
 
@@ -138,10 +140,11 @@ Use `--apply` only when intentionally applying a session repair.
 
 ```bash
 npm exec sparkwright -- tools list --format text
-npm exec sparkwright -- tools enable read_file append_file
-npm exec sparkwright -- tools disable shell_*
-npm exec sparkwright -- tools defer mcp_*
+npm exec sparkwright -- tools disable shell
+npm exec sparkwright -- tools defer read_anchored_text
 ```
+
+`tools disable`/`tools defer` take concrete tool names (no wildcards).
 
 Add `--workspace <path>` to inspect or update project tool defaults in
 `<workspace>/.sparkwright/config.json`; without it, tools commands operate on

@@ -439,14 +439,9 @@ interface AgentProfile {
   id: string;
   name?: string;
   description?: string;
-  experimental?: {
-    mode?: "primary" | "child" | "all";
-    model?: unknown;
-    prompt?: string;
-  };
-  mode?: "primary" | "child" | "all"; // @reserved v0.2
-  model?: unknown; // @reserved v0.2
-  prompt?: string; // compatibility fallback; prefer experimental.prompt
+  mode?: "primary" | "child" | "all"; // carried for orchestration; not applied by agent-runtime
+  model?: unknown; // carried for orchestration; not applied by agent-runtime
+  prompt?: string; // compiled into the run prompt builder when spawning from this profile
   allowedTools?: string[];
   deniedTools?: string[];
   policy?: CapabilityRule[];

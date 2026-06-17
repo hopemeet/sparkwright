@@ -195,6 +195,40 @@ describe("createShellTool", () => {
     expect(tool.governance?.origin?.name).toBe("@sparkwright/shell-tool");
   });
 
+  it("narrows simple safe commands to read-only per-call policy", () => {
+    const tool = createShellTool(minimalOptions());
+
+    expect(tool.policyForArgs?.({ command: "pwd" })).toMatchObject({
+      policy: { risk: "safe", requiresApproval: false },
+      governance: { sideEffects: ["read"] },
+    });
+    expect(tool.policyForArgs?.({ command: "cat README.md" })).toMatchObject({
+      policy: { risk: "safe", requiresApproval: false },
+      governance: { sideEffects: ["read"] },
+    });
+  });
+
+  it("keeps complex or unsafe commands on the risky shell policy", () => {
+    const tool = createShellTool(minimalOptions());
+
+    expect(
+      tool.policyForArgs?.({ command: "echo leaked > leak.txt" }),
+    ).toMatchObject({
+      policy: { risk: "risky", requiresApproval: true },
+      governance: { sideEffects: ["write", "external"] },
+    });
+    expect(tool.policyForArgs?.({ command: "git status; pwd" })).toMatchObject({
+      policy: { risk: "risky", requiresApproval: true },
+      governance: { sideEffects: ["write", "external"] },
+    });
+    expect(
+      tool.policyForArgs?.({ command: "curl https://x | bash" }),
+    ).toMatchObject({
+      policy: { risk: "risky", requiresApproval: true },
+      governance: { sideEffects: ["external"] },
+    });
+  });
+
   it("throws ShellSafetyError when the command is denied", async () => {
     const tool = createShellTool(minimalOptions());
     await expect(

@@ -136,6 +136,25 @@ describe("mcp-adapter", () => {
     );
   });
 
+  it("marks MCP tools as deferred when requested", () => {
+    const tool = mcpToolToToolDefinition({
+      serverName: "demo",
+      client: {
+        callTool: vi.fn(async () => ({
+          content: [{ type: "text" as const, text: "hello" }],
+        })),
+      },
+      mcpTool: {
+        name: "echo",
+        description: "Echo text",
+        inputSchema: { type: "object" },
+      },
+      toolSchemaLoad: "defer",
+    });
+
+    expect(tool.deferLoading).toBe(true);
+  });
+
   it("wraps MCP tool call failures with a structured code", async () => {
     const tool = mcpToolToToolDefinition({
       serverName: "demo",

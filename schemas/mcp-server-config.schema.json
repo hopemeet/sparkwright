@@ -24,7 +24,11 @@
           "type": "integer",
           "minimum": 1
         },
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "toolSchemaLoad": {
+          "type": "string",
+          "enum": ["eager", "defer"]
+        }
       },
       "additionalProperties": false
     },
@@ -46,7 +50,11 @@
           "type": "integer",
           "minimum": 1
         },
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "toolSchemaLoad": {
+          "type": "string",
+          "enum": ["eager", "defer"]
+        }
       },
       "additionalProperties": false
     }

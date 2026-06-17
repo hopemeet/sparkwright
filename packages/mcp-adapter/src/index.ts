@@ -60,6 +60,8 @@ interface McpServerConfigBase {
   name: string;
   timeoutMs?: number;
   enabled?: boolean;
+  /** Provider-schema loading behavior for concrete tools from this server. */
+  toolSchemaLoad?: McpToolSchemaLoad;
   supportsParallelToolCalls?: boolean;
   /**
    * Auto-reconnect on connection-class call failures. When set, a dropped
@@ -77,6 +79,8 @@ export interface McpReconnectOptions {
   /** Upper bound on the backoff delay, in ms. Default 5000. */
   maxDelayMs?: number;
 }
+
+export type McpToolSchemaLoad = "eager" | "defer";
 
 export type McpServerConfig =
   | (McpServerConfigBase & {
@@ -151,6 +155,8 @@ export interface PrepareMcpToolsForRunOptions {
   servers: McpServerConfig[];
   defaultTimeoutMs?: number;
   namePrefix?: string;
+  /** Default provider-schema loading behavior for concrete MCP tools. */
+  toolSchemaLoad?: McpToolSchemaLoad;
   policy?: McpToolPolicy | ((input: McpToolPolicyInput) => McpToolPolicy);
   serverPolicy?: Policy;
   /**
@@ -282,6 +288,7 @@ export async function prepareMcpToolsForRun(
       prepareMcpServer(server, {
         defaultTimeoutMs: options.defaultTimeoutMs,
         namePrefix: options.namePrefix,
+        toolSchemaLoad: options.toolSchemaLoad,
         policy: options.policy,
         serverPolicy: options.serverPolicy,
         onStdioStderr: options.onStdioStderr,
@@ -500,6 +507,7 @@ async function ensureLazyMcpServerPrepared(input: {
     const prepared = await prepareMcpServer(input.server, {
       defaultTimeoutMs: input.options.defaultTimeoutMs,
       namePrefix: input.options.namePrefix,
+      toolSchemaLoad: input.options.toolSchemaLoad,
       policy: input.options.policy,
       serverPolicy: input.options.serverPolicy,
       onStdioStderr: input.options.onStdioStderr,
@@ -780,6 +788,7 @@ export async function prepareMcpServer(
         namePrefix: options.namePrefix,
         usedNames,
         policy: options.policy,
+        toolSchemaLoad: config.toolSchemaLoad ?? options.toolSchemaLoad,
         descriptionPolicy: options.descriptionPolicy,
         onDescriptionWarning: options.onToolDescriptionWarning,
       });
@@ -839,6 +848,7 @@ export function mcpToolToToolDefinition(input: {
     | ((input: McpToolPolicyInput) => McpToolPolicy);
   descriptionPolicy?: ContentPolicy;
   onDescriptionWarning?: (input: McpToolDescriptionWarning) => void;
+  toolSchemaLoad?: McpToolSchemaLoad;
 }): ToolDefinition {
   const toolName = makeMcpToolName({
     serverName: input.serverName,
@@ -876,6 +886,7 @@ export function mcpToolToToolDefinition(input: {
     ),
     outputSchema: input.mcpTool.outputSchema,
     timeoutMs: input.timeoutMs,
+    ...(input.toolSchemaLoad === "defer" ? { deferLoading: true } : {}),
     policy: policy ?? {
       risk: "risky",
       requiresApproval: true,

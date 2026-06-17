@@ -1,39 +1,22 @@
 import { writeFile, mkdir } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { join } from "node:path";
+import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
-  createClient,
-  type Client,
-  type SpawnHostOptions,
-} from "@sparkwright/sdk-node";
-import { writeHostStartFailureTrace } from "@sparkwright/host";
-import type { CapabilitySnapshot } from "@sparkwright/protocol";
+  createHostClientRunMetadata,
+  createHostStartRunRequest,
+  recordHostClientStartFailure,
+  resolveHostStdioSpawn,
+} from "@sparkwright/host";
+import type {
+  CapabilitySnapshot,
+  PermissionMode,
+  TraceLevel,
+} from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
 import { renderTranscript, type TranscriptHeader } from "../lib/transcript.js";
 import type { RunEvent } from "../lib/event-type.js";
-
-const require = createRequire(import.meta.url);
-
-/**
- * Resolve the absolute path to the host bin packaged alongside us. We do
- * NOT import @sparkwright/host at module load — only its bin file, by
- * filesystem path — so the heavy core/openai deps it carries don't get
- * pulled into the TUI bundle until a run actually starts.
- */
-function resolveHostBin(): string {
-  return require.resolve("@sparkwright/host/dist/bin.js");
-}
-
-export type PermissionMode =
-  | "plan"
-  | "default"
-  | "accept_edits"
-  | "dont_ask"
-  | "bypass_permissions";
-
-export type TraceLevel = "minimal" | "standard" | "debug";
 
 export interface RunControllerOptions {
   workspaceRoot: string;
@@ -243,15 +226,19 @@ export class RunController {
     }
 
     try {
-      const { runId } = await client.startRun({
-        goal,
-        sessionId: this.sessionId,
-        model: this.requestModelName(),
-        permissionMode: this.opts.permissionMode,
-        traceLevel: this.opts.traceLevel ?? "standard",
-        shouldWrite: this.shouldWrite(),
-        metadata: this.runRequestMetadata(),
-      });
+      const traceLevel = this.opts.traceLevel ?? "standard";
+      const { runId } = await client.startRun(
+        createHostStartRunRequest({
+          goal,
+          sessionId: this.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+          permissionMode: this.opts.permissionMode,
+          traceLevel,
+          shouldWrite: this.shouldWrite(),
+          metadata: this.runRequestMetadata({ traceLevel }),
+        }),
+      );
       this.activeRunId = runId;
       this.cancelRequested = false;
     } catch (err) {
@@ -411,19 +398,11 @@ export class RunController {
     if (this.client) return this.client;
     if (this.clientPromise) return this.clientPromise;
 
-    const spawn: SpawnHostOptions = {
-      command: process.execPath,
-      args: [
-        resolveHostBin(),
-        "--stdio",
-        "--workspace",
-        this.opts.workspaceRoot,
-        "--session-root",
-        this.sessionRootDir(),
-        "--permission-mode",
-        this.opts.permissionMode ?? "default",
-      ],
-    };
+    const spawn = resolveHostStdioSpawn({
+      workspaceRoot: this.opts.workspaceRoot,
+      sessionRootDir: this.sessionRootDir(),
+      permissionMode: this.opts.permissionMode ?? "default",
+    });
     this.clientPromise = createClient({
       spawn,
       client: { name: "sparkwright-tui", version: "0.1.0" },
@@ -446,7 +425,7 @@ export class RunController {
     goal: string,
     message: string,
   ): Promise<void> {
-    const result = await writeHostStartFailureTrace({
+    const result = await recordHostClientStartFailure({
       goal,
       message,
       sessionRootDir: this.sessionRootDir(),
@@ -486,16 +465,19 @@ export class RunController {
     }
   }
 
-  private runRequestMetadata(): Record<string, unknown> {
-    return {
+  private runRequestMetadata(
+    input: { traceLevel?: TraceLevel } = {},
+  ): Record<string, unknown> {
+    const traceLevel = input.traceLevel ?? this.opts.traceLevel ?? "standard";
+    return createHostClientRunMetadata({
       source: "tui",
       sessionId: this.sessionId,
       workspaceRoot: this.opts.workspaceRoot,
       permissionMode: this.opts.permissionMode ?? "default",
-      traceLevel: this.opts.traceLevel ?? "standard",
+      traceLevel,
       shouldWrite: this.shouldWrite(),
-      ...(this.opts.modelName ? { model: this.opts.modelName } : {}),
-    };
+      modelName: this.opts.modelName,
+    });
   }
 
   private shouldWrite(): boolean {
@@ -510,12 +492,6 @@ export class RunController {
       const type = (event as { type?: unknown }).type;
       return type === "run.failed" || type === "run.completed";
     });
-  }
-
-  private requestModelName(): string | undefined {
-    return this.opts.modelNameSource === "config"
-      ? undefined
-      : this.opts.modelName;
   }
 
   private attachListeners(client: Client): void {

@@ -267,6 +267,41 @@ describe("task tools", () => {
     expect(listed.tasks[0]!.kind).toBe("hello");
   });
 
+  it("task action wrapper delegates list/get/output/stop", async () => {
+    const manager = makeManager();
+    manager.registerKind("emitter", async (controller) => {
+      controller.emitOutput({ channel: "stdout", data: "ready" });
+      return "ok";
+    });
+    const tools = makeTools(manager);
+    const { taskId } = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "emitter",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const listed = await exec<{ tasks: Array<{ id: string }> }>(tools.task, {
+      action: "list",
+      kind: "emitter",
+    });
+    const got = await exec<{ id: string; status: string }>(tools.task, {
+      action: "get",
+      taskId,
+    });
+    const output = await exec<{ chunks: TaskOutputChunk[] }>(tools.task, {
+      action: "output",
+      taskId,
+    });
+    const stopped = await exec<{ cancelled: boolean }>(tools.task, {
+      action: "stop",
+      taskId,
+    });
+
+    expect(listed.tasks[0]?.id).toBe(taskId);
+    expect(got.id).toBe(taskId);
+    expect(output.chunks.map((chunk) => chunk.data)).toEqual(["ready"]);
+    expect(stopped.cancelled).toBe(false);
+  });
+
   it("task_get returns the record; task_stop cancels", async () => {
     const manager = makeManager();
     manager.registerKind(

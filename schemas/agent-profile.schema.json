@@ -12,22 +12,15 @@
     "description": { "type": "string" },
     "mode": {
       "type": "string",
-      "enum": ["primary", "child", "all"]
+      "enum": ["primary", "child", "all"],
+      "description": "Profile role. Carried for application-level orchestration; not applied to runs by agent-runtime itself."
     },
-    "model": {},
-    "prompt": { "type": "string" },
-    "experimental": {
-      "type": "object",
-      "description": "Application-owned run-template fields. Prefer experimental.prompt for profile-specific role guidance used when spawning runs.",
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["primary", "child", "all"]
-        },
-        "model": {},
-        "prompt": { "type": "string" }
-      },
-      "additionalProperties": false
+    "model": {
+      "description": "Preferred model for this profile. Carried for orchestration; not applied to model selection by agent-runtime itself."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Application/domain-specific system prompt compiled into the run's prompt builder when spawning runs from this profile."
     },
     "allowedTools": {
       "type": "array",

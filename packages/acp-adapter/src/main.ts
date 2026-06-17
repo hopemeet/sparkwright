@@ -1,7 +1,12 @@
 import { stdin, stdout } from "node:process";
 import { resolve } from "node:path";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import type { PermissionMode, TraceLevel } from "@sparkwright/core";
+import {
+  isPermissionMode,
+  isTraceLevel,
+  type PermissionMode,
+  type TraceLevel,
+} from "@sparkwright/protocol";
 import { createSparkwrightAcpAgentFactory } from "./agent.js";
 
 export interface AcpMainOptions {
@@ -123,18 +128,4 @@ function printHelp(): void {
       "",
     ].join("\n"),
   );
-}
-
-function isPermissionMode(value: string | undefined): value is PermissionMode {
-  return (
-    value === "plan" ||
-    value === "default" ||
-    value === "accept_edits" ||
-    value === "dont_ask" ||
-    value === "bypass_permissions"
-  );
-}
-
-function isTraceLevel(value: string | undefined): value is TraceLevel {
-  return value === "minimal" || value === "standard" || value === "debug";
 }

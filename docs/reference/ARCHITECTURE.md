@@ -29,6 +29,30 @@ Sparkwright should be implementation-driven but protocol-aware.
 
 That means the first implementation can be TypeScript, but the core objects must be serializable and documented well enough to support future SDKs, server adapters, and alternate runtime implementations.
 
+## Package Boundaries
+
+The current runtime boundary is:
+
+- `@sparkwright/core`: runtime primitives only — run loop, policy, approval,
+  events, trace/session stores, workspace abstractions, and tool contracts.
+- `@sparkwright/host`: the runtime assembler — config, providers, skills,
+  MCP, agents, shell, workflow hooks, session ownership, and the host protocol.
+- `@sparkwright/cli` and `@sparkwright/tui`: host clients. They should drive
+  normal runs through `@sparkwright/sdk-node` and the host protocol, not by
+  constructing the core runtime directly.
+- `@sparkwright/protocol`: shared wire types and protocol-owned enums such as
+  permission modes and trace levels.
+
+`--direct-core` is retained only as an internal diagnostics/regression harness.
+It bypasses the host and is gated behind `SPARKWRIGHT_ENABLE_DIRECT_CORE=1`.
+New product behavior should be added to the host path first; the direct-core
+runner should not become a second production runtime.
+
+Architecture checks enforce the most important parts of this boundary: TUI
+source cannot import `@sparkwright/core`, and `@sparkwright/core/internal`
+imports are allowlisted for the few packages that own reference storage/runtime
+plumbing.
+
 ## Runtime Kernel
 
 The kernel owns the run lifecycle:

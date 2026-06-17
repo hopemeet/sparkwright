@@ -270,11 +270,13 @@ export type {
   ObservationSummarizer,
   ContextPrefetcher,
   UsageGateThresholds,
+  ClearToolUsesStageOptions,
 } from "./pipeline.js";
 export {
   createCompactionPipeline,
   compactionStageFromCompactor,
   createToolResultBudgetStage,
+  createClearToolUsesStage,
   createSnipStage,
   createDefaultCompactionStages,
   gateStageByUsage,

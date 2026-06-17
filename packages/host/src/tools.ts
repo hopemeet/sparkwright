@@ -304,10 +304,10 @@ export function createReadAnchoredTextTool() {
 /**
  * Built-in write tool: apply verified anchored edits (replace/delete/append/
  * prepend relative to a unique text anchor) through the workspace write path.
- * Unlike append_file, this can do an in-place line replacement — needed for
- * "make one minimal fix" tasks where appending a new section would leave the
- * incorrect text behind. The write itself is still scope- and approval-gated
- * inside Workspace.writeText, so this preserves the --target / --yes contract.
+ * Supports in-place line replacement — needed for "make one minimal fix" tasks
+ * where appending a new section would leave the incorrect text behind. The
+ * write itself is still scope- and approval-gated inside Workspace.writeText,
+ * so this preserves the --target / --yes contract.
  */
 export function createEditAnchoredTextTool() {
   return createEditAnchoredTextToolBase();
@@ -320,87 +320,6 @@ export function createEditAnchoredTextTool() {
  */
 export function createApplyPatchTool() {
   return createApplyPatchToolBase();
-}
-
-/**
- * Built-in tool: append a heading + body section to a file. Risky — emits
- * approval.requested via core.
- */
-export function createAppendFileTool() {
-  return defineTool({
-    name: "append_file",
-    description:
-      "Append a short heading + body section to a UTF-8 text file, creating " +
-      "the file (and any parent dirs) if it does not exist. Requires approval. " +
-      "Pass `heading` as plain text WITHOUT any leading '#': the tool renders " +
-      "it as a level-2 heading itself.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        heading: { type: "string", minLength: 1 },
-        body: { type: "string" },
-      },
-      required: ["path", "heading", "body"],
-      additionalProperties: false,
-    },
-    policy: { risk: "risky" },
-    governance: {
-      sideEffects: ["write"],
-      idempotency: "conditional",
-      dataSensitivity: "internal",
-      origin: { kind: "local", name: "sparkwright" },
-    },
-    async execute(args: unknown, ctx) {
-      if (!ctx.workspace) throw new Error("Workspace is not configured.");
-      const { path, body } = args as {
-        path: string;
-        heading: string;
-        body: string;
-      };
-      // Models often pass `heading` already carrying its markdown marker
-      // ("## Title"), and we prepend "## " unconditionally — yielding the
-      // "## ## Title" double-prefix seen in the C2 trace. Strip any leading
-      // '#'/whitespace so the tool owns exactly one level-2 marker regardless
-      // of how the caller phrased it.
-      const heading = (args as { heading: string }).heading
-        .replace(/^\s*#+\s*/, "")
-        .trim();
-      if (!heading) {
-        throw toolArgumentsInvalid(
-          "append_file heading must contain text after removing leading markdown heading markers.",
-        );
-      }
-      // A missing file is treated as empty so append_file can CREATE the file.
-      // Only ENOENT is swallowed; other read errors (permission, is-a-dir)
-      // propagate.
-      const current = await ctx.workspace
-        .readText(path)
-        .catch((err: unknown) => {
-          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return "";
-          throw err;
-        });
-      if (current.includes(`## ${heading}`)) {
-        ctx.reportWorkspaceWriteSkipped?.({
-          path,
-          reason: `Heading "${heading}" already present`,
-        });
-        return { path, changed: false };
-      }
-      const next = `${current.replace(/\s+$/, "")}\n\n## ${heading}\n\n${body}\n`;
-      const write = await ctx.workspace.writeText(path, next, {
-        reason: `Append ${heading}`,
-      });
-      if (write?.diffArtifact) ctx.reportToolArtifact?.(write.diffArtifact);
-      return {
-        path,
-        changed: true,
-        diffArtifactId: write?.diffArtifactId,
-        writeSummary: write?.summary,
-        finalLines: write?.summary.lastLines,
-      };
-    },
-  });
 }
 
 export function createCronTool() {
@@ -734,10 +653,6 @@ export function createAgentManagerTool(workspaceRoot: string) {
         ...(input.description ? { description: input.description } : {}),
         mode,
         prompt: input.prompt.trim(),
-        experimental: {
-          mode,
-          prompt: input.prompt.trim(),
-        },
         ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
         ...(input.deniedTools ? { deniedTools: input.deniedTools } : {}),
         ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
@@ -813,22 +728,16 @@ export function applyToolConfig<T extends ToolDefinition>(
   tools: T[],
   config: CapabilityToolsConfig | undefined,
 ): T[] {
-  if (!config) return tools;
+  const deferPatterns = config?.defer ?? DEFAULT_DEFERRED_TOOLS;
+  if (!config) {
+    return tools.map((tool) => applyDefaultDefer(tool, deferPatterns)) as T[];
+  }
   return tools
-    .filter((tool) => {
-      if (matchesAnyToolPattern(tool.name, config.disabled)) return false;
-      if (config.enabled !== undefined) {
-        return (
-          matchesAnyToolPattern(tool.name, config.enabled) ||
-          isManagedCapabilityTool(tool.name)
-        );
-      }
-      return true;
-    })
+    .filter((tool) => !isToolNameListed(tool.name, config.disabled))
     .map((tool) => {
       if (
         tool.alwaysLoad === true ||
-        !matchesAnyToolPattern(tool.name, config.defer)
+        !isToolNameListed(tool.name, deferPatterns)
       ) {
         return tool;
       }
@@ -836,39 +745,31 @@ export function applyToolConfig<T extends ToolDefinition>(
     }) as T[];
 }
 
-const MANAGED_CAPABILITY_TOOLS = new Set([
-  "list_skills",
-  "create_skill",
-  "update_skill",
-  "list_agents",
-  "create_agent",
-]);
+const DEFAULT_DEFERRED_TOOLS = [
+  "todo_write",
+  "read_anchored_text",
+  "edit_anchored_text",
+];
 
-function isManagedCapabilityTool(toolName: string): boolean {
-  return MANAGED_CAPABILITY_TOOLS.has(toolName);
+function applyDefaultDefer<T extends ToolDefinition>(
+  tool: T,
+  names: readonly string[],
+): T {
+  if (tool.alwaysLoad === true || !isToolNameListed(tool.name, names)) {
+    return tool;
+  }
+  return { ...tool, deferLoading: true };
 }
 
 function containsGlobPattern(path: string): boolean {
   return /[*?[]/.test(path);
 }
 
-function matchesAnyToolPattern(
+function isToolNameListed(
   toolName: string,
-  patterns: readonly string[] | undefined,
+  names: readonly string[] | undefined,
 ): boolean {
-  return Boolean(
-    patterns?.some((pattern) => matchesToolPattern(toolName, pattern)),
-  );
-}
-
-function matchesToolPattern(toolName: string, pattern: string): boolean {
-  if (pattern === toolName) return true;
-  if (!pattern.includes("*")) return false;
-  const escaped = pattern
-    .split("*")
-    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${escaped}$`).test(toolName);
+  return Boolean(names?.includes(toolName));
 }
 
 function resolveSkillRoots(
@@ -1071,9 +972,6 @@ function cloneAgentConfigShape(agents: AgentConfigShape): AgentConfigShape {
   return {
     profiles: agents.profiles.map((profile) => ({
       ...profile,
-      ...(profile.experimental
-        ? { experimental: { ...profile.experimental } }
-        : {}),
       ...(profile.allowedTools
         ? { allowedTools: [...profile.allowedTools] }
         : {}),
@@ -1136,7 +1034,7 @@ function validateAgentConfigShape(
     } else {
       ids.add(profile.id);
     }
-    const mode = profile.experimental?.mode ?? profile.mode;
+    const mode = profile.mode;
     if (
       mode !== undefined &&
       mode !== "primary" &&

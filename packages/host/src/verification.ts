@@ -13,11 +13,7 @@ import {
 } from "./workflow-hooks.js";
 
 const DEFAULT_PROFILE = "fast";
-const DEFAULT_WRITE_TOOLS = [
-  "append_file",
-  "edit_anchored_text",
-  "apply_patch",
-];
+const DEFAULT_WRITE_TOOLS = ["edit_anchored_text", "apply_patch"];
 
 export interface CreateVerificationWorkflowHooksOptions extends Omit<
   CreateConfiguredWorkflowHooksOptions,

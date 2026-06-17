@@ -834,6 +834,7 @@ describe("host protocol", () => {
               maxSelectedSkills: 1,
             },
             mcp: {
+              startup: "prepare",
               servers: [
                 {
                   type: "stdio",
@@ -931,7 +932,7 @@ describe("host protocol", () => {
         ),
       ).toBe(true);
       expect(events.some((event) => event.type === "mcp.server.prepared")).toBe(
-        false,
+        true,
       );
       expect(
         events.some(
@@ -1045,11 +1046,11 @@ describe("host protocol", () => {
       await writeFile(
         join(workspace, ".sparkwright", "config.json"),
         JSON.stringify({
+          tools: {
+            disabled: ["shell"],
+            defer: ["delegate_reviewer"],
+          },
           capabilities: {
-            tools: {
-              disabled: ["shell"],
-              defer: ["delegate_*"],
-            },
             skills: {
               roots: ["../skills"],
             },
@@ -1207,8 +1208,8 @@ describe("host protocol", () => {
           ),
         ).toBe(true);
         expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "mcp_missing_list_tools",
+          (resp.result.tools as Array<{ name: string }>).some((tool) =>
+            tool.name.startsWith("mcp_missing_"),
           ),
         ).toBe(true);
         expect(

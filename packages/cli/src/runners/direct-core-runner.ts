@@ -121,6 +121,7 @@ export async function startDirectCoreRun(
     approveAll,
     approveEdits,
     approveShellSafe,
+    permissionMode,
     io,
   });
   const loadedConfig = await loadHostConfig(workspaceRoot, env);
@@ -301,7 +302,7 @@ export async function createConfiguredCliTools(
       createListDirTool(workspaceRoot),
       createAppendFileTool(),
     ],
-    cfg.config.capabilities?.tools,
+    cfg.config.tools,
   );
 }
 

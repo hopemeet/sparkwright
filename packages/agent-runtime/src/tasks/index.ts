@@ -44,6 +44,7 @@ export type { CreateTaskToolsOptions } from "./tools.js";
 export {
   createTaskTools,
   createTaskCreate,
+  createTaskControl,
   createTaskList,
   createTaskGet,
   createTaskStop,

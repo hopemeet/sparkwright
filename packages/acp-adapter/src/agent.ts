@@ -20,7 +20,7 @@ import {
   type ResumeSessionRequest,
   type ResumeSessionResponse,
 } from "@agentclientprotocol/sdk";
-import type { PermissionMode, TraceLevel } from "@sparkwright/core";
+import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import { HostRuntime } from "@sparkwright/host";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import { contentBlocksToText } from "./content.js";

@@ -2,10 +2,19 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { render } from "ink";
 import React from "react";
-import { validateRunInput } from "@sparkwright/host";
+import {
+  configResolutionOrder,
+  loadHostConfig,
+  validateRunInput,
+} from "@sparkwright/host";
+import {
+  isPermissionMode,
+  isTraceLevel,
+  type PermissionMode,
+  type TraceLevel,
+} from "@sparkwright/protocol";
 import { App, type AppProps } from "./app.js";
 import { installTerminalRestore } from "./lib/terminal-restore.js";
-import type { PermissionMode } from "./state/run-controller.js";
 
 export interface RunTuiOptions {
   workspaceRoot?: string;
@@ -77,22 +86,6 @@ function parseArgs(
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: out };
 }
 
-type TraceLevel = "minimal" | "standard" | "debug";
-
-function isTraceLevel(value: string): value is TraceLevel {
-  return value === "minimal" || value === "standard" || value === "debug";
-}
-
-function isPermissionMode(value: string): value is PermissionMode {
-  return (
-    value === "plan" ||
-    value === "default" ||
-    value === "accept_edits" ||
-    value === "dont_ask" ||
-    value === "bypass_permissions"
-  );
-}
-
 export async function runTui(
   argv: string[],
   options: RunTuiOptions = {},
@@ -119,6 +112,7 @@ export async function runTui(
     for (const error of validation.errors) process.stderr.write(`${error}\n`);
     return { exitCode: 1 };
   }
+  await maybePrintFirstRunConfigHint(initialCwd);
   const props: AppProps = {
     initialCwd,
     cliOverrides: {
@@ -146,6 +140,26 @@ export async function runTui(
   });
   await instance.waitUntilExit();
   return { exitCode: 0 };
+}
+
+async function maybePrintFirstRunConfigHint(initialCwd: string): Promise<void> {
+  if (!process.stderr.isTTY) return;
+  const loaded = await loadHostConfig(initialCwd, process.env);
+  if (loaded.errors.length > 0) return;
+  if (loaded.attempted.some((entry) => entry.loaded)) return;
+  const order = configResolutionOrder(initialCwd, process.env);
+  const user = order.find((entry) => entry.label === "user")?.path;
+  const project = order.find((entry) => entry.label === "project")?.path;
+  process.stderr.write(
+    [
+      "No Sparkwright config found yet.",
+      ...(user ? [`User config: ${user}`] : []),
+      ...(project ? [`Project config: ${project}`] : []),
+      "Create one with `sparkwright init` or `sparkwright init --project`.",
+      "Inspect config with `sparkwright config inspect --format text`.",
+      "",
+    ].join("\n"),
+  );
 }
 
 function tuiUsage(): string {

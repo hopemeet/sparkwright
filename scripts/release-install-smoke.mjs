@@ -16,12 +16,18 @@ const repoRoot = resolve(scriptDir, "..");
 const tempRoot = mkdtempSync(join(tmpdir(), "sparkwright-release-"));
 const packDir = join(tempRoot, "packs");
 const installDir = join(tempRoot, "install");
+const smokeEnv = {
+  XDG_CONFIG_HOME: join(tempRoot, "xdg-config"),
+  XDG_STATE_HOME: join(tempRoot, "xdg-state"),
+};
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 
 try {
   mkdirSync(packDir, { recursive: true });
   mkdirSync(installDir, { recursive: true });
+  mkdirSync(smokeEnv.XDG_CONFIG_HOME, { recursive: true });
+  mkdirSync(smokeEnv.XDG_STATE_HOME, { recursive: true });
 
   const publicPackages = getPublicWorkspacePackages();
   if (publicPackages.length === 0) {
@@ -74,11 +80,21 @@ try {
       "deterministic",
     ],
     installDir,
+    { env: smokeEnv },
   );
 
   const writeSmokeWorkspace = join(tempRoot, "write-smoke-workspace");
   mkdirSync(writeSmokeWorkspace, { recursive: true });
+  mkdirSync(join(writeSmokeWorkspace, ".sparkwright"), { recursive: true });
   writeFileSync(join(writeSmokeWorkspace, "README.md"), "# Write Smoke\n");
+  writeFileSync(
+    join(writeSmokeWorkspace, ".sparkwright", "config.json"),
+    JSON.stringify({
+      capabilities: {
+        tools: { enabled: ["read_file", "append_file"] },
+      },
+    }),
+  );
   run(
     npx,
     [
@@ -98,6 +114,7 @@ try {
       "deterministic",
     ],
     installDir,
+    { env: { ...smokeEnv, SPARKWRIGHT_ENABLE_DIRECT_CORE: "1" } },
   );
 
   assertWriteSmokeResult(writeSmokeWorkspace);
@@ -121,9 +138,10 @@ function getPublicWorkspacePackages() {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
+    env: { ...process.env, ...(options.env ?? {}) },
     shell: process.platform === "win32",
     stdio: "inherit",
   });

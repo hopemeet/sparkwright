@@ -642,7 +642,7 @@ async function mcpLazyPositiveCase() {
     "utf8",
   );
   const prompt =
-    "Use the MCP server qa. First call mcp_qa_list_tools, then call mcp_qa_echo with text `real model mcp positive`. Do not modify files. Finish by reporting the echoed text.";
+    'Use the MCP server qa. First call mcp_qa_list_tools, then call mcp_qa_call_tool with toolName `echo` and arguments {"text":"real model mcp positive"}. Do not modify files. Finish by reporting the echoed text.';
   const result = await runCli([
     "run",
     prompt,

@@ -12,6 +12,34 @@
 
 export const PROTOCOL_VERSION = "1.3" as const;
 
+export const PERMISSION_MODES = [
+  "plan",
+  "default",
+  "accept_edits",
+  "dont_ask",
+  "bypass_permissions",
+] as const;
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+export function isPermissionMode(value: unknown): value is PermissionMode {
+  return (
+    typeof value === "string" &&
+    (PERMISSION_MODES as readonly string[]).includes(value)
+  );
+}
+
+export const TRACE_LEVELS = ["minimal", "standard", "debug"] as const;
+
+export type TraceLevel = (typeof TRACE_LEVELS)[number];
+
+export function isTraceLevel(value: unknown): value is TraceLevel {
+  return (
+    typeof value === "string" &&
+    (TRACE_LEVELS as readonly string[]).includes(value)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Envelope discriminator
 // ---------------------------------------------------------------------------
@@ -89,13 +117,8 @@ export interface RunStartRequestPayload {
   shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
-  permissionMode?:
-    | "plan"
-    | "default"
-    | "accept_edits"
-    | "dont_ask"
-    | "bypass_permissions";
-  traceLevel?: "minimal" | "standard" | "debug";
+  permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
 
@@ -116,13 +139,8 @@ export interface RunResumeRequestPayload {
   force?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
-  permissionMode?:
-    | "plan"
-    | "default"
-    | "accept_edits"
-    | "dont_ask"
-    | "bypass_permissions";
-  traceLevel?: "minimal" | "standard" | "debug";
+  permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
 }
 

@@ -211,6 +211,14 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
   };
   governance?: ToolGovernance;
   /**
+   * Optional per-call policy override for wrapper tools whose action argument
+   * mixes read-only and mutating operations.
+   */
+  policyForArgs?(args: TArgs): {
+    policy?: ToolDefinition<TArgs, TResult>["policy"];
+    governance?: ToolGovernance;
+  };
+  /**
    * Optional runtime availability probe. When provided and it resolves false,
    * the tool is withheld from model-facing descriptors (it never appears in the
    * provider request) instead of failing at call time. Use for tools gated on

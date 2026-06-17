@@ -44,13 +44,22 @@ npm exec sparkwright -- init
 npm exec sparkwright -- init --project
 ```
 
+Package installation does not write config files. The first interactive CLI or
+TUI run points at the expected user and project config paths if no config
+exists yet.
+
 `init` scaffolds the personal provider config. `init --project` scaffolds a
 committable project config plus `.sparkwright/skills`, `.sparkwright/agents`,
-and `.sparkwright/command`.
+and `.sparkwright/command`. Both commands are non-destructive: they do not
+overwrite existing config files. `init --project` may recreate missing
+convention directories, but it must not replace existing Skills, agents,
+commands, sessions, tasks, or config content.
 
 Inspect effective host capabilities before guessing:
 
 ```bash
+npm exec sparkwright -- config inspect --workspace . --format text
+npm exec sparkwright -- config explain --workspace . --format text
 npm exec sparkwright -- capabilities inspect --workspace . --format text
 ```
 
@@ -129,27 +138,37 @@ OpenAI-compatible proxies omit reasoning summary deltas.
 
 ```json
 {
-  "permissionMode": "default",
+  "policy": {
+    "permissionMode": "default",
+    "write": {
+      "maxFiles": 1,
+      "maxDiffLines": 200,
+      "allowDeletions": false
+    }
+  },
+  "tools": {
+    "defer": ["todo_write", "read_anchored_text", "edit_anchored_text"]
+  },
   "capabilities": {
-    "tools": {
-      "disabled": ["shell"],
-      "defer": ["mcp_*"]
-    },
     "skills": {
       "includeLoaderTool": true,
       "loadSelectedSkills": false,
       "resourceFileLimit": 8
     },
     "mcp": {
+      "startup": "lazy",
+      "toolSchemaLoad": "defer",
       "servers": []
     }
   }
 }
 ```
 
-Do not add `tools.enabled` unless the user explicitly wants an allowlist.
-Omitting it lets the host start from all available tools before applying
-`disabled` and `defer`.
+Standard tools are enabled by default. Use `tools.disabled` to close concrete
+tool names, and `tools.defer` only to delay built-in tool schemas. MCP tools use
+`capabilities.mcp.toolSchemaLoad`; do not configure them with wildcard tool
+names. Prefer `task(action=...)` for task inspection/control and `apply_patch`
+for ordinary file writes.
 
 ### Stdio MCP Server
 
@@ -169,6 +188,7 @@ Omitting it lets the host start from all available tools before applying
       ],
       "defaultTimeoutMs": 30000,
       "namePrefix": "mcp",
+      "startup": "lazy",
       "defaultPolicy": {
         "risk": "risky",
         "requiresApproval": true
@@ -182,12 +202,15 @@ MCP `cwd` resolves from the config file that declares it. Prefer
 `requiresApproval: true` for tools that can touch workspace state,
 credentials, network services, or external systems.
 
-MCP servers are lazy during normal host runs. Capability inspection reports
-configured servers and exposes lazy tools such as `mcp_<server>_list_tools` and
-`mcp_<server>_call_tool`; it does not start the server unless inspection is run
-with `--resolve-mcp` or the model explicitly selects a lazy MCP tool. Explicit
-lazy selection emits `mcp.server.prepared` with either the concrete tool map or
-a structured prepare failure.
+Configured MCP servers default to `startup: "lazy"`: normal host runs do not
+connect to them until an MCP gateway tool is used. Set `startup: "prepare"` to
+connect and list concrete tool names such as `mcp_<server>_<tool>` during
+host-run startup, or `startup: "eager"` to prepare them and default schema
+loading to eager. With `capabilities.mcp.toolSchemaLoad: "defer"`, prepared
+concrete MCP tools are loaded through `tool_search select:<tool-name>` instead
+of being sent in the initial provider tool list. Preparation emits
+`mcp.server.prepared` with either the concrete tool map or a structured prepare
+failure.
 
 ACP `session/new` can also supply session-scoped `mcpServers`. SparkWright
 merges them with configured MCP servers for that ACP session and applies the
@@ -213,7 +236,7 @@ integrations, not the usual project config surface.
           "description": "Generated files are produced by build tooling.",
           "hook": "PreToolUse",
           "matcher": {
-            "toolName": ["append_file", "edit_anchored_text", "apply_patch"],
+            "toolName": ["edit_anchored_text", "apply_patch"],
             "pathGlob": "src/generated/**",
             "excludePathGlob": "src/generated/fixtures/**"
           },
@@ -227,7 +250,7 @@ integrations, not the usual project config surface.
           "hook": "PostToolUse",
           "frequency": "oncePerTurn",
           "matcher": {
-            "toolName": ["append_file", "edit_anchored_text", "apply_patch"]
+            "toolName": ["edit_anchored_text", "apply_patch"]
           },
           "action": {
             "type": "command",
@@ -257,10 +280,11 @@ must gate the final answer.
 - `permissionMode`: default run permission mode.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
-- `capabilities.tools`: tool enable, disable, and defer filters.
+- `tools`: preferred tool disable/defer settings.
 - `capabilities.hooks.workflow`: deterministic project workflow hooks.
 - `capabilities.skills`: Skill roots and loading behavior.
-- `capabilities.mcp`: MCP server definitions and default policy.
+- `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
+  schema loading.
 - `capabilities.agents`: agent profiles and delegate tools.
 - `theme`, `mouse`, `keybindings`: TUI-only preferences.
 
@@ -281,9 +305,8 @@ The CLI can update user-level tool loading settings:
 
 ```bash
 npm exec sparkwright -- tools list --format text
-npm exec sparkwright -- tools enable <pattern...>
-npm exec sparkwright -- tools disable <pattern...>
-npm exec sparkwright -- tools defer <pattern...>
+npm exec sparkwright -- tools disable <tool-name...>
+npm exec sparkwright -- tools defer <tool-name...>
 ```
 
 Add `--workspace <path>` to manage project defaults in
@@ -292,11 +315,13 @@ Add `--workspace <path>` to manage project defaults in
 ```bash
 npm exec sparkwright -- tools list --workspace . --format text
 npm exec sparkwright -- tools disable shell --workspace .
-npm exec sparkwright -- tools defer "mcp_*" --workspace .
+npm exec sparkwright -- tools defer todo_write --workspace .
 ```
 
-Use `defer` for tools that should be discovered lazily instead of being loaded
-into the initial prompt.
+Use `defer` for built-in tools that should be discovered lazily instead of
+being loaded into the initial provider schema. Configure MCP tool schema loading
+with `capabilities.mcp.toolSchemaLoad` and MCP connection timing with
+`capabilities.mcp.startup`.
 
 ## Skills And Agents
 
@@ -458,6 +483,10 @@ Models not listed still run if the provider accepts them.
 Use local facts first:
 
 ```bash
+npm exec sparkwright -- config path --workspace . --format text
+npm exec sparkwright -- config validate --workspace . --format text
+npm exec sparkwright -- config inspect --workspace . --format text
+npm exec sparkwright -- config explain --workspace . --format text
 npm exec sparkwright -- capabilities inspect --workspace . --format text
 npm exec sparkwright -- capabilities inspect --workspace . --resolve-mcp --format text
 npm exec sparkwright -- tools list --format text
@@ -465,19 +494,39 @@ npm exec sparkwright -- agents validate --workspace .
 npm exec sparkwright -- skills validate --workspace .
 ```
 
+`config inspect` shows the effective merged config with secret-looking fields
+redacted. `config explain` shows field origins and values. `capabilities
+inspect` shows prepared runtime surfaces such as tools, Skills, agents, MCP,
+cron, and command directories.
+
+## Install And Upgrade Safety
+
+SparkWright treats config and project capabilities as user-owned assets:
+
+- package installation does not create or modify config files
+- first interactive use suggests `init` paths instead of silently writing files
+- `init` and `init --project` do not overwrite existing config files
+- upgrade or reinstall must not overwrite existing Skills, agents, commands,
+  sessions, tasks, or config
+- commands that replace an existing user asset require explicit `--force` or a
+  dedicated apply/approval flow
+- future config migrations should be inspectable and preferably dry-run before
+  writing
+
 Checks to make before proposing edits:
 
 - Unknown provider: confirm `model` uses `provider/model` form and the provider
   key exists under `providers`.
 - API key ignored: check environment variable overrides.
-- Tool missing: inspect `tools.enabled` allowlists and `tools.disabled`.
+- Tool missing: inspect `tools.disabled`, deprecated legacy allowlists, and MCP
+  server `enabled` settings.
 - MCP tool missing: use `capabilities inspect --resolve-mcp` to distinguish a
   configured server from a prepared server with resolved tools.
 - User and project capability settings did not combine: remember that most
   fields other than `providers` are wholesale-overridden.
 - MCP server does not start: verify `cwd`, command path, timeout, and
-  `enabled`; if the server is only `configured`, confirm the model actually
-  selected `mcp_<server>_list_tools` or run inspection with `--resolve-mcp`.
+  `enabled`; run inspection with `--resolve-mcp` to reproduce the same concrete
+  tool discovery path outside a model run.
 
 ## Agent-Written Config Changes
 

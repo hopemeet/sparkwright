@@ -44,9 +44,9 @@ describe("parseAgentProfileFile", () => {
     expect(profile.name).toBe("Triage");
     expect(profile.allowedTools).toEqual(["read_file", "glob"]);
     expect(profile.maxSteps).toBe(5);
-    expect(profile.experimental?.mode).toBe("child");
-    expect(profile.experimental?.model).toBe("openai/m");
-    expect(profile.experimental?.prompt).toBe("You triage issues.");
+    expect(profile.mode).toBe("child");
+    expect(profile.model).toBe("openai/m");
+    expect(profile.prompt).toBe("You triage issues.");
   });
 
   it("ignores an invalid mode and non-positive maxSteps", () => {
@@ -56,7 +56,7 @@ describe("parseAgentProfileFile", () => {
     );
     expect(profile.mode).toBeUndefined();
     expect(profile.maxSteps).toBeUndefined();
-    expect(profile.experimental?.prompt).toBe("body");
+    expect(profile.prompt).toBe("body");
   });
 });
 

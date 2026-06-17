@@ -249,7 +249,7 @@ describe("ACP round trip", () => {
     await clientConnection.closeSession({ sessionId: session.sessionId });
   });
 
-  it("honors session-scoped MCP servers from ACP without eager startup", async () => {
+  it("honors session-scoped MCP servers from ACP with concrete deferred tools", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "sparkwright-acp-mcp-"));
     isolateRuntimeEnv(cwd);
     await writeFile(join(cwd, "README.md"), "# Demo\n", "utf8");
@@ -258,8 +258,8 @@ describe("ACP round trip", () => {
       {
         toolCalls: [
           {
-            toolName: "mcp_qa_list_tools",
-            arguments: {},
+            toolName: "tool_search",
+            arguments: { query: "select:mcp_qa_echo" },
           },
         ],
       },
@@ -326,16 +326,14 @@ describe("ACP round trip", () => {
       sse: true,
     });
     expect(
-      capabilities.tools?.some((tool) => tool.name === "mcp_qa_list_tools"),
+      capabilities.tools?.some((tool) => tool.name === "mcp_qa_echo"),
     ).toBe(true);
     expect(
       capabilities.mcp?.statuses?.find((status) => status.serverName === "qa"),
     ).toMatchObject({
-      status: "configured",
+      status: "connected",
     });
-    await expect(readFile(markerPath, "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(readFile(markerPath, "utf8")).resolves.toBe("started");
 
     const response = await clientConnection.prompt({
       sessionId: session.sessionId,
@@ -348,7 +346,7 @@ describe("ACP round trip", () => {
       updates.some(
         (update) =>
           update.update.sessionUpdate === "tool_call" &&
-          update.update.title === "mcp_qa_list_tools",
+          update.update.title === "tool_search",
       ),
     ).toBe(true);
     const tracePath = join(

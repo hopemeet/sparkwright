@@ -107,16 +107,8 @@ export function parseAgentProfileFile(id: string, raw: string): AgentProfile {
   const model = scalar(frontmatter, "model");
   const prompt = body.length > 0 ? body : undefined;
 
-  // experimental.* is the preferred home for mode/model/prompt; mirror mode at
-  // the top level too so mainAgentProfile() resolves a primary either way.
-  if (mode || model || prompt) {
-    profile.experimental = {
-      ...(mode ? { mode } : {}),
-      ...(model ? { model } : {}),
-      ...(prompt ? { prompt } : {}),
-    };
-  }
   if (mode) profile.mode = mode;
+  if (model) profile.model = model;
   if (prompt) profile.prompt = prompt;
 
   return profile;

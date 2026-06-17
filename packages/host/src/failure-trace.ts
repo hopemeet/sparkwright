@@ -8,8 +8,8 @@ import {
   FileSessionStore,
   type RunRecord,
   type RunResult,
-  type TraceLevel,
 } from "@sparkwright/core";
+import type { TraceLevel } from "@sparkwright/protocol";
 
 export interface HostStartFailureTraceInput {
   goal: string;
@@ -24,9 +24,34 @@ export interface HostStartFailureTraceInput {
   metadata?: Record<string, unknown>;
 }
 
+export type HostClientStartFailureInput = Omit<
+  HostStartFailureTraceInput,
+  "goal"
+> & {
+  goal?: string;
+  /** @reserved Public host-client diagnostic field consumed by start-failure trace writers. */
+  resumeRunId?: string;
+};
+
+export interface HostStartFailureTraceResult {
+  tracePath?: string;
+  sessionId?: string;
+  runId?: string;
+}
+
+export async function recordHostClientStartFailure(
+  input: HostClientStartFailureInput,
+): Promise<HostStartFailureTraceResult> {
+  const { resumeRunId, ...traceInput } = input;
+  return writeHostStartFailureTrace({
+    ...traceInput,
+    goal: input.goal ?? (resumeRunId ? `resume ${resumeRunId}` : "start host"),
+  });
+}
+
 export async function writeHostStartFailureTrace(
   input: HostStartFailureTraceInput,
-): Promise<{ tracePath?: string; sessionId?: string; runId?: string }> {
+): Promise<HostStartFailureTraceResult> {
   const sessionId = input.sessionId ?? createSessionId();
   const runId = (input.runId ?? createRunId()) as RunRecord["id"];
   const now = new Date().toISOString();

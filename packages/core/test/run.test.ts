@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createContextItemId,
+  createClearToolUsesStage,
+  createWorkspaceMutationPolicy,
   createRun,
+  createToolSearchTool,
   classifyToolFailure,
   defineTool,
   type ContextItem,
@@ -170,6 +173,79 @@ describe("SparkwrightRun", () => {
       ],
     });
     expect(events.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("omits deferred tools from provider requests until tool_search loads them", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "use deferred tool",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 4,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          const toolNames = input.tools.map((tool) => tool.name);
+          if (modelCalls === 1) {
+            expect(toolNames).toEqual(["tool_search"]);
+            return {
+              toolCalls: [
+                {
+                  toolName: "tool_search",
+                  arguments: { query: "select:deferred_echo" },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            expect(toolNames).toEqual(["deferred_echo", "tool_search"]);
+            return {
+              toolCalls: [
+                {
+                  toolName: "deferred_echo",
+                  arguments: { text: "loaded" },
+                },
+              ],
+            };
+          }
+          expect(toolNames).toEqual(["deferred_echo", "tool_search"]);
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({
+      signal: "completed",
+      message: "done",
+    });
+    expect(modelCalls).toBe(3);
   });
 
   it("persists a command-outcome verdict on run.completed", async () => {
@@ -422,6 +498,87 @@ describe("SparkwrightRun", () => {
       .find((event) => event.type === "context.compaction.started");
     expect(started).toBeUndefined();
     expect(run.record.state).toBe("completed");
+  });
+
+  it("clears stale tool results with explicit placeholders before model calls", async () => {
+    let seenContext: ContextItem[] = [];
+    const oldOne = toolResultContext("read_file", "old-one".repeat(500));
+    const oldTwo = toolResultContext("grep", "old-two".repeat(500));
+    const recent = toolResultContext("shell", "recent result");
+    const run = createRun({
+      goal: "clear stale tool results",
+      context: [oldOne, oldTwo, recent],
+      compactionStages: [
+        createClearToolUsesStage({ triggerChars: 0, keepRecent: 1 }),
+      ],
+      model: {
+        async complete(input) {
+          seenContext = input.context;
+          return { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(seenContext).toHaveLength(3);
+    expect(seenContext[0]?.content).toContain(
+      "tool result cleared by clear_tool_uses",
+    );
+    expect(seenContext[0]?.content).toContain("tool=read_file");
+    expect(seenContext[0]?.metadata.clearToolUsesCleared).toBe(true);
+    expect(seenContext[1]?.content).toContain(
+      "tool result cleared by clear_tool_uses",
+    );
+    expect(seenContext[2]?.content).toBe("recent result");
+
+    const completed = run.events
+      .all()
+      .find(
+        (event) =>
+          event.type === "context.compaction.completed" &&
+          (event.payload as { trigger?: string }).trigger === "clear_tool_uses",
+      );
+    expect(completed?.payload).toMatchObject({
+      metadata: { replaced: 2, keepRecent: 1 },
+    });
+  });
+
+  it("skips stale tool-result clearing below clearAtLeastChars", async () => {
+    let seenContext: ContextItem[] = [];
+    const old = toolResultContext("read_file", "old".repeat(100));
+    const recent = toolResultContext("shell", "recent");
+    const run = createRun({
+      goal: "clear threshold",
+      context: [old, recent],
+      compactionStages: [
+        createClearToolUsesStage({
+          triggerChars: 0,
+          keepRecent: 1,
+          clearAtLeastChars: 10_000,
+        }),
+      ],
+      model: {
+        async complete(input) {
+          seenContext = input.context;
+          return { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(seenContext[0]?.content).toBe(old.content);
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "context.compaction.started" &&
+            (event.payload as { trigger?: string }).trigger ===
+              "clear_tool_uses",
+        ),
+    ).toBe(false);
   });
 
   it("wraps up with a best-effort partial when max steps are exceeded", async () => {
@@ -1679,6 +1836,138 @@ describe("SparkwrightRun", () => {
       toolOrigin: {
         kind: "mcp",
         name: "demo",
+      },
+    });
+    expect(run.record.state).toBe("completed");
+  });
+
+  it("uses per-argument tool governance before read-only workspace gating", async () => {
+    let executed = false;
+    let modelCalls = 0;
+    const tool = defineTool({
+      name: "mixed_shell",
+      description: "Mixed shell-like tool.",
+      inputSchema: {
+        type: "object",
+        properties: { mode: { type: "string" } },
+        required: ["mode"],
+      },
+      policy: { risk: "risky", requiresApproval: true },
+      governance: {
+        sideEffects: ["write", "external"],
+        origin: { kind: "local", name: "test" },
+      },
+      policyForArgs(args: { mode: string }) {
+        if (args.mode === "read") {
+          return {
+            policy: { risk: "safe", requiresApproval: false },
+            governance: {
+              sideEffects: ["read"],
+              origin: { kind: "local", name: "test" },
+            },
+          };
+        }
+        return {
+          policy: { risk: "risky", requiresApproval: true },
+          governance: {
+            sideEffects: ["write", "external"],
+            origin: { kind: "local", name: "test" },
+          },
+        };
+      },
+      execute() {
+        executed = true;
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "safe per-arg shell",
+      tools: [tool],
+      policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: false }),
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  { toolName: "mixed_shell", arguments: { mode: "read" } },
+                ],
+              }
+            : { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(executed).toBe(true);
+    expect(
+      run.events.all().some((event) => event.type === "approval.requested"),
+    ).toBe(false);
+    expect(run.record.state).toBe("completed");
+  });
+
+  it("keeps per-argument write-side-effect tools blocked in read-only runs", async () => {
+    let executed = false;
+    let modelCalls = 0;
+    const tool = defineTool({
+      name: "mixed_shell",
+      description: "Mixed shell-like tool.",
+      inputSchema: {
+        type: "object",
+        properties: { mode: { type: "string" } },
+        required: ["mode"],
+      },
+      policy: { risk: "risky", requiresApproval: true },
+      governance: {
+        sideEffects: ["write", "external"],
+        origin: { kind: "local", name: "test" },
+      },
+      policyForArgs() {
+        return {
+          policy: { risk: "risky", requiresApproval: true },
+          governance: {
+            sideEffects: ["write", "external"],
+            origin: { kind: "local", name: "test" },
+          },
+        };
+      },
+      execute() {
+        executed = true;
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "risky per-arg shell",
+      tools: [tool],
+      policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: false }),
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  { toolName: "mixed_shell", arguments: { mode: "write" } },
+                ],
+              }
+            : { message: "blocked" };
+        },
+      },
+    });
+
+    await run.start();
+
+    const toolFailed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    expect(executed).toBe(false);
+    expect(toolFailed?.payload).toMatchObject({
+      error: {
+        code: "TOOL_DENIED",
+        message:
+          "Tools with write side effects require an explicit write-enabled run.",
       },
     });
     expect(run.record.state).toBe("completed");
@@ -2947,6 +3236,60 @@ describe("SparkwrightRun", () => {
     ).toContain("{not valid json");
   });
 
+  it("treats empty streamed tool-call arguments as `{}` instead of failing", async () => {
+    let modelCalls = 0;
+    let receivedArgs: unknown;
+
+    const ping = defineTool({
+      name: "ping",
+      description: "Zero-argument tool.",
+      inputSchema: { type: "object" },
+      execute(args: unknown) {
+        receivedArgs = args;
+        return { ok: true };
+      },
+    });
+
+    const model: ModelAdapter = {
+      async complete() {
+        throw new Error("complete() should not be called when stream() exists");
+      },
+      async *stream() {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          // Some models emit start/end for a zero-argument tool without any
+          // argumentsDelta in between.
+          yield {
+            type: "tool_call_start" as const,
+            toolCallIndex: 0,
+            toolName: "ping",
+          };
+          yield { type: "tool_call_end" as const, toolCallIndex: 0 };
+          return;
+        }
+        yield { type: "text_delta" as const, text: "done" };
+      },
+    };
+
+    const run = createRun({
+      goal: "zero-argument streamed tool call",
+      tools: [ping],
+      model,
+      maxSteps: 2,
+    });
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    expect(receivedArgs).toEqual({});
+    expect(run.events.all().map((event) => event.type)).toEqual(
+      expect.arrayContaining(["tool.completed"]),
+    );
+    expect(run.events.all().some((event) => event.type === "run.failed")).toBe(
+      false,
+    );
+  });
+
   it("uses streaming adapter and emits model.stream.started and model.stream.completed events", async () => {
     const events: SparkwrightEvent[] = [];
 
@@ -3688,5 +4031,21 @@ function userContext(content: string): ContextItem {
     type: "user",
     content,
     metadata: {},
+  };
+}
+
+function toolResultContext(toolName: string, content: string): ContextItem {
+  return {
+    id: createContextItemId(),
+    type: "tool_result",
+    source: { kind: "tool", uri: toolName },
+    content,
+    metadata: {
+      layer: "working",
+      stability: "turn",
+      toolName,
+      status: "completed",
+      toolCallId: `call_${toolName}`,
+    },
   };
 }

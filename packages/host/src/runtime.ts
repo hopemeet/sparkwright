@@ -30,13 +30,11 @@ import {
   type EventEmitter,
   type ModelAdapter,
   type Policy,
-  type PermissionMode,
   type RunId,
   type RunBudget,
   type RunRecord,
   type RunResult,
   type SparkwrightEvent,
-  type TraceLevel,
   type ToolDefinition,
   type ToolOrigin,
   type WorkflowHook,
@@ -86,13 +84,16 @@ import {
   LocalWorkspace,
   MemoryTrace,
 } from "@sparkwright/core/internal";
-import type {
-  HostEvent,
-  ProtocolError,
-  RunResumeRequestPayload,
-  RunStartRequestPayload,
-  CapabilitySnapshot,
-  CapabilityAutomationSummary,
+import {
+  isTraceLevel,
+  type PermissionMode,
+  type TraceLevel,
+  type HostEvent,
+  type ProtocolError,
+  type RunResumeRequestPayload,
+  type RunStartRequestPayload,
+  type CapabilitySnapshot,
+  type CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig, type CapabilityMcpConfig } from "./config.js";
@@ -188,6 +189,7 @@ function mergeRuntimeMcpConfig(
   config: CapabilityMcpConfig | undefined,
   extraServers: readonly McpServerConfig[] | undefined,
 ): RuntimeMcpConfig | undefined {
+  const hasExtraServers = (extraServers?.length ?? 0) > 0;
   const servers = [
     ...((config?.servers ?? []) as McpServerConfig[]),
     ...(extraServers ?? []),
@@ -195,8 +197,52 @@ function mergeRuntimeMcpConfig(
   if (!config && servers.length === 0) return undefined;
   return {
     ...(config ?? {}),
+    ...(config?.startup
+      ? {}
+      : hasExtraServers
+        ? { startup: "prepare" as const }
+        : {}),
     ...(servers.length > 0 ? { servers } : {}),
   };
+}
+
+function mcpStartupMode(
+  config: RuntimeMcpConfig | undefined,
+): "lazy" | "prepare" | "eager" {
+  return config?.startup ?? "lazy";
+}
+
+function mcpToolSchemaLoad(
+  config: RuntimeMcpConfig,
+): NonNullable<RuntimeMcpConfig["toolSchemaLoad"]> {
+  return (
+    config.toolSchemaLoad ?? (config.startup === "eager" ? "eager" : "defer")
+  );
+}
+
+async function createRuntimeMcpTools(input: {
+  config: RuntimeMcpConfig | undefined;
+  emitter?: EventEmitter;
+  agentId?: string;
+  shellSandbox?: ReturnType<typeof resolveShellSandboxConfig>;
+}): Promise<PreparedMcp | null> {
+  const config = input.config;
+  if (!config?.servers?.length) return null;
+  const common = {
+    servers: config.servers,
+    defaultTimeoutMs: config.defaultTimeoutMs,
+    namePrefix: config.namePrefix,
+    toolSchemaLoad: mcpToolSchemaLoad(config),
+    policy: config.defaultPolicy,
+    emitter: input.emitter,
+    agentId: input.agentId,
+    shellSandbox: input.shellSandbox,
+  };
+  const startup = mcpStartupMode(config);
+  if (startup === "lazy") {
+    return createLazyMcpToolsForRun(common);
+  }
+  return prepareMcpToolsForRun(common);
 }
 
 function requireActiveRunId(value: string | null): RunId {
@@ -324,10 +370,6 @@ export function sessionPreviewFromTranscriptLine(firstLine: string): string {
 
 function extractSkillSourcePath(message: string): string | undefined {
   return message.match(/(?:^|\s)(\/[^\n:]+SKILL\.md)\b/)?.[1];
-}
-
-function isTraceLevel(value: unknown): value is TraceLevel {
-  return value === "minimal" || value === "standard" || value === "debug";
 }
 
 function resolveTraceLevel(input: {
@@ -569,7 +611,7 @@ export class HostRuntime {
     const runIdHolder: { value: string | null } = { value: null };
     const approvalResolver = this.createApprovalResolver(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
-    const toolConfig = loadedConfig.config.capabilities?.tools;
+    const toolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
     const hookConfig = loadedConfig.config.capabilities?.hooks;
     const skillConfig = loadedConfig.config.capabilities?.skills;
@@ -651,25 +693,12 @@ export class HostRuntime {
         );
       },
     };
-    const preparedMcp = mcpConfig?.servers?.length
-      ? createLazyMcpToolsForRun({
-          servers: mcpConfig.servers,
-          defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
-          namePrefix: mcpConfig.namePrefix,
-          policy: mcpConfig.defaultPolicy,
-          emitter: mcpEventEmitter,
-          agentId: MAIN_AGENT_ID,
-          shellSandbox: mcpShellSandbox,
-          onServerPrepared: (server) => {
-            const run = parentRunRef.current;
-            if (!run || server.status.status !== "connected") return;
-            for (const tool of server.tools) {
-              if (run.tools.get(tool.name)) run.tools.replace(tool);
-              else run.tools.register(tool);
-            }
-          },
-        })
-      : null;
+    const preparedMcp = await createRuntimeMcpTools({
+      config: mcpConfig,
+      emitter: mcpEventEmitter,
+      agentId: MAIN_AGENT_ID,
+      shellSandbox: mcpShellSandbox,
+    });
     const resolvedProfiles = await resolveAgentProfiles(
       workspaceRoot,
       agentConfig?.profiles,
@@ -1703,7 +1732,7 @@ export class HostRuntime {
 
   private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
     const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
-    const toolConfig = loadedConfig.config.capabilities?.tools;
+    const toolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = mergeRuntimeMcpConfig(
@@ -1749,15 +1778,10 @@ export class HostRuntime {
             agentId: MAIN_AGENT_ID,
           })
         : null;
-    const preparedMcp = mcpConfig?.servers?.length
-      ? createLazyMcpToolsForRun({
-          servers: mcpConfig.servers,
-          defaultTimeoutMs: mcpConfig.defaultTimeoutMs,
-          namePrefix: mcpConfig.namePrefix,
-          policy: mcpConfig.defaultPolicy,
-          shellSandbox: mcpShellSandbox,
-        })
-      : null;
+    const preparedMcp = await createRuntimeMcpTools({
+      config: mcpConfig,
+      shellSandbox: mcpShellSandbox,
+    });
     try {
       const mainAgent = mainAgentProfile(resolvedProfiles);
       const derivedAgents = deriveConfiguredAgents(mainAgent, resolvedProfiles);
@@ -2323,7 +2347,7 @@ function buildCapabilitySnapshot(input: {
       ).map((profile) => ({
         id: profile.id,
         name: profile.name,
-        mode: profile.experimental?.mode ?? profile.mode,
+        mode: profile.mode,
       })),
       delegateTools: input.delegateTools ?? [],
     },
@@ -2427,10 +2451,7 @@ function readTasksForSnapshot(
 function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
   return (
     profiles?.find(
-      (profile) =>
-        profile.id === MAIN_AGENT_ID ||
-        profile.experimental?.mode === "primary" ||
-        profile.mode === "primary",
+      (profile) => profile.id === MAIN_AGENT_ID || profile.mode === "primary",
     ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
   );
 }
@@ -2534,7 +2555,7 @@ function deriveConfiguredAgents(
   return profiles
     .filter((profile) => profile.id !== parentAgent.id)
     .filter((profile) => {
-      const mode = profile.experimental?.mode ?? profile.mode;
+      const mode = profile.mode;
       return mode === undefined || mode === "child" || mode === "all";
     })
     .map((childAgent) =>
@@ -2561,13 +2582,9 @@ const snapshotOnlyChildRunStoreFactory = (): ReturnType<
 };
 
 function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
-  const experimental = profile.experimental ?? {};
   return {
     ...profile,
-    experimental: {
-      ...experimental,
-      prompt: withDelegatedAgentPrompt(experimental.prompt ?? profile.prompt),
-    },
+    prompt: withDelegatedAgentPrompt(profile.prompt),
   };
 }
 
@@ -2857,10 +2874,7 @@ export function createDynamicSpawnAgentTool(input: {
         mode: "child",
         allowedTools: childTools.map((tool) => tool.name),
         maxSteps: parsed.maxSteps,
-        experimental: {
-          mode: "child",
-          prompt: withDelegatedAgentPrompt(parsed.prompt),
-        },
+        prompt: withDelegatedAgentPrompt(parsed.prompt),
         metadata: {
           dynamic: true,
         },

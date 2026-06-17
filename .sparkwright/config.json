@@ -1,8 +1,8 @@
 {
+  "tools": {
+    "defer": []
+  },
   "capabilities": {
-    "tools": {
-      "defer": []
-    },
     "hooks": {
       "workflow": [
         {
@@ -18,7 +18,7 @@
           "name": "protect-generated-dependency-and-vcs-paths",
           "hook": "PreToolUse",
           "matcher": {
-            "toolName": ["append_file", "edit_anchored_text", "apply_patch"],
+            "toolName": ["edit_anchored_text", "apply_patch"],
             "pathGlob": [
               "node_modules/**",
               "dist/**",

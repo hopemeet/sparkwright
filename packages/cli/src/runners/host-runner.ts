@@ -1,14 +1,15 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import type {
-  ApprovalResolver,
-  PermissionMode,
-  SparkwrightEvent,
-  TraceLevel,
-} from "@sparkwright/core";
+import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
+import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import { createClient, type Client } from "@sparkwright/sdk-node";
-import { writeHostStartFailureTrace } from "@sparkwright/host";
+import {
+  createHostClientRunMetadata,
+  createHostResumeRunRequest,
+  createHostStartRunRequest,
+  recordHostClientStartFailure,
+  resolveHostStdioSpawn,
+  tracePathForSession,
+} from "@sparkwright/host";
 import { createCliApprovalResolver } from "../cli-approval.js";
 import {
   checkDocumentedCommands,
@@ -32,8 +33,6 @@ import {
   summarizeWorkspaceMutations,
   updateCliRunEventSummary,
 } from "../run-outcome.js";
-
-const require = createRequire(import.meta.url);
 
 export interface HostRunInput {
   goal: string;
@@ -123,9 +122,7 @@ async function runHostLifecycle(
   const eventSummary = createCliRunEventSummary();
   const forwardHostLogs = shouldForwardHostLogs(env);
 
-  let tracePath = sessionId
-    ? join(sessionRootDir, sessionId, "trace.jsonl")
-    : undefined;
+  let tracePath = tracePathForSession({ sessionRootDir, sessionId });
 
   const terminal = new Promise<void>((resolveTerminal) => {
     const resolveOnce = (() => {
@@ -140,18 +137,13 @@ async function runHostLifecycle(
     void (async () => {
       client = await createClient({
         spawn: {
-          command: resolveHostCommand(env),
-          args: [
-            ...resolveHostArgs(env),
-            "--stdio",
-            "--workspace",
+          ...resolveHostStdioSpawn({
             workspaceRoot,
-            "--session-root",
             sessionRootDir,
-            "--permission-mode",
             permissionMode,
-            ...(modelName ? ["--model", modelName] : []),
-          ],
+            modelName,
+            env,
+          }),
           env: { ...process.env, ...env },
         },
         client: { name: "sparkwright-cli", version: "0.1.0" },
@@ -173,6 +165,7 @@ async function runHostLifecycle(
           approveAll,
           approveEdits,
           approveShellSafe,
+          permissionMode,
           io,
         });
         const request: Parameters<ApprovalResolver>[0] = {
@@ -249,50 +242,54 @@ async function runHostLifecycle(
       });
 
       if ("goal" in input) {
-        const started = await client.startRun({
-          goal: input.goal,
-          sessionId,
-          model: modelName,
-          permissionMode,
-          traceLevel,
+        const metadata = createHostClientRunMetadata({
+          source: "cli",
           targetPath,
-          ...(confidentialPaths && confidentialPaths.length > 0
-            ? { confidentialPaths: [...confidentialPaths] }
-            : {}),
           shouldWrite,
-          metadata: {
-            source: "cli",
-            targetPath,
-            shouldWrite,
-            traceLevel,
-          },
+          traceLevel,
         });
+        const started = await client.startRun(
+          createHostStartRunRequest({
+            goal: input.goal,
+            sessionId,
+            permissionMode,
+            targetPath,
+            traceLevel,
+            modelName,
+            modelNameSource: "request",
+            confidentialPaths,
+            shouldWrite,
+            metadata,
+          }),
+        );
         runId = started.runId;
       } else {
-        const resumed = await client.resumeRun({
-          runId: input.runId,
-          ...(sessionId ? { sessionId } : {}),
-          fromTrace: input.fromTrace,
-          force: input.force,
-          model: modelName,
-          permissionMode,
-          traceLevel,
+        const metadata = createHostClientRunMetadata({
+          source: "cli",
           targetPath,
-          ...(confidentialPaths && confidentialPaths.length > 0
-            ? { confidentialPaths: [...confidentialPaths] }
-            : {}),
           shouldWrite,
-          metadata: {
-            source: "cli",
-            targetPath,
-            shouldWrite,
-            traceLevel,
-          },
+          traceLevel,
         });
+        const resumed = await client.resumeRun(
+          createHostResumeRunRequest({
+            runId: input.runId,
+            sessionId,
+            fromTrace: input.fromTrace,
+            force: input.force,
+            permissionMode,
+            targetPath,
+            traceLevel,
+            modelName,
+            modelNameSource: "request",
+            confidentialPaths,
+            shouldWrite,
+            metadata,
+          }),
+        );
         runId = resumed.runId;
         if (resumed.sessionId) {
           sessionId = resumed.sessionId;
-          tracePath = join(sessionRootDir, sessionId, "trace.jsonl");
+          tracePath = tracePathForSession({ sessionRootDir, sessionId });
         }
       }
     })().catch(async (error: unknown) => {
@@ -305,8 +302,9 @@ async function runHostLifecycle(
         resolveOnce();
         return;
       }
-      const failureTrace = await writeHostStartFailureTrace({
-        goal: "goal" in input ? input.goal : `resume ${input.runId}`.trim(),
+      const failureTrace = await recordHostClientStartFailure({
+        goal: "goal" in input ? input.goal : undefined,
+        resumeRunId: "runId" in input ? input.runId : undefined,
         message: failedMessage,
         sessionRootDir: input.sessionRootDir,
         source: "cli",
@@ -427,24 +425,4 @@ function formatHostError(error: unknown): string {
     return error.message;
   }
   return String(error);
-}
-
-function resolveHostCommand(env: Record<string, string | undefined>): string {
-  return env.SPARKWRIGHT_HOST_COMMAND ?? process.execPath;
-}
-
-function resolveHostArgs(env: Record<string, string | undefined>): string[] {
-  if (env.SPARKWRIGHT_HOST_BIN) return [env.SPARKWRIGHT_HOST_BIN];
-  if (env.SPARKWRIGHT_HOST_SOURCE === "1") {
-    return [require.resolve("tsx/cli"), resolveHostSourceBin()];
-  }
-  return [resolveHostBin()];
-}
-
-function resolveHostBin(): string {
-  return require.resolve("@sparkwright/host/dist/bin.js");
-}
-
-function resolveHostSourceBin(): string {
-  return join(dirname(dirname(resolveHostBin())), "src", "bin.ts");
 }

@@ -153,8 +153,38 @@ export type {
   RunInputValidationInput,
   RunInputValidationResult,
 } from "./run-input-validation.js";
-export { writeHostStartFailureTrace } from "./failure-trace.js";
-export type { HostStartFailureTraceInput } from "./failure-trace.js";
+export {
+  recordHostClientStartFailure,
+  writeHostStartFailureTrace,
+} from "./failure-trace.js";
+export type {
+  HostClientStartFailureInput,
+  HostStartFailureTraceInput,
+  HostStartFailureTraceResult,
+} from "./failure-trace.js";
+export {
+  resolveHostBin,
+  resolveHostCommand,
+  resolveHostExecutableArgs,
+  resolveHostSourceBin,
+  resolveHostStdioSpawn,
+} from "./client-spawn.js";
+export type {
+  HostStdioSpawnInput,
+  ResolvedHostStdioSpawn,
+} from "./client-spawn.js";
+export {
+  createHostClientRunMetadata,
+  createHostResumeRunRequest,
+  createHostStartRunRequest,
+  resolveHostRequestModel,
+  tracePathForSession,
+} from "./client-run.js";
+export type {
+  HostClientModelSource,
+  HostClientRunMetadataInput,
+  HostClientSource,
+} from "./client-run.js";
 export type {
   SharedConfig,
   SharedConfigSourceMap,
