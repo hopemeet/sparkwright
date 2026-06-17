@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { suggestionWindow } from "../src/components/input-box.js";
+import {
+  inputBoxWidth,
+  suggestionWindow,
+} from "../src/components/input-box.js";
+
+describe("inputBoxWidth", () => {
+  it("fits inside the terminal with a small margin", () => {
+    expect(inputBoxWidth(60)).toBe(58);
+    expect(inputBoxWidth(120)).toBe(118);
+  });
+
+  it("keeps a minimum usable width", () => {
+    expect(inputBoxWidth(10)).toBe(20);
+  });
+});
 
 describe("suggestionWindow", () => {
   it("keeps the selected item visible after moving past the first page", () => {

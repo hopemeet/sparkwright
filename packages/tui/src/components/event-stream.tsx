@@ -1,11 +1,12 @@
 import React from "react";
-import { Box, Static, Text } from "ink";
+import { Box, Static, Text, useStdout } from "ink";
 import type { RunEvent } from "../lib/event-type.js";
 import { formatEvent } from "../lib/format-event.js";
 import { parseUnifiedDiff } from "../lib/diff.js";
 import { sanitizeAnsiForRender } from "../lib/text.js";
 import { Markdown } from "./markdown.js";
 import { useTheme } from "../lib/theme-context.js";
+import { resolveDialogColumns } from "./dialog-frame.js";
 
 export interface TranscriptHeaderInfo {
   workspaceRoot: string;
@@ -15,7 +16,46 @@ export interface TranscriptHeaderInfo {
 
 type Row =
   | { kind: "header"; key: string; header: TranscriptHeaderInfo }
-  | { kind: "event"; key: string; event: RunEvent; inBatch: boolean };
+  | {
+      kind: "event";
+      key: string;
+      event: RunEvent;
+      inBatch: boolean;
+      facts?: RunFactsSnapshot;
+    };
+
+interface RunFacts {
+  toolCalls: number;
+  writePaths: Set<string>;
+  approvalsRequested: number;
+  approvalsApproved: number;
+  approvalsDenied: number;
+  shellRequests: string[];
+  shellResults: ShellFact[];
+}
+
+interface RunFactsSnapshot {
+  toolCalls: number;
+  changedFiles: number;
+  approvalsRequested: number;
+  approvalsApproved: number;
+  approvalsDenied: number;
+  lastShell?: ShellFact;
+  commandOutcome?: CommandOutcomeFact;
+}
+
+interface ShellFact {
+  command?: string;
+  exitCode: number | null;
+  timedOut: boolean;
+}
+
+interface CommandOutcomeFact {
+  lastCommand?: string;
+  lastExitCode?: number;
+  lastTimedOut?: boolean;
+  unresolvedVerificationFailures?: number;
+}
 
 /**
  * Committed transcript. A one-time session header sits at the very top, then
@@ -42,20 +82,29 @@ export function EventStream(props: {
   // batch.requested has already been seen, so each row's `inBatch` is stable and
   // never changes on a later commit.
   let batchDepth = 0;
+  let facts = createRunFacts();
   const rows: Row[] = [
     { kind: "header", key: "__header", header: props.header },
     ...props.events.map((event): Row => {
+      if (event.type === "run.started") facts = createRunFacts();
       // The batch.requested header itself is NOT a member (depth flips after
       // it); the batch.completed closer drops back out before this row.
       if (event.type === "tool.batch.completed" && batchDepth > 0) batchDepth--;
       const inBatch = batchDepth > 0;
       if (event.type === "tool.batch.requested") batchDepth++;
-      return {
+      const row: Row = {
         kind: "event",
         key: event.id ?? `${event.sequence}`,
         event,
         inBatch,
       };
+      if (event.type === "run.completed") {
+        row.facts = snapshotRunFacts(facts, event);
+        facts = createRunFacts();
+      } else {
+        recordRunFact(facts, event);
+      }
+      return row;
     }),
   ];
   return (
@@ -68,6 +117,7 @@ export function EventStream(props: {
             key={row.key}
             event={row.event}
             inBatch={row.inBatch}
+            facts={row.facts}
           />
         )
       }
@@ -83,10 +133,14 @@ export function EventStream(props: {
  * to its own row and degrades to a dim diagnostic line instead.
  */
 class EventCardBoundary extends React.Component<
-  { event: RunEvent; inBatch: boolean },
+  { event: RunEvent; inBatch: boolean; facts?: RunFactsSnapshot },
   { error: Error | null }
 > {
-  constructor(props: { event: RunEvent; inBatch: boolean }) {
+  constructor(props: {
+    event: RunEvent;
+    inBatch: boolean;
+    facts?: RunFactsSnapshot;
+  }) {
     super(props);
     this.state = { error: null };
   }
@@ -105,7 +159,13 @@ class EventCardBoundary extends React.Component<
         </Box>
       );
     }
-    return <EventCard event={this.props.event} inBatch={this.props.inBatch} />;
+    return (
+      <EventCard
+        event={this.props.event}
+        inBatch={this.props.inBatch}
+        facts={this.props.facts}
+      />
+    );
   }
 }
 
@@ -142,6 +202,146 @@ function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function createRunFacts(): RunFacts {
+  return {
+    toolCalls: 0,
+    writePaths: new Set<string>(),
+    approvalsRequested: 0,
+    approvalsApproved: 0,
+    approvalsDenied: 0,
+    shellRequests: [],
+    shellResults: [],
+  };
+}
+
+function recordRunFact(facts: RunFacts, event: RunEvent): void {
+  const p = rec(event.payload);
+  switch (event.type) {
+    case "tool.requested": {
+      facts.toolCalls += 1;
+      if (str(p.toolName) === "shell") {
+        const args = rec(p.arguments ?? p.input ?? p.args);
+        const command = str(args.command);
+        if (command) facts.shellRequests.push(command);
+      }
+      return;
+    }
+    case "tool.completed": {
+      const result = p.result ?? p.output;
+      if (isShellResult(result)) {
+        const r = result as Record<string, unknown>;
+        facts.shellResults.push({
+          command: facts.shellRequests.shift(),
+          exitCode: typeof r.exitCode === "number" ? r.exitCode : null,
+          timedOut: r.timedOut === true,
+        });
+      }
+      return;
+    }
+    case "workspace.write.applied":
+    case "workspace.write.completed": {
+      const path = str(p.path);
+      if (path) facts.writePaths.add(path);
+      return;
+    }
+    case "approval.requested":
+      facts.approvalsRequested += 1;
+      return;
+    case "approval.resolved": {
+      const decision = str(p.decision);
+      if (decision === "approved") facts.approvalsApproved += 1;
+      else if (decision === "denied") facts.approvalsDenied += 1;
+      return;
+    }
+  }
+}
+
+function snapshotRunFacts(
+  facts: RunFacts,
+  completed: RunEvent,
+): RunFactsSnapshot {
+  const p = rec(completed.payload);
+  return {
+    toolCalls: facts.toolCalls,
+    changedFiles: facts.writePaths.size,
+    approvalsRequested: facts.approvalsRequested,
+    approvalsApproved: facts.approvalsApproved,
+    approvalsDenied: facts.approvalsDenied,
+    lastShell: facts.shellResults[facts.shellResults.length - 1],
+    commandOutcome: commandOutcomeFact(p.commandOutcome),
+  };
+}
+
+function commandOutcomeFact(value: unknown): CommandOutcomeFact | undefined {
+  const r = rec(value);
+  if (Object.keys(r).length === 0) return undefined;
+  const verification = rec(r.verification);
+  const fact: CommandOutcomeFact = {};
+  const lastCommand = str(verification.lastCommand);
+  if (lastCommand) fact.lastCommand = lastCommand;
+  if (typeof verification.lastExitCode === "number") {
+    fact.lastExitCode = verification.lastExitCode;
+  }
+  if (typeof verification.lastTimedOut === "boolean") {
+    fact.lastTimedOut = verification.lastTimedOut;
+  }
+  if (typeof verification.unresolved === "number") {
+    fact.unresolvedVerificationFailures = verification.unresolved;
+  }
+  return Object.keys(fact).length > 0 ? fact : undefined;
+}
+
+function runFactsParts(facts: RunFactsSnapshot | undefined): string[] {
+  if (!facts) return [];
+  const parts: string[] = [];
+  if (facts.changedFiles > 0) {
+    parts.push(
+      `changed ${facts.changedFiles} file${facts.changedFiles === 1 ? "" : "s"}`,
+    );
+  }
+  if (facts.approvalsRequested > 0) {
+    const resolved = facts.approvalsApproved + facts.approvalsDenied;
+    const suffix =
+      facts.approvalsDenied > 0 ? `, ${facts.approvalsDenied} denied` : "";
+    parts.push(`approvals ${resolved}/${facts.approvalsRequested}${suffix}`);
+  }
+  if (facts.toolCalls > 0) {
+    parts.push(`tools ${facts.toolCalls}`);
+  }
+  const command = commandFact(facts);
+  if (command) parts.push(command);
+  return parts;
+}
+
+function commandFact(facts: RunFactsSnapshot): string | undefined {
+  const shell = facts.lastShell;
+  if (shell?.command) return `last command: ${commandStatus(shell)}`;
+  const outcome = facts.commandOutcome;
+  if (!outcome?.lastCommand) return undefined;
+  return `last command: ${commandStatus({
+    command: outcome.lastCommand,
+    exitCode:
+      typeof outcome.lastExitCode === "number" ? outcome.lastExitCode : null,
+    timedOut: outcome.lastTimedOut === true,
+  })}`;
+}
+
+function commandStatus(fact: ShellFact): string {
+  const command = fact.command ?? "shell";
+  if (fact.timedOut) return `${command} timed out`;
+  if (fact.exitCode === 0) return `${command} passed`;
+  if (typeof fact.exitCode === "number") return `${command} failed`;
+  return `${command} completed`;
+}
+
+function RunFactsLine(props: {
+  facts: RunFactsSnapshot | undefined;
+}): React.ReactElement | null {
+  const parts = runFactsParts(props.facts);
+  if (parts.length === 0) return null;
+  return <Text dimColor>run facts {parts.join(" · ")}</Text>;
+}
+
 /**
  * One committed event → one typed card. Intermediate / noisy events
  * (stream start, tool start, usage, write-requested) render to nothing so the
@@ -152,8 +352,10 @@ function str(value: unknown): string {
 function EventCard(props: {
   event: RunEvent;
   inBatch: boolean;
+  facts?: RunFactsSnapshot;
 }): React.ReactElement | null {
   const theme = useTheme();
+  const { stdout } = useStdout();
   const ev = props.event;
   const p = rec(ev.payload);
   // Batch members are indented one extra step and packed tightly (no per-card
@@ -264,18 +466,28 @@ function EventCard(props: {
     case "tool.requested": {
       const name = str(p.toolName) || "tool";
       const args = p.arguments ?? p.input ?? p.args;
-      const preview = formatToolRequestPreview(name, args);
+      const cols = resolveDialogColumns(stdout?.columns) ?? 120;
+      const marker = inBatch ? "› " : "⚙ ";
+      const nameBudget = Math.max(8, Math.min(24, cols - childPad - 4));
+      const visibleName = truncatePlain(name, nameBudget);
+      const previewBudget = Math.max(
+        0,
+        cols - childPad - marker.length - visibleName.length - 4,
+      );
+      const preview = formatToolRequestPreview(name, args, previewBudget);
       return (
         <Box
           paddingLeft={childPad}
           paddingRight={1}
           marginTop={inBatch ? 0 : 1}
         >
-          <Text color={theme.accent}>{inBatch ? "› " : "⚙ "}</Text>
-          <Text color={theme.accent} bold>
-            {name}
+          <Text>
+            <Text color={theme.accent} bold>
+              {marker}
+              {visibleName}
+            </Text>
+            {preview ? <Text dimColor>{"  " + preview}</Text> : null}
           </Text>
-          {preview ? <Text dimColor>{"  " + preview}</Text> : null}
         </Box>
       );
     }
@@ -393,6 +605,21 @@ function EventCard(props: {
       // inspectable via /events.
       if (isListDirResult(result)) {
         const { head, detail } = summarizeListDir(result);
+        return (
+          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
+            <Text color={theme.muted}>{head}</Text>
+            {detail ? <Text dimColor>{"  " + detail}</Text> : null}
+            {artifacts.length > 0 ? (
+              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
+            ) : null}
+          </Box>
+        );
+      }
+      // A `glob` result is also a structured search envelope. Keep the
+      // transcript scan-friendly by showing the count and sample paths instead
+      // of raw JSON.
+      if (isGlobResult(result)) {
+        const { head, detail } = summarizeGlobResult(result);
         return (
           <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
             <Text color={theme.muted}>{head}</Text>
@@ -635,25 +862,28 @@ function EventCard(props: {
           reason ||
           "run failed";
         return (
-          <Box paddingX={1} marginTop={1}>
+          <Box flexDirection="column" paddingX={1} marginTop={1}>
             <Text color={theme.error}>── run failed: {err}</Text>
+            <RunFactsLine facts={props.facts} />
           </Box>
         );
       }
       if (state === "cancelled") {
         return (
-          <Box paddingX={1} marginTop={1}>
+          <Box flexDirection="column" paddingX={1} marginTop={1}>
             <Text color={theme.error}>
               ── run cancelled: {reason || "cancelled"}
             </Text>
+            <RunFactsLine facts={props.facts} />
           </Box>
         );
       }
       const displayReason = reason || "completed";
       const isFinal = displayReason === "final_answer";
       return (
-        <Box paddingX={1} marginTop={1}>
+        <Box flexDirection="column" paddingX={1} marginTop={1}>
           <Text dimColor>{isFinal ? "─────" : `── run ${displayReason}`}</Text>
+          <RunFactsLine facts={props.facts} />
         </Box>
       );
     }
@@ -684,6 +914,8 @@ function EventCard(props: {
     // run.state_transition.rejected) is hidden too: the user-facing cancel is
     // surfaced by the run.completed (state=cancelled) card and the "cancelling…"
     // toast, so these would otherwise leak as raw "[seq] type" debug rows.
+    case "workflow_hook.started":
+    case "workflow_hook.completed":
     case "run.started":
     case "run.created":
     case "run.cancelled":
@@ -772,15 +1004,27 @@ function CompactDiff(props: { diff: string }): React.ReactElement {
   );
 }
 
-function formatToolRequestPreview(name: string, args: unknown): string {
+function formatToolRequestPreview(
+  name: string,
+  args: unknown,
+  max = 80,
+): string {
+  if (max < 8) return "";
   const r = rec(args);
+  if (r && name === "shell") {
+    const command = str(r.command);
+    return command ? truncatePlain(`$ ${command}`, max) : "";
+  }
   if (r && (name === "create_skill" || name === "update_skill")) {
     const action = str(r.action);
     const skill = str(r.name);
     const force = r.force === true ? " · force" : "";
-    return [action, skill].filter(Boolean).join(" ") + force;
+    return truncatePlain(
+      [action, skill].filter(Boolean).join(" ") + force,
+      max,
+    );
   }
-  return args !== undefined ? oneLine(args, 80) : "";
+  return args !== undefined ? oneLine(args, max) : "";
 }
 
 function compactMutationPath(path: string): string {
@@ -1052,6 +1296,42 @@ export function summarizeListDir(
   return { head, detail };
 }
 
+export function isGlobResult(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const r = value as Record<string, unknown>;
+  return (
+    Array.isArray(r.patterns) &&
+    r.patterns.every((pattern) => typeof pattern === "string") &&
+    Array.isArray(r.paths) &&
+    r.paths.every((path) => typeof path === "string")
+  );
+}
+
+export function summarizeGlobResult(
+  value: unknown,
+  maxPaths = 8,
+): { head: string; detail: string } {
+  const r = value as {
+    paths?: unknown;
+    totalPaths?: unknown;
+    hasMore?: unknown;
+  };
+  const paths = Array.isArray(r.paths) ? r.paths.filter(isString) : [];
+  const totalPaths =
+    typeof r.totalPaths === "number" ? r.totalPaths : paths.length;
+  const head = `glob → ${totalPaths} ${totalPaths === 1 ? "path" : "paths"}`;
+  const shown = paths.slice(0, maxPaths);
+  const hidden = Math.max(0, totalPaths - shown.length);
+  const detail = shown.join(" · ") + (hidden > 0 ? ` · +${hidden} more` : "");
+  return { head, detail };
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
 /** Best-effort one-line preview of a value (object → compact JSON). */
 export function oneLine(value: unknown, max: number): string {
   let s: string;
@@ -1077,5 +1357,10 @@ export function oneLine(value: unknown, max: number): string {
     .replace(/\\[nrt]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+  return truncatePlain(s, max);
+}
+
+function truncatePlain(text: string, max: number): string {
+  if (max <= 0) return "";
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "…" : text;
 }

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Command, CommandRegistry } from "../lib/commands.js";
 import { useTheme } from "../lib/theme-context.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 /**
  * Modal command picker. Inline text input (no Ink TextInput dep) + scrollable
@@ -65,12 +66,7 @@ export function CommandPalette(props: {
   const visible = matches.slice(start, start + windowSize);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent2}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent2}>
       <Box>
         <Text color={theme.accent2} bold>
           ⌘ command palette
@@ -123,6 +119,6 @@ export function CommandPalette(props: {
           {matches.length}
         </Text>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
 }

@@ -1,10 +1,16 @@
 import React, { useMemo, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
+import {
+  DialogFrame,
+  dialogFrameWidth,
+  resolveDialogColumns,
+} from "./dialog-frame.js";
 
 /**
  * Session browser with inline filter + diagnostics + actions:
  *   "/"      toggle filter mode (type to filter id/label/preview)
+ *   "1"-"9"  resume one of the first nine listed sessions
  *   j/k ↑↓   navigate
  *   enter    resume
  *   i        inspect (diagnostics)
@@ -19,13 +25,19 @@ export function SessionListDialog(props: {
   diagnostics: SessionDiagnostics | null;
   loadingDiagnosticsFor: string | null;
   labels: Record<string, string>;
+  quickMode?: boolean;
   onPick: (id: string) => void;
   onInspect: (id: string) => void;
   onRename: (id: string) => void;
   onCancel: () => void;
 }): React.ReactElement {
+  const { stdout } = useStdout();
   const [cursor, setCursor] = useState(0);
   const [filter, setFilter] = useState<string | null>(null);
+  const rowWidth = Math.max(
+    20,
+    dialogFrameWidth(resolveDialogColumns(stdout?.columns)) - 4,
+  );
 
   const filtered = useMemo(
     () => rankSessions(props.sessions, props.labels, filter ?? ""),
@@ -75,6 +87,12 @@ export function SessionListDialog(props: {
       setFilter("");
       return;
     }
+    const digit = Number.parseInt(input, 10);
+    if (digit >= 1 && digit <= Math.min(9, filtered.length)) {
+      const pick = filtered[digit - 1];
+      if (pick) props.onPick(pick.id);
+      return;
+    }
     if (key.upArrow || input === "k") {
       setCursor((c) => Math.max(0, c - 1));
     } else if (key.downArrow || input === "j") {
@@ -93,38 +111,24 @@ export function SessionListDialog(props: {
 
   if (props.sessions.length === 0) {
     return (
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={1}
-      >
+      <DialogFrame borderColor="cyan">
         <Text color="cyan" bold>
-          sessions
+          {props.quickMode ? "sessions quick switch" : "sessions"}
         </Text>
         <Text dimColor>
           (none found in .sparkwright/sessions — press esc to close)
         </Text>
-      </Box>
+      </DialogFrame>
     );
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-    >
-      <Box>
-        <Text color="cyan" bold>
-          sessions
-        </Text>
-        <Text dimColor>
-          {"  "}↑/↓ navigate · enter resume · i inspect · r rename · / filter ·
-          esc close
-        </Text>
-      </Box>
+    <DialogFrame borderColor="cyan">
+      <Text color="cyan" bold>
+        {props.quickMode ? "sessions quick switch" : "sessions"}
+      </Text>
+      <Text dimColor>1-9 quick resume · ↑/↓ navigate · enter resume</Text>
+      <Text dimColor>i inspect · r rename · / filter · esc close</Text>
       {filter !== null ? (
         <Box>
           <Text color="yellow">filter: </Text>
@@ -142,21 +146,18 @@ export function SessionListDialog(props: {
           .toISOString()
           .replace("T", " ")
           .slice(0, 19);
+        const title = label ?? s.preview ?? "(no preview)";
+        const line = truncatePlain(
+          `${sessionRowPrefix(selected, i)}${ts} ${s.id.slice(0, 12)} ${title}`,
+          rowWidth,
+        );
         return (
-          <Box key={s.id}>
-            <Text color={selected ? "green" : undefined}>
-              {selected ? "› " : "  "}
-            </Text>
-            <Text color={selected ? "green" : undefined}>{ts}</Text>
-            <Text> </Text>
-            <Text dimColor>{s.id.slice(0, 12)}</Text>
-            <Text> </Text>
-            {label ? (
-              <Text color="cyan">{label}</Text>
-            ) : (
-              <Text dimColor>{s.preview || "(no preview)"}</Text>
-            )}
-          </Box>
+          <Text
+            key={s.id}
+            color={selected ? "green" : label ? "cyan" : undefined}
+          >
+            {line}
+          </Text>
         );
       })}
       {filtered.length > 12 ? (
@@ -166,8 +167,17 @@ export function SessionListDialog(props: {
         diagnostics={props.diagnostics}
         loadingFor={props.loadingDiagnosticsFor}
       />
-    </Box>
+    </DialogFrame>
   );
+}
+
+function sessionRowPrefix(selected: boolean, index: number): string {
+  const digit = index < 9 ? String(index + 1) : " ";
+  return `${selected ? "›" : " "} ${digit} `;
+}
+
+function truncatePlain(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
 }
 
 /**

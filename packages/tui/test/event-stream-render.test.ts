@@ -18,10 +18,13 @@ import type { RunEvent } from "../src/lib/event-type.js";
  *  - internal cancel/state-machine events are suppressed (don't leak as
  *    "[seq] type" debug rows); the polished cancel card still shows.
  */
-async function renderToText(element: React.ReactElement): Promise<string> {
+async function renderToText(
+  element: React.ReactElement,
+  columns = 120,
+): Promise<string> {
   const writes: string[] = [];
   const fakeStdout = {
-    columns: 120,
+    columns,
     rows: 40,
     write: (s: string) => {
       writes.push(s);
@@ -89,6 +92,26 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("dist/");
     expect(text).not.toContain('"entries"');
     expect(text).not.toContain('{"path"');
+  });
+
+  it("renders a glob result as a summary, not raw JSON", async () => {
+    const events = [
+      ev("tool.completed", 1, {
+        result: {
+          patterns: ["package.json", "pnpm-lock.yaml"],
+          paths: ["package.json"],
+          truncated: false,
+          offset: 0,
+          totalPaths: 1,
+          hasMore: false,
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("glob → 1 path");
+    expect(text).toContain("package.json");
+    expect(text).not.toContain('"patterns"');
+    expect(text).not.toContain('"totalPaths"');
   });
 
   it("renders anchored reads as summaries, not raw JSON", async () => {
@@ -163,6 +186,42 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"description"');
   });
 
+  it("keeps tool names readable while truncating long argument previews", async () => {
+    const events = [
+      ev("tool.batch.requested", 1, {
+        toolCallCount: 1,
+        mode: "serial",
+      }),
+      ev("tool.requested", 2, {
+        toolName: "apply_patch",
+        arguments: {
+          path: "src/cart.js",
+          patch:
+            "*** Begin Patch\n*** Update File: src/cart.js\n@@\n- old\n+ new\n*** End Patch",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events), 72);
+    expect(text).toContain("› apply_patch");
+    expect(text).not.toContain("›apply_patc");
+  });
+
+  it("renders shell tool requests as commands instead of raw JSON", async () => {
+    const events = [
+      ev("tool.requested", 1, {
+        toolName: "shell",
+        arguments: {
+          command: "npm test",
+          timeoutMs: 120000,
+          cwd: "/tmp/project",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events), 72);
+    expect(text).toContain("⚙ shell  $ npm test");
+    expect(text).not.toContain('"command"');
+  });
+
   it("renders capability mutations with action and compact path", async () => {
     const events = [
       ev("capability.mutation.completed", 1, {
@@ -220,6 +279,47 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"exitCode"');
   });
 
+  it("renders run facts from committed events after run completion", async () => {
+    const events = [
+      ev("run.started", 1, {}),
+      ev("approval.requested", 2, {
+        id: "approval_1",
+        action: "tool.execute",
+      }),
+      ev("approval.resolved", 3, {
+        approvalId: "approval_1",
+        decision: "approved",
+      }),
+      ev("tool.requested", 4, {
+        toolName: "shell",
+        arguments: {
+          command: "npm test",
+        },
+      }),
+      ev("tool.completed", 5, {
+        toolName: "shell",
+        output: {
+          stdout: "tests passed\n",
+          stderr: "",
+          exitCode: 0,
+          timedOut: false,
+        },
+      }),
+      ev("workspace.write.completed", 6, {
+        path: "src/cart.js",
+      }),
+      ev("run.completed", 7, {
+        reason: "final_answer",
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("run facts");
+    expect(text).toContain("changed 1 file");
+    expect(text).toContain("approvals 1/1");
+    expect(text).toContain("tools 1");
+    expect(text).toContain("last command: npm test passed");
+  });
+
   it("suppresses internal cancel/state-machine events but keeps the cancel card", async () => {
     const events = [
       ev("run.cancelled", 1, {}),
@@ -234,5 +334,19 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("state_transition");
     // but the user-facing cancel card from run.completed is still shown
     expect(text).toContain("run cancelled");
+  });
+
+  it("suppresses successful workflow hook machinery", async () => {
+    const events = [
+      ev("workflow_hook.started", 1, {
+        name: "project-operating-rules",
+      }),
+      ev("workflow_hook.completed", 2, {
+        name: "project-operating-rules",
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).not.toContain("workflow_hook");
+    expect(text).not.toContain("project-operating-rules");
   });
 });

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import type { DraftEntry } from "../lib/stash.js";
 import { useTheme } from "../lib/theme-context.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 /**
  * Browse archived drafts. Enter loads the selected one into the input box
@@ -35,29 +36,19 @@ export function StashDialog(props: {
 
   if (props.entries.length === 0) {
     return (
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={theme.accent}
-        paddingX={1}
-      >
+      <DialogFrame borderColor={theme.accent}>
         <Text color={theme.accent} bold>
           stashed drafts
         </Text>
         <Text color={theme.muted}>
           (none yet — drafts ≥ 20 chars are snapshotted as you type)
         </Text>
-      </Box>
+      </DialogFrame>
     );
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Box>
         <Text color={theme.accent} bold>
           stashed drafts ({props.entries.length})
@@ -84,6 +75,6 @@ export function StashDialog(props: {
           </Box>
         );
       })}
-    </Box>
+    </DialogFrame>
   );
 }

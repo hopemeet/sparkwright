@@ -3,6 +3,7 @@ import { Box, Text, useInput } from "ink";
 import type { RunEvent } from "../lib/event-type.js";
 import { searchTranscript } from "../lib/transcript.js";
 import { useTheme } from "../lib/theme-context.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 /**
  * Find text in the committed conversation. Type to filter user/assistant
@@ -60,12 +61,7 @@ export function SearchDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Box>
         <Text color={theme.accent} bold>
           search transcript
@@ -110,6 +106,6 @@ export function SearchDialog(props: {
           {safeCursor + 1}/{matches.length}
         </Text>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
 }

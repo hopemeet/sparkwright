@@ -28,6 +28,7 @@ import { StatusBar } from "./components/status-bar.js";
 import { Spinner } from "./components/spinner.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
+import { resolveDialogColumns } from "./components/dialog-frame.js";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { copyToClipboard } from "./lib/clipboard.js";
 import { lastAssistantMessage } from "./lib/transcript.js";
@@ -581,8 +582,10 @@ function AppReady(
     // Re-fetch every time — sessions list isn't large and may have grown
     // since the user last looked.
     const sessions = await controller.listSessions();
+    setSessionDiagnostics(null);
+    setLoadingDiagnosticsFor(null);
     setSessionList(sessions);
-    layers.push("quick-switch");
+    layers.push("sessions", { quick: true });
   }
 
   async function inspectSession(id: string): Promise<void> {
@@ -1012,8 +1015,9 @@ function AppReady(
     });
     reg.register({
       name: "events",
-      title: "Inspect event detail",
-      description: "Browse recent events, expand a row to see full payload.",
+      title: "Open Run Inspector",
+      description:
+        "Inspect run events with filters, search, and payload detail.",
       category: "view",
       hint: formatBinding(resolved.bindings["events.open"]) || undefined,
       run: () => layers.toggle("events"),
@@ -1040,6 +1044,7 @@ function AppReady(
       description:
         "Create a Skill, agent, cron job, slash command, or MCP server.",
       category: "capability",
+      hiddenByDefault: true,
       run: () => openCreateCapability(),
       runRaw: (rest) => openCreateCapability(rest),
     });
@@ -1048,6 +1053,7 @@ function AppReady(
       title: "Browse tools",
       description: "Show prepared tools, risk, and origin.",
       category: "view",
+      hiddenByDefault: true,
       run: () => void openCapabilities("tools"),
     });
     reg.register({
@@ -1055,6 +1061,7 @@ function AppReady(
       title: "Browse Skills",
       description: "Show Skills SparkWright can discover or load.",
       category: "view",
+      hiddenByDefault: true,
       run: () => void openCapabilities("skills"),
     });
     reg.register({
@@ -1063,6 +1070,7 @@ function AppReady(
       description:
         "Create a project Skill proposal interactively or from arguments.",
       category: "capability",
+      hiddenByDefault: true,
       run: () => openSkillCreateProposal(),
       runRaw: openSkillCreateProposal,
     });
@@ -1072,6 +1080,7 @@ function AppReady(
       description:
         "Create a hash-gated update/fork proposal interactively or from arguments.",
       category: "capability",
+      hiddenByDefault: true,
       run: () => openSkillUpdateProposal(),
       runRaw: openSkillUpdateProposal,
     });
@@ -1081,6 +1090,7 @@ function AppReady(
       description:
         "Summarize recent Skill proposals; optionally pass a state like draft.",
       category: "capability",
+      hiddenByDefault: true,
       run: () => reviewSkillProposalsFromSlash(""),
       runRaw: reviewSkillProposalsFromSlash,
     });
@@ -1090,6 +1100,7 @@ function AppReady(
       description:
         "Show or set Skill Evolution mode: off, notice, draft, apply.",
       category: "capability",
+      hiddenByDefault: true,
       run: () => handleSkillLearn(""),
       runRaw: handleSkillLearn,
     });
@@ -1098,6 +1109,7 @@ function AppReady(
       title: "Browse agents",
       description: "Show configured agent profiles.",
       category: "view",
+      hiddenByDefault: true,
       run: () => void openCapabilities("agents"),
     });
     reg.register({
@@ -1105,6 +1117,7 @@ function AppReady(
       title: "Browse MCP servers",
       description: "Show configured MCP servers and their exposed tools.",
       category: "view",
+      hiddenByDefault: true,
       run: () => void openCapabilities("mcp"),
     });
     reg.register({
@@ -1112,6 +1125,7 @@ function AppReady(
       title: "Browse automation status",
       description: "Show cron jobs and durable background task state.",
       category: "view",
+      hiddenByDefault: true,
       run: () => void openCapabilities("cron"),
     });
     reg.register({
@@ -1157,7 +1171,7 @@ function AppReady(
       title: "Fork session at a turn",
       description: "Branch a new session from a chosen point in history.",
       category: "session",
-      run: () => layers.toggle("timeline"),
+      run: () => layers.toggle("fork"),
     });
     reg.register({
       name: "trace",
@@ -1409,7 +1423,7 @@ function AppReady(
 
   const modelLabel = effModel ?? "deterministic";
 
-  const cols = stdout?.columns ?? 100;
+  const cols = resolveDialogColumns(stdout?.columns) ?? 100;
   // Only reserve the sidebar rail when the terminal is wide AND there's
   // something to show — an empty "modified files (none yet)" box pinned at the
   // bottom is just clutter.
@@ -1453,7 +1467,6 @@ function AppReady(
             registry={registry}
             resolved={resolved}
             sessionList={sessionList}
-            currentSessionId={state.sessionId}
             events={state.events}
             labels={labels}
             renameTarget={renameTarget}
@@ -1483,7 +1496,7 @@ function AppReady(
             }}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
-              layers.pop("timeline");
+              layers.pop("fork");
               if (!src) return;
               void controller.forkSession(src, seq).then((res) => {
                 if (!res) return;
@@ -1501,7 +1514,6 @@ function AppReady(
             onPickSession={(id) => {
               void controller.switchSession(id);
               layers.pop("sessions");
-              layers.pop("quick-switch");
               toasts.push({
                 variant: "success",
                 message: `switched to session ${id}`,
@@ -1655,7 +1667,6 @@ function AppReady(
             registry={registry}
             resolved={resolved}
             sessionList={sessionList}
-            currentSessionId={state.sessionId}
             events={state.events}
             labels={labels}
             renameTarget={renameTarget}
@@ -1685,7 +1696,7 @@ function AppReady(
             }}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
-              layers.pop("timeline");
+              layers.pop("fork");
               if (!src) return;
               void controller.forkSession(src, seq).then((res) => {
                 if (!res) return;
@@ -1707,7 +1718,6 @@ function AppReady(
             onPickSession={(id) => {
               void controller.switchSession(id);
               layers.pop("sessions");
-              layers.pop("quick-switch");
               toasts.push({
                 variant: "success",
                 message: `switched to session ${id}`,
@@ -1781,20 +1791,24 @@ function AppReady(
           </Box>
         )}
 
-        <Box paddingX={1}>
-          <Text dimColor>{inputFooterText(resolved.bindings)}</Text>
+        <Box paddingX={1} flexDirection="column">
+          {inputFooterLines(resolved.bindings, cols - 2).map((line, index) => (
+            <Text key={index} dimColor>
+              {line}
+            </Text>
+          ))}
         </Box>
       </Box>
     </ThemeProvider>
   );
 }
 
-function inputFooterText(bindings: Bindings): string {
+export function inputFooterLines(bindings: Bindings, width = 100): string[] {
   const items = ["enter run", "\\↵ newline", "/ commands", "@ files"];
   for (const [name, label] of [
     ["history.search", "search"],
     ["palette.open", "palette"],
-    ["events.open", "events"],
+    ["events.open", "inspector"],
     ["quick.switch", "switch"],
     ["cancel.run", "cancel"],
     ["quit.app", "quit"],
@@ -1802,5 +1816,21 @@ function inputFooterText(bindings: Bindings): string {
     const binding = formatBinding(bindings[name]);
     if (binding) items.push(`${binding} ${label}`);
   }
-  return items.join(" · ");
+  return wrapFooterItems(items, Math.max(24, width));
+}
+
+function wrapFooterItems(items: string[], width: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const item of items) {
+    const next = current ? `${current} · ${item}` : item;
+    if (next.length <= width || !current) {
+      current = next;
+      continue;
+    }
+    lines.push(current);
+    current = item;
+  }
+  if (current) lines.push(current);
+  return lines;
 }

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { RunEvent } from "../lib/event-type.js";
 import { useTheme } from "../lib/theme-context.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 /**
  * Fork-point picker. We surface each user turn (a `run.started` event with a
@@ -10,7 +11,7 @@ import { useTheme } from "../lib/theme-context.js";
  *
  * Enter forks at the highlighted point; esc cancels.
  */
-export function TimelineDialog(props: {
+export function ForkDialog(props: {
   events: RunEvent[];
   /**
    * Fork at the chosen point. `edit` true means "edit & resend": fork, then
@@ -75,20 +76,16 @@ export function TimelineDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Box>
         <Text color={theme.accent} bold>
           fork session
         </Text>
-        <Text color={theme.muted}>
-          {"  "}pick a point · ↑/↓ select · enter fork · e fork+edit · esc
-        </Text>
+        <Text color={theme.muted}>{"  "}pick a point</Text>
       </Box>
+      <Text color={theme.muted}>
+        ↑/↓ select · enter fork · e fork+edit · esc close
+      </Text>
       {visible.map((opt, i) => {
         const optionIndex = start + i;
         const selected = optionIndex === safeCursor;
@@ -121,7 +118,7 @@ export function TimelineDialog(props: {
           {options.length} · u/d page · g/G top/bottom
         </Text>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
 }
 

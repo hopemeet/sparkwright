@@ -14,11 +14,10 @@ export type LayerName =
   | "approval"
   | "palette"
   | "sessions"
-  | "quick-switch"
   | "events"
   | "stash"
   | "model"
-  | "timeline"
+  | "fork"
   | "search"
   | "help"
   | "config"
@@ -43,13 +42,12 @@ const PRIORITY: Record<LayerName, number> = {
   // Approval is the most important — it blocks the run; it MUST be on top.
   approval: 100,
   palette: 80,
-  "quick-switch": 75,
   "session-rename": 70, // above sessions so it can stack
   events: 65,
   sessions: 60,
   stash: 55,
   model: 58,
-  timeline: 62,
+  fork: 62,
   search: 63,
   capabilities: 57,
   create: 57,

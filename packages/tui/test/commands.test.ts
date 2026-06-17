@@ -51,4 +51,27 @@ describe("CommandRegistry", () => {
     const results = reg.search("sess");
     expect(results[0].name).toBe("session");
   });
+
+  it("hides advanced commands only from the empty suggestion list", () => {
+    const reg = new CommandRegistry();
+    reg.register({
+      name: "capabilities",
+      title: "Capabilities",
+      description: "overview",
+      category: "view",
+      run: () => {},
+    });
+    reg.register({
+      name: "tools",
+      title: "Tools",
+      description: "capability subview",
+      category: "view",
+      hiddenByDefault: true,
+      run: () => {},
+    });
+
+    expect(reg.search("").map((cmd) => cmd.name)).toEqual(["capabilities"]);
+    expect(reg.search("tool").map((cmd) => cmd.name)).toEqual(["tools"]);
+    expect(reg.resolve("tools")?.name).toBe("tools");
+  });
 });

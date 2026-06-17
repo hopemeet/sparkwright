@@ -3,6 +3,7 @@ import { Box, Text, useInput, useStdout } from "ink";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { useTheme } from "../lib/theme-context.js";
 import type { CapabilityView } from "../lib/layer-payload.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 export function CapabilitiesPanel(props: {
   snapshot: CapabilitySnapshot | null;
@@ -68,12 +69,7 @@ export function CapabilitiesPanel(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Text color={theme.accent} bold>
         {capabilityPanelTitle(props.view)}
         <Text color={theme.muted}>
@@ -89,18 +85,19 @@ export function CapabilitiesPanel(props: {
         <Box flexDirection="column" marginTop={1}>
           {visible}
           <Box marginTop={1}>
-            <Text color={theme.muted}>esc close</Text>
-            {maxScroll > 0 ? (
-              <Text color={theme.muted}>
-                {" · ↑/↓ j/k scroll · u/d page"}
-                {more > 0 ? ` · ${more} more ↓` : " · end"}
-              </Text>
-            ) : null}
+            <Text color={theme.muted}>{footerText(maxScroll > 0, more)}</Text>
           </Box>
         </Box>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
+}
+
+function footerText(scrollable: boolean, more: number): string {
+  if (!scrollable) return "esc close";
+  return `esc close · ↑/↓ j/k scroll · u/d page${
+    more > 0 ? ` · ${more} more ↓` : " · end"
+  }`;
 }
 
 function capabilityRows(input: {

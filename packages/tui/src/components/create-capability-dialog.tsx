@@ -5,6 +5,7 @@ import type {
   CreateCapabilityDraft,
   CreateCapabilityKind,
 } from "../lib/create-capability.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 const KINDS: CreateCapabilityKind[] = [
   "skill",
@@ -170,12 +171,7 @@ export function CreateCapabilityDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Text color={theme.accent} bold>
         create capability
         <Text color={theme.muted}> enter next · esc cancel</Text>
@@ -222,7 +218,7 @@ export function CreateCapabilityDialog(props: {
           ) : null}
         </Box>
       )}
-    </Box>
+    </DialogFrame>
   );
 }
 

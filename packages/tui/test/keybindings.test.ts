@@ -78,7 +78,7 @@ describe("ctrlCPressCount", () => {
 });
 
 describe("mergeBindings", () => {
-  it("leaves palette and quick switch unbound by default", () => {
+  it("leaves palette and sessions quick mode unbound by default", () => {
     expect(DEFAULTS["palette.open"]).toEqual([]);
     expect(DEFAULTS["quick.switch"]).toEqual([]);
   });

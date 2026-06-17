@@ -24,6 +24,11 @@ export interface Command {
   aliases?: string[];
   /** Keyboard hint shown on the right side of the palette row. */
   hint?: string;
+  /**
+   * Keep this command out of the empty palette/slash suggestion list. Direct
+   * slash resolution and non-empty palette search still include it.
+   */
+  hiddenByDefault?: boolean;
   /** Whether the command is currently selectable. */
   available?: () => boolean;
   /** Called when the user picks the command (palette, or `/name` with no args). */
@@ -72,7 +77,7 @@ export class CommandRegistry {
    */
   search(query: string): Command[] {
     const q = query.trim().toLowerCase();
-    if (!q) return this.list();
+    if (!q) return this.list().filter((cmd) => !cmd.hiddenByDefault);
     const scored: Array<{ cmd: Command; score: number }> = [];
     for (const cmd of this.list()) {
       const name = cmd.name.toLowerCase();

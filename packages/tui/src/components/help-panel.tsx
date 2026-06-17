@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { CommandRegistry } from "../lib/commands.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 // Input editing affordances live inside InputBox (readline-style), so they have
 // no /command entry. Surface them here so the help panel remains comprehensive.
@@ -22,7 +23,7 @@ export function HelpPanel(props: {
   const { stdout } = useStdout();
   const [scroll, setScroll] = useState(0);
 
-  const cmds = props.registry.list();
+  const cmds = props.registry.list().filter((cmd) => !cmd.hiddenByDefault);
   const grouped = new Map<string, typeof cmds>();
   for (const command of cmds) {
     const group = grouped.get(command.category) ?? [];
@@ -84,12 +85,7 @@ export function HelpPanel(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="magenta"
-      paddingX={1}
-    >
+    <DialogFrame borderColor="magenta">
       <Text color="magenta" bold>
         keyboard / commands
       </Text>
@@ -97,14 +93,16 @@ export function HelpPanel(props: {
         {visible}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>esc close</Text>
-        {maxScroll > 0 ? (
-          <Text dimColor>
-            {" · ↑/↓ j/k scroll · u/d page"}
-            {more > 0 ? ` · ${more} more ↓` : " · end"}
-          </Text>
-        ) : null}
+        <Text dimColor>{footerText(maxScroll > 0, more)}</Text>
       </Box>
-    </Box>
+    </DialogFrame>
   );
+}
+
+function footerText(scrollable: boolean, more: number): string {
+  const suffix = " · search for more";
+  if (!scrollable) return `esc close${suffix}`;
+  return `esc close · ↑/↓ j/k · u/d page${
+    more > 0 ? ` · ${more} more ↓` : " · end"
+  }${suffix}`;
 }

@@ -4,6 +4,11 @@ import type { PendingApproval } from "../state/event-store.js";
 import { DiffView } from "./diff-view.js";
 import { useTheme } from "../lib/theme-context.js";
 import type { Theme } from "../lib/theme.js";
+import {
+  DialogFrame,
+  dialogFrameWidth,
+  resolveDialogColumns,
+} from "./dialog-frame.js";
 
 /**
  * Kind-aware approval panel. Shows a renderable body matching the action:
@@ -32,7 +37,10 @@ export function ApprovalPrompt(props: {
   // Reserve some rows for header / footer / surrounding chrome. The remainder
   // is the diff viewport. Floor at 6 to stay useful on tiny terminals.
   const viewportRows = Math.max(6, (stdout?.rows ?? 30) - 18);
-  const viewportCols = Math.max(40, (stdout?.columns ?? 100) - 4);
+  const viewportCols = Math.max(
+    20,
+    dialogFrameWidth(resolveDialogColumns(stdout?.columns)) - 4,
+  );
 
   useInput((input, key) => {
     if (input === "y" || input === "Y" || key.return) {
@@ -56,12 +64,7 @@ export function ApprovalPrompt(props: {
   const borderColor = riskColor(props.pending.policy?.risk, theme);
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={borderColor}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={borderColor}>
       <Header pending={props.pending} theme={theme} />
       <Body
         pending={props.pending}
@@ -71,7 +74,7 @@ export function ApprovalPrompt(props: {
         viewportCols={viewportCols}
       />
       <Footer hasDiff={!!props.pending.diff} theme={theme} />
-    </Box>
+    </DialogFrame>
   );
 }
 
@@ -150,7 +153,9 @@ function Body(props: {
     return (
       <Box marginTop={1}>
         <Text dimColor>$ </Text>
-        <Text color={theme.accent2}>{pending.command}</Text>
+        <Text color={theme.accent2}>
+          {truncateText(pending.command, props.viewportCols - 2)}
+        </Text>
       </Box>
     );
   }
@@ -196,12 +201,54 @@ function ToolArgs(props: {
       />
     );
   }
+  if (args && props.toolName === "shell") {
+    return (
+      <ShellToolArgs
+        args={args}
+        theme={props.theme}
+        viewportCols={props.viewportCols}
+      />
+    );
+  }
   if (!props.args) return null;
   return (
     <Text>
       <Text dimColor>args: </Text>
       <Text>{truncateJson(props.args, props.viewportCols)}</Text>
     </Text>
+  );
+}
+
+function ShellToolArgs(props: {
+  args: Record<string, unknown>;
+  theme: Theme;
+  viewportCols: number;
+}): React.ReactElement {
+  const command = str(props.args.command) || "?";
+  const cwd = str(props.args.cwd);
+  const timeoutMs =
+    typeof props.args.timeoutMs === "number" ? props.args.timeoutMs : undefined;
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text dimColor>$ </Text>
+        <Text color={props.theme.accent2}>
+          {truncateText(command, props.viewportCols - 2)}
+        </Text>
+      </Text>
+      {cwd ? (
+        <Text>
+          <Text dimColor>cwd: </Text>
+          {truncateText(cwd, props.viewportCols - 5)}
+        </Text>
+      ) : null}
+      {timeoutMs !== undefined ? (
+        <Text>
+          <Text dimColor>timeout: </Text>
+          {timeoutMs}ms
+        </Text>
+      ) : null}
+    </Box>
   );
 }
 
@@ -275,6 +322,10 @@ function truncateJson(value: unknown, maxCols: number): string {
   } catch {
     text = String(value);
   }
+  return truncateText(text, maxCols);
+}
+
+function truncateText(text: string, maxCols: number): string {
   if (text.length <= maxCols) return text;
   return text.slice(0, Math.max(0, maxCols - 1)) + "…";
 }

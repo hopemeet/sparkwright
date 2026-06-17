@@ -798,7 +798,8 @@ metadata.
 `theme`, `mouse`, and `keybindings` are TUI-only. Provider, model, permission,
 and workspace settings apply to both CLI and TUI surfaces.
 `palette.open` and `quick.switch` are unbound by default; use `/palette` and
-`/quick`, or add bindings here if you want direct shortcuts.
+`/quick` (the quick mode of `/sessions`), or add bindings here if you want
+direct shortcuts.
 
 ## Inspect And Troubleshoot
 

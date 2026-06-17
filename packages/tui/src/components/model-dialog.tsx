@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTheme } from "../lib/theme-context.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 /**
  * Switch the model reference at runtime. A free-text "provider/model" ref
@@ -101,12 +102,7 @@ export function ModelDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Box>
         <Text color={theme.accent} bold>
           model
@@ -137,6 +133,6 @@ export function ModelDialog(props: {
           ))}
         </Box>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
 }

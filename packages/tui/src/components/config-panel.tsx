@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text, useInput } from "ink";
+import { Text, useInput } from "ink";
+import { DialogFrame } from "./dialog-frame.js";
 
 export interface ConfigPanelResolved {
   workspaceRoot: string;
@@ -24,12 +25,7 @@ export function ConfigPanel(props: {
 
   const resolved = props.resolved;
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-    >
+    <DialogFrame borderColor="cyan">
       <Text color="cyan" bold>
         resolved config (esc to close)
       </Text>
@@ -62,6 +58,6 @@ export function ConfigPanel(props: {
           <Text dimColor={!attempt.loaded}>{attempt.path}</Text>
         </Text>
       ))}
-    </Box>
+    </DialogFrame>
   );
 }

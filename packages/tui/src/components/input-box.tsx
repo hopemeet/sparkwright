@@ -10,6 +10,7 @@ import {
 import { FileIndex, type IndexedFile } from "../lib/files.js";
 import { loadFrecency, type Frecency } from "../lib/frecency.js";
 import { clearDraftOnSubmit, saveDraft, type StashFile } from "../lib/stash.js";
+import { resolveDialogColumns } from "./dialog-frame.js";
 import {
   graphemeAt,
   nextGraphemeBoundary,
@@ -46,6 +47,11 @@ const PASTE_THRESHOLD = 50;
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
 const PASTE_PLACEHOLDER_RE = /\[Pasted #(\d+) · \d+ lines?\]/g;
+const INPUT_MIN_WIDTH = 20;
+
+export function inputBoxWidth(columns: number | undefined): number {
+  return Math.max(INPUT_MIN_WIDTH, (columns ?? 100) - 2);
+}
 
 export interface InputBoxHandle {
   /** Imperative: replace the current value (used by the stash picker). */
@@ -85,6 +91,7 @@ export function InputBox(props: {
   const [pastes, setPastes] = useState<Map<number, PastePart>>(new Map());
   const pasteIdRef = useRef(1);
   const { stdout } = useStdout();
+  const inputWidth = inputBoxWidth(resolveDialogColumns(stdout?.columns));
   // ctrl+r reverse-search overlay state — when not null, captures input.
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [searchCursor, setSearchCursor] = useState(0);
@@ -648,8 +655,14 @@ export function InputBox(props: {
   });
 
   return (
-    <Box flexDirection="column">
-      <Box borderStyle="round" paddingX={1} flexDirection="column">
+    <Box flexDirection="column" width={inputWidth} flexShrink={0}>
+      <Box
+        borderStyle="round"
+        paddingX={1}
+        flexDirection="column"
+        width={inputWidth}
+        flexShrink={0}
+      >
         {value.length === 0 ? (
           <Box>
             <Text color={props.disabled ? "gray" : "cyan"}>{"› "}</Text>

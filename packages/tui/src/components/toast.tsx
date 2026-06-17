@@ -1,7 +1,8 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 import type { Toast as ToastT, ToastVariant } from "../state/toast-store.js";
 import { useTheme } from "../lib/theme-context.js";
+import { dialogFrameWidth, resolveDialogColumns } from "./dialog-frame.js";
 
 const VARIANT_ICON: Record<ToastVariant, string> = {
   info: "i",
@@ -16,7 +17,9 @@ export function ToastView(props: {
 }): React.ReactElement | null {
   const t = props.toast;
   const theme = useTheme();
+  const { stdout } = useStdout();
   if (!t) return null;
+  const width = dialogFrameWidth(resolveDialogColumns(stdout?.columns));
   const color =
     t.variant === "success"
       ? theme.success
@@ -31,6 +34,8 @@ export function ToastView(props: {
       borderStyle="round"
       borderColor={color}
       paddingX={1}
+      width={width}
+      flexShrink={0}
     >
       <Box>
         <Text color={color} bold>

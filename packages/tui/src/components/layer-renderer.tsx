@@ -8,14 +8,13 @@ import { CreateCapabilityDialog } from "./create-capability-dialog.js";
 import { EventDetailPanel } from "./event-detail.js";
 import { HelpPanel } from "./help-panel.js";
 import { ModelDialog } from "./model-dialog.js";
-import { QuickSwitchDialog } from "./quick-switch-dialog.js";
 import { SearchDialog } from "./search-dialog.js";
 import { SessionListDialog } from "./session-list-dialog.js";
 import { SessionRenameDialog } from "./session-rename-dialog.js";
 import { SkillProposalDialog } from "./skill-proposal-dialog.js";
 import { SkillReviewDialog } from "./skill-review-dialog.js";
 import { StashDialog } from "./stash-dialog.js";
-import { TimelineDialog } from "./timeline-dialog.js";
+import { ForkDialog } from "./fork-dialog.js";
 import type { CommandRegistry } from "../lib/commands.js";
 import type { CreateCapabilityDraft } from "../lib/create-capability.js";
 import type { RunEvent } from "../lib/event-type.js";
@@ -37,7 +36,6 @@ export function LayerRenderer(props: {
   registry: CommandRegistry;
   resolved: ConfigPanelResolved;
   sessionList: SessionSummary[];
-  currentSessionId: string | null;
   events: RunEvent[];
   labels: Record<string, string>;
   renameTarget: string | null;
@@ -100,20 +98,11 @@ export function LayerRenderer(props: {
           labels={props.labels}
           diagnostics={props.sessionDiagnostics}
           loadingDiagnosticsFor={props.loadingDiagnosticsFor}
+          quickMode={sessionQuickModeFromPayload(props.entry.payload)}
           onCancel={props.onCloseTop}
           onInspect={props.onInspectSession}
           onPick={props.onPickSession}
           onRename={props.onRequestRename}
-        />
-      );
-    case "quick-switch":
-      return (
-        <QuickSwitchDialog
-          sessions={props.sessionList}
-          currentSessionId={props.currentSessionId}
-          labels={props.labels}
-          onCancel={props.onCloseTop}
-          onPick={props.onPickSession}
         />
       );
     case "session-rename":
@@ -147,9 +136,9 @@ export function LayerRenderer(props: {
           onCommit={props.onCommitModel}
         />
       );
-    case "timeline":
+    case "fork":
       return (
-        <TimelineDialog
+        <ForkDialog
           events={props.events}
           onCancel={props.onCloseTop}
           onFork={props.onFork}
@@ -216,4 +205,12 @@ export function LayerRenderer(props: {
     default:
       return null;
   }
+}
+
+function sessionQuickModeFromPayload(payload: unknown): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    (payload as { quick?: unknown }).quick === true
+  );
 }

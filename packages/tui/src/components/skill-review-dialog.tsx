@@ -5,6 +5,7 @@ import type {
   TuiSkillReviewDetail,
   TuiSkillReviewItem,
 } from "../lib/skill-evolution.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 type ReviewTab = "proposal" | "patch" | "metadata";
 
@@ -79,12 +80,7 @@ export function SkillReviewDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Text color={theme.accent} bold>
         skill review
         <Text color={theme.muted}>
@@ -138,7 +134,7 @@ export function SkillReviewDialog(props: {
           ) : null}
         </>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
 }
 
