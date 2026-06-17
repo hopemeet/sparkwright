@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createHostClientRunMetadata,
@@ -103,7 +104,7 @@ describe("host client run request helpers", () => {
         sessionRootDir: "/repo/.sparkwright/sessions",
         sessionId: "session_1",
       }),
-    ).toBe("/repo/.sparkwright/sessions/session_1/trace.jsonl");
+    ).toBe(join("/repo/.sparkwright/sessions", "session_1", "trace.jsonl"));
     expect(
       tracePathForSession({ sessionRootDir: "/repo/.sparkwright/sessions" }),
     ).toBeUndefined();
