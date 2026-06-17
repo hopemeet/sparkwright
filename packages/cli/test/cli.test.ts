@@ -1216,8 +1216,8 @@ describe("runCli", () => {
     };
     expect(report.ok).toBe(true);
     expect(report.config.providers?.openai?.apiKey).toBe("<redacted>");
-    expect(report.sources.model).toContain(".sparkwright/config.json");
-    expect(report.sources.tools).toContain(".sparkwright/config.json");
+    expect(report.sources.model).toContain(join(".sparkwright", "config.json"));
+    expect(report.sources.tools).toContain(join(".sparkwright", "config.json"));
 
     const explain = createOutputCapture();
     const explainResult = await runCli(
