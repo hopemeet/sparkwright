@@ -94,6 +94,75 @@ describe("runCli", () => {
     expect(output.stderrText()).toBe("");
   });
 
+  it("reports installation, config, capability, and state paths", async () => {
+    const workspace = await createWorkspace("# Paths\n");
+    const stateHome = await mkdtemp(join(tmpdir(), "sparkwright-state-"));
+    tempDirs.push(stateHome);
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["doctor", "paths", "--workspace", workspace, "--format", "json"],
+      {
+        env: { ...process.env, XDG_STATE_HOME: stateHome },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      install: {
+        root: string;
+        entrypoints: { cli: string; tui: string; acp: string };
+      };
+      config: { user: string; project: string };
+      capabilities: {
+        skills: Array<{ layer: string; path: string }>;
+        mcp: { source: string };
+        acp: { source: string };
+      };
+      state: {
+        user: string;
+        cron: { root: string };
+        imGateway: { config: string; dataDir: string };
+      };
+      workspace: { root: string; sessionRoot: string };
+    };
+    expect(report.install.root).toContain(".sparkwright");
+    expect(report.install.entrypoints.cli).toContain(
+      join(".sparkwright", "bin", "sparkwright"),
+    );
+    expect(report.install.entrypoints.tui).toContain("sparkwright tui");
+    expect(report.install.entrypoints.acp).toContain("sparkwright acp");
+    expect(report.config.user).toContain(join("sparkwright", "config.json"));
+    expect(report.config.project).toBe(
+      join(workspace, ".sparkwright", "config.json"),
+    );
+    expect(report.capabilities.skills.map((entry) => entry.layer)).toEqual([
+      "builtin",
+      "user",
+      "project",
+    ]);
+    expect(report.capabilities.mcp.source).toBe("config");
+    expect(report.capabilities.acp.source).toBe("entrypoint-and-config");
+    expect(report.state.user).toBe(stateHome);
+    expect(report.state.cron.root).toBe(join(stateHome, "sparkwright", "cron"));
+    expect(report.state.imGateway.config).toContain(
+      join("sparkwright", "im-gateway.json"),
+    );
+    expect(report.state.imGateway.dataDir).toBe(
+      join(stateHome, "sparkwright", "im-gateway"),
+    );
+    expect(report.workspace.root).toBe(workspace);
+    expect(report.workspace.sessionRoot).toBe(
+      join(workspace, ".sparkwright", "sessions"),
+    );
+    expect(output.stderrText()).toBe("");
+  });
+
   it("keeps direct-core behind an internal diagnostics switch", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

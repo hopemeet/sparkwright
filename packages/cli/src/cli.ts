@@ -1,4 +1,6 @@
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { readlinkSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   FileTaskStore,
   type TaskId,
@@ -271,6 +273,10 @@ export async function runCli(
     return handleConfigCommand(parsed.value, io, env);
   }
 
+  if (command === "doctor") {
+    return handleDoctorCommand(parsed.value, io, env);
+  }
+
   const { goal } = parsed.value;
   if (command === "run" && !goal) {
     writeLine(
@@ -518,6 +524,7 @@ function parseArgs(
     "skills",
     "agents",
     "config",
+    "doctor",
   ]);
   const command = knownCommands.has(args[0] ?? "")
     ? (args.shift() ?? "run")
@@ -533,7 +540,8 @@ function parseArgs(
     command === "delegates" ||
     command === "skills" ||
     command === "agents" ||
-    command === "config"
+    command === "config" ||
+    command === "doctor"
   ) {
     subcommand = args.shift();
   } else if (command === "run" && args[0] === "resume") {
@@ -1010,6 +1018,10 @@ function parseArgs(
     subcommand !== "example"
   ) {
     return { ok: false, message: configUsage() };
+  }
+
+  if (command === "doctor" && subcommand !== "paths") {
+    return { ok: false, message: doctorUsage() };
   }
 
   const goal =
@@ -3369,6 +3381,10 @@ function configUsage(): string {
   ].join("\n");
 }
 
+function doctorUsage(): string {
+  return "Usage: sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]";
+}
+
 async function handleConfigCommand(
   parsed: ParsedArgs,
   io: CliIO,
@@ -3389,6 +3405,321 @@ async function handleConfigCommand(
       writeLine(io.stderr, configUsage());
       return { exitCode: 1 };
   }
+}
+
+async function handleDoctorCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  if (parsed.subcommand !== "paths") {
+    writeLine(io.stderr, doctorUsage());
+    return { exitCode: 1 };
+  }
+
+  const report = buildDoctorPathsReport(parsed, env);
+  writeLine(
+    io.stdout,
+    parsed.format === "json"
+      ? JSON.stringify(report, null, 2)
+      : formatDoctorPathsReport(report),
+  );
+  return { exitCode: 0 };
+}
+
+interface DoctorPathsReport {
+  executable?: string;
+  node: {
+    executable: string;
+    version: string;
+  };
+  install: {
+    root: string;
+    bin: string;
+    current: string;
+    version?: string;
+    currentTarget?: string;
+    inferredFromExecutable?: string;
+    entrypoints: {
+      cli: string;
+      tui: string;
+      acp: string;
+    };
+  };
+  config: {
+    user: string;
+    project: string;
+    envOverride?: string;
+  };
+  capabilities: {
+    skills: LayerPathEntry[];
+    agents: LayerPathEntry[];
+    command: LayerPathEntry[];
+    mcp: { source: "config"; user: string; project: string };
+    acp: { source: "entrypoint-and-config"; delegateConfig: string };
+  };
+  state: {
+    user: string;
+    cron: { root: string; legacyRoot: string };
+    imGateway: {
+      config: string;
+      legacyConfig: string;
+      dataDir: string;
+      legacyDataDir: string;
+    };
+  };
+  workspace: {
+    root: string;
+    sessionRoot: string;
+    tasksRoot: string;
+    exportsRoot: string;
+  };
+}
+
+interface LayerPathEntry {
+  layer: string;
+  path: string;
+  readOnly?: boolean;
+}
+
+function buildDoctorPathsReport(
+  parsed: ParsedArgs,
+  env: Record<string, string | undefined>,
+): DoctorPathsReport {
+  const executable = process.argv[1];
+  const installRoot =
+    (executable ? inferInstallRoot(executable) : undefined) ??
+    join(homedir(), ".sparkwright");
+  const installBin = join(installRoot, "bin", "sparkwright");
+  const installSource = executable ? inferInstallSource(executable) : undefined;
+  const installVersion =
+    installSource === "sparkwright"
+      ? inferInstallVersion(executable, installRoot)
+      : undefined;
+  const currentTarget =
+    installSource === "sparkwright"
+      ? readInstallCurrentTarget(installRoot)
+      : undefined;
+  const userStateRoot = userStateBase(env);
+  const projectConfig = join(
+    parsed.workspaceRoot,
+    ".sparkwright",
+    "config.json",
+  );
+  const configEnvOverride = env.SPARKWRIGHT_CONFIG;
+  return {
+    ...(executable ? { executable } : {}),
+    node: {
+      executable: process.execPath,
+      version: process.version,
+    },
+    install: {
+      root: installRoot,
+      bin: join(installRoot, "bin"),
+      current: join(installRoot, "current"),
+      ...(installVersion ? { version: installVersion } : {}),
+      ...(currentTarget ? { currentTarget } : {}),
+      ...(executable
+        ? { inferredFromExecutable: installSource ?? "unknown" }
+        : {}),
+      entrypoints: {
+        cli: installBin,
+        tui: `${installBin} tui`,
+        acp: `${installBin} acp`,
+      },
+    },
+    config: {
+      user: userConfigPath(env),
+      project: projectConfig,
+      ...(configEnvOverride ? { envOverride: configEnvOverride } : {}),
+    },
+    capabilities: {
+      skills: resolveCapabilityDirs("skills", {
+        cwd: parsed.workspaceRoot,
+        env,
+      }).map(layerPathEntry),
+      agents: resolveCapabilityDirs("agents", {
+        cwd: parsed.workspaceRoot,
+        env,
+      }).map(layerPathEntry),
+      command: resolveCapabilityDirs("command", {
+        cwd: parsed.workspaceRoot,
+        env,
+      }).map(layerPathEntry),
+      mcp: {
+        source: "config",
+        user: userConfigPath(env),
+        project: projectConfig,
+      },
+      acp: {
+        source: "entrypoint-and-config",
+        delegateConfig:
+          "capabilities.agents.profiles[].metadata.acp + capabilities.agents.delegateTools[]",
+      },
+    },
+    state: {
+      user: userStateRoot,
+      cron: {
+        root: defaultCronRoot(env),
+        legacyRoot: legacyConfigCronRoot(env),
+      },
+      imGateway: {
+        config: imGatewayConfigPath(env),
+        legacyConfig: legacyImGatewayConfigPath(),
+        dataDir: imGatewayDataDir(env),
+        legacyDataDir: legacyImGatewayDataDir(),
+      },
+    },
+    workspace: {
+      root: parsed.workspaceRoot,
+      sessionRoot: parsed.sessionRootDir,
+      tasksRoot: defaultTaskRoot(parsed.workspaceRoot),
+      exportsRoot: join(parsed.workspaceRoot, ".sparkwright", "exports"),
+    },
+  };
+}
+
+function layerPathEntry(input: {
+  layer: string;
+  dir: string;
+  readOnly?: boolean;
+}): LayerPathEntry {
+  return {
+    layer: input.layer,
+    path: input.dir,
+    ...(input.readOnly !== undefined ? { readOnly: input.readOnly } : {}),
+  };
+}
+
+function formatDoctorPathsReport(report: DoctorPathsReport): string {
+  const lines = [
+    `executable: ${report.executable ?? "(unknown)"}`,
+    `node: ${report.node.executable} (${report.node.version})`,
+    `install root: ${report.install.root}`,
+    `install bin: ${report.install.bin}`,
+    `install current: ${report.install.current}`,
+    `install source: ${report.install.inferredFromExecutable ?? "unknown"}`,
+    `install version: ${report.install.version ?? "(unknown)"}`,
+    `install current target: ${report.install.currentTarget ?? "(unknown)"}`,
+    `cli entrypoint: ${report.install.entrypoints.cli}`,
+    `tui entrypoint: ${report.install.entrypoints.tui}`,
+    `acp entrypoint: ${report.install.entrypoints.acp}`,
+    `user config: ${report.config.user}`,
+    `project config: ${report.config.project}`,
+  ];
+  if (report.config.envOverride) {
+    lines.push(`env config override: ${report.config.envOverride}`);
+  }
+  lines.push(
+    "skill roots:",
+    ...report.capabilities.skills.map(formatLayerPath),
+    "agent roots:",
+    ...report.capabilities.agents.map(formatLayerPath),
+    "command dirs:",
+    ...report.capabilities.command.map(formatLayerPath),
+    `mcp source: ${report.capabilities.mcp.source} (${report.capabilities.mcp.user}, ${report.capabilities.mcp.project})`,
+    `acp source: ${report.capabilities.acp.source} (${report.capabilities.acp.delegateConfig})`,
+    `user state: ${report.state.user}`,
+    `cron state: ${report.state.cron.root}`,
+    `cron legacy state: ${report.state.cron.legacyRoot}`,
+    `im gateway config: ${report.state.imGateway.config}`,
+    `im gateway legacy config: ${report.state.imGateway.legacyConfig}`,
+    `im gateway state: ${report.state.imGateway.dataDir}`,
+    `im gateway legacy state: ${report.state.imGateway.legacyDataDir}`,
+    `workspace: ${report.workspace.root}`,
+    `session root: ${report.workspace.sessionRoot}`,
+    `tasks root: ${report.workspace.tasksRoot}`,
+    `exports root: ${report.workspace.exportsRoot}`,
+  );
+  return lines.join("\n");
+}
+
+function formatLayerPath(entry: LayerPathEntry): string {
+  return `  - ${entry.layer}: ${entry.path}${entry.readOnly ? " (read-only)" : ""}`;
+}
+
+function inferInstallSource(executable: string): string {
+  const normalized = executable.split(sep).join("/");
+  if (
+    normalized.includes("/.sparkwright/versions/") ||
+    normalized.includes("/versions/") ||
+    normalized.includes("/current/app/node_modules/@sparkwright/cli/")
+  ) {
+    return "sparkwright";
+  }
+  if (normalized.includes("/node_modules/@sparkwright/cli/")) return "npm";
+  if (normalized.includes("/packages/cli/")) return "source";
+  return "unknown";
+}
+
+function inferInstallRoot(executable: string): string | undefined {
+  const currentMarker = `${sep}current${sep}app${sep}node_modules${sep}@sparkwright${sep}cli${sep}`;
+  const currentIndex = executable.indexOf(currentMarker);
+  if (currentIndex >= 0) return executable.slice(0, currentIndex);
+
+  const versionsMarker = `${sep}versions${sep}`;
+  const appMarker = `${sep}app${sep}node_modules${sep}@sparkwright${sep}cli${sep}`;
+  const versionsIndex = executable.indexOf(versionsMarker);
+  const appIndex = executable.indexOf(appMarker);
+  if (versionsIndex >= 0 && appIndex > versionsIndex) {
+    return executable.slice(0, versionsIndex);
+  }
+  return undefined;
+}
+
+function inferInstallVersion(
+  executable: string | undefined,
+  installRoot: string,
+): string | undefined {
+  if (executable) {
+    const versionsMarker = `${sep}versions${sep}`;
+    const appMarker = `${sep}app${sep}node_modules${sep}@sparkwright${sep}cli${sep}`;
+    const versionsIndex = executable.indexOf(versionsMarker);
+    const appIndex = executable.indexOf(appMarker);
+    if (versionsIndex >= 0 && appIndex > versionsIndex) {
+      return executable.slice(versionsIndex + versionsMarker.length, appIndex);
+    }
+  }
+
+  const currentTarget = readInstallCurrentTarget(installRoot);
+  if (!currentTarget) return undefined;
+  const normalized = currentTarget.split(sep).join("/");
+  const match = normalized.match(/(?:^|\/)versions\/([^/]+)$/);
+  return match?.[1] ?? basename(currentTarget);
+}
+
+function readInstallCurrentTarget(installRoot: string): string | undefined {
+  try {
+    return readlinkSync(join(installRoot, "current"));
+  } catch {
+    return undefined;
+  }
+}
+
+function userStateBase(env: Record<string, string | undefined>): string {
+  return env.XDG_STATE_HOME && env.XDG_STATE_HOME.length > 0
+    ? env.XDG_STATE_HOME
+    : join(homedir(), ".local", "state");
+}
+
+function imGatewayConfigPath(env: Record<string, string | undefined>): string {
+  const configBase =
+    env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.length > 0
+      ? env.XDG_CONFIG_HOME
+      : join(homedir(), ".config");
+  return join(configBase, "sparkwright", "im-gateway.json");
+}
+
+function legacyImGatewayConfigPath(): string {
+  return join(homedir(), ".sparkwright", "im-gateway.json");
+}
+
+function imGatewayDataDir(env: Record<string, string | undefined>): string {
+  return join(userStateBase(env), "sparkwright", "im-gateway");
+}
+
+function legacyImGatewayDataDir(): string {
+  return join(homedir(), ".sparkwright", "im-gateway");
 }
 
 async function handleConfigPath(
@@ -4478,6 +4809,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (command === "skills") return skillsUsage();
   if (command === "agents") return agentsUsage();
   if (command === "config") return configUsage();
+  if (command === "doctor") return doctorUsage();
   return undefined;
 }
 
@@ -5304,6 +5636,7 @@ function usage(): string {
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+    "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",

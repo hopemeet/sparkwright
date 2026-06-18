@@ -5,9 +5,15 @@ export { TelegramAdapter } from "./adapters/telegram.js";
 export {
   defaultConfigPath,
   defaultDataDir,
+  legacyConfigPath,
+  legacyDataDir,
   loadConfig,
+  migrateLegacyPaths,
+  resolveConfigPathForRead,
   writeConfig,
   type ImGatewayConfig,
+  type ImGatewayMigrationOptions,
+  type ImGatewayMigrationResult,
   type TelegramGatewayConfig,
 } from "./config.js";
 export {

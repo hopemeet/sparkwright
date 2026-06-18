@@ -11,6 +11,28 @@ npm run build
 
 The local CLI binary points at `packages/cli/dist/index.js`, so it only exists after TypeScript compilation.
 
+For source installs, `bash ./install.sh` writes the command under
+`~/.sparkwright/bin`. If `sparkwright` is not found after installation, add that
+directory to your shell `PATH`:
+
+```bash
+export PATH="$HOME/.sparkwright/bin:$PATH"
+```
+
+To see the executable, install root, config files, capability roots, user state,
+and workspace state that the CLI is using, run:
+
+```bash
+sparkwright doctor paths --workspace . --format text
+```
+
+To verify the full source install path in a clean temporary root, including
+installed CLI/TUI/ACP entrypoints and uninstall boundaries, run:
+
+```bash
+npm run source:install-smoke
+```
+
 ## Approval is denied in a non-interactive shell
 
 When `--write` is used without `--yes`, the CLI prompts for approval. In CI or another non-interactive shell, Sparkwright denies the write and records `workspace.write.denied` plus a failed tool result.

@@ -37,11 +37,12 @@
     "check:reserved:strict": "node scripts/check-reserved-fields.mjs --strict",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "check": "npm run build && npm run typecheck --workspaces && npm run typecheck:test && npm run lint && npm run format:check && npm run schema:check && npm run check:workspace-lock && npm run check:internal-imports && npm run check:package-boundaries && npm run check:reserved:strict && npm run test --workspaces",
-    "release:check": "npm run check && node packages/cli/dist/index.js run \"inspect this repo\" --workspace examples/repo-pilot --target README.md --trace-level standard --model deterministic && npm run release:install-smoke",
+    "release:check": "npm run check && node packages/cli/dist/index.js run \"inspect this repo\" --workspace examples/repo-pilot --target README.md --trace-level standard --model deterministic && npm run source:install-smoke && npm run release:install-smoke",
     "regression:matrix": "node scripts/regression-matrix.mjs",
     "regression:real-model": "node scripts/regression-real-model.mjs",
     "regression:real-skill-capabilities": "node scripts/regression-real-skill-capabilities.mjs",
-    "release:install-smoke": "node scripts/release-install-smoke.mjs"
+    "release:install-smoke": "node scripts/release-install-smoke.mjs",
+    "source:install-smoke": "node scripts/source-install-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

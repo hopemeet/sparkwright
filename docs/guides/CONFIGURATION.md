@@ -826,7 +826,8 @@ copy-pasteable snippet in the grouped form (names: `write`, `sandbox`, `run`,
 `hooks`, `verification`, `mcp`, `agent`). `capabilities inspect` is read-only.
 It summarizes the workspace, effective tool filters, Skill roots and shadows,
 agent roots and shadows, MCP servers, cron state paths, and command
-directories.
+directories. `doctor paths` prints the installation, config, capability, user
+state, and workspace state paths without starting a run.
 
 ## Install And Upgrade Safety
 
@@ -840,6 +841,9 @@ Sparkwright treats config and project capabilities as user-owned assets:
   commands, sessions, tasks, or config.
 - Commands that can replace an existing user asset require an explicit
   `--force` or a dedicated apply/approval flow.
+- User-level runtime state belongs under `~/.local/state/sparkwright`; program
+  installation may use `~/.sparkwright`, but package install and upgrade should
+  not place config, credentials, sessions, or gateway state there.
 - Future config migrations should be inspectable and preferably dry-run before
   writing.
 

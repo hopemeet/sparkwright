@@ -116,15 +116,30 @@ cd SparkWright
 bash ./install.sh
 ```
 
-The install script runs `npm install`, builds the workspace, and links the
-`@sparkwright/cli` package so `sparkwright` is available on your PATH.
+The install script runs `npm install`, builds the workspace, packs the public
+workspace packages, and installs an independent copy under `~/.sparkwright`.
+Add `~/.sparkwright/bin` to your `PATH` if the script reports that it is not
+already present.
 
-Manual equivalent:
+Development link mode is still available when you want `sparkwright` to point
+at the live source checkout:
 
 ```bash
-npm install
-npm run build
-npm link --workspace @sparkwright/cli
+bash ./install-dev.sh
+```
+
+Uninstalling program files does not remove user config, user state, or project
+`.sparkwright` directories:
+
+```bash
+bash ./uninstall.sh
+```
+
+When changing install, path, or packaging behavior, run the source install
+smoke:
+
+```bash
+npm run source:install-smoke
 ```
 
 ## First Run
@@ -145,6 +160,12 @@ Inspect the configured runtime surface before a run:
 
 ```bash
 node packages/cli/dist/index.js capabilities inspect --workspace . --format text
+```
+
+Inspect installation, config, capability, state, and workspace paths:
+
+```bash
+sparkwright doctor paths --workspace . --format text
 ```
 
 The report includes the effective built-in tools (`read_file`,
