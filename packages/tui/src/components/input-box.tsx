@@ -12,11 +12,13 @@ import { loadFrecency, type Frecency } from "../lib/frecency.js";
 import { clearDraftOnSubmit, saveDraft, type StashFile } from "../lib/stash.js";
 import { resolveDialogColumns } from "./dialog-frame.js";
 import {
+  displayWidth,
   graphemeAt,
   nextGraphemeBoundary,
   nextWordBoundary,
   prevGraphemeBoundary,
   prevWordBoundary,
+  toGraphemes,
 } from "../lib/graphemes.js";
 import { vimKey, type VimMode, type VimState } from "../lib/vim-mode.js";
 
@@ -40,6 +42,7 @@ import { vimKey, type VimMode, type VimState } from "../lib/vim-mode.js";
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
 const INPUT_MIN_WIDTH = 20;
+const INPUT_MIN_VISIBLE_LINES = 5;
 const INPUT_MAX_VISIBLE_LINES = 8;
 
 export function inputBoxWidth(columns: number | undefined): number {
@@ -48,7 +51,10 @@ export function inputBoxWidth(columns: number | undefined): number {
 
 export function inputMaxVisibleLines(rows: number | undefined): number {
   if (rows === undefined) return INPUT_MAX_VISIBLE_LINES;
-  return Math.max(3, Math.min(INPUT_MAX_VISIBLE_LINES, rows - 16));
+  return Math.max(
+    INPUT_MIN_VISIBLE_LINES,
+    Math.min(INPUT_MAX_VISIBLE_LINES, rows - 9),
+  );
 }
 
 export interface InputBoxHandle {
@@ -75,6 +81,7 @@ export function InputBox(props: {
    */
   onEscape?: () => void;
   onQuit?: (presses?: number) => void;
+  onQuitClear?: () => void;
   /** Stash snapshot bridge — parent owns the latest StashFile. */
   stashRef: { current: StashFile };
   onStashChange: (next: StashFile) => void;
@@ -83,11 +90,14 @@ export function InputBox(props: {
 }): React.ReactElement {
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
+  const valueRef = useRef(value);
+  const cursorRef = useRef(cursor);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyIdx, setHistoryIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const { stdout } = useStdout();
   const inputWidth = inputBoxWidth(resolveDialogColumns(stdout?.columns));
+  const inputTextWidth = Math.max(1, inputWidth - 7);
   const maxVisibleInputLines = inputMaxVisibleLines(stdout?.rows);
   // ctrl+r reverse-search overlay state — when not null, captures input.
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
@@ -96,6 +106,10 @@ export function InputBox(props: {
   // fresh prompt types immediately; Esc drops to normal.
   const [vimMode, setVimMode] = useState<VimMode>("insert");
   const [vimPending, setVimPending] = useState<VimState["pending"]>(null);
+  const pasteModeRef = useRef(false);
+
+  valueRef.current = value;
+  cursorRef.current = cursor;
 
   // Lazy file index — only constructed when needed.
   const fileIndex = useMemo(
@@ -215,10 +229,23 @@ export function InputBox(props: {
   }, [slash, slashSuggestions, safeSugCursor, cursor, value]);
 
   function update(next: string, nextCursor?: number): void {
+    valueRef.current = next;
+    cursorRef.current = nextCursor ?? next.length;
     setValue(next);
     setCursor(nextCursor ?? next.length);
     setHistoryIdx(null);
     setSugCursor(0);
+  }
+
+  function insertText(text: string): void {
+    if (!text) return;
+    const currentValue = valueRef.current;
+    const currentCursor = cursorRef.current;
+    const next =
+      currentValue.slice(0, currentCursor) +
+      text +
+      currentValue.slice(currentCursor);
+    update(next, currentCursor + text.length);
   }
 
   /**
@@ -326,6 +353,19 @@ export function InputBox(props: {
     // macOS spaces/apps is what makes the terminal fire these.)
     if (input === "[I" || input === "[O") return;
 
+    // Bracketed paste can arrive split across several Ink events. Handle this
+    // before Enter/submission logic so pasted newlines stay in the draft.
+    const paste = normalizeBracketedPasteChunk(
+      input,
+      key.return,
+      pasteModeRef.current,
+    );
+    if (paste.handled) {
+      pasteModeRef.current = paste.inPaste;
+      insertText(paste.text);
+      return;
+    }
+
     // --- ctrl+r reverse-search overlay owns input while active ------------
     if (searchQuery !== null) {
       if (key.escape) {
@@ -412,6 +452,13 @@ export function InputBox(props: {
     const quitPresses =
       ctrlCPressCount(input) || (key.ctrl && input === "c" ? 1 : 0);
     if (quitPresses > 0) {
+      if (valueRef.current.length > 0) {
+        pasteModeRef.current = false;
+        props.onQuitClear?.();
+        update("", 0);
+        setDraft("");
+        return;
+      }
       props.onQuit?.(quitPresses);
       return;
     }
@@ -607,15 +654,6 @@ export function InputBox(props: {
 
     if (!input || input.length === 0) return;
 
-    // --- paste cleanup ----------------------------------------------------
-    const stripped = stripBracketedPaste(input);
-    if (stripped.wasBracketed && stripped.text.length === 0) return;
-    if (stripped.wasBracketed) {
-      const next = value.slice(0, cursor) + stripped.text + value.slice(cursor);
-      update(next, cursor + stripped.text.length);
-      return;
-    }
-
     const next = value.slice(0, cursor) + input + value.slice(cursor);
     update(next, cursor + input.length);
   });
@@ -642,6 +680,7 @@ export function InputBox(props: {
             slash={!!slash}
             disabled={props.disabled}
             ghost={ghost}
+            wrapWidth={inputTextWidth}
             maxVisibleLines={maxVisibleInputLines}
           />
         )}
@@ -697,11 +736,13 @@ function RenderedInput(props: {
   slash: boolean;
   disabled: boolean;
   maxVisibleLines: number;
+  wrapWidth: number;
   /** Dimmed inline completion appended after the last line (slash mode). */
   ghost?: string;
 }): React.ReactElement {
   const { value, cursor } = props;
   const lines = value.split("\n");
+  const visualLines = inputVisualLines(lines, props.wrapWidth);
 
   // Locate the caret's (line, column). `column` is a code-unit offset into the
   // line; movement keeps the global cursor on grapheme boundaries, so the
@@ -718,14 +759,21 @@ function RenderedInput(props: {
     }
     acc += len + 1; // + the newline
   }
+  const caretVisualLine = visualLines.findIndex(
+    (line) =>
+      line.logicalLine === caretLine &&
+      caretCol >= line.startCol &&
+      (caretCol < line.endCol ||
+        (line.endCol === lines[caretLine].length && caretCol <= line.endCol)),
+  );
   const viewport = inputLineViewport(
-    lines.length,
-    caretLine,
+    visualLines.length,
+    caretVisualLine >= 0 ? caretVisualLine : visualLines.length - 1,
     props.maxVisibleLines,
   );
-  const visibleLines = lines
+  const visibleLines = visualLines
     .slice(viewport.start, viewport.end)
-    .map((line, index) => ({ line, li: viewport.start + index }));
+    .map((line, index) => ({ ...line, visualIndex: viewport.start + index }));
 
   return (
     <Box flexDirection="column">
@@ -735,17 +783,25 @@ function RenderedInput(props: {
           {viewport.hiddenBefore === 1 ? "" : "s"}
         </Text>
       ) : null}
-      {visibleLines.map(({ line, li }) => (
-        <Box key={li}>
+      {visibleLines.map((line) => (
+        <Box key={`${line.logicalLine}:${line.startCol}:${line.endCol}`}>
           <Text color={props.disabled ? "gray" : "cyan"}>
-            {li === 0 ? "› " : "  "}
+            {line.logicalLine === 0 && line.startCol === 0 ? "› " : "  "}
           </Text>
           <LineView
-            line={line}
-            slash={props.slash && li === 0}
-            caretCol={!props.disabled && li === caretLine ? caretCol : null}
+            line={lines[line.logicalLine]}
+            visibleStart={line.startCol}
+            visibleEnd={line.endCol}
+            slash={props.slash && line.logicalLine === 0}
+            caretCol={
+              !props.disabled && line.visualIndex === caretVisualLine
+                ? caretCol
+                : null
+            }
           />
-          {props.ghost && li === lines.length - 1 ? (
+          {props.ghost &&
+          line.logicalLine === lines.length - 1 &&
+          line.endCol === lines[lines.length - 1].length ? (
             <Text dimColor>{props.ghost}</Text>
           ) : null}
         </Box>
@@ -758,6 +814,42 @@ function RenderedInput(props: {
       ) : null}
     </Box>
   );
+}
+
+export interface InputVisualLine {
+  logicalLine: number;
+  startCol: number;
+  endCol: number;
+}
+
+export function inputVisualLines(
+  lines: readonly string[],
+  wrapWidth: number,
+): InputVisualLine[] {
+  const width = Math.max(1, wrapWidth);
+  const out: InputVisualLine[] = [];
+  for (let logicalLine = 0; logicalLine < lines.length; logicalLine += 1) {
+    const line = lines[logicalLine] ?? "";
+    if (line.length === 0) {
+      out.push({ logicalLine, startCol: 0, endCol: 0 });
+      continue;
+    }
+    let startCol = 0;
+    let cursor = 0;
+    let currentWidth = 0;
+    for (const g of toGraphemes(line)) {
+      const w = displayWidth(g);
+      if (cursor > startCol && currentWidth + w > width) {
+        out.push({ logicalLine, startCol, endCol: cursor });
+        startCol = cursor;
+        currentWidth = 0;
+      }
+      cursor += g.length;
+      currentWidth += w;
+    }
+    out.push({ logicalLine, startCol, endCol: line.length });
+  }
+  return out;
 }
 
 export function inputLineViewport(
@@ -789,12 +881,28 @@ export function inputLineViewport(
 /** One transcript line of the draft, with an optional inverse caret. */
 function LineView(props: {
   line: string;
+  visibleStart: number;
+  visibleEnd: number;
   slash: boolean;
   /** Code-unit column of the caret on this line, or null if not the caret line. */
   caretCol: number | null;
 }): React.ReactElement {
-  const segments = colorizeSegments(props.line, props.slash);
-  if (props.caretCol === null) {
+  const segments = sliceSegments(
+    colorizeSegments(props.line, props.slash),
+    props.visibleStart,
+    props.visibleEnd,
+  );
+  const caretCol =
+    props.caretCol === null
+      ? null
+      : Math.max(
+          0,
+          Math.min(
+            props.caretCol - props.visibleStart,
+            Math.max(0, props.visibleEnd - props.visibleStart),
+          ),
+        );
+  if (caretCol === null) {
     // Render a single space for an empty line so the row keeps its height.
     if (segments.length === 0) return <Text> </Text>;
     return (
@@ -805,7 +913,6 @@ function LineView(props: {
       </>
     );
   }
-  const caretCol = props.caretCol;
   const out: React.ReactElement[] = [];
   let consumed = 0;
   let placed = false;
@@ -868,6 +975,29 @@ function colorizeSegments(value: string, slash: boolean): Segment[] {
     segments.push({ text: value.slice(cursor) });
   }
   return segments;
+}
+
+function sliceSegments(
+  segments: Segment[],
+  start: number,
+  end: number,
+): Segment[] {
+  const out: Segment[] = [];
+  let consumed = 0;
+  for (const seg of segments) {
+    const segStart = consumed;
+    const segEnd = consumed + seg.text.length;
+    const from = Math.max(start, segStart);
+    const to = Math.min(end, segEnd);
+    if (from < to) {
+      out.push({
+        ...seg,
+        text: seg.text.slice(from - segStart, to - segStart),
+      });
+    }
+    consumed = segEnd;
+  }
+  return out;
 }
 
 function Segment(props: { seg: Segment }): React.ReactElement | null {
@@ -1066,4 +1196,54 @@ export function stripBracketedPaste(input: string): {
   const end = PASTE_END_RE.exec(after);
   const text = end ? after.slice(0, end.index) : after;
   return { text, wasBracketed: true };
+}
+
+export function normalizeBracketedPasteChunk(
+  input: string,
+  isReturn: boolean,
+  inPaste: boolean,
+): {
+  handled: boolean;
+  text: string;
+  inPaste: boolean;
+} {
+  if (inPaste && isReturn) {
+    return { handled: true, text: "\n", inPaste: true };
+  }
+
+  const start = PASTE_START_RE.exec(input);
+  if (start) {
+    const afterStart = input.slice(start.index + start[0].length);
+    const end = PASTE_END_RE.exec(afterStart);
+    return {
+      handled: true,
+      text: normalizePasteText(
+        end ? afterStart.slice(0, end.index) : afterStart,
+      ),
+      inPaste: !end,
+    };
+  }
+
+  const end = PASTE_END_RE.exec(input);
+  if (inPaste) {
+    return {
+      handled: true,
+      text: normalizePasteText(end ? input.slice(0, end.index) : input),
+      inPaste: !end,
+    };
+  }
+
+  if (end) {
+    return {
+      handled: true,
+      text: normalizePasteText(input.replace(PASTE_END_RE, "")),
+      inPaste: false,
+    };
+  }
+
+  return { handled: false, text: input, inPaste: false };
+}
+
+function normalizePasteText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
 }

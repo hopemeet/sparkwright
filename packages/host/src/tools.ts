@@ -29,7 +29,10 @@ import {
   type CapabilityWriteResult,
 } from "./capability-mutation.js";
 import type { CapabilityToolsConfig } from "./config.js";
-import { createSkillUpdateProposal } from "./skill-evolution.js";
+import {
+  createSkillUpdateProposal,
+  type SkillProposalProvenance,
+} from "./skill-evolution.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
 
@@ -465,7 +468,9 @@ export function createSkillUpdateTool(
     name: "update_skill",
     description:
       "Draft an evolution proposal for an existing skill. Creates a proposal only; " +
-      "it does not apply the update. Use list_skills first to find the skill.",
+      "it does not apply the update. Use list_skills first to find the skill. " +
+      "Pass `body` with the full revised SKILL.md to propose real authored " +
+      "content; omit it to record only the intent as a stub.",
     deferLoading: true,
     inputSchema: {
       type: "object",
@@ -479,6 +484,13 @@ export function createSkillUpdateTool(
         description: {
           type: "string",
           description: "Short reason and intent for the proposed evolution.",
+        },
+        body: {
+          type: "string",
+          description:
+            "Full revised SKILL.md content (frontmatter + body). Its frontmatter " +
+            "name must match `name`. When provided, this becomes the proposed " +
+            "content instead of an intent stub.",
         },
       },
       required: ["action", "name", "description"],
@@ -494,11 +506,14 @@ export function createSkillUpdateTool(
     async execute(args: unknown, ctx) {
       const input = parseSkillUpdateArgs(args);
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
+      const body = input.body;
       const proposalInput = {
         workspaceRoot,
         skillRoots: roots,
         name: input.name,
         description: input.description,
+        ...(body ? { applyEdit: () => body } : {}),
+        provenance: skillProposalProvenanceFromContext(ctx, input.description),
         mutationReporter: ctx,
       };
       const proposal = await createSkillUpdateProposal(proposalInput);
@@ -855,10 +870,26 @@ function parseSkillManagerArgs(args: unknown): {
   };
 }
 
+function skillProposalProvenanceFromContext(
+  ctx: { run?: { id?: string; metadata?: Record<string, unknown> } },
+  rationale: string,
+): SkillProposalProvenance {
+  const sessionId =
+    typeof ctx.run?.metadata?.sessionId === "string"
+      ? ctx.run.metadata.sessionId
+      : undefined;
+  return {
+    runId: ctx.run?.id,
+    sessionId,
+    rationale,
+  };
+}
+
 function parseSkillUpdateArgs(args: unknown): {
   action: "draft";
   name: string;
   description: string;
+  body?: string;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     throw toolArgumentsInvalid("update_skill expects an object argument.");
@@ -879,10 +910,15 @@ function parseSkillUpdateArgs(args: unknown): {
   if (description.length === 0) {
     throw toolArgumentsInvalid("update_skill draft requires description.");
   }
+  const body =
+    typeof record.body === "string" && record.body.trim().length > 0
+      ? record.body
+      : undefined;
   return {
     action,
     name,
     description,
+    body,
   };
 }
 

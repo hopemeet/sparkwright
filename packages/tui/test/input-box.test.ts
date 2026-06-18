@@ -3,6 +3,7 @@ import {
   inputBoxWidth,
   inputLineViewport,
   inputMaxVisibleLines,
+  inputVisualLines,
   suggestionWindow,
 } from "../src/components/input-box.js";
 
@@ -23,8 +24,9 @@ describe("inputMaxVisibleLines", () => {
   });
 
   it("keeps a usable smaller window on short terminals", () => {
-    expect(inputMaxVisibleLines(20)).toBe(4);
-    expect(inputMaxVisibleLines(12)).toBe(3);
+    expect(inputMaxVisibleLines(20)).toBe(8);
+    expect(inputMaxVisibleLines(16)).toBe(7);
+    expect(inputMaxVisibleLines(12)).toBe(5);
   });
 });
 
@@ -60,6 +62,30 @@ describe("inputLineViewport", () => {
       hiddenBefore: 12,
       hiddenAfter: 0,
     });
+  });
+});
+
+describe("inputVisualLines", () => {
+  it("wraps long pasted text to the terminal-column budget", () => {
+    expect(inputVisualLines(["abcdef"], 3)).toEqual([
+      { logicalLine: 0, startCol: 0, endCol: 3 },
+      { logicalLine: 0, startCol: 3, endCol: 6 },
+    ]);
+  });
+
+  it("counts CJK text as two columns and never splits a glyph", () => {
+    expect(inputVisualLines(["这是测试文本"], 6)).toEqual([
+      { logicalLine: 0, startCol: 0, endCol: 3 },
+      { logicalLine: 0, startCol: 3, endCol: 6 },
+    ]);
+  });
+
+  it("keeps explicit blank lines visible", () => {
+    expect(inputVisualLines(["one", "", "two"], 20)).toEqual([
+      { logicalLine: 0, startCol: 0, endCol: 3 },
+      { logicalLine: 1, startCol: 0, endCol: 0 },
+      { logicalLine: 2, startCol: 0, endCol: 3 },
+    ]);
   });
 });
 

@@ -9,6 +9,7 @@ import {
   type ProtocolError,
   type RequestKind,
   type ResponseResults,
+  type RunInputPayload,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type SessionCompactRequestPayload,
@@ -307,6 +308,7 @@ export class Client extends TypedEmitter<ClientEventMap> {
   injectRunMessage(payload: {
     runId: string;
     content: string;
+    input?: RunInputPayload;
     metadata?: Record<string, unknown>;
   }): Promise<ResponseResults["run.inject_message"]> {
     return this.request("run.inject_message", payload) as Promise<

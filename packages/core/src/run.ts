@@ -62,6 +62,7 @@ import {
   compilePromptCacheBlocks,
   type ContextAssembler,
   type ContextBudget,
+  type ContentPart,
   type ContextUsageHint,
   type ObservationFormatter,
   type PromptBuilder,
@@ -395,6 +396,7 @@ export interface RunHandle {
    */
   injectUserMessage(input: {
     content: string;
+    parts?: ContentPart[];
     metadata?: Record<string, unknown>;
   }): void;
   requestApproval(input: {
@@ -2136,11 +2138,13 @@ export class SparkwrightRun implements RunHandle {
 
   injectUserMessage(input: {
     content: string;
+    parts?: ContentPart[];
     metadata?: Record<string, unknown>;
   }): void {
     this.enqueueCommand({
       type: "user_message",
       content: input.content,
+      parts: input.parts,
       metadata: input.metadata,
     });
   }
@@ -2173,6 +2177,10 @@ export class SparkwrightRun implements RunHandle {
         });
       }
 
+      const commandParts = command.parts ?? [];
+      const commandImageCount = commandParts.filter(
+        (part) => part.type === "image",
+      ).length;
       state.context.push({
         id: (this.loopServices.createContextItemId ?? createContextItemId)(),
         type: "user",
@@ -2181,10 +2189,20 @@ export class SparkwrightRun implements RunHandle {
           uri: "run.command.user_message",
         },
         content: command.content,
+        ...(commandParts.length > 0 ? { parts: commandParts } : {}),
         metadata: {
           layer: "runtime",
           stability: "turn",
           injected: true,
+          ...(commandParts.length > 0
+            ? {
+                multimodal: true,
+                attachmentCount: commandParts.length,
+                ...(commandImageCount > 0
+                  ? { imageCount: commandImageCount }
+                  : {}),
+              }
+            : {}),
           ...(command.metadata ?? {}),
         },
       });

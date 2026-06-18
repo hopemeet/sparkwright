@@ -1,5 +1,5 @@
-import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { basename, extname, join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
   createHostClientRunMetadata,
@@ -11,6 +11,8 @@ import {
 import type {
   CapabilitySnapshot,
   PermissionMode,
+  RunInputPayload,
+  RunInputPart,
   TraceLevel,
 } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
@@ -45,6 +47,7 @@ type ApprovalDecision = "approved" | "denied";
  * replay to tell a continuation run apart from a real user turn.
  */
 const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
+const MAX_TUI_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Drives runs against a Sparkwright host. The host is launched lazily on
@@ -74,6 +77,7 @@ export class RunController {
   // it. start() only ever receives real user goals (todo-continuation runs are
   // driven by the host/replay path, not start()), so no filtering is needed.
   private lastGoal: string | null = null;
+  private pendingInputParts: RunInputPart[] = [];
 
   constructor(opts: RunControllerOptions) {
     this.opts = opts;
@@ -210,6 +214,58 @@ export class RunController {
     return this.lastGoal;
   }
 
+  pendingAttachmentCount(): number {
+    return this.pendingInputParts.length;
+  }
+
+  clearPendingAttachments(): void {
+    this.pendingInputParts = [];
+  }
+
+  async attachImage(
+    imagePath: string,
+  ): Promise<
+    { ok: true; name: string; count: number } | { ok: false; message: string }
+  > {
+    const trimmed = imagePath.trim();
+    if (!trimmed) return { ok: false, message: "usage: /image <path>" };
+    const resolved = resolve(this.opts.workspaceRoot, trimmed);
+    const mediaType = mediaTypeForImagePath(resolved);
+    if (!mediaType) {
+      return {
+        ok: false,
+        message: "unsupported image type; use png, jpg, jpeg, gif, or webp",
+      };
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(resolved);
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (bytes.byteLength > MAX_TUI_IMAGE_BYTES) {
+      return {
+        ok: false,
+        message: `image is too large (${bytes.byteLength} bytes); limit is ${MAX_TUI_IMAGE_BYTES}`,
+      };
+    }
+    const name = basename(trimmed);
+    this.pendingInputParts.push({
+      type: "image",
+      data: bytes.toString("base64"),
+      mediaType,
+      name,
+      metadata: {
+        sourcePath: trimmed,
+        byteLength: bytes.byteLength,
+      },
+    });
+    return { ok: true, name, count: this.pendingInputParts.length };
+  }
+
   /**
    * Re-run the most recent goal in the same session. No-op (returns false) while
    * a run is active or before any goal has been submitted, so the caller can
@@ -240,9 +296,11 @@ export class RunController {
 
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
+      const input = this.pendingRunInput();
       const { runId } = await client.startRun(
         createHostStartRunRequest({
           goal,
+          input,
           sessionId: this.sessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
@@ -254,6 +312,7 @@ export class RunController {
       );
       this.activeRunId = runId;
       this.cancelRequested = false;
+      if (input) this.clearPendingAttachments();
     } catch (err) {
       const message = formatError(err);
       if (!this.hasTerminalRunEvent()) {
@@ -288,7 +347,7 @@ export class RunController {
   > {
     try {
       const client = await this.ensureClient();
-      const result = await client.listSessions({ limit: 20 });
+      const result = await client.listSessions({ limit: 200 });
       return result.sessions;
     } catch (err) {
       this.store.setError(formatError(err));
@@ -471,15 +530,28 @@ export class RunController {
     input: { traceLevel?: TraceLevel } = {},
   ): Record<string, unknown> {
     const traceLevel = input.traceLevel ?? this.opts.traceLevel ?? "standard";
-    return createHostClientRunMetadata({
-      source: "tui",
-      sessionId: this.sessionId,
-      workspaceRoot: this.opts.workspaceRoot,
-      permissionMode: this.opts.permissionMode ?? "default",
-      traceLevel,
-      shouldWrite: this.shouldWrite(),
-      modelName: this.opts.modelName,
-    });
+    return {
+      ...createHostClientRunMetadata({
+        source: "tui",
+        sessionId: this.sessionId,
+        workspaceRoot: this.opts.workspaceRoot,
+        permissionMode: this.opts.permissionMode ?? "default",
+        traceLevel,
+        shouldWrite: this.shouldWrite(),
+        modelName: this.opts.modelName,
+      }),
+      ...inputMetadataRecord(this.pendingRunInput()),
+    };
+  }
+
+  private pendingRunInput(): RunInputPayload | undefined {
+    if (this.pendingInputParts.length === 0) return undefined;
+    const parts = [...this.pendingInputParts];
+    const summary = inputSummary(parts);
+    return {
+      parts,
+      metadata: summary,
+    };
   }
 
   private shouldWrite(): boolean {
@@ -638,6 +710,40 @@ function validateSessionId(id: string): string {
     throw new Error("Session id must be a safe path segment.");
   }
   return id;
+}
+
+function mediaTypeForImagePath(path: string): string | undefined {
+  switch (extname(path).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      return undefined;
+  }
+}
+
+function inputMetadataRecord(
+  input: RunInputPayload | undefined,
+): Record<string, unknown> {
+  const summary = inputSummary(input?.parts ?? []);
+  return summary.attachmentCount > 0 ? { input: summary } : {};
+}
+
+function inputSummary(parts: readonly RunInputPart[]): {
+  attachmentCount: number;
+  imageCount?: number;
+} {
+  const imageCount = parts.filter((part) => part.type === "image").length;
+  return {
+    attachmentCount: parts.length,
+    ...(imageCount > 0 ? { imageCount } : {}),
+  };
 }
 
 /** The most recent goal carried by a loaded event stream, or null. */

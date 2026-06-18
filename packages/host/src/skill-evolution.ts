@@ -1,7 +1,10 @@
 import { createId, assertSafePathSegment } from "@sparkwright/core";
 import {
   computeSkillPackageHash,
+  inspectSkill,
   parseSkill,
+  type SkillGuardFinding,
+  type SkillManifest,
   type SkillRoot,
 } from "@sparkwright/skills";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -37,6 +40,18 @@ const PRUNABLE_PROPOSAL_STATES: readonly SkillProposalState[] = [
   "failed",
 ];
 
+/**
+ * Where a proposal came from. Auto-captured when a proposal is drafted by a
+ * model tool during a run, so a reviewer can pull the trace that motivated the
+ * change. All fields are optional: CLI-authored proposals have no run.
+ */
+export interface SkillProposalProvenance {
+  runId?: string;
+  sessionId?: string;
+  /** Short reason/intent the author gave for the change. */
+  rationale?: string;
+}
+
 export interface SkillProposalMetadata {
   id: string;
   kind: SkillProposalKind;
@@ -54,6 +69,14 @@ export interface SkillProposalMetadata {
   closedAt?: string;
   statusReason?: string;
   supersededBy?: string;
+  /**
+   * Static guard findings on the proposed (after) content, recorded at draft so
+   * a human reviewer sees them before applying. Evolution content is inspected
+   * as `agent-created` regardless of any trust the skill body self-declares.
+   */
+  guardFindings?: SkillGuardFinding[];
+  /** Run/session that produced the proposal, when drafted during a run. */
+  provenance?: SkillProposalProvenance;
 }
 
 export interface SkillProposalSummary extends SkillProposalMetadata {
@@ -92,6 +115,7 @@ export interface ApplySkillProposalResult {
   proposal: SkillProposalDetail;
   history: SkillHistoryEntry;
   doctor: SkillDoctorReport;
+  guardFindings: SkillGuardFinding[];
   changed: true;
 }
 
@@ -127,6 +151,12 @@ export interface RestoreSkillFromHistoryInput {
   skillName: string;
   historyId: string;
   apply?: boolean;
+  /**
+   * Which side of the history entry to restore. `after` (default) re-applies the
+   * package that version produced. `before` restores the package as it was prior
+   * to that version — the revert/undo edge for an applied evolution.
+   */
+  side?: "before" | "after";
   restoredAt?: Date | string;
 }
 
@@ -134,6 +164,7 @@ export interface RestoreSkillFromHistoryResult {
   applied: boolean;
   skillName: string;
   targetPath: string;
+  side: "before" | "after";
   sourceHistory: SkillHistoryDetail;
   currentPackageHash: string | null;
   restorePackageHash: string;
@@ -153,6 +184,7 @@ export interface CreateSkillCreateProposalInput {
    * actual guidance rather than a placeholder.
    */
   content?: string;
+  provenance?: SkillProposalProvenance;
   mutationReporter?: CapabilityPackageMutationReporter;
 }
 
@@ -167,6 +199,7 @@ export interface CreateSkillUpdateProposalInput {
    * When omitted, `description` is appended as a "Proposed Evolution" section.
    */
   applyEdit?: (beforeContent: string) => string;
+  provenance?: SkillProposalProvenance;
   mutationReporter?: CapabilityPackageMutationReporter;
 }
 
@@ -208,6 +241,7 @@ export async function createSkillCreateProposal(
   await mutations.writeText(join(afterSkillDir, "SKILL.md"), skillContent, {
     reason: `Write proposed Skill ${input.name}`,
   });
+  const guardFindings = inspectProposedSkillContent(input.name, skillContent);
 
   const afterHash = await computeSkillPackageHash(afterSkillDir);
   const metadata: SkillProposalMetadata = {
@@ -222,6 +256,10 @@ export async function createSkillCreateProposal(
     basePackageHash: null,
     afterPackageHash: afterHash.packageHash,
     summary: `Create project Skill ${input.name}`,
+    ...(guardFindings.length > 0 ? { guardFindings } : {}),
+    ...(normalizeProvenance(input.provenance)
+      ? { provenance: normalizeProvenance(input.provenance) }
+      : {}),
   };
   const proposalMarkdown = renderCreateProposalMarkdown(
     metadata,
@@ -301,6 +339,7 @@ export async function createSkillUpdateProposal(
   await mutations.writeText(skillPath, afterContent, {
     reason: `Write proposed Skill update ${input.name}`,
   });
+  const guardFindings = inspectProposedSkillContent(input.name, afterContent);
 
   const afterHash = await computeSkillPackageHash(afterSkillDir);
   const metadata: SkillProposalMetadata = {
@@ -320,6 +359,10 @@ export async function createSkillUpdateProposal(
         : `Fork ${skill.layer ?? "unknown"} Skill ${input.name} into project layer`,
     sourceLayer: skill.layer,
     sourcePath: skill.source,
+    ...(guardFindings.length > 0 ? { guardFindings } : {}),
+    ...(normalizeProvenance(input.provenance)
+      ? { provenance: normalizeProvenance(input.provenance) }
+      : {}),
   };
   const proposalMarkdown = renderUpdateProposalMarkdown(
     metadata,
@@ -450,7 +493,7 @@ async function readSkillProposalFromPath(
 export async function applySkillProposal(
   workspaceRoot: string,
   proposalId: string,
-  options: { appliedAt?: Date | string } = {},
+  options: { appliedAt?: Date | string; force?: boolean } = {},
 ): Promise<ApplySkillProposalResult> {
   const mutations = createFileCapabilityPackageWriter(workspaceRoot);
   const proposal = await readSkillProposal(workspaceRoot, proposalId);
@@ -466,6 +509,21 @@ export async function applySkillProposal(
     await updateProposalState(proposal, "stale", mutations);
     throw new Error(
       `Skill proposal after package hash changed: ${proposal.id}`,
+    );
+  }
+
+  // Re-inspect the proposed content at the human apply gate. Dangerous findings
+  // require an explicit force so an agent-authored evolution cannot quietly
+  // introduce secret-exfil-shaped instructions.
+  const afterContent = await readFile(join(afterSkillDir, "SKILL.md"), "utf8");
+  const guardFindings = inspectProposedSkillContent(
+    proposal.skillName,
+    afterContent,
+  );
+  if (hasDangerousGuardFinding(guardFindings) && !options.force) {
+    throw new Error(
+      `Skill proposal ${proposal.id} has dangerous guard findings; ` +
+        `review with 'skills proposals show' and re-apply with force to proceed.`,
     );
   }
 
@@ -515,6 +573,7 @@ export async function applySkillProposal(
       proposal: applied,
       history,
       doctor,
+      guardFindings,
       changed: true,
     };
   } catch (error) {
@@ -651,6 +710,17 @@ export async function restoreSkillFromHistory(
     input.skillName,
     input.historyId,
   );
+  const side = input.side ?? "after";
+  if (side === "before" && !sourceHistory.beforePackageHash) {
+    throw new Error(
+      `Skill history version ${input.skillName}:${input.historyId} has no prior ` +
+        `(before) package to restore; this version created the Skill from nothing.`,
+    );
+  }
+  const restoreSourceDir =
+    side === "before"
+      ? join(sourceHistory.beforePath, input.skillName)
+      : sourceHistory.afterPath;
   const targetPath = join(
     projectSkillRoot(input.workspaceRoot),
     input.skillName,
@@ -659,7 +729,7 @@ export async function restoreSkillFromHistory(
     .then((hash) => hash.packageHash)
     .catch(() => null);
   const restorePackageHash = await computeSkillPackageHash(
-    sourceHistory.afterPath,
+    restoreSourceDir,
   ).then((hash) => hash.packageHash);
 
   if (!input.apply) {
@@ -667,6 +737,7 @@ export async function restoreSkillFromHistory(
       applied: false,
       skillName: input.skillName,
       targetPath,
+      side,
       sourceHistory,
       currentPackageHash,
       restorePackageHash,
@@ -699,13 +770,9 @@ export async function restoreSkillFromHistory(
     await mutations.removeTree(targetPath, {
       reason: `Remove current Skill ${input.skillName} before restore`,
     });
-    await mutations.replaceWithSkillPackage(
-      sourceHistory.afterPath,
-      targetPath,
-      {
-        reason: `Restore Skill ${input.skillName} from history ${input.historyId}`,
-      },
-    );
+    await mutations.replaceWithSkillPackage(restoreSourceDir, targetPath, {
+      reason: `Restore Skill ${input.skillName} from history ${input.historyId} (${side})`,
+    });
 
     const roots = [
       {
@@ -743,6 +810,7 @@ export async function restoreSkillFromHistory(
       applied: true,
       skillName: input.skillName,
       targetPath,
+      side,
       sourceHistory,
       currentPackageHash,
       restorePackageHash,
@@ -773,6 +841,47 @@ export async function restoreSkillFromHistory(
 
 export function skillEvolutionRoot(workspaceRoot: string): string {
   return join(workspaceRoot, ".sparkwright", "skill-evolution");
+}
+
+/**
+ * Run the static skill guard over proposed content. Evolution content is
+ * agent-authored, so it is inspected as `agent-created` regardless of any trust
+ * the skill body self-declares (preventing a skill from weakening its own
+ * scrutiny). Returns findings only; callers decide whether to record or gate.
+ */
+function inspectProposedSkillContent(
+  skillName: string,
+  content: string,
+): SkillGuardFinding[] {
+  const parsed = parseSkill(content, `${skillName}/SKILL.md`);
+  const manifest: SkillManifest = {
+    name: parsed.name,
+    description: parsed.description,
+    instructions: parsed.body,
+    allowedTools: parsed.allowedTools,
+    metadata: parsed.metadata,
+  };
+  return inspectSkill(manifest, { trust: "agent-created" }).findings;
+}
+
+function hasDangerousGuardFinding(
+  findings: readonly SkillGuardFinding[],
+): boolean {
+  return findings.some((finding) => finding.severity === "dangerous");
+}
+
+/** Drop empty/whitespace fields; return undefined when nothing meaningful set. */
+function normalizeProvenance(
+  provenance: SkillProposalProvenance | undefined,
+): SkillProposalProvenance | undefined {
+  if (!provenance) return undefined;
+  const clean: SkillProposalProvenance = {};
+  if (provenance.runId?.trim()) clean.runId = provenance.runId.trim();
+  if (provenance.sessionId?.trim())
+    clean.sessionId = provenance.sessionId.trim();
+  if (provenance.rationale?.trim())
+    clean.rationale = provenance.rationale.trim();
+  return Object.keys(clean).length > 0 ? clean : undefined;
 }
 
 function proposalsRoot(workspaceRoot: string): string {

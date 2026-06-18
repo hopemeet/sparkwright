@@ -906,9 +906,21 @@ Initial artifact types:
     "path": "README.md"
   },
   "content": "# Sparkwright\n",
+  "parts": [
+    {
+      "type": "image",
+      "data": "base64...",
+      "mediaType": "image/png",
+      "name": "screenshot.png"
+    }
+  ],
   "metadata": {}
 }
 ```
+
+`parts` is optional and carries extensible multimodal input associated with the
+textual `content` summary. Current part types are `text`, `image`, `file`, and
+`audio`; media parts use either base64 `data` or a resolvable `uri`.
 
 Initial context types:
 

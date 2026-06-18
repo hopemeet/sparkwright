@@ -6,9 +6,11 @@ import {
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
+  type UserContent,
 } from "ai";
 import {
   sanitizeToolSchema,
+  type ContentPart,
   type ModelAdapter,
   type ModelInput,
   type ModelOutput,
@@ -244,7 +246,15 @@ export function toModelMessages(prompt: PromptMessage[]): ModelMessage[] {
     if (message.role === "tool") {
       return {
         role: "user",
-        content: `Tool observation:\n${message.content}`,
+        content: userContentFromPromptMessage(message, "Tool observation:\n"),
+        ...(providerOptions ? { providerOptions } : {}),
+      };
+    }
+
+    if (message.role === "user") {
+      return {
+        role: "user",
+        content: userContentFromPromptMessage(message),
         ...(providerOptions ? { providerOptions } : {}),
       };
     }
@@ -272,9 +282,63 @@ function fallbackPrompt(input: ModelInput): PromptMessage[] {
         "Context:",
         ...input.context.map((item, index) => `${index + 1}. ${item.content}`),
       ].join("\n"),
+      parts: input.context.flatMap((item) => item.parts ?? []),
       stability: "turn",
     },
   ];
+}
+
+function userContentFromPromptMessage(
+  message: PromptMessage,
+  prefix = "",
+): UserContent {
+  const text = `${prefix}${message.content}`;
+  const parts = (message.parts ?? [])
+    .map(toAiSdkContentPart)
+    .filter((part): part is UserContentPart => part !== undefined);
+  if (parts.length === 0) return text;
+  return [{ type: "text", text }, ...parts];
+}
+
+type UserContentPart = Exclude<UserContent, string>[number];
+
+function toAiSdkContentPart(part: ContentPart): UserContentPart | undefined {
+  if (part.type === "text") return { type: "text", text: part.text };
+
+  const payload = partData(part);
+  if (!payload) {
+    return {
+      type: "text",
+      text: `[${part.type} attachment omitted: missing data or uri]`,
+    };
+  }
+
+  if (part.type === "image") {
+    return {
+      type: "image",
+      image: payload,
+      ...(part.mediaType ? { mediaType: part.mediaType } : {}),
+    };
+  }
+
+  return {
+    type: "file",
+    data: payload,
+    mediaType: part.mediaType ?? "application/octet-stream",
+    ...(part.name ? { filename: part.name } : {}),
+  };
+}
+
+function partData(
+  part: Extract<ContentPart, { type: "image" | "file" | "audio" }>,
+) {
+  if (part.data) return part.data;
+  if (!part.uri) return undefined;
+  try {
+    return new URL(part.uri);
+  } catch {
+    return undefined;
+  }
 }
 
 function asJsonSchema(schema: unknown): Parameters<typeof jsonSchema>[0] {

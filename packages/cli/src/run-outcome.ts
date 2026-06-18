@@ -12,6 +12,7 @@ export type { VerificationProfileResult };
 export interface CliRunEventSummary {
   events: SparkwrightEvent[];
   toolFailures: Array<{ code?: string }>;
+  skillFailures: Array<{ source?: string; message?: string }>;
   writeCompleted: number;
   writeSkipped: number;
   writeDenied: number;
@@ -37,6 +38,7 @@ export function createCliRunEventSummary(): CliRunEventSummary {
   return {
     events: [],
     toolFailures: [],
+    skillFailures: [],
     writeCompleted: 0,
     writeSkipped: 0,
     writeDenied: 0,
@@ -52,6 +54,8 @@ export function updateCliRunEventSummary(
   summary.events.push(event);
   if (event.type === "tool.failed") {
     summary.toolFailures.push({ code: toolFailureCode(event) });
+  } else if (event.type === "skill.failed") {
+    summary.skillFailures.push(skillFailureDetail(event));
   } else if (event.type === "tool.completed") {
     if (toolCompletedChanged(event)) summary.toolReportedChanges += 1;
   } else if (event.type === "capability.mutation.completed") {
@@ -236,6 +240,17 @@ export function summarizeUnsupportedFinalClaims(
   return `Run completed with ${claims.length} unsupported final-answer claim${claims.length === 1 ? "" : "s"}; see trace outcome for evidence details.${command}`;
 }
 
+export function summarizeSkillLoadFailures(
+  summary: CliRunEventSummary,
+): string | undefined {
+  const failures = summary.skillFailures;
+  if (failures.length === 0) return undefined;
+  const first = failures[0];
+  const where = first?.source ? ` First: ${first.source}` : "";
+  const why = first?.message ? ` — ${first.message}` : "";
+  return `Run completed with ${failures.length} skill load failure${failures.length === 1 ? "" : "s"}; affected skills were not indexed for this run.${where}${why}`;
+}
+
 export function summarizeDeniedWorkspaceWrites(
   summary: CliRunEventSummary,
 ): string | undefined {
@@ -352,6 +367,17 @@ function toolFailureCode(event: SparkwrightEvent): string | undefined {
     error?: { code?: string };
   };
   return payload.error?.code;
+}
+
+function skillFailureDetail(event: SparkwrightEvent): {
+  source?: string;
+  message?: string;
+} {
+  if (!isRecord(event.payload)) return {};
+  return {
+    source: stringValue(event.payload.source),
+    message: stringValue(event.payload.message),
+  };
 }
 
 function toolCompletedChanged(event: SparkwrightEvent): boolean {

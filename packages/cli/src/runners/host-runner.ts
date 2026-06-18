@@ -1,6 +1,10 @@
 import { existsSync } from "node:fs";
 import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
-import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
+import type {
+  PermissionMode,
+  RunInputPayload,
+  TraceLevel,
+} from "@sparkwright/protocol";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
   createHostClientRunMetadata,
@@ -25,6 +29,7 @@ import {
   createCliRunEventSummary,
   summarizeDeniedWorkspaceWrites,
   summarizeRunFailure,
+  summarizeSkillLoadFailures,
   summarizeTerminalRunFailure,
   summarizeUnhandledToolFailures,
   summarizeUnsupportedFinalClaims,
@@ -48,6 +53,7 @@ export interface HostRunInput {
   targetPath?: string;
   confidentialPaths?: readonly string[];
   traceLevel: TraceLevel;
+  input?: RunInputPayload;
 }
 
 export interface HostResumeInput {
@@ -243,12 +249,15 @@ async function runHostLifecycle(
       });
 
       if ("goal" in input) {
-        const metadata = createHostClientRunMetadata({
-          source: "cli",
-          targetPath,
-          shouldWrite,
-          traceLevel,
-        });
+        const metadata = {
+          ...createHostClientRunMetadata({
+            source: "cli",
+            targetPath,
+            shouldWrite,
+            traceLevel,
+          }),
+          ...inputMetadataSummary(input.input),
+        };
         const started = await client.startRun(
           createHostStartRunRequest({
             goal: input.goal,
@@ -261,6 +270,7 @@ async function runHostLifecycle(
             confidentialPaths,
             shouldWrite,
             metadata,
+            input: input.input,
           }),
         );
         runId = started.runId;
@@ -336,6 +346,8 @@ async function runHostLifecycle(
     );
     if (documentedCommandSummary)
       writeLine(io.stderr, documentedCommandSummary);
+    const skillLoadFailureSummary = summarizeSkillLoadFailures(eventSummary);
+    if (skillLoadFailureSummary) writeLine(io.stderr, skillLoadFailureSummary);
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
@@ -396,6 +408,20 @@ function shouldForwardHostLogs(
   return (
     value === "1" || value === "true" || value === "yes" || value === "debug"
   );
+}
+
+function inputMetadataSummary(
+  input: RunInputPayload | undefined,
+): Record<string, unknown> {
+  const parts = input?.parts ?? [];
+  if (parts.length === 0) return {};
+  const imageCount = parts.filter((part) => part.type === "image").length;
+  return {
+    input: {
+      attachmentCount: parts.length,
+      ...(imageCount > 0 ? { imageCount } : {}),
+    },
+  };
 }
 
 async function closeClient(client: Client | undefined): Promise<void> {

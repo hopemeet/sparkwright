@@ -48,10 +48,20 @@ describe("host client run request helpers", () => {
 
   it("builds start and resume payloads with shared field rules", () => {
     const metadata = { source: "cli", shouldWrite: true, traceLevel: "debug" };
+    const input = {
+      parts: [
+        {
+          type: "image" as const,
+          data: "iVBORw0KGgo=",
+          mediaType: "image/png",
+        },
+      ],
+    };
 
     expect(
       createHostStartRunRequest({
         goal: "inspect",
+        input,
         sessionId: "session_1",
         modelName: "openai/configured",
         modelNameSource: "config",
@@ -64,6 +74,7 @@ describe("host client run request helpers", () => {
       }),
     ).toEqual({
       goal: "inspect",
+      input,
       sessionId: "session_1",
       model: undefined,
       permissionMode: "accept_edits",

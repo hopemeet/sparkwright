@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { render } from "ink";
-import { SessionListDialog } from "../src/components/session-list-dialog.js";
+import {
+  SessionListDialog,
+  sessionWindow,
+} from "../src/components/session-list-dialog.js";
 import type { SessionSummary } from "../src/lib/sessions.js";
 
 async function renderToText(element: React.ReactElement): Promise<string> {
@@ -71,5 +74,25 @@ describe("SessionListDialog rendering", () => {
     expect(text).toContain("› 1 ");
     expect(text).toContain("Alpha");
     expect(text).toContain("second task");
+  });
+
+  it("keeps the selected session visible when navigating beyond the first page", () => {
+    const sessions = Array.from({ length: 20 }, (_, i) =>
+      session(`session_${i + 1}`, `task ${i + 1}`, i),
+    );
+
+    const page = sessionWindow(sessions, 15, 8);
+
+    expect(page.start).toBe(11);
+    expect(page.visible.map((s) => s.id)).toEqual([
+      "session_12",
+      "session_13",
+      "session_14",
+      "session_15",
+      "session_16",
+      "session_17",
+      "session_18",
+      "session_19",
+    ]);
   });
 });

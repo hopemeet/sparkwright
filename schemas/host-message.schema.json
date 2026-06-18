@@ -319,6 +319,7 @@
       "required": ["goal"],
       "properties": {
         "goal": { "type": "string", "minLength": 1 },
+        "input": { "$ref": "#/$defs/RunInputPayload" },
         "sessionId": { "type": "string", "minLength": 1 },
         "targetPath": {
           "type": "string",
@@ -413,9 +414,58 @@
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "content": { "type": "string", "minLength": 1 },
+        "input": { "$ref": "#/$defs/RunInputPayload" },
         "metadata": { "type": "object" }
       },
       "additionalProperties": false
+    },
+    "RunInputPayload": {
+      "type": "object",
+      "properties": {
+        "parts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RunInputPart" }
+        },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "RunInputPart": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "text"],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string" },
+            "metadata": { "type": "object" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "enum": ["image", "file", "audio"] },
+            "data": { "type": "string", "minLength": 1 },
+            "uri": { "type": "string", "minLength": 1 },
+            "mediaType": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "metadata": { "type": "object" }
+          },
+          "anyOf": [
+            {
+              "properties": { "data": { "type": "string", "minLength": 1 } },
+              "required": ["data"]
+            },
+            {
+              "properties": { "uri": { "type": "string", "minLength": 1 } },
+              "required": ["uri"]
+            }
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "ApprovalResolveRequestPayload": {
       "type": "object",

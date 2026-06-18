@@ -21,7 +21,50 @@
       "additionalProperties": false
     },
     "content": { "type": "string" },
+    "parts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ContentPart" }
+    },
     "metadata": { "type": "object" }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "ContentPart": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "text"],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string" },
+            "metadata": { "type": "object" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "enum": ["image", "file", "audio"] },
+            "data": { "type": "string", "minLength": 1 },
+            "uri": { "type": "string", "minLength": 1 },
+            "mediaType": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "metadata": { "type": "object" }
+          },
+          "anyOf": [
+            {
+              "properties": { "data": { "type": "string", "minLength": 1 } },
+              "required": ["data"]
+            },
+            {
+              "properties": { "uri": { "type": "string", "minLength": 1 } },
+              "required": ["uri"]
+            }
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
 }

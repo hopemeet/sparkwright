@@ -38,6 +38,20 @@ describe("installTerminalRestore", () => {
     expect(written).toBe(TERMINAL_RESTORE_SEQUENCE);
   });
 
+  it("restores terminal state on SIGINT without owning process exit", () => {
+    let written = "";
+    const fake = {
+      isTTY: true,
+      write: (s: string) => {
+        written += s;
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+    dispose = installTerminalRestore(fake);
+    process.emit("SIGINT");
+    expect(written).toBe(TERMINAL_RESTORE_SEQUENCE);
+  });
+
   it("is idempotent — a second install does not double-register", () => {
     const fake = {
       isTTY: false,

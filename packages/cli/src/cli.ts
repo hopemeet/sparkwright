@@ -1,6 +1,14 @@
-import { readlinkSync } from "node:fs";
+import { readFileSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  resolve,
+  sep,
+} from "node:path";
 import {
   FileTaskStore,
   type TaskId,
@@ -17,6 +25,7 @@ import {
   DEFAULT_CONFIDENTIAL_PATHS,
   createPermissionModePolicy,
   createWorkspaceReadScopePolicy,
+  createContextItemId,
   createRunId,
   FileSessionStore,
   loadCheckpointFromRunDir,
@@ -27,6 +36,7 @@ import {
   summarizeTraceFile,
   validateSessionTraceConsistency,
   type RunRecord,
+  type ContextItem,
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
   type TraceReport,
@@ -41,6 +51,8 @@ import {
   isTraceLevel,
   type CapabilitySnapshot,
   type PermissionMode,
+  type RunInputPayload,
+  type RunInputPart,
   type TraceLevel,
 } from "@sparkwright/protocol";
 import {
@@ -57,7 +69,7 @@ import {
   type CreateJobInput,
   type UpdateJobPatch,
 } from "@sparkwright/cron";
-import { type SkillRoot } from "@sparkwright/skills";
+import { type SkillGuardFinding, type SkillRoot } from "@sparkwright/skills";
 import {
   loadLayeredSkillReport,
   applySkillProposal,
@@ -142,6 +154,7 @@ interface ParsedArgs {
   targetPathSource: "default" | "cli";
   /** Workspace-relative paths/globs whose contents the run must not read. */
   confidentialPaths: string[];
+  imagePaths: string[];
   shouldWrite: boolean;
   approveAll: boolean;
   approveEdits: boolean;
@@ -305,12 +318,20 @@ export async function runCli(
       writeLine(io.stdout, `Validation trace written to ${tracePath}`);
     return { exitCode: 1, tracePath, sessionId };
   }
+  const loadedInput = loadCliRunInput(runInput.imagePaths, cwd);
+  if (!loadedInput.ok) {
+    writeLine(io.stderr, loadedInput.message);
+    return { exitCode: 1, sessionId };
+  }
 
   return parsed.value.directCore
     ? startDirectCoreRun(
         {
           ...runInput,
-          contextItems: [],
+          contextItems: contextItemsForCliInput(
+            runInput.goal,
+            loadedInput.input,
+          ),
         },
         io,
         env,
@@ -324,6 +345,7 @@ export async function runCli(
             runInput.targetPathSource === "cli"
               ? runInput.targetPath
               : undefined,
+          input: loadedInput.input,
         },
         io,
         env,
@@ -332,6 +354,103 @@ export async function runCli(
 
 function directCoreEnabled(env: Record<string, string | undefined>): boolean {
   return env.SPARKWRIGHT_ENABLE_DIRECT_CORE === "1";
+}
+
+const MAX_CLI_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function loadCliRunInput(
+  imagePaths: readonly string[],
+  cwd: string,
+): { ok: true; input?: RunInputPayload } | { ok: false; message: string } {
+  if (imagePaths.length === 0) return { ok: true };
+  const parts: RunInputPart[] = [];
+  for (const imagePath of imagePaths) {
+    const resolved = resolve(cwd, imagePath);
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(resolved);
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Could not read image ${imagePath}: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+    if (bytes.byteLength > MAX_CLI_IMAGE_BYTES) {
+      return {
+        ok: false,
+        message: `Image is too large (${bytes.byteLength} bytes): ${imagePath}. Limit is ${MAX_CLI_IMAGE_BYTES} bytes.`,
+      };
+    }
+    const mediaType = mediaTypeForImagePath(resolved);
+    if (!mediaType) {
+      return {
+        ok: false,
+        message: `Unsupported image type for ${imagePath}. Use png, jpg, jpeg, gif, or webp.`,
+      };
+    }
+    parts.push({
+      type: "image",
+      data: bytes.toString("base64"),
+      mediaType,
+      name: basename(imagePath),
+      metadata: {
+        sourcePath: imagePath,
+        byteLength: bytes.byteLength,
+      },
+    });
+  }
+
+  return {
+    ok: true,
+    input: {
+      parts,
+      metadata: {
+        imageCount: parts.length,
+        attachmentCount: parts.length,
+      },
+    },
+  };
+}
+
+function contextItemsForCliInput(
+  goal: string,
+  input: RunInputPayload | undefined,
+): ContextItem[] {
+  const parts = input?.parts ?? [];
+  if (parts.length === 0) return [];
+  const imageCount = parts.filter((part) => part.type === "image").length;
+  return [
+    {
+      id: createContextItemId(),
+      type: "user",
+      source: { kind: "user_input", uri: "cli.run" },
+      content: `User request attachments for: ${goal}`,
+      parts,
+      metadata: {
+        layer: "runtime",
+        stability: "turn",
+        multimodal: true,
+        attachmentCount: parts.length,
+        ...(imageCount > 0 ? { imageCount } : {}),
+      },
+    },
+  ];
+}
+
+function mediaTypeForImagePath(path: string): string | undefined {
+  switch (extname(path).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      return undefined;
+  }
 }
 
 function maybePrintFirstRunConfigHint(input: {
@@ -557,6 +676,7 @@ function parseArgs(
   let targetPath = "README.md";
   let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
+  const imagePaths: string[] = [];
   let shouldWrite = false;
   let approveAll = defaults.approveAll ?? false;
   let approveEdits = defaults.approveEdits ?? false;
@@ -650,6 +770,22 @@ function parseArgs(
       for (const entry of value.split(",")) {
         const trimmed = entry.trim();
         if (trimmed) confidentialPaths.push(trimmed);
+      }
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--image") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--"))
+        return {
+          ok: false,
+          message: "Usage: --image requires a local image path",
+        };
+      for (const entry of value.split(",")) {
+        const trimmed = entry.trim();
+        if (trimmed) imagePaths.push(trimmed);
       }
       args.splice(index, 2);
       index -= 1;
@@ -1083,6 +1219,7 @@ function parseArgs(
       targetPath,
       targetPathSource,
       confidentialPaths,
+      imagePaths,
       shouldWrite,
       approveAll,
       approveEdits,
@@ -2408,7 +2545,9 @@ async function handleSkillProposalsCommand(
       writeLine(io.stderr, "Usage: sparkwright skills proposals apply <id>");
       return { exitCode: 1 };
     }
-    const result = await applySkillProposal(parsed.workspaceRoot, id);
+    const result = await applySkillProposal(parsed.workspaceRoot, id, {
+      force: parsed.force,
+    });
     writeLine(
       io.stdout,
       parsed.format === "json"
@@ -2602,6 +2741,7 @@ async function handleSkillRestoreCommand(
     workspaceRoot: parsed.workspaceRoot,
     skillName: input.value.name,
     historyId: input.value.version,
+    side: input.value.side,
     apply: parsed.apply,
   });
   writeLine(
@@ -2889,10 +3029,11 @@ function parseDurationMs(
   return { ok: true, value: amount * factor };
 }
 
-function parseSkillRestoreArgs(
-  args: string[],
-):
-  | { ok: true; value: { name: string; version: string } }
+function parseSkillRestoreArgs(args: string[]):
+  | {
+      ok: true;
+      value: { name: string; version: string; side: "before" | "after" };
+    }
   | { ok: false; message: string } {
   const rest = [...args];
   const name = rest.shift();
@@ -2900,14 +3041,27 @@ function parseSkillRestoreArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright skills restore <skill-name> --version <history-id>",
+        "Usage: sparkwright skills restore <skill-name> --version <history-id> [--to before|after]",
     };
   }
   let version: string | undefined;
+  let side: "before" | "after" = "after";
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
     if (arg === "--version") {
       version = rest[i + 1];
+      i += 1;
+      continue;
+    }
+    if (arg === "--to") {
+      const value = rest[i + 1];
+      if (value !== "before" && value !== "after") {
+        return {
+          ok: false,
+          message: "Usage: skills restore --to must be 'before' or 'after'",
+        };
+      }
+      side = value;
       i += 1;
       continue;
     }
@@ -2922,7 +3076,7 @@ function parseSkillRestoreArgs(
       message: "Usage: skills restore requires --version",
     };
   }
-  return { ok: true, value: { name, version: version.trim() } };
+  return { ok: true, value: { name, version: version.trim(), side } };
 }
 
 async function resolveSkillRootsForCli(
@@ -3160,6 +3314,8 @@ function formatSkillProposalDetail(proposal: SkillProposalDetail): string {
     `closed: ${proposal.closedAt ?? "none"}`,
     `superseded by: ${proposal.supersededBy ?? "none"}`,
     `reason: ${proposal.statusReason ?? "none"}`,
+    `provenance: ${formatProvenance(proposal.provenance)}`,
+    formatGuardFindingsLine(proposal.guardFindings),
     "",
     proposal.proposalMarkdown.trimEnd(),
     "",
@@ -3179,7 +3335,30 @@ function formatSkillProposalApplyResult(
     `base package: ${result.history.beforePackageHash ?? "none"}`,
     `after package: ${result.history.afterPackageHash}`,
     `doctor: ${result.doctor.status}`,
+    formatGuardFindingsLine(result.guardFindings),
   ].join("\n");
+}
+
+function formatProvenance(
+  provenance:
+    | { runId?: string; sessionId?: string; rationale?: string }
+    | undefined,
+): string {
+  if (!provenance) return "none";
+  const parts: string[] = [];
+  if (provenance.sessionId) parts.push(`session=${provenance.sessionId}`);
+  if (provenance.runId) parts.push(`run=${provenance.runId}`);
+  if (provenance.rationale) parts.push(`rationale=${provenance.rationale}`);
+  return parts.length > 0 ? parts.join(" ") : "none";
+}
+
+function formatGuardFindingsLine(
+  findings: readonly SkillGuardFinding[] | undefined,
+): string {
+  if (!findings || findings.length === 0) return "guard: ok (no findings)";
+  const dangerous = findings.filter((f) => f.severity === "dangerous").length;
+  const detail = findings.map((f) => `${f.severity}:${f.ruleId}`).join(", ");
+  return `guard: ${findings.length} finding${findings.length === 1 ? "" : "s"}${dangerous > 0 ? ` (${dangerous} dangerous — apply needs force)` : ""} [${detail}]`;
 }
 
 function formatSkillProposalPruneResult(
@@ -3239,7 +3418,7 @@ function formatSkillRestoreResult(
     `mode: ${result.applied ? "applied" : "dry-run"}`,
     `skill: ${result.skillName}`,
     `target: ${result.targetPath}`,
-    `source history: ${result.sourceHistory.id}`,
+    `source history: ${result.sourceHistory.id} (${result.side})`,
     `current package: ${result.currentPackageHash ?? "none"}`,
     `restore package: ${result.restorePackageHash}`,
   ];
@@ -4769,7 +4948,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
-    return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]';
+    return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]';
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
@@ -5632,7 +5811,7 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]',
+    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
@@ -5674,14 +5853,14 @@ function skillsUsage(): string {
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list [--workspace path] [--format json|text]",
     "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals apply <id> [--workspace path] [--format json|text]",
+    "       sparkwright skills proposals apply <id> [--force] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals reject <id> --reason "why" [--workspace path] [--format json|text]',
     '       sparkwright skills proposals supersede <id> --by <new-id> [--reason "why"] [--workspace path] [--format json|text]',
     "       sparkwright skills proposals prune [--state rejected,stale,superseded,failed] [--older-than 30d] [--dry-run|--apply] [--workspace path] [--format json|text]",
     "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
     "       sparkwright skills history show <skill-name> <history-id> [--workspace path] [--format json|text]",
     "       sparkwright skills history diff <skill-name> <history-id> [--workspace path] [--format json|text]",
-    "       sparkwright skills restore <skill-name> --version <history-id> [--dry-run|--apply] [--workspace path] [--format json|text]",
+    "       sparkwright skills restore <skill-name> --version <history-id> [--to before|after] [--dry-run|--apply] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals create <name> --description "what it does" [--workspace path] [--format json|text]',
     '       sparkwright skills proposals update <name> --description "what should change" [--workspace path] [--format json|text]',
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
@@ -5692,7 +5871,7 @@ function skillProposalsUsage(): string {
   return [
     "Usage: sparkwright skills proposals list [--workspace path] [--format json|text]",
     "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals apply <id> [--workspace path] [--format json|text]",
+    "       sparkwright skills proposals apply <id> [--force] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals reject <id> --reason "why" [--workspace path] [--format json|text]',
     '       sparkwright skills proposals supersede <id> --by <new-id> [--reason "why"] [--workspace path] [--format json|text]',
     "       sparkwright skills proposals prune [--state rejected,stale,superseded,failed] [--older-than 30d] [--dry-run|--apply] [--workspace path] [--format json|text]",

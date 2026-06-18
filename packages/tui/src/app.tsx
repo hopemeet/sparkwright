@@ -309,8 +309,8 @@ function AppReady(
   const [skillReviewRest, setSkillReviewRest] = useState("");
   const [labels, setLabels] = useState<Record<string, string>>({});
   const labelsRef = useRef<SessionLabels | null>(null);
-  // Ctrl+C cancels an active run; when idle it exits immediately. This keeps
-  // the TUI scriptable under PTYs and matches the footer's "ctrl+c quit" hint.
+  // Ctrl+C behaves like a safe escape hatch: first press cancels/backs out,
+  // second press exits when idle with no layer open.
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const theme = resolved.theme;
   // Todo band: collapsed by default (active items only); ctrl+o expands to show
@@ -326,6 +326,10 @@ function AppReady(
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
   const skillLearnGoalsRef = useRef<string[]>([]);
   const skillLearnNoticeCountRef = useRef(0);
+  const quitArmedUntilRef = useRef(0);
+  const lastQuitRequestAtRef = useRef(0);
+  const suppressQuitUntilRef = useRef(0);
+  const requestQuitRef = useRef<(presses?: number) => void>(() => {});
 
   // Sync awaiting-approval status with a layer entry so the layer stack is
   // the single source of truth for "what's on top".
@@ -1131,6 +1135,52 @@ function AppReady(
       run: () => layers.toggle("model"),
     });
     reg.register({
+      name: "image",
+      title: "Attach image",
+      description: "Attach a local image to the next submitted goal.",
+      category: "capability",
+      aliases: ["attach-image"],
+      run: () =>
+        toasts.push({
+          variant: "info",
+          title: "image",
+          message: "usage: /image <path>",
+        }),
+      runRaw: (rest) => {
+        void controller.attachImage(rest).then((result) => {
+          if (!result.ok) {
+            toasts.push({
+              variant: "error",
+              title: "image failed",
+              message: result.message,
+            });
+            return;
+          }
+          toasts.push({
+            variant: "success",
+            title: "image attached",
+            message: `${result.name} · ${result.count} pending`,
+          });
+        });
+      },
+    });
+    reg.register({
+      name: "clear-images",
+      title: "Clear attached images",
+      description: "Remove pending image attachments for the next goal.",
+      category: "capability",
+      hiddenByDefault: true,
+      run: () => {
+        const count = controller.pendingAttachmentCount();
+        controller.clearPendingAttachments();
+        toasts.push({
+          variant: "info",
+          title: "images cleared",
+          message: `${count} pending`,
+        });
+      },
+    });
+    reg.register({
       name: "fork",
       title: "Fork session at a turn",
       description: "Branch a new session from a chosen point in history.",
@@ -1204,6 +1254,7 @@ function AppReady(
   ]);
 
   function startGoal(value: string): void {
+    quitArmedUntilRef.current = 0;
     skillLearnGoalsRef.current.push(value);
     void controller.start(value);
   }
@@ -1224,16 +1275,58 @@ function AppReady(
   }
 
   function requestQuit(presses = 1): void {
-    for (let i = 0; i < presses; i += 1) {
-      if (state.status === "running") {
-        if (controller.cancel())
-          toasts.push({ variant: "info", message: "cancelling…" });
-        return;
-      }
+    const now = Date.now();
+    if (presses < 2 && suppressQuitUntilRef.current > now) return;
+    const duplicatePhysicalPress =
+      presses < 2 && now - lastQuitRequestAtRef.current < 150;
+    lastQuitRequestAtRef.current = now;
+    if (duplicatePhysicalPress) return;
+    if (presses >= 2 || quitArmedUntilRef.current > now) {
       exit();
       return;
     }
+    if (state.status === "running") {
+      quitArmedUntilRef.current = now + 1500;
+      if (controller.cancel())
+        toasts.push({ variant: "info", message: "cancelling…" });
+      return;
+    }
+    if (topLayer?.name === "approval" && state.pendingApproval) {
+      quitArmedUntilRef.current = now + 1500;
+      controller.resolveApproval("denied");
+      return;
+    }
+    if (topLayer) {
+      quitArmedUntilRef.current = now + 1500;
+      closeTopLayer();
+      return;
+    }
+    quitArmedUntilRef.current = now + 1500;
+    toasts.push({
+      variant: "info",
+      message: "press ctrl+c again to quit",
+      durationMs: 1500,
+    });
   }
+
+  function noteInputClearedByQuit(): void {
+    const now = Date.now();
+    quitArmedUntilRef.current = 0;
+    lastQuitRequestAtRef.current = now;
+    suppressQuitUntilRef.current = now + 750;
+  }
+
+  useEffect(() => {
+    requestQuitRef.current = requestQuit;
+  });
+
+  useEffect(() => {
+    const onSigint = (): void => requestQuitRef.current(1);
+    process.on("SIGINT", onSigint);
+    return () => {
+      process.off("SIGINT", onSigint);
+    };
+  }, []);
 
   // Drain the prompt queue: when a run finishes and the controller is free,
   // start the next queued goal. Gated on `controller.isRunning()` so we never
@@ -1256,6 +1349,7 @@ function AppReady(
     useInput((input, key) => {
       const top = layers.top();
       if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
+        if (!top) return;
         requestQuit(Math.max(1, ctrlCPressCount(input)));
         return;
       }
@@ -1307,14 +1401,14 @@ function AppReady(
   // off-screen. Committed lines are in scrollback, so nothing else is clamped.
   const streamingMax = Math.max(3, termRows - 16);
 
-  const closeTopLayer = (): void => {
+  function closeTopLayer(): void {
     if (!topLayer) return;
     layers.pop(topLayer.name);
     if (topLayer.name === "events") {
       toasts.push({ variant: "info", message: "closed events" });
     }
     if (topLayer.name === "session-rename") setRenameTarget(null);
-  };
+  }
 
   if (topLayer?.name === "events") {
     return (
@@ -1622,6 +1716,7 @@ function AppReady(
               }
             }}
             onQuit={requestQuit}
+            onQuitClear={noteInputClearedByQuit}
             stashRef={stashRef}
             onStashChange={(next) => {
               stashRef.current = next;
@@ -1654,7 +1749,7 @@ export function inputFooterLines(bindings: Bindings, width = 100): string[] {
     ["history.search", "search"],
     ["events.open", "inspector"],
     ["cancel.run", "cancel"],
-    ["quit.app", "quit"],
+    ["quit.app", "quit x2"],
   ] as const) {
     const binding = formatBinding(bindings[name]);
     if (binding) items.push(`${binding} ${label}`);

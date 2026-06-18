@@ -156,7 +156,11 @@ async function handleRequest(
     case "run.inject_message": {
       const r = runtime.injectRunMessage(req.payload.runId, {
         content: req.payload.content,
-        metadata: req.payload.metadata,
+        parts: req.payload.input?.parts,
+        metadata: {
+          ...(req.payload.input?.metadata ?? {}),
+          ...(req.payload.metadata ?? {}),
+        },
       });
       if (r.ok) respondOk(conn, req.id, {});
       else respondError(conn, req.id, r.error);

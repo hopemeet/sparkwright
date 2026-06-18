@@ -4,6 +4,7 @@ import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
   createCliRunEventSummary,
+  summarizeSkillLoadFailures,
   summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
   summarizeVerificationProfileResults,
@@ -237,5 +238,40 @@ describe("CLI run outcome", () => {
     expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
       0,
     );
+  });
+
+  it("surfaces skill load failures without failing the run", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("run.created", { goal: "Help me get release-ready" }),
+      log.emit("skill.failed", {
+        source: "/ws/.sparkwright/skills/release-readiness/SKILL.md",
+        message: "Unsupported skill frontmatter line:   - release",
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    const message = summarizeSkillLoadFailures(summary);
+    expect(message).toContain("1 skill load failure");
+    expect(message).toContain("release-readiness/SKILL.md");
+    expect(message).toContain("Unsupported skill frontmatter line");
+    // A malformed skill is an authoring warning, not a run failure.
+    expect(completedRunHasCliIssues(summary)).toBe(false);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      0,
+    );
+  });
+
+  it("returns no skill-failure summary for a clean run", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    updateCliRunEventSummary(
+      summary,
+      log.emit("run.completed", { reason: "final_answer" }),
+    );
+    expect(summarizeSkillLoadFailures(summary)).toBeUndefined();
   });
 });

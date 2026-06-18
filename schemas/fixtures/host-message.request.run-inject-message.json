@@ -6,6 +6,15 @@
   "payload": {
     "runId": "run_01h",
     "content": "Please include the migration files too.",
+    "input": {
+      "parts": [
+        {
+          "type": "image",
+          "uri": "https://example.com/migration.png",
+          "mediaType": "image/png"
+        }
+      ]
+    },
     "metadata": {
       "source": "telegram"
     }

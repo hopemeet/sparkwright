@@ -106,8 +106,37 @@ export interface HandshakeRequestPayload {
   capabilities?: string[];
 }
 
+export interface RunTextInputPart {
+  type: "text";
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RunMediaInputPart {
+  type: "image" | "file" | "audio";
+  /** Base64-encoded bytes for local client-provided content. */
+  data?: string;
+  /** URL/URI reference for provider- or host-resolvable content. */
+  uri?: string;
+  mediaType?: string;
+  name?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type RunInputPart = RunTextInputPart | RunMediaInputPart;
+
+export interface RunInputPayload {
+  /**
+   * Extensible input content parts. Text-only clients can keep using
+   * `goal`/`content`; media-capable clients add parts here.
+   */
+  parts?: RunInputPart[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface RunStartRequestPayload {
   goal: string;
+  input?: RunInputPayload;
   sessionId?: string;
   /** Workspace-relative target path that the run should focus on when applicable. */
   targetPath?: string;
@@ -152,6 +181,7 @@ export interface RunCancelRequestPayload {
 export interface RunInjectMessageRequestPayload {
   runId: string;
   content: string;
+  input?: RunInputPayload;
   metadata?: Record<string, unknown>;
 }
 

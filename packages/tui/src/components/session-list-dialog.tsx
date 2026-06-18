@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
+import { displayWidth, toGraphemes } from "../lib/graphemes.js";
 import {
   DialogFrame,
   dialogFrameWidth,
@@ -44,6 +45,12 @@ export function SessionListDialog(props: {
   );
 
   const safeCursor = Math.min(cursor, Math.max(0, filtered.length - 1));
+  const pageSize = Math.max(4, Math.min(12, (stdout?.rows ?? 24) - 10));
+  const { start: visibleStart, visible } = sessionWindow(
+    filtered,
+    safeCursor,
+    pageSize,
+  );
 
   useInput((input, key) => {
     // Filter-mode owns most keys when active.
@@ -138,8 +145,10 @@ export function SessionListDialog(props: {
           </Text>
         </Box>
       ) : null}
-      {filtered.slice(0, 12).map((s, i) => {
-        const selected = i === safeCursor;
+      {visibleStart > 0 ? <Text dimColor>↑ {visibleStart} more</Text> : null}
+      {visible.map((s, i) => {
+        const index = visibleStart + i;
+        const selected = index === safeCursor;
         const label = props.labels[s.id];
         const ts = new Date(s.mtimeMs)
           .toISOString()
@@ -147,7 +156,7 @@ export function SessionListDialog(props: {
           .slice(0, 19);
         const title = label ?? s.preview ?? "(no preview)";
         const line = truncatePlain(
-          `${sessionRowPrefix(selected, i)}${ts} ${s.id.slice(0, 12)} ${title}`,
+          `${sessionRowPrefix(selected, index)}${ts} ${s.id.slice(0, 12)} ${title}`,
           rowWidth,
         );
         return (
@@ -159,8 +168,16 @@ export function SessionListDialog(props: {
           </Text>
         );
       })}
-      {filtered.length > 12 ? (
-        <Text dimColor>… +{filtered.length - 12} more (narrow filter)</Text>
+      {visibleStart + visible.length < filtered.length ? (
+        <Text dimColor>
+          ↓ {filtered.length - visibleStart - visible.length} more
+        </Text>
+      ) : null}
+      {filtered.length > pageSize ? (
+        <Text dimColor>
+          {visibleStart + 1}-{visibleStart + visible.length} of{" "}
+          {filtered.length}
+        </Text>
       ) : null}
       <SessionDiagnosticsPanel
         diagnostics={props.diagnostics}
@@ -176,7 +193,34 @@ function sessionRowPrefix(selected: boolean, index: number): string {
 }
 
 function truncatePlain(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+  if (displayWidth(text) <= max) return text;
+  const budget = Math.max(0, max - 1);
+  let out = "";
+  let width = 0;
+  for (const g of toGraphemes(text)) {
+    const w = displayWidth(g);
+    if (width + w > budget) break;
+    out += g;
+    width += w;
+  }
+  return `${out}…`;
+}
+
+export function sessionWindow<T>(
+  items: readonly T[],
+  cursor: number,
+  windowSize: number,
+): { start: number; visible: readonly T[] } {
+  const size = Math.max(1, windowSize);
+  const safeCursor = Math.max(
+    0,
+    Math.min(cursor, Math.max(0, items.length - 1)),
+  );
+  const start = Math.max(
+    0,
+    Math.min(items.length - size, safeCursor - Math.floor(size / 2)),
+  );
+  return { start, visible: items.slice(start, start + size) };
 }
 
 /**

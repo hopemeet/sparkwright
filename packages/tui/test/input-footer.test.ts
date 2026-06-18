@@ -15,6 +15,6 @@ describe("inputFooterLines", () => {
     const lines = inputFooterLines(DEFAULTS, 140);
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("enter run");
-    expect(lines[0]).toContain("ctrl+c quit");
+    expect(lines[0]).toContain("ctrl+c quit x2");
   });
 });

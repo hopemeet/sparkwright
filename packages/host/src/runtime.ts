@@ -4,6 +4,7 @@ import {
   buildTraceTimelineFile,
   asSessionId,
   createBufferedEmitter,
+  createContextItemId,
   createRunId,
   createDefaultPolicy,
   createLayeredPolicy,
@@ -26,6 +27,7 @@ import {
   validateSessionTraceConsistency,
   writeSessionCompactArtifact,
   type ApprovalResolver,
+  type ContentPart,
   type ContextItem,
   type EventEmitter,
   type ModelAdapter,
@@ -88,6 +90,7 @@ import {
   type ProtocolError,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
+  type RunInputPart,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
 } from "@sparkwright/protocol";
@@ -341,6 +344,60 @@ function stripGoalDecorations(content: string): string {
     .replace(/^\s*User request:\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function inputPartsFromPayload(
+  parts: readonly RunInputPart[] | undefined,
+): ContentPart[] {
+  if (!parts || parts.length === 0) return [];
+  const out: ContentPart[] = [];
+  for (const part of parts) {
+    if (part.type === "text") {
+      if (part.text.length > 0) {
+        out.push({
+          type: "text",
+          text: part.text,
+          ...(part.metadata ? { metadata: part.metadata } : {}),
+        });
+      }
+      continue;
+    }
+    if (!part.data && !part.uri) continue;
+    out.push({
+      type: part.type,
+      ...(part.data ? { data: part.data } : {}),
+      ...(part.uri ? { uri: part.uri } : {}),
+      ...(part.mediaType ? { mediaType: part.mediaType } : {}),
+      ...(part.name ? { name: part.name } : {}),
+      ...(part.metadata ? { metadata: part.metadata } : {}),
+    });
+  }
+  return out;
+}
+
+function userInputContextItem(input: {
+  content: string;
+  parts: ContentPart[];
+  source: "run.start" | "run.inject_message";
+  metadata?: Record<string, unknown>;
+}): ContextItem | undefined {
+  if (input.parts.length === 0) return undefined;
+  const imageCount = input.parts.filter((part) => part.type === "image").length;
+  return {
+    id: createContextItemId(),
+    type: "user",
+    source: { kind: "user_input", uri: input.source },
+    content: input.content,
+    parts: input.parts,
+    metadata: {
+      layer: "runtime",
+      stability: "turn",
+      multimodal: true,
+      attachmentCount: input.parts.length,
+      ...(imageCount > 0 ? { imageCount } : {}),
+      ...(input.metadata ?? {}),
+    },
+  };
 }
 
 /**
@@ -824,6 +881,7 @@ export class HostRuntime {
     const runMetadata: Record<string, unknown> = {
       source: "host",
       ...(input.runMetadata ?? {}),
+      sessionId: input.sessionId,
       workspaceRoot,
       permissionMode: input.permissionMode,
       traceLevel,
@@ -1446,6 +1504,16 @@ export class HostRuntime {
       env.sessionRootDir,
       sessionId,
     );
+    const initialInputParts = inputPartsFromPayload(payload.input?.parts);
+    const initialInputContext = userInputContextItem({
+      content:
+        initialInputParts.length > 0
+          ? `User request attachments for: ${payload.goal}`
+          : payload.goal,
+      parts: initialInputParts,
+      source: "run.start",
+      metadata: payload.input?.metadata,
+    });
 
     // Build (but do not start) a main-agent run for `goal`, appending
     // `extraContext` after the skills context. Each call mints a fresh runId
@@ -1530,8 +1598,14 @@ export class HostRuntime {
         // comes last as the durable, compaction-proof backstop.
         const goal = supervisedInput.continuation?.prompt ?? payload.goal;
         const extraContext = supervisedInput.continuation
-          ? [...chainTurns, supervisedInput.continuation.context]
-          : [];
+          ? [
+              ...(initialInputContext ? [initialInputContext] : []),
+              ...chainTurns,
+              supervisedInput.continuation.context,
+            ]
+          : initialInputContext
+            ? [initialInputContext]
+            : [];
         if (!supervisedInput.continuation) return buildRun(goal, extraContext);
         return buildRun(goal, extraContext, {
           maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
@@ -1940,7 +2014,11 @@ export class HostRuntime {
 
   injectRunMessage(
     runId: string,
-    input: { content: string; metadata?: Record<string, unknown> },
+    input: {
+      content: string;
+      parts?: readonly RunInputPart[];
+      metadata?: Record<string, unknown>;
+    },
   ): { ok: true } | { ok: false; error: ProtocolError } {
     if (!this.active || this.active.runId !== runId) {
       return {
@@ -1960,8 +2038,10 @@ export class HostRuntime {
         },
       };
     }
+    const parts = inputPartsFromPayload(input.parts);
     this.active.run.injectUserMessage({
       content: input.content,
+      parts,
       metadata: input.metadata,
     });
     return { ok: true };

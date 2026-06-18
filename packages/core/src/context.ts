@@ -148,9 +148,36 @@ export interface CompactingContextAssemblerOptions {
   compactOnOmissionReasons?: string[];
 }
 
+export interface TextContentPart {
+  type: "text";
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MediaContentPart {
+  type: "image" | "file" | "audio";
+  /** Base64-encoded bytes or provider-native data content. */
+  data?: string;
+  /** URL or URI reference when the provider can fetch/read it directly. */
+  uri?: string;
+  mediaType?: string;
+  name?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Provider-neutral multimodal input part. Text-only callers can keep using
+ * `content`; media-capable callers attach parts alongside the text summary.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export type ContentPart = TextContentPart | MediaContentPart;
+
 export interface PromptMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  parts?: ContentPart[];
   stability?: ContextStability;
   metadata?: Record<string, unknown>;
 }
@@ -895,6 +922,7 @@ export function createDefaultPromptSections(
         return history.map((item) => ({
           role: item.type === "assistant" ? "assistant" : "user",
           content: item.content,
+          ...(item.parts && item.parts.length > 0 ? { parts: item.parts } : {}),
           stability: "session" as const,
           metadata: { kind: "conversation_history", sourceItemId: item.id },
         }));
@@ -956,14 +984,23 @@ export function createDefaultPromptSections(
           !isSkillIndexContextItem(item),
       );
       if (items.length === 0) return null;
-      return {
-        role: "user",
-        content: formatContextItems(items),
-        stability: "turn",
-        metadata: {
-          kind: "selected_context",
-        },
-      };
+      const plainItems = items.filter((item) => !hasContentParts(item));
+      const mediaItems = items.filter(hasContentParts);
+      const messages: PromptMessage[] = [];
+      if (plainItems.length > 0) {
+        messages.push({
+          role: "user",
+          content: formatContextItems(plainItems),
+          stability: "turn",
+          metadata: {
+            kind: "selected_context",
+          },
+        });
+      }
+      for (const item of mediaItems) {
+        messages.push(contextItemToPromptMessage(item));
+      }
+      return messages;
     },
   });
 
@@ -986,6 +1023,28 @@ export function createDefaultPromptSections(
   }
 
   return sections;
+}
+
+function contextItemToPromptMessage(
+  item: ContextItem & { parts: ContentPart[] },
+): PromptMessage {
+  return {
+    role: item.type === "assistant" ? "assistant" : "user",
+    content: formatContextItems([item]),
+    parts: [{ type: "text", text: formatContextItems([item]) }, ...item.parts],
+    stability: (item.metadata.stability as ContextStability) ?? "turn",
+    metadata: {
+      kind: "selected_context",
+      sourceItemId: item.id,
+      mediaPartCount: item.parts.length,
+    },
+  };
+}
+
+function hasContentParts(
+  item: ContextItem,
+): item is ContextItem & { parts: ContentPart[] } {
+  return Array.isArray(item.parts) && item.parts.length > 0;
 }
 
 export interface AppPromptSectionOptions {

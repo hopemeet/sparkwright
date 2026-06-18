@@ -411,6 +411,46 @@ describe("DefaultPromptBuilder", () => {
     });
   });
 
+  it("emits media context as content parts on a user prompt message", async () => {
+    const builder = new DefaultPromptBuilder();
+    const media = userContext("Attached image for the request.");
+    media.parts = [
+      {
+        type: "image",
+        data: "iVBORw0KGgo=",
+        mediaType: "image/png",
+        name: "screenshot.png",
+      },
+    ];
+
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 1,
+      tools: [],
+      context: [userContext("plain context"), media],
+    });
+
+    const mediaMessage = messages.find(
+      (message) => message.metadata?.sourceItemId === media.id,
+    );
+    expect(mediaMessage).toMatchObject({
+      role: "user",
+      metadata: { kind: "selected_context", mediaPartCount: 1 },
+    });
+    expect(mediaMessage?.parts).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("Attached image for the request."),
+      }),
+      {
+        type: "image",
+        data: "iVBORw0KGgo=",
+        mediaType: "image/png",
+        name: "screenshot.png",
+      },
+    ]);
+  });
+
   it("can omit current_request when an embedder supplies the user turn elsewhere", async () => {
     const builder = new DefaultPromptBuilder({ includeCurrentRequest: false });
     const messages = await builder.build({

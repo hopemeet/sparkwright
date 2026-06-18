@@ -210,6 +210,12 @@ If the selected model requests an edit, `--yes` approves it automatically and
 the trace records the resulting workspace write or denial. Omit `--yes` to
 review the approval prompt yourself. Omit `--write` for a read-only run.
 
+Attach local images to the run with repeatable `--image` flags:
+
+```bash
+sparkwright run "describe this UI state" --image ./screenshot.png --workspace .
+```
+
 ## Interactive TUI
 
 Launch the terminal UI:
@@ -217,6 +223,9 @@ Launch the terminal UI:
 ```bash
 sparkwright tui
 ```
+
+Inside the TUI, use `/image <path>` to attach an image to the next submitted
+goal, and `/clear-images` to discard pending image attachments.
 
 If `--workspace` is omitted, Sparkwright uses the current working directory. To
 open a specific project:

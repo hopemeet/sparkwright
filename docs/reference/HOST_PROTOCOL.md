@@ -175,16 +175,17 @@ Begin a new agent run.
 
 **Payload**
 
-| Field            | Type                      | Required | Notes                                                                      |
-| ---------------- | ------------------------- | -------- | -------------------------------------------------------------------------- |
-| `goal`           | string                    | yes      | User goal text.                                                            |
-| `sessionId`      | string                    | no       | Existing session to write into; host creates a new one if omitted.         |
-| `targetPath`     | string                    | no       | Workspace-relative target path the run should focus on when applicable.    |
-| `shouldWrite`    | boolean                   | no       | Whether this run is allowed to request workspace writes.                   |
-| `model`          | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
-| `permissionMode` | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
-| `traceLevel`     | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                    |
-| `metadata`       | object                    | no       | Free-form, propagated to runRecord.                                        |
+| Field            | Type                      | Required | Notes                                                                                                                                                                                                                     |
+| ---------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `goal`           | string                    | yes      | User goal text.                                                                                                                                                                                                           |
+| `input.parts`    | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`. |
+| `sessionId`      | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                        |
+| `targetPath`     | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                   |
+| `shouldWrite`    | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                  |
+| `model`          | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                |
+| `permissionMode` | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                   |
+| `traceLevel`     | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                   |
+| `metadata`       | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                       |
 
 **Response result**
 
@@ -202,11 +203,12 @@ IM gateways and other remote clients for mid-run steering/follow-up.
 
 **Payload**
 
-| Field      | Type   | Required | Notes                                            |
-| ---------- | ------ | -------- | ------------------------------------------------ |
-| `runId`    | string | yes      | Active run to receive the message.               |
-| `content`  | string | yes      | User message to enqueue into the run loop.       |
-| `metadata` | object | no       | Free-form source/routing metadata for the trace. |
+| Field         | Type   | Required | Notes                                                                                                 |
+| ------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------- |
+| `runId`       | string | yes      | Active run to receive the message.                                                                    |
+| `content`     | string | yes      | User message to enqueue into the run loop.                                                            |
+| `input.parts` | array  | no       | Additional content parts for the same injected user message; shape matches `run.start` `input.parts`. |
+| `metadata`    | object | no       | Free-form source/routing metadata for the trace.                                                      |
 
 **Response result:** empty object. The core run emits normal
 `run.command.enqueued` / `run.command.applied` events through
