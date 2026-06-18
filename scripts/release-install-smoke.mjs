@@ -14,9 +14,11 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const tempRoot = mkdtempSync(join(tmpdir(), "sparkwright-release-"));
+const homeDir = join(tempRoot, "home");
 const packDir = join(tempRoot, "packs");
 const installDir = join(tempRoot, "install");
 const smokeEnv = {
+  HOME: homeDir,
   XDG_CONFIG_HOME: join(tempRoot, "xdg-config"),
   XDG_STATE_HOME: join(tempRoot, "xdg-state"),
 };
@@ -24,6 +26,7 @@ const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 
 try {
+  mkdirSync(homeDir, { recursive: true });
   mkdirSync(packDir, { recursive: true });
   mkdirSync(installDir, { recursive: true });
   mkdirSync(smokeEnv.XDG_CONFIG_HOME, { recursive: true });
@@ -139,7 +142,7 @@ function getPublicWorkspacePackages() {
 function run(command, args, cwd, options = {}) {
   const result = spawnSync(command, args, {
     cwd,
-    env: { ...process.env, ...(options.env ?? {}) },
+    env: { ...process.env, ...smokeEnv, ...(options.env ?? {}) },
     shell: process.platform === "win32",
     stdio: "inherit",
   });

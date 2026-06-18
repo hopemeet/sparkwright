@@ -14,11 +14,13 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const tempRoot = mkdtempSync(join(tmpdir(), "sparkwright-source-install-"));
+const homeDir = join(tempRoot, "home");
 const installRoot = join(tempRoot, "install");
 const xdgConfigHome = join(tempRoot, "xdg-config");
 const xdgStateHome = join(tempRoot, "xdg-state");
 const installedBin = join(installRoot, "bin", "sparkwright");
 const smokeEnv = {
+  HOME: homeDir,
   SPARKWRIGHT_INSTALL_ROOT: installRoot,
   SPARKWRIGHT_INSTALL_VERSION: "smoke",
   XDG_CONFIG_HOME: xdgConfigHome,
@@ -26,6 +28,7 @@ const smokeEnv = {
 };
 
 try {
+  mkdirSync(homeDir, { recursive: true });
   mkdirSync(xdgConfigHome, { recursive: true });
   mkdirSync(xdgStateHome, { recursive: true });
 
@@ -94,6 +97,16 @@ function assertDoctorPaths() {
     paths.state.imGateway.dataDir,
     join(xdgStateHome, "sparkwright", "im-gateway"),
     "IM gateway state root mismatch",
+  );
+  assertEqual(
+    paths.state.imGateway.legacyConfig,
+    join(homeDir, ".sparkwright", "im-gateway.json"),
+    "IM gateway legacy config root should be isolated to smoke HOME",
+  );
+  assertEqual(
+    paths.state.imGateway.legacyDataDir,
+    join(homeDir, ".sparkwright", "im-gateway"),
+    "IM gateway legacy data root should be isolated to smoke HOME",
   );
 }
 
