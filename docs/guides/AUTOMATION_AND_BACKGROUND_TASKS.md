@@ -54,6 +54,12 @@ cron store, can be managed through the CLI, and run in fresh sessions. The cron
 tool is disabled inside scheduled runs so a scheduled job does not recursively
 create or run more scheduled jobs from inside its own agent session.
 
+The cron store is user runtime state. By default it lives under
+`~/.local/state/sparkwright/cron`, or under
+`$XDG_STATE_HOME/sparkwright/cron` when `XDG_STATE_HOME` is set. It is not
+stored in `~/.sparkwright` and is not project-authored under
+`<workspace>/.sparkwright`.
+
 Common CLI commands:
 
 ```bash

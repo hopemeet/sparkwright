@@ -121,6 +121,18 @@ workspace packages, and installs an independent copy under `~/.sparkwright`.
 Add `~/.sparkwright/bin` to your `PATH` if the script reports that it is not
 already present.
 
+SparkWright keeps program files separate from user and project data:
+
+| What                                       | Default path                 | Notes                                                                         |
+| ------------------------------------------ | ---------------------------- | ----------------------------------------------------------------------------- |
+| Program install                            | `~/.sparkwright`             | Installed versions, `current`, and `bin/sparkwright`.                         |
+| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.json`, user Skills, agents, and commands.                    |
+| User runtime state                         | `~/.local/state/sparkwright` | Cron state, IM gateway state, host crash logs, and other machine-local state. |
+| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports. |
+
+`~/.sparkwright` is only the source-install program root. Do not put config,
+credentials, cron state, IM gateway state, or project sessions there.
+
 Development link mode is still available when you want `sparkwright` to point
 at the live source checkout:
 

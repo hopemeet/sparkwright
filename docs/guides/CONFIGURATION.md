@@ -27,6 +27,21 @@ Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
 Do not put provider API keys in project config. Keep credentials in the user
 file or environment variables.
 
+## Where Files Live
+
+SparkWright keeps installation, configuration, state, and project artifacts in
+separate locations:
+
+| What                                       | Default path                 | Notes                                                                                       |
+| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                  |
+| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.json`, user Skills, agents, and commands.                                  |
+| User runtime state                         | `~/.local/state/sparkwright` | Cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
+| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.               |
+
+`~/.sparkwright` is not a config or state directory. Treat it as replaceable
+program files owned by source install and uninstall scripts.
+
 ## Load Order
 
 Configuration is loaded in this order, with later sources overriding earlier
@@ -853,8 +868,8 @@ Sparkwright treats config and project capabilities as user-owned assets:
   and that the provider key exists under `providers`.
 - If an API key is ignored, check whether the matching environment variable is
   overriding config.
-- If a tool disappeared, look for `tools.disabled`, legacy allowlists, and MCP
-  server `enabled` settings.
+- If a tool disappeared, look for top-level `tools.disabled`, `tools.defer`, and
+  MCP server `enabled` settings.
 - If a project setting does not combine with a user setting, remember that most
   fields other than `providers` are replaced wholesale — except the security
   boundaries (`permissionMode`, `confidentialPaths`, `write`, `shell.sandbox`),
