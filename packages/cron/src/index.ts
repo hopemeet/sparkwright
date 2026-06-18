@@ -35,4 +35,4 @@ export { runCronJobByRef, tickCron } from "./scheduler.js";
 export type { CronSchedulerOptions, CronTickResult } from "./scheduler.js";
 export { createCronTool } from "./tool.js";
 export type { CreateCronToolOptions } from "./tool.js";
-export { defaultCronRoot, legacyConfigCronRoot } from "./paths.js";
+export { defaultCronRoot } from "./paths.js";

@@ -51,7 +51,6 @@ const MANAGED_CAPABILITY_PREFIXES = [
   ".sparkwright/skills/",
   ".sparkwright/agents/",
   ".sparkwright/command/",
-  ".sparkwright/cron/",
 ];
 
 class LiveOutputBuffer {
@@ -349,7 +348,7 @@ export function createHostShellTool(
     description:
       `${descriptor.description} Do not use shell to create or update ` +
       "managed capability files under .sparkwright/skills, .sparkwright/agents, " +
-      ".sparkwright/command, or .sparkwright/cron; use the dedicated " +
+      "or .sparkwright/command; use the dedicated " +
       "SparkWright capability tools or CLI subcommands instead.",
     async execute(args, ctx) {
       const readOnlyFastPath = isReadOnlyShellFastPath(args);

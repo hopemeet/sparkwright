@@ -51,7 +51,6 @@ import {
 import {
   CronStore,
   defaultCronRoot,
-  legacyConfigCronRoot,
   runCronJobByRef,
   tickCron,
   type CronJob,
@@ -1585,7 +1584,6 @@ interface CapabilityInspectReport {
   };
   cron: {
     stateRoot: string;
-    legacyStateRoot: string;
   };
   command: {
     dirs: Array<{ layer: string; path: string; exists: boolean }>;
@@ -1900,7 +1898,6 @@ async function loadCapabilityInspectReport(
     },
     cron: {
       stateRoot: defaultCronRoot(env),
-      legacyStateRoot: legacyConfigCronRoot(env),
     },
     command: { dirs: commandDirs },
   };
@@ -2240,7 +2237,6 @@ function formatCapabilityInspectReport(
     }
   }
   lines.push(`cron state: ${report.cron.stateRoot}`);
-  lines.push(`cron legacy state: ${report.cron.legacyStateRoot}`);
   lines.push("command dirs:");
   for (const dir of report.command.dirs) {
     lines.push(
@@ -3460,12 +3456,11 @@ interface DoctorPathsReport {
   };
   state: {
     user: string;
-    cron: { root: string; legacyRoot: string };
+    hostCrashes: string;
+    cron: { root: string };
     imGateway: {
       config: string;
-      legacyConfig: string;
       dataDir: string;
-      legacyDataDir: string;
     };
   };
   workspace: {
@@ -3559,15 +3554,13 @@ function buildDoctorPathsReport(
     },
     state: {
       user: userStateRoot,
+      hostCrashes: join(userStateRoot, "sparkwright", "host-crashes"),
       cron: {
         root: defaultCronRoot(env),
-        legacyRoot: legacyConfigCronRoot(env),
       },
       imGateway: {
         config: imGatewayConfigPath(env),
-        legacyConfig: legacyImGatewayConfigPath(),
         dataDir: imGatewayDataDir(env),
-        legacyDataDir: legacyImGatewayDataDir(),
       },
     },
     workspace: {
@@ -3620,12 +3613,10 @@ function formatDoctorPathsReport(report: DoctorPathsReport): string {
     `mcp source: ${report.capabilities.mcp.source} (${report.capabilities.mcp.user}, ${report.capabilities.mcp.project})`,
     `acp source: ${report.capabilities.acp.source} (${report.capabilities.acp.delegateConfig})`,
     `user state: ${report.state.user}`,
+    `host crash state: ${report.state.hostCrashes}`,
     `cron state: ${report.state.cron.root}`,
-    `cron legacy state: ${report.state.cron.legacyRoot}`,
     `im gateway config: ${report.state.imGateway.config}`,
-    `im gateway legacy config: ${report.state.imGateway.legacyConfig}`,
     `im gateway state: ${report.state.imGateway.dataDir}`,
-    `im gateway legacy state: ${report.state.imGateway.legacyDataDir}`,
     `workspace: ${report.workspace.root}`,
     `session root: ${report.workspace.sessionRoot}`,
     `tasks root: ${report.workspace.tasksRoot}`,
@@ -3710,16 +3701,8 @@ function imGatewayConfigPath(env: Record<string, string | undefined>): string {
   return join(configBase, "sparkwright", "im-gateway.json");
 }
 
-function legacyImGatewayConfigPath(): string {
-  return join(homedir(), ".sparkwright", "im-gateway.json");
-}
-
 function imGatewayDataDir(env: Record<string, string | undefined>): string {
   return join(userStateBase(env), "sparkwright", "im-gateway");
-}
-
-function legacyImGatewayDataDir(): string {
-  return join(homedir(), ".sparkwright", "im-gateway");
 }
 
 async function handleConfigPath(
@@ -4405,7 +4388,6 @@ async function handleCronCommand(
   const rootDir = cron.value.rootDir ?? defaultCronRoot(env);
   const store = new CronStore({
     rootDir,
-    legacyRootDir: legacyConfigCronRoot(env),
   });
 
   try {

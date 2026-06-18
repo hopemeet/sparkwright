@@ -94,19 +94,14 @@ function assertDoctorPaths() {
     "cron state root mismatch",
   );
   assertEqual(
+    paths.state.hostCrashes,
+    join(xdgStateHome, "sparkwright", "host-crashes"),
+    "host crash state root mismatch",
+  );
+  assertEqual(
     paths.state.imGateway.dataDir,
     join(xdgStateHome, "sparkwright", "im-gateway"),
     "IM gateway state root mismatch",
-  );
-  assertEqual(
-    paths.state.imGateway.legacyConfig,
-    join(homeDir, ".sparkwright", "im-gateway.json"),
-    "IM gateway legacy config root should be isolated to smoke HOME",
-  );
-  assertEqual(
-    paths.state.imGateway.legacyDataDir,
-    join(homeDir, ".sparkwright", "im-gateway"),
-    "IM gateway legacy data root should be isolated to smoke HOME",
   );
 }
 

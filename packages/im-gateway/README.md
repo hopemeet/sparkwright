@@ -23,19 +23,7 @@ sparkwright-im-gateway run
 
 The gateway stores config in `~/.config/sparkwright/im-gateway.json` and
 runtime routing state in `~/.local/state/sparkwright/im-gateway/state.json`
-by default. Legacy `~/.sparkwright/im-gateway.json` config is still read when
-the new XDG config file is absent; running `setup` writes the new path.
-
-To migrate explicitly from the legacy paths:
-
-```sh
-sparkwright-im-gateway migrate --copy-state
-```
-
-The migration copies config from `~/.sparkwright/im-gateway.json` to
-`~/.config/sparkwright/im-gateway.json`. `--copy-state` also copies
-`~/.sparkwright/im-gateway` to `~/.local/state/sparkwright/im-gateway`. Existing
-targets are not overwritten unless `--force` is passed.
+by default.
 
 ## Current Scope
 

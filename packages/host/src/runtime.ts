@@ -63,11 +63,7 @@ import {
   type DerivedChildAgentProfile,
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
-import {
-  CronStore,
-  defaultCronRoot,
-  legacyConfigCronRoot,
-} from "@sparkwright/cron";
+import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
@@ -2420,7 +2416,6 @@ async function readCronJobsForSnapshot(
   try {
     const store = new CronStore({
       rootDir,
-      legacyRootDir: legacyConfigCronRoot(),
     });
     const jobs = await store.listJobs();
     return jobs

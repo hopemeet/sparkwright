@@ -1,11 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  CronStore,
-  defaultCronRoot,
-  legacyConfigCronRoot,
-} from "@sparkwright/cron";
+import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { projectConfigPath } from "@sparkwright/host";
 
 export type CreateCapabilityKind =
@@ -194,7 +190,6 @@ async function createCron(
   const schedule = required(draft.schedule, "Schedule");
   const store = new CronStore({
     rootDir: defaultCronRoot(),
-    legacyRootDir: legacyConfigCronRoot(),
   });
   const job = await store.createJob({
     prompt,

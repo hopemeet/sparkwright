@@ -4,9 +4,6 @@ import {
   defaultConfigPath,
   defaultDataDir,
   loadConfig,
-  legacyConfigPath,
-  legacyDataDir,
-  migrateLegacyPaths,
   resolveConfigPathForRead,
   writeConfig,
   type ImGatewayConfig,
@@ -24,10 +21,6 @@ async function main(argv: string[]): Promise<void> {
   }
   if (command === "run") {
     await run(argv.slice(1));
-    return;
-  }
-  if (command === "migrate") {
-    await migrate(argv.slice(1));
     return;
   }
   printHelp();
@@ -63,16 +56,8 @@ async function setup(args: string[]): Promise<void> {
 
 async function run(args: string[]): Promise<void> {
   const explicitPath = readFlag(args, "--config");
-  const resolved = explicitPath
-    ? { path: explicitPath, legacy: false }
-    : await resolveConfigPathForRead();
-  const config = await loadConfig(resolved.path);
-  const path = resolved.path;
-  if (resolved.legacy) {
-    console.warn(
-      `Using legacy config path ${path}; run setup again to write ${defaultConfigPath()}.`,
-    );
-  }
+  const path = resolveConfigPathForRead(explicitPath);
+  const config = await loadConfig(path);
   if (!config.telegram?.token) {
     throw new Error(`telegram token missing in ${path}`);
   }
@@ -102,33 +87,12 @@ async function run(args: string[]): Promise<void> {
   await new Promise(() => undefined);
 }
 
-async function migrate(args: string[]): Promise<void> {
-  const result = await migrateLegacyPaths({
-    fromConfigPath: readFlag(args, "--from") ?? legacyConfigPath(),
-    toConfigPath: readFlag(args, "--to") ?? defaultConfigPath(),
-    fromDataDir: readFlag(args, "--from-data-dir") ?? legacyDataDir(),
-    toDataDir: readFlag(args, "--to-data-dir") ?? defaultDataDir(),
-    copyState: args.includes("--copy-state"),
-    force: args.includes("--force"),
-  });
-
-  console.log(`Migrated config: ${result.config.from} -> ${result.config.to}`);
-  if (result.state?.migrated) {
-    console.log(`Migrated state: ${result.state.from} -> ${result.state.to}`);
-  } else if (result.state?.reason === "not-requested") {
-    console.log("State not copied. Add --copy-state to migrate routing state.");
-  } else if (result.state?.reason === "missing-source") {
-    console.log(`State source does not exist: ${result.state.from}`);
-  }
-}
-
 function printHelp(): void {
   console.log(`sparkwright-im-gateway
 
 Commands:
   setup --telegram-token <token> [--host-url ws://127.0.0.1:...] [--allowed-user-ids 123,456]
   run [--config ~/.config/sparkwright/im-gateway.json]
-  migrate [--from ~/.sparkwright/im-gateway.json] [--to ~/.config/sparkwright/im-gateway.json] [--copy-state] [--force]
 `);
 }
 

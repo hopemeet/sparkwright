@@ -1508,7 +1508,7 @@ describe("runCli", () => {
         }>;
       };
       mcp: { servers: Array<{ name: string; type: string; enabled: boolean }> };
-      cron: { stateRoot: string; legacyStateRoot: string };
+      cron: { stateRoot: string };
       command: { dirs: Array<{ layer: string; exists: boolean }> };
     };
     expect(report.shell.sandbox).toMatchObject({
