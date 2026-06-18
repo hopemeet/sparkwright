@@ -412,7 +412,6 @@ function candidateConfigFiles() {
   return [
     join(xdg, "sparkwright", "config.json"),
     join(homedir(), ".config", "sparkwright", "config.json"),
-    join(homedir(), ".sparkwright", "config.json"),
   ];
 }
 

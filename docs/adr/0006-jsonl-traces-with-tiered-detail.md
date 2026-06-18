@@ -43,7 +43,7 @@ Positive:
 Negative:
 
 - JSONL files grow without bound; rotation and retention are an embedder responsibility.
-- Three levels mean three sets of filtering rules to maintain; adding a new event type (see `docs/maintainer/AI_TASK_INDEX.md`) requires updating each level's summarizer.
+- Two levels mean two sets of filtering rules to maintain; adding a new event type (see `docs/maintainer/AI_TASK_INDEX.md`) requires updating each level's summarizer.
 - Filtering happens after serialization in the default store, so very large payloads briefly exist in memory before being trimmed — a streaming-summarize path may be needed if very large tool outputs become common.
 - The default redactor uses regex patterns; sophisticated secret detection (entropy-based, structured-credential-aware) is out of scope and pushed to downstream sinks.
 
