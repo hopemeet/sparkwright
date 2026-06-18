@@ -1230,6 +1230,120 @@ describe("host protocol", () => {
     });
   });
 
+  it("preserves approval resolution messages in host-backed traces", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-approval-message-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "apply_patch",
+            arguments: {
+              path: "README.md",
+              reason: "exercise approval trace",
+              patch: [
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1 +1,3 @@",
+                " # Demo",
+                "+",
+                "+Approved write.",
+                "",
+              ].join("\n"),
+            },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "start",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "write with approval",
+          model: "scripted",
+          shouldWrite: true,
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
+
+      const approval = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "approval.requested",
+      );
+      expect(approval).toMatchObject({
+        envelope: "event",
+        kind: "approval.requested",
+      });
+      if (
+        approval.envelope !== "event" ||
+        approval.kind !== "approval.requested"
+      ) {
+        throw new Error("approval request was not emitted");
+      }
+      pair.clientSend({
+        envelope: "request",
+        id: "approve",
+        kind: "approval.resolve",
+        timestamp: TIMESTAMP,
+        payload: {
+          approvalId: approval.payload.approvalId,
+          decision: "approved",
+          message: "Auto-approved by test.",
+          autoApproved: true,
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "approve",
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const resolved = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent)
+        .find((event) => event.type === "approval.resolved");
+      expect(resolved?.payload).toMatchObject({
+        decision: "approved",
+        message: "Auto-approved by test.",
+        autoApproved: true,
+      });
+    } finally {
+      pair.close();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("runs a deterministic goal end-to-end", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

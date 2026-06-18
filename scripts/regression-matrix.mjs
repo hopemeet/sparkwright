@@ -90,7 +90,7 @@ async function readOnlyCase() {
 
 async function writeApprovedCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-approved-");
-  await enableDirectCoreAppendFile(workspace);
+  await prepareDirectCoreWorkspace(workspace);
   const prompt = "Append deterministic golden-path section.";
   const result = await runCli([
     "run",
@@ -139,7 +139,7 @@ async function writeApprovedCase() {
 
 async function writeDeniedCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-denied-");
-  await enableDirectCoreAppendFile(workspace);
+  await prepareDirectCoreWorkspace(workspace);
   const prompt = "Attempt deterministic write and deny approval.";
   const result = await runCli(
     [
@@ -874,18 +874,8 @@ async function workspaceWithReadme(prefix) {
   return workspace;
 }
 
-async function enableDirectCoreAppendFile(workspace) {
-  const configDir = join(workspace, ".sparkwright");
-  await mkdir(configDir, { recursive: true });
-  await writeFile(
-    join(configDir, "config.json"),
-    JSON.stringify({
-      capabilities: {
-        tools: { enabled: ["read_file", "append_file"] },
-      },
-    }),
-    "utf8",
-  );
+async function prepareDirectCoreWorkspace(workspace) {
+  await mkdir(join(workspace, ".sparkwright"), { recursive: true });
 }
 
 async function tempDir(prefix) {

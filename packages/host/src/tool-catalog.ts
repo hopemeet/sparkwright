@@ -44,12 +44,9 @@ export type HostToolCatalogSource =
   | "delegate"
   | "core";
 
-export type HostToolCatalogExposure = "main" | "child" | "diagnostic";
-
 export interface HostToolCatalogEntry {
   definition: ToolDefinition;
   source: HostToolCatalogSource;
-  exposure: HostToolCatalogExposure;
 }
 
 interface PreparedToolSource {
@@ -62,10 +59,10 @@ export function createReadOnlyChildToolCatalog(input: {
 }): HostToolCatalogEntry[] {
   return applyToolConfigToCatalog(
     [
-      catalogEntry(createReadFileTool(), "coding", "child"),
-      catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding", "child"),
-      catalogEntry(createGrepTextTool(input.workspaceRoot), "coding", "child"),
-      catalogEntry(createListDirTool(input.workspaceRoot), "coding", "child"),
+      catalogEntry(createReadFileTool(), "coding"),
+      catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
+      catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
+      catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
     ],
     input.toolConfig,
   );
@@ -77,10 +74,9 @@ export function createCliDiagnosticToolCatalog(input: {
 }): HostToolCatalogEntry[] {
   return withDeferredToolSearch(
     applyToolConfigToCatalog(
-      createCoreCodingToolCatalog(input.workspaceRoot, "diagnostic"),
+      createCoreCodingToolCatalog(input.workspaceRoot),
       input.toolConfig,
     ),
-    "diagnostic",
   );
 }
 
@@ -102,7 +98,7 @@ export function createMainHostToolCatalog(input: {
     createMainHostToolCatalogList(input),
     input.toolConfig,
   );
-  return withDeferredToolSearch(entries, "main");
+  return withDeferredToolSearch(entries);
 }
 
 export function catalogToolDefinitions(
@@ -113,7 +109,6 @@ export function catalogToolDefinitions(
 
 function withDeferredToolSearch(
   entries: HostToolCatalogEntry[],
-  exposure: HostToolCatalogExposure,
 ): HostToolCatalogEntry[] {
   if (!entries.some((entry) => entry.definition.deferLoading === true)) {
     return entries;
@@ -129,7 +124,6 @@ function withDeferredToolSearch(
         },
       }),
       "core",
-      exposure,
     ),
   ];
 }
@@ -174,29 +168,22 @@ function createMainHostToolCatalogList(input: {
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
   return [
-    ...createCoreCodingToolCatalog(input.workspaceRoot, "main"),
-    catalogEntry(createCronTool(), "cron", "main"),
+    ...createCoreCodingToolCatalog(input.workspaceRoot),
+    catalogEntry(createCronTool(), "cron"),
     catalogEntry(
       createSkillInspectorTool(input.workspaceRoot, input.skillRoots),
       "skill",
-      "main",
     ),
     catalogEntry(
       createSkillManagerTool(input.workspaceRoot, input.skillRoots),
       "skill",
-      "main",
     ),
     catalogEntry(
       createSkillUpdateTool(input.workspaceRoot, input.skillRoots),
       "skill",
-      "main",
     ),
-    catalogEntry(
-      createAgentInspectorTool(input.workspaceRoot),
-      "agent",
-      "main",
-    ),
-    catalogEntry(createAgentManagerTool(input.workspaceRoot), "agent", "main"),
+    catalogEntry(createAgentInspectorTool(input.workspaceRoot), "agent"),
+    catalogEntry(createAgentManagerTool(input.workspaceRoot), "agent"),
     catalogEntry(
       createHostShellTool(input.workspaceRoot, {
         taskManager: input.taskManager,
@@ -205,7 +192,6 @@ function createMainHostToolCatalogList(input: {
         extraForcedDenyWrite: input.configPaths,
       }),
       "shell",
-      "main",
     ),
     catalogEntry(
       createTaskControl({
@@ -213,41 +199,39 @@ function createMainHostToolCatalogList(input: {
         getParentRunId: input.getParentRunId,
       }),
       "task",
-      "main",
     ),
     ...createTodoTools({
       getTodoPath: () => input.todoPath,
       maxWritesPerRun: MAIN_TODO_MAX_WRITES_PER_RUN,
     })
       .all()
-      .map((tool) => catalogEntry(tool, "todo", "main")),
+      .map((tool) => catalogEntry(tool, "todo")),
     ...(input.preparedSkills?.tools ?? []).map((tool) =>
-      catalogEntry(tool, "skill", "main"),
+      catalogEntry(tool, "skill"),
     ),
     ...(input.preparedMcp?.tools ?? []).map((tool) =>
-      catalogEntry(tool, "mcp", "main"),
+      catalogEntry(tool, "mcp"),
     ),
     ...(input.delegateTools ?? []).map((tool) =>
-      catalogEntry(tool, "delegate", "main"),
+      catalogEntry(tool, "delegate"),
     ),
     ...(input.dynamicSpawnTool
-      ? [catalogEntry(input.dynamicSpawnTool, "agent", "main")]
+      ? [catalogEntry(input.dynamicSpawnTool, "agent")]
       : []),
   ];
 }
 
 function createCoreCodingToolCatalog(
   workspaceRoot: string,
-  exposure: HostToolCatalogExposure,
 ): HostToolCatalogEntry[] {
   return [
-    catalogEntry(createReadFileTool(), "coding", exposure),
-    catalogEntry(createGlobPathsTool(workspaceRoot), "coding", exposure),
-    catalogEntry(createGrepTextTool(workspaceRoot), "coding", exposure),
-    catalogEntry(createListDirTool(workspaceRoot), "coding", exposure),
-    catalogEntry(createReadAnchoredTextTool(), "coding", exposure),
-    catalogEntry(createEditAnchoredTextTool(), "coding", exposure),
-    catalogEntry(createApplyPatchTool(), "coding", exposure),
+    catalogEntry(createReadFileTool(), "coding"),
+    catalogEntry(createGlobPathsTool(workspaceRoot), "coding"),
+    catalogEntry(createGrepTextTool(workspaceRoot), "coding"),
+    catalogEntry(createListDirTool(workspaceRoot), "coding"),
+    catalogEntry(createReadAnchoredTextTool(), "coding"),
+    catalogEntry(createEditAnchoredTextTool(), "coding"),
+    catalogEntry(createApplyPatchTool(), "coding"),
   ];
 }
 
@@ -264,7 +248,7 @@ function applyToolConfigToCatalog(
   ).map((definition) => {
     const metadata = metadataByName.get(definition.name);
     if (!metadata) {
-      return catalogEntry(definition, "core", "main");
+      return catalogEntry(definition, "core");
     }
     return { ...metadata, definition };
   });
@@ -273,9 +257,8 @@ function applyToolConfigToCatalog(
 function catalogEntry(
   definition: ToolDefinition,
   source: HostToolCatalogSource,
-  exposure: HostToolCatalogExposure,
 ): HostToolCatalogEntry {
-  return { definition, source, exposure };
+  return { definition, source };
 }
 
 function toolToDescriptor(tool: ToolDefinition): ToolDescriptor {

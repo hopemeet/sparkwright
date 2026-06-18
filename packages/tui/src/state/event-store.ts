@@ -524,9 +524,7 @@ function parseTodoPanelItems(rawItems: unknown): TodoPanelItem[] | null {
       title,
       status: typeof it.status === "string" ? it.status : "pending",
       depth:
-        typeof it.depth === "number" && it.depth > 0
-          ? Math.floor(it.depth)
-          : 0,
+        typeof it.depth === "number" && it.depth > 0 ? Math.floor(it.depth) : 0,
     };
   });
 }

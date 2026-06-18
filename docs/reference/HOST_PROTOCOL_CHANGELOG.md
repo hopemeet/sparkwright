@@ -7,6 +7,8 @@ major; breaking changes bump the major.
 ## Unreleased
 
 - Add optional `traceLevel` to `run.start` and `run.resume` payloads.
+- Add optional `autoApproved` to `approval.resolve` so clients can mark
+  policy/flag-driven approvals structurally.
 - Add `session.compact` request for host-owned manual session context
   compaction.
 

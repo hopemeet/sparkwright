@@ -16,7 +16,7 @@ const isolatedXdgStateHome = join(tempRoot, "xdg-state");
 const cases = [];
 
 try {
-  await staticToolAllowlistCase();
+  await staticToolDisabledCase();
   await scriptedShellManagedPackageGuardCase();
 
   const availability = configuredModelAvailability(requestedModel);
@@ -45,10 +45,10 @@ try {
   }
 }
 
-async function staticToolAllowlistCase() {
-  const workspace = await createWorkspace("static-allowlist");
+async function staticToolDisabledCase() {
+  const workspace = await createWorkspace("static-disabled");
   await writeProjectConfig(workspace, {
-    capabilities: { tools: { enabled: ["shell"] } },
+    tools: { disabled: ["shell"] },
   });
 
   const result = await runCli([
@@ -79,7 +79,7 @@ async function staticToolAllowlistCase() {
 
   record({
     id: "SKILL_TOOLS_ALLOWLIST",
-    name: "managed skill tools survive shell-only enabled config",
+    name: "managed skill tools survive disabled shell config",
     status: ok ? "passed" : "failed",
     command: commandString(result.command),
     evidence: `tools=${toolNames.join(",")}`,
@@ -169,7 +169,7 @@ async function scriptedShellManagedPackageGuardCase() {
 async function realCreateSkillCase() {
   const workspace = await createWorkspace("real-create");
   await writeProjectConfig(workspace, {
-    capabilities: { tools: { enabled: ["shell"] } },
+    tools: { disabled: ["shell"] },
   });
   const prompt =
     "Create a new project skill named release-reviewer for release readiness checks. Use SparkWright skill tools, not shell. Do not modify files except creating the skill.";
@@ -222,7 +222,7 @@ async function realCreateSkillCase() {
 async function realUpdateSkillProposalCase() {
   const workspace = await createWorkspace("real-update");
   await writeProjectConfig(workspace, {
-    capabilities: { tools: { enabled: ["shell"] } },
+    tools: { disabled: ["shell"] },
   });
   await writeSkill(
     workspace,

@@ -857,7 +857,8 @@ Allowed statuses:
 {
   "approvalId": "approval_01h",
   "decision": "approved",
-  "message": "Looks good."
+  "message": "Looks good.",
+  "autoApproved": false
 }
 ```
 
@@ -865,6 +866,10 @@ Allowed decisions:
 
 - `approved`
 - `denied`
+
+`autoApproved` is optional. When present and `true`, it marks approvals resolved
+by policy or command-line flags without requiring consumers to parse `message`.
+Older traces may only expose this fact through message text.
 
 ## Artifact
 

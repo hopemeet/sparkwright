@@ -262,7 +262,12 @@ export interface TodoWriteResult {
    * serialized todo_write result, not by an in-process TS reader.
    */
   todos: { title: string; status: TodoStatus }[];
-  /** Rejected proposed list, present only when saved:false rejected a change. */
+  /**
+   * Rejected proposed list, present only when saved:false rejected a change.
+   *
+   * @reserved Public tool-result field consumed by the model reading the
+   * serialized todo_write result, not by an in-process TS reader.
+   */
   rejectedTodos?: { title: string; status: TodoStatus }[];
   /** Anti-churn nudge, present only after repeated no-op writes. */
   hint?: string;

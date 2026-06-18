@@ -318,6 +318,7 @@ export class Client extends TypedEmitter<ClientEventMap> {
     approvalId: string;
     decision: "approved" | "denied";
     message?: string;
+    autoApproved?: boolean;
   }): Promise<ResponseResults["approval.resolve"]> {
     return this.request("approval.resolve", payload) as Promise<
       ResponseResults["approval.resolve"]

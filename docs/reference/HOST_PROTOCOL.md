@@ -280,11 +280,12 @@ Resolve an `approval.requested` event.
 
 **Payload**
 
-| Field        | Type                       | Required | Notes                      |
-| ------------ | -------------------------- | -------- | -------------------------- |
-| `approvalId` | string                     | yes      | From `approval.requested`. |
-| `decision`   | `"approved"` \| `"denied"` | yes      |                            |
-| `message`    | string                     | no       | Surfaced in the run trace. |
+| Field          | Type                       | Required | Notes                                                                 |
+| -------------- | -------------------------- | -------- | --------------------------------------------------------------------- |
+| `approvalId`   | string                     | yes      | From `approval.requested`.                                            |
+| `decision`     | `"approved"` \| `"denied"` | yes      |                                                                       |
+| `message`      | string                     | no       | Surfaced in the run trace.                                            |
+| `autoApproved` | boolean                    | no       | Marks policy/flag-driven approvals without requiring message parsing. |
 
 **Response result:** empty object.
 

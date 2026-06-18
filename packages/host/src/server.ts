@@ -172,6 +172,8 @@ async function handleRequest(
       const r = runtime.resolveApproval(
         req.payload.approvalId,
         req.payload.decision,
+        req.payload.message,
+        req.payload.autoApproved,
       );
       if (r.ok) respondOk(conn, req.id, {});
       else respondError(conn, req.id, r.error);
@@ -348,11 +350,17 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "approval.resolve":
       return (
-        requireOnly(req.payload, ["approvalId", "decision", "message"]) ??
+        requireOnly(req.payload, [
+          "approvalId",
+          "decision",
+          "message",
+          "autoApproved",
+        ]) ??
         requireString(req.payload, "approvalId") ??
         optionalEnum(req.payload, "decision", ["approved", "denied"]) ??
         requireString(req.payload, "decision") ??
-        optionalString(req.payload, "message")
+        optionalString(req.payload, "message") ??
+        optionalBoolean(req.payload, "autoApproved")
       );
     case "session.list":
       return (

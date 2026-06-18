@@ -36,7 +36,6 @@ export {
 } from "./tool-catalog.js";
 export type {
   HostToolCatalogEntry,
-  HostToolCatalogExposure,
   HostToolCatalogSource,
 } from "./tool-catalog.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
@@ -186,6 +185,11 @@ export type {
   HostStdioSpawnInput,
   ResolvedHostStdioSpawn,
 } from "./client-spawn.js";
+export { resolveHostClientApprovalByPolicy } from "./client-approval.js";
+export type {
+  HostClientApprovalPolicyInput,
+  HostClientApprovalRequestInput,
+} from "./client-approval.js";
 export {
   createHostClientRunMetadata,
   createHostResumeRunRequest,

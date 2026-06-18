@@ -280,7 +280,11 @@ export interface RuntimeOptions {
 interface PendingApproval {
   approvalId: string;
   runId: string;
-  resolve: (decision: "approved" | "denied") => void;
+  resolve: (response: {
+    decision: "approved" | "denied";
+    message?: string;
+    autoApproved?: boolean;
+  }) => void;
 }
 
 interface ActiveRun {
@@ -996,7 +1000,7 @@ export class HostRuntime {
         this.pendingApprovals.set(approvalId, {
           approvalId,
           runId: currentRunId,
-          resolve: (decision) => resolve({ approvalId, decision }),
+          resolve: (response) => resolve({ approvalId, ...response }),
         });
         const details = request.details as { path?: unknown } | undefined;
         this.opts.emit({
@@ -1171,7 +1175,7 @@ export class HostRuntime {
         void env.preparedMcp?.close().catch(() => {});
         this.active = null;
         for (const [id, p] of this.pendingApprovals) {
-          p.resolve("denied");
+          p.resolve({ decision: "denied" });
           this.pendingApprovals.delete(id);
         }
       });
@@ -1970,6 +1974,8 @@ export class HostRuntime {
   resolveApproval(
     approvalId: string,
     decision: "approved" | "denied",
+    message?: string,
+    autoApproved?: boolean,
   ): { ok: true } | { ok: false; error: ProtocolError } {
     const pending = this.pendingApprovals.get(approvalId);
     if (!pending) {
@@ -1982,7 +1988,11 @@ export class HostRuntime {
       };
     }
     this.pendingApprovals.delete(approvalId);
-    pending.resolve(decision);
+    pending.resolve({
+      decision,
+      ...(message !== undefined ? { message } : {}),
+      ...(autoApproved !== undefined ? { autoApproved } : {}),
+    });
     return { ok: true };
   }
 
@@ -1991,7 +2001,9 @@ export class HostRuntime {
    * core does not leak file handles or hang on never-arriving decisions.
    */
   cleanup(): void {
-    for (const p of this.pendingApprovals.values()) p.resolve("denied");
+    for (const p of this.pendingApprovals.values()) {
+      p.resolve({ decision: "denied" });
+    }
     this.pendingApprovals.clear();
     if (this.active) {
       try {

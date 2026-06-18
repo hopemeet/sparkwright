@@ -75,6 +75,13 @@ function invalidApprovalResponseReason(
     return "message must be a string when provided.";
   }
 
+  if (
+    response.autoApproved !== undefined &&
+    typeof response.autoApproved !== "boolean"
+  ) {
+    return "autoApproved must be a boolean when provided.";
+  }
+
   return undefined;
 }
 

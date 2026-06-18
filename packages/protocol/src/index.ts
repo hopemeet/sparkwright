@@ -159,6 +159,7 @@ export interface ApprovalResolveRequestPayload {
   approvalId: string;
   decision: "approved" | "denied";
   message?: string;
+  autoApproved?: boolean;
 }
 
 export interface SessionListRequestPayload {

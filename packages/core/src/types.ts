@@ -700,4 +700,5 @@ export interface ApprovalResponse {
   approvalId: ApprovalId;
   decision: "approved" | "denied";
   message?: string;
+  autoApproved?: boolean;
 }

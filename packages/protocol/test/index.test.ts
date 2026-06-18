@@ -28,6 +28,7 @@ describe("@sparkwright/protocol", () => {
     expect(isPermissionMode("accept_edits")).toBe(true);
     expect(isPermissionMode("unknown")).toBe(false);
     expect(isTraceLevel("debug")).toBe(true);
+    expect(isTraceLevel("minimal")).toBe(false);
     expect(isTraceLevel("verbose")).toBe(false);
   });
 

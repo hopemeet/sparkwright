@@ -11,7 +11,8 @@
       "type": "string",
       "enum": ["approved", "denied"]
     },
-    "message": { "type": "string" }
+    "message": { "type": "string" },
+    "autoApproved": { "type": "boolean" }
   },
   "additionalProperties": false
 }

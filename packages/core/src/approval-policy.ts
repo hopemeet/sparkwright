@@ -59,6 +59,7 @@ export function resolveApprovalByPolicy(
       approvalId: request.id,
       decision: "approved",
       message: "Auto-approved by bypass_permissions.",
+      autoApproved: true,
     };
   }
 
@@ -77,6 +78,7 @@ export function resolveApprovalByPolicy(
       approvalId: request.id,
       decision: "approved",
       message: "Auto-approved by --yes/--yes-all.",
+      autoApproved: true,
     };
   }
   if (
@@ -87,6 +89,7 @@ export function resolveApprovalByPolicy(
       approvalId: request.id,
       decision: "approved",
       message: "Auto-approved by --yes-edits.",
+      autoApproved: true,
     };
   }
   if (hasScope(policy, "safe_shell") && isSafeShellApproval(request)) {
@@ -94,6 +97,7 @@ export function resolveApprovalByPolicy(
       approvalId: request.id,
       decision: "approved",
       message: "Auto-approved by --yes-shell-safe.",
+      autoApproved: true,
     };
   }
   if (hasScope(policy, "mcp") && isMcpApproval(request)) {
@@ -101,6 +105,7 @@ export function resolveApprovalByPolicy(
       approvalId: request.id,
       decision: "approved",
       message: "Auto-approved by MCP approval scope.",
+      autoApproved: true,
     };
   }
   if (hasScope(policy, "external") && isExternalApproval(request)) {
@@ -108,6 +113,7 @@ export function resolveApprovalByPolicy(
       approvalId: request.id,
       decision: "approved",
       message: "Auto-approved by external approval scope.",
+      autoApproved: true,
     };
   }
 

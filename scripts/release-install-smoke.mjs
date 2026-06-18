@@ -75,7 +75,7 @@ try {
       "--target",
       "README.md",
       "--trace-level",
-      "minimal",
+      "standard",
       "--model",
       "deterministic",
     ],
@@ -90,9 +90,7 @@ try {
   writeFileSync(
     join(writeSmokeWorkspace, ".sparkwright", "config.json"),
     JSON.stringify({
-      capabilities: {
-        tools: { enabled: ["read_file", "append_file"] },
-      },
+      tools: { disabled: [] },
     }),
   );
   run(
@@ -109,7 +107,7 @@ try {
       "--write",
       "--yes",
       "--trace-level",
-      "minimal",
+      "standard",
       "--model",
       "deterministic",
     ],

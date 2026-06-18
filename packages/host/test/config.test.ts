@@ -226,7 +226,7 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("rejects the removed legacy capabilities.tools surface", async () => {
+  it("rejects the removed legacy capabilities.tools surface with migration guidance", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
@@ -242,7 +242,10 @@ describe("loadHostConfig", () => {
         loaded.errors.some(
           (error) =>
             error.field === "capabilities.tools" &&
-            error.message.includes("unknown field"),
+            error.message.includes(
+              "legacy capabilities.tools has been removed",
+            ) &&
+            error.message.includes("top-level tools.disabled/tools.defer"),
         ),
       ).toBe(true);
       expect(loaded.config.tools).toBeUndefined();

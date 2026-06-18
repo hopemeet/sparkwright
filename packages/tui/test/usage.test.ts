@@ -193,7 +193,11 @@ describe("EventStore todo ledger projection", () => {
       ),
     );
     store.appendEvent(
-      ev("tool.completed", { toolCallId: "call_1", output: { saved: true } }, 2),
+      ev(
+        "tool.completed",
+        { toolCallId: "call_1", output: { saved: true } },
+        2,
+      ),
     );
 
     store.appendEvent(

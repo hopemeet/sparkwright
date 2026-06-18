@@ -1037,12 +1037,103 @@ describe("trace", () => {
         "EXCESSIVE_MODEL_CALLS",
         "WORKSPACE_READ_NOISE",
         "DUPLICATE_WORKSPACE_READS",
+        "REPEATED_TOOL_REQUESTS",
         "COST_UNAVAILABLE",
       ]),
     );
     expect(report.topDuplicateReads).toMatchObject({
       "packages/core/src/trace.ts": 20,
     });
+  });
+
+  it("reports repeated failing shell commands without lowering max steps", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
+    ];
+
+    for (let i = 0; i < 2; i += 1) {
+      events.push(
+        log.emit("tool.requested", {
+          id: `call_${i}`,
+          toolName: "shell",
+          arguments: { command: "npm test -- --runInBand" },
+        }),
+        log.emit("tool.completed", {
+          toolCallId: `call_${i}`,
+          toolName: "shell",
+          status: "completed",
+          output: { exitCode: 1, timedOut: false },
+        }),
+      );
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNRESOLVED_VERIFICATION_FAILURES",
+        }),
+        expect.objectContaining({
+          code: "REPEATED_COMMAND_FAILURES",
+          evidence: ["2x npm test -- --runInBand (exit 1)"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports unresolved verification command failures as high severity", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.completed", {
+        toolCallId: "call_shell",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("run.completed", {
+        state: "completed",
+        reason: "final_answer",
+        commandOutcome: {
+          total: 1,
+          byExitCode: { "1": 1 },
+          verification: {
+            total: 1,
+            unresolved: 1,
+            lastCommand: "npm test",
+            lastExitCode: 1,
+            lastTimedOut: false,
+          },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "UNRESOLVED_VERIFICATION_FAILURES",
+          evidence: expect.arrayContaining([
+            "1 unresolved verification failure(s)",
+            "last command: npm test",
+            "last exit code: 1",
+          ]),
+        }),
+      ]),
+    );
   });
 
   it("summarizes capability mutation events", () => {
@@ -1332,7 +1423,8 @@ describe("trace", () => {
       log.emit("approval.resolved", {
         approvalId: "approval_write",
         decision: "approved",
-        message: "Auto-approved by --yes-edits.",
+        message: "Approved by policy.",
+        autoApproved: true,
       }),
       log.emit("approval.requested", {
         id: "approval_shell",

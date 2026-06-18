@@ -338,13 +338,11 @@ describe("host tools", () => {
       entries.find((entry) => entry.definition.name === "read_file"),
     ).toMatchObject({
       source: "coding",
-      exposure: "diagnostic",
     });
     expect(
       entries.find((entry) => entry.definition.name === "tool_search"),
     ).toMatchObject({
       source: "core",
-      exposure: "diagnostic",
     });
   });
 

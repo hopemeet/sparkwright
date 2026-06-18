@@ -1487,10 +1487,16 @@ function validateCapabilities(
   const allowed = new Set(["hooks", "verification", "skills", "mcp", "agents"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
+      const removedToolsMessage =
+        key === "tools"
+          ? "legacy capabilities.tools has been removed; use top-level tools.disabled/tools.defer instead"
+          : undefined;
       errors.push({
         file: filePath,
         field: `capabilities.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+        message:
+          removedToolsMessage ??
+          `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
   }

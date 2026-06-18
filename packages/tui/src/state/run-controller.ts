@@ -1,17 +1,11 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  createApprovalPolicy,
-  resolveApprovalByPolicy,
-  type ApprovalId,
-  type ApprovalPolicyOptions,
-  type RunId,
-} from "@sparkwright/core";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
   createHostClientRunMetadata,
   createHostStartRunRequest,
   recordHostClientStartFailure,
+  resolveHostClientApprovalByPolicy,
   resolveHostStdioSpawn,
 } from "@sparkwright/host";
 import type {
@@ -520,22 +514,20 @@ export class RunController {
     client.on("approval.requested", (msg) => {
       const details = (msg.payload.details ?? {}) as Record<string, unknown>;
       const action = msg.payload.action;
-      const policyDecision = resolveApprovalByPolicy(this.approvalPolicy(), {
-        id: msg.payload.approvalId as unknown as ApprovalId,
-        runId: msg.payload.runId as unknown as RunId,
-        action,
-        summary: msg.payload.summary,
-        details,
-        createdAt: msg.timestamp,
-        status: "pending",
-      });
+      const policyDecision = resolveHostClientApprovalByPolicy(
+        this.approvalPolicyInput(),
+        {
+          approvalId: msg.payload.approvalId,
+          runId: msg.payload.runId,
+          action,
+          summary: msg.payload.summary,
+          details,
+          createdAt: msg.timestamp,
+        },
+      );
       if (policyDecision) {
         void client
-          .resolveApproval({
-            approvalId: msg.payload.approvalId,
-            decision: policyDecision.decision,
-            message: policyDecision.message,
-          })
+          .resolveApproval(policyDecision)
           .catch((err) => this.store.setError(formatError(err)));
         return;
       }
@@ -628,14 +620,13 @@ export class RunController {
     // can subscribe via client.on('host.log', …).
   }
 
-  private approvalPolicy(): ReturnType<typeof createApprovalPolicy> {
-    const input: ApprovalPolicyOptions = {
+  private approvalPolicyInput() {
+    return {
       approveAll: this.opts.approveAll,
       approveEdits: this.opts.approveEdits,
       approveShellSafe: this.opts.approveShellSafe,
       permissionMode: this.opts.permissionMode,
     };
-    return createApprovalPolicy(input);
   }
 }
 

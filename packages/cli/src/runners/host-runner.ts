@@ -183,6 +183,7 @@ async function runHostLifecycle(
               approvalId: msg.payload.approvalId,
               decision: decision.decision,
               message: decision.message,
+              autoApproved: decision.autoApproved,
             })
             .catch((error: unknown) => {
               writeLine(

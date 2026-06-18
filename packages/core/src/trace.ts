@@ -260,6 +260,8 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     8,
   );
   const topTools = firstEntries(summary.toolCalls, 8);
+  const repeatedToolRequests = collectRepeatedToolRequests(events);
+  const repeatedCommandFailures = collectRepeatedCommandFailures(events);
 
   if (summary.toolFailures.unresolved.total > 0) {
     findings.push({
@@ -286,6 +288,40 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
       ].filter(Boolean),
       recommendation:
         "Use trace events filtered by error type/code to find the failing layer.",
+    });
+  }
+
+  if (summary.commandFailures.verification.unresolved > 0) {
+    findings.push({
+      severity: "high",
+      code: "UNRESOLVED_VERIFICATION_FAILURES",
+      title: "Verification commands are still failing",
+      evidence: [
+        `${summary.commandFailures.verification.unresolved} unresolved verification failure(s)`,
+        summary.commandFailures.verification.lastCommand
+          ? `last command: ${summary.commandFailures.verification.lastCommand}`
+          : undefined,
+        summary.commandFailures.verification.lastExitCode !== undefined
+          ? `last exit code: ${String(summary.commandFailures.verification.lastExitCode)}`
+          : undefined,
+        summary.commandFailures.verification.lastTimedOut === true
+          ? "last command timed out"
+          : undefined,
+      ].filter((value): value is string => typeof value === "string"),
+      recommendation:
+        "Do not trust final answers until the verification command passes or the failure is explicitly resolved.",
+    });
+  } else if (summary.commandFailures.total > 0) {
+    findings.push({
+      severity: "medium",
+      code: "COMMAND_FAILURES",
+      title: "Shell commands failed during the run",
+      evidence: [
+        `${summary.commandFailures.total} command failure(s)`,
+        formatCountRecord(summary.commandFailures.byExitCode),
+      ].filter(Boolean),
+      recommendation:
+        "Inspect the failed shell command output before treating the run as clean.",
     });
   }
 
@@ -339,6 +375,32 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
       ],
       recommendation:
         "Surface prior reads to the model or return cached-read hints for duplicate targets.",
+    });
+  }
+
+  if (repeatedToolRequests.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "REPEATED_TOOL_REQUESTS",
+      title: "Identical tool requests repeated",
+      evidence: repeatedToolRequests
+        .slice(0, 5)
+        .map((item) => `${item.count}x ${item.label}`),
+      recommendation:
+        "Feed duplicate-call evidence back to the model or add cached-result hints before lowering maxSteps.",
+    });
+  }
+
+  if (repeatedCommandFailures.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "REPEATED_COMMAND_FAILURES",
+      title: "Same shell commands failed repeatedly",
+      evidence: repeatedCommandFailures
+        .slice(0, 5)
+        .map((item) => `${item.count}x ${item.label}`),
+      recommendation:
+        "Stop retrying unchanged failing commands; inspect the first failure and change the plan or inputs.",
     });
   }
 
@@ -2654,19 +2716,6 @@ function pick(
   );
 }
 
-function pickNested(
-  payload: Record<string, unknown>,
-  keys: string[],
-  extra: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    ...pick(payload, keys),
-    ...Object.fromEntries(
-      Object.entries(extra).filter(([, value]) => value !== undefined),
-    ),
-  };
-}
-
 function collectTerminalState(
   summary: TraceSummary,
   event: SparkwrightEvent,
@@ -3216,10 +3265,20 @@ function collectSafetySummary(
           ? event.payload.response.message
           : undefined,
       );
+      const autoApproved = booleanValue(
+        event.payload.autoApproved,
+        isRecord(event.payload.response)
+          ? event.payload.response.autoApproved
+          : undefined,
+      );
       summary.safety.approvals.resolved += 1;
       if (decision === "approved") summary.safety.approvals.approved += 1;
       if (decision === "denied") summary.safety.approvals.denied += 1;
-      if (message?.toLowerCase().includes("auto-approved")) {
+      if (
+        autoApproved === true ||
+        (autoApproved === undefined &&
+          message?.toLowerCase().includes("auto-approved"))
+      ) {
         summary.safety.approvals.autoApproved += 1;
       }
       continue;
@@ -3290,6 +3349,72 @@ function traceReportHeadline(
   return `${top.title}${findings.length > 1 ? ` (+${findings.length - 1} more)` : ""}.`;
 }
 
+function collectRepeatedToolRequests(
+  events: readonly SparkwrightEvent[],
+): Array<{ label: string; count: number }> {
+  const counts = new Map<string, { label: string; count: number }>();
+
+  for (const event of events) {
+    if (event.type !== "tool.requested" || !isRecord(event.payload)) continue;
+    const toolName = stringValue(event.payload.toolName);
+    if (!toolName) continue;
+    const args = stableDiagnosticJson(event.payload.arguments ?? {});
+    const key = `${toolName}:${args}`;
+    const label = truncateDiagnostic(`${toolName} ${args}`, 180);
+    const existing = counts.get(key);
+    if (existing) existing.count += 1;
+    else counts.set(key, { label, count: 1 });
+  }
+
+  return [...counts.values()]
+    .filter((item) => item.count >= 3)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function collectRepeatedCommandFailures(
+  events: readonly SparkwrightEvent[],
+): Array<{ label: string; count: number }> {
+  const commandByCallId = new Map<string, string>();
+  const counts = new Map<string, { label: string; count: number }>();
+
+  for (const event of events) {
+    if (!isRecord(event.payload)) continue;
+
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const args = recordValue(event.payload.arguments);
+      const command = stringValue(args?.command);
+      if (toolName === "shell" && callId && command) {
+        commandByCallId.set(callId, command);
+      }
+      continue;
+    }
+
+    if (event.type !== "tool.completed") continue;
+    const toolName = stringValue(event.payload.toolName);
+    const callId = stringValue(event.payload.toolCallId, event.payload.id);
+    if (toolName !== "shell" || !callId) continue;
+    const command = commandByCallId.get(callId);
+    if (!command) continue;
+    const output = recordValue(event.payload.output);
+    const exitCode = optionalNumberValue(output?.exitCode);
+    const timedOut = output?.timedOut === true;
+    if (!timedOut && (exitCode === undefined || exitCode === 0)) continue;
+
+    const outcome = timedOut ? "timeout" : `exit ${exitCode}`;
+    const key = `${command}:${outcome}`;
+    const label = `${truncateDiagnostic(command, 140)} (${outcome})`;
+    const existing = counts.get(key);
+    if (existing) existing.count += 1;
+    else counts.set(key, { label, count: 1 });
+  }
+
+  return [...counts.values()]
+    .filter((item) => item.count >= 2)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
 function firstEntries(
   counts: Record<string, number>,
   limit: number,
@@ -3310,6 +3435,36 @@ function formatCountRecord(counts: Record<string, number>): string {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([key, count]) => `${key}:${count}`)
     .join(", ");
+}
+
+function stableDiagnosticJson(value: unknown): string {
+  try {
+    return JSON.stringify(stableDiagnosticValue(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function stableDiagnosticValue(value: unknown): unknown {
+  if (Array.isArray(value))
+    return value.slice(0, 20).map(stableDiagnosticValue);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .slice(0, 20)
+      .map((key) => [key, stableDiagnosticValue(value[key])]),
+  );
+}
+
+function truncateDiagnostic(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function optionalNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function latestOpenModelPhaseKey(
@@ -3596,6 +3751,13 @@ function timelinePhaseMetadata(
 function stringValue(...values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function booleanValue(...values: unknown[]): boolean | undefined {
+  for (const value of values) {
+    if (typeof value === "boolean") return value;
   }
   return undefined;
 }
