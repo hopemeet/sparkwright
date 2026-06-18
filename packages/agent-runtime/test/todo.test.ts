@@ -294,14 +294,15 @@ describe("createTodoWriteTool", () => {
       hint: expect.stringContaining("calling todo_write again"),
     });
 
-    await expect(
-      write.execute(
-        { items: [{ title: "a", status: "completed" }] },
-        ctx("run-1"),
-      ),
-    ).resolves.toMatchObject({
+    const rejected = (await write.execute(
+      { items: [{ title: "a", status: "completed" }] },
+      ctx("run-1"),
+    )) as TodoWriteResult;
+    expect(rejected).toMatchObject({
       saved: false,
       hint: expect.stringContaining("too many times"),
+      todos: [{ title: "a", status: "in_progress" }],
+      rejectedTodos: [{ title: "a", status: "completed" }],
     });
 
     await expect(

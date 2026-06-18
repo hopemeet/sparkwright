@@ -76,6 +76,7 @@ describe("CapabilitiesPanel rendering", () => {
       expect(err).not.toHaveBeenCalled();
       expect(text).toContain("capabilities");
       expect(text).toContain("Available now: 30 tools");
+      expect(text).toContain("Tool map:");
       expect(text).toContain("tool_00");
       expect(text).toContain("more");
       expect(text).not.toContain("tool_20");
@@ -94,11 +95,18 @@ describe("CapabilitiesPanel rendering", () => {
               name: "create_skill",
               origin: "local:sparkwright",
               risk: "risky",
+              deferred: true,
             },
             {
               name: "update_skill",
               origin: "local:sparkwright",
               risk: "risky",
+              deferred: true,
+            },
+            {
+              name: "tool_search",
+              origin: "local:@sparkwright/core",
+              risk: "safe",
             },
           ],
           skills: { indexed: [], loaded: [] },
@@ -109,9 +117,13 @@ describe("CapabilitiesPanel rendering", () => {
         view="tools"
         onClose={() => {}}
       />,
-      28,
+      34,
     );
 
+    expect(text).toContain("ready tools");
+    expect(text).toContain("deferred via tool_search");
+    expect(text).toContain("approval / high risk");
+    expect(text).toContain("tool sources");
     expect(text).toContain("managed Skill package create");
     expect(text).toContain("draft proposal first");
     expect(text).toContain("apply only when requested");

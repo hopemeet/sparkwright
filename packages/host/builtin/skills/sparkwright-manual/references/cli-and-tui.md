@@ -52,7 +52,7 @@ Read-only smoke test:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal
+  --trace-level standard
 ```
 
 Provider-backed run:
@@ -82,7 +82,7 @@ SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read_file","argumen
 - `--yes`: approve CLI approval prompts non-interactively.
 - `--permission-mode mode`: one of `plan`, `default`, `accept_edits`,
   `dont_ask`, `bypass_permissions`.
-- `--trace-level level`: one of `minimal`, `standard`, `debug`.
+- `--trace-level level`: one of `standard`, `debug`.
 - `--session-id id`: attach a run to a known session id.
 - `--model provider/model`: select a configured provider/model.
 - `--model scripted`: run a host-backed scripted model from

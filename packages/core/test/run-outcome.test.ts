@@ -405,10 +405,10 @@ describe("run outcome evidence", () => {
     });
   });
 
-  it("classifies a minimal-trace tool failure (flat errorCode) like the full shape", () => {
+  it("classifies a legacy compact tool failure (flat errorCode) like the full shape", () => {
     const log = new EventLog(createRunId());
-    // minimalPayload (trace.ts) flattens the code to `errorCode`; the analyzer
-    // must read it so classification stays trace-level invariant.
+    // Older compact traces flattened the code to `errorCode`; the analyzer must
+    // read it so classification stays trace-shape invariant.
     const events = [
       log.emit("run.created", { goal: "Improve the README" }),
       log.emit("tool.failed", {

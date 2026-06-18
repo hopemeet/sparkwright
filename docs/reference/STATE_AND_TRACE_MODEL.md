@@ -253,10 +253,16 @@ The CLI exposes these primitives directly:
 sparkwright trace summary <trace.jsonl> --format text
 sparkwright trace events <trace.jsonl> --type tool.failed --limit 20 --jsonl
 sparkwright trace timeline <trace.jsonl> --format text
+sparkwright trace report <trace.jsonl> --format text
 sparkwright session check <session-id> --workspace <repo> --format text
 sparkwright session repair <session-id> --workspace <repo> --dry-run
 sparkwright session resume <session-id> "next goal" --workspace <repo>
 ```
+
+`trace report` is the human-oriented diagnostic layer over the same raw trace:
+it highlights verdict, efficiency, failure recovery, safety posture, repeated
+reads, and cost-reporting gaps without replacing `summary`, `timeline`, or
+`verify`.
 
 Host clients can request the same inspection bundle with `session.inspect`,
 which returns trace summary, consistency report, and timeline phases in one

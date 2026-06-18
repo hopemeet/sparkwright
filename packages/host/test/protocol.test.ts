@@ -504,8 +504,8 @@ describe("host protocol", () => {
           sessionId,
           model: "deterministic",
           permissionMode: "default",
-          traceLevel: "minimal",
-          metadata: { source: "test", traceLevel: "minimal", ticket: "T-1" },
+          traceLevel: "standard",
+          metadata: { source: "test", traceLevel: "standard", ticket: "T-1" },
         },
       });
 
@@ -525,7 +525,7 @@ describe("host protocol", () => {
       ) as { metadata?: Record<string, unknown> };
       expect(runJson.metadata).toMatchObject({
         source: "test",
-        traceLevel: "minimal",
+        traceLevel: "standard",
         ticket: "T-1",
         resumedFromRunId: runId,
       });
@@ -542,16 +542,12 @@ describe("host protocol", () => {
         (event) => event.runId === runId && event.type === "model.completed",
       );
       expect(modelCompleted?.payload).toMatchObject({
-        hasMessage: true,
+        message: expect.any(String),
+        toolCalls: expect.any(Array),
+        trace: expect.objectContaining({
+          toolCallCount: expect.any(Number),
+        }),
       });
-      expect(
-        (modelCompleted?.payload as Record<string, unknown> | undefined)
-          ?.toolCallCount,
-      ).toEqual(expect.any(Number));
-      expect(
-        (modelCompleted?.payload as Record<string, unknown> | undefined)
-          ?.message,
-      ).toBeUndefined();
       expect(
         pair
           .clientMessages()
@@ -1167,56 +1163,31 @@ describe("host protocol", () => {
         },
       });
       if (resp.envelope === "response" && resp.ok) {
+        const tools = resp.result.tools as Array<{
+          name: string;
+          origin?: string;
+        }>;
         expect(
           (
             resp.result as { skills: { indexed: Array<{ name: string }> } }
           ).skills.indexed.some((skill) => skill.name === "reviewer"),
         ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "read_file",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "delegate_reviewer",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "spawn_agent",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "create_skill",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "create_agent",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "list_skills",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "list_agents",
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some((tool) =>
-            tool.name.startsWith("mcp_missing_"),
-          ),
-        ).toBe(true);
-        expect(
-          (resp.result.tools as Array<{ name: string }>).some(
-            (tool) => tool.name === "shell",
-          ),
-        ).toBe(false);
+        expect(tools.find((tool) => tool.name === "read_file")).toMatchObject({
+          origin: "local:@sparkwright/coding-tools",
+        });
+        expect(tools.some((tool) => tool.name === "read_file")).toBe(true);
+        expect(tools.some((tool) => tool.name === "delegate_reviewer")).toBe(
+          true,
+        );
+        expect(tools.some((tool) => tool.name === "spawn_agent")).toBe(true);
+        expect(tools.some((tool) => tool.name === "create_skill")).toBe(true);
+        expect(tools.some((tool) => tool.name === "create_agent")).toBe(true);
+        expect(tools.some((tool) => tool.name === "list_skills")).toBe(true);
+        expect(tools.some((tool) => tool.name === "list_agents")).toBe(true);
+        expect(tools.some((tool) => tool.name.startsWith("mcp_missing_"))).toBe(
+          true,
+        );
+        expect(tools.some((tool) => tool.name === "shell")).toBe(false);
       }
     } finally {
       pair.close();

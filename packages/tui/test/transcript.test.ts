@@ -49,7 +49,7 @@ describe("renderTranscript", () => {
     expect(md).toContain("_Run completed: **natural**_");
   });
 
-  it("renders tool call args and result as fenced code", () => {
+  it("renders tool call args and result as concise tool display text", () => {
     const events: RunEvent[] = [
       {
         type: "tool.requested",
@@ -67,9 +67,86 @@ describe("renderTranscript", () => {
       events,
     );
     expect(md).toContain("### Tool: `read_file`");
-    expect(md).toContain("```json");
-    expect(md).toContain('"path": "foo.ts"');
+    expect(md).toContain("_Args:_ foo.ts");
     expect(md).toContain("contents here");
+  });
+
+  it("renders trace-shaped tool arguments and names completed results by call id", () => {
+    const events: RunEvent[] = [
+      {
+        type: "tool.requested",
+        sequence: 1,
+        payload: {
+          id: "call_1",
+          toolName: "read_file",
+          arguments: { path: "foo.ts", offset: 1, limit: 20 },
+        },
+      },
+      {
+        type: "tool.completed",
+        sequence: 2,
+        payload: {
+          toolCallId: "call_1",
+          status: "completed",
+          output: { path: "foo.ts", bytes: 12 },
+        },
+      },
+    ];
+    const md = renderTranscript(
+      { sessionId: "s", workspaceRoot: "/x" },
+      events,
+    );
+
+    expect(md).toContain("### Tool: `read_file`");
+    expect(md).toContain("_Args:_ foo.ts:1 +20");
+    expect(md).toContain("_Result of `read_file`:_");
+    expect(md).toContain('"bytes":12');
+    expect(md).not.toContain("_Result of `?`:_");
+  });
+
+  it("summarizes structured tool results without raw JSON envelopes", () => {
+    const events: RunEvent[] = [
+      {
+        type: "tool.completed",
+        sequence: 1,
+        payload: {
+          toolName: "list_dir",
+          output: {
+            path: ".",
+            entries: [
+              { path: "src", name: "src", type: "directory" },
+              { path: "package.json", name: "package.json", type: "file" },
+            ],
+          },
+        },
+      },
+      {
+        type: "tool.completed",
+        sequence: 2,
+        payload: {
+          toolName: "read_file",
+          output: {
+            path: "README.md",
+            content: "# Demo\nbody",
+            totalLines: 2,
+            bytes: 11,
+          },
+        },
+      },
+    ];
+
+    const md = renderTranscript(
+      { sessionId: "s", workspaceRoot: "/x" },
+      events,
+    );
+
+    expect(md).toContain("list_dir . → 2 entries");
+    expect(md).toContain("src/ · package.json");
+    expect(md).toContain("read_file README.md");
+    expect(md).toContain("2 lines");
+    expect(md).toContain("11 bytes");
+    expect(md).not.toContain('"entries"');
+    expect(md).not.toContain('"content"');
   });
 
   it("renders workspace.write with a diff fence", () => {

@@ -3751,8 +3751,8 @@ export class SparkwrightRun implements RunHandle {
           )
         : undefined;
     // Persist the command- and tool-outcome verdicts (computed over the full
-    // event stream) so trace summaries stay correct even when a minimal trace
-    // has stripped the tool.completed output / tool.requested arguments they
+    // event stream) so trace summaries stay correct for legacy traces that
+    // may not retain the tool.completed output / tool.requested arguments they
     // would otherwise be recomputed from.
     const commandOutcome = commandOutcomeSnapshot(this.events.all());
     const toolOutcome = toolOutcomeSnapshot(this.events.all());

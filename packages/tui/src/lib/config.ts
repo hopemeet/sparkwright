@@ -1,19 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname } from "node:path";
 import {
-  CONFIG_ENV_VAR,
-  DETERMINISTIC_PROVIDER,
+  configResolutionOrder,
+  loadHostConfig,
   normalizeGroupedConfig,
-  projectConfigPath,
-  userConfigPath,
   type ProviderConfig,
+  type ApprovalDefaults,
 } from "@sparkwright/host";
-import {
-  PERMISSION_MODES,
-  isPermissionMode,
-  type PermissionMode,
-} from "@sparkwright/protocol";
+import type { PermissionMode } from "@sparkwright/protocol";
 import { mergeBindings, type Bindings } from "./keybindings.js";
 
 export interface TuiConfigFile {
@@ -22,12 +17,14 @@ export interface TuiConfigFile {
   model?: string;
   /** Provider definitions, merged by key across config layers. */
   providers?: Record<string, ProviderConfig>;
+  /** Default approval auto-grants shared with CLI/host config. */
+  approvals?: ApprovalDefaults;
   /** Path relative to the config file, or absolute. */
   workspace?: string;
   /** Host-owned capability runtime settings. The TUI accepts but does not interpret these. */
   capabilities?: Record<string, unknown>;
   /**
-   * Per-action keybindings. Keys are binding names (e.g. "palette.open"),
+   * Per-action keybindings. Keys are binding names (e.g. "help.open"),
    * values are chord strings or arrays. Empty string / [] clears the default.
    */
   keybindings?: Record<string, string | string[] | null>;
@@ -50,6 +47,7 @@ export interface SourceMap {
   model?: string;
   workspace?: string;
   theme?: string;
+  approvals?: string;
 }
 
 export interface ValidationError {
@@ -121,74 +119,12 @@ async function readJson(
   }
 }
 
-function validateProvider(
-  value: unknown,
-  filePath: string,
-  field: string,
-  errors: ValidationError[],
-): ProviderConfig | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    errors.push({ file: filePath, field, message: "must be a JSON object" });
-    return null;
-  }
-  const obj = value as Record<string, unknown>;
-  const out: ProviderConfig = {};
-  if (obj.npm !== undefined) {
-    if (typeof obj.npm === "string" && obj.npm.length > 0) out.npm = obj.npm;
-    else
-      errors.push({
-        file: filePath,
-        field: `${field}.npm`,
-        message: "must be a non-empty string",
-      });
-  }
-  if (obj.baseURL !== undefined) {
-    if (typeof obj.baseURL === "string" && /^https?:\/\//i.test(obj.baseURL))
-      out.baseURL = obj.baseURL;
-    else
-      errors.push({
-        file: filePath,
-        field: `${field}.baseURL`,
-        message: "must be an http(s) URL",
-      });
-  }
-  if (obj.apiKey !== undefined) {
-    if (typeof obj.apiKey === "string" && obj.apiKey.length > 0)
-      out.apiKey = obj.apiKey;
-    else
-      errors.push({
-        file: filePath,
-        field: `${field}.apiKey`,
-        message: "must be a non-empty string",
-      });
-  }
-  if (obj.models !== undefined) {
-    if (
-      typeof obj.models === "object" &&
-      obj.models !== null &&
-      !Array.isArray(obj.models)
-    ) {
-      out.models = obj.models as ProviderConfig["models"];
-    } else {
-      errors.push({
-        file: filePath,
-        field: `${field}.models`,
-        message: "must be a JSON object",
-      });
-    }
-  }
-  return out;
-}
-
 /**
- * Validate one parsed config file against the same shape that
- * schemas/config.schema.json describes. Unknown keys produce a warning
- * error; wrong types produce a hard error and the field is dropped.
- *
- * Kept hand-rolled (no ajv dep) to match the repo pattern: schemas/ is the
- * source of truth for editors/CI, runtime validation is small and explicit.
+ * Validate only TUI-owned fields. Shared fields (model, providers,
+ * permissionMode, approvals, capabilities, tools, shell, etc.) are loaded by
+ * @sparkwright/host so the TUI cannot drift from CLI/host semantics.
  */
-function validate(
+function validateUiOverlay(
   raw: unknown,
   origin: string,
   filePath: string,
@@ -205,9 +141,9 @@ function validate(
     });
     return { config, sources, errors };
   }
-  // Accept the grouped form (identity/policy/run/ui); the shared normalizer
-  // flattens it to the same keys the TUI reads below. The host loader is the
-  // authority on these fields, so this keeps the two readers in agreement.
+  // Accept grouped config so ui.theme/keybindings/mouse normalize to the same
+  // flat fields the rest of the TUI reads. Shared grouped fields are normalized
+  // too but intentionally ignored here; host validation owns them.
   const obj = normalizeGroupedConfig(
     raw as Record<string, unknown>,
     filePath,
@@ -224,92 +160,6 @@ function validate(
     }
   }
 
-  if (obj.model !== undefined) {
-    if (typeof obj.model === "string" && obj.model.length > 0) {
-      config.model = obj.model;
-      sources.model = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "model",
-        message: "must be a non-empty string",
-      });
-    }
-  }
-  if (obj.permissionMode !== undefined) {
-    if (isPermissionMode(obj.permissionMode)) {
-      config.permissionMode = obj.permissionMode;
-      sources.permissionMode = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "permissionMode",
-        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
-      });
-    }
-  }
-  if (obj.workspace !== undefined) {
-    if (typeof obj.workspace === "string" && obj.workspace.length > 0) {
-      config.workspace = obj.workspace;
-      sources.workspace = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "workspace",
-        message: "must be a non-empty string",
-      });
-    }
-  }
-  if (obj.providers !== undefined) {
-    if (
-      typeof obj.providers === "object" &&
-      obj.providers !== null &&
-      !Array.isArray(obj.providers)
-    ) {
-      const providers: Record<string, ProviderConfig> = {};
-      for (const [key, value] of Object.entries(
-        obj.providers as Record<string, unknown>,
-      )) {
-        if (key === DETERMINISTIC_PROVIDER) {
-          errors.push({
-            file: filePath,
-            field: `providers.${key}`,
-            message: `"${DETERMINISTIC_PROVIDER}" is a reserved provider key`,
-          });
-          continue;
-        }
-        const pv = validateProvider(
-          value,
-          filePath,
-          `providers.${key}`,
-          errors,
-        );
-        if (pv) providers[key] = pv;
-      }
-      config.providers = providers;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "providers",
-        message: "must be a JSON object",
-      });
-    }
-  }
-  if (obj.capabilities !== undefined) {
-    if (
-      typeof obj.capabilities === "object" &&
-      obj.capabilities !== null &&
-      !Array.isArray(obj.capabilities)
-    ) {
-      config.capabilities = obj.capabilities as Record<string, unknown>;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "capabilities",
-        message: "must be a JSON object",
-      });
-    }
-  }
   if (obj.theme !== undefined) {
     if (typeof obj.theme === "string" && VALID_THEMES.includes(obj.theme)) {
       config.theme = obj.theme;
@@ -379,29 +229,35 @@ function validate(
 }
 
 function resolutionOrder(cwd: string): { path: string; label: string }[] {
-  const explicit = process.env[CONFIG_ENV_VAR];
-  const order: { path: string; label: string }[] = [
-    { path: userConfigPath(), label: "user" },
-    { path: projectConfigPath(cwd), label: "project" },
-  ];
-  if (explicit) {
-    order.push({
-      path: isAbsolute(explicit) ? explicit : resolve(cwd, explicit),
-      label: "env",
-    });
-  }
-  return order;
+  return configResolutionOrder(cwd, process.env);
 }
 
 /**
  * Load + merge TUI config files. CLI args are applied by the caller (index.ts).
  */
 export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
+  const shared = await loadHostConfig(cwd, process.env);
   const order = resolutionOrder(cwd);
-  const merged: TuiConfigFile = {};
-  const sources: SourceMap = {};
-  const attempted: LoadedTuiConfig["attempted"] = [];
-  const errors: ValidationError[] = [];
+  const merged: TuiConfigFile = {
+    permissionMode: shared.config.permissionMode,
+    model: shared.config.model,
+    providers: shared.config.providers,
+    approvals: shared.config.approvals,
+    workspace: shared.config.workspace,
+    capabilities: shared.config.capabilities as
+      | Record<string, unknown>
+      | undefined,
+  };
+  const sources: SourceMap = {
+    permissionMode: shared.sources.permissionMode,
+    model: shared.sources.model,
+    workspace: shared.sources.workspace,
+    approvals: shared.sources.approvals,
+  };
+  const attempted: LoadedTuiConfig["attempted"] = shared.attempted.map(
+    (entry) => ({ path: entry.path, loaded: entry.loaded }),
+  );
+  const errors: ValidationError[] = [...shared.errors];
 
   // Keybindings merge layer-by-layer (later files override earlier ones per
   // binding name), so user can override project defaults of their own choice.
@@ -409,31 +265,15 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
 
   for (const { path, label } of order) {
     const r = await readJson(path);
-    if (r.kind === "missing") {
-      attempted.push({ path, loaded: false });
-      continue;
-    }
-    if (r.kind === "error") {
-      attempted.push({ path, loaded: false });
-      errors.push({ file: path, field: "(root)", message: r.message });
-      continue;
-    }
-    attempted.push({ path, loaded: true });
-    const v = validate(r.value, `${label}:${path}`, path);
+    if (r.kind !== "ok") continue;
+    const v = validateUiOverlay(r.value, `${label}:${path}`, path);
     errors.push(...v.errors);
-    if (v.config.workspace !== undefined) {
-      v.config.workspace = isAbsolute(v.config.workspace)
-        ? v.config.workspace
-        : resolve(dirname(path), v.config.workspace);
-    }
     if (v.config.keybindings) {
       mergedBindings = { ...(mergedBindings ?? {}), ...v.config.keybindings };
     }
-    const { providers, ...rest } = v.config;
-    Object.assign(merged, rest);
-    if (providers) {
-      merged.providers = { ...(merged.providers ?? {}), ...providers };
-    }
+    if (v.config.theme !== undefined) merged.theme = v.config.theme;
+    if (v.config.mouse !== undefined) merged.mouse = v.config.mouse;
+    if (v.config.vim !== undefined) merged.vim = v.config.vim;
     Object.assign(sources, v.sources);
   }
 
@@ -488,8 +328,8 @@ export function watchTuiConfig(cwd: string, onChange: () => void): () => void {
       w.unref?.();
       watchers.push(w);
     } catch {
-      // dir doesn't exist; we just won't catch creates here. The user can
-      // /reload manually after creating the file.
+      // dir doesn't exist; we just won't catch creates here. Startup and the
+      // next watcher event will pick up future files.
     }
   }
 

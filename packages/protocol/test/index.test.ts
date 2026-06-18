@@ -24,7 +24,7 @@ describe("@sparkwright/protocol", () => {
       "dont_ask",
       "bypass_permissions",
     ]);
-    expect([...TRACE_LEVELS]).toEqual(["minimal", "standard", "debug"]);
+    expect([...TRACE_LEVELS]).toEqual(["standard", "debug"]);
     expect(isPermissionMode("accept_edits")).toBe(true);
     expect(isPermissionMode("unknown")).toBe(false);
     expect(isTraceLevel("debug")).toBe(true);

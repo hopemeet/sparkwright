@@ -1,10 +1,10 @@
 /**
- * Command registry. The palette and the `/foo` slash input share this list so
- * a command added once is reachable both ways.
+ * Command registry. Slash input and help share this list so a command added
+ * once is discoverable and executable.
  *
  * Commands are pure descriptors; the `run` callback closes over App state.
- * `available()` is consulted at lookup time so the palette can hide commands
- * that don't make sense in the current state (e.g. "cancel" when idle).
+ * `available()` is consulted at lookup time so suggestions can hide commands
+ * that don't make sense in the current state.
  */
 
 // Intentionally empty: the registry stores `run` as a thunk closed over
@@ -14,30 +14,30 @@ export type CommandCtx = Record<string, never>;
 export interface Command {
   /** Unique id, also the slash command (e.g. "help" → /help). */
   name: string;
-  /** Short label shown in the palette and help. */
+  /** Short label shown in help and command suggestions. */
   title: string;
   /** One-line description. */
   description: string;
-  /** Category label (groups palette rows). */
+  /** Category label used by help and command suggestions. */
   category: "session" | "config" | "view" | "system" | "capability";
   /** Optional aliases for the slash input. */
   aliases?: string[];
-  /** Keyboard hint shown on the right side of the palette row. */
+  /** Keyboard hint shown alongside command help. */
   hint?: string;
   /**
-   * Keep this command out of the empty palette/slash suggestion list. Direct
-   * slash resolution and non-empty palette search still include it.
+   * Keep this command out of the empty slash suggestion list. Direct slash
+   * resolution still includes it.
    */
   hiddenByDefault?: boolean;
   /** Whether the command is currently selectable. */
   available?: () => boolean;
-  /** Called when the user picks the command (palette, or `/name` with no args). */
+  /** Called when the user runs `/name` with no args. */
   run: () => void | Promise<void>;
   /**
    * Optional arg-aware entry point. When present, the `/name <rest>` slash input
    * dispatches here with the rest-of-line (everything after the command name);
-   * the palette and bare `/name` still use `run`. File-authored project
-   * commands set this so `$ARGUMENTS` can be filled.
+   * bare `/name` still uses `run`. File-authored project commands set this so
+   * `$ARGUMENTS` can be filled.
    *
    * @reserved Public command field consumed by the TUI slash dispatch in app.tsx.
    */
@@ -58,7 +58,8 @@ export class CommandRegistry {
 
   /**
    * All canonical commands (alias entries deduped), in registration order.
-   * Available()-false commands are kept so the palette can grey them out.
+   * Available()-false commands are kept for direct lookup, but suggestions can
+   * choose not to show them.
    */
   list(): Command[] {
     const seen = new Set<string>();

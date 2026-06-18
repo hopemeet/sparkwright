@@ -8,6 +8,7 @@ import {
 } from "@sparkwright/agent-runtime";
 import {
   asSessionId,
+  buildTraceReportFile,
   buildTraceTimelineFile,
   createSessionId,
   createLayeredPolicy,
@@ -26,6 +27,7 @@ import {
   type RunRecord,
   type SessionTraceConsistencyReport,
   type SessionTraceRepairReport,
+  type TraceReport,
   type TraceSummary,
   type TraceVerificationReport,
   type TraceTimeline,
@@ -35,6 +37,7 @@ import {
 import {
   isPermissionMode,
   isTraceLevel,
+  type CapabilitySnapshot,
   type PermissionMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
@@ -72,9 +75,11 @@ import {
   loadLayeredAgentReport,
   loadHostConfig,
   configResolutionOrder,
+  DEFAULT_DEFERRED_TOOLS,
   resolveAgentProfiles,
   describeExternalDelegateCapability,
   existingSkillRoots,
+  HostRuntime,
   projectSkillRoot,
   resolveCapabilityDirs,
   resolveSkillRootsForRuntime,
@@ -579,8 +584,7 @@ function parseArgs(
       if (!isTraceLevel(value))
         return {
           ok: false,
-          message:
-            "Usage: --trace-level must be one of: minimal, standard, debug",
+          message: "Usage: --trace-level must be one of: standard, debug",
         };
       traceLevel = value;
       args.splice(index, 2);
@@ -902,12 +906,13 @@ function parseArgs(
     subcommand !== "summary" &&
     subcommand !== "events" &&
     subcommand !== "timeline" &&
+    subcommand !== "report" &&
     subcommand !== "verify"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>",
+        "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>",
     };
   }
 
@@ -927,13 +932,12 @@ function parseArgs(
 
   if (
     command === "tools" &&
-    subcommand !== "list" &&
     subcommand !== "disable" &&
     subcommand !== "defer"
   ) {
     return {
       ok: false,
-      message: "Usage: sparkwright tools <list|disable|defer> [tool-name ...]",
+      message: "Usage: sparkwright tools <disable|defer> <tool-name ...>",
     };
   }
 
@@ -1101,17 +1105,13 @@ async function handleToolsCommand(
   env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
   const subcommand = parsed.subcommand;
-  if (
-    subcommand !== "list" &&
-    subcommand !== "disable" &&
-    subcommand !== "defer"
-  ) {
+  if (subcommand !== "disable" && subcommand !== "defer") {
     writeLine(io.stderr, toolsUsage());
     return { exitCode: 1 };
   }
 
   const patterns = splitCliWords(parsed.goal);
-  if (subcommand !== "list" && patterns.length === 0) {
+  if (patterns.length === 0) {
     writeLine(
       io.stderr,
       `Usage: sparkwright tools ${subcommand} <tool-name...>`,
@@ -1136,19 +1136,6 @@ async function handleToolsCommand(
         : { path: userConfigPath(env), privateFile: true };
     const loaded = await readConfigObject(target.path);
     const before = getToolsConfig(loaded.value);
-
-    if (subcommand === "list") {
-      writeLine(
-        io.stdout,
-        formatToolsConfig({
-          path: target.path,
-          exists: loaded.exists,
-          tools: before,
-          format: parsed.format,
-        }),
-      );
-      return { exitCode: 0 };
-    }
 
     const next = updateToolsConfig(before, subcommand, patterns);
     setToolsConfig(loaded.value, next);
@@ -1535,6 +1522,7 @@ function formatPatternList(
 
 interface CapabilityInspectReport {
   workspace: string;
+  runtime?: CapabilitySnapshot;
   config: {
     errors: Array<{ file: string; field: string; message: string }>;
   };
@@ -1847,14 +1835,17 @@ async function loadCapabilityInspectReport(
     if (describeExternalDelegateCapability({ delegate, profile })) return [];
     return [{ toolName: delegate.toolName, profileId: delegate.profileId }];
   });
+  const runtime = await inspectRuntimeCapabilities(workspaceRoot);
 
   return {
     workspace: workspaceRoot,
+    ...(runtime ? { runtime } : {}),
     config: { errors: loaded.errors },
     tools: {
       ...(loaded.config.tools ?? {}),
       available: buildCapabilityToolInventory({
         config: loaded.config.tools ?? {},
+        runtime,
         mcpServers,
         delegateTools: externalDelegateDescriptors,
         inProcessDelegateTools,
@@ -1901,6 +1892,17 @@ async function loadCapabilityInspectReport(
     },
     command: { dirs: commandDirs },
   };
+}
+
+async function inspectRuntimeCapabilities(
+  workspaceRoot: string,
+): Promise<CapabilitySnapshot | undefined> {
+  const runtime = new HostRuntime({
+    workspaceRoot,
+    emit: () => {},
+  });
+  const inspected = await runtime.inspectCapabilities();
+  return inspected.ok ? inspected.snapshot : undefined;
 }
 
 function shellSandboxEffective(input: {
@@ -2014,11 +2016,30 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
 
 function buildCapabilityToolInventory(input: {
   config: ToolsConfigShape;
+  runtime?: CapabilitySnapshot;
   mcpServers: CapabilityInspectReport["mcp"]["servers"];
   delegateTools: DelegateCapabilityDescriptor[];
   /** In-process (config child-agent) delegates — real tools without an external descriptor. */
   inProcessDelegateTools?: Array<{ toolName: string; profileId: string }>;
 }): CapabilityToolInspectEntry[] {
+  const externalDelegateByName = new Map(
+    input.delegateTools.map((tool) => [tool.toolName, tool]),
+  );
+  const inProcessDelegateByName = new Map(
+    (input.inProcessDelegateTools ?? []).map((tool) => [tool.toolName, tool]),
+  );
+  if (input.runtime) {
+    return input.runtime.tools
+      .map((tool) =>
+        runtimeToolToInspectEntry({
+          tool,
+          externalDelegateByName,
+          inProcessDelegateByName,
+        }),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   const mcpTools: CapabilityToolInspectEntry[] = input.mcpServers.flatMap(
     (server) =>
       (server.tools ?? []).map((tool) => ({
@@ -2070,6 +2091,47 @@ function buildCapabilityToolInventory(input: {
   return available.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function runtimeToolToInspectEntry(input: {
+  tool: CapabilitySnapshot["tools"][number];
+  externalDelegateByName: Map<string, DelegateCapabilityDescriptor>;
+  inProcessDelegateByName: Map<string, { toolName: string; profileId: string }>;
+}): CapabilityToolInspectEntry {
+  const inProcessDelegate = input.inProcessDelegateByName.get(input.tool.name);
+  if (inProcessDelegate) {
+    return {
+      name: input.tool.name,
+      source: "delegate",
+      risk: "risky",
+      origin: `in_process:${inProcessDelegate.profileId}`,
+      ...(input.tool.deferred === true ? { deferred: true } : {}),
+    };
+  }
+
+  const externalDelegate = input.externalDelegateByName.get(input.tool.name);
+  if (externalDelegate) {
+    return {
+      name: input.tool.name,
+      source: "delegate",
+      risk: "risky",
+      origin: `${externalDelegate.protocol}:${externalDelegate.profileId}`,
+      ...(input.tool.deferred === true ? { deferred: true } : {}),
+    };
+  }
+
+  const source = input.tool.origin?.startsWith("mcp:") ? "mcp" : "builtin";
+  return {
+    name: input.tool.name,
+    source,
+    ...(input.tool.risk === "safe" ||
+    input.tool.risk === "risky" ||
+    input.tool.risk === "denied"
+      ? { risk: input.tool.risk }
+      : {}),
+    ...(input.tool.origin ? { origin: input.tool.origin } : {}),
+    ...(input.tool.deferred === true ? { deferred: true } : {}),
+  };
+}
+
 function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
   return !isToolNameListed(name, config.disabled);
 }
@@ -2077,12 +2139,6 @@ function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
 function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
   return isToolNameListed(name, config.defer ?? DEFAULT_DEFERRED_TOOLS);
 }
-
-const DEFAULT_DEFERRED_TOOLS = [
-  "todo_write",
-  "read_anchored_text",
-  "edit_anchored_text",
-];
 
 const PROJECT_CONFIG_DEFERRED_TOOLS = [...DEFAULT_DEFERRED_TOOLS];
 
@@ -2110,12 +2166,18 @@ function formatCapabilityInspectReport(
     `workspace: ${report.workspace}`,
     `tools: disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
-    `available tools: ${report.tools.available.length}`,
+    `runtime tools: ${report.runtime?.tools.length ?? "unavailable"}`,
+    `diagnostic tools: ${report.tools.available.length}`,
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
   ];
+  for (const tool of report.runtime?.tools ?? []) {
+    lines.push(
+      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}${tool.deferred ? "; deferred" : ""})` : tool.deferred ? " (deferred)" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
+    );
+  }
   for (const tool of report.tools.available) {
     lines.push(
-      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}` : ""}${tool.deferred ? "; deferred" : ""}${tool.risk ? ")" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}` : ""}${tool.deferred ? "; deferred" : ""}${tool.risk ? ")" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const root of report.skills.roots) lines.push(`  root: ${root}`);
@@ -4397,13 +4459,13 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return 'Usage: sparkwright run "your goal" [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]';
   }
   if (command === "trace") {
-    return "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>";
+    return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
   }
   if (command === "tui") {
-    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]";
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]";
   }
   if (command === "acp") {
-    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]";
+    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]";
   }
   if (command === "session") {
     return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
@@ -4430,9 +4492,19 @@ async function handleTraceCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright trace <summary|events|timeline|verify> <trace.jsonl>",
+      "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>",
     );
     return { exitCode: 1 };
+  }
+  if (parsed.subcommand === "report") {
+    const report = await buildTraceReportFile(parsed.target);
+    writeLine(
+      io.stdout,
+      parsed.format === "text"
+        ? formatTraceReport(report)
+        : JSON.stringify(report, null, 2),
+    );
+    return { exitCode: 0 };
   }
   if (parsed.subcommand === "verify") {
     const report = await verifyTraceFile(parsed.target);
@@ -4916,6 +4988,38 @@ function formatTraceCost(summary: TraceSummary["usage"]): string {
   return "cost: unavailable (not reported)";
 }
 
+function formatTraceReport(report: TraceReport): string {
+  const lines = [
+    `verdict: ${report.verdict}`,
+    `headline: ${report.headline}`,
+    `runs: ${report.summary.runCount}, sessions: ${report.summary.sessionCount}, events: ${report.summary.eventCount}`,
+    `model/tool: ${report.summary.modelCalls} model calls, ${report.summary.toolCalls} tool calls`,
+    `tokens: ${report.summary.totalTokens}`,
+    `safety: ${report.summary.workspaceWrites} workspace writes, ${report.summary.approvalsRequested} approvals requested`,
+  ];
+
+  const topTools = formatTopCounts(report.topTools, 5);
+  if (topTools) lines.push(`top tools: ${topTools}`);
+
+  const duplicateReads = formatTopCounts(report.topDuplicateReads, 5);
+  if (duplicateReads) lines.push(`top duplicate reads: ${duplicateReads}`);
+
+  if (report.findings.length === 0) {
+    lines.push("findings: none");
+    return lines.join("\n");
+  }
+
+  lines.push("findings:");
+  for (const finding of report.findings) {
+    lines.push(
+      `- [${finding.severity}] ${finding.code}: ${finding.title}`,
+      `  evidence: ${finding.evidence.join("; ") || "(none)"}`,
+      `  recommendation: ${finding.recommendation}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function formatCostReasons(
   reasons: Record<string, number> | undefined,
 ): string {
@@ -5197,14 +5301,13 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
-    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
-    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
+    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]',
-    "       sparkwright tools list [--workspace path] [--format json|text]",
+    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
@@ -5227,8 +5330,7 @@ function usage(): string {
 
 function toolsUsage(): string {
   return [
-    "Usage: sparkwright tools list [--workspace path] [--format json|text]",
-    "       sparkwright tools disable <tool-name...> [--workspace path]",
+    "Usage: sparkwright tools disable <tool-name...> [--workspace path]",
     "       sparkwright tools defer <tool-name...> [--workspace path]",
   ].join("\n");
 }
@@ -5246,7 +5348,7 @@ function capabilitiesUsage(): string {
 }
 
 function delegatesUsage(): string {
-  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level minimal|standard|debug] [--format json|text]';
+  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]';
 }
 
 function skillsUsage(): string {

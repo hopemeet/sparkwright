@@ -6,7 +6,6 @@ import {
   createSessionRunStoreFactory,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
-  defineTool,
   FileSessionStore,
   type ContextItem,
   type ModelAdapter,
@@ -21,13 +20,11 @@ import {
   MemoryTrace,
 } from "@sparkwright/core/internal";
 import {
-  applyToolConfig,
   buildConfiguredAdapter,
+  catalogToolDefinitions,
+  createCliDiagnosticToolCatalog,
   createDocumentedCommandStopHook,
   createConfiguredWorkflowHooks,
-  createGlobPathsTool,
-  createGrepTextTool,
-  createListDirTool,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
   resolveSkillRootsForRuntime,
@@ -294,15 +291,11 @@ export async function createConfiguredCliTools(
   env: Record<string, string | undefined>,
 ) {
   const cfg = await loadHostConfig(workspaceRoot, env);
-  return applyToolConfig(
-    [
-      createReadFileTool(),
-      createGlobPathsTool(workspaceRoot),
-      createGrepTextTool(workspaceRoot),
-      createListDirTool(workspaceRoot),
-      createAppendFileTool(),
-    ],
-    cfg.config.tools,
+  return catalogToolDefinitions(
+    createCliDiagnosticToolCatalog({
+      workspaceRoot,
+      toolConfig: cfg.config.tools,
+    }),
   );
 }
 
@@ -380,6 +373,8 @@ function createDeterministicModel(input: {
   goal: string;
 }): ModelAdapter {
   let modelCalls = 0;
+  const heading = "Sparkwright CLI Golden Path";
+  const body = `This section was added by Sparkwright while running the goal: "${input.goal}".`;
 
   return {
     async complete(modelInput) {
@@ -398,17 +393,54 @@ function createDeterministicModel(input: {
       }
 
       if (modelCalls === 2 && input.shouldWrite) {
+        if (hasDeterministicSection(modelInput.events, heading)) {
+          return {
+            message: formatDeterministicWriteSummary(
+              input.targetPath,
+              modelInput.events,
+            ),
+          };
+        }
+
+        return {
+          message: `Reading anchors for ${input.targetPath}.`,
+          toolCalls: [
+            {
+              toolName: "read_anchored_text",
+              arguments: { path: input.targetPath },
+            },
+          ],
+        };
+      }
+
+      if (modelCalls === 3 && input.shouldWrite) {
+        const lastLine = latestAnchoredLine(modelInput.events);
         return {
           message: `Appending a golden-path section to ${input.targetPath}.`,
           toolCalls: [
-            {
-              toolName: "append_file",
-              arguments: {
-                path: input.targetPath,
-                heading: "Sparkwright CLI Golden Path",
-                body: `This section was added by Sparkwright while running the goal: "${input.goal}".`,
-              },
-            },
+            lastLine
+              ? {
+                  toolName: "edit_anchored_text",
+                  arguments: {
+                    path: input.targetPath,
+                    edits: [
+                      {
+                        op: "append",
+                        anchor: lastLine.anchor,
+                        lines: ["", `## ${heading}`, "", body],
+                      },
+                    ],
+                    reason: `Append ${heading}`,
+                  },
+                }
+              : {
+                  toolName: "apply_patch",
+                  arguments: {
+                    path: input.targetPath,
+                    patch: `@@ -0,0 +1,3 @@\n+## ${heading}\n+\n+${body}\n`,
+                    reason: `Append ${heading}`,
+                  },
+                },
           ],
         };
       }
@@ -451,6 +483,9 @@ function formatDeterministicWriteSummary(
   if (events.some((event) => event.type === "workspace.write.skipped")) {
     return `No workspace change was needed for ${targetPath}; the deterministic section was already present.`;
   }
+  if (hasDeterministicSection(events, "Sparkwright CLI Golden Path")) {
+    return `No workspace change was needed for ${targetPath}; the deterministic section was already present.`;
+  }
   return `Completed approval-gated write path for ${targetPath}.`;
 }
 
@@ -464,109 +499,35 @@ function formatToolFailure(event: SparkwrightEvent): string {
   return message ?? code ?? "tool failed";
 }
 
-function createReadFileTool() {
-  return defineTool({
-    name: "read_file",
-    description: "Read a UTF-8 text file from the workspace.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-      },
-      required: ["path"],
-    },
-    policy: { risk: "safe" },
-    async execute(args: unknown, ctx) {
-      if (!ctx.workspace) throw new Error("Workspace is not configured.");
-      const input = args as { path: string };
-      const content = await ctx.workspace.readText(input.path);
-      const anchored = await ctx.workspace.readAnchoredText(input.path);
-      return {
-        path: input.path,
-        content,
-        anchoredContent: anchored.content,
-        anchors: anchored.lines.map((line) => ({
-          line: line.line,
-          anchor: line.anchor,
-        })),
-      };
-    },
-  });
+function latestToolOutput<T>(
+  events: SparkwrightEvent[],
+  toolName: string,
+): T | undefined {
+  for (const event of [...events].reverse()) {
+    if (event.type !== "tool.completed") continue;
+    const payload = event.payload as {
+      toolName?: string;
+      output?: unknown;
+    };
+    if (payload.toolName === toolName) return payload.output as T;
+  }
+  return undefined;
 }
 
-function createAppendFileTool() {
-  return defineTool({
-    name: "append_file",
-    description:
-      "Append a short generated section to a UTF-8 text file in the workspace.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        heading: { type: "string" },
-        body: { type: "string" },
-      },
-      required: ["path", "heading", "body"],
-    },
-    policy: { risk: "safe" },
-    async execute(args: unknown, ctx) {
-      if (!ctx.workspace) throw new Error("Workspace is not configured.");
-      const input = args as { path: string; heading: string; body: string };
-      const current = await ctx.workspace.readText(input.path);
-      const section = `\n\n## ${input.heading}\n\n${input.body}\n`;
-      if (current.includes(`## ${input.heading}`)) {
-        ctx.reportWorkspaceWriteSkipped?.({
-          path: input.path,
-          reason: `Heading "${input.heading}" already present`,
-        });
-        return {
-          path: input.path,
-          changed: false,
-        };
-      }
+function hasDeterministicSection(
+  events: SparkwrightEvent[],
+  heading: string,
+): boolean {
+  const read = latestToolOutput<{ content?: string }>(events, "read_file");
+  return typeof read?.content === "string" && read.content.includes(heading);
+}
 
-      const anchored = await ctx.workspace.readAnchoredText(input.path);
-      const lastLine = anchored.lines.at(-1);
-      if (!lastLine) {
-        const write = await ctx.workspace.writeText(
-          input.path,
-          section.trimStart(),
-          {
-            reason: `Append ${input.heading}`,
-          },
-        );
-        if (write?.diffArtifact) ctx.reportToolArtifact?.(write.diffArtifact);
-        return {
-          path: input.path,
-          changed: true,
-          diffArtifactId: write?.diffArtifactId,
-          writeSummary: write?.summary,
-        };
-      }
-
-      const result = await ctx.workspace.editAnchoredText(
-        input.path,
-        [
-          {
-            op: "append",
-            anchor: lastLine.anchor,
-            lines: ["", `## ${input.heading}`, "", input.body],
-          },
-        ],
-        {
-          reason: `Append ${input.heading}`,
-        },
-      );
-      if (result.write?.diffArtifact) {
-        ctx.reportToolArtifact?.(result.write.diffArtifact);
-      }
-      return {
-        path: input.path,
-        changed: result.content !== current,
-        diffArtifactId: result.write?.diffArtifactId,
-        writeSummary: result.write?.summary,
-        finalLines: result.write?.summary.lastLines,
-      };
-    },
-  });
+function latestAnchoredLine(
+  events: SparkwrightEvent[],
+): { anchor: string } | undefined {
+  const anchored = latestToolOutput<{
+    lines?: Array<{ anchor?: string }>;
+  }>(events, "read_anchored_text");
+  const last = anchored?.lines?.at(-1);
+  return typeof last?.anchor === "string" ? { anchor: last.anchor } : undefined;
 }

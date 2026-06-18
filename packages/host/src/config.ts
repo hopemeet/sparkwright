@@ -1657,7 +1657,7 @@ function validateApprovals(
   return out;
 }
 
-const VALID_TRACE_LEVELS: TraceLevel[] = ["minimal", "standard", "debug"];
+const VALID_TRACE_LEVELS: TraceLevel[] = ["standard", "debug"];
 
 function validateShellConfig(
   raw: unknown,
@@ -3183,7 +3183,7 @@ function validateShared(
       errors.push({
         file: filePath,
         field: "traceLevel",
-        message: `must be one of ${VALID_TRACE_LEVELS.join(" | ")}`,
+        message: "must be one of standard | debug",
       });
     }
   }

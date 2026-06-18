@@ -302,7 +302,7 @@ trigger, runId, source?, stdout?, stderr?, output?, data? }`.
 
 The extension packages may emit experimental edge lifecycle events through the
 generic event envelope. Payloads remain intentionally small. Reproducibility and
-audit facts should live in event `metadata` so minimal trace filtering can keep
+audit facts should live in event `metadata` so standard trace filtering can keep
 the useful evidence.
 
 Common metadata:
@@ -935,7 +935,6 @@ Current local run store layout:
 
 Trace levels:
 
-- `minimal`: keep event structure and compact payloads to identifiers, statuses, and counts
 - `standard`: keep useful summaries while truncating large values
 - `debug`: preserve full event payloads
 

@@ -21,11 +21,24 @@ export type {
   RunConfiguredDelegateResult,
 } from "./delegate-runner.js";
 export {
+  DEFAULT_DEFERRED_TOOLS,
   applyToolConfig,
   createGlobPathsTool,
   createGrepTextTool,
   createListDirTool,
 } from "./tools.js";
+export {
+  catalogEntryOrigin,
+  catalogToolDefinitions,
+  createCliDiagnosticToolCatalog,
+  createMainHostToolCatalog,
+  createReadOnlyChildToolCatalog,
+} from "./tool-catalog.js";
+export type {
+  HostToolCatalogEntry,
+  HostToolCatalogExposure,
+  HostToolCatalogSource,
+} from "./tool-catalog.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
 export { createVerificationWorkflowHooks } from "./verification.js";
@@ -190,6 +203,7 @@ export type {
   SharedConfigSourceMap,
   SharedConfigError,
   LoadedSharedConfig,
+  ApprovalDefaults,
   CapabilityConfig,
   CapabilitySkillEvolutionConfig,
   CapabilitySkillEvolutionMode,

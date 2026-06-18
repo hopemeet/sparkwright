@@ -19,7 +19,7 @@ import { StreamingMessage } from "./components/streaming-message.js";
 import { ToastView } from "./components/toast.js";
 import { loadSessionLabels, type SessionLabels } from "./lib/session-labels.js";
 import { ThemeProvider } from "./lib/theme-context.js";
-import { resolveTheme, THEMES, type Theme } from "./lib/theme.js";
+import { resolveTheme, type Theme } from "./lib/theme.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
 import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
@@ -30,8 +30,6 @@ import { QueuedMessages } from "./components/queued-messages.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
-import { copyToClipboard } from "./lib/clipboard.js";
-import { lastAssistantMessage } from "./lib/transcript.js";
 import { AttentionManager } from "./lib/attention.js";
 import { CommandRegistry } from "./lib/commands.js";
 import {
@@ -94,6 +92,9 @@ export interface CliOverrides {
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   shouldWrite?: boolean;
+  approveAll?: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   modelName?: string;
   sessionId?: string;
 }
@@ -109,6 +110,9 @@ interface Resolved {
   permissionMode: PermissionMode;
   traceLevel: TraceLevel;
   shouldWrite: boolean;
+  approveAll: boolean;
+  approveEdits: boolean;
+  approveShellSafe: boolean;
   /** Model reference "provider/model", or the reserved "deterministic". */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -150,6 +154,11 @@ function resolveConfig(
   else if (!loaded.config.permissionMode) sources.permissionMode = "default";
   const traceLevel: TraceLevel = cli.traceLevel ?? "standard";
   const shouldWrite = cli.shouldWrite === true;
+  const approveAll = cli.approveAll ?? loaded.config.approvals?.all ?? false;
+  const approveEdits =
+    cli.approveEdits ?? loaded.config.approvals?.edits ?? false;
+  const approveShellSafe =
+    cli.approveShellSafe ?? loaded.config.approvals?.shellSafe ?? false;
 
   if (!loaded.config.theme) sources.theme = "default";
 
@@ -159,6 +168,9 @@ function resolveConfig(
     permissionMode,
     traceLevel,
     shouldWrite,
+    approveAll,
+    approveEdits,
+    approveShellSafe,
     modelName,
     modelNameSource,
     providers: loaded.config.providers,
@@ -237,6 +249,9 @@ function AppReady(
         permissionMode: resolved.permissionMode,
         traceLevel: resolved.traceLevel,
         shouldWrite: resolved.shouldWrite,
+        approveAll: resolved.approveAll,
+        approveEdits: resolved.approveEdits,
+        approveShellSafe: resolved.approveShellSafe,
         modelName: resolved.modelName,
         modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
@@ -297,15 +312,12 @@ function AppReady(
   // Ctrl+C cancels an active run; when idle it exits immediately. This keeps
   // the TUI scriptable under PTYs and matches the footer's "ctrl+c quit" hint.
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
-  // Runtime theme override from /theme; falls back to the configured theme.
-  const [themeOverride, setThemeOverride] = useState<Theme | null>(null);
-  const theme = themeOverride ?? resolved.theme;
+  const theme = resolved.theme;
   // Todo band: collapsed by default (active items only); ctrl+o expands to show
   // completed items too.
   const [todoExpanded, setTodoExpanded] = useState(false);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
-  const [stashList, setStashList] = useState<StashFile["list"]>([]);
   const inputHandleRef = useRef<InputBoxHandle | null>(null);
   // Runtime model-ref override from /model; falls back to config.
   const [modelOverride, setModelOverride] = useState<{
@@ -342,7 +354,6 @@ function AppReady(
     void loadStash(resolved.workspaceRoot).then((s) => {
       if (cancelled) return;
       stashRef.current = s;
-      setStashList(s.list);
     });
     return () => {
       cancelled = true;
@@ -541,6 +552,17 @@ function AppReady(
     if (r.traceLevel !== resolved.traceLevel) {
       controller.updateTraceLevel(r.traceLevel);
     }
+    if (
+      r.approveAll !== resolved.approveAll ||
+      r.approveEdits !== resolved.approveEdits ||
+      r.approveShellSafe !== resolved.approveShellSafe
+    ) {
+      controller.updateApprovalDefaults({
+        approveAll: r.approveAll,
+        approveEdits: r.approveEdits,
+        approveShellSafe: r.approveShellSafe,
+      });
+    }
     props.setResolved(r);
     // Re-discover file-authored commands so newly added .sparkwright/command/*.md
     // files appear without a restart (mirrors config reload).
@@ -576,16 +598,6 @@ function AppReady(
     setLoadingDiagnosticsFor(null);
     setSessionList(sessions);
     layers.push("sessions");
-  }
-
-  async function openQuickSwitch(): Promise<void> {
-    // Re-fetch every time — sessions list isn't large and may have grown
-    // since the user last looked.
-    const sessions = await controller.listSessions();
-    setSessionDiagnostics(null);
-    setLoadingDiagnosticsFor(null);
-    setSessionList(sessions);
-    layers.push("sessions", { quick: true });
   }
 
   async function inspectSession(id: string): Promise<void> {
@@ -906,7 +918,7 @@ function AppReady(
   }
 
   // Build the command registry once per controller. App-level handlers are
-  // closed over here; both the palette and `/foo` input share this list.
+  // closed over here and invoked later via slash input.
   const registry = useMemo(() => {
     const reg = new CommandRegistry();
     reg.register({
@@ -916,15 +928,6 @@ function AppReady(
       category: "view",
       hint: formatBinding(resolved.bindings["help.open"]) || undefined,
       run: () => layers.toggle("help"),
-    });
-    reg.register({
-      name: "palette",
-      title: "Open command palette",
-      description: "Search every available command.",
-      category: "view",
-      hint: formatBinding(resolved.bindings["palette.open"]) || undefined,
-      aliases: ["p", "cmd"],
-      run: () => layers.toggle("palette"),
     });
     reg.register({
       name: "clear",
@@ -1004,14 +1007,6 @@ function AppReady(
       description: "List, inspect diagnostics, resume.",
       category: "session",
       run: () => void openSessionList(),
-    });
-    reg.register({
-      name: "quick",
-      title: "Quick switch session",
-      description: "Jump to one of the 9 most recent sessions by number.",
-      category: "session",
-      hint: formatBinding(resolved.bindings["quick.switch"]) || undefined,
-      run: () => void openQuickSwitch(),
     });
     reg.register({
       name: "events",
@@ -1129,37 +1124,6 @@ function AppReady(
       run: () => void openCapabilities("cron"),
     });
     reg.register({
-      name: "reload",
-      title: "Reload config files",
-      description: "Re-read sparkwright.tui.json now.",
-      category: "config",
-      run: () => void reloadConfig(true),
-    });
-    reg.register({
-      name: "theme",
-      title: "Cycle theme",
-      description: "Switch between dark / light / mono (session-only).",
-      category: "config",
-      run: () => {
-        const ids = Object.keys(THEMES);
-        const currentId = (themeOverride ?? resolved.theme).id;
-        const nextId = ids[(ids.indexOf(currentId) + 1) % ids.length];
-        setThemeOverride(THEMES[nextId]);
-        toasts.push({
-          variant: "info",
-          title: "theme",
-          message: `${nextId} (set "theme" in config to persist)`,
-        });
-      },
-    });
-    reg.register({
-      name: "stash",
-      title: "Browse stashed drafts",
-      description: "Restore an unsubmitted draft snapshot into the input.",
-      category: "view",
-      run: () => layers.toggle("stash"),
-    });
-    reg.register({
       name: "model",
       title: "Switch model",
       description: "Change the model reference for the next run.",
@@ -1172,69 +1136,6 @@ function AppReady(
       description: "Branch a new session from a chosen point in history.",
       category: "session",
       run: () => layers.toggle("fork"),
-    });
-    reg.register({
-      name: "trace",
-      title: "Dump trace to disk",
-      description: "Write the in-memory event log to .sparkwright/tui-traces.",
-      category: "system",
-      run: () => {
-        controller
-          .dumpTrace()
-          .then((path) =>
-            toasts.push({
-              variant: "success",
-              title: "trace written",
-              message: path,
-            }),
-          )
-          .catch((err) =>
-            toasts.push({
-              variant: "error",
-              title: "trace failed",
-              message: String(err),
-            }),
-          );
-      },
-    });
-    reg.register({
-      name: "copy",
-      title: "Copy last answer",
-      description:
-        "Copy the most recent assistant message to the system clipboard (OSC 52).",
-      category: "view",
-      aliases: ["yank"],
-      run: () => {
-        // Read the live snapshot, not the closed-over `state` — the registry
-        // is only rebuilt on status changes, so `state.events` would be stale
-        // mid-run.
-        const message = lastAssistantMessage(store.getSnapshot().events);
-        if (!message) {
-          toasts.push({ variant: "warning", message: "no answer to copy yet" });
-          return;
-        }
-        const ok = copyToClipboard(message);
-        toasts.push(
-          ok
-            ? {
-                variant: "success",
-                title: "copied",
-                message: `${message.length} chars to clipboard`,
-              }
-            : {
-                variant: "warning",
-                message: "clipboard unavailable (not a TTY)",
-              },
-        );
-      },
-    });
-    reg.register({
-      name: "search",
-      title: "Search transcript",
-      description: "Find text in the conversation; enter copies the match.",
-      category: "view",
-      aliases: ["find"],
-      run: () => layers.toggle("search"),
     });
     reg.register({
       name: "export",
@@ -1272,18 +1173,6 @@ function AppReady(
       },
     });
     reg.register({
-      name: "cancel",
-      title: "Cancel running goal",
-      description: "Sends a cancel to the host.",
-      category: "system",
-      hint: formatBinding(resolved.bindings["cancel.run"]) || undefined,
-      available: () => state.status === "running",
-      run: () => {
-        if (controller.cancel())
-          toasts.push({ variant: "info", message: "cancelling…" });
-      },
-    });
-    reg.register({
       name: "quit",
       title: "Quit",
       description: "Exit the TUI.",
@@ -1301,18 +1190,16 @@ function AppReady(
       if (!reg.resolve(cmd.name)) reg.register(cmd);
     }
     return reg;
-    // Re-build when state.status changes so `available()` updates the
-    // palette grey-out, and when bindings change so hint strings refresh.
+    // Re-build when keybindings change so hint strings refresh, when the
+    // current session id changes so /rename targets the right session, and when
+    // project-authored commands are reloaded.
   }, [
     layers,
-    store,
     controller,
     toasts,
-    state.status,
+    state.sessionId,
     resolved.bindings,
     resolved.workspaceRoot,
-    resolved.theme,
-    themeOverride,
     projectCommands,
   ]);
 
@@ -1362,8 +1249,8 @@ function AppReady(
 
   // Layer-aware hotkeys: when a layer owns input, the App-level hotkeys
   // step back so they don't double-handle keys. Each binding is resolved
-  // through `resolved.bindings`, so user overrides in sparkwright.tui.json
-  // take effect on /reload.
+  // through `resolved.bindings`, so user config overrides take effect after
+  // the config watcher reloads.
   function Hotkeys(): null {
     const b = resolved.bindings;
     useInput((input, key) => {
@@ -1374,23 +1261,9 @@ function AppReady(
       }
       if (
         top?.name !== "approval" &&
-        b["palette.open"].some((c) => chordMatches(c, key, input))
-      ) {
-        layers.toggle("palette");
-        return;
-      }
-      if (
-        top?.name !== "approval" &&
         b["events.open"].some((c) => chordMatches(c, key, input))
       ) {
         layers.toggle("events");
-        return;
-      }
-      if (
-        top?.name !== "approval" &&
-        b["quick.switch"].some((c) => chordMatches(c, key, input))
-      ) {
-        void openQuickSwitch();
         return;
       }
       if (
@@ -1443,21 +1316,6 @@ function AppReady(
     if (topLayer.name === "session-rename") setRenameTarget(null);
   };
 
-  // Copy a transcript message picked in the search dialog, then close it.
-  const handleTranscriptCopy = (text: string): void => {
-    const ok = copyToClipboard(text);
-    layers.pop("search");
-    toasts.push(
-      ok
-        ? {
-            variant: "success",
-            title: "copied",
-            message: `${text.length} chars to clipboard`,
-          }
-        : { variant: "warning", message: "clipboard unavailable (not a TTY)" },
-    );
-  };
-
   if (topLayer?.name === "events") {
     return (
       <ThemeProvider theme={theme}>
@@ -1470,7 +1328,6 @@ function AppReady(
             events={state.events}
             labels={labels}
             renameTarget={renameTarget}
-            stashList={stashList}
             effModel={effModel}
             modelCandidates={modelCandidates(resolved.providers)}
             sessionDiagnostics={sessionDiagnostics}
@@ -1479,10 +1336,6 @@ function AppReady(
             loadingCapabilities={loadingCapabilities}
             skillReviewSnapshot={skillReviewSnapshot}
             loadingSkillReview={loadingSkillReview}
-            onPickStash={(text) => {
-              inputHandleRef.current?.setValue(text);
-              layers.pop("stash");
-            }}
             onCommitModel={(modelName) => {
               const nextModelName = modelName.trim() || "deterministic";
               setModelOverride({ modelName: nextModelName });
@@ -1536,7 +1389,6 @@ function AppReady(
               setRenameTarget(null);
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
-            onSearchCopy={handleTranscriptCopy}
             onCreateCapability={(draft) => void handleCreateCapability(draft)}
             onCreateSkillProposal={handleCreateSkillProposal}
             onUpdateSkillProposal={handleUpdateSkillProposal}
@@ -1670,7 +1522,6 @@ function AppReady(
             events={state.events}
             labels={labels}
             renameTarget={renameTarget}
-            stashList={stashList}
             effModel={effModel}
             modelCandidates={modelCandidates(resolved.providers)}
             sessionDiagnostics={sessionDiagnostics}
@@ -1679,10 +1530,6 @@ function AppReady(
             loadingCapabilities={loadingCapabilities}
             skillReviewSnapshot={skillReviewSnapshot}
             loadingSkillReview={loadingSkillReview}
-            onPickStash={(text) => {
-              inputHandleRef.current?.setValue(text);
-              layers.pop("stash");
-            }}
             onCommitModel={(modelName) => {
               const nextModelName = modelName.trim() || "deterministic";
               setModelOverride({ modelName: nextModelName });
@@ -1740,7 +1587,6 @@ function AppReady(
               setRenameTarget(null);
             }}
             onApprovalDecision={(d) => controller.resolveApproval(d)}
-            onSearchCopy={handleTranscriptCopy}
             onCreateCapability={(draft) => void handleCreateCapability(draft)}
             onCreateSkillProposal={handleCreateSkillProposal}
             onUpdateSkillProposal={handleUpdateSkillProposal}
@@ -1779,7 +1625,6 @@ function AppReady(
             stashRef={stashRef}
             onStashChange={(next) => {
               stashRef.current = next;
-              setStashList(next.list);
             }}
             handleRef={inputHandleRef}
           />
@@ -1807,9 +1652,7 @@ export function inputFooterLines(bindings: Bindings, width = 100): string[] {
   const items = ["enter run", "\\↵ newline", "/ commands", "@ files"];
   for (const [name, label] of [
     ["history.search", "search"],
-    ["palette.open", "palette"],
     ["events.open", "inspector"],
-    ["quick.switch", "switch"],
     ["cancel.run", "cancel"],
     ["quit.app", "quit"],
   ] as const) {

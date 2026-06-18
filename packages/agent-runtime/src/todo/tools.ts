@@ -12,7 +12,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { defineTool, type ToolDefinition } from "@sparkwright/core";
-import { serializeTodoMarkdown, type TodoEntry } from "./markdown.js";
+import {
+  itemsOnly,
+  parseTodoMarkdown,
+  serializeTodoMarkdown,
+  type TodoEntry,
+} from "./markdown.js";
 import type {
   TodoEvidence,
   TodoItem,
@@ -199,12 +204,14 @@ export function createTodoWriteTool(
       if (options.maxWritesPerRun !== undefined) {
         const nextCount = (writesByRun.get(runId) ?? 0) + 1;
         if (nextCount > options.maxWritesPerRun) {
+          const currentItems = itemsOnly(parseTodoMarkdown(current));
           return {
-            ...echo,
+            ...renderWriteEcho(currentItems),
             saved: false,
+            rejectedTodos: echo.todos,
             hint:
               `todo_write changed too many times in this run (limit: ${options.maxWritesPerRun}). ` +
-              "Do not update the ledger again. Take a concrete non-todo action on the current task, or give your final answer with the current status.",
+              "The proposed update was not saved; todos reflects the current ledger. Do not update the ledger again. Take a concrete non-todo action on the current task, or give your final answer with the current status.",
           };
         }
         writesByRun.set(runId, nextCount);
@@ -228,7 +235,8 @@ export function createTodoWriteTool(
  */
 export interface TodoWriteResult {
   /**
-   * Whether this write changed the list on disk (false = byte-identical no-op).
+   * Whether this write changed the list on disk (false = byte-identical no-op
+   * or rejected proposed update).
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
@@ -246,12 +254,16 @@ export interface TodoWriteResult {
    */
   remaining: number;
   /**
-   * The resulting list, lean (title + status) so the model re-emits lean items.
+   * The current resulting list, lean (title + status) so the model re-emits lean
+   * items. When saved is false because a proposed update was rejected, this
+   * remains the committed ledger rather than the rejected proposal.
    *
    * @reserved Public tool-result field consumed by the model reading the
    * serialized todo_write result, not by an in-process TS reader.
    */
   todos: { title: string; status: TodoStatus }[];
+  /** Rejected proposed list, present only when saved:false rejected a change. */
+  rejectedTodos?: { title: string; status: TodoStatus }[];
   /** Anti-churn nudge, present only after repeated no-op writes. */
   hint?: string;
 }

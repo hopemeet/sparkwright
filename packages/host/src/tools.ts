@@ -745,10 +745,13 @@ export function applyToolConfig<T extends ToolDefinition>(
     }) as T[];
 }
 
-const DEFAULT_DEFERRED_TOOLS = [
+export const DEFAULT_DEFERRED_TOOLS = [
   "todo_write",
   "read_anchored_text",
   "edit_anchored_text",
+  "create_skill",
+  "create_agent",
+  "cron",
 ];
 
 function applyDefaultDefer<T extends ToolDefinition>(

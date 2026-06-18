@@ -1,5 +1,12 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  createApprovalPolicy,
+  resolveApprovalByPolicy,
+  type ApprovalId,
+  type ApprovalPolicyOptions,
+  type RunId,
+} from "@sparkwright/core";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
   createHostClientRunMetadata,
@@ -25,6 +32,9 @@ export interface RunControllerOptions {
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   shouldWrite?: boolean;
+  approveAll?: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   /** Model reference shown by the TUI. Only request-sourced models are sent to the host. */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -51,9 +61,8 @@ const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
  * lifetime share the same sessionId so the host accumulates events on disk
  * under `<workspace>/.sparkwright/sessions/<id>/`.
  *
- * /trace dumps the SDK's in-memory event log for the current run; the
- * host's on-disk trace is the canonical record but copying it via stdio
- * isn't worth a protocol round-trip just yet.
+ * Host on-disk session traces are the canonical record; this controller keeps
+ * only the live event stream needed to render and export the current session.
  */
 export class RunController {
   private opts: RunControllerOptions;
@@ -186,6 +195,16 @@ export class RunController {
 
   updateTraceLevel(traceLevel: TraceLevel): void {
     this.opts.traceLevel = traceLevel;
+  }
+
+  updateApprovalDefaults(input: {
+    approveAll: boolean;
+    approveEdits: boolean;
+    approveShellSafe: boolean;
+  }): void {
+    this.opts.approveAll = input.approveAll;
+    this.opts.approveEdits = input.approveEdits;
+    this.opts.approveShellSafe = input.approveShellSafe;
   }
 
   isRunning(): boolean {
@@ -374,17 +393,6 @@ export class RunController {
     return path;
   }
 
-  async dumpTrace(): Promise<string> {
-    const dir = join(this.opts.workspaceRoot, ".sparkwright", "tui-traces");
-    await mkdir(dir, { recursive: true });
-    const path = join(dir, `trace-${this.sessionId}-${Date.now()}.jsonl`);
-    const body = this.currentSessionEvents
-      .map((e) => JSON.stringify(e))
-      .join("\n");
-    await writeFile(path, body + (body ? "\n" : ""), "utf8");
-    return path;
-  }
-
   /** Close the underlying client. Called on app exit. */
   shutdown(): void {
     this.client?.close();
@@ -497,7 +505,7 @@ export class RunController {
   private attachListeners(client: Client): void {
     client.on("run.event", (msg) => {
       // Pass through to the store. EventStore handles streaming chunk
-      // assembly; we keep a parallel array for /trace dump.
+      // assembly; we keep a parallel array for exports and replay checks.
       this.currentSessionEvents.push(msg.payload.event);
       // The host's SparkwrightEvent is opaque to the protocol layer
       // (`unknown`); the store's appendEvent expects the runtime shape.
@@ -512,6 +520,25 @@ export class RunController {
     client.on("approval.requested", (msg) => {
       const details = (msg.payload.details ?? {}) as Record<string, unknown>;
       const action = msg.payload.action;
+      const policyDecision = resolveApprovalByPolicy(this.approvalPolicy(), {
+        id: msg.payload.approvalId as unknown as ApprovalId,
+        runId: msg.payload.runId as unknown as RunId,
+        action,
+        summary: msg.payload.summary,
+        details,
+        createdAt: msg.timestamp,
+        status: "pending",
+      });
+      if (policyDecision) {
+        void client
+          .resolveApproval({
+            approvalId: msg.payload.approvalId,
+            decision: policyDecision.decision,
+            message: policyDecision.message,
+          })
+          .catch((err) => this.store.setError(formatError(err)));
+        return;
+      }
       const kind:
         | "workspace.write"
         | "tool.execute"
@@ -599,6 +626,16 @@ export class RunController {
 
     // host.log events go unhandled in the TUI today — a future log panel
     // can subscribe via client.on('host.log', …).
+  }
+
+  private approvalPolicy(): ReturnType<typeof createApprovalPolicy> {
+    const input: ApprovalPolicyOptions = {
+      approveAll: this.opts.approveAll,
+      approveEdits: this.opts.approveEdits,
+      approveShellSafe: this.opts.approveShellSafe,
+      permissionMode: this.opts.permissionMode,
+    };
+    return createApprovalPolicy(input);
   }
 }
 

@@ -104,7 +104,13 @@ import {
 } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
-import { createMainHostTools, createReadOnlyChildTools } from "./toolset.js";
+import { createReadOnlyChildTools } from "./toolset.js";
+import {
+  catalogEntryOrigin,
+  catalogToolDefinitions,
+  createMainHostToolCatalog,
+  type HostToolCatalogEntry,
+} from "./tool-catalog.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -306,6 +312,7 @@ interface PreparedHostRunEnvironment {
   preparedSkills: PreparedSkills | null;
   preparedMcp: PreparedMcp | null;
   mainAgent: AgentProfile;
+  toolCatalog: HostToolCatalogEntry[];
   tools: ToolDefinition[];
   workflowHooks: WorkflowHook[];
   sessionStore: FileSessionStore;
@@ -764,7 +771,7 @@ export class HostRuntime {
       parentRunPolicy,
       childRunStoreFactory,
     });
-    const tools = createMainHostTools({
+    const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
       skillRoots,
       toolConfig,
@@ -778,6 +785,7 @@ export class HostRuntime {
       shell: shellConfig,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
+    const tools = catalogToolDefinitions(toolCatalog);
     const workflowHooks = [
       ...createConfiguredWorkflowHooks({
         hooks: hookConfig?.workflow,
@@ -800,7 +808,7 @@ export class HostRuntime {
       }),
     ];
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
-      tools,
+      toolCatalog,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
       loadedSkills: preparedSkills?.loadedSkills ?? [],
       mcpStatuses: preparedMcp?.statuses ?? {},
@@ -849,6 +857,7 @@ export class HostRuntime {
           }
         : {}),
     };
+    runStoreMetadata.traceLevel = traceLevel;
 
     return {
       ok: true,
@@ -864,6 +873,7 @@ export class HostRuntime {
         preparedSkills,
         preparedMcp,
         mainAgent,
+        toolCatalog,
         tools,
         workflowHooks,
         sessionStore,
@@ -1820,26 +1830,27 @@ export class HostRuntime {
         parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
       });
+      const toolCatalog = createMainHostToolCatalog({
+        workspaceRoot: this.opts.workspaceRoot,
+        skillRoots,
+        toolConfig,
+        taskManager: this.taskManager,
+        getParentRunId: () => "run_capability_snapshot" as RunId,
+        todoPath: join(
+          this.opts.sessionRootDir ??
+            defaultSessionRootDir(this.opts.workspaceRoot),
+          "capability_snapshot",
+          "todo.md",
+        ),
+        preparedSkills,
+        preparedMcp,
+        delegateTools,
+        dynamicSpawnTool,
+        shell: shellConfig,
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      });
       return buildCapabilitySnapshot({
-        tools: createMainHostTools({
-          workspaceRoot: this.opts.workspaceRoot,
-          skillRoots,
-          toolConfig,
-          taskManager: this.taskManager,
-          getParentRunId: () => "run_capability_snapshot" as RunId,
-          todoPath: join(
-            this.opts.sessionRootDir ??
-              defaultSessionRootDir(this.opts.workspaceRoot),
-            "capability_snapshot",
-            "todo.md",
-          ),
-          preparedSkills,
-          preparedMcp,
-          delegateTools,
-          dynamicSpawnTool,
-          shell: shellConfig,
-          configPaths: loadedConfig.attempted.map((entry) => entry.path),
-        }),
+        toolCatalog,
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
         mcpStatuses:
@@ -2290,7 +2301,7 @@ export class HostRuntime {
 }
 
 function buildCapabilitySnapshot(input: {
-  tools: ToolDefinition[];
+  toolCatalog: HostToolCatalogEntry[];
   indexedSkills: SkillIndexEntry[];
   loadedSkills: LoadedSkill[];
   mcpStatuses?: Record<string, McpStatus | { status: "configured" }>;
@@ -2301,10 +2312,13 @@ function buildCapabilitySnapshot(input: {
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
-    tools: input.tools.map((tool) => ({
-      name: tool.name,
-      origin: formatToolOrigin(tool.governance?.origin),
-      risk: tool.policy?.risk,
+    tools: input.toolCatalog.map((entry) => ({
+      name: entry.definition.name,
+      origin:
+        formatToolOrigin(entry.definition.governance?.origin) ??
+        catalogEntryOrigin(entry),
+      risk: entry.definition.policy?.risk,
+      ...(entry.definition.deferLoading === true ? { deferred: true } : {}),
     })),
     skills: {
       indexed: input.indexedSkills.map((skill) => ({
@@ -2791,10 +2805,10 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Supported: read_file, glob, grep. Defaults to all three. Use grep to find a symbol by name (glob only matches paths, not contents).",
+            "Optional subset of read-only tools to expose. Supported: read_file, glob, grep, list_dir. Defaults to all four. Use grep to find a symbol by name (glob only matches paths, not contents).",
           items: {
             type: "string",
-            enum: ["read_file", "glob", "grep"],
+            enum: ["read_file", "glob", "grep", "list_dir"],
           },
         },
         maxSteps: {
@@ -2832,11 +2846,12 @@ export function createDynamicSpawnAgentTool(input: {
       }
 
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set(["read_file", "glob", "grep"]);
+      const supportedTools = new Set(["read_file", "glob", "grep", "list_dir"]);
       const requestedTools = parsed.allowedTools ?? [
         "read_file",
         "glob",
         "grep",
+        "list_dir",
       ];
       const availableTools = new Map(
         input.childTools.map((tool) => [tool.name, tool]),

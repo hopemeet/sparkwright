@@ -246,6 +246,7 @@ Useful diagnostics:
 
 ```bash
 sparkwright trace summary <trace.jsonl> --format text
+sparkwright trace report <trace.jsonl> --format text
 sparkwright trace verify <trace.jsonl> --format text
 sparkwright session check <session-id> --workspace . --format text
 ```

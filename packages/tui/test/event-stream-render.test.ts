@@ -222,6 +222,35 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"command"');
   });
 
+  it("renders common read/search tool requests as short previews", async () => {
+    const events = [
+      ev("tool.requested", 1, {
+        toolName: "list_dir",
+        arguments: {
+          path: ".",
+          recursive: true,
+          includeHidden: false,
+          maxEntries: 200,
+        },
+      }),
+      ev("tool.requested", 2, {
+        toolName: "read_file",
+        arguments: { path: "README.md", offset: 1, limit: 20 },
+      }),
+      ev("tool.requested", 3, {
+        toolName: "glob",
+        arguments: { patterns: ["packages/*/package.json"] },
+      }),
+    ];
+    const text = await renderToText(stream(events), 100);
+    expect(text).toContain("⚙ list_dir  . recursive");
+    expect(text).toContain("⚙ read_file  README.md:1 +20");
+    expect(text).toContain("⚙ glob  packages/*/package.json");
+    expect(text).not.toContain('"recursive"');
+    expect(text).not.toContain('"maxEntries"');
+    expect(text).not.toContain('"patterns"');
+  });
+
   it("renders capability mutations with action and compact path", async () => {
     const events = [
       ev("capability.mutation.completed", 1, {

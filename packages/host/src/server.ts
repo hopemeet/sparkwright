@@ -297,11 +297,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "dont_ask",
           "bypass_permissions",
         ]) ??
-        optionalEnum(req.payload, "traceLevel", [
-          "minimal",
-          "standard",
-          "debug",
-        ]) ??
+        optionalEnum(req.payload, "traceLevel", ["standard", "debug"]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.resume":
@@ -334,11 +330,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "dont_ask",
           "bypass_permissions",
         ]) ??
-        optionalEnum(req.payload, "traceLevel", [
-          "minimal",
-          "standard",
-          "debug",
-        ]) ??
+        optionalEnum(req.payload, "traceLevel", ["standard", "debug"]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.inject_message":

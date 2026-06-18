@@ -54,7 +54,7 @@ Read-only trace smoke test:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal \
+  --trace-level standard \
   --model deterministic
 ```
 
@@ -275,6 +275,7 @@ Use trace commands to inspect what happened:
 npm exec sparkwright -- trace summary examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --format text
 npm exec sparkwright -- trace events examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --type tool.failed --limit 20 --jsonl
 npm exec sparkwright -- trace timeline examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --format text
+npm exec sparkwright -- trace report examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --format text
 ```
 
 Use session commands for integrity checks and continuation:
@@ -287,7 +288,6 @@ npm exec sparkwright -- session resume <session-id> "continue the investigation"
 
 Trace levels are:
 
-- `minimal`: lifecycle and terminal facts.
 - `standard`: useful debugging detail for normal runs.
 - `debug`: deeper event payloads for development.
 

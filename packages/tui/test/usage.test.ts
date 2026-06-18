@@ -136,3 +136,122 @@ describe("EventStore reasoning accumulation", () => {
     expect(store.getSnapshot().streamingText).toBe("");
   });
 });
+
+describe("EventStore todo ledger projection", () => {
+  it("commits a todo proposal only after todo_write completes successfully", () => {
+    const store = new EventStore();
+    store.appendEvent(
+      ev(
+        "tool.requested",
+        {
+          id: "call_1",
+          toolName: "todo_write",
+          arguments: {
+            items: [
+              { title: "Inspect trace", status: "in_progress" },
+              { title: "Patch UI", status: "pending" },
+            ],
+          },
+        },
+        1,
+      ),
+    );
+    expect(store.getSnapshot().todoItems).toEqual([]);
+
+    store.appendEvent(
+      ev(
+        "tool.completed",
+        {
+          toolCallId: "call_1",
+          output: { saved: true },
+        },
+        2,
+      ),
+    );
+    expect(store.getSnapshot().todoItems).toEqual([
+      { title: "Inspect trace", status: "in_progress", depth: 0 },
+      { title: "Patch UI", status: "pending", depth: 0 },
+    ]);
+  });
+
+  it("does not replace the displayed ledger when todo_write returns saved:false", () => {
+    const store = new EventStore();
+    store.appendEvent(
+      ev(
+        "tool.requested",
+        {
+          id: "call_1",
+          toolName: "todo_write",
+          arguments: {
+            items: [
+              { title: "Discover files", status: "completed" },
+              { title: "Extract learning", status: "in_progress" },
+            ],
+          },
+        },
+        1,
+      ),
+    );
+    store.appendEvent(
+      ev("tool.completed", { toolCallId: "call_1", output: { saved: true } }, 2),
+    );
+
+    store.appendEvent(
+      ev(
+        "tool.requested",
+        {
+          id: "call_2",
+          toolName: "todo_write",
+          arguments: {
+            items: [
+              { title: "Discover files", status: "in_progress" },
+              { title: "Extract learning", status: "pending" },
+            ],
+          },
+        },
+        3,
+      ),
+    );
+    store.appendEvent(
+      ev(
+        "tool.completed",
+        {
+          toolCallId: "call_2",
+          output: {
+            saved: false,
+            hint: "todo_write changed too many times in this run",
+          },
+        },
+        4,
+      ),
+    );
+
+    expect(store.getSnapshot().todoItems).toEqual([
+      { title: "Discover files", status: "completed", depth: 0 },
+      { title: "Extract learning", status: "in_progress", depth: 0 },
+    ]);
+  });
+
+  it("falls back to completed output todos when the request proposal is unavailable", () => {
+    const store = new EventStore();
+    store.appendEvent(
+      ev(
+        "tool.completed",
+        {
+          toolCallId: "call_1",
+          output: {
+            saved: true,
+            todos: {
+              type: "array",
+              preview: [{ title: "Summarize result", status: "completed" }],
+            },
+          },
+        },
+        1,
+      ),
+    );
+    expect(store.getSnapshot().todoItems).toEqual([
+      { title: "Summarize result", status: "completed", depth: 0 },
+    ]);
+  });
+});

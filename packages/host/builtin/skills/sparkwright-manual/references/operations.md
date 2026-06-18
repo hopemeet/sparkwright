@@ -5,14 +5,12 @@ recovery, and troubleshooting.
 
 ## Trace Levels
 
-- `minimal`: lifecycle and terminal facts.
 - `standard`: useful debugging detail for normal runs.
 - `debug`: deeper event payloads for development.
 
 Run with:
 
 ```bash
---trace-level minimal
 --trace-level standard
 --trace-level debug
 ```
@@ -155,7 +153,7 @@ Workspace path escaped:
 
 Trace too large or too small:
 
-- Use `--trace-level minimal|standard|debug`.
+- Use `--trace-level standard|debug`.
 
 Write proposed but not applied:
 

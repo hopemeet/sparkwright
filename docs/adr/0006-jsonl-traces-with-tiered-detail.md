@@ -20,13 +20,12 @@ A second tension is between in-process observability and durable persistence. Su
 
 ## Decision
 
-The trace format is **JSONL: one serialized `SparkwrightEvent` per line, in sequence order**, with three tiers of detail selected per run by the caller:
+The trace format is **JSONL: one serialized `SparkwrightEvent` per line, in sequence order**, with two tiers of detail selected per run by the caller:
 
-- `minimal`: execution skeleton — types, sequence numbers, identifiers, statuses, counts. Suitable for compliance logs and minimum-cost retention.
 - `standard`: normalized summaries with truncated large values. The default for demos and most production runs.
 - `debug`: full normalized payloads. Suitable for development and incident forensics.
 
-The same event envelope is used at all three levels — only payload detail varies. Redaction is a separate filter (regex-based, key + value patterns) that composes on top of any level. The default `FileRunStore` writes the filtered, redacted JSONL stream to `.sparkwright/runs/<run-id>/trace.jsonl`.
+The same event envelope is used at both levels — only payload detail varies. Redaction is a separate filter (regex-based, key + value patterns) that composes on top of any level. The default `FileRunStore` writes the filtered, redacted JSONL stream to `.sparkwright/runs/<run-id>/trace.jsonl`.
 
 In-process, `EventLog` always emits the full event to subscribers; level filtering and redaction happen at the persistence boundary (`RunStore`, `TraceSink`). This means embedders see full payloads if they want them, while disk and external sinks see filtered output.
 
@@ -36,9 +35,9 @@ Positive:
 
 - JSONL is trivially streamable: `tail -f`, `jq`, log shippers, and SDKs all consume it without a custom parser.
 - One serialized event per line means partial files (after a crash) remain readable up to the last complete line, with no recovery logic needed.
-- Tiered detail lets one kernel serve compliance, production, and development without forking the format.
+- Tiered detail lets one kernel serve production and development without forking the format.
 - Filtering at the persistence boundary keeps the kernel's emission path simple — subscribers always get the truth.
-- Redaction composes orthogonally with levels, so secrets are stripped uniformly whether the run is `minimal` or `debug`.
+- Redaction composes orthogonally with levels, so secrets are stripped uniformly whether the run is `standard` or `debug`.
 - Append-only semantics make traces a stable artifact for diffing across runs (paired with ADR 0005's deterministic golden path).
 
 Negative:

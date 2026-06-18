@@ -17,6 +17,7 @@ import {
 } from "../src/session.js";
 import {
   createSessionFileRunStoreFactory,
+  buildTraceReportJsonl,
   buildTraceTimelineJsonl,
   createTraceRedactor,
   FileRunStore,
@@ -600,7 +601,7 @@ describe("trace", () => {
     const { loadCheckpointFromRunDir, resumeRunFromCheckpoint } =
       await import("../src/index.js");
 
-    // Build a run dir from scratch with a non-terminal run.json + minimal trace.
+    // Build a run dir from scratch with a non-terminal run.json and trace.
     const runId = createRunId();
     const runDir = join(root, runId);
     const { mkdir, writeFile } = await import("node:fs/promises");
@@ -981,6 +982,69 @@ describe("trace", () => {
     });
   });
 
+  it("builds a human-oriented trace report from noisy successful runs", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+    ];
+
+    for (let i = 0; i < 25; i += 1) {
+      events.push(
+        log.emit("model.completed", {
+          step: i + 1,
+          usage: {
+            inputTokens: 10,
+            outputTokens: 1,
+            totalTokens: 11,
+          },
+        }),
+      );
+    }
+    for (let i = 0; i < 85; i += 1) {
+      events.push(
+        log.emit("tool.requested", {
+          id: `call_${i}`,
+          toolName: i % 2 === 0 ? "read_file" : "grep",
+          arguments: { path: i % 2 === 0 ? "README.md" : "packages" },
+        }),
+      );
+    }
+    for (let i = 0; i < 1000; i += 1) {
+      events.push(
+        log.emit("workspace.read", {
+          path: i < 20 ? "packages/core/src/trace.ts" : `packages/file-${i}.ts`,
+        }),
+      );
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("passed_with_issues");
+    expect(report.summary).toMatchObject({
+      modelCalls: 25,
+      toolCalls: 85,
+      totalTokens: 275,
+      workspaceWrites: 0,
+      approvalsRequested: 0,
+    });
+    expect(report.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining([
+        "EXCESSIVE_TOOL_CALLS",
+        "EXCESSIVE_MODEL_CALLS",
+        "WORKSPACE_READ_NOISE",
+        "DUPLICATE_WORKSPACE_READS",
+        "COST_UNAVAILABLE",
+      ]),
+    );
+    expect(report.topDuplicateReads).toMatchObject({
+      "packages/core/src/trace.ts": 20,
+    });
+  });
+
   it("summarizes capability mutation events", () => {
     const log = new EventLog(createRunId());
     const jsonl = [
@@ -1002,7 +1066,7 @@ describe("trace", () => {
     expect(summary.safety.capabilityMutations.completed).toBe(1);
   });
 
-  it("reads the persisted tool outcome on a minimal trace", () => {
+  it("classifies tool outcomes from standard payloads", () => {
     const run = createRunRecord();
     // The verdict computed over full events: the failure on a.txt is NOT
     // recovered, because the later success is on a *different* file (b.txt) and
@@ -1044,27 +1108,22 @@ describe("trace", () => {
       ];
       return summarizeTraceJsonl(
         events
-          .map((event) => filterTraceEvent(event, "minimal"))
+          .map((event) => filterTraceEvent(event, "standard"))
           .map(serializeEventJsonl)
           .join(""),
       );
     };
 
-    // With the persisted verdict, the minimal trace reports the failure as
-    // unresolved (correct).
     const withVerdict = buildEvents(true);
     expect(withVerdict.toolFailures.unresolved.total).toBe(1);
     expect(withVerdict.toolFailures.recovered.total).toBe(0);
 
-    // Regression guard: without the verdict, recomputing from the minimal trace
-    // collapses both reads to one target (arguments are stripped) and *falsely*
-    // marks the failure recovered — hiding a real unresolved failure.
     const withoutVerdict = buildEvents(false);
-    expect(withoutVerdict.toolFailures.recovered.total).toBe(1);
-    expect(withoutVerdict.toolFailures.unresolved.total).toBe(0);
+    expect(withoutVerdict.toolFailures.recovered.total).toBe(0);
+    expect(withoutVerdict.toolFailures.unresolved.total).toBe(1);
   });
 
-  it("reads the persisted command outcome on a minimal trace", () => {
+  it("reads the persisted command outcome on a standard trace", () => {
     const run = createRunRecord();
     const commandOutcome = {
       total: 1,
@@ -1078,10 +1137,8 @@ describe("trace", () => {
       },
     };
     const log = new EventLog(run.id);
-    const minimalJsonl = [
+    const standardJsonl = [
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      // tool.completed output (which command analysis needs) is stripped at
-      // minimal; only the persisted verdict survives.
       log.emit("tool.completed", {
         toolCallId: "call_1",
         toolName: "shell",
@@ -1090,11 +1147,11 @@ describe("trace", () => {
       }),
       log.emit("run.completed", { reason: "final_answer", commandOutcome }),
     ]
-      .map((event) => filterTraceEvent(event, "minimal"))
+      .map((event) => filterTraceEvent(event, "standard"))
       .map(serializeEventJsonl)
       .join("");
 
-    const summary = summarizeTraceJsonl(minimalJsonl);
+    const summary = summarizeTraceJsonl(standardJsonl);
 
     expect(summary.commandFailures.total).toBe(1);
     expect(summary.commandFailures.byExitCode).toEqual({ "254": 1 });
@@ -1106,12 +1163,10 @@ describe("trace", () => {
     });
   });
 
-  it("under-reports command failures on a minimal trace without a persisted outcome", () => {
-    // Guards the regression the persisted snapshot fixes: with output stripped
-    // and no verdict to read, the summary cannot recover the failure.
+  it("keeps command failures on standard traces without a persisted outcome", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const minimalJsonl = [
+    const standardJsonl = [
       log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
@@ -1121,16 +1176,16 @@ describe("trace", () => {
       }),
       log.emit("run.completed", { reason: "final_answer" }),
     ]
-      .map((event) => filterTraceEvent(event, "minimal"))
+      .map((event) => filterTraceEvent(event, "standard"))
       .map(serializeEventJsonl)
       .join("");
 
-    expect(summarizeTraceJsonl(minimalJsonl).commandFailures.total).toBe(0);
+    expect(summarizeTraceJsonl(standardJsonl).commandFailures.total).toBe(1);
   });
 
-  it("counts an approval denial the same at minimal and standard trace levels", () => {
+  it("counts an approval denial the same at standard and debug trace levels", () => {
     const run = createRunRecord();
-    const buildJsonl = (level: "minimal" | "standard") => {
+    const buildJsonl = (level: "standard" | "debug") => {
       const log = new EventLog(run.id);
       return [
         log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
@@ -1152,17 +1207,14 @@ describe("trace", () => {
         .join("");
     };
 
-    const minimal = summarizeTraceJsonl(buildJsonl("minimal"));
     const standard = summarizeTraceJsonl(buildJsonl("standard"));
+    const debug = summarizeTraceJsonl(buildJsonl("debug"));
 
-    // The minimal trace flattens the code to `errorCode`; the denial must still
-    // be classified as an expected denial, not an unresolved tool failure.
-    expect(minimal.expectedDenialCount).toBe(1);
-    expect(minimal.expectedDenialCodes).toEqual({ TOOL_APPROVAL_DENIED: 1 });
-    expect(minimal.toolFailures.unresolved.total).toBe(0);
-    // ...and identical to the standard-level verdict.
-    expect(minimal.expectedDenialCount).toBe(standard.expectedDenialCount);
-    expect(minimal.toolFailures.unresolved.total).toBe(
+    expect(standard.expectedDenialCount).toBe(1);
+    expect(standard.expectedDenialCodes).toEqual({ TOOL_APPROVAL_DENIED: 1 });
+    expect(standard.toolFailures.unresolved.total).toBe(0);
+    expect(debug.expectedDenialCount).toBe(standard.expectedDenialCount);
+    expect(debug.toolFailures.unresolved.total).toBe(
       standard.toolFailures.unresolved.total,
     );
   });
@@ -2376,53 +2428,64 @@ describe("trace", () => {
     });
   });
 
-  it("keeps only execution skeleton for minimal traces", () => {
+  it("summarizes large tool output for standard traces", () => {
     const log = new EventLog(createRunId());
-    const event = log.emit("model.completed", {
-      message: "full response",
-      toolCalls: [{ toolName: "echo", arguments: { text: "secret" } }],
+    const event = log.emit("tool.completed", {
+      toolCallId: "call_1",
+      toolName: "echo",
+      status: "completed",
+      output: { text: "x".repeat(600) },
+      artifacts: [],
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const standard = filterTraceEvent(event, "standard");
 
-    expect(filtered.payload).toEqual({
-      hasMessage: true,
-      toolCallCount: 1,
+    expect(standard.payload).toMatchObject({
+      toolCallId: "call_1",
+      toolName: "echo",
+      status: "completed",
     });
   });
 
-  it("applies trace level filtering to file-backed traces", async () => {
+  it("applies standard filtering to file-backed traces", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-store-"));
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
       rootDir: root,
-      traceLevel: "minimal",
+      traceLevel: "standard",
       redact: false,
     });
 
     store.append(
-      log.emit("model.completed", {
-        message: "full response",
-        toolCalls: [{ toolName: "echo", arguments: { text: "secret" } }],
-        usage: { totalTokens: 3 },
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "echo",
+        status: "completed",
+        output: { text: "x".repeat(600) },
+        artifacts: [],
       }),
     );
 
     const trace = await readFile(store.tracePath, "utf8");
     const persisted = JSON.parse(trace) as { payload: unknown };
 
-    expect(persisted.payload).toEqual({
-      hasMessage: true,
-      toolCallCount: 1,
-      totalTokens: 3,
+    expect(store.traceLevel).toBe("standard");
+    expect(persisted.payload).toMatchObject({
+      toolCallId: "call_1",
+      toolName: "echo",
+      status: "completed",
+      output: {
+        text: {
+          type: "string",
+          length: 600,
+        },
+      },
     });
-    expect(trace).not.toContain("full response");
-    expect(trace).not.toContain("secret");
   });
 
-  it("keeps workspace write proposal ids in minimal traces", () => {
+  it("keeps workspace write proposal summaries in standard traces", () => {
     const runId = createRunId();
     const log = new EventLog(runId);
     const event = log.emit("workspace.write.requested", {
@@ -2436,16 +2499,20 @@ describe("trace", () => {
       metadata: {},
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const filtered = filterTraceEvent(event, "standard");
 
     expect(filtered.payload).toEqual({
       id: "write_1",
+      runId,
       path: "README.md",
       reason: "test write",
+      diffSummary: "--- a/README.md\n+++ b/README.md\n",
+      createdAt: expect.any(String),
+      metadata: {},
     });
   });
 
-  it("keeps anchored edit evidence in minimal traces", () => {
+  it("keeps anchored edit evidence in standard traces", () => {
     const log = new EventLog(createRunId());
     const event = log.emit("workspace.anchored_edit.rejected", {
       path: "README.md",
@@ -2463,16 +2530,18 @@ describe("trace", () => {
       },
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const filtered = filterTraceEvent(event, "standard");
 
-    expect(filtered.payload).toEqual({
+    expect(filtered.payload).toMatchObject({
       path: "README.md",
       reason: "Anchor hash does not match current line: 2#ABCD",
-      errorCode: "ANCHOR_HASH_MISMATCH",
+      error: {
+        code: "ANCHOR_HASH_MISMATCH",
+      },
     });
   });
 
-  it("keeps validation evidence in minimal traces", () => {
+  it("keeps validation evidence in standard traces", () => {
     const log = new EventLog(createRunId());
     const event = log.emit("validation.failed", {
       hookName: "final-answer-policy",
@@ -2491,13 +2560,19 @@ describe("trace", () => {
       },
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const filtered = filterTraceEvent(event, "standard");
 
-    expect(filtered.payload).toEqual({
+    expect(filtered.payload).toMatchObject({
       hookName: "final-answer-policy",
       stage: "final_output",
-      status: "failed",
-      findingCount: 1,
+      result: {
+        status: "failed",
+        findings: [
+          {
+            code: "FINAL_TOO_LOOSE",
+          },
+        ],
+      },
     });
   });
 

@@ -7,6 +7,17 @@ import { sanitizeAnsiForRender } from "../lib/text.js";
 import { Markdown } from "./markdown.js";
 import { useTheme } from "../lib/theme-context.js";
 import { resolveDialogColumns } from "./dialog-frame.js";
+import { isShellResult } from "../lib/tool-result-summary.js";
+import {
+  formatToolRequestPreview,
+  oneLine,
+  compactMutationPath,
+  summarizeToolResultForDisplay,
+  type ToolDisplayTone,
+  type ToolResultDisplay,
+} from "../lib/tool-display.js";
+
+export { oneLine } from "../lib/tool-display.js";
 
 export interface TranscriptHeaderInfo {
   workspaceRoot: string;
@@ -493,163 +504,29 @@ function EventCard(props: {
     }
 
     case "tool.completed": {
+      const toolName = str(p.toolName) || undefined;
       const result = p.result ?? p.output;
       const artifacts = Array.isArray(p.artifacts) ? p.artifacts : [];
       if (result === undefined && artifacts.length === 0) return null;
-      // read_file returns a structured envelope ({ path, content, totalLines,
-      // bytes, … }). Dumping it via oneLine floods the transcript with the
-      // entire file body as JSON — but more than that, a read_file call already
-      // emitted a `workspace.read` line (ControlledWorkspace.readText fires it
-      // from inside the tool), so a tool.completed card here would just repeat
-      // "read <path>". Recognise the envelope structurally and render nothing;
-      // the workspace.read line is the canonical row for a file read.
-      if (isFileReadResult(result)) {
+      const display =
+        result === undefined
+          ? ({ kind: "hidden", reason: "no_result" } as const)
+          : summarizeToolResultForDisplay({
+              toolName,
+              result,
+              mode: "live",
+            });
+      if (display.kind === "hidden") {
         return artifacts.length > 0 ? (
           <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
         ) : null;
       }
-      if (isAnchoredReadResult(result)) {
-        return artifacts.length > 0 ? (
-          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
-        ) : null;
-      }
-      if (isWorkspaceWriteToolResult(result)) {
-        return artifacts.length > 0 ? (
-          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
-        ) : null;
-      }
-      if (isSkillMutationToolResult(result)) {
-        return (
-          <SkillMutationToolSummary
-            result={result}
-            artifacts={artifacts}
-            paddingLeft={childPad}
-          />
-        );
-      }
-      if (isShellResult(result)) {
-        const { head, lines, timedOut } = summarizeShellResult(result);
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Text color={timedOut ? theme.warning : theme.muted}>{head}</Text>
-            {lines.map((line, i) => (
-              <Text key={i} dimColor>
-                {"  " + line}
-              </Text>
-            ))}
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // A sub-agent tool (delegate_* / spawn_agent) returns a structured
-      // envelope { childRunId, signal, stopReason, message, usage, … }. Dumping
-      // it via oneLine floods the transcript with raw JSON (spanId, token
-      // counts, promotionHint). The only part worth committing is the child's
-      // own answer (`message`); the `subagent.completed` line already marked the
-      // run done, and the rest stays inspectable via /events.
-      if (isAgentToolResult(result)) {
-        const message = str(rec(result).message).trim();
-        if (!message) return null;
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Markdown text={message} />
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // A `skill_load` result carries the whole skill body in `content`, which
-      // oneLine would truncate to a meaningless ~200-char JSON stub (hiding the
-      // one fact that matters: did the body actually come back?). Render a
-      // proof-of-load summary — status + body length + resource count — and
-      // leave the full envelope inspectable via /events.
-      if (isSkillLoadResult(result)) {
-        const r = rec(result);
-        if (r.status === "not_found") {
-          const avail = Array.isArray(r.availableSkills)
-            ? r.availableSkills.join(", ")
-            : "";
-          return (
-            <Box paddingLeft={childPad} paddingRight={1}>
-              <Text color={theme.error}>
-                {`skill_load ${str(r.requestedName)} → not found`}
-              </Text>
-              {avail ? <Text dimColor>{"  available: " + avail}</Text> : null}
-            </Box>
-          );
-        }
-        const bodyChars = str(r.content).length;
-        const resources = Array.isArray(r.resourceFiles)
-          ? r.resourceFiles.length
-          : 0;
-        const version = str(r.version);
-        return (
-          <Box paddingLeft={childPad} paddingRight={1}>
-            <Text color={theme.success}>
-              {`skill_load ${str(r.name)} → loaded`}
-            </Text>
-            <Text dimColor>
-              {`  body ${bodyChars} chars · ${resources} resource file${
-                resources === 1 ? "" : "s"
-              }${version ? " · v" + version : ""}`}
-            </Text>
-          </Box>
-        );
-      }
-      // A `list_dir` result carries an `entries` array that oneLine would dump
-      // as truncated JSON (`{"path":".","entries":[{"path":"dist",…`). Render a
-      // compact "N entries + names" summary instead; the full listing stays
-      // inspectable via /events.
-      if (isListDirResult(result)) {
-        const { head, detail } = summarizeListDir(result);
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Text color={theme.muted}>{head}</Text>
-            {detail ? <Text dimColor>{"  " + detail}</Text> : null}
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // A `glob` result is also a structured search envelope. Keep the
-      // transcript scan-friendly by showing the count and sample paths instead
-      // of raw JSON.
-      if (isGlobResult(result)) {
-        const { head, detail } = summarizeGlobResult(result);
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Text color={theme.muted}>{head}</Text>
-            {detail ? <Text dimColor>{"  " + detail}</Text> : null}
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // Tool output (shell stdout especially) is the most likely carrier of
-      // raw escape sequences — strip them so a `clear`/cursor-move in stdout
-      // can't scramble the transcript.
-      const text = sanitizeAnsiForRender(
-        typeof result === "string" ? result : oneLine(result, 200),
-      );
-      const lines = text.split("\n").slice(0, 6);
-      const truncated = text.split("\n").length > 6;
       return (
-        <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-          {lines.map((l, i) => (
-            <Text key={i} dimColor>
-              {"  " + l}
-            </Text>
-          ))}
-          {truncated ? <Text dimColor>{"  …"}</Text> : null}
-          {artifacts.length > 0 ? (
-            <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-          ) : null}
-        </Box>
+        <ToolResultDisplayBlock
+          display={display}
+          artifacts={artifacts}
+          paddingLeft={childPad}
+        />
       );
     }
 
@@ -1004,79 +881,64 @@ function CompactDiff(props: { diff: string }): React.ReactElement {
   );
 }
 
-function formatToolRequestPreview(
-  name: string,
-  args: unknown,
-  max = 80,
-): string {
-  if (max < 8) return "";
-  const r = rec(args);
-  if (r && name === "shell") {
-    const command = str(r.command);
-    return command ? truncatePlain(`$ ${command}`, max) : "";
-  }
-  if (r && (name === "create_skill" || name === "update_skill")) {
-    const action = str(r.action);
-    const skill = str(r.name);
-    const force = r.force === true ? " · force" : "";
-    return truncatePlain(
-      [action, skill].filter(Boolean).join(" ") + force,
-      max,
-    );
-  }
-  return args !== undefined ? oneLine(args, max) : "";
-}
-
-function compactMutationPath(path: string): string {
-  if (!path) return "";
-  const marker = `${path.includes("\\") ? "\\" : "/"}.sparkwright${
-    path.includes("\\") ? "\\" : "/"
-  }`;
-  const idx = path.indexOf(marker);
-  if (idx >= 0) return path.slice(idx + 1);
-  const parts = path.split(/[\\/]+/).filter(Boolean);
-  if (parts.length <= 4) return path;
-  return `…/${parts.slice(-4).join("/")}`;
-}
-
-function SkillMutationToolSummary(props: {
-  result: unknown;
+function ToolResultDisplayBlock(props: {
+  display: Exclude<ToolResultDisplay, { kind: "hidden" }>;
   artifacts: unknown[];
   paddingLeft: number;
 }): React.ReactElement {
   const theme = useTheme();
-  const r = rec(props.result);
-  const action = str(r.action) || "skill";
-  const name = str(r.name);
-  const path = compactMutationPath(str(r.path) || str(r.proposalPath));
-  const proposalId = str(r.proposalId);
-  const changed = r.changed === false ? "unchanged" : "changed";
-  const label =
-    action === "draft"
-      ? "skill proposal"
-      : action === "apply"
-        ? "skill proposal applied"
-        : "skill mutation";
+  if (props.display.kind === "markdown") {
+    return (
+      <Box
+        flexDirection="column"
+        paddingLeft={props.paddingLeft}
+        paddingRight={1}
+      >
+        <Markdown text={props.display.text} />
+        {props.display.details.map((line, i) => (
+          <Text key={i} dimColor>
+            {"  " + line}
+          </Text>
+        ))}
+        {props.artifacts.length > 0 ? (
+          <ArtifactHint artifacts={props.artifacts} paddingLeft={0} />
+        ) : null}
+      </Box>
+    );
+  }
+
   return (
     <Box
       flexDirection="column"
       paddingLeft={props.paddingLeft}
       paddingRight={1}
     >
-      <Text>
-        <Text color={theme.success}>{label} </Text>
-        <Text bold>{proposalId || name || action}</Text>
-        <Text dimColor>{` · ${changed}`}</Text>
-      </Text>
-      {path ? <Text dimColor>{"  " + path}</Text> : null}
-      {action === "draft" ? (
-        <Text dimColor>{"  draft only; original Skill package unchanged"}</Text>
+      {props.display.head ? (
+        <Text color={toolToneColor(props.display.tone, theme)}>
+          {props.display.head}
+        </Text>
       ) : null}
+      {props.display.details.map((line, i) => (
+        <Text key={i} dimColor>
+          {"  " + line}
+        </Text>
+      ))}
       {props.artifacts.length > 0 ? (
         <ArtifactHint artifacts={props.artifacts} paddingLeft={0} />
       ) : null}
     </Box>
   );
+}
+
+function toolToneColor(
+  tone: ToolDisplayTone,
+  theme: ReturnType<typeof useTheme>,
+): string | undefined {
+  if (tone === "success") return theme.success;
+  if (tone === "warning") return theme.warning;
+  if (tone === "error") return theme.error;
+  if (tone === "muted") return theme.muted;
+  return undefined;
 }
 
 function ArtifactHint(props: {
@@ -1100,264 +962,6 @@ function ArtifactHint(props: {
       </Text>
     </Box>
   );
-}
-
-/**
- * Recognise a `read_file` result envelope by its shape: a record carrying a
- * string `path`, a string `content`, and numeric `totalLines`/`bytes`. The
- * committed renderer has no toolCallId correlation, so this structural check is
- * how `tool.completed` knows a result is a file read (and can suppress its card
- * in favour of the `workspace.read` line). Returns true for a file-read result.
- */
-export function isFileReadResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.path === "string" &&
-    typeof r.content === "string" &&
-    typeof r.totalLines === "number" &&
-    typeof r.bytes === "number"
-  );
-}
-
-export function isAnchoredReadResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.path === "string" &&
-    typeof r.content === "string" &&
-    typeof r.anchorSetId === "string" &&
-    typeof r.lineCount === "number" &&
-    Array.isArray(r.lines)
-  );
-}
-
-export function isWorkspaceWriteToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.path === "string" &&
-    (typeof r.changed === "boolean" ||
-      typeof r.hunksApplied === "number" ||
-      typeof r.proposalId === "string") &&
-    ("content" in r || "diff" in r || "summary" in r)
-  );
-}
-
-export function isSkillMutationToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (typeof r.action !== "string" || typeof r.changed !== "boolean") {
-    return false;
-  }
-  if (r.action === "create") {
-    return typeof r.name === "string" && typeof r.path === "string";
-  }
-  if (r.action === "draft") {
-    return (
-      typeof r.proposalId === "string" && typeof r.proposalPath === "string"
-    );
-  }
-  if (r.action === "apply") {
-    return typeof r.proposalId === "string";
-  }
-  return false;
-}
-
-export function isShellResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.stdout === "string" &&
-    typeof r.stderr === "string" &&
-    (typeof r.exitCode === "number" || r.exitCode === null) &&
-    typeof r.timedOut === "boolean"
-  );
-}
-
-export function summarizeShellResult(
-  value: unknown,
-  maxLines = 4,
-): { head: string; lines: string[]; timedOut: boolean } {
-  const r = value as Record<string, unknown>;
-  const exitCode =
-    typeof r.exitCode === "number" ? String(r.exitCode) : String(r.exitCode);
-  const timedOut = r.timedOut === true;
-  const head = timedOut
-    ? `shell timed out exit ${exitCode}`
-    : `shell exit ${exitCode}`;
-  const stdout = sanitizeAnsiForRender(str(r.stdout));
-  const stderr = sanitizeAnsiForRender(str(r.stderr));
-  const combined = [stdout, stderr ? `stderr: ${stderr}` : ""]
-    .filter(Boolean)
-    .join("\n");
-  const lines = combined
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, maxLines);
-  return { head, lines, timedOut };
-}
-
-/**
- * Recognise a sub-agent tool result envelope by its shape: a record carrying a
- * string `childRunId`, a string `signal`, and a `stopReason`. Both the stable
- * delegate tool (`AgentToolResult`) and the dynamic `spawn_agent` output share
- * this core. The committed renderer has no toolCallId correlation, so this
- * structural check is how `tool.completed` knows to surface only the child's
- * `message` instead of dumping the whole envelope as JSON. Returns true for a
- * sub-agent result.
- */
-export function isAgentToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.childRunId === "string" &&
-    typeof r.signal === "string" &&
-    "stopReason" in r
-  );
-}
-
-/**
- * Recognise a `skill_load` tool result by its shape: a record with a string
- * `status` that is either a loaded skill (`name` + string `content` body) or a
- * `not_found` miss (`requestedName`). The committed renderer has no toolCallId
- * correlation, so this structural check is how `tool.completed` knows to render
- * a proof-of-load summary instead of dumping/truncating the body-bearing
- * envelope as JSON. Returns true for a skill_load result.
- */
-export function isSkillLoadResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (r.status === "loaded") {
-    return typeof r.name === "string" && typeof r.content === "string";
-  }
-  return r.status === "not_found" && typeof r.requestedName === "string";
-}
-
-/**
- * Recognise a `list_dir` tool result by its shape: a record with a string `path`
- * and an `entries` array of `{ name, type }`. Like read_file/skill_load, the
- * committed renderer has no toolCallId correlation, so this structural check is
- * how `tool.completed` knows to render a compact directory summary instead of
- * dumping the entries array as truncated JSON. Returns true for a list_dir result.
- */
-export function isListDirResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (typeof r.path !== "string" || !Array.isArray(r.entries)) return false;
-  return r.entries.every(
-    (e) =>
-      typeof e === "object" &&
-      e !== null &&
-      typeof (e as Record<string, unknown>).name === "string" &&
-      typeof (e as Record<string, unknown>).type === "string",
-  );
-}
-
-/**
- * Compact one-or-two-line summary of a `list_dir` result: a count headline plus
- * a sample of entry names (directories suffixed with `/`), capped so a large
- * directory can't flood the transcript. Pure for testing.
- */
-export function summarizeListDir(
-  value: unknown,
-  maxNames = 8,
-): { head: string; detail: string } {
-  const r = value as { path?: unknown; entries?: unknown };
-  const path = typeof r.path === "string" && r.path ? r.path : ".";
-  const entries = Array.isArray(r.entries) ? r.entries : [];
-  const head = `list_dir ${path} → ${entries.length} ${
-    entries.length === 1 ? "entry" : "entries"
-  }`;
-  const names = entries.slice(0, maxNames).map((e) => {
-    const rec = e as Record<string, unknown>;
-    const name = String(rec.name ?? "");
-    return rec.type === "directory" ? `${name}/` : name;
-  });
-  const more = entries.length - names.length;
-  const detail = names.join(" · ") + (more > 0 ? ` · +${more} more` : "");
-  return { head, detail };
-}
-
-export function isGlobResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    Array.isArray(r.patterns) &&
-    r.patterns.every((pattern) => typeof pattern === "string") &&
-    Array.isArray(r.paths) &&
-    r.paths.every((path) => typeof path === "string")
-  );
-}
-
-export function summarizeGlobResult(
-  value: unknown,
-  maxPaths = 8,
-): { head: string; detail: string } {
-  const r = value as {
-    paths?: unknown;
-    totalPaths?: unknown;
-    hasMore?: unknown;
-  };
-  const paths = Array.isArray(r.paths) ? r.paths.filter(isString) : [];
-  const totalPaths =
-    typeof r.totalPaths === "number" ? r.totalPaths : paths.length;
-  const head = `glob → ${totalPaths} ${totalPaths === 1 ? "path" : "paths"}`;
-  const shown = paths.slice(0, maxPaths);
-  const hidden = Math.max(0, totalPaths - shown.length);
-  const detail = shown.join(" · ") + (hidden > 0 ? ` · +${hidden} more` : "");
-  return { head, detail };
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
-}
-
-/** Best-effort one-line preview of a value (object → compact JSON). */
-export function oneLine(value: unknown, max: number): string {
-  let s: string;
-  if (typeof value === "string") s = value;
-  else if (value === undefined || value === null) s = "";
-  else {
-    try {
-      // JSON.stringify returns undefined for undefined/functions/symbols, so
-      // fall back to String() to guarantee a string (the .replace below would
-      // otherwise throw on undefined).
-      s = JSON.stringify(value) ?? String(value);
-    } catch {
-      s = String(value);
-    }
-  }
-  // Strip raw escape/control sequences (a tool arg can echo terminal codes)
-  // before folding so a preview can't carry cursor moves or OSC sets.
-  s = sanitizeAnsiForRender(s);
-  // JSON.stringify renders newlines/tabs inside strings as the two literal
-  // characters `\n` / `\t`, which the whitespace collapse below would miss —
-  // fold those escape sequences to a space first so previews stay one line.
-  s = s
-    .replace(/\\[nrt]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return truncatePlain(s, max);
 }
 
 function truncatePlain(text: string, max: number): string {

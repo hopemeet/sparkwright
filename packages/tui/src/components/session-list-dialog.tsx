@@ -25,7 +25,6 @@ export function SessionListDialog(props: {
   diagnostics: SessionDiagnostics | null;
   loadingDiagnosticsFor: string | null;
   labels: Record<string, string>;
-  quickMode?: boolean;
   onPick: (id: string) => void;
   onInspect: (id: string) => void;
   onRename: (id: string) => void;
@@ -113,7 +112,7 @@ export function SessionListDialog(props: {
     return (
       <DialogFrame borderColor="cyan">
         <Text color="cyan" bold>
-          {props.quickMode ? "sessions quick switch" : "sessions"}
+          sessions
         </Text>
         <Text dimColor>
           (none found in .sparkwright/sessions — press esc to close)
@@ -125,7 +124,7 @@ export function SessionListDialog(props: {
   return (
     <DialogFrame borderColor="cyan">
       <Text color="cyan" bold>
-        {props.quickMode ? "sessions quick switch" : "sessions"}
+        sessions
       </Text>
       <Text dimColor>1-9 quick resume · ↑/↓ navigate · enter resume</Text>
       <Text dimColor>i inspect · r rename · / filter · esc close</Text>

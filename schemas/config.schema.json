@@ -139,7 +139,7 @@
     },
     "traceLevel": {
       "type": "string",
-      "enum": ["minimal", "standard", "debug"],
+      "enum": ["standard", "debug"],
       "description": "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides."
     },
     "approvals": {

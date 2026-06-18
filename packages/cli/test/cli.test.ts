@@ -614,7 +614,7 @@ describe("runCli", () => {
         "--target",
         "README.md",
         "--trace-level",
-        "minimal",
+        "standard",
       ],
       {
         io: {
@@ -776,7 +776,7 @@ describe("runCli", () => {
 
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
+    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -838,7 +838,7 @@ describe("runCli", () => {
 
   it("auto-approves writes with --yes and records the write path", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
+    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -885,7 +885,7 @@ describe("runCli", () => {
 
   it("allows workspace writes without approval in accept_edits mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
+    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -926,7 +926,7 @@ describe("runCli", () => {
 
   it("denies approval-gated writes in dont_ask mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
+    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1116,6 +1116,9 @@ describe("runCli", () => {
       "todo_write",
       "read_anchored_text",
       "edit_anchored_text",
+      "create_skill",
+      "create_agent",
+      "cron",
     ]);
     expect(parsed.tools?.enabled).toBeUndefined();
     expect(parsed.capabilities?.tools).toBeUndefined();
@@ -1259,26 +1262,21 @@ describe("runCli", () => {
     expect(parsed.policy?.write?.maxFiles).toBe(1);
   });
 
-  it("lists tool config without creating a user config", async () => {
-    const xdg = process.env.XDG_CONFIG_HOME as string;
+  it("rejects removed tools list command", async () => {
     const output = createOutputCapture();
 
     const result = await runCli(["tools", "list", "--format", "text"], {
       io: { stdout: output.stdout, stderr: output.stderr },
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain(
-      join(xdg, "sparkwright", "config.json"),
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "Usage: sparkwright tools <disable|defer>",
     );
-    expect(output.stdoutText()).toContain("disabled: (none)");
-    expect(output.stdoutText()).toContain("defer: (none)");
-    await expect(
-      stat(join(xdg, "sparkwright", "config.json")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(output.stdoutText()).toBe("");
   });
 
-  it("exposes discovery tools in direct-core CLI runs", async () => {
+  it("exposes catalog-backed diagnostic tools in direct-core CLI runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
 
     const tools = await createConfiguredCliTools(workspace, process.env);
@@ -1288,11 +1286,14 @@ describe("runCli", () => {
       "glob",
       "grep",
       "list_dir",
-      "append_file",
+      "read_anchored_text",
+      "edit_anchored_text",
+      "apply_patch",
+      "tool_search",
     ]);
   });
 
-  it("applies tool config to direct-core discovery tools", async () => {
+  it("applies tool config to direct-core diagnostic tools", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
@@ -1309,7 +1310,10 @@ describe("runCli", () => {
       "read_file",
       "glob",
       "list_dir",
-      "append_file",
+      "read_anchored_text",
+      "edit_anchored_text",
+      "apply_patch",
+      "tool_search",
     ]);
   });
 
@@ -1413,7 +1417,7 @@ describe("runCli", () => {
       tools: {
         disabled?: string[];
         defer?: string[];
-        available: Array<{ name: string }>;
+        available: Array<{ name: string; origin?: string }>;
       };
       shell: {
         sandbox: {
@@ -1450,6 +1454,14 @@ describe("runCli", () => {
     });
     expect(report.tools.disabled).toEqual(["shell"]);
     expect(report.tools.defer).toEqual(["read_anchored_text"]);
+    expect(report.tools.available.map((tool) => tool.name)).not.toContain(
+      "shell",
+    );
+    expect(
+      report.tools.available.find((tool) => tool.name === "read_file"),
+    ).toMatchObject({
+      origin: "local:@sparkwright/coding-tools",
+    });
     expect(report.tools.available.map((tool) => tool.name)).not.toContain(
       "append_file",
     );
@@ -1500,6 +1512,9 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain(
       "tools: disabled=(none); defer=(none)",
     );
+    expect(output.stdoutText()).toContain("runtime tools:");
+    expect(output.stdoutText()).toContain("tool: list_dir");
+    expect(output.stdoutText()).toContain("diagnostic tools:");
     expect(output.stdoutText()).toContain("tool: shell");
     expect(output.stdoutText()).toContain("tool: read_file");
     expect(output.stdoutText()).toContain("tool: list_skills");
@@ -1550,7 +1565,7 @@ describe("runCli", () => {
         expect.objectContaining({ name: "spawn_agent", risk: "safe" }),
         expect.objectContaining({ name: "todo_write", risk: "safe" }),
         expect.objectContaining({ name: "read_anchored_text", risk: "safe" }),
-        expect.objectContaining({ name: "edit_anchored_text", risk: "risky" }),
+        expect.objectContaining({ name: "edit_anchored_text", risk: "safe" }),
       ]),
     );
     expect(staticReport.mcp.servers[0]?.status).toBeUndefined();
@@ -1723,27 +1738,6 @@ describe("runCli", () => {
       "configure MCP schema loading with capabilities.mcp.toolSchemaLoad",
     );
     expect(output.stdoutText()).toBe("");
-  });
-
-  it("lists workspace tool config without creating project config", async () => {
-    const workspace = await createWorkspace("# Demo\n");
-    const projectConfigPath = join(workspace, ".sparkwright", "config.json");
-    const output = createOutputCapture();
-
-    const result = await runCli(
-      ["tools", "list", "--workspace", workspace, "--format", "text"],
-      {
-        io: { stdout: output.stdout, stderr: output.stderr },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain(projectConfigPath);
-    expect(output.stdoutText()).toContain("disabled: (none)");
-    expect(output.stdoutText()).toContain("defer: (none)");
-    await expect(stat(projectConfigPath)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
   });
 
   it("marks missing command capability dirs as optional in inspect output", async () => {
@@ -3474,7 +3468,7 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("run.completed");
   });
 
-  it("writes a minimal trace when host startup fails before the run starts", async () => {
+  it("writes a startup failure trace when host startup fails before the run starts", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
     const missingHostCommand = join(workspace, "missing-host-command");
@@ -3832,6 +3826,77 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain(
       "cost: unavailable (missing_pricing:1)",
     );
+  });
+
+  it("prints a human trace report", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "noisy.trace.jsonl");
+    const lines = [
+      {
+        id: "evt_1",
+        runId: "run_report",
+        type: "run.created",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: { goal: "inspect" },
+      },
+      ...Array.from({ length: 85 }, (_, index) => ({
+        id: `evt_tool_${index}`,
+        runId: "run_report",
+        type: "tool.requested",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        sequence: index + 2,
+        payload: {
+          id: `call_${index}`,
+          toolName: index % 2 === 0 ? "read_file" : "grep",
+          arguments: { path: "README.md" },
+        },
+      })),
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `evt_read_${index}`,
+        runId: "run_report",
+        type: "workspace.read",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        sequence: index + 87,
+        payload: { path: "README.md" },
+      })),
+      {
+        id: "evt_done",
+        runId: "run_report",
+        type: "run.completed",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        sequence: 107,
+        payload: { state: "completed" },
+      },
+    ];
+    await writeFile(
+      tracePath,
+      lines.map((line) => JSON.stringify(line)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const textOutput = createOutputCapture();
+    const text = await runCli(
+      ["trace", "report", tracePath, "--format", "text"],
+      {
+        io: { stdout: textOutput.stdout, stderr: textOutput.stderr },
+      },
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain("verdict: passed_with_issues");
+    expect(textOutput.stdoutText()).toContain("EXCESSIVE_TOOL_CALLS");
+    expect(textOutput.stdoutText()).toContain("DUPLICATE_WORKSPACE_READS");
+
+    const jsonOutput = createOutputCapture();
+    const json = await runCli(["trace", "report", tracePath], {
+      io: { stdout: jsonOutput.stdout, stderr: jsonOutput.stderr },
+    });
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(jsonOutput.stdoutText())).toMatchObject({
+      verdict: "passed_with_issues",
+      summary: { toolCalls: 85 },
+    });
   });
 
   it("counts failed MCP preparation in trace summaries", async () => {
@@ -4299,7 +4364,7 @@ describe("runCli", () => {
         "--model",
         "deterministic",
         "--trace-level",
-        "minimal",
+        "standard",
       ],
       {
         io: {
@@ -4321,7 +4386,7 @@ describe("runCli", () => {
     expect(runJson.metadata).toMatchObject({
       source: "cli",
       shouldWrite: false,
-      traceLevel: "minimal",
+      traceLevel: "standard",
       resumedFromRunId: runId,
     });
 
@@ -4334,19 +4399,12 @@ describe("runCli", () => {
       (event) => event.type === "model.completed",
     );
     expect(modelCompleted?.payload).toMatchObject({
-      hasMessage: true,
+      message: expect.any(String),
+      toolCalls: expect.any(Array),
+      trace: expect.objectContaining({
+        toolCallCount: expect.any(Number),
+      }),
     });
-    expect(
-      (modelCompleted?.payload as Record<string, unknown> | undefined)
-        ?.toolCallCount,
-    ).toEqual(expect.any(Number));
-    expect(
-      (modelCompleted?.payload as Record<string, unknown> | undefined)?.message,
-    ).toBeUndefined();
-    expect(
-      (modelCompleted?.payload as Record<string, unknown> | undefined)
-        ?.toolCalls,
-    ).toBeUndefined();
   });
 
   it("does not start configured MCP servers in lazy startup mode", async () => {
@@ -4753,7 +4811,7 @@ describe("runCli", () => {
 
   it("denies scripted host writes when --write is not enabled", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["append_file"]);
+    await enableWorkspaceTools(workspace, ["apply_patch"]);
     const output = createOutputCapture();
 
     const run = await runCli(
@@ -4815,7 +4873,7 @@ describe("runCli", () => {
 
   it("rejects scripted model tool calls with invalid args before execution or approval", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "append_file"]);
+    await enableWorkspaceTools(workspace, ["read_file", "apply_patch"]);
     const output = createOutputCapture();
 
     const run = await runCli(
@@ -5209,7 +5267,7 @@ describe("runCli", () => {
 
   it("denies host writes outside the requested target scope", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["append_file"]);
+    await enableWorkspaceTools(workspace, ["apply_patch"]);
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
     const output = createOutputCapture();
 
@@ -5281,7 +5339,7 @@ describe("runCli", () => {
 
   it("does not scope host writes to README.md unless --target is explicit", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["append_file"]);
+    await enableWorkspaceTools(workspace, ["apply_patch"]);
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
     const output = createOutputCapture();
 
@@ -5348,7 +5406,7 @@ describe("runCli", () => {
 
   it("allows a small multi-file write budget when no target is explicit", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["append_file"]);
+    await enableWorkspaceTools(workspace, ["apply_patch"]);
     await writeFile(join(workspace, "test.js"), "console.log('test')\n");
     const output = createOutputCapture();
 
@@ -5498,7 +5556,7 @@ describe("runCli", () => {
         "--workspace",
         workspace,
         "--trace-level",
-        "minimal",
+        "standard",
       ],
       {
         io: {
@@ -5954,10 +6012,9 @@ describe("runCli", () => {
     return workspace;
   }
 
-  // Read/write tools (read_file, edit_anchored_text/apply_patch, and the
-  // direct-core harness append_file) are available by default, so the write
-  // smokes no longer need to opt tools in. Kept as a no-op so call sites stay
-  // declarative about which tools the scenario exercises.
+  // Read/write tools are available by default, so the write smokes no longer
+  // need to opt tools in. Kept as a no-op so call sites stay declarative about
+  // which tools the scenario exercises.
   async function enableWorkspaceTools(
     _workspace: string,
     _tools: string[],

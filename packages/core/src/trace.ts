@@ -33,7 +33,7 @@ import {
   type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
 
-export type TraceLevel = "minimal" | "standard" | "debug";
+export type TraceLevel = "standard" | "debug";
 export type TraceRedactor = (event: SparkwrightEvent) => SparkwrightEvent;
 
 export interface TraceRedactionOptions {
@@ -192,8 +192,217 @@ export interface TraceSummary {
   };
 }
 
+export type TraceReportVerdict = "ok" | "passed_with_issues" | "failed";
+export type TraceReportFindingSeverity = "high" | "medium" | "low" | "info";
+
+export interface TraceReportFinding {
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  severity: TraceReportFindingSeverity;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  code: string;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  title: string;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  evidence: string[];
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  recommendation: string;
+}
+
+export interface TraceReport {
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  verdict: TraceReportVerdict;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  headline: string;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  summary: {
+    eventCount: number;
+    runCount: number;
+    sessionCount: number;
+    modelCalls: number;
+    toolCalls: number;
+    totalTokens: number;
+    costStatus?: TraceSummary["usage"]["costStatus"];
+    workspaceWrites: number;
+    approvalsRequested: number;
+    unresolvedToolFailures: number;
+    recoveredToolFailures: number;
+  };
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  topTools: Record<string, number>;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  topDuplicateReads: Record<string, number>;
+  /** @reserved Public trace-report field consumed by diagnostics UIs. */
+  findings: TraceReportFinding[];
+}
+
 export async function summarizeTraceFile(path: string): Promise<TraceSummary> {
   return summarizeTraceJsonl(await readFile(path, "utf8"));
+}
+
+export async function buildTraceReportFile(path: string): Promise<TraceReport> {
+  return buildTraceReportJsonl(await readFile(path, "utf8"));
+}
+
+export function buildTraceReportJsonl(jsonl: string): TraceReport {
+  return buildTraceReport(loadTraceEventsJsonl(jsonl));
+}
+
+export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
+  const summary = summarizeTraceJsonl(events.map(serializeEventJsonl).join(""));
+  const findings: TraceReportFinding[] = [];
+  const modelCalls = summary.byType["model.completed"] ?? 0;
+  const toolCalls = sumRecord(summary.toolCalls);
+  const workspaceReadTotal = summary.workspaceReads.total;
+  const workspaceReadRatio =
+    summary.eventCount > 0 ? workspaceReadTotal / summary.eventCount : 0;
+  const topDuplicateReads = firstEntries(
+    summary.workspaceReads.duplicatePaths,
+    8,
+  );
+  const topTools = firstEntries(summary.toolCalls, 8);
+
+  if (summary.toolFailures.unresolved.total > 0) {
+    findings.push({
+      severity: "high",
+      code: "UNRESOLVED_TOOL_FAILURES",
+      title: "Unresolved tool failures remain",
+      evidence: [
+        `${summary.toolFailures.unresolved.total} unresolved tool failure(s)`,
+        formatCountRecord(summary.toolFailures.unresolved.byCode),
+      ].filter(Boolean),
+      recommendation:
+        "Inspect the failing tool events before trusting the final answer.",
+    });
+  }
+
+  if (summary.errorCount > 0) {
+    findings.push({
+      severity: "high",
+      code: "TRACE_ERRORS",
+      title: "Trace contains runtime error events",
+      evidence: [
+        `${summary.errorCount} error event(s)`,
+        formatCountRecord(summary.errorCodes),
+      ].filter(Boolean),
+      recommendation:
+        "Use trace events filtered by error type/code to find the failing layer.",
+    });
+  }
+
+  if (toolCalls >= 80) {
+    findings.push({
+      severity: "medium",
+      code: "EXCESSIVE_TOOL_CALLS",
+      title: "Tool loop is unusually large",
+      evidence: [
+        `${toolCalls} tool call(s)`,
+        `top tools: ${formatCountRecord(topTools) || "(none)"}`,
+      ],
+      recommendation:
+        "Add duplicate-call diagnostics or model feedback so repeated read/search loops stop earlier.",
+    });
+  }
+
+  if (modelCalls >= 20) {
+    findings.push({
+      severity: "medium",
+      code: "EXCESSIVE_MODEL_CALLS",
+      title: "Model loop is unusually long",
+      evidence: [`${modelCalls} model completion(s)`],
+      recommendation:
+        "Check whether the task should have stopped after enough evidence was gathered.",
+    });
+  }
+
+  if (workspaceReadTotal >= 1000 || workspaceReadRatio >= 0.5) {
+    findings.push({
+      severity: "medium",
+      code: "WORKSPACE_READ_NOISE",
+      title: "Workspace read events dominate the trace",
+      evidence: [
+        `${workspaceReadTotal} workspace.read event(s)`,
+        `${Math.round(workspaceReadRatio * 100)}% of trace events`,
+      ],
+      recommendation:
+        "Consider aggregating scan-level reads separately from explicit file reads in standard traces.",
+    });
+  }
+
+  const largestDuplicate = Object.values(topDuplicateReads)[0] ?? 0;
+  if (largestDuplicate >= 10) {
+    findings.push({
+      severity: "medium",
+      code: "DUPLICATE_WORKSPACE_READS",
+      title: "The same files were read repeatedly",
+      evidence: [
+        `top duplicate reads: ${formatCountRecord(topDuplicateReads)}`,
+      ],
+      recommendation:
+        "Surface prior reads to the model or return cached-read hints for duplicate targets.",
+    });
+  }
+
+  if (summary.toolFailures.recovered.total > 0) {
+    findings.push({
+      severity: "low",
+      code: "RECOVERED_TOOL_FAILURES",
+      title: "Tool failures were recovered",
+      evidence: [
+        `${summary.toolFailures.recovered.total} recovered tool failure(s)`,
+        formatCountRecord(summary.toolFailures.recovered.byCode),
+      ].filter(Boolean),
+      recommendation:
+        "Keep the run but inspect the failed call if recovery cost or retries matter.",
+    });
+  }
+
+  if (summary.usage.totalTokens > 0 && !summary.usage.costStatus) {
+    findings.push({
+      severity: "low",
+      code: "COST_UNAVAILABLE",
+      title: "Token usage was recorded without cost status",
+      evidence: [
+        `${summary.usage.totalTokens} token(s)`,
+        "cost status missing",
+      ],
+      recommendation:
+        "Populate usage.costStatus/costUnavailableReason so cost reporting distinguishes zero from unknown.",
+    });
+  }
+
+  const workspaceWrites = summary.safety.workspaceWrites.completed;
+  const approvalsRequested = summary.safety.approvals.requested;
+  const verdict: TraceReportVerdict = findings.some(
+    (finding) => finding.severity === "high",
+  )
+    ? "failed"
+    : findings.some(
+          (finding) =>
+            finding.severity === "medium" || finding.severity === "low",
+        )
+      ? "passed_with_issues"
+      : "ok";
+
+  return {
+    verdict,
+    headline: traceReportHeadline(verdict, findings),
+    summary: {
+      eventCount: summary.eventCount,
+      runCount: summary.runIds.length,
+      sessionCount: summary.sessionIds.length,
+      modelCalls,
+      toolCalls,
+      totalTokens: summary.usage.totalTokens,
+      costStatus: summary.usage.costStatus,
+      workspaceWrites,
+      approvalsRequested,
+      unresolvedToolFailures: summary.toolFailures.unresolved.total,
+      recoveredToolFailures: summary.toolFailures.recovered.total,
+    },
+    topTools,
+    topDuplicateReads,
+    findings,
+  };
 }
 
 export interface TraceEventFilter {
@@ -1861,6 +2070,7 @@ function transcriptEntryForEvent(
       runId: event.runId,
       timestamp: event.timestamp,
       toolCallId: event.payload.toolCallId,
+      toolName: event.payload.toolName,
       status: event.payload.status,
       output: event.payload.output,
       error: event.payload.error,
@@ -2152,139 +2362,10 @@ export function filterTraceEvent(
 ): SparkwrightEvent {
   if (level === "debug") return event;
 
-  if (level === "minimal") {
-    return {
-      ...event,
-      payload: minimalPayload(event),
-    };
-  }
-
   return {
     ...event,
     payload: standardPayload(event),
   };
-}
-
-function minimalPayload(event: SparkwrightEvent): unknown {
-  if (isRecord(event.payload)) {
-    switch (event.type) {
-      case "model.requested":
-        return pick(event.payload, ["step"]);
-      case "model.completed":
-        return {
-          // Truthy on any populated message — providers may emit
-          // either a string or a structured `{role, content}` object,
-          // and "hasMessage" should reflect content presence, not
-          // a specific schema shape.
-          hasMessage:
-            (typeof event.payload.message === "string" &&
-              event.payload.message.length > 0) ||
-            (isRecord(event.payload.message) &&
-              Object.keys(event.payload.message).length > 0),
-          toolCallCount: Array.isArray(event.payload.toolCalls)
-            ? event.payload.toolCalls.length
-            : 0,
-          totalTokens: isRecord(event.payload.usage)
-            ? event.payload.usage.totalTokens
-            : undefined,
-        };
-      case "run.budget.checked":
-        return pickNested(event.payload, ["stage"], {
-          modelCalls: isRecord(event.payload.usage)
-            ? event.payload.usage.modelCalls
-            : undefined,
-          toolCalls: isRecord(event.payload.usage)
-            ? event.payload.usage.toolCalls
-            : undefined,
-        });
-      case "context.compaction_requested":
-        return pick(event.payload, ["step", "omittedCount", "reasons"]);
-      case "validation.started":
-      case "validation.completed":
-      case "validation.failed":
-        return pickNested(event.payload, ["hookName", "stage"], {
-          status: isRecord(event.payload.result)
-            ? event.payload.result.status
-            : undefined,
-          findingCount:
-            isRecord(event.payload.result) &&
-            Array.isArray(event.payload.result.findings)
-              ? event.payload.result.findings.length
-              : undefined,
-        });
-      case "tool.requested":
-        return pick(event.payload, ["id", "toolName"]);
-      case "tool.started":
-        return pick(event.payload, ["toolCallId", "toolName"]);
-      case "tool.completed":
-      case "tool.failed":
-        return pickNested(event.payload, ["toolCallId", "status"], {
-          errorCode: isRecord(event.payload.error)
-            ? event.payload.error.code
-            : undefined,
-          artifactCount: Array.isArray(event.payload.artifacts)
-            ? event.payload.artifacts.length
-            : 0,
-        });
-      case "approval.requested":
-        return pick(event.payload, ["id", "action", "summary", "status"]);
-      case "approval.resolved":
-        return pick(event.payload, ["approvalId", "decision"]);
-      case "artifact.created":
-        return pick(event.payload, ["id", "type", "name", "path"]);
-      case "workspace.read":
-        return pick(event.payload, ["path"]);
-      case "workspace.anchored_read":
-        return pick(event.payload, ["path", "anchorSetId", "lineCount"]);
-      case "workspace.anchored_edit.requested":
-        return pickNested(event.payload, ["path", "reason"], {
-          editCount: Array.isArray(event.payload.edits)
-            ? event.payload.edits.length
-            : undefined,
-        });
-      case "workspace.anchored_edit.verified":
-        return pick(event.payload, ["path", "editCount"]);
-      case "workspace.anchored_edit.rejected":
-        return pickNested(event.payload, ["path", "reason"], {
-          errorCode: isRecord(event.payload.error)
-            ? event.payload.error.code
-            : undefined,
-        });
-      case "workspace.write.requested":
-        return pick(event.payload, ["id", "path", "reason"]);
-      case "workspace.write.completed":
-      case "workspace.write.denied":
-      case "workspace.write.skipped":
-        return pick(event.payload, ["proposalId", "path", "reason"]);
-      case "capability.mutation.completed":
-        return pick(event.payload, [
-          "action",
-          "path",
-          "reason",
-          "sourcePath",
-          "fileCount",
-        ]);
-      case "run.failed":
-        return pick(event.payload, ["code", "message"]);
-      case "run.completed":
-        // Keep the persisted verdict: it is the authoritative, full-event
-        // command/tool/run outcome that summaries read instead of recomputing
-        // from this (lossy) minimal trace.
-        return pick(event.payload, [
-          "reason",
-          "outcome",
-          "commandOutcome",
-          "toolOutcome",
-        ]);
-      case "run.created":
-      case "run.cancelled":
-      case "run.started":
-      default:
-        return {};
-    }
-  }
-
-  return {};
 }
 
 function standardPayload(event: SparkwrightEvent): unknown {
@@ -2474,6 +2555,7 @@ function summarizeToolResult(
 ): Record<string, unknown> {
   return {
     toolCallId: payload.toolCallId,
+    toolName: payload.toolName,
     status: payload.status,
     output: summarizeValue(payload.output),
     error: isRecord(payload.error)
@@ -2982,8 +3064,9 @@ function collectClassifiedToolFailures(
   events: readonly SparkwrightEvent[],
 ): void {
   // Prefer the snapshot the run persisted (computed over the full event
-  // stream). Recomputing here would misclassify same-target recovery on a
-  // minimal trace, where tool.requested arguments are stripped.
+  // stream). This preserves legacy trace compatibility for older traces that
+  // may not retain enough tool.requested detail to classify same-target
+  // recovery.
   const snapshot = persistedToolOutcome(events) ?? toolOutcomeSnapshot(events);
   if (!snapshot) return;
   summary.toolFailures.unresolved.total = snapshot.unresolved.total;
@@ -3036,8 +3119,8 @@ function collectCommandFailures(
   events: readonly SparkwrightEvent[],
 ): void {
   // Prefer the snapshot the run persisted (computed over the full event
-  // stream). Recomputing here would under-report on a minimal trace, where
-  // tool.completed output — and therefore command exit codes — are stripped.
+  // stream). This preserves legacy trace compatibility for older traces that
+  // may not retain command exit evidence in tool.completed output.
   const snapshot =
     persistedCommandOutcome(events) ?? commandOutcomeSnapshot(events);
   if (!snapshot) return;
@@ -3173,7 +3256,7 @@ function collectSafetySummary(
       continue;
     }
     if (event.type === "tool.failed") {
-      // traceErrorCode reads the minimal-trace `errorCode` shape too, so this
+      // traceErrorCode reads legacy compact `errorCode` shapes too, so this
       // safety counter stays trace-level invariant.
       if (traceErrorCode(event) === "UNTRACKED_WORKSPACE_MUTATION") {
         summary.safety.shell.untrackedWorkspaceMutations += 1;
@@ -3195,6 +3278,38 @@ function collectWorkspaceRead(
   const path = stringValue(event.payload.path);
   if (!path) return;
   workspaceReadPaths[path] = (workspaceReadPaths[path] ?? 0) + 1;
+}
+
+function traceReportHeadline(
+  verdict: TraceReportVerdict,
+  findings: readonly TraceReportFinding[],
+): string {
+  if (verdict === "ok") return "Trace completed without diagnostic findings.";
+  const top = findings[0];
+  if (!top) return "Trace has diagnostic findings.";
+  return `${top.title}${findings.length > 1 ? ` (+${findings.length - 1} more)` : ""}.`;
+}
+
+function firstEntries(
+  counts: Record<string, number>,
+  limit: number,
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(counts)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, limit),
+  );
+}
+
+function sumRecord(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
+}
+
+function formatCountRecord(counts: Record<string, number>): string {
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([key, count]) => `${key}:${count}`)
+    .join(", ");
 }
 
 function latestOpenModelPhaseKey(
@@ -3259,7 +3374,7 @@ function collectExpectedDenialCode(
 
 function isExpectedDenialEvent(event: SparkwrightEvent): boolean {
   if (event.type.endsWith(".denied")) return true;
-  // Use traceErrorCode so this reads the minimal-trace `errorCode` shape too,
+  // Use traceErrorCode so this reads legacy compact `errorCode` shapes too,
   // keeping the expected-denial count trace-level invariant.
   return isPolicyOrApprovalFailure(traceErrorCode(event));
 }

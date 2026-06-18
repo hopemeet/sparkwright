@@ -108,8 +108,8 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
       log.emit("run.created", { goal: "Improve the README" }),
       log.emit("tool.requested", {
         id: "call_1",
-        toolName: "append_file",
-        arguments: { path: "README.md", content: "x" },
+        toolName: "edit_anchored_text",
+        arguments: { path: "README.md", edits: [] },
       }),
       log.emit("approval.requested", { toolCallId: "call_1" }),
       log.emit("approval.resolved", {
@@ -118,7 +118,7 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
       }),
       log.emit("tool.failed", {
         toolCallId: "call_1",
-        toolName: "append_file",
+        toolName: "edit_anchored_text",
         status: "failed",
         error: { code: "TOOL_APPROVAL_DENIED", message: "approval denied" },
       }),
@@ -253,7 +253,7 @@ describe("run-outcome consistency (CLI exit vs core outcome)", () => {
       }),
       log.emit("tool.failed", {
         toolCallId: "call_1",
-        toolName: "append_file",
+        toolName: "edit_anchored_text",
         status: "failed",
         error: { code: "WORKSPACE_WRITE_DENIED", message: "write denied" },
       }),

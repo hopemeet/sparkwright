@@ -84,12 +84,14 @@ Use workspace-relative paths such as `README.md`; avoid absolute paths and `..` 
 Choose a trace level:
 
 ```bash
---trace-level minimal
 --trace-level standard
 --trace-level debug
 ```
 
-`minimal` keeps the event skeleton, `standard` keeps useful summaries, and `debug` keeps full normalized payloads. Trace and artifact storage apply default redaction for common secret keys and token-shaped values, but callers should still avoid placing secrets in tool outputs when possible.
+`standard` keeps useful summaries, and `debug` keeps full normalized payloads.
+Trace and artifact storage apply default redaction for common secret keys and
+token-shaped values, but callers should still avoid placing secrets in tool
+outputs when possible.
 
 ## A write was proposed but not applied
 

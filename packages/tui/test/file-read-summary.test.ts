@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isFileReadResult } from "../src/components/event-stream.js";
+import { isFileReadResult } from "../src/lib/tool-result-summary.js";
 
 describe("isFileReadResult", () => {
   it("recognises a read_file result envelope", () => {

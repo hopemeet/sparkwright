@@ -49,10 +49,9 @@ function session(id: string, preview: string, mtimeMs: number): SessionSummary {
 }
 
 describe("SessionListDialog rendering", () => {
-  it("renders the unified quick switch mode with numbered sessions", async () => {
+  it("renders numbered sessions for fast resume", async () => {
     const text = await renderToText(
       <SessionListDialog
-        quickMode
         sessions={[
           session("session_a", "first task", 2000),
           session("session_b", "second task", 1000),
@@ -67,7 +66,7 @@ describe("SessionListDialog rendering", () => {
       />,
     );
 
-    expect(text).toContain("sessions quick switch");
+    expect(text).toContain("sessions");
     expect(text).toContain("1-9 quick resume");
     expect(text).toContain("› 1 ");
     expect(text).toContain("Alpha");

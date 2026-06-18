@@ -577,7 +577,7 @@ Put user arguments in prompt text instead.
   `capabilities.agents` overrides this.
 - `maxSteps`: explicit main-run step ceiling. Overrides the value derived from
   `runBudget` and the safety backstop.
-- `traceLevel`: default trace verbosity (`minimal`, `standard`, `debug`) when an
+- `traceLevel`: default trace verbosity (`standard`, `debug`) when an
   entrypoint does not pass one. CLI `--trace-level` overrides.
 - `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`). CLI
   flags (`--yes`, `--yes-edits`, `--yes-shell-safe`) still override.
@@ -703,7 +703,6 @@ The CLI can manage user-level tool settings in
 `~/.config/sparkwright/config.json`:
 
 ```bash
-sparkwright tools list --format text
 sparkwright tools disable shell
 sparkwright tools defer todo_write
 ```
@@ -712,10 +711,12 @@ Add `--workspace <path>` to manage project defaults in
 `<workspace>/.sparkwright/config.json` instead:
 
 ```bash
-sparkwright tools list --workspace . --format text
 sparkwright tools disable shell --workspace .
 sparkwright tools defer todo_write --workspace .
 ```
+
+Use `sparkwright capabilities inspect --workspace . --format text` for the
+runtime tool inventory.
 
 ## Skill Loading
 
@@ -812,7 +813,6 @@ sparkwright config inspect --workspace .       # effective config, redacted
 sparkwright config explain --workspace .       # field origins and values
 sparkwright config example hooks               # paste-ready grouped snippet
 sparkwright capabilities inspect --workspace . --format text
-sparkwright tools list --format text
 sparkwright agents validate --workspace .
 sparkwright skills validate --workspace .
 ```

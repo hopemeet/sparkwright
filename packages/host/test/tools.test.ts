@@ -29,6 +29,12 @@ import {
   createSkillManagerTool,
   createSkillUpdateTool,
 } from "../src/tools.js";
+import {
+  catalogEntryOrigin,
+  createCliDiagnosticToolCatalog,
+  createMainHostToolCatalog,
+  createReadOnlyChildToolCatalog,
+} from "../src/tool-catalog.js";
 import { createHostShellTool } from "../src/shell.js";
 
 describe("host tools", () => {
@@ -173,7 +179,7 @@ describe("host tools", () => {
     ).toBeUndefined();
   });
 
-  it("marks low-frequency edit helpers as deferred by default", () => {
+  it("marks low-frequency and capability mutation tools as deferred by default", () => {
     const todo = defineTool({
       name: "todo_write",
       description: "todo",
@@ -186,6 +192,24 @@ describe("host tools", () => {
       inputSchema: { type: "object" },
       execute: () => ({}),
     });
+    const createSkill = defineTool({
+      name: "create_skill",
+      description: "create skill",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const createAgent = defineTool({
+      name: "create_agent",
+      description: "create agent",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const cron = defineTool({
+      name: "cron",
+      description: "cron",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
     const read = defineTool({
       name: "read_file",
       description: "read",
@@ -193,18 +217,33 @@ describe("host tools", () => {
       execute: () => ({}),
     });
 
-    const defaults = applyToolConfig([todo, anchoredRead, read], undefined);
+    const defaults = applyToolConfig(
+      [todo, anchoredRead, createSkill, createAgent, cron, read],
+      undefined,
+    );
     expect(defaults.find((tool) => tool.name === "todo_write")).toMatchObject({
       deferLoading: true,
     });
     expect(
       defaults.find((tool) => tool.name === "read_anchored_text"),
     ).toMatchObject({ deferLoading: true });
+    expect(defaults.find((tool) => tool.name === "create_skill")).toMatchObject(
+      { deferLoading: true },
+    );
+    expect(defaults.find((tool) => tool.name === "create_agent")).toMatchObject(
+      { deferLoading: true },
+    );
+    expect(defaults.find((tool) => tool.name === "cron")).toMatchObject({
+      deferLoading: true,
+    });
     expect(
       defaults.find((tool) => tool.name === "read_file")?.deferLoading,
     ).toBeUndefined();
 
-    const eager = applyToolConfig([todo, anchoredRead, read], { defer: [] });
+    const eager = applyToolConfig(
+      [todo, anchoredRead, createSkill, createAgent, cron, read],
+      { defer: [] },
+    );
     expect(eager.some((tool) => tool.deferLoading === true)).toBe(false);
   });
 
@@ -218,6 +257,95 @@ describe("host tools", () => {
     );
 
     expect(tools.map((tool) => tool.name)).toEqual(["list_skills"]);
+  });
+
+  it("builds the main host tool catalog with stable source metadata", () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const entries = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      dynamicSpawnTool: defineTool({
+        name: "spawn_agent",
+        description: "spawn",
+        inputSchema: { type: "object" },
+        execute: () => ({}),
+      }),
+      shell: { sandbox: { mode: "off" } },
+    });
+    const byName = new Map(
+      entries.map((entry) => [entry.definition.name, entry]),
+    );
+
+    expect(byName.get("read_file")).toMatchObject({ source: "coding" });
+    expect(catalogEntryOrigin(byName.get("read_file")!)).toBe(
+      "local:@sparkwright/coding-tools",
+    );
+    expect(byName.get("shell")).toMatchObject({ source: "shell" });
+    expect(byName.get("cron")).toMatchObject({ source: "cron" });
+    expect(byName.get("create_skill")).toMatchObject({ source: "skill" });
+    expect(byName.get("task")).toMatchObject({ source: "task" });
+    expect(byName.get("todo_write")).toMatchObject({ source: "todo" });
+    expect(byName.get("spawn_agent")).toMatchObject({ source: "agent" });
+    expect(byName.get("create_skill")?.definition.deferLoading).toBe(true);
+    expect(byName.get("tool_search")).toMatchObject({ source: "core" });
+  });
+
+  it("keeps read-only child tool catalog aligned with spawnable tools", () => {
+    const entries = createReadOnlyChildToolCatalog({
+      workspaceRoot: "/tmp/ws",
+    });
+
+    expect(entries.map((entry) => entry.definition.name)).toEqual([
+      "read_file",
+      "glob",
+      "grep",
+      "list_dir",
+    ]);
+    expect(new Set(entries.map((entry) => entry.source))).toEqual(
+      new Set(["coding"]),
+    );
+
+    const disabled = createReadOnlyChildToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      toolConfig: { disabled: ["list_dir"] },
+    });
+    expect(disabled.map((entry) => entry.definition.name)).toEqual([
+      "read_file",
+      "glob",
+      "grep",
+    ]);
+  });
+
+  it("builds CLI diagnostic tools from the shared coding catalog", () => {
+    const entries = createCliDiagnosticToolCatalog({
+      workspaceRoot: "/tmp/ws",
+    });
+
+    expect(entries.map((entry) => entry.definition.name)).toEqual([
+      "read_file",
+      "glob",
+      "grep",
+      "list_dir",
+      "read_anchored_text",
+      "edit_anchored_text",
+      "apply_patch",
+      "tool_search",
+    ]);
+    expect(
+      entries.find((entry) => entry.definition.name === "read_file"),
+    ).toMatchObject({
+      source: "coding",
+      exposure: "diagnostic",
+    });
+    expect(
+      entries.find((entry) => entry.definition.name === "tool_search"),
+    ).toMatchObject({
+      source: "core",
+      exposure: "diagnostic",
+    });
   });
 
   it("creates and lists workspace skills", async () => {

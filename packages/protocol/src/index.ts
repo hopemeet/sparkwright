@@ -29,7 +29,7 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
   );
 }
 
-export const TRACE_LEVELS = ["minimal", "standard", "debug"] as const;
+export const TRACE_LEVELS = ["standard", "debug"] as const;
 
 export type TraceLevel = (typeof TRACE_LEVELS)[number];
 
@@ -274,6 +274,8 @@ export interface CapabilityToolSummary {
   name: string;
   origin?: string;
   risk?: string;
+  /** True when the full tool schema is loaded through tool_search on demand. */
+  deferred?: boolean;
 }
 
 export interface CapabilitySkillSummary {

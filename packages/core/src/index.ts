@@ -208,6 +208,16 @@ export {
 // Approval
 export type { ApprovalResolver } from "./approval.js";
 export { createApprovalRequest, resolveApproval } from "./approval.js";
+export type {
+  ApprovalEnforcementMode,
+  ApprovalPolicy,
+  ApprovalPolicyOptions,
+  ApprovalScope,
+} from "./approval-policy.js";
+export {
+  createApprovalPolicy,
+  resolveApprovalByPolicy,
+} from "./approval-policy.js";
 
 // Context
 export type {
@@ -362,12 +372,19 @@ export type {
   TraceTimelinePhaseCategory,
   TraceTimelinePhaseStatus,
   TraceEventFilter,
+  TraceReport,
+  TraceReportFinding,
+  TraceReportFindingSeverity,
+  TraceReportVerdict,
   TraceSummary,
   TraceVerificationFinding,
   TraceVerificationReport,
   ValidateSessionTraceConsistencyOptions,
 } from "./trace.js";
 export {
+  buildTraceReport,
+  buildTraceReportFile,
+  buildTraceReportJsonl,
   buildTraceTimeline,
   buildTraceTimelineFile,
   buildTraceTimelineJsonl,
