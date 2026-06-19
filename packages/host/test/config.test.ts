@@ -137,6 +137,52 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports unknown provider model and cost fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+            extra: true,
+            models: {
+              "gpt-5.4-nano": {
+                extra: true,
+                cost: {
+                  input: 1,
+                  unexpected: 2,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(
+        loaded.config.providers?.openai?.models?.["gpt-5.4-nano"]?.cost,
+      ).toEqual({ input: 1 });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "providers.openai.extra",
+          }),
+          expect.objectContaining({
+            field: "providers.openai.models.gpt-5.4-nano.extra",
+          }),
+          expect.objectContaining({
+            field: "providers.openai.models.gpt-5.4-nano.cost.unexpected",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reads shared fields and applies them, ignoring UI-only keys", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

@@ -54,6 +54,7 @@ export const modelCostSchema = z
   })
   .strict()
   .describe("Per-million-token pricing used to attach costUsd to usage.");
+export const MODEL_COST_CONFIG_KEYS = modelCostSchema.keyof().options;
 
 export const providerModelConfigSchema = z
   .object({
@@ -61,6 +62,8 @@ export const providerModelConfigSchema = z
     providerOptions: providerOptionsSchema.optional(),
   })
   .strict();
+export const PROVIDER_MODEL_CONFIG_KEYS =
+  providerModelConfigSchema.keyof().options;
 
 export const providerConfigSchema = z
   .object({
@@ -90,6 +93,7 @@ export const providerConfigSchema = z
       .optional(),
   })
   .strict();
+export const PROVIDER_CONFIG_KEYS = providerConfigSchema.keyof().options;
 
 export const writeGuardrailsSchema = z
   .object({

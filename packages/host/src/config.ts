@@ -70,6 +70,9 @@ import {
   MCP_DEFAULT_POLICY_CONFIG_KEYS,
   MCP_STARTUP_MODES,
   MCP_TOOL_SCHEMA_LOAD_MODES,
+  MODEL_COST_CONFIG_KEYS,
+  PROVIDER_CONFIG_KEYS,
+  PROVIDER_MODEL_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
   SHELL_CONFIG_KEYS,
   SHELL_SANDBOX_CONFIG_KEYS,
@@ -3002,6 +3005,13 @@ function validateProvider(
     return undefined;
   }
   const provider: ProviderConfig = {};
+  validateKnownKeys(
+    raw,
+    `providers.${key}`,
+    filePath,
+    errors,
+    new Set<string>(PROVIDER_CONFIG_KEYS),
+  );
   if (raw.npm !== undefined) {
     if (typeof raw.npm === "string" && raw.npm.length > 0)
       provider.npm = raw.npm;
@@ -3045,31 +3055,42 @@ function validateProvider(
     if (isRecord(raw.models)) {
       const models: Record<string, ProviderModelConfig> = {};
       for (const [modelId, entry] of Object.entries(raw.models)) {
+        const modelField = `providers.${key}.models.${modelId}`;
         if (!isRecord(entry)) {
           errors.push({
             file: filePath,
-            field: `providers.${key}.models.${modelId}`,
+            field: modelField,
             message: "must be an object",
           });
           continue;
         }
         const modelConfig: ProviderModelConfig = {};
+        validateKnownKeys(
+          entry,
+          modelField,
+          filePath,
+          errors,
+          new Set<string>(PROVIDER_MODEL_CONFIG_KEYS),
+        );
         if (entry.cost !== undefined) {
           if (isRecord(entry.cost)) {
             const cost: ModelCost = {};
-            for (const field of [
-              "input",
-              "output",
-              "cacheRead",
-              "cacheWrite",
-            ] as const) {
+            const costField = `${modelField}.cost`;
+            validateKnownKeys(
+              entry.cost,
+              costField,
+              filePath,
+              errors,
+              new Set<string>(MODEL_COST_CONFIG_KEYS),
+            );
+            for (const field of MODEL_COST_CONFIG_KEYS) {
               const v = entry.cost[field];
               if (v === undefined) continue;
               if (typeof v === "number") cost[field] = v;
               else
                 errors.push({
                   file: filePath,
-                  field: `providers.${key}.models.${modelId}.cost.${field}`,
+                  field: `${costField}.${field}`,
                   message: "must be a number",
                 });
             }
