@@ -41,6 +41,56 @@ import {
   intersectToolUseSelectors,
   isToolUseSelector,
 } from "./tool-selectors.js";
+import type {
+  ApprovalDefaults,
+  CapabilityDelegateToolConfig,
+  CapabilityHookActionConfig,
+  CapabilityHooksConfig,
+  CapabilityMcpStartup,
+  CapabilityMcpToolSchemaLoad,
+  CapabilitySkillEvolutionConfig,
+  CapabilitySkillEvolutionMode,
+  CapabilitySkillInlineShellConfig,
+  CapabilitySkillsConfig,
+  CapabilityToolsConfig,
+  CapabilityVerificationCommandConfig,
+  CapabilityVerificationConfig,
+  CapabilityVerificationKind,
+  CapabilityVerificationAfterWritesConfig,
+  CapabilityVerificationStopGateConfig,
+  CapabilityWorkflowHookConfig,
+  ModelCost,
+  ProviderConfig,
+  ProviderModelConfig,
+  ShellConfig,
+  WriteGuardrailsConfig,
+} from "./config-zod-schema.js";
+export type {
+  ApprovalDefaults,
+  CapabilityDelegateToolConfig,
+  CapabilityHookActionConfig,
+  CapabilityHooksConfig,
+  CapabilityMcpStartup,
+  CapabilityMcpToolSchemaLoad,
+  CapabilitySkillEvolutionConfig,
+  CapabilitySkillEvolutionMode,
+  CapabilitySkillInlineShellConfig,
+  CapabilitySkillsConfig,
+  CapabilityToolsConfig,
+  CapabilityVerificationCommandConfig,
+  CapabilityVerificationConfig,
+  CapabilityVerificationKind,
+  CapabilityVerificationMode,
+  CapabilityVerificationAfterWritesConfig,
+  CapabilityVerificationStopGateConfig,
+  CapabilityWorkflowHookConfig,
+  CapabilityWorkflowHookFrequency,
+  ModelCost,
+  ProviderConfig,
+  ProviderModelConfig,
+  ShellConfig,
+  WriteGuardrailsConfig,
+} from "./config-zod-schema.js";
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
 export const CONFIG_USER_REL = ".config/sparkwright/config.json";
@@ -82,26 +132,6 @@ export const SUPPORTED_PROVIDER_NPMS: Record<
   },
 };
 
-export interface ModelCost {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-}
-
-export interface ProviderModelConfig {
-  cost?: ModelCost;
-  providerOptions?: Record<string, Record<string, unknown>>;
-}
-
-export interface ProviderConfig {
-  npm?: string;
-  baseURL?: string;
-  apiKey?: string;
-  providerOptions?: Record<string, Record<string, unknown>>;
-  models?: Record<string, ProviderModelConfig>;
-}
-
 export interface SharedConfig {
   /** Active model in "provider/model" form (or the reserved "deterministic"). */
   model?: string;
@@ -141,30 +171,6 @@ export interface SharedConfig {
   approvals?: ApprovalDefaults;
 }
 
-export interface WriteGuardrailsConfig {
-  /** Maximum distinct files a run may write. */
-  maxFiles?: number;
-  /** Maximum changed diff lines per write. */
-  maxDiffLines?: number;
-  /** Whether in-place edits may remove lines. */
-  allowDeletions?: boolean;
-}
-
-export interface ApprovalDefaults {
-  /** Auto-approve commands the safety classifier rates safe. */
-  shellSafe?: boolean;
-  /** Auto-approve workspace edits. */
-  edits?: boolean;
-  /** Auto-approve everything the policy allows (use with care). */
-  all?: boolean;
-  /** Default permission mode for unattended cron run/tick commands. */
-  cronMode?: PermissionMode;
-}
-
-export interface ShellConfig {
-  sandbox?: ShellSandboxConfig;
-}
-
 export interface CapabilityConfig {
   hooks?: CapabilityHooksConfig;
   verification?: CapabilityVerificationConfig;
@@ -173,133 +179,11 @@ export interface CapabilityConfig {
   agents?: CapabilityAgentsConfig;
 }
 
-export interface CapabilityToolsConfig {
-  /** High-level source/capability selectors retained in the prepared tool set. */
-  use?: string[];
-  /** Concrete tool names retained in the prepared run tool set. */
-  allowed?: string[];
-  /** Concrete tool names removed from the prepared run tool set. */
-  disabled?: string[];
-  /** Concrete tool names prepared as deferred schemas when supported. */
-  defer?: string[];
-}
-
-export type CapabilityHookActionConfig =
-  | {
-      type: "block";
-      reason: string;
-    }
-  | {
-      type: "context";
-      content: string;
-      contextType?: "system" | "user" | "summary";
-    }
-  | {
-      type: "command";
-      command: string;
-      args?: string[];
-      cwd?: string;
-      timeoutMs?: number;
-      blockOnFailure?: boolean;
-      injectOutput?: "always" | "onFailure" | "never";
-      maxOutputBytes?: number;
-      stdin?: "none" | "json";
-    };
-
-export type CapabilityWorkflowHookFrequency = "always" | "oncePerTurn";
-
-export interface CapabilityWorkflowHookConfig {
-  name: string;
-  description?: string;
-  hook: WorkflowHookName;
-  enabled?: boolean;
-  frequency?: CapabilityWorkflowHookFrequency;
-  matcher?: WorkflowHookMatcher;
-  onError?: "continue" | "block";
-  action: CapabilityHookActionConfig;
-}
-
-export interface CapabilityHooksConfig {
-  workflow?: CapabilityWorkflowHookConfig[];
-}
-
-export type CapabilityVerificationMode = "off" | "suggest" | "require";
-
-export type CapabilityVerificationKind =
-  | "lint"
-  | "typecheck"
-  | "test"
-  | "check"
-  | "custom";
-
-export interface CapabilityVerificationCommandConfig {
-  id: string;
-  kind?: CapabilityVerificationKind;
-  command: string;
-  args?: string[];
-  cwd?: string;
-  timeoutMs?: number;
-  maxOutputBytes?: number;
-}
-
-export interface CapabilityVerificationAfterWritesConfig {
-  profile?: string;
-  frequency?: CapabilityWorkflowHookFrequency;
-  injectOutput?: "always" | "onFailure" | "never";
-}
-
-export interface CapabilityVerificationStopGateConfig {
-  enabled?: boolean;
-  requireCleanAfterLastWrite?: boolean;
-}
-
-export interface CapabilityVerificationConfig {
-  mode?: CapabilityVerificationMode;
-  defaultProfile?: string;
-  profiles?: Record<string, CapabilityVerificationCommandConfig[]>;
-  afterWrites?: CapabilityVerificationAfterWritesConfig;
-  stopGate?: CapabilityVerificationStopGateConfig;
-}
-
 export interface CapabilityAgentsConfig {
   profiles?: AgentProfile[];
   delegateTools?: CapabilityDelegateToolConfig[];
   /** Maximum allowed sub-agent depth. 0 disables spawning; absent keeps legacy defaults. */
   maxDepth?: number;
-}
-
-export interface CapabilityDelegateToolConfig {
-  profileId: string;
-  toolName?: string;
-  description?: string;
-  requiresApproval?: boolean;
-  forbidNesting?: boolean;
-  maxSteps?: number;
-}
-
-export interface CapabilitySkillsConfig {
-  /** Skill root directories. Relative paths resolve from the config file. */
-  roots?: string[];
-  includeLoaderTool?: boolean;
-  loadSelectedSkills?: boolean;
-  maxSelectedSkills?: number;
-  resourceFileLimit?: number;
-  allowedSkills?: string[];
-  deniedSkills?: string[];
-  evolution?: CapabilitySkillEvolutionConfig;
-  inlineShell?: CapabilitySkillInlineShellConfig;
-}
-
-export type CapabilitySkillEvolutionMode = "off" | "notice" | "draft" | "apply";
-
-export interface CapabilitySkillEvolutionConfig {
-  mode?: CapabilitySkillEvolutionMode;
-}
-
-export interface CapabilitySkillInlineShellConfig {
-  enabled?: boolean;
-  timeoutMs?: number;
-  maxOutputChars?: number;
 }
 
 export type CapabilityMcpServerConfig =
@@ -323,9 +207,6 @@ export type CapabilityMcpServerConfig =
       enabled?: boolean;
       toolSchemaLoad?: CapabilityMcpToolSchemaLoad;
     };
-
-export type CapabilityMcpToolSchemaLoad = "eager" | "defer";
-export type CapabilityMcpStartup = "lazy" | "prepare" | "eager";
 
 export interface CapabilityMcpConfig {
   servers?: CapabilityMcpServerConfig[];

@@ -1,4 +1,6 @@
 import { PERMISSION_MODES, TRACE_LEVELS } from "@sparkwright/protocol";
+import type { WorkflowHookMatcher, WorkflowHookName } from "@sparkwright/core";
+import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import { z } from "zod";
 import { TOOL_USE_SELECTORS } from "./tool-selectors.js";
 
@@ -37,7 +39,7 @@ const toolUseSelectorSchema = z.union([
     .describe("Select tools from one configured MCP server, e.g. mcp:demo."),
 ]);
 
-const modelCostSchema = z
+export const modelCostSchema = z
   .object({
     input: z.number().optional(),
     output: z.number().optional(),
@@ -47,14 +49,14 @@ const modelCostSchema = z
   .strict()
   .describe("Per-million-token pricing used to attach costUsd to usage.");
 
-const providerModelConfigSchema = z
+export const providerModelConfigSchema = z
   .object({
     cost: modelCostSchema.optional(),
     providerOptions: providerOptionsSchema.optional(),
   })
   .strict();
 
-const providerConfigSchema = z
+export const providerConfigSchema = z
   .object({
     npm: nonEmptyString
       .describe(
@@ -83,7 +85,7 @@ const providerConfigSchema = z
   })
   .strict();
 
-const writeGuardrailsSchema = z
+export const writeGuardrailsSchema = z
   .object({
     maxFiles: positiveInteger
       .describe("Maximum distinct files a run may write.")
@@ -99,7 +101,7 @@ const writeGuardrailsSchema = z
   .strict()
   .describe("Workspace write guardrails. Merges conservatively across layers.");
 
-const runBudgetSchema = z
+export const runBudgetSchema = z
   .object({
     maxDurationMs: positiveInteger.optional(),
     maxModelCalls: positiveInteger.optional(),
@@ -112,7 +114,7 @@ const runBudgetSchema = z
     "Resource budget for the interactive main run. maxModelCalls is the tightest natural step bound.",
   );
 
-const approvalsSchema = z
+export const approvalsSchema = z
   .object({
     shellSafe: z
       .boolean()
@@ -134,7 +136,7 @@ const approvalsSchema = z
     "Default approval auto-grants. CLI flags still override these values.",
   );
 
-const shellSandboxSchema = z
+export const shellSandboxSchema = z
   .object({
     mode: z
       .enum(["off", "warn", "enforce"])
@@ -168,14 +170,14 @@ const shellSandboxSchema = z
     "OS-level process sandbox for local command execution. Forced deny-write paths are always appended by the host.",
   );
 
-const shellSchema = z
+export const shellSchema = z
   .object({
     sandbox: shellSandboxSchema.optional(),
   })
   .strict()
   .describe("Host shell execution boundary.");
 
-const toolsSchema = z
+export const toolsSchema = z
   .object({
     use: z
       .array(toolUseSelectorSchema)
@@ -203,7 +205,7 @@ const toolsSchema = z
   );
 
 const stringOrStringArraySchema = z.union([z.string(), stringArray]);
-const workflowHookMatcherSchema = z
+export const workflowHookMatcherSchema = z
   .object({
     toolName: stringOrStringArraySchema.optional(),
     eventType: stringOrStringArraySchema.optional(),
@@ -214,7 +216,7 @@ const workflowHookMatcherSchema = z
   })
   .strict();
 
-const workflowHookActionSchema = z.union([
+export const workflowHookActionSchema = z.union([
   z
     .object({
       type: z.literal("block"),
@@ -243,7 +245,9 @@ const workflowHookActionSchema = z.union([
     .strict(),
 ]);
 
-const hooksSchema = z
+export const workflowHookFrequencySchema = z.enum(["always", "oncePerTurn"]);
+
+export const hooksSchema = z
   .object({
     workflow: z
       .array(
@@ -263,7 +267,7 @@ const hooksSchema = z
             ]),
             enabled: z.boolean().optional(),
             onError: z.enum(["continue", "block"]).optional(),
-            frequency: z.enum(["always", "oncePerTurn"]).optional(),
+            frequency: workflowHookFrequencySchema.optional(),
             matcher: workflowHookMatcherSchema.optional(),
             action: workflowHookActionSchema,
           })
@@ -274,10 +278,19 @@ const hooksSchema = z
   .strict()
   .describe("Deterministic workflow hooks for host-created runs.");
 
-const verificationCommandSchema = z
+export const verificationModeSchema = z.enum(["off", "suggest", "require"]);
+export const verificationKindSchema = z.enum([
+  "lint",
+  "typecheck",
+  "test",
+  "check",
+  "custom",
+]);
+
+export const verificationCommandSchema = z
   .object({
     id: nonEmptyString,
-    kind: z.enum(["lint", "typecheck", "test", "check", "custom"]).optional(),
+    kind: verificationKindSchema.optional(),
     command: nonEmptyString,
     args: stringArray.optional(),
     cwd: nonEmptyString.optional(),
@@ -286,9 +299,9 @@ const verificationCommandSchema = z
   })
   .strict();
 
-const verificationSchema = z
+export const verificationSchema = z
   .object({
-    mode: z.enum(["off", "suggest", "require"]).optional(),
+    mode: verificationModeSchema.optional(),
     defaultProfile: nonEmptyString.optional(),
     profiles: z
       .record(z.string(), z.array(verificationCommandSchema))
@@ -296,7 +309,7 @@ const verificationSchema = z
     afterWrites: z
       .object({
         profile: nonEmptyString.optional(),
-        frequency: z.enum(["always", "oncePerTurn"]).optional(),
+        frequency: workflowHookFrequencySchema.optional(),
         injectOutput: z.enum(["always", "onFailure", "never"]).optional(),
       })
       .strict()
@@ -314,7 +327,14 @@ const verificationSchema = z
     "Project verification profiles compiled by the host into workflow hooks.",
   );
 
-const skillsSchema = z
+export const skillEvolutionModeSchema = z.enum([
+  "off",
+  "notice",
+  "draft",
+  "apply",
+]);
+
+export const skillsSchema = z
   .object({
     roots: stringArray
       .describe(
@@ -335,7 +355,7 @@ const skillsSchema = z
     deniedSkills: stringArray.optional(),
     evolution: z
       .object({
-        mode: z.enum(["off", "notice", "draft", "apply"]).optional(),
+        mode: skillEvolutionModeSchema.optional(),
       })
       .strict()
       .optional(),
@@ -351,14 +371,17 @@ const skillsSchema = z
   .strict()
   .describe("Skill loading settings for host-created runs.");
 
-const mcpConfigSchema = z
+export const mcpToolSchemaLoadSchema = z.enum(["eager", "defer"]);
+export const mcpStartupSchema = z.enum(["lazy", "prepare", "eager"]);
+
+export const mcpConfigSchema = z
   .object({
     // Replaced with an external JSON Schema ref by scripts/generate-config-schema.ts.
     servers: z.array(z.unknown()).optional(),
     defaultTimeoutMs: positiveInteger.optional(),
     namePrefix: z.string().optional(),
-    startup: z.enum(["lazy", "prepare", "eager"]).optional(),
-    toolSchemaLoad: z.enum(["eager", "defer"]).optional(),
+    startup: mcpStartupSchema.optional(),
+    toolSchemaLoad: mcpToolSchemaLoadSchema.optional(),
     defaultPolicy: z
       .object({
         risk: z.enum(["safe", "risky", "denied"]).optional(),
@@ -370,24 +393,22 @@ const mcpConfigSchema = z
   .strict()
   .describe("MCP server settings for host-created runs.");
 
-const agentsConfigSchema = z
+export const delegateToolSchema = z
+  .object({
+    profileId: nonEmptyString,
+    toolName: nonEmptyString.optional(),
+    description: nonEmptyString.optional(),
+    requiresApproval: z.boolean().optional(),
+    forbidNesting: z.boolean().optional(),
+    maxSteps: positiveInteger.optional(),
+  })
+  .strict();
+
+export const agentsConfigSchema = z
   .object({
     // Replaced with an external JSON Schema ref by scripts/generate-config-schema.ts.
     profiles: z.array(z.unknown()).optional(),
-    delegateTools: z
-      .array(
-        z
-          .object({
-            profileId: nonEmptyString,
-            toolName: nonEmptyString.optional(),
-            description: nonEmptyString.optional(),
-            requiresApproval: z.boolean().optional(),
-            forbidNesting: z.boolean().optional(),
-            maxSteps: positiveInteger.optional(),
-          })
-          .strict(),
-      )
-      .optional(),
+    delegateTools: z.array(delegateToolSchema).optional(),
     maxDepth: nonNegativeInteger
       .describe(
         "Global sub-agent depth ceiling. 0 disables sub-agent spawning.",
@@ -397,7 +418,7 @@ const agentsConfigSchema = z
   .strict()
   .describe("Agent profile run templates for host-created runs.");
 
-const capabilitiesSchema = z
+export const capabilitiesSchema = z
   .object({
     hooks: hooksSchema.optional(),
     verification: verificationSchema.optional(),
@@ -408,23 +429,25 @@ const capabilitiesSchema = z
   .strict()
   .describe("Host-owned capability runtime settings.");
 
-const providersSchema = z
+export const providersSchema = z
   .record(z.string(), providerConfigSchema)
   .describe(
     'Named model providers. The reserved name "deterministic" is built in and must not be declared here.',
   );
-const modelSchema = nonEmptyString
+export const modelSchema = nonEmptyString
   .regex(/^[^/]+(\/.+)?$/)
   .describe('Active model in the form "provider/model".');
-const confidentialPathsSchema = nonEmptyStringArray.describe(
+export const confidentialPathsSchema = nonEmptyStringArray.describe(
   "Opt-in read-confidentiality paths or globs whose contents a run must not read.",
 );
-const maxStepsSchema = positiveInteger.describe(
+export const maxStepsSchema = positiveInteger.describe(
   "Explicit main-run step ceiling.",
 );
-const themeSchema = z.enum(["dark", "light", "mono"]).describe("Visual theme.");
-const mouseSchema = z.boolean().describe("Enable mouse reporting.");
-const keybindingsSchema = z
+export const themeSchema = z
+  .enum(["dark", "light", "mono"])
+  .describe("Visual theme.");
+export const mouseSchema = z.boolean().describe("Enable mouse reporting.");
+export const keybindingsSchema = z
   .record(z.string(), z.union([z.string(), stringArray, z.null()]))
   .describe("Override default key chords for named TUI actions.");
 
@@ -506,3 +529,62 @@ export const sparkwrightConfigZodSchema = z
   .describe(CONFIG_SCHEMA_DESCRIPTION);
 
 export type SparkwrightConfigInput = z.input<typeof sparkwrightConfigZodSchema>;
+export type ModelCost = z.output<typeof modelCostSchema>;
+export type ProviderModelConfig = z.output<typeof providerModelConfigSchema>;
+export type ProviderConfig = z.output<typeof providerConfigSchema>;
+export type WriteGuardrailsConfig = z.output<typeof writeGuardrailsSchema>;
+export type ApprovalDefaults = z.output<typeof approvalsSchema>;
+export type ShellConfig = Omit<z.output<typeof shellSchema>, "sandbox"> & {
+  sandbox?: ShellSandboxConfig;
+};
+export type CapabilityToolsConfig = z.output<typeof toolsSchema>;
+export type CapabilityHookActionConfig = z.output<
+  typeof workflowHookActionSchema
+>;
+export type CapabilityWorkflowHookFrequency = z.output<
+  typeof workflowHookFrequencySchema
+>;
+export type CapabilityWorkflowHookConfig = Omit<
+  NonNullable<z.output<typeof hooksSchema>["workflow"]>[number],
+  "hook" | "matcher"
+> & {
+  hook: WorkflowHookName;
+  matcher?: WorkflowHookMatcher;
+};
+export type CapabilityHooksConfig = Omit<
+  z.output<typeof hooksSchema>,
+  "workflow"
+> & {
+  workflow?: CapabilityWorkflowHookConfig[];
+};
+export type CapabilityVerificationMode = z.output<
+  typeof verificationModeSchema
+>;
+export type CapabilityVerificationKind = z.output<
+  typeof verificationKindSchema
+>;
+export type CapabilityVerificationCommandConfig = z.output<
+  typeof verificationCommandSchema
+>;
+export type CapabilityVerificationAfterWritesConfig = NonNullable<
+  z.output<typeof verificationSchema>["afterWrites"]
+>;
+export type CapabilityVerificationStopGateConfig = NonNullable<
+  z.output<typeof verificationSchema>["stopGate"]
+>;
+export type CapabilityVerificationConfig = z.output<typeof verificationSchema>;
+export type CapabilitySkillsConfig = z.output<typeof skillsSchema>;
+export type CapabilitySkillEvolutionMode = z.output<
+  typeof skillEvolutionModeSchema
+>;
+export type CapabilitySkillEvolutionConfig = NonNullable<
+  z.output<typeof skillsSchema>["evolution"]
+>;
+export type CapabilitySkillInlineShellConfig = NonNullable<
+  z.output<typeof skillsSchema>["inlineShell"]
+>;
+export type CapabilityMcpToolSchemaLoad = z.output<
+  typeof mcpToolSchemaLoadSchema
+>;
+export type CapabilityMcpStartup = z.output<typeof mcpStartupSchema>;
+export type CapabilityDelegateToolConfig = z.output<typeof delegateToolSchema>;
