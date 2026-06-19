@@ -892,6 +892,47 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports invalid trace and sandbox enum values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        traceLevel: "verbose",
+        shell: {
+          sandbox: {
+            mode: "audit",
+            network: { mode: "maybe" },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.traceLevel).toBeUndefined();
+      expect(loaded.config.shell?.sandbox?.mode).toBeUndefined();
+      expect(loaded.config.shell?.sandbox?.network?.mode).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "traceLevel",
+            message: "must be one of standard | debug",
+          }),
+          expect.objectContaining({
+            field: "shell.sandbox.mode",
+            message: "must be off, warn, or enforce",
+          }),
+          expect.objectContaining({
+            field: "shell.sandbox.network.mode",
+            message: "must be allow or deny",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("loads configured workflow hooks", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

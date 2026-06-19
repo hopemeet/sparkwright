@@ -37,6 +37,7 @@ const traceLevelSchema = z
   .describe(
     "Default trace verbosity when an entrypoint does not pass one. CLI --trace-level overrides.",
   );
+export const TRACE_LEVEL_CONFIG_VALUES = traceLevelSchema.options;
 const toolUseSelectorSchema = z.union([
   z.enum(TOOL_USE_SELECTORS),
   z
@@ -162,9 +163,15 @@ export const shellSandboxFilesystemSchema = z
 export const SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS =
   shellSandboxFilesystemSchema.keyof().options;
 
+export const shellSandboxModeSchema = z.enum(["off", "warn", "enforce"]);
+export const SHELL_SANDBOX_MODES = shellSandboxModeSchema.options;
+export const shellSandboxNetworkModeSchema = z.enum(["allow", "deny"]);
+export const SHELL_SANDBOX_NETWORK_MODES =
+  shellSandboxNetworkModeSchema.options;
+
 export const shellSandboxNetworkSchema = z
   .object({
-    mode: z.enum(["allow", "deny"]).optional(),
+    mode: shellSandboxNetworkModeSchema.optional(),
   })
   .strict();
 export const SHELL_SANDBOX_NETWORK_CONFIG_KEYS =
@@ -172,8 +179,7 @@ export const SHELL_SANDBOX_NETWORK_CONFIG_KEYS =
 
 export const shellSandboxSchema = z
   .object({
-    mode: z
-      .enum(["off", "warn", "enforce"])
+    mode: shellSandboxModeSchema
       .describe(
         "off disables OS sandboxing; warn uses it when available; enforce fails shell execution when sandboxing is unavailable.",
       )
@@ -239,6 +245,32 @@ export const workflowHookNameSchema = z.enum([
   "RuntimeSignal",
 ]);
 export const WORKFLOW_HOOK_NAMES = workflowHookNameSchema.options;
+export const workflowHookOnErrorSchema = z.enum(["continue", "block"]);
+export const WORKFLOW_HOOK_ON_ERROR_MODES = workflowHookOnErrorSchema.options;
+export const workflowHookFrequencySchema = z.enum(["always", "oncePerTurn"]);
+export const WORKFLOW_HOOK_FREQUENCIES = workflowHookFrequencySchema.options;
+export const workflowHookActionTypeSchema = z.enum([
+  "block",
+  "context",
+  "command",
+]);
+export const WORKFLOW_HOOK_ACTION_TYPES = workflowHookActionTypeSchema.options;
+export const workflowHookContextTypeSchema = z.enum([
+  "system",
+  "user",
+  "summary",
+]);
+export const WORKFLOW_HOOK_CONTEXT_TYPES =
+  workflowHookContextTypeSchema.options;
+export const workflowHookOutputInjectionSchema = z.enum([
+  "always",
+  "onFailure",
+  "never",
+]);
+export const WORKFLOW_HOOK_OUTPUT_INJECTION_MODES =
+  workflowHookOutputInjectionSchema.options;
+export const workflowHookStdinSchema = z.enum(["none", "json"]);
+export const WORKFLOW_HOOK_STDIN_MODES = workflowHookStdinSchema.options;
 
 export const workflowHookMatcherSchema = z
   .object({
@@ -264,7 +296,7 @@ export const workflowHookActionSchema = z.union([
     .object({
       type: z.literal("context"),
       content: nonEmptyString,
-      contextType: z.enum(["system", "user", "summary"]).optional(),
+      contextType: workflowHookContextTypeSchema.optional(),
     })
     .strict(),
   z
@@ -275,14 +307,12 @@ export const workflowHookActionSchema = z.union([
       cwd: nonEmptyString.optional(),
       timeoutMs: positiveInteger.optional(),
       blockOnFailure: z.boolean().optional(),
-      injectOutput: z.enum(["always", "onFailure", "never"]).optional(),
+      injectOutput: workflowHookOutputInjectionSchema.optional(),
       maxOutputBytes: positiveInteger.optional(),
-      stdin: z.enum(["none", "json"]).optional(),
+      stdin: workflowHookStdinSchema.optional(),
     })
     .strict(),
 ]);
-
-export const workflowHookFrequencySchema = z.enum(["always", "oncePerTurn"]);
 
 export const workflowHookConfigSchema = z
   .object({
@@ -290,7 +320,7 @@ export const workflowHookConfigSchema = z
     description: z.string().optional(),
     hook: workflowHookNameSchema,
     enabled: z.boolean().optional(),
-    onError: z.enum(["continue", "block"]).optional(),
+    onError: workflowHookOnErrorSchema.optional(),
     frequency: workflowHookFrequencySchema.optional(),
     matcher: workflowHookMatcherSchema.optional(),
     action: workflowHookActionSchema,
@@ -337,7 +367,7 @@ export const verificationAfterWritesSchema = z
   .object({
     profile: nonEmptyString.optional(),
     frequency: workflowHookFrequencySchema.optional(),
-    injectOutput: z.enum(["always", "onFailure", "never"]).optional(),
+    injectOutput: workflowHookOutputInjectionSchema.optional(),
   })
   .strict();
 export const VERIFICATION_AFTER_WRITES_CONFIG_KEYS =

@@ -75,22 +75,32 @@ import {
   PROVIDER_MODEL_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
   SHELL_CONFIG_KEYS,
+  SHELL_SANDBOX_MODES,
   SHELL_SANDBOX_CONFIG_KEYS,
   SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS,
+  SHELL_SANDBOX_NETWORK_MODES,
   SHELL_SANDBOX_NETWORK_CONFIG_KEYS,
   SKILLS_CONFIG_KEYS,
   SKILL_EVOLUTION_CONFIG_KEYS,
   SKILL_EVOLUTION_MODES,
   SKILL_INLINE_SHELL_CONFIG_KEYS,
   TOOLS_CONFIG_KEYS,
+  TRACE_LEVEL_CONFIG_VALUES,
   VERIFICATION_AFTER_WRITES_CONFIG_KEYS,
   VERIFICATION_COMMAND_CONFIG_KEYS,
   VERIFICATION_CONFIG_KEYS,
   VERIFICATION_KINDS,
+  VERIFICATION_MODES,
   VERIFICATION_STOP_GATE_CONFIG_KEYS,
+  WORKFLOW_HOOK_ACTION_TYPES,
   WORKFLOW_HOOK_CONFIG_KEYS,
+  WORKFLOW_HOOK_CONTEXT_TYPES,
+  WORKFLOW_HOOK_FREQUENCIES,
   WORKFLOW_HOOK_MATCHER_CONFIG_KEYS,
   WORKFLOW_HOOK_NAMES,
+  WORKFLOW_HOOK_ON_ERROR_MODES,
+  WORKFLOW_HOOK_OUTPUT_INJECTION_MODES,
+  WORKFLOW_HOOK_STDIN_MODES,
   WRITE_GUARDRAILS_CONFIG_KEYS,
 } from "./config-zod-schema.js";
 import type {
@@ -101,7 +111,6 @@ import type {
   CapabilityMcpStartup,
   CapabilityMcpToolSchemaLoad,
   CapabilitySkillEvolutionConfig,
-  CapabilitySkillEvolutionMode,
   CapabilitySkillInlineShellConfig,
   CapabilitySkillsConfig,
   CapabilityToolsConfig,
@@ -563,6 +572,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isStringOption<T extends string>(
+  value: unknown,
+  options: readonly T[],
+): value is T {
+  return (
+    typeof value === "string" && (options as readonly string[]).includes(value)
+  );
+}
+
 interface ConfigValueSchema<T> {
   safeParse(raw: unknown): { success: true; data: T } | { success: false };
 }
@@ -760,10 +778,6 @@ function validateCapabilitySkills(
   return out;
 }
 
-const VALID_SKILL_EVOLUTION_MODES: CapabilitySkillEvolutionMode[] = [
-  ...SKILL_EVOLUTION_MODES,
-];
-
 function validateCapabilitySkillEvolution(
   raw: unknown,
   filePath: string,
@@ -789,16 +803,13 @@ function validateCapabilitySkillEvolution(
     }
   }
   if (raw.mode !== undefined) {
-    if (
-      typeof raw.mode === "string" &&
-      (VALID_SKILL_EVOLUTION_MODES as string[]).includes(raw.mode)
-    ) {
-      out.mode = raw.mode as CapabilitySkillEvolutionMode;
+    if (isStringOption(raw.mode, SKILL_EVOLUTION_MODES)) {
+      out.mode = raw.mode;
     } else {
       errors.push({
         file: filePath,
         field: "capabilities.skills.evolution.mode",
-        message: `must be one of ${VALID_SKILL_EVOLUTION_MODES.join(" | ")}`,
+        message: `must be one of ${SKILL_EVOLUTION_MODES.join(" | ")}`,
       });
     }
   }
@@ -1025,10 +1036,7 @@ function validateWorkflowHookConfig(
     });
     return undefined;
   }
-  if (
-    typeof raw.hook !== "string" ||
-    !(WORKFLOW_HOOK_NAMES as readonly string[]).includes(raw.hook)
-  ) {
+  if (!isStringOption(raw.hook, WORKFLOW_HOOK_NAMES)) {
     errors.push({
       file: filePath,
       field: `${field}.hook`,
@@ -1068,7 +1076,7 @@ function validateWorkflowHookConfig(
     );
   }
   if (raw.onError !== undefined) {
-    if (raw.onError === "continue" || raw.onError === "block") {
+    if (isStringOption(raw.onError, WORKFLOW_HOOK_ON_ERROR_MODES)) {
       out.onError = raw.onError;
     } else {
       errors.push({
@@ -1079,7 +1087,7 @@ function validateWorkflowHookConfig(
     }
   }
   if (raw.frequency !== undefined) {
-    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+    if (isStringOption(raw.frequency, WORKFLOW_HOOK_FREQUENCIES)) {
       out.frequency = raw.frequency;
     } else {
       errors.push({
@@ -1113,7 +1121,7 @@ function validateWorkflowHookAction(
     return undefined;
   }
   const type = raw.type;
-  if (type !== "block" && type !== "context" && type !== "command") {
+  if (!isStringOption(type, WORKFLOW_HOOK_ACTION_TYPES)) {
     errors.push({
       file: filePath,
       field: `${field}.type`,
@@ -1142,12 +1150,13 @@ function validateWorkflowHookAction(
       return undefined;
     }
     const contextType = raw.contextType;
-    if (
-      contextType !== undefined &&
-      contextType !== "system" &&
-      contextType !== "user" &&
-      contextType !== "summary"
-    ) {
+    const parsedContextType =
+      contextType === undefined
+        ? undefined
+        : isStringOption(contextType, WORKFLOW_HOOK_CONTEXT_TYPES)
+          ? contextType
+          : undefined;
+    if (contextType !== undefined && parsedContextType === undefined) {
       errors.push({
         file: filePath,
         field: `${field}.contextType`,
@@ -1158,7 +1167,7 @@ function validateWorkflowHookAction(
     return {
       type,
       content: raw.content,
-      ...(contextType ? { contextType } : {}),
+      ...(parsedContextType ? { contextType: parsedContextType } : {}),
     };
   }
   if (typeof raw.command !== "string" || raw.command.length === 0) {
@@ -1213,9 +1222,7 @@ function validateWorkflowHookAction(
         }
       : {}),
     ...(raw.injectOutput !== undefined
-      ? raw.injectOutput === "always" ||
-        raw.injectOutput === "onFailure" ||
-        raw.injectOutput === "never"
+      ? isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
         ? { injectOutput: raw.injectOutput }
         : (errors.push({
             file: filePath,
@@ -1225,7 +1232,7 @@ function validateWorkflowHookAction(
           {})
       : {}),
     ...(raw.stdin !== undefined
-      ? raw.stdin === "none" || raw.stdin === "json"
+      ? isStringOption(raw.stdin, WORKFLOW_HOOK_STDIN_MODES)
         ? { stdin: raw.stdin }
         : (errors.push({
             file: filePath,
@@ -1314,11 +1321,7 @@ function validateCapabilityVerification(
 
   const out: CapabilityVerificationConfig = {};
   if (raw.mode !== undefined) {
-    if (
-      raw.mode === "off" ||
-      raw.mode === "suggest" ||
-      raw.mode === "require"
-    ) {
+    if (isStringOption(raw.mode, VERIFICATION_MODES)) {
       out.mode = raw.mode;
     } else {
       errors.push({
@@ -1531,7 +1534,7 @@ function validateVerificationAfterWrites(
     }
   }
   if (raw.frequency !== undefined) {
-    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+    if (isStringOption(raw.frequency, WORKFLOW_HOOK_FREQUENCIES)) {
       out.frequency = raw.frequency;
     } else {
       errors.push({
@@ -1543,9 +1546,7 @@ function validateVerificationAfterWrites(
   }
   if (raw.injectOutput !== undefined) {
     if (
-      raw.injectOutput === "always" ||
-      raw.injectOutput === "onFailure" ||
-      raw.injectOutput === "never"
+      isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
     ) {
       out.injectOutput = raw.injectOutput;
     } else {
@@ -1624,10 +1625,7 @@ function validateVerificationProfileReferences(
 function isVerificationKind(
   value: unknown,
 ): value is CapabilityVerificationKind {
-  return (
-    typeof value === "string" &&
-    (VERIFICATION_KINDS as readonly string[]).includes(value)
-  );
+  return isStringOption(value, VERIFICATION_KINDS);
 }
 
 function validateCapabilities(
@@ -1834,8 +1832,6 @@ function validateApprovals(
   return out;
 }
 
-const VALID_TRACE_LEVELS: TraceLevel[] = ["standard", "debug"];
-
 function validateShellConfig(
   raw: unknown,
   filePath: string,
@@ -1892,7 +1888,7 @@ function validateShellSandboxConfig(
     }
   }
   if (raw.mode !== undefined) {
-    if (raw.mode === "off" || raw.mode === "warn" || raw.mode === "enforce") {
+    if (isStringOption(raw.mode, SHELL_SANDBOX_MODES)) {
       out.mode = raw.mode;
     } else {
       errors.push({
@@ -2000,7 +1996,7 @@ function validateShellSandboxNetwork(
     }
   }
   if (raw.mode !== undefined) {
-    if (raw.mode === "allow" || raw.mode === "deny") {
+    if (isStringOption(raw.mode, SHELL_SANDBOX_NETWORK_MODES)) {
       out.mode = raw.mode;
     } else {
       errors.push({
@@ -2318,11 +2314,8 @@ function validateMcpToolSchemaLoad(
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityMcpToolSchemaLoad | undefined {
-  if (
-    typeof raw === "string" &&
-    (MCP_TOOL_SCHEMA_LOAD_MODES as readonly string[]).includes(raw)
-  ) {
-    return raw as CapabilityMcpToolSchemaLoad;
+  if (isStringOption(raw, MCP_TOOL_SCHEMA_LOAD_MODES)) {
+    return raw;
   }
   errors.push({
     file: filePath,
@@ -2338,11 +2331,8 @@ function validateMcpStartup(
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityMcpStartup | undefined {
-  if (
-    typeof raw === "string" &&
-    (MCP_STARTUP_MODES as readonly string[]).includes(raw)
-  ) {
-    return raw as CapabilityMcpStartup;
+  if (isStringOption(raw, MCP_STARTUP_MODES)) {
+    return raw;
   }
   errors.push({
     file: filePath,
@@ -2502,11 +2492,7 @@ function validateAgentProfile(
     }
   }
   if (raw.mode !== undefined) {
-    if (
-      typeof raw.mode === "string" &&
-      (AGENT_PROFILE_MODES as readonly string[]).includes(raw.mode)
-    )
-      profile.mode = raw.mode as AgentProfile["mode"];
+    if (isStringOption(raw.mode, AGENT_PROFILE_MODES)) profile.mode = raw.mode;
     else
       errors.push({
         file: filePath,
@@ -3355,8 +3341,8 @@ function validateShared(
     }
   }
   if (obj.traceLevel !== undefined) {
-    if ((VALID_TRACE_LEVELS as string[]).includes(obj.traceLevel as string)) {
-      config.traceLevel = obj.traceLevel as TraceLevel;
+    if (isStringOption(obj.traceLevel, TRACE_LEVEL_CONFIG_VALUES)) {
+      config.traceLevel = obj.traceLevel;
       sources.traceLevel = origin;
     } else {
       errors.push({
