@@ -266,12 +266,19 @@ export interface CapabilitySkillsConfig {
   allowedSkills?: string[];
   deniedSkills?: string[];
   evolution?: CapabilitySkillEvolutionConfig;
+  inlineShell?: CapabilitySkillInlineShellConfig;
 }
 
 export type CapabilitySkillEvolutionMode = "off" | "notice" | "draft" | "apply";
 
 export interface CapabilitySkillEvolutionConfig {
   mode?: CapabilitySkillEvolutionMode;
+}
+
+export interface CapabilitySkillInlineShellConfig {
+  enabled?: boolean;
+  timeoutMs?: number;
+  maxOutputChars?: number;
 }
 
 export type CapabilityMcpServerConfig =
@@ -563,6 +570,7 @@ function validateCapabilitySkills(
     "allowedSkills",
     "deniedSkills",
     "evolution",
+    "inlineShell",
   ]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
@@ -637,6 +645,14 @@ function validateCapabilitySkills(
     );
     if (evolution) out.evolution = evolution;
   }
+  if (raw.inlineShell !== undefined) {
+    const inlineShell = validateCapabilitySkillInlineShell(
+      raw.inlineShell,
+      filePath,
+      errors,
+    );
+    if (inlineShell) out.inlineShell = inlineShell;
+  }
   return out;
 }
 
@@ -684,6 +700,57 @@ function validateCapabilitySkillEvolution(
         message: `must be one of ${VALID_SKILL_EVOLUTION_MODES.join(" | ")}`,
       });
     }
+  }
+  return out;
+}
+
+function validateCapabilitySkillInlineShell(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilitySkillInlineShellConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.skills.inlineShell",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: CapabilitySkillInlineShellConfig = {};
+  const allowed = new Set(["enabled", "timeoutMs", "maxOutputChars"]);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `capabilities.skills.inlineShell.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      "capabilities.skills.inlineShell.enabled",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.timeoutMs !== undefined) {
+    out.timeoutMs = validateOptionalPositiveInteger(
+      raw.timeoutMs,
+      "capabilities.skills.inlineShell.timeoutMs",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.maxOutputChars !== undefined) {
+    out.maxOutputChars = validateOptionalPositiveInteger(
+      raw.maxOutputChars,
+      "capabilities.skills.inlineShell.maxOutputChars",
+      filePath,
+      errors,
+    );
   }
   return out;
 }

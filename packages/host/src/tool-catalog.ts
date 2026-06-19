@@ -5,6 +5,7 @@ import {
 } from "@sparkwright/agent-runtime";
 import {
   createToolSearchTool,
+  type EventEmitter,
   type RunId,
   type ToolDefinition,
   type ToolDescriptor,
@@ -86,6 +87,7 @@ export function createMainHostToolCatalog(input: {
   toolConfig?: CapabilityToolsConfig;
   taskManager: TaskManager;
   getParentRunId: () => RunId;
+  getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;
@@ -159,6 +161,7 @@ function createMainHostToolCatalogList(input: {
   skillRoots: SkillRoot[];
   taskManager: TaskManager;
   getParentRunId: () => RunId;
+  getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;
@@ -190,6 +193,7 @@ function createMainHostToolCatalogList(input: {
         sandbox: input.shell?.sandbox,
         skillRoots: input.skillRoots.map((root) => root.root),
         extraForcedDenyWrite: input.configPaths,
+        getRunEvents: input.getRunEvents,
       }),
       "shell",
     ),

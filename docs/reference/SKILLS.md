@@ -25,6 +25,37 @@ my-skill/
 through governed helper paths, but bundled scripts should not execute merely
 because a Skill was discovered.
 
+## Inline Shell Preprocessing
+
+Skill bodies may contain inline shell snippets of the form `` !`cmd` ``, but
+they are inert by default. Host-created runs expand them only when config
+explicitly enables:
+
+```json
+{
+  "capabilities": {
+    "skills": {
+      "inlineShell": {
+        "enabled": true,
+        "timeoutMs": 10000,
+        "maxOutputChars": 4000
+      }
+    }
+  }
+}
+```
+
+When enabled, the host expands inline shell while loading `SKILL.md`. Commands
+run with the Skill directory as `cwd`, through the same shell sandbox settings
+used for host-managed processes, and are traced as `extension.process.*` with
+`kind: "skill_script"`. Output replaces the inline snippet after trimming one
+trailing newline and is capped by `maxOutputChars`.
+
+The `@sparkwright/skills` package does not own process execution. It exposes a
+`preprocess` hook on `loadSkill`, `loadSkills`, and `prepareSkillsForRun`; hosts
+that need tracing or sandboxing inject an `inlineShellRunner`. Without that
+option, Skill loading preserves the source body unchanged.
+
 ## Frontmatter
 
 The first implementation supports a small YAML frontmatter subset:

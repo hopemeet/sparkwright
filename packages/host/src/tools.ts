@@ -31,6 +31,7 @@ import {
 import type { CapabilityToolsConfig } from "./config.js";
 import {
   createSkillUpdateProposal,
+  inspectProposedSkillContent,
   type SkillProposalProvenance,
 } from "./skill-evolution.js";
 import { projectSkillRoot } from "./skill-roots.js";
@@ -371,7 +372,8 @@ export function createSkillManagerTool(
     name: "create_skill",
     description:
       "Create a workspace skill. Writes a SKILL.md under an existing or " +
-      "default skill root. Use list_skills to list or validate skills.",
+      "default skill root. Content is checked by the skill guard; a dangerous " +
+      "finding requires force=true. Use list_skills to list or validate skills.",
     inputSchema: {
       type: "object",
       properties: {
@@ -442,6 +444,21 @@ export function createSkillManagerTool(
           `Skill already exists with different content: ${outputPath}. Use a Skill proposal/update flow or pass force=true to overwrite.`,
         );
       }
+      // Run the same static guard the proposal pipeline applies, so a
+      // secret-exfil-shaped description cannot be written without review.
+      const guardFindings = inspectProposedSkillContent(input.name, content);
+      if (
+        guardFindings.some((finding) => finding.severity === "dangerous") &&
+        !input.force
+      ) {
+        throw new Error(
+          `create_skill content has dangerous guard findings ` +
+            `(${guardFindings
+              .filter((f) => f.severity === "dangerous")
+              .map((f) => f.ruleId)
+              .join(", ")}); pass force=true to create it anyway.`,
+        );
+      }
       const write = await writeCapabilityText(
         ctx,
         skillPath,
@@ -455,6 +472,7 @@ export function createSkillManagerTool(
         changed: true,
         diffArtifactId: write.diffArtifactId,
         writeSummary: write.summary,
+        ...(guardFindings.length > 0 ? { guardFindings } : {}),
       };
     },
   });

@@ -421,7 +421,13 @@ function rootSpanName(startType: EventType, endType?: EventType): string {
 }
 
 function stripLifecycleSuffix(type: EventType): string {
-  for (const suffix of [".requested", ".started", ".completed", ".failed"]) {
+  for (const suffix of [
+    ".requested",
+    ".started",
+    ".completed",
+    ".failed",
+    ".cancelled",
+  ]) {
     if (type.endsWith(suffix)) return type.slice(0, -suffix.length);
   }
   return type;

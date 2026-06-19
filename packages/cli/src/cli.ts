@@ -2513,7 +2513,19 @@ async function handleSkillProposalsCommand(
   const args = splitCliWords(parsed.goal);
   const action = args.shift();
   if (action === "list") {
-    const proposals = await listSkillProposals(parsed.workspaceRoot);
+    const runFilter = readFlagValue(args, "--run");
+    // `--session` is parsed globally into parsed.sessionId, so read it there
+    // rather than from the subcommand args.
+    const sessionFilter = parsed.sessionId;
+    let proposals = await listSkillProposals(parsed.workspaceRoot);
+    if (runFilter) {
+      proposals = proposals.filter((p) => p.provenance?.runId === runFilter);
+    }
+    if (sessionFilter) {
+      proposals = proposals.filter(
+        (p) => p.provenance?.sessionId === sessionFilter,
+      );
+    }
     writeLine(
       io.stdout,
       parsed.format === "json"
@@ -3337,6 +3349,14 @@ function formatSkillProposalApplyResult(
     `doctor: ${result.doctor.status}`,
     formatGuardFindingsLine(result.guardFindings),
   ].join("\n");
+}
+
+/** Read `--flag value` from a positional arg list; returns trimmed value or undefined. */
+function readFlagValue(args: string[], flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  if (i === -1) return undefined;
+  const value = args[i + 1]?.trim();
+  return value && value.length > 0 ? value : undefined;
 }
 
 function formatProvenance(
@@ -5851,7 +5871,7 @@ function skillsUsage(): string {
     "       sparkwright skills validate [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
-    "       sparkwright skills proposals list [--workspace path] [--format json|text]",
+    "       sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",
     "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
     "       sparkwright skills proposals apply <id> [--force] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals reject <id> --reason "why" [--workspace path] [--format json|text]',
@@ -5869,7 +5889,7 @@ function skillsUsage(): string {
 
 function skillProposalsUsage(): string {
   return [
-    "Usage: sparkwright skills proposals list [--workspace path] [--format json|text]",
+    "Usage: sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",
     "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
     "       sparkwright skills proposals apply <id> [--force] [--workspace path] [--format json|text]",
     '       sparkwright skills proposals reject <id> --reason "why" [--workspace path] [--format json|text]',

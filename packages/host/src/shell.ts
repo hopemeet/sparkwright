@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { TaskManager } from "@sparkwright/agent-runtime";
+import { createBufferedEmitter, openSpan } from "@sparkwright/core";
 import {
   createShellTool,
   evaluateShellSafety,
@@ -26,8 +27,10 @@ import {
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
 import type {
+  EventEmitter,
   ExecutionEnvironment,
   LiveShellHandle,
+  ProcessOutputSummary,
   RunId,
   ShellExecutionRequest,
   ShellExecutionResult,
@@ -35,6 +38,7 @@ import type {
   ToolDefinition,
 } from "@sparkwright/core";
 import type { ShellToolInput, ShellToolOutput } from "@sparkwright/shell-tool";
+import { TracedProcessRunner } from "./traced-process-runner.js";
 
 const PROMOTED_SHELL_KIND = "shell.promoted";
 const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
@@ -299,6 +303,7 @@ export interface HostShellToolOptions {
   explicitConfigPath?: string;
   skillRoots?: readonly string[];
   extraForcedDenyWrite?: readonly string[];
+  getRunEvents?: () => EventEmitter | undefined;
 }
 
 /**
@@ -366,6 +371,7 @@ export function createHostShellTool(
               parentRunId: ctx.run.id,
               workspaceRoot,
               before,
+              getRunEvents: options.getRunEvents,
             })
           : createUnavailablePromotionHandler(),
       });
@@ -443,8 +449,16 @@ function createTaskPromotionHandler(input: {
   parentRunId: RunId;
   workspaceRoot: string;
   before?: WorkspaceSnapshot;
+  getRunEvents?: () => EventEmitter | undefined;
 }): ShellPromotionHandler {
-  return ({ handle, completed, request, partialStdout, partialStderr }) => {
+  return ({
+    handle,
+    completed,
+    request,
+    partialStdout,
+    partialStderr,
+    startedAt,
+  }) => {
     const rawCommand =
       typeof request.metadata?.rawCommand === "string"
         ? request.metadata.rawCommand
@@ -459,53 +473,111 @@ function createTaskPromotionHandler(input: {
         timeoutMs: request.timeoutMs,
       },
       runner: async (ctrl) => {
-        if (partialStdout) {
-          ctrl.emitOutput({ channel: "stdout", data: partialStdout });
-        }
-        if (partialStderr) {
-          ctrl.emitOutput({ channel: "stderr", data: partialStderr });
-        }
-
-        const stdoutDrain = (async () => {
-          for await (const chunk of handle.stdout()) {
-            ctrl.emitOutput({ channel: "stdout", data: chunk });
-          }
-        })();
-        const stderrDrain = (async () => {
-          for await (const chunk of handle.stderr()) {
-            ctrl.emitOutput({ channel: "stderr", data: chunk });
-          }
-        })();
-        ctrl.signal.addEventListener(
-          "abort",
-          () => handle.abort("task cancelled"),
-          { once: true },
-        );
-
-        const final = await completed;
-        await Promise.allSettled([stdoutDrain, stderrDrain]);
-        if (input.before) {
-          const after = await snapshotWorkspace(input.workspaceRoot);
-          const changes = diffWorkspaceSnapshots(input.before, after);
-          if (changes.length > 0) {
-            const rollback = await rollbackWorkspaceSnapshot(
-              input.workspaceRoot,
-              input.before,
-              after,
-            );
-            throw new UntrackedWorkspaceMutationError(changes, rollback);
-          }
-        }
-
-        if (final.status !== "completed" || final.exitCode !== 0) {
-          throw new ShellTaskExitError(final);
-        }
-
-        return {
+        const emitter = input.getRunEvents?.() ?? createBufferedEmitter();
+        const taskPayload = {
+          taskId: ctrl.taskId,
+          kind: PROMOTED_SHELL_KIND,
+          title: `shell: ${rawCommand}`,
           command: rawCommand,
-          exitCode: final.exitCode,
-          completedAt: final.completedAt,
+          cwd: request.cwd,
+          timeoutMs: request.timeoutMs,
         };
+        const taskSpan = openSpan(emitter, {
+          startType: "task.started",
+          payload: taskPayload,
+        });
+        const runner = new TracedProcessRunner();
+        let observed:
+          | Awaited<ReturnType<TracedProcessRunner["observeStreaming"]>>
+          | undefined;
+        try {
+          observed = await runner.observeStreaming({
+            emitter,
+            runId: input.parentRunId,
+            name: rawCommand,
+            kind: "task",
+            runtime: "shell",
+            command: "bash",
+            args: ["-c", rawCommand],
+            cwd: request.cwd,
+            streaming: { handle, completed },
+            startedAt,
+            initialStdout: partialStdout,
+            initialStderr: partialStderr,
+            spanFrame: taskSpan.frame,
+            abortSignal: ctrl.signal,
+            onOutput: (chunk) => {
+              ctrl.emitOutput(chunk);
+            },
+            onProgress: (chunk, context) => {
+              if (!chunk.message || chunk.channel === "event") return;
+              context.emit("task.output", {
+                taskId: ctrl.taskId,
+                channel: chunk.channel,
+                data: chunk.message,
+              });
+            },
+          });
+
+          if (ctrl.signal.aborted) {
+            const result = promotedShellTaskResult(
+              rawCommand,
+              observed.exitCode,
+              observed.output,
+            );
+            taskSpan.close("task.cancelled", {
+              ...taskPayload,
+              result,
+              output: observed.output,
+            });
+            return result;
+          }
+
+          if (input.before) {
+            const after = await snapshotWorkspace(input.workspaceRoot);
+            const changes = diffWorkspaceSnapshots(input.before, after);
+            if (changes.length > 0) {
+              const rollback = await rollbackWorkspaceSnapshot(
+                input.workspaceRoot,
+                input.before,
+                after,
+              );
+              throw new UntrackedWorkspaceMutationError(changes, rollback);
+            }
+          }
+
+          if (observed.error || observed.exitCode !== 0) {
+            throw new ShellTaskExitError(shellResultFromObserved(observed));
+          }
+
+          const result = promotedShellTaskResult(
+            rawCommand,
+            observed.exitCode,
+            observed.output,
+          );
+          taskSpan.close("task.completed", {
+            ...taskPayload,
+            result,
+            output: observed.output,
+            progressCount: observed.progressCount,
+            progressDropped: observed.progressDropped,
+          });
+          return result;
+        } catch (cause) {
+          taskSpan.close("task.failed", {
+            ...taskPayload,
+            errorCode: errorCodeFromCause(cause),
+            error: cause instanceof Error ? cause.message : String(cause),
+            ...(observed
+              ? {
+                  output: observed.output,
+                  progressCount: observed.progressCount,
+                  progressDropped: observed.progressDropped,
+                }
+              : {}),
+          });
+          throw cause;
+        }
       },
     });
 
@@ -526,6 +598,62 @@ class ShellTaskExitError extends Error {
     );
     this.name = "ShellTaskExitError";
   }
+}
+
+interface PromotedShellTaskResult {
+  command: string;
+  exitCode: number | null;
+  completedAt: string;
+  output: ProcessOutputSummary;
+}
+
+function promotedShellTaskResult(
+  command: string,
+  exitCode: number | null,
+  output: ProcessOutputSummary,
+): PromotedShellTaskResult {
+  return {
+    command,
+    exitCode,
+    completedAt: new Date().toISOString(),
+    output,
+  };
+}
+
+function shellResultFromObserved(
+  observed: Awaited<ReturnType<TracedProcessRunner["observeStreaming"]>>,
+): ShellExecutionResult {
+  const completedAt = new Date().toISOString();
+  return {
+    status: observed.exitCode === 0 && !observed.error ? "completed" : "failed",
+    exitCode: observed.exitCode,
+    stdout: observed.output.stdoutPreview ?? "",
+    stderr: observed.output.stderrPreview ?? observed.error?.message ?? "",
+    startedAt: new Date(Date.now() - observed.durationMs).toISOString(),
+    completedAt,
+    metadata: {
+      timedOut: observed.timedOut,
+      ...(observed.sandbox
+        ? {
+            sandboxed: observed.sandbox.sandboxed,
+            sandboxMode: observed.sandbox.mode,
+            sandboxRuntime: observed.sandbox.runtime,
+            sandboxNetworkMode: observed.sandbox.networkMode,
+            sandboxAvailable: observed.sandbox.available,
+            sandboxFallbackReason: observed.sandbox.fallbackReason,
+            sandboxEnforced: observed.sandbox.enforced,
+          }
+        : {}),
+    },
+  };
+}
+
+function errorCodeFromCause(cause: unknown): string {
+  if (cause && typeof cause === "object") {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return "TASK_RUNNER_FAILED";
 }
 
 interface WorkspaceSnapshotEntry {

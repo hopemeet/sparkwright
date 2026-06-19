@@ -45,6 +45,7 @@ import {
   prepareSkillsForRun,
   type LoadedSkill,
   type SkillIndexEntry,
+  type SkillPreprocessOptions,
 } from "@sparkwright/skills";
 import {
   createLazyMcpToolsForRun,
@@ -70,9 +71,11 @@ import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
   resolveShellSandboxConfig,
+  type ResolvedShellSandboxConfig,
   type ShellSandboxStatus,
 } from "@sparkwright/shell-sandbox";
 import type {
+  CapabilitySkillsConfig,
   CapabilityDelegateToolConfig,
   ShellConfig,
   WriteGuardrailsConfig,
@@ -118,6 +121,7 @@ import {
   createExternalCommandDelegateTool,
   externalCommandConfigFromAgentProfile,
 } from "./external-command-agent.js";
+import { createSkillInlineShellRunner } from "./skill-inline-shell.js";
 import {
   describeDelegateCapability,
   delegateToolName,
@@ -701,6 +705,11 @@ export class HostRuntime {
       skillRoots: skillRoots.map((root) => root.root),
       extraForcedDenyWrite: loadedConfig.attempted.map((entry) => entry.path),
     });
+    const skillPreprocess = createSkillPreprocessOptions({
+      skillConfig,
+      emitter: pendingExtensionEvents,
+      sandbox: mcpShellSandbox,
+    });
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     let preparedSkills: PreparedSkills | null = null;
     try {
@@ -724,6 +733,7 @@ export class HostRuntime {
             includeDevSkills: devSkillsEnabled(),
             emitter: pendingExtensionEvents,
             agentId: MAIN_AGENT_ID,
+            preprocess: skillPreprocess,
           })
         : null;
     } catch (error) {
@@ -834,6 +844,7 @@ export class HostRuntime {
       toolConfig,
       taskManager: this.taskManager,
       getParentRunId: () => requireActiveRunId(runIdHolder.value),
+      getRunEvents: () => parentRunRef.current?.events,
       todoPath: join(sessionRootDir, input.sessionId, "todo.md"),
       preparedSkills,
       preparedMcp,
@@ -2488,6 +2499,24 @@ async function inspectShellSandboxStatus(input: {
     config,
     createPlatformShellSandboxRuntime(),
   );
+}
+
+function createSkillPreprocessOptions(input: {
+  skillConfig?: CapabilitySkillsConfig;
+  emitter: EventEmitter;
+  sandbox: ResolvedShellSandboxConfig;
+}): SkillPreprocessOptions | undefined {
+  const inlineShell = input.skillConfig?.inlineShell;
+  if (inlineShell?.enabled !== true) return undefined;
+  return {
+    inlineShell: true,
+    inlineShellTimeoutMs: inlineShell.timeoutMs,
+    maxOutputChars: inlineShell.maxOutputChars,
+    inlineShellRunner: createSkillInlineShellRunner({
+      emitter: input.emitter,
+      sandbox: input.sandbox,
+    }),
+  };
 }
 
 async function readCronJobsForSnapshot(

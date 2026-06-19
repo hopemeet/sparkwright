@@ -481,6 +481,7 @@ export type TraceTimelinePhaseCategory =
   | "workspace"
   | "validation"
   | "context"
+  | "extension"
   | "task"
   | "artifact"
   | "other";
@@ -1480,6 +1481,15 @@ interface StreamTimingAccumulator {
   metadata: Record<string, unknown>;
 }
 
+interface ProcessProgressAccumulator {
+  count: number;
+  head: unknown[];
+  tail: unknown[];
+}
+
+const PROCESS_PROGRESS_HEAD_LIMIT = 5;
+const PROCESS_PROGRESS_TAIL_LIMIT = 5;
+
 /**
  * @internal Reference `RunStore` persisting JSONL traces + artifacts. Legacy
  * mode writes `.sparkwright/runs/<run-id>/`; session mode writes aggregate
@@ -1523,6 +1533,10 @@ export class FileRunStore implements RunStore {
   private readonly streamAccumulators = new Map<
     string,
     StreamTimingAccumulator
+  >();
+  private readonly processProgressAccumulators = new Map<
+    string,
+    ProcessProgressAccumulator
   >();
 
   constructor(run: RunRecord, options: FileRunStoreOptions = {}) {
@@ -1614,6 +1628,7 @@ export class FileRunStore implements RunStore {
   }
 
   private writeEventToDisk(event: SparkwrightEvent): void {
+    let eventToWrite = event;
     // Collapse high-frequency stream chunks into a single synthesized
     // `model.stream.text` per stream at non-debug levels: buffer each
     // text_delta, suppress the individual chunk, and flush the merged event
@@ -1637,12 +1652,22 @@ export class FileRunStore implements RunStore {
           // event so file order reads started → text → completed.
           this.flushStreamText(event);
           break;
+        case "extension.process.started":
+          this.resetProcessProgress(event);
+          break;
+        case "extension.process.progress":
+          this.accumulateProcessProgress(event);
+          return; // not persisted individually at standard level
+        case "extension.process.completed":
+        case "extension.process.failed":
+          eventToWrite = this.withProcessProgressSummary(event);
+          break;
         default:
           break;
       }
     }
 
-    const traceEvent = this.prepareTraceEvent(event);
+    const traceEvent = this.prepareTraceEvent(eventToWrite);
     appendFileSync(this.tracePath, serializeEventJsonl(traceEvent), "utf8");
     if (this.agentTracePath) {
       appendFileSync(
@@ -1651,7 +1676,7 @@ export class FileRunStore implements RunStore {
         "utf8",
       );
     }
-    this.appendTranscriptEvent(this.prepareTranscriptEvent(event));
+    this.appendTranscriptEvent(this.prepareTranscriptEvent(eventToWrite));
   }
 
   private accumulateStreamChunk(event: SparkwrightEvent): void {
@@ -1727,6 +1752,63 @@ export class FileRunStore implements RunStore {
         "utf8",
       );
     }
+  }
+
+  private resetProcessProgress(event: SparkwrightEvent): void {
+    const key = processInvocationKey(event);
+    if (key) this.processProgressAccumulators.delete(key);
+  }
+
+  private accumulateProcessProgress(event: SparkwrightEvent): void {
+    const key = processInvocationKey(event);
+    if (!key) return;
+    const existing = this.processProgressAccumulators.get(key) ?? {
+      count: 0,
+      head: [],
+      tail: [],
+    };
+    const snapshot = processProgressSnapshot(event);
+    existing.count += 1;
+    if (existing.head.length < PROCESS_PROGRESS_HEAD_LIMIT) {
+      existing.head.push(snapshot);
+    } else {
+      existing.tail.push(snapshot);
+      if (existing.tail.length > PROCESS_PROGRESS_TAIL_LIMIT) {
+        existing.tail.shift();
+      }
+    }
+    this.processProgressAccumulators.set(key, existing);
+  }
+
+  private withProcessProgressSummary(
+    event: SparkwrightEvent,
+  ): SparkwrightEvent {
+    const key = processInvocationKey(event);
+    if (!key) return event;
+    const acc = this.processProgressAccumulators.get(key);
+    if (!acc) return event;
+    this.processProgressAccumulators.delete(key);
+    if (!isRecord(event.payload)) return event;
+    const progressTail =
+      acc.tail.length > 0
+        ? acc.tail
+        : acc.head.slice(PROCESS_PROGRESS_HEAD_LIMIT);
+    return {
+      ...event,
+      payload: {
+        ...event.payload,
+        progressCount:
+          typeof event.payload.progressCount === "number"
+            ? event.payload.progressCount
+            : acc.count,
+        progressDropped:
+          typeof event.payload.progressDropped === "number"
+            ? event.payload.progressDropped
+            : 0,
+        progressHead: acc.head,
+        progressTail,
+      },
+    };
   }
 
   private bufferDegradedEvent(event: SparkwrightEvent, error: unknown): void {
@@ -2478,9 +2560,29 @@ function standardPayload(event: SparkwrightEvent): unknown {
       return summarizeAnchoredEditRejected(event.payload);
     case "approval.requested":
       return summarizeApprovalRequest(event.payload);
+    case "extension.process.progress":
+      return processProgressSnapshot(event);
     default:
       return event.payload;
   }
+}
+
+function processInvocationKey(event: SparkwrightEvent): string | undefined {
+  const payload = isRecord(event.payload) ? event.payload : {};
+  return stringValue(payload.invocationId, event.spanId);
+}
+
+function processProgressSnapshot(event: SparkwrightEvent): unknown {
+  if (!isRecord(event.payload)) return summarizeValue(event.payload);
+  const out: Record<string, unknown> = {
+    sequence: event.sequence,
+    timestamp: event.timestamp,
+    monotonicUs: event.monotonicUs,
+  };
+  for (const key of ["invocationId", "message", "channel", "data"]) {
+    if (key in event.payload) out[key] = summarizeValue(event.payload[key]);
+  }
+  return out;
 }
 
 /**
@@ -3550,7 +3652,8 @@ function isTimelineDetailEvent(event: SparkwrightEvent): boolean {
     event.type === "model.turn.started" ||
     event.type === "model.turn.completed" ||
     event.type === "model.stream.chunk" ||
-    event.type.startsWith("model.stream.")
+    event.type.startsWith("model.stream.") ||
+    event.type === "extension.process.progress"
   );
 }
 
@@ -3658,6 +3761,17 @@ function timelinePhaseKey(event: SparkwrightEvent): string | undefined {
     return `${event.runId}:run`;
   }
 
+  if (
+    event.type === "extension.process.started" ||
+    event.type === "extension.process.completed" ||
+    event.type === "extension.process.failed"
+  ) {
+    const invocationId = stringValue(payload.invocationId);
+    return invocationId
+      ? `${event.runId}:extension.process:${invocationId}`
+      : undefined;
+  }
+
   if (event.spanId) return `span:${event.spanId}`;
 
   return undefined;
@@ -3710,6 +3824,7 @@ function timelineCategory(
   if (type.startsWith("workspace.")) return "workspace";
   if (type.startsWith("validation.")) return "validation";
   if (type.startsWith("context.")) return "context";
+  if (type.startsWith("extension.")) return "extension";
   if (type.startsWith("task.")) return "task";
   if (type.startsWith("artifact.")) return "artifact";
   return "other";
@@ -3731,6 +3846,11 @@ function timelineLabel(
   }
   if (category === "model") {
     return `model step ${String(payload.step ?? "?")}`;
+  }
+  if (category === "extension") {
+    const kind = String(payload.kind ?? "process");
+    const name = String(payload.name ?? payload.invocationId ?? event.type);
+    return `extension ${kind}:${name}`;
   }
   if (category === "run") return "run";
   return event.type;

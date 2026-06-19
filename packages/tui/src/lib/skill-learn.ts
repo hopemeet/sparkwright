@@ -42,6 +42,8 @@ export interface SkillLearnDraftProposal {
 
 export interface CreateSkillLearnDraftProposalOptions {
   targetSkillName?: string;
+  /** Session the learning was captured in, recorded as proposal provenance. */
+  sessionId?: string;
 }
 
 export interface SkillLearnAutoApplyResult {
@@ -196,6 +198,7 @@ export async function createSkillLearnDraftProposal(
       ? condenseEvidence(notice.evidence)
       : "Reusable workflow guidance noticed in a TUI session.";
   const description = learnSummaryDescription(evidence);
+  const provenance = { sessionId: options.sessionId, rationale: description };
   const applyEdit = (beforeContent: string): string =>
     appendLearning(beforeContent, evidence);
   const roots = await existingSkillRoots(
@@ -220,6 +223,7 @@ export async function createSkillLearnDraftProposal(
           name: options.targetSkillName,
           description,
           applyEdit,
+          provenance,
         }),
       );
     } catch (error) {
@@ -237,6 +241,7 @@ export async function createSkillLearnDraftProposal(
         name: SKILL_LEARN_DRAFT_SKILL_NAME,
         description,
         applyEdit,
+        provenance,
       }),
     );
   } catch (error) {
@@ -249,6 +254,7 @@ export async function createSkillLearnDraftProposal(
       name: SKILL_LEARN_DRAFT_SKILL_NAME,
       description,
       content: renderSessionLearningsSkill(evidence),
+      provenance,
     }),
   );
 }

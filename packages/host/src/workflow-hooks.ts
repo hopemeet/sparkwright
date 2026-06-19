@@ -1,15 +1,15 @@
-import { spawn } from "node:child_process";
 import { isAbsolute, resolve } from "node:path";
 import {
   createContextItemId,
+  createBufferedEmitter,
   type ContextItem,
-  type ShellStreamingResult,
+  type ProcessOutputSummary,
+  type SandboxSummary,
   type WorkflowHook,
   type WorkflowHookInput,
   type WorkflowHookResult,
 } from "@sparkwright/core";
 import {
-  ShellSandboxExecutor,
   createPlatformShellSandboxRuntime,
   resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
@@ -20,6 +20,7 @@ import type {
   CapabilityHookActionConfig,
   CapabilityWorkflowHookConfig,
 } from "./config.js";
+import { TracedProcessRunner } from "./traced-process-runner.js";
 
 export interface CreateConfiguredWorkflowHooksOptions {
   hooks?: CapabilityWorkflowHookConfig[];
@@ -117,7 +118,10 @@ async function runConfiguredHookAction(
     timedOut: result.timedOut,
     stdout: result.stdout,
     stderr: result.stderr,
+    output: result.output,
     sandbox: result.sandbox,
+    progressCount: result.progressCount,
+    progressDropped: result.progressDropped,
   };
   const failed = result.timedOut || result.exitCode !== 0;
   if (action.blockOnFailure === true && failed) {
@@ -179,16 +183,10 @@ interface CommandResult {
   timedOut: boolean;
   stdout: string;
   stderr: string;
-  sandbox?: {
-    sandboxed: boolean;
-    mode?: string;
-    runtime?: string;
-    networkMode?: string;
-    unavailable?: string;
-    available?: boolean;
-    fallbackReason?: string;
-    enforced?: boolean;
-  };
+  output: ProcessOutputSummary;
+  sandbox?: SandboxSummary;
+  progressCount: number;
+  progressDropped: number;
 }
 
 async function runCommandAction(
@@ -206,193 +204,38 @@ async function runCommandAction(
     action.stdin === "json"
       ? `${JSON.stringify(commandHookStdin(input))}\n`
       : undefined;
-  let fallbackSandbox: CommandResult["sandbox"] =
-    options.sandboxConfig.mode === "off"
-      ? {
-          sandboxed: false,
-          mode: options.sandboxConfig.mode,
-          networkMode: options.sandboxConfig.network.mode,
-          available: false,
-          enforced: false,
-        }
-      : undefined;
-
-  if (options.sandboxConfig.mode !== "off") {
-    const sandbox = new ShellSandboxExecutor(options.sandboxRuntime);
-    const result = await sandbox.execute(
-      {
-        command: shellCommand([action.command, ...(action.args ?? [])]),
-        cwd,
-        env: sanitizeEnv(options.env),
-        stdin,
-        timeoutMs: action.timeoutMs,
-        metadata: {
-          workflowHook: options.hookName,
-          sandboxMode: options.sandboxConfig.mode,
-          sandboxNetworkMode: options.sandboxConfig.network.mode,
-          sandboxAvailable: true,
-          sandboxEnforced: options.sandboxConfig.failIfUnavailable,
-        },
-      },
-      options.sandboxConfig,
-    );
-    if (result.status === "started") {
-      return collectSandboxedCommandResult(result.result, maxOutputBytes);
-    }
-    if (options.sandboxConfig.failIfUnavailable) {
-      return {
-        exitCode: null,
-        timedOut: false,
-        stdout: "",
-        stderr: result.reason,
-        sandbox: {
-          sandboxed: false,
-          mode: options.sandboxConfig.mode,
-          runtime: result.runtimeId,
-          networkMode: options.sandboxConfig.network.mode,
-          unavailable: result.reason,
-          available: false,
-          fallbackReason: result.reason,
-          enforced: true,
-        },
-      };
-    }
-    fallbackSandbox = {
-      sandboxed: false,
-      mode: options.sandboxConfig.mode,
-      runtime: result.runtimeId,
-      networkMode: options.sandboxConfig.network.mode,
-      unavailable: result.reason,
-      available: false,
-      fallbackReason: result.reason,
-      enforced: false,
-    };
-  }
-
-  const child = spawn(action.command, action.args ?? [], {
+  const runner = new TracedProcessRunner();
+  const result = await runner.run({
+    emitter: input.events ?? createBufferedEmitter(),
+    runId: input.run.id,
+    name: options.hookName,
+    kind: "workflow_hook",
+    runtime: "custom",
+    command: action.command,
+    args: action.args ?? [],
     cwd,
-    env: sanitizeEnv(options.env),
-    stdio: [action.stdin === "json" ? "pipe" : "ignore", "pipe", "pipe"],
-    shell: false,
-  });
-
-  let stdout = "";
-  let stderr = "";
-  let timedOut = false;
-  let settled = false;
-
-  return new Promise<CommandResult>((resolvePromise) => {
-    const finish = (exitCode: number | null) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolvePromise({
-        exitCode,
-        timedOut,
-        stdout,
-        stderr,
-        sandbox: fallbackSandbox,
-      });
-    };
-    const timer =
-      action.timeoutMs && action.timeoutMs > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            child.kill("SIGTERM");
-          }, action.timeoutMs)
-        : undefined;
-
-    if (stdin !== undefined) {
-      child.stdin?.on("error", () => undefined);
-      try {
-        child.stdin?.end(stdin);
-      } catch (error) {
-        stderr = appendLimited(
-          stderr,
-          error instanceof Error ? error.message : String(error),
-          maxOutputBytes,
-        );
-        child.kill("SIGTERM");
-        finish(127);
-      }
-    }
-
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = appendLimited(stdout, chunk.toString("utf8"), maxOutputBytes);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = appendLimited(stderr, chunk.toString("utf8"), maxOutputBytes);
-    });
-    child.on("error", (error) => {
-      stderr = appendLimited(stderr, error.message, maxOutputBytes);
-      finish(127);
-    });
-    child.on("close", (code) => {
-      finish(code);
-    });
-  });
-}
-
-async function collectSandboxedCommandResult(
-  streaming: ShellStreamingResult,
-  maxOutputBytes: number,
-): Promise<CommandResult> {
-  let stdout = "";
-  let stderr = "";
-  const stdoutDrain = (async () => {
-    for await (const chunk of streaming.handle.stdout()) {
-      stdout = appendLimited(stdout, chunk, maxOutputBytes);
-    }
-  })();
-  const stderrDrain = (async () => {
-    for await (const chunk of streaming.handle.stderr()) {
-      stderr = appendLimited(stderr, chunk, maxOutputBytes);
-    }
-  })();
-  const final = await streaming.completed;
-  await Promise.allSettled([stdoutDrain, stderrDrain]);
-  return {
-    exitCode: final.exitCode,
-    timedOut:
-      typeof final.metadata?.timedOut === "boolean"
-        ? final.metadata.timedOut
-        : false,
-    stdout: stdout || final.stdout,
-    stderr: stderr || final.stderr,
-    sandbox: {
-      sandboxed: final.metadata?.sandboxed === true,
-      ...(typeof final.metadata?.sandboxMode === "string"
-        ? { mode: final.metadata.sandboxMode }
-        : {}),
-      ...(typeof final.metadata?.sandboxRuntime === "string"
-        ? { runtime: final.metadata.sandboxRuntime }
-        : {}),
-      ...(typeof final.metadata?.sandboxNetworkMode === "string"
-        ? { networkMode: final.metadata.sandboxNetworkMode }
-        : {}),
-      ...(typeof final.metadata?.sandboxUnavailable === "string"
-        ? { unavailable: final.metadata.sandboxUnavailable }
-        : {}),
-      ...(typeof final.metadata?.sandboxAvailable === "boolean"
-        ? { available: final.metadata.sandboxAvailable }
-        : {}),
-      ...(typeof final.metadata?.sandboxFallbackReason === "string"
-        ? { fallbackReason: final.metadata.sandboxFallbackReason }
-        : {}),
-      ...(typeof final.metadata?.sandboxEnforced === "boolean"
-        ? { enforced: final.metadata.sandboxEnforced }
-        : {}),
+    env: options.env,
+    stdin,
+    timeoutMs: action.timeoutMs,
+    sandbox: options.sandboxConfig,
+    sandboxRuntime: options.sandboxRuntime,
+    outputLimits: {
+      previewBytes: maxOutputBytes,
+      artifactBytes: action.maxOutputBytes ?? 32_000,
+      maxStdoutBytes: action.maxOutputBytes ?? 32_000,
+      maxStderrBytes: action.maxOutputBytes ?? 32_000,
     },
+  });
+  return {
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    stdout: result.output.stdoutPreview ?? "",
+    stderr: result.output.stderrPreview ?? "",
+    output: result.output,
+    sandbox: result.sandbox,
+    progressCount: result.progressCount,
+    progressDropped: result.progressDropped,
   };
-}
-
-function shellCommand(argv: readonly string[]): string {
-  return argv.map(shellQuote).join(" ");
-}
-
-function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(value)) return value;
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 function commandHookStdin(input: WorkflowHookInput): Record<string, unknown> {
@@ -403,24 +246,4 @@ function commandHookStdin(input: WorkflowHookInput): Record<string, unknown> {
     payload: input.payload,
     metadata: input.metadata,
   };
-}
-
-function appendLimited(
-  current: string,
-  next: string,
-  maxBytes: number,
-): string {
-  const combined = current + next;
-  if (Buffer.byteLength(combined, "utf8") <= maxBytes) return combined;
-  return combined.slice(0, maxBytes) + "\n[truncated]";
-}
-
-function sanitizeEnv(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
-): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
 }

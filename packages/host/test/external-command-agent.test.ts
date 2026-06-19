@@ -84,6 +84,7 @@ describe("external command delegate tool", () => {
       stdout: string;
       exitCode: number;
       agentProfileId: string;
+      output: { stdoutBytes: number; stdoutPreview?: string };
     };
 
     expect(result).toMatchObject({
@@ -95,6 +96,10 @@ describe("external command delegate tool", () => {
       argv: ["--goal", "review the patch"],
       stdin: "",
     });
+    expect(result.output).toMatchObject({
+      stdoutBytes: result.stdout.length,
+      stdoutPreview: result.stdout,
+    });
     expect(parent.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "subagent.requested",
@@ -102,6 +107,9 @@ describe("external command delegate tool", () => {
         "subagent.completed",
       ]),
     );
+    expect(
+      parent.events.all().some((event) => event.type.startsWith("extension.")),
+    ).toBe(false);
     expect(parent.events.all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -112,6 +120,9 @@ describe("external command delegate tool", () => {
               exitCode: 0,
               stdoutTruncated: false,
               stderrTruncated: false,
+              output: expect.objectContaining({
+                stdoutBytes: result.stdout.length,
+              }),
             }),
           }),
         }),
@@ -541,6 +552,7 @@ describe("external command delegate tool", () => {
       stdoutTruncated: boolean;
       stderrTruncated: boolean;
       outputTruncated: boolean;
+      output: { artifactIds?: string[] };
     };
 
     expect(result).toMatchObject({
@@ -550,6 +562,17 @@ describe("external command delegate tool", () => {
       stderrTruncated: true,
       outputTruncated: true,
     });
+    expect(result.output.artifactIds).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^artifact_/)]),
+    );
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "artifact.created",
+          payload: expect.objectContaining({ type: "log" }),
+        }),
+      ]),
+    );
   });
 
   it("fails closed when enforce-mode sandbox is unavailable", async () => {

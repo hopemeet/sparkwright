@@ -13,6 +13,7 @@ import {
   listSkillResourceFiles,
   listSkillPackageFiles,
   lockSkills,
+  loadSkill,
   loadSkills,
   parseSkill,
   prepareSkillsForRun,
@@ -649,6 +650,36 @@ Review only the requested change.
     // passing an absolute host path to a file-reading tool.
     expect(loaded.content).toContain("resource");
     expect(loaded.content).not.toContain(root);
+  });
+
+  it("preprocesses skill bodies when loadSkill opts in", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    const skillDir = join(root, "dynamic");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      `---
+name: dynamic
+description: Dynamic preprocessing.
+---
+dir=\${SPARKWRIGHT_SKILL_DIR}
+value=!\`printf source\`
+`,
+    );
+
+    const skill = await loadSkill(join(skillDir, "SKILL.md"), {
+      preprocess: {
+        inlineShell: true,
+        inlineShellRunner: async ({ cwd, command }) => {
+          expect(cwd).toBe(skillDir);
+          expect(command).toBe("printf source");
+          return "expanded";
+        },
+      },
+    });
+
+    expect(skill.body).toContain(`dir=${skillDir}`);
+    expect(skill.body).toContain("value=expanded");
   });
 
   it("reads a skill reference file through the resource argument", async () => {

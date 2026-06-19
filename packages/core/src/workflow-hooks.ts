@@ -7,7 +7,7 @@
 // ValidationHook remain supported for embedders that need lower-level seams.
 // =============================================================================
 
-import type { EventLog } from "./events.js";
+import type { EventEmitter, EventLog } from "./events.js";
 import type { ContextItem, RunRecord } from "./types.js";
 import type { ValidationFinding } from "./validation.js";
 
@@ -47,6 +47,7 @@ export interface WorkflowHookInput<TPayload = unknown> {
   step?: number;
   payload: TPayload;
   metadata: Record<string, unknown>;
+  events?: EventEmitter;
 }
 
 export type WorkflowHookResult =
@@ -155,6 +156,7 @@ export async function runWorkflowHooks(
           step: input.step,
           payload: input.payload,
           metadata,
+          events: input.events,
         }),
       );
 

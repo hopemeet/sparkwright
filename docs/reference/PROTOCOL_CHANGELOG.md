@@ -12,6 +12,12 @@ Conventions:
 
 ## Unreleased
 
+- `config.schema.json`: additive — new optional
+  `capabilities.skills.inlineShell` config surface. When `enabled: true`, host
+  skill loading may expand `` !`cmd` `` snippets through a host-injected runner
+  with timeout and output caps. Migration: none; omitted config preserves the
+  existing behavior where Skill inline shell is inert.
+
 - `event.schema.json`: additive — new `capability.mutation.completed` event
   type. Emitted when a higher-level capability package mutation completes
   outside the single-file `workspace.write.*` path, such as writing a draft
@@ -34,6 +40,17 @@ Conventions:
   - `workflow_hook.failed`
     Migration: none; consumers that exhaustively match event types should add a
     default ignore arm or render these as host/runtime automation evidence.
+
+- `event.schema.json`: additive — four new `extension.process.*` event types
+  for host-controlled external process invocations:
+  - `extension.process.started`
+  - `extension.process.progress`
+  - `extension.process.completed`
+  - `extension.process.failed`
+    `standard` traces suppress raw progress events and aggregate progress
+    head/tail samples onto the terminal event; `debug` traces keep progress.
+    Migration: none; consumers that exhaustively match event types should add a
+    default ignore arm or render these as host process evidence.
 
 - `config.schema.json`: additive — new `capabilities.hooks.workflow` config
   surface. Host-created runs can now attach deterministic workflow hooks with

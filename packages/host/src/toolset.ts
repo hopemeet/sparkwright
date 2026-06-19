@@ -1,5 +1,5 @@
 import type { TaskManager } from "@sparkwright/agent-runtime";
-import type { RunId, ToolDefinition } from "@sparkwright/core";
+import type { EventEmitter, RunId, ToolDefinition } from "@sparkwright/core";
 import type { SkillRoot } from "@sparkwright/skills";
 import type { CapabilityToolsConfig, ShellConfig } from "./config.js";
 import {
@@ -25,6 +25,7 @@ export function createMainHostTools(input: {
   toolConfig?: CapabilityToolsConfig;
   taskManager: TaskManager;
   getParentRunId: () => RunId;
+  getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;

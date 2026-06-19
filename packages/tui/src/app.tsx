@@ -470,7 +470,10 @@ function AppReady(
               void createSkillLearnDraftProposal(
                 resolved.workspaceRoot,
                 notice,
-                targetSkillName ? { targetSkillName } : {},
+                {
+                  ...(targetSkillName ? { targetSkillName } : {}),
+                  ...(sessionId ? { sessionId } : {}),
+                },
               )
                 .then((proposal) => {
                   if (sessionId !== state.sessionId) return;

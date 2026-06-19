@@ -452,6 +452,27 @@
                 }
               },
               "additionalProperties": false
+            },
+            "inlineShell": {
+              "type": "object",
+              "description": "Optional SKILL.md inline shell preprocessing. Disabled by default; when enabled the host runs inline commands through the process trace/sandbox boundary during skill indexing/loading.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable expansion of !`cmd` snippets in Skill bodies."
+                },
+                "timeoutMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Per-command timeout in milliseconds. Defaults to 10000."
+                },
+                "maxOutputChars": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Maximum inline replacement characters per command. Defaults to 4000."
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

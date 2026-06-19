@@ -212,9 +212,20 @@ describe("createConfiguredWorkflowHooks", () => {
             hookName: "quiet-check",
             exitCode: 0,
             stdout: "ok\n",
+            output: {
+              stdoutPreview: "ok\n",
+              stdoutBytes: 3,
+              stdoutTruncated: false,
+            },
           },
         },
       });
+      expect(events.all().map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "extension.process.started",
+          "extension.process.completed",
+        ]),
+      );
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -320,7 +331,6 @@ describe("createConfiguredWorkflowHooks", () => {
           sandboxed: false,
           mode: "enforce",
           runtime: "test-unavailable",
-          unavailable: expect.stringContaining("test-unavailable"),
           available: false,
           fallbackReason: expect.stringContaining("test-unavailable"),
           enforced: true,
@@ -373,7 +383,6 @@ describe("createConfiguredWorkflowHooks", () => {
               sandboxed: false,
               mode: "warn",
               runtime: "test-unavailable",
-              unavailable: expect.stringContaining("test-unavailable"),
               available: false,
               fallbackReason: expect.stringContaining("test-unavailable"),
               enforced: false,

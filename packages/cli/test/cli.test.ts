@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import type { RunId } from "@sparkwright/core";
+import { createSkillCreateProposal } from "@sparkwright/host";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
@@ -2844,6 +2845,63 @@ describe("runCli", () => {
       { io: { stdout: forcedOutput.stdout, stderr: forcedOutput.stderr } },
     );
     expect(forced.exitCode).toBe(0);
+  });
+
+  it("filters proposals by provenance run and session", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    // A proposal carrying provenance, as a model-drafted proposal would.
+    await createSkillCreateProposal({
+      workspaceRoot: workspace,
+      name: "from-run",
+      description: "captured during a run",
+      provenance: { runId: "run_match", sessionId: "sess_match" },
+    });
+    // A plain CLI-authored proposal (no provenance).
+    const plain = createOutputCapture();
+    const plainRes = await runCli(
+      [
+        "skills",
+        "proposals",
+        "create",
+        "plain",
+        "--description",
+        "manual create",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      { io: { stdout: plain.stdout, stderr: plain.stderr } },
+    );
+    expect(plainRes.exitCode).toBe(0);
+
+    const listJson = async (extra: string[]) => {
+      const out = createOutputCapture();
+      const res = await runCli(
+        [
+          "skills",
+          "proposals",
+          "list",
+          ...extra,
+          "--workspace",
+          workspace,
+          "--format",
+          "json",
+        ],
+        { io: { stdout: out.stdout, stderr: out.stderr } },
+      );
+      expect(res.exitCode).toBe(0);
+      return JSON.parse(out.stdoutText()) as Array<{ skillName: string }>;
+    };
+
+    expect((await listJson([])).length).toBe(2);
+    expect(
+      (await listJson(["--run", "run_match"])).map((p) => p.skillName),
+    ).toEqual(["from-run"]);
+    expect((await listJson(["--run", "nope"])).length).toBe(0);
+    expect(
+      (await listJson(["--session", "sess_match"])).map((p) => p.skillName),
+    ).toEqual(["from-run"]);
   });
 
   it("reverts the latest applied evolution with restore --to before", async () => {

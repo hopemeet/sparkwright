@@ -62,6 +62,9 @@ export type {
   SparkwrightEvent,
   EventEmitter,
   BufferedEmitter,
+  ProcessOutputSummary,
+  SandboxSummary,
+  ProcessInvocationBase,
 } from "./events.js";
 export { createBufferedEmitter } from "./events.js";
 

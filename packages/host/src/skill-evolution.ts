@@ -235,61 +235,66 @@ export async function createSkillCreateProposal(
     join(afterSkillDir, "SKILL.md"),
   );
 
-  await mutations.ensureDirectory(afterSkillDir, {
-    reason: `Create proposal package ${proposalId}`,
-  });
-  await mutations.writeText(join(afterSkillDir, "SKILL.md"), skillContent, {
-    reason: `Write proposed Skill ${input.name}`,
-  });
-  const guardFindings = inspectProposedSkillContent(input.name, skillContent);
+  try {
+    await mutations.ensureDirectory(afterSkillDir, {
+      reason: `Create proposal package ${proposalId}`,
+    });
+    await mutations.writeText(join(afterSkillDir, "SKILL.md"), skillContent, {
+      reason: `Write proposed Skill ${input.name}`,
+    });
+    const guardFindings = inspectProposedSkillContent(input.name, skillContent);
 
-  const afterHash = await computeSkillPackageHash(afterSkillDir);
-  const metadata: SkillProposalMetadata = {
-    id: proposalId,
-    kind: "create",
-    state: "draft",
-    skillName: input.name,
-    targetLayer: "project",
-    targetPath,
-    createdAt: now,
-    updatedAt: now,
-    basePackageHash: null,
-    afterPackageHash: afterHash.packageHash,
-    summary: `Create project Skill ${input.name}`,
-    ...(guardFindings.length > 0 ? { guardFindings } : {}),
-    ...(normalizeProvenance(input.provenance)
-      ? { provenance: normalizeProvenance(input.provenance) }
-      : {}),
-  };
-  const proposalMarkdown = renderCreateProposalMarkdown(
-    metadata,
-    input.description,
-  );
-  const patchDiff = renderCreatePatch(input.name, skillContent);
+    const afterHash = await computeSkillPackageHash(afterSkillDir);
+    const metadata: SkillProposalMetadata = {
+      id: proposalId,
+      kind: "create",
+      state: "draft",
+      skillName: input.name,
+      targetLayer: "project",
+      targetPath,
+      createdAt: now,
+      updatedAt: now,
+      basePackageHash: null,
+      afterPackageHash: afterHash.packageHash,
+      summary: `Create project Skill ${input.name}`,
+      ...(guardFindings.length > 0 ? { guardFindings } : {}),
+      ...(normalizeProvenance(input.provenance)
+        ? { provenance: normalizeProvenance(input.provenance) }
+        : {}),
+    };
+    const proposalMarkdown = renderCreateProposalMarkdown(
+      metadata,
+      input.description,
+    );
+    const patchDiff = renderCreatePatch(input.name, skillContent);
 
-  await mutations.ensureDirectory(join(proposalPath, "before"), {
-    reason: `Create empty proposal base ${proposalId}`,
-  });
-  await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
-    reason: `Write proposal metadata ${proposalId}`,
-  });
-  await mutations.writeText(
-    join(proposalPath, "proposal.md"),
-    proposalMarkdown,
-    {
-      reason: `Write proposal markdown ${proposalId}`,
-    },
-  );
-  await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
-    reason: `Write proposal patch ${proposalId}`,
-  });
+    await mutations.ensureDirectory(join(proposalPath, "before"), {
+      reason: `Create empty proposal base ${proposalId}`,
+    });
+    await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
+      reason: `Write proposal metadata ${proposalId}`,
+    });
+    await mutations.writeText(
+      join(proposalPath, "proposal.md"),
+      proposalMarkdown,
+      {
+        reason: `Write proposal markdown ${proposalId}`,
+      },
+    );
+    await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
+      reason: `Write proposal patch ${proposalId}`,
+    });
 
-  return {
-    ...metadata,
-    path: proposalPath,
-    proposalMarkdown,
-    patchDiff,
-  };
+    return {
+      ...metadata,
+      path: proposalPath,
+      proposalMarkdown,
+      patchDiff,
+    };
+  } catch (error) {
+    await rollbackPartialProposal(mutations, proposalPath, proposalId);
+    throw error;
+  }
 }
 
 export async function createSkillUpdateProposal(
@@ -324,72 +329,81 @@ export async function createSkillUpdateProposal(
       ? input.createdAt.toISOString()
       : (input.createdAt ?? new Date().toISOString());
 
-  await mutations.snapshotSkillPackage(sourceDir, beforeSkillDir, {
-    reason: `Snapshot proposal base ${proposalId}`,
-  });
-  await mutations.snapshotSkillPackage(sourceDir, afterSkillDir, {
-    reason: `Snapshot proposal after package ${proposalId}`,
-  });
-  const skillPath = join(afterSkillDir, "SKILL.md");
-  const beforeContent = await readFile(skillPath, "utf8");
-  const afterContent = input.applyEdit
-    ? input.applyEdit(beforeContent)
-    : renderUpdatedSkillContent(beforeContent, input.description);
-  assertSkillMarkdownName(afterContent, input.name, skillPath);
-  await mutations.writeText(skillPath, afterContent, {
-    reason: `Write proposed Skill update ${input.name}`,
-  });
-  const guardFindings = inspectProposedSkillContent(input.name, afterContent);
+  try {
+    await mutations.snapshotSkillPackage(sourceDir, beforeSkillDir, {
+      reason: `Snapshot proposal base ${proposalId}`,
+    });
+    await mutations.snapshotSkillPackage(sourceDir, afterSkillDir, {
+      reason: `Snapshot proposal after package ${proposalId}`,
+    });
+    const skillPath = join(afterSkillDir, "SKILL.md");
+    const beforeContent = await readFile(skillPath, "utf8");
+    const afterContent = input.applyEdit
+      ? input.applyEdit(beforeContent)
+      : renderUpdatedSkillContent(beforeContent, input.description);
+    assertSkillMarkdownName(afterContent, input.name, skillPath);
+    await mutations.writeText(skillPath, afterContent, {
+      reason: `Write proposed Skill update ${input.name}`,
+    });
+    const guardFindings = inspectProposedSkillContent(input.name, afterContent);
 
-  const afterHash = await computeSkillPackageHash(afterSkillDir);
-  const metadata: SkillProposalMetadata = {
-    id: proposalId,
-    kind: "update",
-    state: "draft",
-    skillName: input.name,
-    targetLayer: "project",
-    targetPath,
-    createdAt: now,
-    updatedAt: now,
-    basePackageHash: baseHash.packageHash,
-    afterPackageHash: afterHash.packageHash,
-    summary:
-      skill.layer === "project"
-        ? `Update project Skill ${input.name}`
-        : `Fork ${skill.layer ?? "unknown"} Skill ${input.name} into project layer`,
-    sourceLayer: skill.layer,
-    sourcePath: skill.source,
-    ...(guardFindings.length > 0 ? { guardFindings } : {}),
-    ...(normalizeProvenance(input.provenance)
-      ? { provenance: normalizeProvenance(input.provenance) }
-      : {}),
-  };
-  const proposalMarkdown = renderUpdateProposalMarkdown(
-    metadata,
-    input.description,
-  );
-  const patchDiff = renderUpdatePatch(input.name, beforeContent, afterContent);
+    const afterHash = await computeSkillPackageHash(afterSkillDir);
+    const metadata: SkillProposalMetadata = {
+      id: proposalId,
+      kind: "update",
+      state: "draft",
+      skillName: input.name,
+      targetLayer: "project",
+      targetPath,
+      createdAt: now,
+      updatedAt: now,
+      basePackageHash: baseHash.packageHash,
+      afterPackageHash: afterHash.packageHash,
+      summary:
+        skill.layer === "project"
+          ? `Update project Skill ${input.name}`
+          : `Fork ${skill.layer ?? "unknown"} Skill ${input.name} into project layer`,
+      sourceLayer: skill.layer,
+      sourcePath: skill.source,
+      ...(guardFindings.length > 0 ? { guardFindings } : {}),
+      ...(normalizeProvenance(input.provenance)
+        ? { provenance: normalizeProvenance(input.provenance) }
+        : {}),
+    };
+    const proposalMarkdown = renderUpdateProposalMarkdown(
+      metadata,
+      input.description,
+    );
+    const patchDiff = renderUpdatePatch(
+      input.name,
+      beforeContent,
+      afterContent,
+    );
 
-  await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
-    reason: `Write proposal metadata ${proposalId}`,
-  });
-  await mutations.writeText(
-    join(proposalPath, "proposal.md"),
-    proposalMarkdown,
-    {
-      reason: `Write proposal markdown ${proposalId}`,
-    },
-  );
-  await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
-    reason: `Write proposal patch ${proposalId}`,
-  });
+    await mutations.writeJson(join(proposalPath, "metadata.json"), metadata, {
+      reason: `Write proposal metadata ${proposalId}`,
+    });
+    await mutations.writeText(
+      join(proposalPath, "proposal.md"),
+      proposalMarkdown,
+      {
+        reason: `Write proposal markdown ${proposalId}`,
+      },
+    );
+    await mutations.writeText(join(proposalPath, "patch.diff"), patchDiff, {
+      reason: `Write proposal patch ${proposalId}`,
+    });
 
-  return {
-    ...metadata,
-    path: proposalPath,
-    proposalMarkdown,
-    patchDiff,
-  };
+    return {
+      ...metadata,
+      path: proposalPath,
+      proposalMarkdown,
+      patchDiff,
+    };
+  } catch (error) {
+    await rollbackPartialProposal(mutations, proposalPath, proposalId);
+    throw error;
+  }
 }
 
 export async function listSkillProposals(
@@ -849,7 +863,7 @@ export function skillEvolutionRoot(workspaceRoot: string): string {
  * the skill body self-declares (preventing a skill from weakening its own
  * scrutiny). Returns findings only; callers decide whether to record or gate.
  */
-function inspectProposedSkillContent(
+export function inspectProposedSkillContent(
   skillName: string,
   content: string,
 ): SkillGuardFinding[] {
@@ -868,6 +882,26 @@ function hasDangerousGuardFinding(
   findings: readonly SkillGuardFinding[],
 ): boolean {
   return findings.some((finding) => finding.severity === "dangerous");
+}
+
+/**
+ * Best-effort removal of a partially-written proposal directory when proposal
+ * creation throws after the package dirs were created (e.g. unparseable body,
+ * name mismatch). Keeps the original error as the thrown one.
+ */
+async function rollbackPartialProposal(
+  mutations: CapabilityPackageMutationWriter,
+  proposalPath: string,
+  proposalId: string,
+): Promise<void> {
+  if (!existsSync(proposalPath)) return;
+  try {
+    await mutations.removeTree(proposalPath, {
+      reason: `Roll back partial proposal ${proposalId}`,
+    });
+  } catch {
+    // Swallow cleanup failures so the caller sees the original error.
+  }
 }
 
 /** Drop empty/whitespace fields; return undefined when nothing meaningful set. */

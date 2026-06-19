@@ -175,6 +175,141 @@ describe("trace", () => {
     ]);
   });
 
+  it("summarizes extension process progress at standard level", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root });
+
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "first",
+        data: { files: 1 },
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "second",
+        data: { files: 2 },
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressDropped: 3,
+      }),
+    );
+
+    const lines = (await readFile(store.tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+
+    expect(lines.map((line) => line.type)).toEqual([
+      "extension.process.started",
+      "extension.process.completed",
+    ]);
+    expect(lines[1]?.payload).toMatchObject({
+      progressCount: 2,
+      progressDropped: 3,
+      progressHead: [
+        expect.objectContaining({ message: "first" }),
+        expect.objectContaining({ message: "second" }),
+      ],
+      progressTail: [],
+    });
+  });
+
+  it("keeps extension process progress at debug level", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-debug-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "first",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+      }),
+    );
+
+    const types = (await readFile(store.tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as SparkwrightEvent).type);
+
+    expect(types).toEqual([
+      "extension.process.started",
+      "extension.process.progress",
+      "extension.process.completed",
+    ]);
+  });
+
+  it("groups extension processes in the trace timeline", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const timeline = buildTraceTimelineJsonl(
+      [
+        log.emit("extension.process.started", {
+          invocationId: "proc_1",
+          name: "pre-check",
+          kind: "workflow_hook",
+          runtime: "custom",
+        }),
+        log.emit("extension.process.completed", {
+          invocationId: "proc_1",
+          name: "pre-check",
+          kind: "workflow_hook",
+          runtime: "custom",
+          exitCode: 0,
+        }),
+      ]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
+
+    expect(timeline.phases).toEqual([
+      expect.objectContaining({
+        category: "extension",
+        label: "extension workflow_hook:pre-check",
+        status: "completed",
+      }),
+    ]);
+  });
+
   it("buffers events when disk append fails and flushes on next success", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-degraded-"));
     tempDirs.push(root);

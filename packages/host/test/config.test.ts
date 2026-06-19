@@ -995,6 +995,11 @@ describe("loadHostConfig", () => {
             evolution: {
               mode: "always",
             },
+            inlineShell: {
+              enabled: "yes",
+              timeoutMs: 0,
+              extra: true,
+            },
           },
         },
       });
@@ -1016,6 +1021,21 @@ describe("loadHostConfig", () => {
       expect(
         loaded.errors.some(
           (e) => e.field === "capabilities.skills.evolution.mode",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.inlineShell.enabled",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.inlineShell.timeoutMs",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.inlineShell.extra",
         ),
       ).toBe(true);
     } finally {

@@ -271,6 +271,16 @@ Current event types:
   Payloads carry `{ hookName, hookId?, hook, step?, metadata }`; completion
   includes the normalized hook result, blocked includes reason/findings, and
   failed includes `{ error: { code, message } }`.
+- `extension.process.started` / `extension.process.progress` /
+  `extension.process.completed` / `extension.process.failed`: host-controlled
+  external process invocation evidence. External processes cannot write
+  arbitrary Sparkwright events; host runners may expose a JSONL progress inbox
+  and re-emit accepted progress with host-owned `event.sequence`, `timestamp`,
+  `monotonicUs`, and span fields. Terminal payloads include a shared
+  `ProcessOutputSummary` with bounded stdout/stderr previews, byte counts,
+  truncation flags, and optional `artifactIds` for materialized logs.
+  `standard` traces suppress raw progress events and fold progress head/tail
+  samples into the terminal event; `debug` traces keep raw progress.
 - `interaction.requested`: the runtime asked the InteractionChannel for an
   approval / question / notification. Payload:
   `{ kind: "approval"|"question"|"notification", request|notification }`.

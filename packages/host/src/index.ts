@@ -40,6 +40,15 @@ export type {
 } from "./tool-catalog.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
+export { TracedProcessRunner } from "./traced-process-runner.js";
+export type {
+  ProgressChunk,
+  ProgressContext,
+  TracedProcessInput,
+  TracedProcessResult,
+} from "./traced-process-runner.js";
+export { createSkillInlineShellRunner } from "./skill-inline-shell.js";
+export type { CreateSkillInlineShellRunnerOptions } from "./skill-inline-shell.js";
 export { createVerificationWorkflowHooks } from "./verification.js";
 export type { CreateVerificationWorkflowHooksOptions } from "./verification.js";
 export {
