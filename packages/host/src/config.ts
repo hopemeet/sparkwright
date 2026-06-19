@@ -53,6 +53,8 @@ import {
   stringSchema,
   stringRecordSchema,
   APPROVALS_CONFIG_KEYS,
+  CAPABILITIES_CONFIG_KEYS,
+  HOOKS_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
   SHELL_CONFIG_KEYS,
   SHELL_SANDBOX_CONFIG_KEYS,
@@ -63,6 +65,14 @@ import {
   SKILL_EVOLUTION_MODES,
   SKILL_INLINE_SHELL_CONFIG_KEYS,
   TOOLS_CONFIG_KEYS,
+  VERIFICATION_AFTER_WRITES_CONFIG_KEYS,
+  VERIFICATION_COMMAND_CONFIG_KEYS,
+  VERIFICATION_CONFIG_KEYS,
+  VERIFICATION_KINDS,
+  VERIFICATION_STOP_GATE_CONFIG_KEYS,
+  WORKFLOW_HOOK_CONFIG_KEYS,
+  WORKFLOW_HOOK_MATCHER_CONFIG_KEYS,
+  WORKFLOW_HOOK_NAMES,
   WRITE_GUARDRAILS_CONFIG_KEYS,
 } from "./config-zod-schema.js";
 import type {
@@ -928,17 +938,6 @@ function validateToolUseSelectorArray(
   return values;
 }
 
-const WORKFLOW_HOOK_NAMES: WorkflowHookName[] = [
-  "SessionStart",
-  "UserPromptSubmit",
-  "ModelOutput",
-  "PreToolUse",
-  "PostToolUse",
-  "Stop",
-  "SessionEnd",
-  "RuntimeSignal",
-];
-
 function validateCapabilityHooks(
   raw: unknown,
   filePath: string,
@@ -953,7 +952,7 @@ function validateCapabilityHooks(
     return undefined;
   }
   const out: CapabilityHooksConfig = {};
-  const allowed = new Set(["workflow"]);
+  const allowed = new Set<string>(HOOKS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -990,16 +989,7 @@ function validateWorkflowHookConfig(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "name",
-    "description",
-    "hook",
-    "enabled",
-    "frequency",
-    "matcher",
-    "onError",
-    "action",
-  ]);
+  const allowed = new Set<string>(WORKFLOW_HOOK_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1019,7 +1009,7 @@ function validateWorkflowHookConfig(
   }
   if (
     typeof raw.hook !== "string" ||
-    !(WORKFLOW_HOOK_NAMES as string[]).includes(raw.hook)
+    !(WORKFLOW_HOOK_NAMES as readonly string[]).includes(raw.hook)
   ) {
     errors.push({
       file: filePath,
@@ -1249,14 +1239,7 @@ function validateWorkflowHookMatcher(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "toolName",
-    "eventType",
-    "signal",
-    "status",
-    "pathGlob",
-    "excludePathGlob",
-  ]);
+  const allowed = new Set<string>(WORKFLOW_HOOK_MATCHER_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1300,13 +1283,7 @@ function validateCapabilityVerification(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "mode",
-    "defaultProfile",
-    "profiles",
-    "afterWrites",
-    "stopGate",
-  ]);
+  const allowed = new Set<string>(VERIFICATION_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1431,15 +1408,7 @@ function validateVerificationCommand(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "id",
-    "kind",
-    "command",
-    "args",
-    "cwd",
-    "timeoutMs",
-    "maxOutputBytes",
-  ]);
+  const allowed = new Set<string>(VERIFICATION_COMMAND_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1521,7 +1490,7 @@ function validateVerificationAfterWrites(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set(["profile", "frequency", "injectOutput"]);
+  const allowed = new Set<string>(VERIFICATION_AFTER_WRITES_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1582,7 +1551,7 @@ function validateVerificationStopGate(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set(["enabled", "requireCleanAfterLastWrite"]);
+  const allowed = new Set<string>(VERIFICATION_STOP_GATE_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1638,11 +1607,8 @@ function isVerificationKind(
   value: unknown,
 ): value is CapabilityVerificationKind {
   return (
-    value === "lint" ||
-    value === "typecheck" ||
-    value === "test" ||
-    value === "check" ||
-    value === "custom"
+    typeof value === "string" &&
+    (VERIFICATION_KINDS as readonly string[]).includes(value)
   );
 }
 
@@ -1660,7 +1626,7 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set(["hooks", "verification", "skills", "mcp", "agents"]);
+  const allowed = new Set<string>(CAPABILITIES_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       const removedToolsMessage =

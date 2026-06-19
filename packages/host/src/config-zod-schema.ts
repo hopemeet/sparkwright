@@ -224,6 +224,18 @@ export const toolsSchema = z
 export const TOOLS_CONFIG_KEYS = toolsSchema.keyof().options;
 
 const stringOrStringArraySchema = z.union([z.string(), stringArray]);
+export const workflowHookNameSchema = z.enum([
+  "SessionStart",
+  "UserPromptSubmit",
+  "ModelOutput",
+  "PreToolUse",
+  "PostToolUse",
+  "Stop",
+  "SessionEnd",
+  "RuntimeSignal",
+]);
+export const WORKFLOW_HOOK_NAMES = workflowHookNameSchema.options;
+
 export const workflowHookMatcherSchema = z
   .object({
     toolName: stringOrStringArraySchema.optional(),
@@ -234,6 +246,8 @@ export const workflowHookMatcherSchema = z
     excludePathGlob: stringOrStringArraySchema.optional(),
   })
   .strict();
+export const WORKFLOW_HOOK_MATCHER_CONFIG_KEYS =
+  workflowHookMatcherSchema.keyof().options;
 
 export const workflowHookActionSchema = z.union([
   z
@@ -266,38 +280,32 @@ export const workflowHookActionSchema = z.union([
 
 export const workflowHookFrequencySchema = z.enum(["always", "oncePerTurn"]);
 
+export const workflowHookConfigSchema = z
+  .object({
+    name: nonEmptyString,
+    description: z.string().optional(),
+    hook: workflowHookNameSchema,
+    enabled: z.boolean().optional(),
+    onError: z.enum(["continue", "block"]).optional(),
+    frequency: workflowHookFrequencySchema.optional(),
+    matcher: workflowHookMatcherSchema.optional(),
+    action: workflowHookActionSchema,
+  })
+  .strict();
+export const WORKFLOW_HOOK_CONFIG_KEYS =
+  workflowHookConfigSchema.keyof().options;
+
 export const hooksSchema = z
   .object({
-    workflow: z
-      .array(
-        z
-          .object({
-            name: nonEmptyString,
-            description: z.string().optional(),
-            hook: z.enum([
-              "SessionStart",
-              "UserPromptSubmit",
-              "ModelOutput",
-              "PreToolUse",
-              "PostToolUse",
-              "Stop",
-              "SessionEnd",
-              "RuntimeSignal",
-            ]),
-            enabled: z.boolean().optional(),
-            onError: z.enum(["continue", "block"]).optional(),
-            frequency: workflowHookFrequencySchema.optional(),
-            matcher: workflowHookMatcherSchema.optional(),
-            action: workflowHookActionSchema,
-          })
-          .strict(),
-      )
-      .optional(),
+    workflow: z.array(workflowHookConfigSchema).optional(),
   })
   .strict()
   .describe("Deterministic workflow hooks for host-created runs.");
+export const HOOKS_CONFIG_KEYS = hooksSchema.keyof().options;
 
 export const verificationModeSchema = z.enum(["off", "suggest", "require"]);
+export const VERIFICATION_MODES = verificationModeSchema.options;
+
 export const verificationKindSchema = z.enum([
   "lint",
   "typecheck",
@@ -305,6 +313,7 @@ export const verificationKindSchema = z.enum([
   "check",
   "custom",
 ]);
+export const VERIFICATION_KINDS = verificationKindSchema.options;
 
 export const verificationCommandSchema = z
   .object({
@@ -317,6 +326,27 @@ export const verificationCommandSchema = z
     maxOutputBytes: positiveInteger.optional(),
   })
   .strict();
+export const VERIFICATION_COMMAND_CONFIG_KEYS =
+  verificationCommandSchema.keyof().options;
+
+export const verificationAfterWritesSchema = z
+  .object({
+    profile: nonEmptyString.optional(),
+    frequency: workflowHookFrequencySchema.optional(),
+    injectOutput: z.enum(["always", "onFailure", "never"]).optional(),
+  })
+  .strict();
+export const VERIFICATION_AFTER_WRITES_CONFIG_KEYS =
+  verificationAfterWritesSchema.keyof().options;
+
+export const verificationStopGateSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    requireCleanAfterLastWrite: z.boolean().optional(),
+  })
+  .strict();
+export const VERIFICATION_STOP_GATE_CONFIG_KEYS =
+  verificationStopGateSchema.keyof().options;
 
 export const verificationSchema = z
   .object({
@@ -325,26 +355,14 @@ export const verificationSchema = z
     profiles: z
       .record(z.string(), z.array(verificationCommandSchema))
       .optional(),
-    afterWrites: z
-      .object({
-        profile: nonEmptyString.optional(),
-        frequency: workflowHookFrequencySchema.optional(),
-        injectOutput: z.enum(["always", "onFailure", "never"]).optional(),
-      })
-      .strict()
-      .optional(),
-    stopGate: z
-      .object({
-        enabled: z.boolean().optional(),
-        requireCleanAfterLastWrite: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
+    afterWrites: verificationAfterWritesSchema.optional(),
+    stopGate: verificationStopGateSchema.optional(),
   })
   .strict()
   .describe(
     "Project verification profiles compiled by the host into workflow hooks.",
   );
+export const VERIFICATION_CONFIG_KEYS = verificationSchema.keyof().options;
 
 export const skillEvolutionModeSchema = z.enum([
   "off",
@@ -454,6 +472,7 @@ export const capabilitiesSchema = z
   })
   .strict()
   .describe("Host-owned capability runtime settings.");
+export const CAPABILITIES_CONFIG_KEYS = capabilitiesSchema.keyof().options;
 
 export const providersSchema = z
   .record(z.string(), providerConfigSchema)
