@@ -579,6 +579,79 @@ export const keybindingsSchema = z
   .record(z.string(), z.union([z.string(), stringArray, z.null()]))
   .describe("Override default key chords for named TUI actions.");
 
+export const identityGroupSchema = z
+  .object({
+    model: modelSchema.optional(),
+    providers: providersSchema.optional(),
+  })
+  .strict()
+  .describe(
+    "Preferred grouping for who/what runs. Flattens to model/providers.",
+  );
+export const IDENTITY_GROUP_CONFIG_KEYS = identityGroupSchema.keyof().options;
+
+export const policyGroupSchema = z
+  .object({
+    permissionMode: permissionModeSchema.optional(),
+    confidentialPaths: confidentialPathsSchema.optional(),
+    write: writeGuardrailsSchema.optional(),
+    sandbox: shellSandboxSchema.optional(),
+  })
+  .strict()
+  .describe(
+    "Preferred grouping for security boundaries. Flattens to permissionMode/confidentialPaths/write and shell.sandbox.",
+  );
+export const POLICY_GROUP_CONFIG_KEYS = policyGroupSchema.keyof().options;
+
+export const runGroupSchema = z
+  .object({
+    budget: runBudgetSchema.optional(),
+    maxSteps: maxStepsSchema.optional(),
+    traceLevel: traceLevelSchema.optional(),
+    approvals: approvalsSchema.optional(),
+  })
+  .strict()
+  .describe(
+    "Preferred grouping for run-shaping defaults. Flattens to runBudget/maxSteps/traceLevel/approvals.",
+  );
+export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
+
+export const uiGroupSchema = z
+  .object({
+    theme: themeSchema.optional(),
+    mouse: mouseSchema.optional(),
+    keybindings: keybindingsSchema.optional(),
+  })
+  .strict()
+  .describe(
+    "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
+  );
+export const UI_GROUP_CONFIG_KEYS = uiGroupSchema.keyof().options;
+
+export const CONFIG_GROUP_CONFIG_KEYS = {
+  identity: IDENTITY_GROUP_CONFIG_KEYS,
+  policy: POLICY_GROUP_CONFIG_KEYS,
+  run: RUN_GROUP_CONFIG_KEYS,
+  ui: UI_GROUP_CONFIG_KEYS,
+} as const;
+
+export const CONFIG_GROUP_FIELD_MAP = {
+  identity: { model: "model", providers: "providers" },
+  policy: {
+    permissionMode: "permissionMode",
+    confidentialPaths: "confidentialPaths",
+    write: "write",
+    sandbox: "shell",
+  },
+  run: {
+    budget: "runBudget",
+    maxSteps: "maxSteps",
+    traceLevel: "traceLevel",
+    approvals: "approvals",
+  },
+  ui: { theme: "theme", mouse: "mouse", keybindings: "keybindings" },
+} as const;
+
 export const sparkwrightConfigZodSchema = z
   .object({
     $schema: z
@@ -607,51 +680,10 @@ export const sparkwrightConfigZodSchema = z
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),
-    identity: z
-      .object({
-        model: modelSchema.optional(),
-        providers: providersSchema.optional(),
-      })
-      .strict()
-      .describe(
-        "Preferred grouping for who/what runs. Flattens to model/providers.",
-      )
-      .optional(),
-    policy: z
-      .object({
-        permissionMode: permissionModeSchema.optional(),
-        confidentialPaths: confidentialPathsSchema.optional(),
-        write: writeGuardrailsSchema.optional(),
-        sandbox: shellSandboxSchema.optional(),
-      })
-      .strict()
-      .describe(
-        "Preferred grouping for security boundaries. Flattens to permissionMode/confidentialPaths/write and shell.sandbox.",
-      )
-      .optional(),
-    run: z
-      .object({
-        budget: runBudgetSchema.optional(),
-        maxSteps: maxStepsSchema.optional(),
-        traceLevel: traceLevelSchema.optional(),
-        approvals: approvalsSchema.optional(),
-      })
-      .strict()
-      .describe(
-        "Preferred grouping for run-shaping defaults. Flattens to runBudget/maxSteps/traceLevel/approvals.",
-      )
-      .optional(),
-    ui: z
-      .object({
-        theme: themeSchema.optional(),
-        mouse: mouseSchema.optional(),
-        keybindings: keybindingsSchema.optional(),
-      })
-      .strict()
-      .describe(
-        "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
-      )
-      .optional(),
+    identity: identityGroupSchema.optional(),
+    policy: policyGroupSchema.optional(),
+    run: runGroupSchema.optional(),
+    ui: uiGroupSchema.optional(),
   })
   .strict()
   .describe(CONFIG_SCHEMA_DESCRIPTION);

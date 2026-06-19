@@ -59,6 +59,8 @@ import {
   AGENT_PROFILE_MODES,
   AGENTS_CONFIG_KEYS,
   CAPABILITIES_CONFIG_KEYS,
+  CONFIG_GROUP_CONFIG_KEYS,
+  CONFIG_GROUP_FIELD_MAP,
   DELEGATE_TOOL_CONFIG_KEYS,
   DELEGATE_ENV_MODES,
   DELEGATE_WORKSPACE_ACCESS_MODES,
@@ -3130,30 +3132,6 @@ function validateProviderOptions(
 }
 
 /**
- * Map each grouped key to the flat internal field it normalizes to. The grouped
- * form (`identity`/`policy`/`run`/`ui`) is the preferred on-disk surface; the
- * loader flattens it into the historical flat `SharedConfig` so consumers are
- * untouched and the old flat keys keep working as aliases. `policy.sandbox`
- * remaps structurally to `shell.sandbox` and is handled specially below;
- * `capabilities` is already its own group and passes through unchanged.
- */
-const CONFIG_GROUP_FIELD_MAP: Record<string, Record<string, string>> = {
-  identity: { model: "model", providers: "providers" },
-  policy: {
-    permissionMode: "permissionMode",
-    confidentialPaths: "confidentialPaths",
-    write: "write",
-  },
-  run: {
-    budget: "runBudget",
-    maxSteps: "maxSteps",
-    traceLevel: "traceLevel",
-    approvals: "approvals",
-  },
-  ui: { theme: "theme", mouse: "mouse", keybindings: "keybindings" },
-};
-
-/**
  * Flatten the grouped config form into the flat shape the field validators
  * expect. Both the grouped key and an old flat alias may appear; the grouped
  * value wins and the conflict is reported. Unknown keys inside a known group are
@@ -3181,7 +3159,9 @@ export function normalizeGroupedConfig(
     flat[flatKey] = value;
   };
 
-  for (const [group, fieldMap] of Object.entries(CONFIG_GROUP_FIELD_MAP)) {
+  for (const [group, fieldMap] of Object.entries(
+    CONFIG_GROUP_FIELD_MAP,
+  ) as Array<[keyof typeof CONFIG_GROUP_FIELD_MAP, Record<string, string>]>) {
     const groupValue = raw[group];
     if (groupValue === undefined) continue;
     delete flat[group];
@@ -3193,10 +3173,7 @@ export function normalizeGroupedConfig(
       });
       continue;
     }
-    const knownSub = new Set([
-      ...Object.keys(fieldMap),
-      ...(group === "policy" ? ["sandbox"] : []),
-    ]);
+    const knownSub = new Set<string>(CONFIG_GROUP_CONFIG_KEYS[group]);
     for (const subKey of Object.keys(groupValue)) {
       if (!knownSub.has(subKey)) {
         errors.push({
@@ -3206,11 +3183,12 @@ export function normalizeGroupedConfig(
         });
         continue;
       }
+      const flatKey = fieldMap[subKey]!;
       if (group === "policy" && subKey === "sandbox") {
         assign("shell", { sandbox: groupValue.sandbox }, "policy.sandbox");
         continue;
       }
-      assign(fieldMap[subKey], groupValue[subKey], `${group}.${subKey}`);
+      assign(flatKey, groupValue[subKey], `${group}.${subKey}`);
     }
   }
   return flat;
