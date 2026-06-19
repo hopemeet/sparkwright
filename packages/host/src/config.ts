@@ -53,8 +53,14 @@ import {
   stringSchema,
   stringRecordSchema,
   APPROVALS_CONFIG_KEYS,
+  AGENTS_CONFIG_KEYS,
   CAPABILITIES_CONFIG_KEYS,
+  DELEGATE_TOOL_CONFIG_KEYS,
   HOOKS_CONFIG_KEYS,
+  MCP_CONFIG_KEYS,
+  MCP_DEFAULT_POLICY_CONFIG_KEYS,
+  MCP_STARTUP_MODES,
+  MCP_TOOL_SCHEMA_LOAD_MODES,
   RUN_BUDGET_CONFIG_KEYS,
   SHELL_CONFIG_KEYS,
   SHELL_SANDBOX_CONFIG_KEYS,
@@ -2300,7 +2306,12 @@ function validateMcpToolSchemaLoad(
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityMcpToolSchemaLoad | undefined {
-  if (raw === "eager" || raw === "defer") return raw;
+  if (
+    typeof raw === "string" &&
+    (MCP_TOOL_SCHEMA_LOAD_MODES as readonly string[]).includes(raw)
+  ) {
+    return raw as CapabilityMcpToolSchemaLoad;
+  }
   errors.push({
     file: filePath,
     field,
@@ -2315,7 +2326,12 @@ function validateMcpStartup(
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityMcpStartup | undefined {
-  if (raw === "lazy" || raw === "prepare" || raw === "eager") return raw;
+  if (
+    typeof raw === "string" &&
+    (MCP_STARTUP_MODES as readonly string[]).includes(raw)
+  ) {
+    return raw as CapabilityMcpStartup;
+  }
   errors.push({
     file: filePath,
     field,
@@ -2338,14 +2354,7 @@ function validateCapabilityMcp(
     return undefined;
   }
   const out: CapabilityMcpConfig = {};
-  const allowed = new Set([
-    "servers",
-    "defaultTimeoutMs",
-    "namePrefix",
-    "startup",
-    "toolSchemaLoad",
-    "defaultPolicy",
-  ]);
+  const allowed = new Set<string>(MCP_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2404,6 +2413,13 @@ function validateCapabilityMcp(
   if (raw.defaultPolicy !== undefined) {
     if (isRecord(raw.defaultPolicy)) {
       const policy: NonNullable<CapabilityMcpConfig["defaultPolicy"]> = {};
+      validateKnownKeys(
+        raw.defaultPolicy,
+        "capabilities.mcp.defaultPolicy",
+        filePath,
+        errors,
+        new Set<string>(MCP_DEFAULT_POLICY_CONFIG_KEYS),
+      );
       const risk = raw.defaultPolicy.risk;
       if (risk !== undefined) {
         if (risk === "safe" || risk === "risky" || risk === "denied")
@@ -2876,7 +2892,7 @@ function validateCapabilityAgents(
     return undefined;
   }
   const out: CapabilityAgentsConfig = {};
-  const allowed = new Set(["profiles", "delegateTools", "maxDepth"]);
+  const allowed = new Set<string>(AGENTS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2934,6 +2950,13 @@ function validateDelegateTool(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(DELEGATE_TOOL_CONFIG_KEYS),
+  );
   if (typeof raw.profileId !== "string" || raw.profileId.length === 0) {
     errors.push({
       file: filePath,

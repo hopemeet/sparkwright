@@ -416,7 +416,19 @@ export const skillsSchema = z
 export const SKILLS_CONFIG_KEYS = skillsSchema.keyof().options;
 
 export const mcpToolSchemaLoadSchema = z.enum(["eager", "defer"]);
+export const MCP_TOOL_SCHEMA_LOAD_MODES = mcpToolSchemaLoadSchema.options;
+
 export const mcpStartupSchema = z.enum(["lazy", "prepare", "eager"]);
+export const MCP_STARTUP_MODES = mcpStartupSchema.options;
+
+export const mcpDefaultPolicySchema = z
+  .object({
+    risk: z.enum(["safe", "risky", "denied"]).optional(),
+    requiresApproval: z.boolean().optional(),
+  })
+  .strict();
+export const MCP_DEFAULT_POLICY_CONFIG_KEYS =
+  mcpDefaultPolicySchema.keyof().options;
 
 export const mcpConfigSchema = z
   .object({
@@ -426,16 +438,11 @@ export const mcpConfigSchema = z
     namePrefix: z.string().optional(),
     startup: mcpStartupSchema.optional(),
     toolSchemaLoad: mcpToolSchemaLoadSchema.optional(),
-    defaultPolicy: z
-      .object({
-        risk: z.enum(["safe", "risky", "denied"]).optional(),
-        requiresApproval: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
+    defaultPolicy: mcpDefaultPolicySchema.optional(),
   })
   .strict()
   .describe("MCP server settings for host-created runs.");
+export const MCP_CONFIG_KEYS = mcpConfigSchema.keyof().options;
 
 export const delegateToolSchema = z
   .object({
@@ -447,6 +454,7 @@ export const delegateToolSchema = z
     maxSteps: positiveInteger.optional(),
   })
   .strict();
+export const DELEGATE_TOOL_CONFIG_KEYS = delegateToolSchema.keyof().options;
 
 export const agentsConfigSchema = z
   .object({
@@ -461,6 +469,7 @@ export const agentsConfigSchema = z
   })
   .strict()
   .describe("Agent profile run templates for host-created runs.");
+export const AGENTS_CONFIG_KEYS = agentsConfigSchema.keyof().options;
 
 export const capabilitiesSchema = z
   .object({

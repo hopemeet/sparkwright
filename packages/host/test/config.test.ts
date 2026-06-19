@@ -1338,6 +1338,58 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports unknown MCP and delegate tool fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          mcp: {
+            unexpected: true,
+            defaultPolicy: { risk: "safe", extra: true },
+          },
+          agents: {
+            unexpected: true,
+            delegateTools: [
+              {
+                profileId: "reviewer",
+                toolName: "delegate_reviewer",
+                extra: true,
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.mcp?.defaultPolicy).toEqual({
+        risk: "safe",
+      });
+      expect(loaded.config.capabilities?.agents?.delegateTools?.[0]).toEqual({
+        profileId: "reviewer",
+        toolName: "delegate_reviewer",
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.mcp.unexpected",
+          }),
+          expect.objectContaining({
+            field: "capabilities.mcp.defaultPolicy.extra",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.unexpected",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.delegateTools.0.extra",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reports a validation error for a bad field and drops it", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
