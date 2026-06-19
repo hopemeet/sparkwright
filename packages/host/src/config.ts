@@ -41,6 +41,18 @@ import {
   intersectToolUseSelectors,
   isToolUseSelector,
 } from "./tool-selectors.js";
+import {
+  booleanSchema,
+  integerArray,
+  nonEmptyString,
+  nonNegativeInteger,
+  numberSchema,
+  positiveInteger,
+  positiveNumber,
+  stringArray,
+  stringSchema,
+  stringRecordSchema,
+} from "./config-zod-schema.js";
 import type {
   ApprovalDefaults,
   CapabilityDelegateToolConfig,
@@ -511,21 +523,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+interface ConfigValueSchema<T> {
+  safeParse(raw: unknown): { success: true; data: T } | { success: false };
+}
+
+function validateZodValue<T>(
+  schema: ConfigValueSchema<T>,
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+  message: string,
+): T | undefined {
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  errors.push({ file: filePath, field, message });
+  return undefined;
+}
+
 function validateStringArray(
   raw: unknown,
   field: string,
   filePath: string,
   errors: SharedConfigError[],
 ): string[] | undefined {
-  if (Array.isArray(raw) && raw.every((entry) => typeof entry === "string")) {
-    return raw;
-  }
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    stringArray,
+    raw,
     field,
-    message: "must be an array of strings",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be an array of strings",
+  );
 }
 
 function validateOptionalBoolean(
@@ -534,9 +563,14 @@ function validateOptionalBoolean(
   filePath: string,
   errors: SharedConfigError[],
 ): boolean | undefined {
-  if (typeof raw === "boolean") return raw;
-  errors.push({ file: filePath, field, message: "must be a boolean" });
-  return undefined;
+  return validateZodValue(
+    booleanSchema,
+    raw,
+    field,
+    filePath,
+    errors,
+    "must be a boolean",
+  );
 }
 
 function validateOptionalNonNegativeInteger(
@@ -545,13 +579,14 @@ function validateOptionalNonNegativeInteger(
   filePath: string,
   errors: SharedConfigError[],
 ): number | undefined {
-  if (Number.isInteger(raw) && (raw as number) >= 0) return raw as number;
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    nonNegativeInteger,
+    raw,
     field,
-    message: "must be a non-negative integer",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be a non-negative integer",
+  );
 }
 
 function validateOptionalPositiveInteger(
@@ -560,13 +595,14 @@ function validateOptionalPositiveInteger(
   filePath: string,
   errors: SharedConfigError[],
 ): number | undefined {
-  if (Number.isInteger(raw) && (raw as number) >= 1) return raw as number;
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    positiveInteger,
+    raw,
     field,
-    message: "must be a positive integer",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be a positive integer",
+  );
 }
 
 function validateOptionalPositiveNumber(
@@ -575,13 +611,14 @@ function validateOptionalPositiveNumber(
   filePath: string,
   errors: SharedConfigError[],
 ): number | undefined {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    positiveNumber,
+    raw,
     field,
-    message: "must be a positive number",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be a positive number",
+  );
 }
 
 function validateCapabilitySkills(
@@ -2010,18 +2047,14 @@ function validateStringRecord(
   filePath: string,
   errors: SharedConfigError[],
 ): Record<string, string> | undefined {
-  if (
-    isRecord(raw) &&
-    Object.values(raw).every((entry) => typeof entry === "string")
-  ) {
-    return raw as Record<string, string>;
-  }
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    stringRecordSchema,
+    raw,
     field,
-    message: "must be an object with string values",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be an object with string values",
+  );
 }
 
 function mergeShellConfig(
@@ -2798,7 +2831,7 @@ function validateRequiredString(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (typeof value !== "string" || value.length === 0) {
+  if (!nonEmptyString.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2813,7 +2846,7 @@ function validateOptionalString(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (value !== undefined && typeof value !== "string") {
+  if (value !== undefined && !stringSchema.safeParse(value).success) {
     errors.push({ file: filePath, field, message: "must be a string" });
   }
 }
@@ -2824,7 +2857,7 @@ function validateOptionalNumber(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (value !== undefined && typeof value !== "number") {
+  if (value !== undefined && !numberSchema.safeParse(value).success) {
     errors.push({ file: filePath, field, message: "must be a number" });
   }
 }
@@ -2835,10 +2868,7 @@ function validateOptionalStringArray(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
-  ) {
+  if (value !== undefined && !stringArray.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2853,13 +2883,7 @@ function validateOptionalIntegerArray(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) ||
-      !value.every(
-        (item) => typeof item === "number" && Number.isInteger(item),
-      ))
-  ) {
+  if (value !== undefined && !integerArray.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2875,10 +2899,7 @@ function validateOptionalStringRecord(
   errors: SharedConfigError[],
 ): void {
   if (value === undefined) return;
-  if (
-    !isRecord(value) ||
-    !Object.values(value).every((item) => typeof item === "string")
-  ) {
+  if (!stringRecordSchema.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,

@@ -11,14 +11,20 @@ export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
   "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, permissionMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.";
 
-const nonEmptyString = z.string().min(1);
-const stringArray = z.array(z.string());
-const nonEmptyStringArray = z.array(nonEmptyString);
-const positiveInteger = z.number().int().min(1);
-const nonNegativeInteger = z.number().int().min(0);
-const positiveNumber = z.number().positive();
-const providerOptionsSchema = z
-  .record(z.string(), z.object({}).catchall(z.unknown()))
+export const stringSchema = z.string();
+export const nonEmptyString = stringSchema.min(1);
+export const booleanSchema = z.boolean();
+export const numberSchema = z.number();
+export const integerSchema = numberSchema.int();
+export const stringArray = z.array(stringSchema);
+export const integerArray = z.array(integerSchema);
+export const nonEmptyStringArray = z.array(nonEmptyString);
+export const positiveInteger = integerSchema.min(1);
+export const nonNegativeInteger = integerSchema.min(0);
+export const positiveNumber = numberSchema.positive();
+export const stringRecordSchema = z.record(stringSchema, stringSchema);
+export const providerOptionsSchema = z
+  .record(stringSchema, z.object({}).catchall(z.unknown()))
   .describe(
     "Request-level AI SDK providerOptions keyed by provider namespace.",
   );
