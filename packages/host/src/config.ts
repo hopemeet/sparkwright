@@ -52,6 +52,10 @@ import {
   stringArray,
   stringSchema,
   stringRecordSchema,
+  APPROVALS_CONFIG_KEYS,
+  RUN_BUDGET_CONFIG_KEYS,
+  TOOLS_CONFIG_KEYS,
+  WRITE_GUARDRAILS_CONFIG_KEYS,
 } from "./config-zod-schema.js";
 import type {
   ApprovalDefaults,
@@ -844,7 +848,7 @@ function validateToolsConfig(
     return undefined;
   }
   const out: CapabilityToolsConfig = {};
-  const allowed = new Set(["use", "allowed", "disabled", "defer"]);
+  const allowed = new Set<string>(TOOLS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1718,7 +1722,7 @@ function validateWriteGuardrails(
     return undefined;
   }
   const out: WriteGuardrailsConfig = {};
-  const allowed = new Set(["maxFiles", "maxDiffLines", "allowDeletions"]);
+  const allowed = new Set<string>(WRITE_GUARDRAILS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1772,7 +1776,7 @@ function validateRunBudget(
     "maxToolCalls",
     "maxTokens",
   ] as const;
-  const allowed = new Set<string>([...integerKeys, "maxCostUsd"]);
+  const allowed = new Set<string>(RUN_BUDGET_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1817,7 +1821,7 @@ function validateApprovals(
     return undefined;
   }
   const out: ApprovalDefaults = {};
-  const allowed = new Set(["shellSafe", "edits", "all", "cronMode"]);
+  const allowed = new Set<string>(APPROVALS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({

@@ -106,6 +106,8 @@ export const writeGuardrailsSchema = z
   })
   .strict()
   .describe("Workspace write guardrails. Merges conservatively across layers.");
+export const WRITE_GUARDRAILS_CONFIG_KEYS =
+  writeGuardrailsSchema.keyof().options;
 
 export const runBudgetSchema = z
   .object({
@@ -119,6 +121,7 @@ export const runBudgetSchema = z
   .describe(
     "Resource budget for the interactive main run. maxModelCalls is the tightest natural step bound.",
   );
+export const RUN_BUDGET_CONFIG_KEYS = runBudgetSchema.keyof().options;
 
 export const approvalsSchema = z
   .object({
@@ -141,6 +144,7 @@ export const approvalsSchema = z
   .describe(
     "Default approval auto-grants. CLI flags still override these values.",
   );
+export const APPROVALS_CONFIG_KEYS = approvalsSchema.keyof().options;
 
 export const shellSandboxSchema = z
   .object({
@@ -209,6 +213,7 @@ export const toolsSchema = z
   .describe(
     "Preferred tool exposure/loading settings. Standard tools are enabled by default.",
   );
+export const TOOLS_CONFIG_KEYS = toolsSchema.keyof().options;
 
 const stringOrStringArraySchema = z.union([z.string(), stringArray]);
 export const workflowHookMatcherSchema = z
