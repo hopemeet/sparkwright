@@ -32,6 +32,7 @@ export const providerOptionsSchema = z
 const permissionModeSchema = z
   .enum(PERMISSION_MODES)
   .describe("Permission policy mode for runs started from the TUI.");
+export const PERMISSION_MODE_CONFIG_VALUES = permissionModeSchema.options;
 const traceLevelSchema = z
   .enum(TRACE_LEVELS)
   .describe(
@@ -127,6 +128,14 @@ export const runBudgetSchema = z
     "Resource budget for the interactive main run. maxModelCalls is the tightest natural step bound.",
   );
 export const RUN_BUDGET_CONFIG_KEYS = runBudgetSchema.keyof().options;
+export const RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS = runBudgetSchema
+  .pick({
+    maxDurationMs: true,
+    maxModelCalls: true,
+    maxToolCalls: true,
+    maxTokens: true,
+  })
+  .keyof().options;
 
 export const approvalsSchema = z
   .object({
@@ -150,6 +159,13 @@ export const approvalsSchema = z
     "Default approval auto-grants. CLI flags still override these values.",
   );
 export const APPROVALS_CONFIG_KEYS = approvalsSchema.keyof().options;
+export const APPROVAL_BOOLEAN_CONFIG_KEYS = approvalsSchema
+  .pick({
+    shellSafe: true,
+    edits: true,
+    all: true,
+  })
+  .keyof().options;
 
 export const shellSandboxFilesystemSchema = z
   .object({
@@ -162,6 +178,15 @@ export const shellSandboxFilesystemSchema = z
   .strict();
 export const SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS =
   shellSandboxFilesystemSchema.keyof().options;
+export const SHELL_SANDBOX_FILESYSTEM_PATH_CONFIG_KEYS =
+  shellSandboxFilesystemSchema
+    .pick({
+      allowRead: true,
+      allowWrite: true,
+      denyRead: true,
+      denyWrite: true,
+    })
+    .keyof().options;
 
 export const shellSandboxModeSchema = z.enum(["off", "warn", "enforce"]);
 export const SHELL_SANDBOX_MODES = shellSandboxModeSchema.options;
@@ -473,9 +498,12 @@ export const MCP_TOOL_SCHEMA_LOAD_MODES = mcpToolSchemaLoadSchema.options;
 export const mcpStartupSchema = z.enum(["lazy", "prepare", "eager"]);
 export const MCP_STARTUP_MODES = mcpStartupSchema.options;
 
+export const mcpDefaultPolicyRiskSchema = z.enum(["safe", "risky", "denied"]);
+export const MCP_DEFAULT_POLICY_RISKS = mcpDefaultPolicyRiskSchema.options;
+
 export const mcpDefaultPolicySchema = z
   .object({
-    risk: z.enum(["safe", "risky", "denied"]).optional(),
+    risk: mcpDefaultPolicyRiskSchema.optional(),
     requiresApproval: z.boolean().optional(),
   })
   .strict();
@@ -507,6 +535,18 @@ export const delegateToolSchema = z
   })
   .strict();
 export const DELEGATE_TOOL_CONFIG_KEYS = delegateToolSchema.keyof().options;
+export const DELEGATE_TOOL_OPTIONAL_STRING_CONFIG_KEYS = delegateToolSchema
+  .pick({
+    toolName: true,
+    description: true,
+  })
+  .keyof().options;
+export const DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS = delegateToolSchema
+  .pick({
+    requiresApproval: true,
+    forbidNesting: true,
+  })
+  .keyof().options;
 
 export const agentProfileModeSchema = z.enum(["primary", "child", "all"]);
 export const AGENT_PROFILE_MODES = agentProfileModeSchema.options;
@@ -581,6 +621,20 @@ export const agentProfileConfigSchema = z
   .strict();
 export const AGENT_PROFILE_CONFIG_KEYS =
   agentProfileConfigSchema.keyof().options;
+export const AGENT_PROFILE_OPTIONAL_STRING_CONFIG_KEYS =
+  agentProfileConfigSchema
+    .pick({
+      name: true,
+      description: true,
+      prompt: true,
+    })
+    .keyof().options;
+export const AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS = agentProfileConfigSchema
+  .pick({
+    allowedTools: true,
+    deniedTools: true,
+  })
+  .keyof().options;
 
 export const agentsConfigSchema = z
   .object({
@@ -622,6 +676,9 @@ export const confidentialPathsSchema = nonEmptyStringArray.describe(
 );
 export const maxStepsSchema = positiveInteger.describe(
   "Explicit main-run step ceiling.",
+);
+export const workspaceSchema = nonEmptyString.describe(
+  "Workspace root for runs. Relative paths resolve from the directory of the config file that defined them.",
 );
 export const themeSchema = z
   .enum(["dark", "light", "mono"])
@@ -715,11 +772,7 @@ export const sparkwrightConfigZodSchema = z
     model: modelSchema.optional(),
     providers: providersSchema.optional(),
     permissionMode: permissionModeSchema.optional(),
-    workspace: nonEmptyString
-      .describe(
-        "Workspace root for runs. Relative paths resolve from the directory of the config file that defined them.",
-      )
-      .optional(),
+    workspace: workspaceSchema.optional(),
     confidentialPaths: confidentialPathsSchema.optional(),
     write: writeGuardrailsSchema.optional(),
     runBudget: runBudgetSchema.optional(),
@@ -739,6 +792,8 @@ export const sparkwrightConfigZodSchema = z
   })
   .strict()
   .describe(CONFIG_SCHEMA_DESCRIPTION);
+export const SPARKWRIGHT_CONFIG_KEYS =
+  sparkwrightConfigZodSchema.keyof().options;
 
 export type SparkwrightConfigInput = z.input<typeof sparkwrightConfigZodSchema>;
 export type ModelCost = z.output<typeof modelCostSchema>;

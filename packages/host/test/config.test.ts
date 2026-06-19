@@ -1526,11 +1526,30 @@ describe("loadHostConfig", () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { model: 123, providers: "nope" });
+      await writeUserConfig(xdg, {
+        model: 123,
+        providers: "nope",
+        permissionMode: "always",
+        workspace: "",
+        confidentialPaths: ["secrets/**", ""],
+        maxSteps: 0,
+      });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.model).toBeUndefined();
-      expect(loaded.errors.some((e) => e.field === "model")).toBe(true);
-      expect(loaded.errors.some((e) => e.field === "providers")).toBe(true);
+      expect(loaded.config.permissionMode).toBeUndefined();
+      expect(loaded.config.workspace).toBeUndefined();
+      expect(loaded.config.confidentialPaths).toBeUndefined();
+      expect(loaded.config.maxSteps).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "model" }),
+          expect.objectContaining({ field: "providers" }),
+          expect.objectContaining({ field: "permissionMode" }),
+          expect.objectContaining({ field: "workspace" }),
+          expect.objectContaining({ field: "confidentialPaths" }),
+          expect.objectContaining({ field: "maxSteps" }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });

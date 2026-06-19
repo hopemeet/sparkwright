@@ -30,7 +30,6 @@ import type {
 } from "@sparkwright/core";
 import {
   PERMISSION_MODES,
-  isPermissionMode,
   type PermissionMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
@@ -52,32 +51,42 @@ import {
   stringArray,
   stringSchema,
   stringRecordSchema,
+  APPROVAL_BOOLEAN_CONFIG_KEYS,
   APPROVALS_CONFIG_KEYS,
   AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS,
   AGENT_PROFILE_CONFIG_KEYS,
   AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS,
   AGENT_PROFILE_MODES,
+  AGENT_PROFILE_OPTIONAL_STRING_CONFIG_KEYS,
+  AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS,
   AGENTS_CONFIG_KEYS,
   CAPABILITIES_CONFIG_KEYS,
   CONFIG_GROUP_CONFIG_KEYS,
   CONFIG_GROUP_FIELD_MAP,
+  confidentialPathsSchema,
+  DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS,
   DELEGATE_TOOL_CONFIG_KEYS,
+  DELEGATE_TOOL_OPTIONAL_STRING_CONFIG_KEYS,
   DELEGATE_ENV_MODES,
   DELEGATE_WORKSPACE_ACCESS_MODES,
   EXTERNAL_COMMAND_INPUT_MODES,
   HOOKS_CONFIG_KEYS,
   MCP_CONFIG_KEYS,
   MCP_DEFAULT_POLICY_CONFIG_KEYS,
+  MCP_DEFAULT_POLICY_RISKS,
   MCP_STARTUP_MODES,
   MCP_TOOL_SCHEMA_LOAD_MODES,
+  modelSchema,
   MODEL_COST_CONFIG_KEYS,
   PROVIDER_CONFIG_KEYS,
   PROVIDER_MODEL_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
+  RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS,
   SHELL_CONFIG_KEYS,
   SHELL_SANDBOX_MODES,
   SHELL_SANDBOX_CONFIG_KEYS,
   SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS,
+  SHELL_SANDBOX_FILESYSTEM_PATH_CONFIG_KEYS,
   SHELL_SANDBOX_NETWORK_MODES,
   SHELL_SANDBOX_NETWORK_CONFIG_KEYS,
   SKILLS_CONFIG_KEYS,
@@ -103,6 +112,9 @@ import {
   WORKFLOW_HOOK_OUTPUT_INJECTION_MODES,
   WORKFLOW_HOOK_STDIN_MODES,
   WRITE_GUARDRAILS_CONFIG_KEYS,
+  maxStepsSchema,
+  PERMISSION_MODE_CONFIG_VALUES,
+  workspaceSchema,
 } from "./config-zod-schema.js";
 import type {
   ApprovalDefaults,
@@ -1755,12 +1767,6 @@ function validateRunBudget(
     return undefined;
   }
   const out: RunBudget = {};
-  const integerKeys = [
-    "maxDurationMs",
-    "maxModelCalls",
-    "maxToolCalls",
-    "maxTokens",
-  ] as const;
   const allowed = new Set<string>(RUN_BUDGET_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
@@ -1771,7 +1777,7 @@ function validateRunBudget(
       });
     }
   }
-  for (const key of integerKeys) {
+  for (const key of RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateOptionalPositiveInteger(
         raw[key],
@@ -1816,7 +1822,7 @@ function validateApprovals(
       });
     }
   }
-  for (const key of ["shellSafe", "edits", "all"] as const) {
+  for (const key of APPROVAL_BOOLEAN_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateOptionalBoolean(
         raw[key],
@@ -1827,7 +1833,7 @@ function validateApprovals(
     }
   }
   if (raw.cronMode !== undefined) {
-    if (isPermissionMode(raw.cronMode)) {
+    if (isStringOption(raw.cronMode, PERMISSION_MODE_CONFIG_VALUES)) {
       out.cronMode = raw.cronMode;
     } else {
       errors.push({
@@ -1953,12 +1959,7 @@ function validateShellSandboxFilesystem(
       });
     }
   }
-  for (const key of [
-    "allowRead",
-    "allowWrite",
-    "denyRead",
-    "denyWrite",
-  ] as const) {
+  for (const key of SHELL_SANDBOX_FILESYSTEM_PATH_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateStringArray(
         raw[key],
@@ -2432,8 +2433,7 @@ function validateCapabilityMcp(
       );
       const risk = raw.defaultPolicy.risk;
       if (risk !== undefined) {
-        if (risk === "safe" || risk === "risky" || risk === "denied")
-          policy.risk = risk;
+        if (isStringOption(risk, MCP_DEFAULT_POLICY_RISKS)) policy.risk = risk;
         else
           errors.push({
             file: filePath,
@@ -2488,7 +2488,7 @@ function validateAgentProfile(
     new Set<string>(AGENT_PROFILE_CONFIG_KEYS),
   );
   const profile: AgentProfile = { id: raw.id };
-  for (const key of ["name", "description", "prompt"] as const) {
+  for (const key of AGENT_PROFILE_OPTIONAL_STRING_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] === "string") profile[key] = raw[key];
       else
@@ -2517,7 +2517,7 @@ function validateAgentProfile(
       errors,
     );
   }
-  for (const key of ["allowedTools", "deniedTools"] as const) {
+  for (const key of AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       profile[key] = validateStringArray(
         raw[key],
@@ -2636,10 +2636,7 @@ function validateAcpMetadata(
   validateOptionalStringRecord(acp.env, `${field}.env`, filePath, errors);
   if (
     acp.envMode !== undefined &&
-    !(
-      typeof acp.envMode === "string" &&
-      (DELEGATE_ENV_MODES as readonly string[]).includes(acp.envMode)
-    )
+    !isStringOption(acp.envMode, DELEGATE_ENV_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2705,10 +2702,7 @@ function validateExternalCommandMetadata(
   );
   if (
     command.envMode !== undefined &&
-    !(
-      typeof command.envMode === "string" &&
-      (DELEGATE_ENV_MODES as readonly string[]).includes(command.envMode)
-    )
+    !isStringOption(command.envMode, DELEGATE_ENV_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2718,12 +2712,7 @@ function validateExternalCommandMetadata(
   }
   if (
     command.input !== undefined &&
-    !(
-      typeof command.input === "string" &&
-      (EXTERNAL_COMMAND_INPUT_MODES as readonly string[]).includes(
-        command.input,
-      )
-    )
+    !isStringOption(command.input, EXTERNAL_COMMAND_INPUT_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2747,10 +2736,7 @@ function validateOptionalWorkspaceAccess(
 ): void {
   if (
     value !== undefined &&
-    !(
-      typeof value === "string" &&
-      (DELEGATE_WORKSPACE_ACCESS_MODES as readonly string[]).includes(value)
-    )
+    !isStringOption(value, DELEGATE_WORKSPACE_ACCESS_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2949,7 +2935,7 @@ function validateDelegateTool(
     return undefined;
   }
   const out: CapabilityDelegateToolConfig = { profileId: raw.profileId };
-  for (const key of ["toolName", "description"] as const) {
+  for (const key of DELEGATE_TOOL_OPTIONAL_STRING_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] === "string" && raw[key].length > 0) {
         out[key] = raw[key];
@@ -2962,7 +2948,7 @@ function validateDelegateTool(
       }
     }
   }
-  for (const key of ["requiresApproval", "forbidNesting"] as const) {
+  for (const key of DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateOptionalBoolean(
         raw[key],
@@ -3238,15 +3224,17 @@ function validateShared(
   const obj = normalizeGroupedConfig(raw, filePath, errors);
 
   if (obj.model !== undefined) {
-    if (typeof obj.model === "string" && obj.model.length > 0) {
-      config.model = obj.model;
+    const model = validateZodValue(
+      modelSchema,
+      obj.model,
+      "model",
+      filePath,
+      errors,
+      "must be a non-empty string",
+    );
+    if (model !== undefined) {
+      config.model = model;
       sources.model = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "model",
-        message: "must be a non-empty string",
-      });
     }
   }
   if (obj.providers !== undefined) {
@@ -3277,7 +3265,7 @@ function validateShared(
     }
   }
   if (obj.permissionMode !== undefined) {
-    if (isPermissionMode(obj.permissionMode)) {
+    if (isStringOption(obj.permissionMode, PERMISSION_MODE_CONFIG_VALUES)) {
       config.permissionMode = obj.permissionMode;
       sources.permissionMode = origin;
     } else {
@@ -3289,32 +3277,31 @@ function validateShared(
     }
   }
   if (obj.workspace !== undefined) {
-    if (typeof obj.workspace === "string" && obj.workspace.length > 0) {
-      config.workspace = obj.workspace;
+    const workspace = validateZodValue(
+      workspaceSchema,
+      obj.workspace,
+      "workspace",
+      filePath,
+      errors,
+      "must be a non-empty string",
+    );
+    if (workspace !== undefined) {
+      config.workspace = workspace;
       sources.workspace = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "workspace",
-        message: "must be a non-empty string",
-      });
     }
   }
   if (obj.confidentialPaths !== undefined) {
-    if (
-      Array.isArray(obj.confidentialPaths) &&
-      obj.confidentialPaths.every(
-        (entry) => typeof entry === "string" && entry.length > 0,
-      )
-    ) {
-      config.confidentialPaths = obj.confidentialPaths as string[];
+    const confidentialPaths = validateZodValue(
+      confidentialPathsSchema,
+      obj.confidentialPaths,
+      "confidentialPaths",
+      filePath,
+      errors,
+      "must be an array of non-empty strings",
+    );
+    if (confidentialPaths !== undefined) {
+      config.confidentialPaths = confidentialPaths;
       sources.confidentialPaths = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "confidentialPaths",
-        message: "must be an array of non-empty strings",
-      });
     }
   }
   if (obj.write !== undefined) {
@@ -3337,11 +3324,13 @@ function validateShared(
     }
   }
   if (obj.maxSteps !== undefined) {
-    const maxSteps = validateOptionalPositiveInteger(
+    const maxSteps = validateZodValue(
+      maxStepsSchema,
       obj.maxSteps,
       "maxSteps",
       filePath,
       errors,
+      "must be a positive integer",
     );
     if (maxSteps !== undefined) {
       config.maxSteps = maxSteps;
