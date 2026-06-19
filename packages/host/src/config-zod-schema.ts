@@ -146,6 +146,26 @@ export const approvalsSchema = z
   );
 export const APPROVALS_CONFIG_KEYS = approvalsSchema.keyof().options;
 
+export const shellSandboxFilesystemSchema = z
+  .object({
+    allowRead: nonEmptyStringArray.optional(),
+    allowWrite: nonEmptyStringArray.optional(),
+    denyRead: nonEmptyStringArray.optional(),
+    denyWrite: nonEmptyStringArray.optional(),
+    tmp: z.boolean().optional(),
+  })
+  .strict();
+export const SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS =
+  shellSandboxFilesystemSchema.keyof().options;
+
+export const shellSandboxNetworkSchema = z
+  .object({
+    mode: z.enum(["allow", "deny"]).optional(),
+  })
+  .strict();
+export const SHELL_SANDBOX_NETWORK_CONFIG_KEYS =
+  shellSandboxNetworkSchema.keyof().options;
+
 export const shellSandboxSchema = z
   .object({
     mode: z
@@ -158,27 +178,14 @@ export const shellSandboxSchema = z
       .boolean()
       .describe("Fail closed when the platform sandbox runtime is unavailable.")
       .optional(),
-    filesystem: z
-      .object({
-        allowRead: nonEmptyStringArray.optional(),
-        allowWrite: nonEmptyStringArray.optional(),
-        denyRead: nonEmptyStringArray.optional(),
-        denyWrite: nonEmptyStringArray.optional(),
-        tmp: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-    network: z
-      .object({
-        mode: z.enum(["allow", "deny"]).optional(),
-      })
-      .strict()
-      .optional(),
+    filesystem: shellSandboxFilesystemSchema.optional(),
+    network: shellSandboxNetworkSchema.optional(),
   })
   .strict()
   .describe(
     "OS-level process sandbox for local command execution. Forced deny-write paths are always appended by the host.",
   );
+export const SHELL_SANDBOX_CONFIG_KEYS = shellSandboxSchema.keyof().options;
 
 export const shellSchema = z
   .object({
@@ -186,6 +193,7 @@ export const shellSchema = z
   })
   .strict()
   .describe("Host shell execution boundary.");
+export const SHELL_CONFIG_KEYS = shellSchema.keyof().options;
 
 export const toolsSchema = z
   .object({
@@ -344,6 +352,24 @@ export const skillEvolutionModeSchema = z.enum([
   "draft",
   "apply",
 ]);
+export const SKILL_EVOLUTION_MODES = skillEvolutionModeSchema.options;
+
+export const skillEvolutionSchema = z
+  .object({
+    mode: skillEvolutionModeSchema.optional(),
+  })
+  .strict();
+export const SKILL_EVOLUTION_CONFIG_KEYS = skillEvolutionSchema.keyof().options;
+
+export const skillInlineShellSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    timeoutMs: positiveInteger.optional(),
+    maxOutputChars: positiveInteger.optional(),
+  })
+  .strict();
+export const SKILL_INLINE_SHELL_CONFIG_KEYS =
+  skillInlineShellSchema.keyof().options;
 
 export const skillsSchema = z
   .object({
@@ -364,23 +390,12 @@ export const skillsSchema = z
     resourceFileLimit: nonNegativeInteger.optional(),
     allowedSkills: stringArray.optional(),
     deniedSkills: stringArray.optional(),
-    evolution: z
-      .object({
-        mode: skillEvolutionModeSchema.optional(),
-      })
-      .strict()
-      .optional(),
-    inlineShell: z
-      .object({
-        enabled: z.boolean().optional(),
-        timeoutMs: positiveInteger.optional(),
-        maxOutputChars: positiveInteger.optional(),
-      })
-      .strict()
-      .optional(),
+    evolution: skillEvolutionSchema.optional(),
+    inlineShell: skillInlineShellSchema.optional(),
   })
   .strict()
   .describe("Skill loading settings for host-created runs.");
+export const SKILLS_CONFIG_KEYS = skillsSchema.keyof().options;
 
 export const mcpToolSchemaLoadSchema = z.enum(["eager", "defer"]);
 export const mcpStartupSchema = z.enum(["lazy", "prepare", "eager"]);

@@ -54,6 +54,14 @@ import {
   stringRecordSchema,
   APPROVALS_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
+  SHELL_CONFIG_KEYS,
+  SHELL_SANDBOX_CONFIG_KEYS,
+  SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS,
+  SHELL_SANDBOX_NETWORK_CONFIG_KEYS,
+  SKILLS_CONFIG_KEYS,
+  SKILL_EVOLUTION_CONFIG_KEYS,
+  SKILL_EVOLUTION_MODES,
+  SKILL_INLINE_SHELL_CONFIG_KEYS,
   TOOLS_CONFIG_KEYS,
   WRITE_GUARDRAILS_CONFIG_KEYS,
 } from "./config-zod-schema.js";
@@ -639,17 +647,7 @@ function validateCapabilitySkills(
     return undefined;
   }
   const out: CapabilitySkillsConfig = {};
-  const allowed = new Set([
-    "roots",
-    "includeLoaderTool",
-    "loadSelectedSkills",
-    "maxSelectedSkills",
-    "resourceFileLimit",
-    "allowedSkills",
-    "deniedSkills",
-    "evolution",
-    "inlineShell",
-  ]);
+  const allowed = new Set<string>(SKILLS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -735,10 +733,7 @@ function validateCapabilitySkills(
 }
 
 const VALID_SKILL_EVOLUTION_MODES: CapabilitySkillEvolutionMode[] = [
-  "off",
-  "notice",
-  "draft",
-  "apply",
+  ...SKILL_EVOLUTION_MODES,
 ];
 
 function validateCapabilitySkillEvolution(
@@ -755,7 +750,7 @@ function validateCapabilitySkillEvolution(
     return undefined;
   }
   const out: CapabilitySkillEvolutionConfig = {};
-  const allowed = new Set(["mode"]);
+  const allowed = new Set<string>(SKILL_EVOLUTION_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -796,7 +791,7 @@ function validateCapabilitySkillInlineShell(
     return undefined;
   }
   const out: CapabilitySkillInlineShellConfig = {};
-  const allowed = new Set(["enabled", "timeoutMs", "maxOutputChars"]);
+  const allowed = new Set<string>(SKILL_INLINE_SHELL_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1871,7 +1866,7 @@ function validateShellConfig(
     return undefined;
   }
   const out: ShellConfig = {};
-  const allowed = new Set(["sandbox"]);
+  const allowed = new Set<string>(SHELL_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1902,12 +1897,7 @@ function validateShellSandboxConfig(
     return undefined;
   }
   const out: ShellSandboxConfig = {};
-  const allowed = new Set([
-    "mode",
-    "failIfUnavailable",
-    "filesystem",
-    "network",
-  ]);
+  const allowed = new Set<string>(SHELL_SANDBOX_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1965,13 +1955,7 @@ function validateShellSandboxFilesystem(
     return undefined;
   }
   const out: NonNullable<ShellSandboxConfig["filesystem"]> = {};
-  const allowed = new Set([
-    "allowRead",
-    "allowWrite",
-    "denyRead",
-    "denyWrite",
-    "tmp",
-  ]);
+  const allowed = new Set<string>(SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2021,7 +2005,7 @@ function validateShellSandboxNetwork(
     return undefined;
   }
   const out: NonNullable<ShellSandboxConfig["network"]> = {};
-  const allowed = new Set(["mode"]);
+  const allowed = new Set<string>(SHELL_SANDBOX_NETWORK_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
