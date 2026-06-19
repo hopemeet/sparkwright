@@ -92,6 +92,7 @@ import {
   VERIFICATION_KINDS,
   VERIFICATION_MODES,
   VERIFICATION_STOP_GATE_CONFIG_KEYS,
+  WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE,
   WORKFLOW_HOOK_ACTION_TYPES,
   WORKFLOW_HOOK_CONFIG_KEYS,
   WORKFLOW_HOOK_CONTEXT_TYPES,
@@ -1129,6 +1130,13 @@ function validateWorkflowHookAction(
     });
     return undefined;
   }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE[type]),
+  );
   if (type === "block") {
     if (typeof raw.reason !== "string" || raw.reason.length === 0) {
       errors.push({

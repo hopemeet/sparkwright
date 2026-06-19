@@ -285,33 +285,51 @@ export const workflowHookMatcherSchema = z
 export const WORKFLOW_HOOK_MATCHER_CONFIG_KEYS =
   workflowHookMatcherSchema.keyof().options;
 
+export const workflowHookBlockActionSchema = z
+  .object({
+    type: z.literal("block"),
+    reason: nonEmptyString,
+  })
+  .strict();
+export const WORKFLOW_HOOK_BLOCK_ACTION_CONFIG_KEYS =
+  workflowHookBlockActionSchema.keyof().options;
+
+export const workflowHookContextActionSchema = z
+  .object({
+    type: z.literal("context"),
+    content: nonEmptyString,
+    contextType: workflowHookContextTypeSchema.optional(),
+  })
+  .strict();
+export const WORKFLOW_HOOK_CONTEXT_ACTION_CONFIG_KEYS =
+  workflowHookContextActionSchema.keyof().options;
+
+export const workflowHookCommandActionSchema = z
+  .object({
+    type: z.literal("command"),
+    command: nonEmptyString,
+    args: stringArray.optional(),
+    cwd: nonEmptyString.optional(),
+    timeoutMs: positiveInteger.optional(),
+    blockOnFailure: z.boolean().optional(),
+    injectOutput: workflowHookOutputInjectionSchema.optional(),
+    maxOutputBytes: positiveInteger.optional(),
+    stdin: workflowHookStdinSchema.optional(),
+  })
+  .strict();
+export const WORKFLOW_HOOK_COMMAND_ACTION_CONFIG_KEYS =
+  workflowHookCommandActionSchema.keyof().options;
+
+export const WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE = {
+  block: WORKFLOW_HOOK_BLOCK_ACTION_CONFIG_KEYS,
+  context: WORKFLOW_HOOK_CONTEXT_ACTION_CONFIG_KEYS,
+  command: WORKFLOW_HOOK_COMMAND_ACTION_CONFIG_KEYS,
+} as const;
+
 export const workflowHookActionSchema = z.union([
-  z
-    .object({
-      type: z.literal("block"),
-      reason: nonEmptyString,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("context"),
-      content: nonEmptyString,
-      contextType: workflowHookContextTypeSchema.optional(),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("command"),
-      command: nonEmptyString,
-      args: stringArray.optional(),
-      cwd: nonEmptyString.optional(),
-      timeoutMs: positiveInteger.optional(),
-      blockOnFailure: z.boolean().optional(),
-      injectOutput: workflowHookOutputInjectionSchema.optional(),
-      maxOutputBytes: positiveInteger.optional(),
-      stdin: workflowHookStdinSchema.optional(),
-    })
-    .strict(),
+  workflowHookBlockActionSchema,
+  workflowHookContextActionSchema,
+  workflowHookCommandActionSchema,
 ]);
 
 export const workflowHookConfigSchema = z

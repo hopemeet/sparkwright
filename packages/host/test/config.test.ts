@@ -1211,6 +1211,51 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports unknown workflow hook action fields without dropping valid actions", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "extra-action-field",
+                hook: "Stop",
+                action: {
+                  type: "command",
+                  command: "npm",
+                  reason: "not a command action field",
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.hooks?.workflow).toMatchObject([
+        {
+          name: "extra-action-field",
+          hook: "Stop",
+          action: { type: "command", command: "npm" },
+        },
+      ]);
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.hooks.workflow.0.action.reason",
+            message: expect.stringContaining("unknown field"),
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("drops invalid top-level tool fields with validation errors", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
