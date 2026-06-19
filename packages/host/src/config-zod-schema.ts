@@ -456,6 +456,80 @@ export const delegateToolSchema = z
   .strict();
 export const DELEGATE_TOOL_CONFIG_KEYS = delegateToolSchema.keyof().options;
 
+export const agentProfileModeSchema = z.enum(["primary", "child", "all"]);
+export const AGENT_PROFILE_MODES = agentProfileModeSchema.options;
+
+export const delegateEnvModeSchema = z.enum(["inherit", "explicit"]);
+export const DELEGATE_ENV_MODES = delegateEnvModeSchema.options;
+
+export const delegateWorkspaceAccessSchema = z.enum(["none", "read_write"]);
+export const DELEGATE_WORKSPACE_ACCESS_MODES =
+  delegateWorkspaceAccessSchema.options;
+
+export const externalCommandInputSchema = z.enum(["argument", "stdin", "none"]);
+export const EXTERNAL_COMMAND_INPUT_MODES = externalCommandInputSchema.options;
+
+export const agentProfileAcpMetadataSchema = z
+  .object({
+    transport: z.literal("stdio"),
+    command: nonEmptyString,
+    args: stringArray.optional(),
+    cwd: stringSchema.optional(),
+    env: stringRecordSchema.optional(),
+    envMode: delegateEnvModeSchema.optional(),
+    workspaceAccess: delegateWorkspaceAccessSchema.optional(),
+    timeoutMs: numberSchema.optional(),
+  })
+  .strict();
+export const AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS =
+  agentProfileAcpMetadataSchema.keyof().options;
+
+export const agentProfileExternalCommandMetadataSchema = z
+  .object({
+    command: nonEmptyString,
+    args: stringArray.optional(),
+    cwd: stringSchema.optional(),
+    env: stringRecordSchema.optional(),
+    envMode: delegateEnvModeSchema.optional(),
+    workspaceAccess: delegateWorkspaceAccessSchema.optional(),
+    timeoutMs: numberSchema.optional(),
+    input: externalCommandInputSchema.optional(),
+    maxOutputBytes: numberSchema.optional(),
+    maxStdoutBytes: numberSchema.optional(),
+    maxStderrBytes: numberSchema.optional(),
+    successExitCodes: integerArray.optional(),
+  })
+  .strict();
+export const AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS =
+  agentProfileExternalCommandMetadataSchema.keyof().options;
+
+export const agentProfileMetadataSchema = z
+  .object({
+    acp: agentProfileAcpMetadataSchema.optional(),
+    externalCommand: agentProfileExternalCommandMetadataSchema.optional(),
+  })
+  .catchall(z.unknown());
+
+export const agentProfileConfigSchema = z
+  .object({
+    id: nonEmptyString,
+    name: stringSchema.optional(),
+    description: stringSchema.optional(),
+    mode: agentProfileModeSchema.optional(),
+    model: z.unknown().optional(),
+    prompt: stringSchema.optional(),
+    use: z.array(toolUseSelectorSchema).optional(),
+    allowedTools: stringArray.optional(),
+    deniedTools: stringArray.optional(),
+    policy: z.array(z.object({}).catchall(z.unknown())).optional(),
+    maxSteps: positiveInteger.optional(),
+    runBudget: z.object({}).catchall(z.unknown()).optional(),
+    metadata: agentProfileMetadataSchema.optional(),
+  })
+  .strict();
+export const AGENT_PROFILE_CONFIG_KEYS =
+  agentProfileConfigSchema.keyof().options;
+
 export const agentsConfigSchema = z
   .object({
     // Replaced with an external JSON Schema ref by scripts/generate-config-schema.ts.

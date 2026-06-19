@@ -53,9 +53,16 @@ import {
   stringSchema,
   stringRecordSchema,
   APPROVALS_CONFIG_KEYS,
+  AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS,
+  AGENT_PROFILE_CONFIG_KEYS,
+  AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS,
+  AGENT_PROFILE_MODES,
   AGENTS_CONFIG_KEYS,
   CAPABILITIES_CONFIG_KEYS,
   DELEGATE_TOOL_CONFIG_KEYS,
+  DELEGATE_ENV_MODES,
+  DELEGATE_WORKSPACE_ACCESS_MODES,
+  EXTERNAL_COMMAND_INPUT_MODES,
   HOOKS_CONFIG_KEYS,
   MCP_CONFIG_KEYS,
   MCP_DEFAULT_POLICY_CONFIG_KEYS,
@@ -2470,30 +2477,13 @@ function validateAgentProfile(
     });
     return undefined;
   }
-  const allowed = new Set([
-    "id",
-    "name",
-    "description",
-    "mode",
-    "model",
-    "prompt",
-    "use",
-    "allowedTools",
-    "deniedTools",
-    "policy",
-    "maxSteps",
-    "runBudget",
-    "metadata",
-  ]);
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) {
-      errors.push({
-        file: filePath,
-        field: `${field}.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
-      });
-    }
-  }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(AGENT_PROFILE_CONFIG_KEYS),
+  );
   const profile: AgentProfile = { id: raw.id };
   for (const key of ["name", "description", "prompt"] as const) {
     if (raw[key] !== undefined) {
@@ -2507,8 +2497,11 @@ function validateAgentProfile(
     }
   }
   if (raw.mode !== undefined) {
-    if (raw.mode === "primary" || raw.mode === "child" || raw.mode === "all")
-      profile.mode = raw.mode;
+    if (
+      typeof raw.mode === "string" &&
+      (AGENT_PROFILE_MODES as readonly string[]).includes(raw.mode)
+    )
+      profile.mode = raw.mode as AgentProfile["mode"];
     else
       errors.push({
         file: filePath,
@@ -2629,16 +2622,7 @@ function validateAcpMetadata(
     field,
     filePath,
     errors,
-    new Set([
-      "transport",
-      "command",
-      "args",
-      "cwd",
-      "env",
-      "envMode",
-      "workspaceAccess",
-      "timeoutMs",
-    ]),
+    new Set<string>(AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS),
   );
   if (acp.transport !== "stdio") {
     errors.push({
@@ -2653,8 +2637,10 @@ function validateAcpMetadata(
   validateOptionalStringRecord(acp.env, `${field}.env`, filePath, errors);
   if (
     acp.envMode !== undefined &&
-    acp.envMode !== "inherit" &&
-    acp.envMode !== "explicit"
+    !(
+      typeof acp.envMode === "string" &&
+      (DELEGATE_ENV_MODES as readonly string[]).includes(acp.envMode)
+    )
   ) {
     errors.push({
       file: filePath,
@@ -2682,20 +2668,7 @@ function validateExternalCommandMetadata(
     field,
     filePath,
     errors,
-    new Set([
-      "command",
-      "args",
-      "cwd",
-      "env",
-      "envMode",
-      "workspaceAccess",
-      "timeoutMs",
-      "input",
-      "maxOutputBytes",
-      "maxStdoutBytes",
-      "maxStderrBytes",
-      "successExitCodes",
-    ]),
+    new Set<string>(AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS),
   );
   validateRequiredString(command.command, `${field}.command`, filePath, errors);
   validateOptionalStringArray(command.args, `${field}.args`, filePath, errors);
@@ -2733,8 +2706,10 @@ function validateExternalCommandMetadata(
   );
   if (
     command.envMode !== undefined &&
-    command.envMode !== "inherit" &&
-    command.envMode !== "explicit"
+    !(
+      typeof command.envMode === "string" &&
+      (DELEGATE_ENV_MODES as readonly string[]).includes(command.envMode)
+    )
   ) {
     errors.push({
       file: filePath,
@@ -2744,9 +2719,12 @@ function validateExternalCommandMetadata(
   }
   if (
     command.input !== undefined &&
-    command.input !== "argument" &&
-    command.input !== "stdin" &&
-    command.input !== "none"
+    !(
+      typeof command.input === "string" &&
+      (EXTERNAL_COMMAND_INPUT_MODES as readonly string[]).includes(
+        command.input,
+      )
+    )
   ) {
     errors.push({
       file: filePath,
@@ -2768,7 +2746,13 @@ function validateOptionalWorkspaceAccess(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (value !== undefined && value !== "none" && value !== "read_write") {
+  if (
+    value !== undefined &&
+    !(
+      typeof value === "string" &&
+      (DELEGATE_WORKSPACE_ACCESS_MODES as readonly string[]).includes(value)
+    )
+  ) {
     errors.push({
       file: filePath,
       field,

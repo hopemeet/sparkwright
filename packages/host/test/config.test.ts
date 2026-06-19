@@ -1463,6 +1463,7 @@ describe("loadHostConfig", () => {
                     args: "nope",
                     envMode: "ambient",
                     workspaceAccess: "read_only",
+                    extra: true,
                   },
                   externalCommand: {
                     command: "",
@@ -1473,6 +1474,7 @@ describe("loadHostConfig", () => {
                     maxStdoutBytes: "64",
                     maxStderrBytes: "64",
                     successExitCodes: ["0"],
+                    extra: true,
                   },
                 },
               },
@@ -1490,6 +1492,7 @@ describe("loadHostConfig", () => {
           "capabilities.agents.profiles.0.metadata.acp.args: must be an array of strings",
           "capabilities.agents.profiles.0.metadata.acp.envMode: must be inherit or explicit",
           "capabilities.agents.profiles.0.metadata.acp.workspaceAccess: must be none or read_write",
+          "capabilities.agents.profiles.0.metadata.acp.extra: unknown field (allowed: transport, command, args, cwd, env, envMode, workspaceAccess, timeoutMs)",
           "capabilities.agents.profiles.0.metadata.externalCommand.command: must be a non-empty string",
           "capabilities.agents.profiles.0.metadata.externalCommand.args: must be an array of strings",
           "capabilities.agents.profiles.0.metadata.externalCommand.envMode: must be inherit or explicit",
@@ -1498,6 +1501,7 @@ describe("loadHostConfig", () => {
           "capabilities.agents.profiles.0.metadata.externalCommand.maxStdoutBytes: must be a number",
           "capabilities.agents.profiles.0.metadata.externalCommand.maxStderrBytes: must be a number",
           "capabilities.agents.profiles.0.metadata.externalCommand.successExitCodes: must be an array of integers",
+          "capabilities.agents.profiles.0.metadata.externalCommand.extra: unknown field (allowed: command, args, cwd, env, envMode, workspaceAccess, timeoutMs, input, maxOutputBytes, maxStdoutBytes, maxStderrBytes, successExitCodes)",
         ]),
       );
     } finally {
