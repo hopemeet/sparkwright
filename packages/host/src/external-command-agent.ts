@@ -18,6 +18,7 @@ import {
 import {
   DelegateExecutionError,
   assertReadWriteWorkspaceAccessAllowed,
+  assertSubagentDepthAllowed,
   assertWorkspaceAccess,
   describeDelegateCapability,
   errorCode,
@@ -51,6 +52,7 @@ export interface CreateExternalCommandDelegateToolInput {
   workspaceRoot: string;
   requiresApproval?: boolean;
   forbidNesting?: boolean;
+  maxDepth?: number;
   allowReadWriteWorkspaceAccess?: boolean;
   sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
   sandboxRuntime?: ShellSandboxRuntime;
@@ -191,6 +193,11 @@ export function createExternalCommandDelegateTool(
           `External command delegate tool "${input.toolName}" refused to nest: parent run is itself a sub-agent.`,
         );
       }
+      const subagentDepth = assertSubagentDepthAllowed({
+        parent,
+        maxDepth: input.maxDepth,
+        toolName: input.toolName,
+      });
 
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
@@ -206,6 +213,7 @@ export function createExternalCommandDelegateTool(
         agentName: input.profile.name,
         protocol: "external_command",
         workspaceAccess,
+        subagentDepth,
       };
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);

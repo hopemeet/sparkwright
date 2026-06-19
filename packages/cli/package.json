@@ -29,7 +29,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/chmod-bin.mjs dist/index.js",
+    "build": "tsc -p tsconfig.json && node ../../scripts/copy-cli-schemas.mjs && node ../../scripts/chmod-bin.mjs dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
@@ -48,6 +48,7 @@
     "@sparkwright/shell-sandbox": "0.1.0",
     "@sparkwright/skills": "0.1.0",
     "@sparkwright/tui": "0.1.0",
+    "ajv": "^8.20.0",
     "undici": "^7.26.0"
   },
   "publishConfig": {

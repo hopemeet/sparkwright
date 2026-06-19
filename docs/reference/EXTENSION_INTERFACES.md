@@ -446,6 +446,7 @@ interface AgentProfile {
   mode?: "primary" | "child" | "all"; // carried for orchestration; not applied by agent-runtime
   model?: unknown; // carried for orchestration; not applied by agent-runtime
   prompt?: string; // compiled into the run prompt builder when spawning from this profile
+  use?: string[]; // broad tool selectors intersected through parent/child profiles
   allowedTools?: string[];
   deniedTools?: string[];
   policy?: CapabilityRule[];
@@ -697,7 +698,7 @@ Embedder responsibilities:
   `evaluateShellSafety` floor as model-invoked shell; `deny`/unknown commands are
   blocked, never executed.
 - Decide how `prompt` / `model` / `subtask` map onto its run-start path. Explicit
-  `config.json` declarations shadow same-named files (config wins).
+  config-file declarations shadow same-named files (config wins).
 
 ## Sub-agents
 

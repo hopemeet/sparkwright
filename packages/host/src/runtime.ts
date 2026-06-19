@@ -77,6 +77,7 @@ import {
 import type {
   CapabilitySkillsConfig,
   CapabilityDelegateToolConfig,
+  CapabilityToolsConfig,
   ShellConfig,
   WriteGuardrailsConfig,
 } from "./config.js";
@@ -106,11 +107,11 @@ import {
 } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { createModel } from "./model-factory.js";
-import { createReadOnlyChildTools } from "./toolset.js";
 import {
   catalogEntryOrigin,
   catalogToolDefinitions,
   createMainHostToolCatalog,
+  createReadOnlyChildToolCatalog,
   type HostToolCatalogEntry,
 } from "./tool-catalog.js";
 import {
@@ -123,6 +124,7 @@ import {
 } from "./external-command-agent.js";
 import { createSkillInlineShellRunner } from "./skill-inline-shell.js";
 import {
+  assertSubagentDepthAllowed,
   describeDelegateCapability,
   delegateToolName,
   type DelegateCapabilityDescriptor,
@@ -130,6 +132,10 @@ import {
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
 import { createDocumentedCommandStopHook } from "./documented-command-check.js";
+import {
+  intersectToolUseSelectors,
+  resolveSelectorAllowlist,
+} from "./tool-selectors.js";
 
 /**
  * Skills flagged `metadata.devOnly: true` (test/development fixtures) are kept
@@ -679,7 +685,7 @@ export class HostRuntime {
     const runIdHolder: { value: string | null } = { value: null };
     const approvalResolver = this.createApprovalResolver(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
-    const toolConfig = loadedConfig.config.tools;
+    const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
     const hookConfig = loadedConfig.config.capabilities?.hooks;
     const skillConfig = loadedConfig.config.capabilities?.skills;
@@ -784,6 +790,7 @@ export class HostRuntime {
       loadedConfig.config.runBudget,
       loadedConfig.config.maxSteps,
     );
+    const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
     const parentRunPolicy = createHostRunPolicy({
       permissionMode: input.permissionMode,
       shouldWrite: input.shouldWrite,
@@ -791,9 +798,14 @@ export class HostRuntime {
       confidentialPaths: input.confidentialPaths,
       writeGuardrails,
     });
+    const childToolCatalog = createReadOnlyChildToolCatalog({
+      workspaceRoot,
+      toolConfig,
+    });
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
       resolvedProfiles,
+      childToolCatalog,
       pendingExtensionEvents,
     );
     const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
@@ -809,10 +821,7 @@ export class HostRuntime {
         }),
         metadata: { source: "host" },
       });
-    const childTools = createReadOnlyChildTools({
-      workspaceRoot,
-      toolConfig,
-    });
+    const childTools = catalogToolDefinitions(childToolCatalog);
     const delegateTools = createConfiguredDelegateTools({
       getParent: () => parentRunRef.current,
       delegates: agentConfig?.delegateTools ?? [],
@@ -826,6 +835,7 @@ export class HostRuntime {
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
       childRunStoreFactory,
       allowReadWriteWorkspaceAccess: input.shouldWrite,
+      maxDepth: agentConfig?.maxDepth,
     });
     const delegateDescriptors = describeConfiguredDelegateTools({
       delegates: agentConfig?.delegateTools ?? [],
@@ -837,6 +847,7 @@ export class HostRuntime {
       childTools,
       parentRunPolicy,
       childRunStoreFactory,
+      maxDepth: agentConfig?.maxDepth,
     });
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
@@ -1827,7 +1838,7 @@ export class HostRuntime {
 
   private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
     const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
-    const toolConfig = loadedConfig.config.tools;
+    const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
     const skillConfig = loadedConfig.config.capabilities?.skills;
     const mcpConfig = mergeRuntimeMcpConfig(
@@ -1879,11 +1890,17 @@ export class HostRuntime {
     });
     try {
       const mainAgent = mainAgentProfile(resolvedProfiles);
-      const derivedAgents = deriveConfiguredAgents(mainAgent, resolvedProfiles);
-      const childTools = createReadOnlyChildTools({
+      const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
+      const childToolCatalog = createReadOnlyChildToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
         toolConfig,
       });
+      const derivedAgents = deriveConfiguredAgents(
+        mainAgent,
+        resolvedProfiles,
+        childToolCatalog,
+      );
+      const childTools = catalogToolDefinitions(childToolCatalog);
       const delegateTools = createConfiguredDelegateTools({
         getParent: () => undefined,
         delegates: agentConfig?.delegateTools ?? [],
@@ -1900,6 +1917,7 @@ export class HostRuntime {
         skillRoots: skillRoots.map((root) => root.root),
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
         allowReadWriteWorkspaceAccess: false,
+        maxDepth: agentConfig?.maxDepth,
         // Snapshot only describes the tool; its body never runs here
         // (getParent returns undefined and the tool throws first).
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
@@ -1914,6 +1932,7 @@ export class HostRuntime {
         childTools,
         parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
+        maxDepth: agentConfig?.maxDepth,
       });
       const toolCatalog = createMainHostToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
@@ -1955,10 +1974,7 @@ export class HostRuntime {
         ],
         delegateTools: describeConfiguredDelegateTools({
           delegates: agentConfig?.delegateTools ?? [],
-          derivedAgents: deriveConfiguredAgents(
-            mainAgentProfile(resolvedProfiles),
-            resolvedProfiles,
-          ),
+          derivedAgents,
         }),
         shellSandbox,
         automation,
@@ -2680,6 +2696,7 @@ async function isDirectory(path: string): Promise<boolean> {
 function deriveConfiguredAgents(
   parentAgent: AgentProfile,
   profiles: AgentProfile[],
+  childToolCatalog: readonly HostToolCatalogEntry[],
   emitter?: EventEmitter,
 ): DerivedChildAgentProfile[] {
   return profiles
@@ -2688,13 +2705,61 @@ function deriveConfiguredAgents(
       const mode = profile.mode;
       return mode === undefined || mode === "child" || mode === "all";
     })
-    .map((childAgent) =>
-      deriveChildAgentProfile({
+    .map((childAgent) => {
+      const derived = deriveChildAgentProfile({
         parentAgent,
         childAgent,
         emitter,
-      }),
-    );
+      });
+      const effectiveProfile = applyAgentProfileToolUse(
+        derived.effectiveProfile,
+        childToolCatalog,
+      );
+      return {
+        ...derived,
+        effectiveProfile,
+        effectiveToolCount: effectiveProfile.allowedTools?.length,
+      };
+    });
+}
+
+function applyMainAgentToolUse(
+  config: CapabilityToolsConfig | undefined,
+  profile: AgentProfile,
+): CapabilityToolsConfig | undefined {
+  if (profile.use === undefined) return config;
+  return {
+    ...(config ?? {}),
+    use: intersectToolUseSelectors(config?.use, profile.use),
+  };
+}
+
+function applyAgentProfileToolUse(
+  profile: AgentProfile,
+  childToolCatalog: readonly HostToolCatalogEntry[],
+): AgentProfile {
+  const selectorAllowed = resolveSelectorAllowlist(
+    childToolCatalog,
+    profile.use,
+  );
+  if (selectorAllowed === undefined) return profile;
+  return {
+    ...profile,
+    allowedTools: intersectToolNameAllowlists(
+      profile.allowedTools,
+      selectorAllowed,
+    ),
+  };
+}
+
+function intersectToolNameAllowlists(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): string[] | undefined {
+  if (left === undefined) return right ? [...right] : undefined;
+  if (right === undefined) return [...left];
+  const rightSet = new Set(right);
+  return left.filter((name) => rightSet.has(name));
 }
 
 /**
@@ -2737,6 +2802,7 @@ function createConfiguredDelegateTools(input: {
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
   allowReadWriteWorkspaceAccess: boolean;
+  maxDepth?: number;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -2766,6 +2832,7 @@ function createConfiguredDelegateTools(input: {
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          maxDepth: input.maxDepth,
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
         }),
       );
@@ -2785,6 +2852,7 @@ function createConfiguredDelegateTools(input: {
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          maxDepth: input.maxDepth,
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
           sandbox: input.sandbox,
           skillRoots: input.skillRoots,
@@ -2802,29 +2870,37 @@ function createConfiguredDelegateTools(input: {
           `Delegate a bounded task to ${profile.name ?? profile.id}.`,
         requiresApproval: delegate.requiresApproval,
         forbidNesting: delegate.forbidNesting ?? true,
-        buildSpawnInput: (args, parent) => ({
-          goal: args.goal,
-          model: input.model,
-          tools: input.childTools,
-          childAgentProfile: childProfile,
-          policy: createLayeredPolicy([
-            input.parentRunPolicy,
-            createAgentProfilePolicy(childProfile),
-          ]),
-          maxSteps: delegate.maxSteps ?? profile.maxSteps,
-          runBudget: profile.runBudget,
-          interactionChannel: null,
-          // Persist the child's trace under its own agent dir + register it in
-          // session.json, and roll its usage up into the parent run's tracker.
-          runStore: input.childRunStoreFactory(profile.id),
-          parentUsageTracker: parent.getUsageTracker(),
-          metadata: {
-            ...(args.metadata ?? {}),
-            agentId: profile.id,
-            agentProfileId: profile.id,
-            agentName: profile.name,
-          },
-        }),
+        buildSpawnInput: (args, parent) => {
+          const subagentDepth = assertSubagentDepthAllowed({
+            parent,
+            maxDepth: input.maxDepth,
+            toolName,
+          });
+          return {
+            goal: args.goal,
+            model: input.model,
+            tools: input.childTools,
+            childAgentProfile: childProfile,
+            policy: createLayeredPolicy([
+              input.parentRunPolicy,
+              createAgentProfilePolicy(childProfile),
+            ]),
+            maxSteps: delegate.maxSteps ?? profile.maxSteps,
+            runBudget: profile.runBudget,
+            interactionChannel: null,
+            // Persist the child's trace under its own agent dir + register it in
+            // session.json, and roll its usage up into the parent run's tracker.
+            runStore: input.childRunStoreFactory(profile.id),
+            parentUsageTracker: parent.getUsageTracker(),
+            metadata: {
+              ...(args.metadata ?? {}),
+              subagentDepth,
+              agentId: profile.id,
+              agentProfileId: profile.id,
+              agentName: profile.name,
+            },
+          };
+        },
       }),
     );
   }
@@ -2893,6 +2969,7 @@ export function createDynamicSpawnAgentTool(input: {
   model: ModelAdapter;
   childTools: ToolDefinition[];
   parentRunPolicy: Policy;
+  maxDepth?: number;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -2960,6 +3037,11 @@ export function createDynamicSpawnAgentTool(input: {
           'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
         );
       }
+      const subagentDepth = assertSubagentDepthAllowed({
+        parent,
+        maxDepth: input.maxDepth,
+        toolName: "spawn_agent",
+      });
 
       const parsed = parseDynamicSpawnAgentArgs(args);
       const supportedTools = new Set(["read_file", "glob", "grep", "list_dir"]);
@@ -3033,6 +3115,7 @@ export function createDynamicSpawnAgentTool(input: {
         metadata: {
           ...(parsed.metadata ?? {}),
           dynamic: true,
+          subagentDepth,
           agentId,
           agentProfileId: agentId,
           agentName: parsed.role,

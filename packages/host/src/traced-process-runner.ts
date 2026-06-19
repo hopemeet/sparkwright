@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -144,6 +145,7 @@ interface RawProcessResult {
 interface InboxState {
   dir: string;
   path: string;
+  handle: FileHandle;
   offset: number;
   pending: string;
 }
@@ -177,8 +179,12 @@ export class TracedProcessRunner {
     };
     const defaultProgress = (chunk: ProgressChunk): void => {
       if (!emitLifecycle) return;
+      // Progress events only need the invocation key to correlate with the
+      // span/lifecycle; the full `base` (command/args/cwd) already rides on the
+      // started/completed events, so repeating it on every progress sample is
+      // pure bloat at debug level.
       context.emit("extension.process.progress", {
-        ...base,
+        invocationId: base.invocationId,
         ...chunk,
       });
     };
@@ -212,8 +218,14 @@ export class TracedProcessRunner {
     };
     const poll = setInterval(() => queueDrain(false), PROGRESS_POLL_MS);
 
+    // The progress inbox lives under the OS temp dir. Under a filesystem-isolated
+    // sandbox the child cannot see it unless it is explicitly writable, so add
+    // the inbox dir to allowWrite before spawning.
+    const execInput = input.sandbox
+      ? { ...input, sandbox: withInboxWrite(input.sandbox, inbox.dir) }
+      : input;
     try {
-      raw = await this.execute(input, env, stdout, stderr);
+      raw = await this.execute(execInput, env, stdout, stderr);
       sandbox = raw.sandbox;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -228,6 +240,7 @@ export class TracedProcessRunner {
       clearInterval(poll);
       queueDrain(true);
       await drainChain;
+      await inbox.handle.close().catch(() => undefined);
       await rm(inbox.dir, { recursive: true, force: true });
     }
 
@@ -482,6 +495,7 @@ export class TracedProcessRunner {
     return new Promise<RawProcessResult>((resolve) => {
       let settled = false;
       let timedOut = false;
+      // eslint-disable-next-line prefer-const -- assigned after spawn; finish closes over it.
       let timer: NodeJS.Timeout | undefined;
       let killTimer: NodeJS.Timeout | undefined;
       const finish = (result: RawProcessResult): void => {
@@ -598,8 +612,14 @@ async function createInbox(): Promise<InboxState> {
   const dir = await mkdtemp(join(tmpdir(), "sparkwright-trace-"));
   const path = join(dir, "events.jsonl");
   await writeFile(path, "", { mode: 0o600 });
-  return { dir, path, offset: 0, pending: "" };
+  // Hold a long-lived read handle and track a byte offset so each poll reads
+  // only the newly-appended bytes via positional reads, instead of re-reading
+  // the whole (potentially large, noisy) inbox file every tick.
+  const handle = await open(path, "r");
+  return { dir, path, handle, offset: 0, pending: "" };
 }
+
+const INBOX_READ_CHUNK_BYTES = 64 * 1024;
 
 async function drainInbox(
   inbox: InboxState,
@@ -608,16 +628,27 @@ async function drainInbox(
   emit: (chunk: ProgressChunk) => Promise<void>,
 ): Promise<number> {
   let dropped = 0;
-  let content: Buffer;
-  try {
-    content = await readFile(inbox.path);
-  } catch {
-    return 1;
+  const parts: Buffer[] = [];
+  const buffer = Buffer.allocUnsafe(INBOX_READ_CHUNK_BYTES);
+  for (;;) {
+    let bytesRead: number;
+    try {
+      ({ bytesRead } = await inbox.handle.read(
+        buffer,
+        0,
+        buffer.length,
+        inbox.offset,
+      ));
+    } catch {
+      return 1;
+    }
+    if (bytesRead <= 0) break;
+    parts.push(Buffer.from(buffer.subarray(0, bytesRead)));
+    inbox.offset += bytesRead;
   }
-  if (content.length < inbox.offset) inbox.offset = 0;
-  const next = content.subarray(inbox.offset);
-  inbox.offset = content.length;
-  inbox.pending += next.toString("utf8");
+  if (parts.length > 0) {
+    inbox.pending += Buffer.concat(parts).toString("utf8");
+  }
   const lines = inbox.pending.split(/\r?\n/);
   inbox.pending = final ? "" : (lines.pop() ?? "");
   if (final && inbox.pending.trim()) {
@@ -798,6 +829,11 @@ function outputSummary(
 class OutputCollector {
   private readonly previewChunks: string[] = [];
   private readonly contentChunks: string[] = [];
+  // Running UTF-8 byte counts kept incrementally so `append` stays O(chunk)
+  // instead of re-`join`ing the whole accumulator on every write (which made
+  // line-buffered output quadratic in total size).
+  private previewBytes = 0;
+  private contentBytes = 0;
   bytes = 0;
   contentTruncated = false;
 
@@ -808,14 +844,24 @@ class OutputCollector {
 
   append(text: string): void {
     if (!text) return;
-    this.bytes += Buffer.byteLength(text, "utf8");
-    appendBounded(this.previewChunks, text, this.previewLimit);
-    const before = Buffer.byteLength(this.contentChunks.join(""), "utf8");
-    appendBounded(this.contentChunks, text, this.contentLimit);
-    const after = Buffer.byteLength(this.contentChunks.join(""), "utf8");
-    if (after - before < Buffer.byteLength(text, "utf8")) {
-      this.contentTruncated = true;
-    }
+    const textBytes = Buffer.byteLength(text, "utf8");
+    this.bytes += textBytes;
+    this.previewBytes += appendBounded(
+      this.previewChunks,
+      text,
+      textBytes,
+      this.previewBytes,
+      this.previewLimit,
+    );
+    const added = appendBounded(
+      this.contentChunks,
+      text,
+      textBytes,
+      this.contentBytes,
+      this.contentLimit,
+    );
+    this.contentBytes += added;
+    if (added < textBytes) this.contentTruncated = true;
   }
 
   get preview(): string {
@@ -827,17 +873,32 @@ class OutputCollector {
   }
 }
 
-function appendBounded(chunks: string[], text: string, maxBytes: number): void {
-  const current = Buffer.byteLength(chunks.join(""), "utf8");
-  const remaining = maxBytes - current;
-  if (remaining <= 0) return;
-  if (Buffer.byteLength(text, "utf8") <= remaining) {
+/**
+ * Append `text` to `chunks` without exceeding `maxBytes`, given the caller's
+ * running `currentBytes` count. Returns the number of UTF-8 bytes actually
+ * appended so the caller can update its counter without re-measuring the whole
+ * buffer.
+ */
+function appendBounded(
+  chunks: string[],
+  text: string,
+  textBytes: number,
+  currentBytes: number,
+  maxBytes: number,
+): number {
+  const remaining = maxBytes - currentBytes;
+  if (remaining <= 0) return 0;
+  if (textBytes <= remaining) {
     chunks.push(text);
-    return;
+    return textBytes;
   }
-  chunks.push(
-    Buffer.from(text, "utf8").subarray(0, remaining).toString("utf8"),
-  );
+  // Slicing on a byte boundary can split a multibyte char; re-measure the
+  // decoded string so the running counter stays accurate.
+  const sliceText = Buffer.from(text, "utf8")
+    .subarray(0, remaining)
+    .toString("utf8");
+  chunks.push(sliceText);
+  return Buffer.byteLength(sliceText, "utf8");
 }
 
 interface NormalizedLimits {
@@ -879,6 +940,29 @@ function positive(value: number | undefined, fallback: number): number {
     : fallback;
 }
 
+/**
+ * Best-effort mapping from a command to a {@link ProcessInvocationBase}
+ * runtime label so timeline views can show `extension python:...` instead of a
+ * generic `custom`. Falls back to `custom` for anything unrecognized.
+ */
+export function inferProcessRuntime(
+  command: string,
+): ProcessInvocationBase["runtime"] {
+  const base =
+    command
+      .split(/[\\/]/)
+      .pop()
+      ?.toLowerCase()
+      .replace(/\.(exe|cmd|bat)$/, "") ?? "";
+  if (base === "bash" || base === "sh" || base === "zsh" || base === "dash") {
+    return "shell";
+  }
+  if (base === "python" || /^python[0-9.]*$/.test(base)) return "python";
+  if (base === "node" || base === "nodejs") return "node";
+  if (base === "tsx") return "tsx";
+  return "custom";
+}
+
 function processBase(
   input: {
     name: string;
@@ -910,6 +994,20 @@ function processStartedAtMs(startedAt: string | number | undefined): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return Date.now();
+}
+
+function withInboxWrite(
+  sandbox: ResolvedShellSandboxConfig,
+  inboxDir: string,
+): ResolvedShellSandboxConfig {
+  if (sandbox.filesystem.allowWrite.includes(inboxDir)) return sandbox;
+  return {
+    ...sandbox,
+    filesystem: {
+      ...sandbox.filesystem,
+      allowWrite: [...sandbox.filesystem.allowWrite, inboxDir],
+    },
+  };
 }
 
 function sanitizeEnv(

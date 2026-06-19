@@ -77,6 +77,11 @@ export interface AgentProfile {
    * `compileAgentProfileRunOptions`).
    */
   prompt?: string;
+  /**
+   * Host-owned high-level tool selectors. Agent-runtime carries and narrows
+   * them for profile inheritance; embedders expand them to concrete tools.
+   */
+  use?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
   policy?: CapabilityRule[];
@@ -153,6 +158,10 @@ export function deriveChildAgentProfile(
     options.parentAgent?.allowedTools,
     options.childAgent.allowedTools,
   );
+  const use = intersectAgentProfileUse(
+    options.parentAgent?.use,
+    options.childAgent.use,
+  );
   const deniedTools = uniqueSorted([
     ...(options.parentAgent?.deniedTools ?? []),
     ...(options.childAgent.deniedTools ?? []),
@@ -161,6 +170,7 @@ export function deriveChildAgentProfile(
   const derived: DerivedChildAgentProfile = {
     effectiveProfile: {
       ...options.childAgent,
+      use,
       allowedTools,
       deniedTools,
       policy: effectivePolicy,
@@ -384,6 +394,24 @@ function stringMetadata(
   return typeof value === "string" ? value : undefined;
 }
 
+function numberMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function nextSubagentDepth(
+  metadata: Record<string, unknown> | undefined,
+): number {
+  const current = numberMetadata(metadata, "subagentDepth");
+  if (current !== undefined && current >= 0) return Math.floor(current) + 1;
+  return typeof metadata?.parentRunId === "string" ? 2 : 1;
+}
+
 function removeUndefinedMetadata(
   metadata: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -417,6 +445,39 @@ function intersectOptionalLists(
   if (parent === undefined) return child ? uniqueSorted(child) : undefined;
   if (child === undefined) return uniqueSorted(parent);
   return uniqueSorted(child.filter((item) => matchesAny(item, parent)));
+}
+
+function intersectAgentProfileUse(
+  parent: string[] | undefined,
+  child: string[] | undefined,
+): string[] | undefined {
+  if (parent === undefined) return child ? uniqueSorted(child) : undefined;
+  if (child === undefined) return uniqueSorted(parent);
+  const out: string[] = [];
+  for (const parentSelector of parent) {
+    for (const childSelector of child) {
+      for (const selector of intersectOneUseSelector(
+        parentSelector,
+        childSelector,
+      )) {
+        out.push(selector);
+      }
+    }
+  }
+  return uniqueSorted(out);
+}
+
+function intersectOneUseSelector(left: string, right: string): string[] {
+  if (left === right) return [left];
+  if (left === "mcp" && isMcpServerUseSelector(right)) return [right];
+  if (right === "mcp" && isMcpServerUseSelector(left)) return [left];
+  return [];
+}
+
+function isMcpServerUseSelector(selector: string): boolean {
+  return (
+    selector.startsWith("mcp:") && selector.slice("mcp:".length).length > 0
+  );
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -582,11 +643,15 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   const spanId = createSpanId();
   const childAgentId =
     stringOrUndefined(input.metadata?.agentId) ?? input.childAgentProfile?.id;
+  const subagentDepth =
+    numberMetadata(input.metadata, "subagentDepth") ??
+    nextSubagentDepth(parent.record.metadata);
   const childRunMetadata = removeUndefinedMetadata({
     ...(input.metadata ?? {}),
     parentRunId: parent.record.id,
     parentSpanId: parent.record.metadata?.spanId as string | undefined,
     spanId,
+    subagentDepth,
     agentId: childAgentId,
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,

@@ -38,9 +38,23 @@ export type {
   HostToolCatalogEntry,
   HostToolCatalogSource,
 } from "./tool-catalog.js";
+export {
+  TOOL_USE_SELECTORS,
+  WORKSPACE_READ_TOOL_NAMES,
+  WORKSPACE_WRITE_TOOL_NAMES,
+  assertCodingToolsCoveredByWorkspaceSelectors,
+  formatToolUseSelectorList,
+  intersectToolUseSelectors,
+  isToolUseSelector,
+  resolveSelectorAllowlist,
+} from "./tool-selectors.js";
+export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
-export { TracedProcessRunner } from "./traced-process-runner.js";
+export {
+  TracedProcessRunner,
+  inferProcessRuntime,
+} from "./traced-process-runner.js";
 export type {
   ProgressChunk,
   ProgressContext,
@@ -149,13 +163,20 @@ export {
   loadHostConfig,
   normalizeGroupedConfig,
   configResolutionOrder,
+  projectConfigCandidatePaths,
+  readConfigFileObject,
+  resolveConfigWriteTarget,
+  serializeConfigFileObject,
+  userConfigCandidatePaths,
   userConfigPath,
+  writeConfigFileObject,
   projectConfigPath,
   resolveModelSelection,
   parseModelRef,
   costToPricing,
   DETERMINISTIC_PROVIDER,
   DEFAULT_PROVIDER_NPM,
+  CONFIG_FILE_BASENAMES,
   CONFIG_PROJECT_REL,
   CONFIG_USER_REL,
   CONFIG_ENV_VAR,

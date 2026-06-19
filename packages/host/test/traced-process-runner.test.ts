@@ -3,7 +3,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createRunId, EventLog, openSpan } from "@sparkwright/core";
-import { TracedProcessRunner } from "../src/traced-process-runner.js";
+import {
+  resolveShellSandboxConfig,
+  type ShellSandboxRuntime,
+} from "@sparkwright/shell-sandbox";
+import {
+  TracedProcessRunner,
+  inferProcessRuntime,
+} from "../src/traced-process-runner.js";
+
+describe("inferProcessRuntime", () => {
+  it("maps common interpreters to runtime labels", () => {
+    expect(inferProcessRuntime("bash")).toBe("shell");
+    expect(inferProcessRuntime("/bin/sh")).toBe("shell");
+    expect(inferProcessRuntime("/usr/bin/python3")).toBe("python");
+    expect(inferProcessRuntime("python3.12")).toBe("python");
+    expect(inferProcessRuntime("/usr/local/bin/node")).toBe("node");
+    expect(inferProcessRuntime("tsx")).toBe("tsx");
+    expect(inferProcessRuntime("./scripts/check")).toBe("custom");
+    expect(inferProcessRuntime("C:\\Python\\python.exe")).toBe("python");
+  });
+});
 
 describe("TracedProcessRunner", () => {
   it("emits an extension process lifecycle for successful commands", async () => {
@@ -78,6 +98,10 @@ describe("TracedProcessRunner", () => {
       },
       spanId: started?.spanId,
     });
+    // Progress payload stays lean — the command/args base lives on the
+    // started/completed events, not on every progress sample.
+    expect(progress?.payload).not.toHaveProperty("commandPreview");
+    expect(progress?.payload).not.toHaveProperty("argsPreview");
   });
 
   it("lets callers route progress without extension lifecycle events", async () => {
@@ -191,6 +215,93 @@ describe("TracedProcessRunner", () => {
     ).toMatchObject({
       payload: expect.objectContaining({ errorCode: "PROCESS_TIMEOUT" }),
     });
+  });
+
+  it("marks content truncated and stores the capped output in the artifact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-runner-"));
+    try {
+      const runId = createRunId();
+      const events = new EventLog(runId);
+      const runner = new TracedProcessRunner();
+
+      const result = await runner.run({
+        emitter: events,
+        runId,
+        name: "capped",
+        kind: "custom",
+        command: process.execPath,
+        // Write in many small chunks so the (previously quadratic) collector is
+        // exercised across the maxStdoutBytes boundary.
+        args: [
+          "-e",
+          "for (let i = 0; i < 50; i++) process.stdout.write('abcd');",
+        ],
+        cwd: root,
+        outputLimits: {
+          previewBytes: 8,
+          artifactBytes: 4,
+          maxStdoutBytes: 20,
+        },
+      });
+
+      expect(result.output).toMatchObject({
+        stdoutPreview: "abcdabcd",
+        stdoutBytes: 200,
+        stdoutTruncated: true,
+      });
+      const artifact = events
+        .all()
+        .find((event) => event.type === "artifact.created");
+      // Content is capped at maxStdoutBytes, not the full 200 bytes emitted.
+      expect((artifact?.payload as { content: string }).content).toBe(
+        "abcd".repeat(5),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("adds the progress inbox dir to sandbox allowWrite so the child can reach it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-runner-"));
+    try {
+      const captured: { allowWrite?: readonly string[] } = {};
+      const runtime: ShellSandboxRuntime = {
+        id: "test-recording",
+        platform: process.platform,
+        isAvailable: async () => true,
+        execute: async (_request, config) => {
+          captured.allowWrite = config.filesystem.allowWrite;
+          throw new Error("captured");
+        },
+      };
+      const runId = createRunId();
+      const events = new EventLog(runId);
+      const runner = new TracedProcessRunner();
+
+      await runner.run({
+        emitter: events,
+        runId,
+        name: "sandboxed",
+        kind: "custom",
+        command: process.execPath,
+        args: ["-e", "console.log('ok')"],
+        cwd: root,
+        sandbox: resolveShellSandboxConfig({
+          workspaceRoot: root,
+          config: { mode: "enforce" },
+        }),
+        sandboxRuntime: runtime,
+      });
+
+      expect(captured.allowWrite).toBeDefined();
+      expect(
+        captured.allowWrite?.some((path) =>
+          path.includes("sparkwright-trace-"),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("emits artifacts for output beyond the artifact threshold", async () => {

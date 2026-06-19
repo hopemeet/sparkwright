@@ -52,7 +52,8 @@
     "@sparkwright/shell-sandbox": "0.1.0",
     "@sparkwright/shell-tool": "0.1.0",
     "@sparkwright/skills": "0.1.0",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/ws": "^8.5.13",

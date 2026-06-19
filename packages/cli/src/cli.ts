@@ -1,4 +1,4 @@
-import { readFileSync, readlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import {
   basename,
@@ -9,6 +9,9 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 import {
   FileTaskStore,
   type TaskId,
@@ -89,7 +92,12 @@ import {
   loadHostConfig,
   configResolutionOrder,
   DEFAULT_DEFERRED_TOOLS,
+  formatToolUseSelectorList,
+  isToolUseSelector,
+  projectConfigCandidatePaths,
+  readConfigFileObject,
   resolveAgentProfiles,
+  resolveConfigWriteTarget,
   describeExternalDelegateCapability,
   existingSkillRoots,
   HostRuntime,
@@ -97,8 +105,10 @@ import {
   resolveCapabilityDirs,
   resolveSkillRootsForRuntime,
   runConfiguredDelegate,
+  userConfigCandidatePaths,
   userConfigPath,
   validateRunInput,
+  writeConfigFileObject,
   type AgentReport,
   type DelegateCapabilityDescriptor,
   type ApplySkillProposalResult,
@@ -215,7 +225,10 @@ export async function runCli(
 
   const parsed = parseArgs(argv, cwd, {
     model: cfg.config.model,
-    permissionMode: cfg.config.permissionMode,
+    permissionMode:
+      argv[0] === "cron"
+        ? (cfg.config.approvals?.cronMode ?? cfg.config.permissionMode)
+        : cfg.config.permissionMode,
     workspace: cfg.config.workspace,
     confidentialPaths: cfg.config.confidentialPaths,
     traceLevel: cfg.config.traceLevel,
@@ -463,9 +476,8 @@ function maybePrintFirstRunConfigHint(input: {
   if (input.cfg.errors.length > 0) return;
   if (input.cfg.attempted.some((entry) => entry.loaded)) return;
 
-  const order = configResolutionOrder(input.cwd, input.env);
-  const user = order.find((entry) => entry.label === "user")?.path;
-  const project = order.find((entry) => entry.label === "project")?.path;
+  const user = preferredUserConfigPath(input.env);
+  const project = preferredProjectConfigPathForWorkspace(input.cwd);
   writeLine(
     input.io.stderr,
     [
@@ -1075,12 +1087,13 @@ function parseArgs(
 
   if (
     command === "tools" &&
+    subcommand !== "allow" &&
     subcommand !== "disable" &&
     subcommand !== "defer"
   ) {
     return {
       ok: false,
-      message: "Usage: sparkwright tools <disable|defer> <tool-name ...>",
+      message: "Usage: sparkwright tools <allow|disable|defer> <tool-name ...>",
     };
   }
 
@@ -1253,7 +1266,11 @@ async function handleToolsCommand(
   env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
   const subcommand = parsed.subcommand;
-  if (subcommand !== "disable" && subcommand !== "defer") {
+  if (
+    subcommand !== "allow" &&
+    subcommand !== "disable" &&
+    subcommand !== "defer"
+  ) {
     writeLine(io.stderr, toolsUsage());
     return { exitCode: 1 };
   }
@@ -1287,13 +1304,13 @@ async function handleToolsCommand(
 
     const next = updateToolsConfig(before, subcommand, patterns);
     setToolsConfig(loaded.value, next);
-    await writeConfigObject(target.path, loaded.value, {
+    await writeConfigObject(loaded.path, loaded.value, {
       privateFile: target.privateFile,
     });
     writeLine(
       io.stdout,
       formatToolsConfig({
-        path: target.path,
+        path: loaded.path,
         exists: true,
         tools: next,
         format: parsed.format,
@@ -1538,9 +1555,11 @@ function formatTaskList(input: {
   return lines.join("\n");
 }
 
-type ToolConfigAction = "disable" | "defer";
+type ToolConfigAction = "allow" | "disable" | "defer";
 
 interface ToolsConfigShape {
+  use?: string[];
+  allowed?: string[];
   disabled?: string[];
   defer?: string[];
 }
@@ -1551,10 +1570,14 @@ function updateToolsConfig(
   patterns: string[],
 ): ToolsConfigShape {
   const next: ToolsConfigShape = {
+    use: current.use ? [...current.use] : undefined,
+    allowed: current.allowed ? [...current.allowed] : undefined,
     disabled: current.disabled ? [...current.disabled] : undefined,
     defer: current.defer ? [...current.defer] : undefined,
   };
-  if (action === "disable") {
+  if (action === "allow") {
+    next.allowed = addUnique(next.allowed ?? [], patterns);
+  } else if (action === "disable") {
     next.disabled = addUnique(next.disabled ?? [], patterns);
   } else {
     next.defer = addUnique(next.defer ?? [], patterns);
@@ -1564,10 +1587,12 @@ function updateToolsConfig(
 
 function pruneEmptyToolConfig(config: ToolsConfigShape): ToolsConfigShape {
   return {
+    ...(config.use !== undefined ? { use: config.use } : {}),
+    ...(config.allowed !== undefined ? { allowed: config.allowed } : {}),
     ...(config.disabled && config.disabled.length > 0
       ? { disabled: config.disabled }
       : {}),
-    ...(config.defer && config.defer.length > 0 ? { defer: config.defer } : {}),
+    ...(config.defer !== undefined ? { defer: config.defer } : {}),
   };
 }
 
@@ -1583,26 +1608,13 @@ function addUnique(current: string[], additions: string[]): string[] {
 }
 
 async function readConfigObject(path: string): Promise<{
+  path: string;
   exists: boolean;
   value: Record<string, unknown>;
 }> {
-  const { readFile } = await import("node:fs/promises");
-  try {
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isPlainObject(parsed)) {
-      throw new Error(`${path} must contain a JSON object.`);
-    }
-    return { exists: true, value: parsed };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { exists: false, value: {} };
-    }
-    if (error instanceof SyntaxError) {
-      throw new Error(`Invalid JSON in ${path}: ${error.message}`);
-    }
-    throw error;
-  }
+  const target = await resolveConfigWriteTarget(path);
+  const loaded = await readConfigFileObject(target.path);
+  return { path: target.path, exists: loaded.exists, value: loaded.value };
 }
 
 async function writeConfigObject(
@@ -1610,19 +1622,14 @@ async function writeConfigObject(
   value: Record<string, unknown>,
   options: { privateFile?: boolean } = {},
 ): Promise<void> {
-  const { mkdir, writeFile, chmod } = await import("node:fs/promises");
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, {
-    ...(options.privateFile !== false ? { mode: 0o600 } : {}),
-  });
-  if (options.privateFile !== false) {
-    await chmod(path, 0o600);
-  }
+  await writeConfigFileObject(path, value, options);
 }
 
 function getToolsConfig(config: Record<string, unknown>): ToolsConfigShape {
   if (isPlainObject(config.tools)) {
     return {
+      use: stringArrayOrUndefined(config.tools.use),
+      allowed: stringArrayOrUndefined(config.tools.allowed),
       disabled: stringArrayOrUndefined(config.tools.disabled),
       defer: stringArrayOrUndefined(config.tools.defer),
     };
@@ -1656,6 +1663,8 @@ function formatToolsConfig(input: {
   }
   return [
     `config: ${input.path}${input.exists ? "" : " (not created yet)"}`,
+    `use: ${formatPatternList(input.tools.use, "(all)")}`,
+    `allowed: ${formatPatternList(input.tools.allowed, "(all)")}`,
     `disabled: ${formatPatternList(input.tools.disabled, "(none)")}`,
     `defer: ${formatPatternList(input.tools.defer, "(none)")}`,
   ].join("\n");
@@ -2226,7 +2235,10 @@ function buildCapabilityToolInventory(input: {
         ? { deferred: true }
         : {}),
     }));
-  if (available.some((tool) => tool.deferred === true)) {
+  if (
+    available.some((tool) => tool.deferred === true) &&
+    toolAllowedByConfig("tool_search", input.config)
+  ) {
     available.push({
       name: "tool_search",
       source: "builtin",
@@ -2279,7 +2291,10 @@ function runtimeToolToInspectEntry(input: {
 }
 
 function toolAllowedByConfig(name: string, config: ToolsConfigShape): boolean {
-  return !isToolNameListed(name, config.disabled);
+  return (
+    (config.allowed === undefined || isToolNameListed(name, config.allowed)) &&
+    !isToolNameListed(name, config.disabled)
+  );
 }
 
 function toolDeferredByConfig(name: string, config: ToolsConfigShape): boolean {
@@ -2310,7 +2325,7 @@ function formatCapabilityInspectReport(
 ): string {
   const lines = [
     `workspace: ${report.workspace}`,
-    `tools: disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `tools: use=${formatPatternList(report.tools.use, "(all)")}; allowed=${formatPatternList(report.tools.allowed, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
     `runtime tools: ${report.runtime?.tools.length ?? "unavailable"}`,
     `diagnostic tools: ${report.tools.available.length}`,
@@ -3504,8 +3519,8 @@ async function handleAgentsCommand(
         agents.delegateTools.push(input.value.delegateTool);
       }
       setAgentsConfig(loaded.value, agents);
-      await writeConfigObject(configPath, loaded.value);
-      writeLine(io.stdout, `Updated ${configPath}`);
+      await writeConfigObject(loaded.path, loaded.value);
+      writeLine(io.stdout, `Updated ${loaded.path}`);
       writeLine(
         io.stdout,
         `Agent profile "${input.value.profile.id}" is now defined.`,
@@ -3534,7 +3549,7 @@ async function handleAgentsCommand(
         io.stdout,
         JSON.stringify(
           {
-            path: configPath,
+            path: loaded.path,
             exists: loaded.exists,
             agents,
             errors: report.errors,
@@ -3547,7 +3562,7 @@ async function handleAgentsCommand(
       writeLine(
         io.stdout,
         formatAgentReport({
-          path: configPath,
+          path: loaded.path,
           exists: loaded.exists,
           agents,
           errors: report.errors,
@@ -3695,10 +3710,8 @@ function buildDoctorPathsReport(
       ? readInstallCurrentTarget(installRoot)
       : undefined;
   const userStateRoot = userStateBase(env);
-  const projectConfig = join(
+  const projectConfig = preferredProjectConfigPathForWorkspace(
     parsed.workspaceRoot,
-    ".sparkwright",
-    "config.json",
   );
   const configEnvOverride = env.SPARKWRIGHT_CONFIG;
   return {
@@ -3723,7 +3736,7 @@ function buildDoctorPathsReport(
       },
     },
     config: {
-      user: userConfigPath(env),
+      user: preferredUserConfigPath(env),
       project: projectConfig,
       ...(configEnvOverride ? { envOverride: configEnvOverride } : {}),
     },
@@ -3742,7 +3755,7 @@ function buildDoctorPathsReport(
       }).map(layerPathEntry),
       mcp: {
         source: "config",
-        user: userConfigPath(env),
+        user: preferredUserConfigPath(env),
         project: projectConfig,
       },
       acp: {
@@ -3940,34 +3953,196 @@ async function handleConfigValidate(
 ): Promise<CliRunResult> {
   const loaded = await loadHostConfig(parsed.workspaceRoot, env);
   const loadedCount = loaded.attempted.filter((entry) => entry.loaded).length;
+  const schemaReport = await validateLoadedConfigFilesAgainstSchema(loaded);
+  const errors = [...loaded.errors, ...schemaReport.errors];
+
   if (parsed.format === "json") {
     writeLine(
       io.stdout,
       JSON.stringify(
         {
-          ok: loaded.errors.length === 0,
+          ok: errors.length === 0,
           filesLoaded: loadedCount,
-          errors: loaded.errors,
+          schemaFilesChecked: schemaReport.filesChecked,
+          schemaPath: schemaReport.schemaPath,
+          loadErrors: loaded.errors,
+          schemaErrors: schemaReport.errors,
+          errors,
         },
         null,
         2,
       ),
     );
-  } else if (loaded.errors.length === 0) {
-    writeLine(io.stdout, `Config OK (${loadedCount} file(s) loaded).`);
+  } else if (errors.length === 0) {
+    writeLine(
+      io.stdout,
+      `Config OK (${loadedCount} file(s) loaded, ${schemaReport.filesChecked} schema-checked).`,
+    );
   } else {
     writeLine(
       io.stdout,
-      `${loaded.errors.length} problem(s) across ${loadedCount} loaded file(s):`,
+      `${errors.length} problem(s) across ${loadedCount} loaded file(s), ${schemaReport.filesChecked} schema-checked file(s):`,
     );
-    for (const error of loaded.errors) {
+    for (const error of errors) {
       writeLine(
         io.stdout,
         `  ${error.file} (${error.field}): ${error.message}`,
       );
     }
   }
-  return { exitCode: loaded.errors.length > 0 ? 1 : 0 };
+  return { exitCode: errors.length > 0 ? 1 : 0 };
+}
+
+type ConfigDiagnostic = Awaited<
+  ReturnType<typeof loadHostConfig>
+>["errors"][number];
+
+interface ConfigSchemaValidator {
+  schemaPath: string;
+  validate: ValidateFunction;
+}
+
+let cachedConfigSchemaValidator: ConfigSchemaValidator | undefined;
+
+async function validateLoadedConfigFilesAgainstSchema(
+  loaded: Awaited<ReturnType<typeof loadHostConfig>>,
+): Promise<{
+  schemaPath?: string;
+  filesChecked: number;
+  errors: ConfigDiagnostic[];
+}> {
+  let validator: ConfigSchemaValidator;
+  try {
+    validator = loadConfigSchemaValidator();
+  } catch (error) {
+    return {
+      filesChecked: 0,
+      errors: [
+        {
+          file: "(schema)",
+          field: "(root)",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
+  }
+
+  const errors: ConfigDiagnostic[] = [];
+  let filesChecked = 0;
+  for (const entry of loaded.attempted) {
+    if (!entry.loaded) continue;
+    try {
+      const configFile = await readConfigFileObject(entry.path);
+      filesChecked += 1;
+      if (validator.validate(configFile.value)) continue;
+      for (const error of validator.validate.errors ?? []) {
+        errors.push(formatConfigSchemaError(entry.path, error));
+      }
+    } catch {
+      // Parse/read failures are already reported by loadHostConfig.
+    }
+  }
+
+  return { schemaPath: validator.schemaPath, filesChecked, errors };
+}
+
+function loadConfigSchemaValidator(): ConfigSchemaValidator {
+  if (cachedConfigSchemaValidator) return cachedConfigSchemaValidator;
+
+  const schemaDir = findConfigSchemaDir();
+  const ajv = new Ajv2020({
+    allErrors: true,
+    strict: false,
+    validateFormats: false,
+    validateSchema: true,
+  });
+  ajv.addKeyword({
+    keyword: "x-sparkwrightProtocolVersion",
+    metaSchema: { type: "string" },
+  });
+
+  const schemaFiles = readdirSync(schemaDir)
+    .filter((file) => file.endsWith(".schema.json"))
+    .sort();
+  for (const file of schemaFiles) {
+    const schemaPath = join(schemaDir, file);
+    const schema = JSON.parse(readFileSync(schemaPath, "utf8")) as AnySchema;
+    ajv.addSchema(schema, file);
+  }
+
+  const validate = ajv.getSchema("config.schema.json");
+  if (!validate) {
+    throw new Error(`config.schema.json was not found in ${schemaDir}`);
+  }
+
+  cachedConfigSchemaValidator = {
+    schemaPath: join(schemaDir, "config.schema.json"),
+    validate,
+  };
+  return cachedConfigSchemaValidator;
+}
+
+function findConfigSchemaDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(here, "schemas"),
+    resolve(here, "..", "..", "..", "schemas"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "config.schema.json"))) return candidate;
+  }
+  throw new Error(
+    `config schema files not found (looked in ${candidates.join(", ")})`,
+  );
+}
+
+function formatConfigSchemaError(
+  file: string,
+  error: ErrorObject,
+): ConfigDiagnostic {
+  const field = schemaErrorField(error);
+  return {
+    file,
+    field,
+    message: `schema: ${formatAjvMessage(error)}`,
+  };
+}
+
+function schemaErrorField(error: ErrorObject): string {
+  const base = jsonPointerToField(error.instancePath);
+  if (
+    error.keyword === "additionalProperties" &&
+    isPlainObject(error.params) &&
+    typeof error.params.additionalProperty === "string"
+  ) {
+    return base === "(root)"
+      ? error.params.additionalProperty
+      : `${base}.${error.params.additionalProperty}`;
+  }
+  return base;
+}
+
+function jsonPointerToField(pointer: string): string {
+  if (!pointer) return "(root)";
+  return pointer
+    .split("/")
+    .slice(1)
+    .map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~"))
+    .map((part) => (/^\d+$/.test(part) ? `[${part}]` : part))
+    .join(".")
+    .replace(/\.\[/g, "[");
+}
+
+function formatAjvMessage(error: ErrorObject): string {
+  const message = error.message ?? "schema validation failed";
+  if (
+    error.keyword === "enum" &&
+    isPlainObject(error.params) &&
+    Array.isArray(error.params.allowedValues)
+  ) {
+    return `${message}: ${error.params.allowedValues.join(" | ")}`;
+  }
+  return message;
 }
 
 async function handleConfigInspect(
@@ -4257,6 +4432,7 @@ interface AgentProfileConfigShape {
   description?: string;
   mode?: "primary" | "child" | "all";
   prompt?: string;
+  use?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
   maxSteps?: number;
@@ -4292,7 +4468,7 @@ function parseAgentsCreateArgs(args: string[]):
     return {
       ok: false,
       message:
-        "Usage: sparkwright agents create <id> --prompt <text> [--name text] [--allow tool] [--max-steps n] [--delegate tool_name]",
+        "Usage: sparkwright agents create <id> --prompt <text> [--name text] [--use selector] [--allow tool] [--max-steps n] [--delegate tool_name]",
     };
   }
 
@@ -4300,6 +4476,7 @@ function parseAgentsCreateArgs(args: string[]):
   let description: string | undefined;
   let mode: AgentProfileConfigShape["mode"] = "child";
   let prompt: string | undefined;
+  const use: string[] = [];
   const allowedTools: string[] = [];
   const deniedTools: string[] = [];
   let maxSteps: number | undefined;
@@ -4328,6 +4505,18 @@ function parseAgentsCreateArgs(args: string[]):
     }
     if (arg === "--prompt") {
       prompt = requireFollowingValue(rest, i, arg);
+      i += 1;
+      continue;
+    }
+    if (arg === "--use") {
+      const selector = requireFollowingValue(rest, i, arg);
+      if (!isToolUseSelector(selector)) {
+        return {
+          ok: false,
+          message: `--use must be one of ${formatToolUseSelectorList()}`,
+        };
+      }
+      use.push(selector);
       i += 1;
       continue;
     }
@@ -4371,6 +4560,7 @@ function parseAgentsCreateArgs(args: string[]):
     ...(description ? { description } : {}),
     mode,
     prompt: prompt.trim(),
+    ...(use.length > 0 ? { use } : {}),
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
     ...(deniedTools.length > 0 ? { deniedTools } : {}),
     ...(maxSteps !== undefined ? { maxSteps } : {}),
@@ -4477,6 +4667,16 @@ function validateAgentConfig(agents: AgentsConfigShape): {
       });
     }
     if (
+      profile.use !== undefined &&
+      (!isStringArray(profile.use) ||
+        profile.use.some((selector) => !isToolUseSelector(selector)))
+    ) {
+      errors.push({
+        field: `${field}.use`,
+        message: `must be an array of tool selectors (${formatToolUseSelectorList()})`,
+      });
+    }
+    if (
       profile.allowedTools !== undefined &&
       !isStringArray(profile.allowedTools)
     ) {
@@ -4529,6 +4729,9 @@ function formatAgentReport(input: {
     lines.push(
       `- ${profile.id}${profile.name ? ` (${profile.name})` : ""}${profile.mode ? ` · ${profile.mode}` : ""}`,
     );
+    if (profile.use?.length) {
+      lines.push(`  use: ${profile.use.join(", ")}`);
+    }
     if (profile.allowedTools?.length) {
       lines.push(`  allow: ${profile.allowedTools.join(", ")}`);
     }
@@ -4565,6 +4768,19 @@ function isStringArray(value: unknown): value is string[] {
 
 function projectConfigPathForWorkspace(workspaceRoot: string): string {
   return join(workspaceRoot, ".sparkwright", "config.json");
+}
+
+function preferredUserConfigPath(
+  env: Record<string, string | undefined>,
+): string {
+  return userConfigCandidatePaths(env)[1] ?? userConfigPath(env);
+}
+
+function preferredProjectConfigPathForWorkspace(workspaceRoot: string): string {
+  return (
+    projectConfigCandidatePaths(workspaceRoot)[1] ??
+    projectConfigPathForWorkspace(workspaceRoot)
+  );
 }
 
 async function handleCronCommand(
@@ -5630,76 +5846,77 @@ function parseNonNegativeInteger(
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-// NOTE: templates emit the preferred grouped form (identity/policy/run/ui).
-// They omit a top-level "$schema" since the schema is not hosted at a stable
-// URL; editors instead pick it up via a json.schemas mapping (see the editor
-// setup in docs/guides/CONFIGURATION.md). The schema still *allows* "$schema"
-// for anyone who points it at a local copy.
-const CONFIG_TEMPLATE = {
-  identity: {
-    model: "openai/gpt-5.4-mini",
-    providers: {
-      openai: {
-        baseURL: "https://api.openai.com/v1",
-        apiKey: "REPLACE_WITH_YOUR_API_KEY",
-        models: {
-          "gpt-5.4-mini": {},
-          "gpt-5.4": {},
-        },
-      },
-      anthropic: {
-        npm: "@ai-sdk/anthropic",
-        baseURL: "https://api.anthropic.com/v1",
-        apiKey: "REPLACE_WITH_YOUR_API_KEY",
-        models: {
-          "claude-sonnet-4-6": {},
-          "claude-haiku-4-5": {},
-        },
-      },
-      google: {
-        npm: "@ai-sdk/google",
-        baseURL: "https://generativelanguage.googleapis.com/v1beta",
-        apiKey: "REPLACE_WITH_YOUR_API_KEY",
-        models: {
-          "gemini-3.1-pro": {},
-          "gemini-3-flash": {},
-        },
-      },
-    },
-  },
-};
+// NOTE: init templates emit the preferred grouped form
+// (identity/policy/run/ui) as commented YAML. Existing JSON configs keep
+// working, and write commands preserve whichever format already exists.
+function renderUserConfigTemplate(): string {
+  return [
+    "# yaml-language-server: $schema=https://sparkwright.dev/schemas/v0/config.schema.json",
+    "# Personal Sparkwright config. Keep API keys here; do not commit this file.",
+    "identity:",
+    "  model: openai/gpt-5.4-mini",
+    "  providers:",
+    "    openai:",
+    "      baseURL: https://api.openai.com/v1",
+    "      apiKey: REPLACE_WITH_YOUR_API_KEY",
+    "      models:",
+    "        gpt-5.4-mini: {}",
+    "        gpt-5.4: {}",
+    "    anthropic:",
+    "      npm: '@ai-sdk/anthropic'",
+    "      baseURL: https://api.anthropic.com/v1",
+    "      apiKey: REPLACE_WITH_YOUR_API_KEY",
+    "      models:",
+    "        claude-sonnet-4-6: {}",
+    "        claude-haiku-4-5: {}",
+    "    google:",
+    "      npm: '@ai-sdk/google'",
+    "      baseURL: https://generativelanguage.googleapis.com/v1beta",
+    "      apiKey: REPLACE_WITH_YOUR_API_KEY",
+    "      models:",
+    "        gemini-3.1-pro: {}",
+    "        gemini-3-flash: {}",
+    "",
+  ].join("\n");
+}
 
-/**
- * Scaffold for `<workspace>/.sparkwright/config.json`. Unlike the user template
- * this carries NO secrets — provider keys stay in the user-level file — so it is
- * safe to commit and travel with the repository. Seeds the project skills root
- * and the convention command/agents dirs as the project config surface.
- */
-const PROJECT_CONFIG_TEMPLATE = {
-  policy: {
-    permissionMode: "default",
-    write: {
-      maxFiles: 1,
-      maxDiffLines: 200,
-      allowDeletions: false,
-    },
-  },
-  tools: {
-    defer: PROJECT_CONFIG_DEFERRED_TOOLS,
-  },
-  capabilities: {
-    skills: {
-      includeLoaderTool: true,
-      loadSelectedSkills: false,
-      resourceFileLimit: 8,
-    },
-    mcp: {
-      startup: "lazy",
-      toolSchemaLoad: "defer",
-      servers: [],
-    },
-  },
-};
+function renderProjectConfigTemplate(): string {
+  return [
+    "# yaml-language-server: $schema=https://sparkwright.dev/schemas/v0/config.schema.json",
+    "# Project Sparkwright config. Safe to commit; keep provider keys in your user config.",
+    "# Unset tools.use means all tools. Set it to a tightening selector whitelist.",
+    "tools:",
+    "  use: [workspace.read, workspace.write, shell, planning, skills]",
+    `  defer: [${PROJECT_CONFIG_DEFERRED_TOOLS.join(", ")}]`,
+    "",
+    "policy:",
+    "  permissionMode: default",
+    "  write:",
+    "    maxFiles: 5",
+    "    maxDiffLines: 200",
+    "    allowDeletions: true",
+    "",
+    "run:",
+    "  budget:",
+    "    maxModelCalls: 80",
+    "    maxCostUsd: 2.0",
+    "  approvals:",
+    "    cronMode: default",
+    "",
+    "capabilities:",
+    "  skills:",
+    "    includeLoaderTool: true",
+    "    loadSelectedSkills: false",
+    "    resourceFileLimit: 8",
+    "  agents:",
+    "    maxDepth: 1",
+    "  mcp:",
+    "    startup: lazy",
+    "    toolSchemaLoad: defer",
+    "    servers: []",
+    "",
+  ].join("\n");
+}
 
 const PROJECT_CAPABILITY_DIRS = ["skills", "agents", "command"] as const;
 
@@ -5719,24 +5936,36 @@ async function handleInitCommand(
   return project ? scaffoldProjectConfig(io, cwd) : scaffoldUserConfig(io, env);
 }
 
+async function initConfigTarget(
+  defaultJsonPath: string,
+  defaultYamlPath: string,
+): Promise<{ path: string; exists: boolean }> {
+  const target = await resolveConfigWriteTarget(defaultJsonPath);
+  return target.exists ? target : { path: defaultYamlPath, exists: false };
+}
+
 async function scaffoldUserConfig(
   io: CliIO,
   env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
   const { writeFile, mkdir, chmod } = await import("node:fs/promises");
-  const { existsSync } = await import("node:fs");
   const { dirname } = await import("node:path");
-  const path = userConfigPath(env);
-
-  if (existsSync(path)) {
-    writeLine(io.stdout, `Config already exists: ${path}`);
-    writeLine(io.stdout, "Edit it directly, or delete it and re-run init.");
-    return { exitCode: 0 };
-  }
-
+  let path = "";
   try {
+    const target = await initConfigTarget(
+      userConfigPath(env),
+      userConfigCandidatePaths(env)[1]!,
+    );
+    path = target.path;
+
+    if (target.exists) {
+      writeLine(io.stdout, `Config already exists: ${path}`);
+      writeLine(io.stdout, "Edit it directly, or delete it and re-run init.");
+      return { exitCode: 0 };
+    }
+
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(CONFIG_TEMPLATE, null, 2)}\n`, {
+    await writeFile(path, renderUserConfigTemplate(), {
       mode: 0o600,
     });
     // mkdir/umask can leave looser perms; force 600 since this holds a secret.
@@ -5752,11 +5981,11 @@ async function scaffoldUserConfig(
   writeLine(io.stdout, `Created ${path}`);
   writeLine(
     io.stdout,
-    'Next: set the "apiKey" under identity.providers for the provider you want, then run `sparkwright tui`.',
+    'Next: set "identity.providers.<provider>.apiKey", then run `sparkwright tui`.',
   );
   writeLine(
     io.stdout,
-    'The template seeds openai, anthropic, and google — switch with "identity.model": "<provider>/<model>", e.g. "anthropic/claude-haiku-4-5".',
+    'The template seeds openai, anthropic, and google — switch with "identity.model: <provider>/<model>", e.g. "anthropic/claude-haiku-4-5".',
   );
   return { exitCode: 0 };
 }
@@ -5766,19 +5995,21 @@ async function scaffoldProjectConfig(
   cwd: string,
 ): Promise<CliRunResult> {
   const { writeFile, mkdir } = await import("node:fs/promises");
-  const { existsSync } = await import("node:fs");
   const { dirname } = await import("node:path");
-  const path = projectConfigPathForWorkspace(cwd);
-  const configExists = existsSync(path);
+  let path = "";
+  let configExists = false;
 
   try {
+    const target = await initConfigTarget(
+      projectConfigPathForWorkspace(cwd),
+      projectConfigCandidatePaths(cwd)[1]!,
+    );
+    path = target.path;
+    configExists = target.exists;
     // No secret here, so no forced 600: this file is meant to be committed.
     await mkdir(dirname(path), { recursive: true });
     if (!configExists) {
-      await writeFile(
-        path,
-        `${JSON.stringify(PROJECT_CONFIG_TEMPLATE, null, 2)}\n`,
-      );
+      await writeFile(path, renderProjectConfigTemplate());
     }
     for (const dir of PROJECT_CAPABILITY_DIRS) {
       await mkdir(join(dirname(path), dir), { recursive: true });
@@ -5812,8 +6043,8 @@ async function scaffoldProjectConfig(
 
 function usage(): string {
   return [
-    "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.json",
-    "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.json",
+    "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
+    "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
@@ -5822,7 +6053,7 @@ function usage(): string {
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
-    "       sparkwright tools disable|defer <tool-name...> [--workspace path]",
+    "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
@@ -5830,7 +6061,7 @@ function usage(): string {
     "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
-    '       sparkwright agents create <id> --prompt "what it should do" [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
+    '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
     '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
@@ -5844,7 +6075,8 @@ function usage(): string {
 
 function toolsUsage(): string {
   return [
-    "Usage: sparkwright tools disable <tool-name...> [--workspace path]",
+    "Usage: sparkwright tools allow <tool-name...> [--workspace path]",
+    "       sparkwright tools disable <tool-name...> [--workspace path]",
     "       sparkwright tools defer <tool-name...> [--workspace path]",
   ].join("\n");
 }
@@ -5904,6 +6136,6 @@ function agentsUsage(): string {
   return [
     "Usage: sparkwright agents list [--workspace path] [--format json|text]",
     "       sparkwright agents validate [--workspace path] [--format json|text]",
-    '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
+    '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--use selector] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
   ].join("\n");
 }

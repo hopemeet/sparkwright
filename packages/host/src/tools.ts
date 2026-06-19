@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -24,11 +23,20 @@ import { type SkillRoot } from "@sparkwright/skills";
 import {
   canonicalWorkspacePath,
   readWorkspaceTextIfExists,
-  writeCapabilityJson,
   writeCapabilityText,
   type CapabilityWriteResult,
 } from "./capability-mutation.js";
-import type { CapabilityToolsConfig } from "./config.js";
+import {
+  projectConfigPath,
+  readConfigFileObject,
+  resolveConfigWriteTarget,
+  serializeConfigFileObject,
+  type CapabilityToolsConfig,
+} from "./config.js";
+import {
+  formatToolUseSelectorList,
+  isToolUseSelector,
+} from "./tool-selectors.js";
 import {
   createSkillUpdateProposal,
   inspectProposedSkillContent,
@@ -559,7 +567,7 @@ export function createAgentInspectorTool(workspaceRoot: string) {
   return defineTool({
     name: "list_agents",
     description:
-      "List or validate project agent profiles in .sparkwright/config.json. " +
+      "List or validate project agent profiles in the project Sparkwright config. " +
       "Read-only: never writes. Use create_agent to create or remove a profile.",
     inputSchema: {
       type: "object",
@@ -587,7 +595,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
   return defineTool({
     name: "create_agent",
     description:
-      "Create or remove project agent profiles in .sparkwright/config.json. " +
+      "Create or remove project agent profiles in the project Sparkwright config. " +
       "To create, pass action='create' with a unique id and a prompt (the " +
       "system prompt used when the profile is spawned). Use list_agents to " +
       "list or validate profiles.",
@@ -608,6 +616,12 @@ export function createAgentManagerTool(workspaceRoot: string) {
         prompt: {
           type: "string",
           description: "System prompt used when this profile is spawned.",
+        },
+        use: {
+          type: "array",
+          description:
+            "Optional high-level tool selectors such as workspace.read.",
+          items: { type: "string" },
         },
         allowedTools: {
           type: "array",
@@ -686,6 +700,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
         ...(input.description ? { description: input.description } : {}),
         mode,
         prompt: input.prompt.trim(),
+        ...(input.use ? { use: input.use } : {}),
         ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
         ...(input.deniedTools ? { deniedTools: input.deniedTools } : {}),
         ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
@@ -766,6 +781,7 @@ export function applyToolConfig<T extends ToolDefinition>(
     return tools.map((tool) => applyDefaultDefer(tool, deferPatterns)) as T[];
   }
   return tools
+    .filter((tool) => isToolNameAllowed(tool.name, config.allowed))
     .filter((tool) => !isToolNameListed(tool.name, config.disabled))
     .map((tool) => {
       if (
@@ -806,6 +822,13 @@ function isToolNameListed(
   names: readonly string[] | undefined,
 ): boolean {
   return Boolean(names?.includes(toolName));
+}
+
+function isToolNameAllowed(
+  toolName: string,
+  names: readonly string[] | undefined,
+): boolean {
+  return names === undefined || isToolNameListed(toolName, names);
 }
 
 function resolveSkillRoots(
@@ -976,19 +999,15 @@ async function readProjectConfig(workspaceRoot: string): Promise<{
   exists: boolean;
   data: Record<string, unknown>;
 }> {
-  const path = join(workspaceRoot, ".sparkwright", "config.json");
-  try {
-    return {
-      path,
-      exists: true,
-      data: JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>,
-    };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { path, exists: false, data: {} };
-    }
-    throw error;
-  }
+  const target = await resolveConfigWriteTarget(
+    projectConfigPath(workspaceRoot),
+  );
+  const loaded = await readConfigFileObject(target.path);
+  return {
+    path: target.path,
+    exists: loaded.exists,
+    data: loaded.value,
+  };
 }
 
 async function writeProjectConfig(
@@ -996,10 +1015,10 @@ async function writeProjectConfig(
   path: string,
   data: Record<string, unknown>,
 ): Promise<CapabilityWriteResult> {
-  return writeCapabilityJson(
+  return writeCapabilityText(
     ctx,
     path,
-    data,
+    serializeConfigFileObject(path, data),
     "Update project agent capability config",
   );
 }
@@ -1029,6 +1048,7 @@ function cloneAgentConfigShape(agents: AgentConfigShape): AgentConfigShape {
   return {
     profiles: agents.profiles.map((profile) => ({
       ...profile,
+      ...(profile.use ? { use: [...profile.use] } : {}),
       ...(profile.allowedTools
         ? { allowedTools: [...profile.allowedTools] }
         : {}),
@@ -1104,6 +1124,16 @@ function validateAgentConfigShape(
       });
     }
     if (
+      profile.use !== undefined &&
+      (!isStringArray(profile.use) ||
+        profile.use.some((selector) => !isToolUseSelector(selector)))
+    ) {
+      errors.push({
+        field: `${field}.use`,
+        message: `must be an array of tool selectors (${formatToolUseSelectorList()})`,
+      });
+    }
+    if (
       profile.allowedTools !== undefined &&
       !isStringArray(profile.allowedTools)
     ) {
@@ -1165,6 +1195,7 @@ function parseAgentManagerArgs(args: unknown): {
   description?: string;
   mode?: "primary" | "child" | "all";
   prompt?: string;
+  use?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
   maxSteps?: number;
@@ -1210,6 +1241,9 @@ function parseAgentManagerArgs(args: unknown): {
     ...(typeof record.prompt === "string"
       ? { prompt: record.prompt.trim() }
       : {}),
+    ...(record.use !== undefined
+      ? { use: toolUseSelectorArrayArg(record.use, "use") }
+      : {}),
     ...(record.allowedTools !== undefined
       ? { allowedTools: stringArrayArg(record.allowedTools, "allowedTools") }
       : {}),
@@ -1222,6 +1256,17 @@ function parseAgentManagerArgs(args: unknown): {
       : {}),
     ...(typeof record.force === "boolean" ? { force: record.force } : {}),
   };
+}
+
+function toolUseSelectorArrayArg(value: unknown, field: string): string[] {
+  const selectors = stringArrayArg(value, field);
+  const invalid = selectors.find((selector) => !isToolUseSelector(selector));
+  if (invalid) {
+    throw toolArgumentsInvalid(
+      `create_agent ${field} contains unknown selector "${invalid}" (allowed: ${formatToolUseSelectorList()}).`,
+    );
+  }
+  return selectors;
 }
 
 function stringArrayArg(value: unknown, field: string): string[] {

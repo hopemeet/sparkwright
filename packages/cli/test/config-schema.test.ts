@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadHostConfig } from "@sparkwright/host";
+import { loadHostConfig, readConfigFileObject } from "@sparkwright/host";
 import { runCli } from "../src/cli.js";
 
 // Guards against drift between schemas/config.schema.json and what the CLI
@@ -80,8 +80,13 @@ describe("config schema drift guard", () => {
 
     const userOut = createOutputCapture();
     expect((await runCli(["init"], { io: userOut.io })).exitCode).toBe(0);
-    const userConfig = JSON.parse(
-      await readFile(join(xdg, "sparkwright", "config.json"), "utf8"),
+    const userConfig = (
+      await readConfigFileObject(join(xdg, "sparkwright", "config.yaml"))
+    ).value;
+    await expect(
+      readFile(join(xdg, "sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain(
+      "# yaml-language-server: $schema=https://sparkwright.dev/schemas/v0/config.schema.json",
     );
     expect(validate(userConfig), JSON.stringify(validate.errors)).toBe(true);
 
@@ -94,8 +99,13 @@ describe("config schema drift guard", () => {
         })
       ).exitCode,
     ).toBe(0);
-    const projectConfig = JSON.parse(
-      await readFile(join(workspace, ".sparkwright", "config.json"), "utf8"),
+    const projectConfig = (
+      await readConfigFileObject(join(workspace, ".sparkwright", "config.yaml"))
+    ).value;
+    await expect(
+      readFile(join(workspace, ".sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain(
+      "# yaml-language-server: $schema=https://sparkwright.dev/schemas/v0/config.schema.json",
     );
     expect(validate(projectConfig), JSON.stringify(validate.errors)).toBe(true);
 

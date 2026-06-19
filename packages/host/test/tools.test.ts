@@ -37,6 +37,10 @@ import {
   createReadOnlyChildToolCatalog,
 } from "../src/tool-catalog.js";
 import { createHostShellTool } from "../src/shell.js";
+import {
+  assertCodingToolsCoveredByWorkspaceSelectors,
+  resolveSelectorAllowlist,
+} from "../src/tool-selectors.js";
 
 describe("host tools", () => {
   it("rejects read_file glob paths with tool guidance", async () => {
@@ -180,6 +184,49 @@ describe("host tools", () => {
     ).toBeUndefined();
   });
 
+  it("restricts tool config to allowed names before disabled and defer", () => {
+    const read = defineTool({
+      name: "read_file",
+      description: "read",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const mcpSearch = defineTool({
+      name: "mcp_docs_search",
+      description: "search",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const shell = defineTool({
+      name: "shell",
+      description: "shell",
+      inputSchema: { type: "object" },
+      execute: () => ({}),
+    });
+    const eager = defineTool({
+      name: "mcp_required",
+      description: "required",
+      inputSchema: { type: "object" },
+      alwaysLoad: true,
+      execute: () => ({}),
+    });
+
+    const tools = applyToolConfig([read, mcpSearch, shell, eager], {
+      allowed: ["read_file", "mcp_docs_search", "shell"],
+      disabled: ["shell"],
+      defer: ["mcp_docs_search"],
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "read_file",
+      "mcp_docs_search",
+    ]);
+    expect(tools.find((tool) => tool.name === "mcp_docs_search")).toMatchObject(
+      { deferLoading: true },
+    );
+    expect(tools.find((tool) => tool.name === "mcp_required")).toBeUndefined();
+  });
+
   it("marks low-frequency and capability mutation tools as deferred by default", () => {
     const todo = defineTool({
       name: "todo_write",
@@ -292,6 +339,155 @@ describe("host tools", () => {
     expect(byName.get("spawn_agent")).toMatchObject({ source: "agent" });
     expect(byName.get("create_skill")?.definition.deferLoading).toBe(true);
     expect(byName.get("tool_search")).toMatchObject({ source: "core" });
+  });
+
+  it("keeps the main host tool catalog inside allowed tool names", () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const entries = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      preparedMcp: {
+        tools: [
+          defineTool({
+            name: "mcp_demo_call_tool",
+            description: "call",
+            inputSchema: { type: "object" },
+            execute: () => ({}),
+          }),
+        ],
+      },
+      shell: { sandbox: { mode: "off" } },
+      toolConfig: {
+        allowed: ["read_file", "todo_write", "mcp_demo_call_tool"],
+      },
+    });
+
+    expect(entries.map((entry) => entry.definition.name)).toEqual([
+      "read_file",
+      "todo_write",
+      "mcp_demo_call_tool",
+    ]);
+    expect(
+      entries.find((entry) => entry.definition.name === "todo_write"),
+    ).toMatchObject({ definition: { deferLoading: true }, source: "todo" });
+    expect(entries.map((entry) => entry.definition.name)).not.toContain(
+      "tool_search",
+    );
+  });
+
+  it("resolves tool selectors from catalog source metadata", () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const entries = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      preparedMcp: {
+        tools: [
+          defineTool({
+            name: "mcp_demo_call_tool",
+            description: "call demo",
+            inputSchema: { type: "object" },
+            governance: { origin: { kind: "mcp", name: "demo" } },
+            execute: () => ({}),
+          }),
+          defineTool({
+            name: "mcp_docs_call_tool",
+            description: "call docs",
+            inputSchema: { type: "object" },
+            governance: { origin: { kind: "mcp", name: "docs" } },
+            execute: () => ({}),
+          }),
+        ],
+      },
+      shell: { sandbox: { mode: "off" } },
+    });
+
+    expect(resolveSelectorAllowlist(entries, undefined)).toBeUndefined();
+    expect(resolveSelectorAllowlist(entries, ["workspace.write"])).toEqual([
+      "edit_anchored_text",
+      "apply_patch",
+      "tool_search",
+    ]);
+    expect(resolveSelectorAllowlist(entries, ["mcp:demo"])).toEqual([
+      "mcp_demo_call_tool",
+    ]);
+  });
+
+  it("keeps selector-filtered deferred tools discoverable through tool_search", () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const entries = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      shell: { sandbox: { mode: "off" } },
+      toolConfig: {
+        use: ["workspace.read"],
+      },
+    });
+
+    expect(entries.map((entry) => entry.definition.name)).toEqual([
+      "read_file",
+      "glob",
+      "grep",
+      "list_dir",
+      "read_anchored_text",
+      "tool_search",
+    ]);
+    expect(
+      entries.find((entry) => entry.definition.name === "todo_write"),
+    ).toBeUndefined();
+  });
+
+  it("filters MCP tools by server selector before model inventory is built", () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const entries = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      preparedMcp: {
+        tools: [
+          defineTool({
+            name: "mcp_demo_call_tool",
+            description: "call demo",
+            inputSchema: { type: "object" },
+            governance: { origin: { kind: "mcp", name: "demo" } },
+            execute: () => ({}),
+          }),
+          defineTool({
+            name: "mcp_docs_call_tool",
+            description: "call docs",
+            inputSchema: { type: "object" },
+            governance: { origin: { kind: "mcp", name: "docs" } },
+            execute: () => ({}),
+          }),
+        ],
+      },
+      shell: { sandbox: { mode: "off" } },
+      toolConfig: {
+        use: ["mcp:demo"],
+      },
+    });
+
+    expect(entries.map((entry) => entry.definition.name)).toEqual([
+      "mcp_demo_call_tool",
+    ]);
+  });
+
+  it("keeps every coding catalog tool classified by a workspace selector", () => {
+    expect(() =>
+      assertCodingToolsCoveredByWorkspaceSelectors(
+        createCliDiagnosticToolCatalog({ workspaceRoot: "/tmp/ws" }),
+      ),
+    ).not.toThrow();
   });
 
   it("keeps read-only child tool catalog aligned with spawnable tools", () => {
@@ -607,6 +803,7 @@ describe("host tools", () => {
         name: "Reviewer",
         mode: "child",
         prompt: "Review changes and report concrete risks.",
+        use: ["workspace.read"],
         allowedTools: ["read_file"],
         maxSteps: 2,
         delegateToolName: "delegate_reviewer",
@@ -629,6 +826,7 @@ describe("host tools", () => {
             name: "Reviewer",
             mode: "child",
             prompt: "Review changes and report concrete risks.",
+            use: ["workspace.read"],
             allowedTools: ["read_file"],
             maxSteps: 2,
           },
@@ -645,6 +843,35 @@ describe("host tools", () => {
       },
       errors: [],
     });
+  });
+
+  it("preserves project YAML config when creating agents", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/config.yaml": [
+        "capabilities:",
+        "  agents:",
+        "    maxDepth: 1",
+        "",
+      ].join("\n"),
+    });
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+
+    await tool.execute(
+      {
+        action: "create",
+        id: "reader",
+        prompt: "Read only.",
+        use: ["workspace.read"],
+      },
+      ctx,
+    );
+
+    await expect(
+      readFile(join(ctx.workspaceRoot, ".sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain("use:");
+    await expect(
+      readFile(join(ctx.workspaceRoot, ".sparkwright", "config.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("treats duplicate agent creation as an idempotent skip", async () => {

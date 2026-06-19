@@ -10,17 +10,19 @@
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
- * files, top-level tool config merges with disabled as a tightening union and
- * defer as a later-layer replacement, capabilities merge by sub-capability, and
- * the security boundaries — shell.sandbox, permissionMode, and
+ * files, top-level tool config merges with allowed as a tightening
+ * intersection, disabled as a tightening union, and defer as a later-layer
+ * replacement, capabilities merge by sub-capability, and the security
+ * boundaries — shell.sandbox, permissionMode, and
  * confidentialPaths — merge conservatively so later (lower-trust) layers cannot
  * weaken an earlier layer's policy.
  * Callers layer CLI flags / env on top.
  */
 
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type {
   RunBudget,
   WorkflowHookMatcher,
@@ -34,11 +36,22 @@ import {
 } from "@sparkwright/protocol";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
+import {
+  formatToolUseSelectorList,
+  intersectToolUseSelectors,
+  isToolUseSelector,
+} from "./tool-selectors.js";
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
 export const CONFIG_USER_REL = ".config/sparkwright/config.json";
 export const CONFIG_ENV_VAR = "SPARKWRIGHT_CONFIG";
-const CONFIG_USER_SUBPATH = "sparkwright/config.json";
+export const CONFIG_FILE_BASENAMES = [
+  "config.json",
+  "config.yaml",
+  "config.yml",
+] as const;
+const CONFIG_USER_DIR_SUBPATH = "sparkwright";
+const CONFIG_USER_JSON_SUBPATH = "sparkwright/config.json";
 
 /** Reserved provider key for the built-in offline demo model. */
 export const DETERMINISTIC_PROVIDER = "deterministic";
@@ -144,6 +157,8 @@ export interface ApprovalDefaults {
   edits?: boolean;
   /** Auto-approve everything the policy allows (use with care). */
   all?: boolean;
+  /** Default permission mode for unattended cron run/tick commands. */
+  cronMode?: PermissionMode;
 }
 
 export interface ShellConfig {
@@ -159,6 +174,10 @@ export interface CapabilityConfig {
 }
 
 export interface CapabilityToolsConfig {
+  /** High-level source/capability selectors retained in the prepared tool set. */
+  use?: string[];
+  /** Concrete tool names retained in the prepared run tool set. */
+  allowed?: string[];
   /** Concrete tool names removed from the prepared run tool set. */
   disabled?: string[];
   /** Concrete tool names prepared as deferred schemas when supported. */
@@ -245,6 +264,8 @@ export interface CapabilityVerificationConfig {
 export interface CapabilityAgentsConfig {
   profiles?: AgentProfile[];
   delegateTools?: CapabilityDelegateToolConfig[];
+  /** Maximum allowed sub-agent depth. 0 disables spawning; absent keeps legacy defaults. */
+  maxDepth?: number;
 }
 
 export interface CapabilityDelegateToolConfig {
@@ -417,7 +438,7 @@ export function userConfigPath(
   // hermetic tests); fall back to ~/.config otherwise.
   const xdg = env.XDG_CONFIG_HOME;
   const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config");
-  return join(base, CONFIG_USER_SUBPATH);
+  return join(base, CONFIG_USER_JSON_SUBPATH);
 }
 
 export function projectConfigPath(cwd: string): string {
@@ -428,21 +449,76 @@ export function configResolutionOrder(
   cwd: string,
   env: Record<string, string | undefined> = process.env,
 ): { path: string; label: string }[] {
-  const order = [
-    { path: userConfigPath(env), label: "user" },
-    { path: projectConfigPath(cwd), label: "project" },
+  const order = configLayerResolutionOrder(cwd, env).flatMap((layer) =>
+    layer.candidates.map((path) => ({ path, label: layer.label })),
+  );
+  return order;
+}
+
+interface ConfigLayerResolution {
+  label: string;
+  candidates: string[];
+}
+
+function configLayerResolutionOrder(
+  cwd: string,
+  env: Record<string, string | undefined> = process.env,
+): ConfigLayerResolution[] {
+  const order: ConfigLayerResolution[] = [
+    { label: "user", candidates: userConfigCandidatePaths(env) },
+    { label: "project", candidates: projectConfigCandidatePaths(cwd) },
   ];
   const explicit = env[CONFIG_ENV_VAR];
   if (explicit) {
     order.push({
-      path: isAbsolute(explicit) ? explicit : resolve(cwd, explicit),
+      candidates: [isAbsolute(explicit) ? explicit : resolve(cwd, explicit)],
       label: "env",
     });
   }
   return order;
 }
 
-async function readJson(
+export function userConfigCandidatePaths(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const xdg = env.XDG_CONFIG_HOME;
+  const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config");
+  return CONFIG_FILE_BASENAMES.map((name) =>
+    join(base, CONFIG_USER_DIR_SUBPATH, name),
+  );
+}
+
+export function projectConfigCandidatePaths(cwd: string): string[] {
+  const dir = join(cwd, ".sparkwright");
+  return CONFIG_FILE_BASENAMES.map((name) => join(dir, name));
+}
+
+export type ConfigFileFormat = "json" | "yaml";
+
+export interface ConfigFileObject {
+  exists: boolean;
+  value: Record<string, unknown>;
+  format: ConfigFileFormat;
+}
+
+export function configFileFormatForPath(path: string): ConfigFileFormat {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".yaml") || lower.endsWith(".yml") ? "yaml" : "json";
+}
+
+export function serializeConfigFileObject(
+  path: string,
+  value: Record<string, unknown>,
+): string {
+  const format = configFileFormatForPath(path);
+  const serialized =
+    format === "yaml"
+      ? stringifyYaml(value, { lineWidth: 0 })
+      : JSON.stringify(value, null, 2);
+  return serialized.endsWith("\n") ? serialized : `${serialized}\n`;
+}
+
+async function readConfigFile(
   path: string,
 ): Promise<
   | { kind: "ok"; value: unknown }
@@ -460,14 +536,94 @@ async function readJson(
       message: `read failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  const format = configFileFormatForPath(path);
   try {
-    return { kind: "ok", value: JSON.parse(raw) };
+    return {
+      kind: "ok",
+      value: format === "yaml" ? parseYaml(raw) : JSON.parse(raw),
+    };
   } catch (err) {
     return {
       kind: "error",
-      message: `invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      message: `invalid ${format.toUpperCase()}: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+export async function readConfigFileObject(
+  path: string,
+): Promise<ConfigFileObject> {
+  const result = await readConfigFile(path);
+  if (result.kind === "missing") {
+    return {
+      exists: false,
+      value: {},
+      format: configFileFormatForPath(path),
+    };
+  }
+  if (result.kind === "error") {
+    throw new Error(result.message);
+  }
+  if (!isRecord(result.value)) {
+    throw new Error(`${path} must contain a config object.`);
+  }
+  return {
+    exists: true,
+    value: result.value,
+    format: configFileFormatForPath(path),
+  };
+}
+
+export async function writeConfigFileObject(
+  path: string,
+  value: Record<string, unknown>,
+  options: { privateFile?: boolean } = {},
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, serializeConfigFileObject(path, value), {
+    ...(options.privateFile !== false ? { mode: 0o600 } : {}),
+  });
+  if (options.privateFile !== false) {
+    await chmod(path, 0o600);
+  }
+}
+
+export async function resolveConfigWriteTarget(
+  defaultJsonPath: string,
+): Promise<{ path: string; exists: boolean }> {
+  const candidates = configSiblingCandidatePaths(defaultJsonPath);
+  const existing = await existingConfigCandidatePaths(candidates);
+  if (existing.length > 1) {
+    throw new Error(
+      `Multiple config files found next to ${defaultJsonPath}: ${existing.join(", ")}. Keep one before writing config.`,
+    );
+  }
+  return {
+    path: existing[0] ?? defaultJsonPath,
+    exists: existing.length === 1,
+  };
+}
+
+function configSiblingCandidatePaths(defaultJsonPath: string): string[] {
+  const dir = dirname(defaultJsonPath);
+  return CONFIG_FILE_BASENAMES.map((name) => join(dir, name));
+}
+
+async function existingConfigCandidatePaths(
+  paths: readonly string[],
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const path of paths) {
+    try {
+      const info = await stat(path);
+      if (info.isFile()) out.push(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        out.push(path);
+      }
+    }
+  }
+  return out;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -770,7 +926,7 @@ function validateToolsConfig(
     return undefined;
   }
   const out: CapabilityToolsConfig = {};
-  const allowed = new Set(["disabled", "defer"]);
+  const allowed = new Set(["use", "allowed", "disabled", "defer"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -779,6 +935,22 @@ function validateToolsConfig(
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
+  }
+  if (raw.use !== undefined) {
+    out.use = validateToolUseSelectorArray(
+      raw.use,
+      `${field}.use`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.allowed !== undefined) {
+    out.allowed = validateToolNameArray(
+      raw.allowed,
+      `${field}.allowed`,
+      filePath,
+      errors,
+    );
   }
   if (raw.disabled !== undefined) {
     out.disabled = validateToolNameArray(
@@ -813,6 +985,26 @@ function validateToolNameArray(
       file: filePath,
       field,
       message: `must contain concrete tool names; wildcard patterns are not supported (${invalid})`,
+    });
+    return undefined;
+  }
+  return values;
+}
+
+function validateToolUseSelectorArray(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): string[] | undefined {
+  const values = validateStringArray(raw, field, filePath, errors);
+  if (!values) return undefined;
+  const invalid = values.find((value) => !isToolUseSelector(value));
+  if (invalid !== undefined) {
+    errors.push({
+      file: filePath,
+      field,
+      message: `unknown tool selector "${invalid}" (allowed: ${formatToolUseSelectorList()})`,
     });
     return undefined;
   }
@@ -1556,7 +1748,7 @@ function validateCapabilities(
     if (!allowed.has(key)) {
       const removedToolsMessage =
         key === "tools"
-          ? "legacy capabilities.tools has been removed; use top-level tools.disabled/tools.defer instead"
+          ? "legacy capabilities.tools has been removed; use top-level tools.use/tools.allowed/tools.disabled/tools.defer instead"
           : undefined;
       errors.push({
         file: filePath,
@@ -1707,7 +1899,7 @@ function validateApprovals(
     return undefined;
   }
   const out: ApprovalDefaults = {};
-  const allowed = new Set(["shellSafe", "edits", "all"]);
+  const allowed = new Set(["shellSafe", "edits", "all", "cronMode"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1725,6 +1917,17 @@ function validateApprovals(
         filePath,
         errors,
       );
+    }
+  }
+  if (raw.cronMode !== undefined) {
+    if (isPermissionMode(raw.cronMode)) {
+      out.cronMode = raw.cronMode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "approvals.cronMode",
+        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
+      });
     }
   }
   return out;
@@ -2038,6 +2241,23 @@ function mergeUniqueStrings(
   return out;
 }
 
+function intersectUniqueStrings(
+  previous: readonly string[] | undefined,
+  next: readonly string[] | undefined,
+): string[] | undefined {
+  if (previous === undefined) return next ? [...next] : undefined;
+  if (next === undefined) return [...previous];
+  const nextSet = new Set(next);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of previous) {
+    if (!nextSet.has(entry) || seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  return out;
+}
+
 function mergeToolConfig(
   previous: CapabilityToolsConfig | undefined,
   next: CapabilityToolsConfig | undefined,
@@ -2045,6 +2265,11 @@ function mergeToolConfig(
   if (!previous) return next ? { ...next } : undefined;
   if (!next) return { ...previous };
   return pruneToolConfig({
+    // Tool selectors are a tightening boundary, so layers intersect by the
+    // concrete tool sets they imply (`mcp` ∩ `mcp:demo` = `mcp:demo`).
+    use: intersectToolUseSelectors(previous.use, next.use),
+    // Allowed tools are a tightening boundary, so layers intersect.
+    allowed: intersectUniqueStrings(previous.allowed, next.allowed),
     // Disabled tools are a tightening boundary, so layers union.
     disabled: mergeUniqueStrings(previous.disabled, next.disabled),
     // Defer is a loading preference, not a safety boundary. A later explicit
@@ -2060,6 +2285,8 @@ function mergeToolConfig(
 
 function pruneToolConfig(config: CapabilityToolsConfig): CapabilityToolsConfig {
   return {
+    ...(config.use !== undefined ? { use: config.use } : {}),
+    ...(config.allowed !== undefined ? { allowed: config.allowed } : {}),
     ...(config.disabled && config.disabled.length > 0
       ? { disabled: config.disabled }
       : {}),
@@ -2366,6 +2593,7 @@ function validateAgentProfile(
     "mode",
     "model",
     "prompt",
+    "use",
     "allowedTools",
     "deniedTools",
     "policy",
@@ -2405,6 +2633,14 @@ function validateAgentProfile(
       });
   }
   if (raw.model !== undefined) profile.model = raw.model;
+  if (raw.use !== undefined) {
+    profile.use = validateToolUseSelectorArray(
+      raw.use,
+      `${field}.use`,
+      filePath,
+      errors,
+    );
+  }
   for (const key of ["allowedTools", "deniedTools"] as const) {
     if (raw[key] !== undefined) {
       profile[key] = validateStringArray(
@@ -2784,7 +3020,7 @@ function validateCapabilityAgents(
     return undefined;
   }
   const out: CapabilityAgentsConfig = {};
-  const allowed = new Set(["profiles", "delegateTools"]);
+  const allowed = new Set(["profiles", "delegateTools", "maxDepth"]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2819,6 +3055,14 @@ function validateCapabilityAgents(
         message: "must be an array",
       });
     }
+  }
+  if (raw.maxDepth !== undefined) {
+    out.maxDepth = validateOptionalNonNegativeInteger(
+      raw.maxDepth,
+      "capabilities.agents.maxDepth",
+      filePath,
+      errors,
+    );
   }
   return out;
 }
@@ -3131,7 +3375,7 @@ function validateShared(
     errors.push({
       file: filePath,
       field: "(root)",
-      message: "must be a JSON object",
+      message: "must be an object",
     });
     return { config, sources, errors };
   }
@@ -3172,7 +3416,7 @@ function validateShared(
       errors.push({
         file: filePath,
         field: "providers",
-        message: "must be a JSON object",
+        message: "must be an object",
       });
     }
   }
@@ -3299,24 +3543,45 @@ export async function loadHostConfig(
   cwd: string,
   env: Record<string, string | undefined> = process.env,
 ): Promise<LoadedSharedConfig> {
-  const order = configResolutionOrder(cwd, env);
+  const order = configLayerResolutionOrder(cwd, env);
   const merged: SharedConfig = {};
   const sources: SharedConfigSourceMap = {};
   const attempted: LoadedSharedConfig["attempted"] = [];
   const errors: SharedConfigError[] = [];
 
-  for (const { path, label } of order) {
-    const r = await readJson(path);
+  for (const { candidates, label } of order) {
+    const existing = await existingConfigCandidatePaths(candidates);
+    if (existing.length === 0) {
+      for (const path of candidates) attempted.push({ path, loaded: false });
+      continue;
+    }
+
+    const path = existing[0]!;
+    if (existing.length > 1) {
+      errors.push({
+        file: path,
+        field: "(root)",
+        message: `multiple config files found for ${label} layer: ${existing.join(", ")}; loading ${path}`,
+      });
+    }
+
+    const r = await readConfigFile(path);
     if (r.kind === "missing") {
-      attempted.push({ path, loaded: false });
+      for (const candidate of candidates) {
+        attempted.push({ path: candidate, loaded: false });
+      }
       continue;
     }
     if (r.kind === "error") {
-      attempted.push({ path, loaded: false });
+      for (const candidate of candidates) {
+        attempted.push({ path: candidate, loaded: false });
+      }
       errors.push({ file: path, field: "(root)", message: r.message });
       continue;
     }
-    attempted.push({ path, loaded: true });
+    for (const candidate of candidates) {
+      attempted.push({ path: candidate, loaded: candidate === path });
+    }
     const v = validateShared(r.value, `${label}:${path}`, path);
     errors.push(...v.errors);
     if (v.config.workspace !== undefined) {

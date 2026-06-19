@@ -7,13 +7,14 @@ selection, tool loading, Skills, MCP, or project agent defaults.
 ## Choose The Right Layer
 
 ```txt
-Personal config: ~/.config/sparkwright/config.json
+Personal config: ~/.config/sparkwright/config.yaml
   Use for private provider settings: model, providers, API keys, and personal
-  TUI preferences.
+  TUI preferences. Existing config.json/config.yaml/config.yml files are loaded.
 
-Project config: <workspace>/.sparkwright/config.json
+Project config: <workspace>/.sparkwright/config.yaml
   Use for team-safe runtime defaults: permissionMode, tools, workflow hooks,
-  skills, MCP, agents, and project convention directories.
+  skills, MCP, agents, and project convention directories. Existing
+  config.json/config.yaml/config.yml files are loaded.
 
 Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
   Use for one-off runs, CI jobs, or local experiments.
@@ -28,10 +29,13 @@ The config schema is `schemas/config.schema.json`.
 
 Config is loaded in this order, with later sources overriding earlier sources:
 
-1. `~/.config/sparkwright/config.json`
-2. `<workspace>/.sparkwright/config.json`
+1. `~/.config/sparkwright/config.{json,yaml,yml}`
+2. `<workspace>/.sparkwright/config.{json,yaml,yml}`
 3. `$SPARKWRIGHT_CONFIG`
 4. CLI flags and environment variables
+
+Within the user or project layer, `config.json` wins over `config.yaml`, which
+wins over `config.yml`; multiple files in one layer are reported as a conflict.
 
 `providers` is merged by provider key. Most other fields are replaced by the
 later source. `capabilities` is not deep-merged across files; keep related
@@ -164,11 +168,13 @@ OpenAI-compatible proxies omit reasoning summary deltas.
 }
 ```
 
-Standard tools are enabled by default. Use `tools.disabled` to close concrete
-tool names, and `tools.defer` only to delay built-in tool schemas. MCP tools use
-`capabilities.mcp.toolSchemaLoad`; do not configure them with wildcard tool
-names. Prefer `task(action=...)` for task inspection/control and `apply_patch`
-for ordinary file writes.
+Standard tools are enabled by default. Use `tools.use` for broad selectors such
+as `workspace.read`, `workspace.write`, `shell`, `skills`, `agents`, `cron`,
+`mcp`, or `mcp:<server>`; use `tools.allowed` only for concrete tool names.
+Use `tools.disabled` to close concrete tool names, and `tools.defer` only to
+delay built-in tool schemas. MCP tools use `capabilities.mcp.toolSchemaLoad`;
+do not configure them with wildcard tool names. Prefer `task(action=...)` for
+task inspection/control and `apply_patch` for ordinary file writes.
 
 ### Stdio MCP Server
 
@@ -280,7 +286,7 @@ must gate the final answer.
 - `permissionMode`: default run permission mode.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
-- `tools`: preferred tool disable/defer settings.
+- `tools`: preferred tool selector, allow/disable, and defer settings.
 - `capabilities.hooks.workflow`: deterministic project workflow hooks.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
@@ -304,24 +310,27 @@ do not grant authority by themselves.
 The CLI can update user-level tool loading settings:
 
 ```bash
-npm exec sparkwright -- tools list --format text
+npm exec sparkwright -- capabilities inspect --workspace . --format text
+npm exec sparkwright -- tools allow <tool-name...>
 npm exec sparkwright -- tools disable <tool-name...>
 npm exec sparkwright -- tools defer <tool-name...>
 ```
 
 Add `--workspace <path>` to manage project defaults in
-`<workspace>/.sparkwright/config.json` instead:
+`<workspace>/.sparkwright/config.{json,yaml,yml}` instead:
 
 ```bash
-npm exec sparkwright -- tools list --workspace . --format text
+npm exec sparkwright -- capabilities inspect --workspace . --format text
+npm exec sparkwright -- tools allow read_file --workspace .
 npm exec sparkwright -- tools disable shell --workspace .
 npm exec sparkwright -- tools defer todo_write --workspace .
 ```
 
-Use `defer` for built-in tools that should be discovered lazily instead of
-being loaded into the initial provider schema. Configure MCP tool schema loading
-with `capabilities.mcp.toolSchemaLoad` and MCP connection timing with
-`capabilities.mcp.startup`.
+`tools allow` appends concrete names to `tools.allowed`; edit `tools.use`
+directly for selector scoping. Use `defer` for built-in tools that should be
+discovered lazily instead of being loaded into the initial provider schema.
+Configure MCP tool schema loading with `capabilities.mcp.toolSchemaLoad` and MCP
+connection timing with `capabilities.mcp.startup`.
 
 ## Skills And Agents
 
@@ -344,8 +353,10 @@ the user deliberately wants matched Skill bodies in resident context.
 
 Project agent profiles can live under `.sparkwright/agents/<id>.md`.
 Config-defined profiles live under `capabilities.agents.profiles`, and matching
-config entries win over markdown profiles. Only `delegateTools` entries become
-callable tools.
+config entries win over markdown profiles. Agent profiles can use broad `use`
+selectors and concrete `allowedTools`; both filters are applied. Set
+`capabilities.agents.maxDepth` to cap nested child/delegate spawning. Only
+`delegateTools` entries become callable tools.
 
 Agent profiles may also describe an external ACP-compatible worker under
 `metadata.acp`. When such a profile is exposed through `delegateTools`,
@@ -489,15 +500,15 @@ npm exec sparkwright -- config inspect --workspace . --format text
 npm exec sparkwright -- config explain --workspace . --format text
 npm exec sparkwright -- capabilities inspect --workspace . --format text
 npm exec sparkwright -- capabilities inspect --workspace . --resolve-mcp --format text
-npm exec sparkwright -- tools list --format text
 npm exec sparkwright -- agents validate --workspace .
 npm exec sparkwright -- skills validate --workspace .
 ```
 
-`config inspect` shows the effective merged config with secret-looking fields
-redacted. `config explain` shows field origins and values. `capabilities
-inspect` shows prepared runtime surfaces such as tools, Skills, agents, MCP,
-cron, and command directories.
+`config validate` checks loaded JSON/YAML files against the shipped config
+schema and the host loader's semantic rules. `config inspect` shows the
+effective merged config with secret-looking fields redacted. `config explain`
+shows field origins and values. `capabilities inspect` shows prepared runtime
+surfaces such as tools, Skills, agents, MCP, cron, and command directories.
 
 ## Install And Upgrade Safety
 
@@ -518,8 +529,8 @@ Checks to make before proposing edits:
 - Unknown provider: confirm `model` uses `provider/model` form and the provider
   key exists under `providers`.
 - API key ignored: check environment variable overrides.
-- Tool missing: inspect `tools.disabled`, deprecated legacy allowlists, and MCP
-  server `enabled` settings.
+- Tool missing: inspect `tools.use`, `tools.allowed`, `tools.disabled`,
+  `tools.defer`, and MCP server `enabled` settings.
 - MCP tool missing: use `capabilities inspect --resolve-mcp` to distinguish a
   configured server from a prepared server with resolved tools.
 - User and project capability settings did not combine: remember that most

@@ -30,6 +30,7 @@ import {
   createSkillManagerTool,
   createSkillUpdateTool,
 } from "./tools.js";
+import { resolveSelectorAllowlist } from "./tool-selectors.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 
@@ -78,6 +79,7 @@ export function createCliDiagnosticToolCatalog(input: {
       createCoreCodingToolCatalog(input.workspaceRoot),
       input.toolConfig,
     ),
+    input.toolConfig,
   );
 }
 
@@ -100,7 +102,7 @@ export function createMainHostToolCatalog(input: {
     createMainHostToolCatalogList(input),
     input.toolConfig,
   );
-  return withDeferredToolSearch(entries);
+  return withDeferredToolSearch(entries, input.toolConfig);
 }
 
 export function catalogToolDefinitions(
@@ -111,23 +113,27 @@ export function catalogToolDefinitions(
 
 function withDeferredToolSearch(
   entries: HostToolCatalogEntry[],
+  config: CapabilityToolsConfig | undefined,
 ): HostToolCatalogEntry[] {
   if (!entries.some((entry) => entry.definition.deferLoading === true)) {
     return entries;
   }
 
   const deferredCatalog = entries.map((entry) => entry.definition);
-  return [
-    ...entries,
-    catalogEntry(
-      createToolSearchTool({
-        source: {
-          listDescriptors: () => deferredCatalog.map(toolToDescriptor),
-        },
-      }),
-      "core",
-    ),
-  ];
+  return applyToolConfigToCatalog(
+    [
+      ...entries,
+      catalogEntry(
+        createToolSearchTool({
+          source: {
+            listDescriptors: () => deferredCatalog.map(toolToDescriptor),
+          },
+        }),
+        "core",
+      ),
+    ],
+    config,
+  );
 }
 
 export function catalogEntryOrigin(
@@ -246,9 +252,16 @@ function applyToolConfigToCatalog(
   const metadataByName = new Map(
     entries.map((entry) => [entry.definition.name, entry]),
   );
+  const selectorAllowed = resolveSelectorAllowlist(entries, config?.use);
+  const effectiveAllowed = intersectAllowlists(
+    config?.allowed,
+    selectorAllowed,
+  );
   return applyToolConfig(
     entries.map((entry) => entry.definition),
-    config,
+    selectorAllowed === undefined
+      ? config
+      : { ...config, allowed: effectiveAllowed },
   ).map((definition) => {
     const metadata = metadataByName.get(definition.name);
     if (!metadata) {
@@ -256,6 +269,20 @@ function applyToolConfigToCatalog(
     }
     return { ...metadata, definition };
   });
+}
+
+function intersectAllowlists(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): string[] | undefined {
+  if (left === undefined) return right ? [...right] : undefined;
+  if (right === undefined) return [...left];
+  const rightSet = new Set(right);
+  const out: string[] = [];
+  for (const entry of left) {
+    if (rightSet.has(entry) && !out.includes(entry)) out.push(entry);
+  }
+  return out;
 }
 
 function catalogEntry(

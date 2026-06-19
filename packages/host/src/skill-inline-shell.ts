@@ -21,6 +21,12 @@ export function createSkillInlineShellRunner(
   const runner = new TracedProcessRunner();
   return async ({ command, cwd, timeoutMs, maxOutputChars }) => {
     const processCwd = cwd ? resolve(cwd) : process.cwd();
+    // `runId` is typically absent here: inline-shell expansion runs during
+    // pre-run capability preparation (before `createRun` mints the run id),
+    // emitting onto a buffered emitter that is flushed once the run exists.
+    // Without a run id no output artifact is materialized — acceptable because
+    // inline-shell output is already capped to `maxOutputChars` and inlined
+    // into the skill body, so an artifact would only duplicate that capped text.
     const result = await runner.run({
       emitter: options.emitter,
       runId: options.runId,

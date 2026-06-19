@@ -1,8 +1,13 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
-import { projectConfigPath } from "@sparkwright/host";
+import {
+  projectConfigPath,
+  readConfigFileObject,
+  resolveConfigWriteTarget,
+  writeConfigFileObject,
+} from "@sparkwright/host";
 
 export type CreateCapabilityKind =
   | "skill"
@@ -112,8 +117,8 @@ async function createAgent(
 ): Promise<CreateCapabilityResult> {
   const id = assertName(draft.id, "Agent id");
   const prompt = required(draft.prompt, "Prompt");
-  const configPath = projectConfigPath(workspaceRoot);
-  const config = await readJsonObject(configPath);
+  const { path: configPath, config } =
+    await readProjectConfigObject(workspaceRoot);
   const capabilities = ensureObject(config, "capabilities");
   const agents = ensureObject(capabilities, "agents");
   const profiles = ensureArray<Record<string, unknown>>(agents, "profiles");
@@ -137,7 +142,7 @@ async function createAgent(
       toolName: draft.delegateToolName,
     });
   }
-  await writeJsonObject(configPath, config);
+  await writeConfigFileObject(configPath, config, { privateFile: false });
   return { kind: "agent", message: `Created agent ${id}`, path: configPath };
 }
 
@@ -150,8 +155,8 @@ async function createMcp(
     draft.commandOrUrl,
     draft.serverType === "stdio" ? "Command" : "URL",
   );
-  const configPath = projectConfigPath(workspaceRoot);
-  const config = await readJsonObject(configPath);
+  const { path: configPath, config } =
+    await readProjectConfigObject(workspaceRoot);
   const capabilities = ensureObject(config, "capabilities");
   const mcp = ensureObject(capabilities, "mcp");
   const servers = ensureArray<Record<string, unknown>>(mcp, "servers");
@@ -175,7 +180,7 @@ async function createMcp(
           enabled: true,
         },
   );
-  await writeJsonObject(configPath, config);
+  await writeConfigFileObject(configPath, config, { privateFile: false });
   return {
     kind: "mcp",
     message: `Created MCP server ${name}`,
@@ -239,24 +244,14 @@ function renderCommandTemplate(description: string, prompt: string): string {
   ].join("\n");
 }
 
-async function readJsonObject(path: string): Promise<Record<string, unknown>> {
-  try {
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!isRecord(parsed)) throw new Error("config must be a JSON object");
-    return parsed;
-  } catch (error) {
-    if (isMissingFileError(error)) return {};
-    throw error;
-  }
-}
-
-async function writeJsonObject(
-  path: string,
-  value: Record<string, unknown>,
-): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+async function readProjectConfigObject(
+  workspaceRoot: string,
+): Promise<{ path: string; config: Record<string, unknown> }> {
+  const target = await resolveConfigWriteTarget(
+    projectConfigPath(workspaceRoot),
+  );
+  const loaded = await readConfigFileObject(target.path);
+  return { path: target.path, config: loaded.value };
 }
 
 function ensureObject(
@@ -286,10 +281,4 @@ function ensureArray<T>(target: Record<string, unknown>, key: string): T[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return (
-    isRecord(error) && typeof error.code === "string" && error.code === "ENOENT"
-  );
 }

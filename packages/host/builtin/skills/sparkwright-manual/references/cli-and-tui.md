@@ -139,16 +139,18 @@ Use `--apply` only when intentionally applying a session repair.
 ## Tool, Skill, And Agent Commands
 
 ```bash
-npm exec sparkwright -- tools list --format text
+npm exec sparkwright -- capabilities inspect --workspace . --format text
+npm exec sparkwright -- tools allow read_file
 npm exec sparkwright -- tools disable shell
 npm exec sparkwright -- tools defer read_anchored_text
 ```
 
-`tools disable`/`tools defer` take concrete tool names (no wildcards).
+`tools allow`/`tools disable`/`tools defer` take concrete tool names (no
+wildcards). Edit `tools.use` directly for broad selector scoping.
 
 Add `--workspace <path>` to inspect or update project tool defaults in
-`<workspace>/.sparkwright/config.json`; without it, tools commands operate on
-the user config.
+`<workspace>/.sparkwright/config.{json,yaml,yml}`; without it, tools commands
+operate on the user config.
 
 ```bash
 npm exec sparkwright -- skills list --workspace .

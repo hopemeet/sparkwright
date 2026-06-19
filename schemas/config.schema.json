@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.json, <workspace>/.sparkwright/config.json, and $SPARKWRIGHT_CONFIG. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The `providers` map is merged by key, `tools.disabled` unions while `tools.defer` is replaced by later layers, `capabilities` merges by sub-capability, and the security boundaries — shell.sandbox, permissionMode, confidentialPaths, and write — merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The `providers` map is merged by key, `tools.use` and `tools.allowed` intersect, `tools.disabled` unions, and `tools.defer` is replaced by later layers, `capabilities` merges by sub-capability, and the security boundaries — shell.sandbox, permissionMode, confidentialPaths, and write — merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -158,6 +158,10 @@
         "all": {
           "type": "boolean",
           "description": "Auto-approve everything the policy allows."
+        },
+        "cronMode": {
+          "$ref": "#/properties/permissionMode",
+          "description": "Default permission mode for unattended cron run/tick commands. CLI --permission-mode still overrides."
         }
       }
     },
@@ -219,8 +223,41 @@
     },
     "tools": {
       "type": "object",
-      "description": "Preferred tool exposure/loading settings. Standard tools are enabled by default; `disabled` closes tools and `defer` only delays provider schema loading.",
+      "description": "Preferred tool exposure/loading settings. Standard tools are enabled by default; `use` keeps high-level tool groups, `allowed` keeps concrete tool names, `disabled` closes tools, and `defer` only delays provider schema loading.",
       "properties": {
+        "use": {
+          "type": "array",
+          "description": "High-level source/capability selectors retained in the prepared tool set. Omit to use all otherwise enabled tools.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "workspace.read",
+                  "workspace.write",
+                  "shell",
+                  "planning",
+                  "skills",
+                  "agents",
+                  "tasks",
+                  "cron",
+                  "mcp",
+                  "core.discovery"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^mcp:.+$",
+                "description": "Select tools from one configured MCP server, e.g. mcp:demo."
+              }
+            ]
+          }
+        },
+        "allowed": {
+          "type": "array",
+          "description": "Concrete tool names retained in the prepared run tool set. Omit to allow all otherwise enabled tools.",
+          "items": { "type": "string" }
+        },
         "disabled": {
           "type": "array",
           "description": "Concrete tool names removed from the prepared run tool set.",
@@ -542,6 +579,11 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "maxDepth": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Global sub-agent depth ceiling. 0 disables sub-agent spawning; absent preserves legacy per-delegate forbidNesting behavior."
             }
           },
           "additionalProperties": false

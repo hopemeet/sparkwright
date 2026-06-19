@@ -126,6 +126,7 @@ describe("agent-runtime", () => {
   it("inherits parent agent and parent run deny rules into child profiles", () => {
     const parent: AgentProfile = {
       id: "plan",
+      use: ["workspace.read", "mcp"],
       allowedTools: ["read", "grep", "edit"],
       deniedTools: ["edit"],
       maxSteps: 4,
@@ -143,6 +144,7 @@ describe("agent-runtime", () => {
     };
     const child: AgentProfile = {
       id: "explore",
+      use: ["workspace.read", "mcp:demo", "skills"],
       allowedTools: ["read", "grep", "shell"],
       maxSteps: 12,
       runBudget: {
@@ -170,6 +172,10 @@ describe("agent-runtime", () => {
     });
 
     expect(derived.effectiveProfile.allowedTools).toEqual(["grep", "read"]);
+    expect(derived.effectiveProfile.use).toEqual([
+      "mcp:demo",
+      "workspace.read",
+    ]);
     expect(derived.effectiveProfile.deniedTools).toEqual(["edit"]);
     expect(derived.effectiveProfile.maxSteps).toBe(4);
     expect(derived.effectiveProfile.runBudget).toMatchObject({
@@ -698,6 +704,7 @@ describe("spawnSubAgent", () => {
 
     expect(spawned.run.record.metadata).toMatchObject({
       parentRunId: parent.record.id,
+      subagentDepth: 1,
       agentId: "reviewer",
       agentProfileId: "reviewer",
       agentName: "Reviewer",

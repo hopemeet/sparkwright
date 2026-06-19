@@ -245,7 +245,9 @@ describe("loadHostConfig", () => {
             error.message.includes(
               "legacy capabilities.tools has been removed",
             ) &&
-            error.message.includes("top-level tools.disabled/tools.defer"),
+            error.message.includes(
+              "top-level tools.use/tools.allowed/tools.disabled/tools.defer",
+            ),
         ),
       ).toBe(true);
       expect(loaded.config.tools).toBeUndefined();
@@ -255,18 +257,18 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("rejects wildcard patterns in top-level tool config", async () => {
+  it("rejects wildcard patterns in top-level tool allowed config", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        tools: { disabled: ["mcp_*"] },
+        tools: { allowed: ["mcp_*"] },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(
         loaded.errors.some(
           (error) =>
-            error.field === "tools.disabled" &&
+            error.field === "tools.allowed" &&
             error.message.includes("wildcard patterns are not supported"),
         ),
       ).toBe(true);
@@ -276,12 +278,36 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("loads top-level tool config with replace defer and union disabled semantics", async () => {
+  it("rejects unknown top-level tool selectors", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tools: { use: ["workspace.read", "workspace.delete"] },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.tools?.use).toBeUndefined();
+      expect(
+        loaded.errors.some(
+          (error) =>
+            error.field === "tools.use" &&
+            error.message.includes('unknown tool selector "workspace.delete"'),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads top-level tool config with intersect allowed, union disabled, and replace defer semantics", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
         tools: {
+          use: ["workspace.read", "mcp"],
+          allowed: ["read_file", "shell", "edit_anchored_text"],
           disabled: ["shell"],
           defer: ["todo_write", "read_anchored_text"],
         },
@@ -291,6 +317,8 @@ describe("loadHostConfig", () => {
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
           tools: {
+            use: ["workspace.read", "mcp:demo"],
+            allowed: ["read_file", "grep", "edit_anchored_text"],
             disabled: ["grep"],
             defer: ["edit_anchored_text"],
           },
@@ -301,6 +329,8 @@ describe("loadHostConfig", () => {
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.tools).toEqual({
+        use: ["workspace.read", "mcp:demo"],
+        allowed: ["read_file", "edit_anchored_text"],
         disabled: ["shell", "grep"],
         defer: ["edit_anchored_text"],
       });
@@ -558,7 +588,7 @@ describe("loadHostConfig", () => {
           budget: { maxModelCalls: 12 },
           maxSteps: 30,
           traceLevel: "debug",
-          approvals: { shellSafe: true },
+          approvals: { shellSafe: true, cronMode: "accept_edits" },
         },
         ui: { theme: "dark" },
       });
@@ -574,7 +604,88 @@ describe("loadHostConfig", () => {
       expect(loaded.config.runBudget).toEqual({ maxModelCalls: 12 });
       expect(loaded.config.maxSteps).toBe(30);
       expect(loaded.config.traceLevel).toBe("debug");
-      expect(loaded.config.approvals).toEqual({ shellSafe: true });
+      expect(loaded.config.approvals).toEqual({
+        shellSafe: true,
+        cronMode: "accept_edits",
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads YAML config files from the same user/project candidate layers", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await mkdir(join(xdg, "sparkwright"), { recursive: true });
+      await writeFile(
+        join(xdg, "sparkwright", "config.yaml"),
+        [
+          "identity:",
+          "  model: openai/yaml-model",
+          "  providers:",
+          "    openai:",
+          "      apiKey: sk-yaml",
+          "tools:",
+          "  use: [workspace.read]",
+          "capabilities:",
+          "  agents:",
+          "    maxDepth: 2",
+          "    profiles:",
+          "      - id: reviewer",
+          "        mode: child",
+          "        use: [workspace.read]",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.model).toBe("openai/yaml-model");
+      expect(loaded.config.providers?.openai?.apiKey).toBe("sk-yaml");
+      expect(loaded.config.tools?.use).toEqual(["workspace.read"]);
+      expect(loaded.config.capabilities?.agents?.maxDepth).toBe(2);
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]?.use).toEqual([
+        "workspace.read",
+      ]);
+      expect(
+        loaded.attempted.find((entry) => entry.path.endsWith("config.yaml"))
+          ?.loaded,
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports same-layer config file conflicts and loads the first candidate", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({ model: "openai/json-model" }),
+        "utf8",
+      );
+      await writeFile(
+        join(cwd, ".sparkwright", "config.yaml"),
+        "identity:\n  model: openai/yaml-model\n",
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.model).toBe("openai/json-model");
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "(root)",
+          message: expect.stringContaining("multiple config files found"),
+        }),
+      ]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -618,6 +729,61 @@ describe("loadHostConfig", () => {
           message: expect.stringContaining("unknown field"),
         }),
       ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid approval cronMode values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        run: { approvals: { cronMode: "always" } },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.approvals).toEqual({});
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "approvals.cronMode",
+          message: expect.stringContaining("must be one of"),
+        }),
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid agent selectors and maxDepth values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            maxDepth: -1,
+            profiles: [{ id: "reviewer", use: ["not-a-selector"] }],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.agents?.maxDepth).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.agents.maxDepth",
+            message: "must be a non-negative integer",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.use",
+            message: expect.stringContaining("unknown tool selector"),
+          }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -965,14 +1131,17 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         tools: {
           enabled: ["read_file"],
+          allowed: [false],
           disabled: [false],
           defer: ["read_anchored_text"],
         },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.tools?.allowed).toBeUndefined();
       expect(loaded.config.tools?.disabled).toBeUndefined();
       expect(loaded.config.tools?.defer).toEqual(["read_anchored_text"]);
       expect(loaded.errors.some((e) => e.field === "tools.enabled")).toBe(true);
+      expect(loaded.errors.some((e) => e.field === "tools.allowed")).toBe(true);
       expect(loaded.errors.some((e) => e.field === "tools.disabled")).toBe(
         true,
       );

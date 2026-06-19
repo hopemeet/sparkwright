@@ -20,7 +20,10 @@ import type {
   CapabilityHookActionConfig,
   CapabilityWorkflowHookConfig,
 } from "./config.js";
-import { TracedProcessRunner } from "./traced-process-runner.js";
+import {
+  TracedProcessRunner,
+  inferProcessRuntime,
+} from "./traced-process-runner.js";
 
 export interface CreateConfiguredWorkflowHooksOptions {
   hooks?: CapabilityWorkflowHookConfig[];
@@ -210,7 +213,7 @@ async function runCommandAction(
     runId: input.run.id,
     name: options.hookName,
     kind: "workflow_hook",
-    runtime: "custom",
+    runtime: inferProcessRuntime(action.command),
     command: action.command,
     args: action.args ?? [],
     cwd,

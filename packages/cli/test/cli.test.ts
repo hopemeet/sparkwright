@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import type { RunId } from "@sparkwright/core";
-import { createSkillCreateProposal } from "@sparkwright/host";
+import { createSkillCreateProposal, loadHostConfig } from "@sparkwright/host";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
@@ -154,9 +154,9 @@ describe("runCli", () => {
     );
     expect(report.install.entrypoints.tui).toContain("sparkwright tui");
     expect(report.install.entrypoints.acp).toContain("sparkwright acp");
-    expect(report.config.user).toContain(join("sparkwright", "config.json"));
+    expect(report.config.user).toContain(join("sparkwright", "config.yaml"));
     expect(report.config.project).toBe(
-      join(workspace, ".sparkwright", "config.json"),
+      join(workspace, ".sparkwright", "config.yaml"),
     );
     expect(report.capabilities.skills.map((entry) => entry.layer)).toEqual([
       "builtin",
@@ -1129,7 +1129,7 @@ describe("runCli", () => {
 
   it("init scaffolds a private user config and refuses to overwrite it", async () => {
     const xdg = process.env.XDG_CONFIG_HOME as string;
-    const configPath = join(xdg, "sparkwright", "config.json");
+    const configPath = join(xdg, "sparkwright", "config.yaml");
     const first = createOutputCapture();
 
     const created = await runCli(["init"], {
@@ -1138,14 +1138,13 @@ describe("runCli", () => {
     expect(created.exitCode).toBe(0);
     expect(first.stdoutText()).toContain(configPath);
 
-    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      identity?: {
-        model?: string;
-        providers?: Record<string, { apiKey?: string }>;
-      };
-    };
-    expect(parsed.identity?.model).toBe("openai/gpt-5.4-mini");
-    expect(parsed.identity?.providers?.openai?.apiKey).toBe(
+    const cwd = await mkdtemp(join(tmpdir(), "sw-"));
+    tempDirs.push(cwd);
+    const loaded = await loadHostConfig(cwd, {
+      XDG_CONFIG_HOME: xdg,
+    });
+    expect(loaded.config.model).toBe("openai/gpt-5.4-mini");
+    expect(loaded.config.providers?.openai?.apiKey).toBe(
       "REPLACE_WITH_YOUR_API_KEY",
     );
     if (process.platform !== "win32") {
@@ -1164,7 +1163,7 @@ describe("runCli", () => {
 
   it("init --project scaffolds project config and capability directories", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    const configPath = join(workspace, ".sparkwright", "config.json");
+    const configPath = join(workspace, ".sparkwright", "config.yaml");
     const first = createOutputCapture();
 
     const created = await runCli(["init", "--project"], {
@@ -1177,28 +1176,21 @@ describe("runCli", () => {
     expect(first.stdoutText()).toContain(
       "sparkwright capabilities inspect --workspace . --format text",
     );
-    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
-      policy?: { permissionMode?: string; write?: { maxFiles?: number } };
-      tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
-      capabilities?: {
-        tools?: { disabled?: string[]; defer?: string[]; enabled?: string[] };
-        skills?: {
-          roots?: string[];
-          includeLoaderTool?: boolean;
-          loadSelectedSkills?: boolean;
-          resourceFileLimit?: number;
-        };
-        mcp?: {
-          servers?: unknown[];
-          startup?: string;
-          toolSchemaLoad?: string;
-        };
-      };
-    };
-    expect(parsed.policy?.permissionMode).toBe("default");
-    expect(parsed.policy?.write?.maxFiles).toBe(1);
-    expect(parsed.tools?.disabled).toBeUndefined();
-    expect(parsed.tools?.defer).toEqual([
+    const loaded = await loadHostConfig(workspace, {
+      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+    });
+    expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.write?.maxFiles).toBe(5);
+    expect(loaded.config.tools?.use).toEqual([
+      "workspace.read",
+      "workspace.write",
+      "shell",
+      "planning",
+      "skills",
+    ]);
+    expect(loaded.config.tools?.allowed).toBeUndefined();
+    expect(loaded.config.tools?.disabled).toBeUndefined();
+    expect(loaded.config.tools?.defer).toEqual([
       "todo_write",
       "read_anchored_text",
       "edit_anchored_text",
@@ -1206,15 +1198,14 @@ describe("runCli", () => {
       "create_agent",
       "cron",
     ]);
-    expect(parsed.tools?.enabled).toBeUndefined();
-    expect(parsed.capabilities?.tools).toBeUndefined();
-    expect(parsed.capabilities?.skills?.includeLoaderTool).toBe(true);
-    expect(parsed.capabilities?.skills?.loadSelectedSkills).toBe(false);
-    expect(parsed.capabilities?.skills?.resourceFileLimit).toBe(8);
-    expect(parsed.capabilities?.skills?.roots).toBeUndefined();
-    expect(parsed.capabilities?.mcp?.servers).toEqual([]);
-    expect(parsed.capabilities?.mcp?.startup).toBe("lazy");
-    expect(parsed.capabilities?.mcp?.toolSchemaLoad).toBe("defer");
+    expect(loaded.config.capabilities?.skills?.includeLoaderTool).toBe(true);
+    expect(loaded.config.capabilities?.skills?.loadSelectedSkills).toBe(false);
+    expect(loaded.config.capabilities?.skills?.resourceFileLimit).toBe(8);
+    expect(loaded.config.capabilities?.skills?.roots).toBeUndefined();
+    expect(loaded.config.capabilities?.agents?.maxDepth).toBe(1);
+    expect(loaded.config.capabilities?.mcp?.servers).toEqual([]);
+    expect(loaded.config.capabilities?.mcp?.startup).toBe("lazy");
+    expect(loaded.config.capabilities?.mcp?.toolSchemaLoad).toBe("defer");
     for (const dir of ["skills", "agents", "command"]) {
       expect(
         (await stat(join(workspace, ".sparkwright", dir))).isDirectory(),
@@ -1269,6 +1260,62 @@ describe("runCli", () => {
     );
     expect(goodResult.exitCode).toBe(0);
     expect(good.stdoutText()).toContain("Config OK");
+  });
+
+  it("config validate schema-checks YAML configs and selector errors", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    const configPath = join(workspace, ".sparkwright", "config.yaml");
+    await writeFile(
+      configPath,
+      [
+        "tools:",
+        "  use: [not-a-selector]",
+        "unknownTopLevelField: true",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["config", "validate", "--workspace", workspace, "--format", "json"],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+
+    expect(result.exitCode).toBe(1);
+    const report = JSON.parse(output.stdoutText()) as {
+      ok: boolean;
+      filesLoaded: number;
+      schemaFilesChecked: number;
+      schemaPath?: string;
+      loadErrors: Array<{ file: string; field: string; message: string }>;
+      schemaErrors: Array<{ file: string; field: string; message: string }>;
+      errors: Array<{ file: string; field: string; message: string }>;
+    };
+    expect(report.ok).toBe(false);
+    expect(report.filesLoaded).toBe(1);
+    expect(report.schemaFilesChecked).toBe(1);
+    expect(report.schemaPath).toContain("config.schema.json");
+    expect(report.loadErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: configPath, field: "tools.use" }),
+      ]),
+    );
+    expect(report.schemaErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: configPath,
+          field: "unknownTopLevelField",
+        }),
+      ]),
+    );
+    expect(
+      report.schemaErrors.some((entry) => entry.field === "tools.use[0]"),
+    ).toBe(true);
+    expect(report.errors.length).toBe(
+      report.loadErrors.length + report.schemaErrors.length,
+    );
   });
 
   it("config inspect and explain report effective config without leaking secrets", async () => {
@@ -1333,6 +1380,12 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stderrText()).toContain("No Sparkwright config found yet");
+    expect(output.stderrText()).toContain(
+      join(process.env.XDG_CONFIG_HOME as string, "sparkwright", "config.yaml"),
+    );
+    expect(output.stderrText()).toContain(
+      join(workspace, ".sparkwright", "config.yaml"),
+    );
     expect(output.stderrText()).toContain("sparkwright init");
   });
 
@@ -1357,7 +1410,7 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(1);
     expect(output.stderrText()).toContain(
-      "Usage: sparkwright tools <disable|defer>",
+      "Usage: sparkwright tools <allow|disable|defer>",
     );
     expect(output.stdoutText()).toBe("");
   });
@@ -1379,13 +1432,16 @@ describe("runCli", () => {
     ]);
   });
 
-  it("applies tool config to direct-core diagnostic tools", async () => {
+  it("applies allowed and disabled tool config to direct-core diagnostic tools", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        tools: { disabled: ["grep"] },
+        tools: {
+          allowed: ["read_file", "grep", "apply_patch"],
+          disabled: ["grep"],
+        },
       }),
       "utf8",
     );
@@ -1394,12 +1450,7 @@ describe("runCli", () => {
 
     expect(tools.map((tool) => tool.name)).toEqual([
       "read_file",
-      "glob",
-      "list_dir",
-      "read_anchored_text",
-      "edit_anchored_text",
       "apply_patch",
-      "tool_search",
     ]);
   });
 
@@ -1443,7 +1494,11 @@ describe("runCli", () => {
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
-        tools: { disabled: ["shell"], defer: ["read_anchored_text"] },
+        tools: {
+          allowed: ["read_file", "read_anchored_text"],
+          disabled: ["shell"],
+          defer: ["read_anchored_text"],
+        },
         capabilities: {
           skills: { roots: ["skills"] },
           agents: {
@@ -1474,7 +1529,7 @@ describe("runCli", () => {
 
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain(
-      "tools: disabled=shell; defer=read_anchored_text",
+      "tools: use=(all); allowed=read_file, read_anchored_text; disabled=shell; defer=read_anchored_text",
     );
     expect(textOutput.stdoutText()).toContain(
       "shell sandbox: mode=warn; effective=",
@@ -1501,6 +1556,8 @@ describe("runCli", () => {
     expect(json.exitCode).toBe(0);
     const report = JSON.parse(jsonOutput.stdoutText()) as {
       tools: {
+        use?: string[];
+        allowed?: string[];
         disabled?: string[];
         defer?: string[];
         available: Array<{ name: string; origin?: string }>;
@@ -1538,6 +1595,7 @@ describe("runCli", () => {
       ),
       effective: expect.stringMatching(/^(on|fallback)$/),
     });
+    expect(report.tools.allowed).toEqual(["read_file", "read_anchored_text"]);
     expect(report.tools.disabled).toEqual(["shell"]);
     expect(report.tools.defer).toEqual(["read_anchored_text"]);
     expect(report.tools.available.map((tool) => tool.name)).not.toContain(
@@ -1596,7 +1654,7 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain(
-      "tools: disabled=(none); defer=(none)",
+      "tools: use=(all); allowed=(all); disabled=(none); defer=(none)",
     );
     expect(output.stdoutText()).toContain("runtime tools:");
     expect(output.stdoutText()).toContain("tool: list_dir");
@@ -1722,12 +1780,17 @@ describe("runCli", () => {
         capabilities: {
           skills: { roots: ["./skills"] },
         },
-        tools: { disabled: ["shell"] },
+        tools: {
+          use: ["workspace.read"],
+          allowed: ["read_file"],
+          disabled: ["shell"],
+        },
       }),
       "utf8",
     );
 
     for (const argv of [
+      ["tools", "allow", "apply_patch"],
       ["tools", "disable", "read_file"],
       ["tools", "defer", "todo_write"],
     ]) {
@@ -1744,6 +1807,8 @@ describe("runCli", () => {
         skills?: { roots?: string[] };
       };
       tools?: {
+        use?: string[];
+        allowed?: string[];
         disabled?: string[];
         defer?: string[];
       };
@@ -1751,6 +1816,8 @@ describe("runCli", () => {
     expect(parsed.model).toBe("deterministic/demo");
     expect(parsed.capabilities?.skills?.roots).toEqual(["./skills"]);
     expect(parsed.tools).toEqual({
+      use: ["workspace.read"],
+      allowed: ["read_file", "apply_patch"],
       disabled: ["shell", "read_file"],
       defer: ["todo_write"],
     });
@@ -1758,6 +1825,36 @@ describe("runCli", () => {
       const mode = (await stat(configPath)).mode & 0o777;
       expect(mode).toBe(0o600);
     }
+  });
+
+  it("preserves YAML user tool config when writing tools commands", async () => {
+    const xdg = process.env.XDG_CONFIG_HOME as string;
+    const configPath = join(xdg, "sparkwright", "config.yaml");
+    await mkdir(join(xdg, "sparkwright"), { recursive: true });
+    await writeFile(
+      configPath,
+      [
+        "model: deterministic/demo",
+        "tools:",
+        "  use: [workspace.read]",
+        "  allowed: [read_file]",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(["tools", "allow", "apply_patch"], {
+      io: { stdout: output.stdout, stderr: output.stderr },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(configPath);
+    const contents = await readFile(configPath, "utf8");
+    expect(contents).toContain("apply_patch");
+    await expect(
+      readFile(join(xdg, "sparkwright", "config.json"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("updates workspace tool config when --workspace is explicit", async () => {
@@ -1773,7 +1870,7 @@ describe("runCli", () => {
         capabilities: {
           skills: { roots: ["skills"] },
         },
-        tools: { disabled: ["shell"] },
+        tools: { use: [], allowed: [], disabled: ["shell"], defer: [] },
       }),
       "utf8",
     );
@@ -1782,8 +1879,8 @@ describe("runCli", () => {
     const result = await runCli(
       [
         "tools",
-        "defer",
-        "todo_write",
+        "allow",
+        "read_file",
         "--workspace",
         workspace,
         "--format",
@@ -1803,12 +1900,19 @@ describe("runCli", () => {
       capabilities?: {
         skills?: { roots?: string[] };
       };
-      tools?: { disabled?: string[]; defer?: string[] };
+      tools?: {
+        use?: string[];
+        allowed?: string[];
+        disabled?: string[];
+        defer?: string[];
+      };
     };
     expect(parsed.capabilities?.skills?.roots).toEqual(["skills"]);
     expect(parsed.tools).toEqual({
+      use: [],
+      allowed: ["read_file"],
       disabled: ["shell"],
-      defer: ["todo_write"],
+      defer: [],
     });
   });
 

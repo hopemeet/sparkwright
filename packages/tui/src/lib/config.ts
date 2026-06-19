@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
 import { watch, type FSWatcher } from "node:fs";
 import { dirname } from "node:path";
 import {
   configResolutionOrder,
   loadHostConfig,
   normalizeGroupedConfig,
+  readConfigFileObject,
   type ProviderConfig,
   type ApprovalDefaults,
 } from "@sparkwright/host";
@@ -90,34 +90,6 @@ const KNOWN_KEYS = new Set([
   "approvals",
 ]);
 const VALID_THEMES = ["dark", "light", "mono"];
-
-async function readJson(
-  path: string,
-): Promise<
-  | { kind: "ok"; value: unknown }
-  | { kind: "missing" }
-  | { kind: "error"; message: string }
-> {
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT")
-      return { kind: "missing" };
-    return {
-      kind: "error",
-      message: `read failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-  try {
-    return { kind: "ok", value: JSON.parse(raw) };
-  } catch (err) {
-    return {
-      kind: "error",
-      message: `invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-}
 
 /**
  * Validate only TUI-owned fields. Shared fields (model, providers,
@@ -263,10 +235,22 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   // binding name), so user can override project defaults of their own choice.
   let mergedBindings: Record<string, string | string[] | null> | undefined;
 
-  for (const { path, label } of order) {
-    const r = await readJson(path);
-    if (r.kind !== "ok") continue;
-    const v = validateUiOverlay(r.value, `${label}:${path}`, path);
+  const labelByPath = new Map(order.map((entry) => [entry.path, entry.label]));
+  for (const { path, loaded } of attempted) {
+    if (!loaded) continue;
+    let value: Record<string, unknown>;
+    try {
+      value = (await readConfigFileObject(path)).value;
+    } catch (error) {
+      errors.push({
+        file: path,
+        field: "(root)",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    const label = labelByPath.get(path) ?? "config";
+    const v = validateUiOverlay(value, `${label}:${path}`, path);
     errors.push(...v.errors);
     if (v.config.keybindings) {
       mergedBindings = { ...(mergedBindings ?? {}), ...v.config.keybindings };

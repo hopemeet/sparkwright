@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { RunHandle } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 
@@ -72,6 +73,40 @@ export class DelegateExecutionError extends Error {
     this.code = code;
     this.metadata = metadata;
   }
+}
+
+export function currentSubagentDepth(
+  metadata: Record<string, unknown> | undefined,
+): number {
+  const configured = metadata?.subagentDepth;
+  if (
+    typeof configured === "number" &&
+    Number.isFinite(configured) &&
+    configured >= 0
+  ) {
+    return Math.floor(configured);
+  }
+  return typeof metadata?.parentRunId === "string" ? 1 : 0;
+}
+
+export function assertSubagentDepthAllowed(input: {
+  parent: Pick<RunHandle, "record">;
+  maxDepth?: number;
+  toolName: string;
+}): number {
+  const nextDepth = currentSubagentDepth(input.parent.record.metadata) + 1;
+  if (input.maxDepth !== undefined && nextDepth > input.maxDepth) {
+    throw new DelegateExecutionError(
+      "DELEGATE_EXECUTION_FAILED",
+      `Delegate tool "${input.toolName}" exceeded capabilities.agents.maxDepth (${input.maxDepth}).`,
+      {
+        toolName: input.toolName,
+        maxDepth: input.maxDepth,
+        requestedDepth: nextDepth,
+      },
+    );
+  }
+  return nextDepth;
 }
 
 export function delegateToolName(
