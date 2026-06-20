@@ -31,6 +31,140 @@ describe("ACP event mapping", () => {
     ]);
   });
 
+  it("uses model.completed as a non-streaming fallback only once per routed run", async () => {
+    const updates: unknown[] = [];
+    const session = fakeSession([]);
+    const connection = {
+      async requestPermission() {
+        throw new Error("not used");
+      },
+      async sessionUpdate(params: unknown) {
+        updates.push(params);
+      },
+    };
+
+    await routeHostEventToAcp({
+      session,
+      connection,
+      event: runEvent({
+        id: "stream_1",
+        runId: "run_1",
+        type: "model.stream.chunk",
+        payload: { text: "done" },
+      }),
+    });
+    await routeHostEventToAcp({
+      session,
+      connection,
+      event: runEvent({
+        id: "completed_1",
+        runId: "run_1",
+        type: "model.completed",
+        payload: { message: "done" },
+      }),
+    });
+
+    expect(updates).toEqual([
+      {
+        sessionId: "session_1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "run_1",
+          content: { type: "text", text: "done" },
+        },
+      },
+    ]);
+  });
+
+  it("does not drop a later non-streamed message from the same run", async () => {
+    const updates: unknown[] = [];
+    const session = fakeSession([]);
+    const connection = {
+      async requestPermission() {
+        throw new Error("not used");
+      },
+      async sessionUpdate(params: unknown) {
+        updates.push(params);
+      },
+    };
+
+    await routeHostEventToAcp({
+      session,
+      connection,
+      event: runEvent({
+        id: "stream_1",
+        runId: "run_1",
+        type: "model.stream.chunk",
+        payload: { messageId: "msg_1", text: "first" },
+      }),
+    });
+    await routeHostEventToAcp({
+      session,
+      connection,
+      event: runEvent({
+        id: "completed_2",
+        runId: "run_1",
+        type: "model.completed",
+        payload: { messageId: "msg_2", message: "second" },
+      }),
+    });
+
+    expect(updates).toEqual([
+      {
+        sessionId: "session_1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "msg_1",
+          content: { type: "text", text: "first" },
+        },
+      },
+      {
+        sessionId: "session_1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "msg_2",
+          content: { type: "text", text: "second" },
+        },
+      },
+    ]);
+  });
+
+  it("omits control events from ACP agent text", () => {
+    expect(
+      hostEventToSessionUpdates({
+        envelope: "event",
+        id: "evt_done",
+        kind: "run.completed",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        payload: {
+          runId: "run_1",
+          state: "completed",
+          stopReason: "completed",
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      hostEventToSessionUpdates(
+        runEvent({
+          id: "write_1",
+          runId: "run_1",
+          type: "workspace.write.completed",
+          payload: { path: "README.md" },
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      hostEventToSessionUpdates(
+        runEvent({
+          id: "artifact_1",
+          runId: "run_1",
+          type: "artifact.created",
+          payload: { id: "artifact_1", type: "log" },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("maps tool lifecycle events to ACP tool updates", () => {
     const event: HostEvent = {
       envelope: "event",
@@ -140,6 +274,19 @@ describe("ACP event mapping", () => {
     expect(failed).toEqual([{ approvalId: "approval_1", decision: "denied" }]);
   });
 });
+
+function runEvent(event: Record<string, unknown>): HostEvent {
+  return {
+    envelope: "event",
+    id: "evt_1",
+    kind: "run.event",
+    timestamp: "2026-01-01T00:00:00.000Z",
+    payload: {
+      runId: String(event.runId ?? "run_1"),
+      event,
+    },
+  };
+}
 
 function approvalEvent(): Extract<HostEvent, { kind: "approval.requested" }> {
   return {

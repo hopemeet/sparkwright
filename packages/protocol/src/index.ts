@@ -40,6 +40,63 @@ export function isTraceLevel(value: unknown): value is TraceLevel {
   );
 }
 
+export const INTERNAL_TRANSCRIPT_EVENT_TYPES = [
+  "workflow_hook.started",
+  "workflow_hook.completed",
+  "run.started",
+  "run.created",
+  "run.budget.checked",
+  "run.cancelled",
+  "run.cancel_requested",
+  "run.state_transition.rejected",
+  "context.assembled",
+  "context.cache_break.detected",
+  "context.compaction_requested",
+  "context.compaction.started",
+  "context.compaction.completed",
+  "context.compaction.failed",
+  "skill.indexed",
+  "prompt.built",
+  "model.turn.started",
+  "model.turn.completed",
+  "model.requested",
+  "model.retrying",
+  "model.stream.failed",
+  "model.stream.started",
+  "model.stream.chunk",
+  "model.stream.completed",
+  "tool.batch.completed",
+  "tool.started",
+  "tool.progress",
+  "workspace.write.requested",
+  "artifact.created",
+  "approval.requested",
+  "interaction.requested",
+  "interaction.resolved",
+  "usage.updated",
+] as const;
+
+const INTERNAL_TRANSCRIPT_EVENT_TYPE_SET = new Set<string>(
+  INTERNAL_TRANSCRIPT_EVENT_TYPES,
+);
+
+export function isInternalTranscriptEventType(type: string): boolean {
+  return INTERNAL_TRANSCRIPT_EVENT_TYPE_SET.has(type);
+}
+
+export const LIVE_DEBUG_NOISE_EVENT_TYPES = [
+  "model.stream.chunk",
+  "run.budget.checked",
+] as const;
+
+const LIVE_DEBUG_NOISE_EVENT_TYPE_SET = new Set<string>(
+  LIVE_DEBUG_NOISE_EVENT_TYPES,
+);
+
+export function isLiveDebugNoiseEventType(type: string): boolean {
+  return LIVE_DEBUG_NOISE_EVENT_TYPE_SET.has(type);
+}
+
 // ---------------------------------------------------------------------------
 // Envelope discriminator
 // ---------------------------------------------------------------------------
@@ -340,18 +397,29 @@ export interface CapabilityDelegateToolSummary {
   profileId: string;
   /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
-  protocol: "acp" | "external_command";
+  protocol: "acp" | "external_command" | "in_process";
   risk: "risky";
+  /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
   requiresApproval: boolean;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  approvalRequiredUnderCurrentRun?: boolean;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  approvalReasons?: string[];
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  approvalRunOptions?: {
+    shouldWrite?: boolean;
+  };
   forbidNesting: boolean;
   sideEffects: string[];
   workspaceAccess: "none" | "read_write";
   /** @reserved Public capability-inspection field consumed by permission UIs. */
-  shellAccess: false;
+  shellAccess: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
-  processSpawn: true;
-  command: string;
-  args: string[];
+  processSpawn: boolean;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  gatedByRunWrite?: boolean;
+  command?: string;
+  args?: string[];
   timeoutMs?: number;
   outputLimits?: {
     stdoutBytes?: number;
@@ -403,6 +471,7 @@ export interface CapabilitySnapshot {
   skills: {
     indexed: CapabilitySkillSummary[];
     loaded: CapabilitySkillSummary[];
+    inlineShell?: CapabilitySkillInlineShellSummary;
   };
   mcp: {
     statuses: CapabilityMcpStatus[];
@@ -415,6 +484,15 @@ export interface CapabilitySnapshot {
     sandbox: CapabilityShellSandboxSummary;
   };
   automation?: CapabilityAutomationSummary;
+}
+
+export interface CapabilitySkillInlineShellSummary {
+  enabled: boolean;
+  timeoutMs?: number;
+  maxOutputChars?: number;
+  sandboxMode: string;
+  writePolicy: "disabled" | "no-write";
+  failClosed: boolean;
 }
 
 export interface CapabilityShellSandboxSummary {

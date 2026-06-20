@@ -116,6 +116,7 @@ export function createUsageTracker(
   };
   let estimatedCostSeen = false;
   const costUnavailableReasons: Record<string, number> = {};
+  const USAGE_NOT_REPORTED_REASON = "usage_not_reported";
   let contextTokens = 0;
   const byTool: Record<string, UsageToolStats> = {};
   const byModel: Record<string, UsageModelStats> = {};
@@ -206,7 +207,12 @@ export function createUsageTracker(
           slot.costUsd += usage.costUsd ?? 0;
           recordModelCostStatus(slot, usage);
         }
-      } else if (adapterId) {
+      } else {
+        incrementReason(costUnavailableReasons, USAGE_NOT_REPORTED_REASON);
+        if (!adapterId) {
+          publish();
+          return;
+        }
         const slot = (byModel[adapterId] ??= {
           calls: 0,
           inputTokens: 0,
@@ -215,6 +221,13 @@ export function createUsageTracker(
           costUsd: 0,
         });
         slot.calls += 1;
+        const reasons = (slot.costUnavailableReasons ??= {});
+        incrementReason(reasons, USAGE_NOT_REPORTED_REASON);
+        const fields = costStatusFields(false, slot.costUnavailableReasons);
+        if (fields.costStatus) slot.costStatus = fields.costStatus;
+        if (fields.costUnavailableReasons) {
+          slot.costUnavailableReasons = fields.costUnavailableReasons;
+        }
       }
       publish();
     },

@@ -393,7 +393,15 @@ scanning files or interpreting local config.
         "sourcePath": ".sparkwright/skills/reviewer/SKILL.md"
       }
     ],
-    "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }]
+    "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }],
+    "inlineShell": {
+      "enabled": true,
+      "timeoutMs": 10000,
+      "maxOutputChars": 4000,
+      "sandboxMode": "enforce",
+      "writePolicy": "no-write",
+      "failClosed": true
+    }
   },
   "mcp": { "statuses": [] },
   "agents": {
@@ -405,6 +413,12 @@ scanning files or interpreting local config.
         "protocol": "external_command",
         "risk": "risky",
         "requiresApproval": true,
+        "approvalRequiredUnderCurrentRun": true,
+        "approvalReasons": [
+          "tool.risk:risky",
+          "delegate.requiresApproval:true"
+        ],
+        "approvalRunOptions": { "shouldWrite": false },
         "forbidNesting": true,
         "sideEffects": ["external"],
         "workspaceAccess": "none",
@@ -412,6 +426,22 @@ scanning files or interpreting local config.
         "processSpawn": true,
         "command": "agent-cli",
         "args": ["run", "{{goal}}"]
+      },
+      {
+        "toolName": "delegate_writer",
+        "profileId": "writer",
+        "protocol": "in_process",
+        "risk": "risky",
+        "requiresApproval": false,
+        "approvalRequiredUnderCurrentRun": true,
+        "approvalReasons": ["tool.risk:risky", "gated_by_run_write"],
+        "approvalRunOptions": { "shouldWrite": false },
+        "forbidNesting": true,
+        "sideEffects": ["model", "workspace"],
+        "workspaceAccess": "read_write",
+        "shellAccess": false,
+        "processSpawn": false,
+        "gatedByRunWrite": true
       }
     ]
   }
@@ -421,6 +451,14 @@ scanning files or interpreting local config.
 `workspaceAccess: "none"` means the external delegate is not handed the project
 cwd or `{{workspaceRoot}}`. Use `"read_write"` only for explicitly trusted
 delegates that should inspect or mutate the workspace directly.
+For `in_process` delegates, `workspaceAccess` reports the profile-selected
+potential capability; `gatedByRunWrite: true` means the current run still needs
+workspace writes enabled (for example CLI `--write`) before the delegate can use
+workspace write or shell tools.
+`requiresApproval` is a legacy delegate-config echo. For audit/diagnostics, use
+`approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
+those fields describe the runtime gate under the inspected run options rather
+than promising an unconditional approval boolean.
 
 ---
 

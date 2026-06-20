@@ -170,7 +170,6 @@ async function createMcp(
           name,
           command: commandOrUrl,
           ...(draft.args && draft.args.length > 0 ? { args: draft.args } : {}),
-          cwd: ".",
           enabled: true,
         }
       : {

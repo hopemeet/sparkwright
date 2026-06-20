@@ -1,4 +1,8 @@
-import { createId, assertSafePathSegment } from "@sparkwright/core";
+import {
+  assertSafePathSegment,
+  createId,
+  formatWorkspaceDisplayPath,
+} from "@sparkwright/core";
 import {
   computeSkillPackageHash,
   inspectSkill,
@@ -265,6 +269,7 @@ export async function createSkillCreateProposal(
     const proposalMarkdown = renderCreateProposalMarkdown(
       metadata,
       input.description,
+      input.workspaceRoot,
     );
     const patchDiff = renderCreatePatch(input.name, skillContent);
 
@@ -373,6 +378,7 @@ export async function createSkillUpdateProposal(
     const proposalMarkdown = renderUpdateProposalMarkdown(
       metadata,
       input.description,
+      input.workspaceRoot,
     );
     const patchDiff = renderUpdatePatch(
       input.name,
@@ -1299,6 +1305,7 @@ function renderSkillTemplate(name: string, description: string): string {
 function renderCreateProposalMarkdown(
   metadata: SkillProposalMetadata,
   description: string,
+  workspaceRoot: string,
 ): string {
   return [
     `# Skill Proposal: ${metadata.id}`,
@@ -1306,7 +1313,7 @@ function renderCreateProposalMarkdown(
     `State: ${metadata.state}`,
     `Kind: ${metadata.kind}`,
     `Skill: ${metadata.skillName}`,
-    `Target: ${metadata.targetPath}`,
+    `Target: ${formatWorkspaceDisplayPath(metadata.targetPath, { workspaceRoot })}`,
     "",
     "## Summary",
     "",
@@ -1322,15 +1329,19 @@ function renderCreateProposalMarkdown(
 function renderUpdateProposalMarkdown(
   metadata: SkillProposalMetadata,
   description: string,
+  workspaceRoot: string,
 ): string {
+  const sourcePath = metadata.sourcePath
+    ? formatWorkspaceDisplayPath(metadata.sourcePath, { workspaceRoot })
+    : "unknown";
   return [
     `# Skill Proposal: ${metadata.id}`,
     "",
     `State: ${metadata.state}`,
     `Kind: ${metadata.kind}`,
     `Skill: ${metadata.skillName}`,
-    `Source: ${metadata.sourceLayer ?? "unknown"}:${metadata.sourcePath ?? "unknown"}`,
-    `Target: ${metadata.targetPath}`,
+    `Source: ${metadata.sourceLayer ?? "unknown"}:${sourcePath}`,
+    `Target: ${formatWorkspaceDisplayPath(metadata.targetPath, { workspaceRoot })}`,
     `Base: ${metadata.basePackageHash ?? "none"}`,
     `After: ${metadata.afterPackageHash}`,
     "",

@@ -46,10 +46,21 @@ explicitly enables:
 ```
 
 When enabled, the host expands inline shell while loading `SKILL.md`. Commands
-run with the Skill directory as `cwd`, through the same shell sandbox settings
-used for host-managed processes, and are traced as `extension.process.*` with
-`kind: "skill_script"`. Output replaces the inline snippet after trimming one
-trailing newline and is capped by `maxOutputChars`.
+run with the Skill directory as `cwd`, through a host-owned shell sandbox, and
+are traced as `extension.process.*` with `kind: "skill_script"`. Skill scripts
+are fail-closed and no-write: the host forces sandbox enforcement, disables
+workspace writes, and refuses to fall back to unsandboxed execution if the OS
+sandbox is unavailable. Successful output replaces the inline snippet after
+trimming one trailing newline and is capped by `maxOutputChars`; failures
+replace the snippet with a short marker such as
+`[inline-shell error: PROCESS_FAILED exitCode=1]`, while detailed stderr stays
+in trace output summaries.
+
+`sparkwright capabilities inspect --workspace . --format text` reports the
+effective inline-shell policy (`enabled`, `writePolicy`, `sandbox`,
+`failClosed`, timeout, and output cap). On-demand `skill_load` treats missing
+or denied resources as tool failures and emits `skill.failed`, so CLI/trace
+summaries show degraded or missing Skill context instead of silently continuing.
 
 The `@sparkwright/skills` package does not own process execution. It exposes a
 `preprocess` hook on `loadSkill`, `loadSkills`, and `prepareSkillsForRun`; hosts
@@ -341,13 +352,17 @@ const run = createRun({
 The helper uses progressive loading:
 
 1. Index all discovered Skills by `name`, `description`, version, path, and content hash.
-2. Create one `skill_index` context item listing discovered Skills.
+2. Create one `skill_index` context item listing discovered Skills without host
+   source paths or content hashes in the model-visible body.
 3. Select matching Skills with a deterministic goal matcher.
 4. Load selected Skill bodies into additional context items.
 5. Optionally expose a governed `skill_load` tool for on-demand body loading.
 6. Return metadata for selected Skills so callers can store it on the run.
 
-This keeps Skill behavior outside the core run loop while still making loaded Skills visible to context assembly and trace metadata.
+This keeps Skill behavior outside the core run loop while still making loaded
+Skills visible to context assembly and trace metadata. Loaded Skill context keeps
+absolute source paths in metadata for diagnostics, not in the model-visible
+source projection.
 
 ## Trace And Reproducibility
 

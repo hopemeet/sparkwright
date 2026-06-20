@@ -106,6 +106,11 @@ with `name: "skill-inline-shell"` and `kind: "skill_script"`. These commands
 run during host skill loading, before the run event log may exist; hosts buffer
 their `extension.process.*` events and flush them once the run starts. The
 script still reports only progress JSONL through the host-owned inbox.
+`skill_script` command arguments are redacted in process lifecycle previews to a
+stable hash/byte summary, and `cwd` is rendered relative to the workspace when
+possible. Failed inline shell output is not inserted into the model-facing Skill
+body; the body receives a short marker, while trace terminal events retain
+bounded stdout/stderr previews for diagnostics.
 
 ## skill.indexed
 
@@ -132,11 +137,15 @@ indexed and used.
 
 ```json
 {
+  "toolCallId": "call_01h",
   "source": ".sparkwright/skills/bad/SKILL.md",
   "message": "Skill description must be a non-empty string: ...",
   "phase": "load"
 }
 ```
+
+On-demand loader failures include `toolCallId` when this event is the
+Skill-specific companion to a `tool.failed` result.
 
 ## skill.loaded
 

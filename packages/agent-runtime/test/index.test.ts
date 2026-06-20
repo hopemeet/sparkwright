@@ -455,7 +455,7 @@ describe("spawnSubAgent", () => {
       parent,
       goal: "child task",
       model: childModel,
-      maxSteps: 1,
+      maxSteps: 2,
     });
 
     expect(spawned.run.record.metadata?.parentRunId).toBe(parent.record.id);
@@ -587,6 +587,61 @@ describe("spawnSubAgent", () => {
     expect(spawned.run.getWorkspace()).toBe(workspace);
     await spawned.run.start();
     expect(childCtxHadWorkspace).toBe(true);
+  });
+
+  it("passes an explicit approval resolver into the child run", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    let approvals = 0;
+    const riskyTool = defineTool({
+      name: "risky_child_tool",
+      description: "requires approval",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "risky" },
+      execute() {
+        return "approved";
+      },
+    });
+    let childCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childCalls += 1;
+        if (childCalls === 1) {
+          return {
+            toolCalls: [{ toolName: "risky_child_tool", arguments: {} }],
+          };
+        }
+        return { message: "child done" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child",
+      model: childModel,
+      tools: [riskyTool],
+      maxSteps: 3,
+      approvalResolver: (request) => {
+        approvals += 1;
+        return { approvalId: request.id, decision: "approved" };
+      },
+    });
+
+    const result = await spawned.run.start();
+    expect(result.signal).toBe("completed");
+    expect(approvals).toBe(1);
+    expect(
+      spawned.run.events
+        .all()
+        .some((event) => event.type === "approval.resolved"),
+    ).toBe(true);
   });
 
   it("runs the child without a workspace when explicitly opted out", () => {
@@ -854,7 +909,7 @@ describe("createAgentTool / mountAgentTool", () => {
             return { message: "root entries: README.md, packages/" };
           },
         },
-        maxSteps: 1,
+        maxSteps: 2,
       }),
     });
 
@@ -874,6 +929,52 @@ describe("createAgentTool / mountAgentTool", () => {
       message: "root entries: README.md, packages/",
     });
     expect(childCalls).toBe(1);
+  });
+
+  it("does not cache delegate results completed on the child step limit", async () => {
+    let childCalls = 0;
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const tool = createAgentTool(() => parent, {
+      buildSpawnInput: (input) => ({
+        goal: input.goal,
+        model: {
+          async complete() {
+            childCalls += 1;
+            return { message: "partial child answer" };
+          },
+        },
+        maxSteps: 1,
+      }),
+    });
+
+    const first = await tool.execute(
+      { goal: "inspect the workspace carefully" },
+      { run: parent.record } as never,
+    );
+    const second = await tool.execute(
+      { goal: "carefully inspect this workspace" },
+      { run: parent.record } as never,
+    );
+
+    expect(first).toMatchObject({
+      signal: "completed",
+      stepLimitReached: true,
+      note: expect.stringContaining("possibly truncated"),
+    });
+    expect(second).toMatchObject({
+      signal: "completed",
+      stepLimitReached: true,
+    });
+    expect(second).not.toMatchObject({ alreadyCompleted: true });
+    expect(childCalls).toBe(2);
   });
 
   it("emits subagent.requested → started → completed on the parent", async () => {
@@ -901,7 +1002,7 @@ describe("createAgentTool / mountAgentTool", () => {
       parent,
       goal: "child task",
       model: childModel,
-      maxSteps: 1,
+      maxSteps: 2,
     });
 
     // `requested` must fire synchronously at spawn time — before .start().
@@ -968,6 +1069,116 @@ describe("createAgentTool / mountAgentTool", () => {
         agentProfileId: "dynamic_project_scanner",
       });
     }
+  });
+
+  it("projects multi-agent facts onto every subagent phase", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "child done" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+      maxSteps: 2,
+      childAgentProfile: {
+        id: "reviewer",
+        name: "Reviewer",
+        mode: "child",
+      },
+      metadata: {
+        delegateTool: "delegate_reviewer",
+        entrypoint: "delegate",
+      },
+    });
+    await spawned.run.start();
+
+    for (const type of [
+      "subagent.requested",
+      "subagent.started",
+      "subagent.completed",
+    ]) {
+      const event = parent.events.all().find((e) => e.type === type);
+      expect(event?.metadata, type).toMatchObject({
+        childRunId: spawned.childRunId,
+        parentRunId: parent.record.id,
+        agentId: "reviewer",
+        agentName: "Reviewer",
+        agentProfileId: "reviewer",
+        delegateTool: "delegate_reviewer",
+        entrypoint: "delegate",
+        subagentDepth: 1,
+      });
+    }
+    const completed = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    expect(completed?.payload).toMatchObject({
+      childRunId: spawned.childRunId,
+      stopReason: "final_answer",
+      terminalState: "completed",
+    });
+  });
+
+  it("derives subagent terminal fields from child run completion", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const probe = defineTool({
+      name: "probe",
+      description: "probe",
+      inputSchema: { type: "object", properties: {} },
+      policy: { risk: "safe" },
+      execute() {
+        return "observed";
+      },
+    });
+    let childCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childCalls += 1;
+        if (childCalls === 1) {
+          return { toolCalls: [{ toolName: "probe", arguments: {} }] };
+        }
+        return { message: "partial child answer" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+      tools: [probe],
+      maxSteps: 1,
+    });
+    await spawned.run.start();
+
+    const completed = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    expect(completed?.payload).toMatchObject({
+      childRunId: spawned.childRunId,
+      terminalState: "truncated",
+      stepLimitReached: true,
+      truncated: true,
+    });
   });
 
   it("emits subagent.failed when the child fails", async () => {

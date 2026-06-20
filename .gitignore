@@ -23,20 +23,14 @@ __pycache__/
 *.swp
 
 # Internal docs and dashboards (local-only, not for public repo)
-docs/_internal/
+docs/_internal/*
+!docs/_internal/project-map/
+!docs/_internal/project-map/**
 README.internal.md
 
-# SparkWright local runtime state. The committed project config surface
-# (.sparkwright/config.json and the command/ + agents/ convention dirs) is
-# intentionally NOT ignored so it travels with the repo; only runtime state is.
-# `**/` so nested workspaces (e.g. examples/*/.sparkwright) are covered too.
-**/.sparkwright/sessions/
-**/.sparkwright/runs/
-**/.sparkwright/test-iface-runs/
-**/.sparkwright/tui-history.jsonl
-**/.sparkwright/tui-stash.json
-**/.sparkwright/session-labels.json
-**/.sparkwright/exports/
+# SparkWright project/runtime state
+**/.sparkwright/
+**/.sparkwright-build-stamp.json
 
 # Personal, local-only dev notes (never committed; survives switching tools)
 *.local.md

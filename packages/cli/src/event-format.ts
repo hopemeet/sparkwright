@@ -1,4 +1,58 @@
 import type { SparkwrightEvent } from "@sparkwright/core";
+import { isLiveDebugNoiseEventType } from "@sparkwright/protocol";
+
+export interface LiveEventFormatOptions {
+  verbose?: boolean;
+}
+
+export interface LiveEventFormatter {
+  format(event: SparkwrightEvent): string[];
+  flush(): string[];
+}
+
+export function shouldPrintLiveEvent(
+  event: SparkwrightEvent,
+  options: LiveEventFormatOptions = {},
+): boolean {
+  return Boolean(options.verbose) || !isLiveDebugNoiseEventType(event.type);
+}
+
+export function createLiveEventFormatter(
+  options: LiveEventFormatOptions = {},
+): LiveEventFormatter {
+  const suppressed = new Map<string, number>();
+  let lastSuppressedSequence: number | undefined;
+
+  function flush(): string[] {
+    if (suppressed.size === 0) return [];
+    const total = [...suppressed.values()].reduce(
+      (sum, count) => sum + count,
+      0,
+    );
+    const byType = [...suppressed.entries()]
+      .map(([type, count]) => `${type}=${count}`)
+      .join(" ");
+    suppressed.clear();
+    const sequence =
+      typeof lastSuppressedSequence === "number"
+        ? String(lastSuppressedSequence)
+        : "-";
+    lastSuppressedSequence = undefined;
+    return [`[${sequence}] live.debug.suppressed ${total} event(s): ${byType}`];
+  }
+
+  return {
+    format(event) {
+      if (shouldPrintLiveEvent(event, options)) {
+        return [...flush(), formatEvent(event)];
+      }
+      suppressed.set(event.type, (suppressed.get(event.type) ?? 0) + 1);
+      lastSuppressedSequence = event.sequence;
+      return [];
+    },
+    flush,
+  };
+}
 
 export function formatEvent(event: SparkwrightEvent): string {
   const payload = event.payload;

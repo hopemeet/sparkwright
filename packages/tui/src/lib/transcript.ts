@@ -15,7 +15,7 @@
  * export is lossless without being overwhelming.
  */
 
-import type { RunEvent } from "./event-type.js";
+import { isInternalTranscriptEvent, type RunEvent } from "./event-type.js";
 import {
   formatToolRequestPreview,
   summarizeToolResultForDisplay,
@@ -254,7 +254,7 @@ export function renderTranscript(
         break;
       }
       default:
-        tail.push(ev);
+        if (!isInternalTranscriptEvent(ev.type)) tail.push(ev);
     }
   }
 

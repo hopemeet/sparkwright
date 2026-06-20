@@ -37,6 +37,7 @@ export interface CreateAcpDelegateToolInput {
   requiresApproval?: boolean;
   forbidNesting?: boolean;
   maxDepth?: number;
+  entrypoint?: "acp" | "delegates_run";
   allowReadWriteWorkspaceAccess?: boolean;
 }
 
@@ -98,6 +99,7 @@ export function createAcpDelegateTool(
     args: config.args,
     timeoutMs: config.timeoutMs,
     workspaceAccess,
+    allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
   });
 
   return defineTool({
@@ -158,8 +160,13 @@ export function createAcpDelegateTool(
         goal: parsed.goal,
       };
       const meta = {
+        agentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        delegateTool: input.toolName,
+        childRunId,
+        parentRunId: parent.record.id,
+        entrypoint: input.entrypoint ?? "acp",
         protocol: "acp",
         workspaceAccess,
         subagentDepth,

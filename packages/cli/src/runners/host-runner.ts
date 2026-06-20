@@ -20,7 +20,7 @@ import {
   shouldCheckDocumentedCommands,
   summarizeDocumentedCommandIssues,
 } from "../documented-command-check.js";
-import { formatEvent } from "../event-format.js";
+import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
 import {
@@ -54,6 +54,7 @@ export interface HostRunInput {
   confidentialPaths?: readonly string[];
   traceLevel: TraceLevel;
   input?: RunInputPayload;
+  verbose?: boolean;
 }
 
 export interface HostResumeInput {
@@ -72,6 +73,7 @@ export interface HostResumeInput {
   traceLevel: TraceLevel;
   fromTrace: boolean;
   force: boolean;
+  verbose?: boolean;
 }
 
 export interface HostRunResult {
@@ -127,6 +129,7 @@ async function runHostLifecycle(
   let documentedCommandIssueCount = 0;
   const eventSummary = createCliRunEventSummary();
   const forwardHostLogs = shouldForwardHostLogs(env);
+  const liveEvents = createLiveEventFormatter({ verbose: input.verbose });
 
   let tracePath = tracePathForSession({ sessionRootDir, sessionId });
 
@@ -163,7 +166,7 @@ async function runHostLifecycle(
       client.on("run.event", (msg) => {
         const event = msg.payload.event as SparkwrightEvent;
         updateCliRunEventSummary(eventSummary, event);
-        writeLine(io.stdout, formatEvent(event));
+        for (const line of liveEvents.format(event)) writeLine(io.stdout, line);
       });
 
       client.on("approval.requested", (msg) => {
@@ -201,6 +204,7 @@ async function runHostLifecycle(
       });
 
       client.on("run.completed", (msg) => {
+        for (const line of liveEvents.flush()) writeLine(io.stdout, line);
         runId = msg.payload.runId;
         runState = msg.payload.state;
         stopReason = msg.payload.stopReason;
@@ -226,6 +230,7 @@ async function runHostLifecycle(
       });
 
       client.on("run.failed", (msg) => {
+        for (const line of liveEvents.flush()) writeLine(io.stdout, line);
         runId = msg.payload.runId || runId;
         failedMessage = msg.payload.error.message;
         runState = "failed";
@@ -237,6 +242,7 @@ async function runHostLifecycle(
 
       client.on("disconnect", (reason) => {
         if (!runState && !failedMessage) {
+          for (const line of liveEvents.flush()) writeLine(io.stdout, line);
           failedMessage = reason
             ? `host disconnected: ${reason}`
             : "host disconnected";
@@ -388,6 +394,8 @@ async function runHostLifecycle(
         skipped: eventSummary.writeSkipped,
         denied: eventSummary.writeDenied,
         capabilityMutations: eventSummary.capabilityMutationCompleted,
+        mcpWorkspaceCwdServers: eventSummary.mcpWorkspaceCwdServers,
+        subagentWrites: eventSummary.subagentWriteCompleted,
         toolReportedChanges: eventSummary.toolReportedChanges,
       }),
     );

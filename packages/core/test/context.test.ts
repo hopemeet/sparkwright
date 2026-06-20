@@ -512,6 +512,92 @@ describe("DefaultPromptBuilder", () => {
     expect(selected?.content).not.toContain("spark-tester");
   });
 
+  it("projects model-visible context sources without host absolute paths", async () => {
+    const builder = new DefaultPromptBuilder();
+    const skillPath = "/var/folders/test/.sparkwright/skills/inline/SKILL.md";
+    const filePath = "/Users/alice/project/private-notes.md";
+    const fileUri = "file:///Users/alice/project/secret.txt";
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 1,
+      tools: [],
+      context: [
+        {
+          id: createContextItemId(),
+          type: "system",
+          source: { kind: "skill" },
+          content: "Skill body",
+          metadata: {
+            layer: "resident",
+            skillName: "inline-skill",
+            skillSourcePath: skillPath,
+          },
+        },
+        {
+          id: createContextItemId(),
+          type: "file",
+          source: { kind: "file", path: filePath },
+          content: "File body",
+          metadata: {},
+        },
+        {
+          id: createContextItemId(),
+          type: "summary",
+          source: { kind: "artifact", uri: fileUri },
+          content: "Artifact body",
+          metadata: {},
+        },
+      ],
+    });
+
+    const selected = messages.find(
+      (message) => message.metadata?.sectionName === "selected_context",
+    );
+    expect(selected?.content).toContain("source: skill:inline-skill");
+    expect(selected?.content).toContain("source: file");
+    expect(selected?.content).toContain("source: artifact");
+    expect(selected?.content).not.toContain(skillPath);
+    expect(selected?.content).not.toContain(filePath);
+    expect(selected?.content).not.toContain(fileUri);
+    expect(selected?.content).not.toMatch(
+      /(?:\/var\/folders|\/Users\/alice|file:\/\/\/Users\/alice|[A-Za-z]:\\)/,
+    );
+  });
+
+  it("keeps skill source provenance in omission diagnostics", () => {
+    const assembler = new DefaultContextAssembler({
+      budget: { maxItems: 0 },
+    });
+    const skillPath = "/var/folders/test/.sparkwright/skills/inline/SKILL.md";
+    const result = assembler.assemble({
+      run: createRunRecord(),
+      step: 1,
+      goal: "test",
+      events: [],
+      priorContext: [
+        {
+          id: createContextItemId(),
+          type: "system",
+          source: { kind: "skill" },
+          content: "Skill body",
+          metadata: {
+            layer: "resident",
+            skillName: "inline-skill",
+            skillSourcePath: skillPath,
+          },
+        },
+      ],
+    });
+
+    expect(result.items).toEqual([]);
+    expect(result.omitted).toEqual([
+      expect.objectContaining({
+        source: skillPath,
+        reason: "max_items_exceeded",
+      }),
+    ]);
+  });
+
   it("renders the run goal only when explicitly enabled", async () => {
     const builder = new DefaultPromptBuilder({ includeGoal: true });
     const messages = await builder.build({
@@ -1199,6 +1285,76 @@ describe("DefaultObservationFormatter", () => {
       nextOffset: 1,
     });
     expect(item.metadata).not.toHaveProperty("filePath");
+  });
+
+  it("extracts spawn_agent child finality metadata for compaction", () => {
+    const formatter = new DefaultObservationFormatter();
+
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_spawn" as never,
+        status: "completed",
+        output: {
+          childRunId: "run_child_partial",
+          role: "trace auditor",
+          signal: "completed",
+          stopReason: "final_answer",
+          stepLimitReached: true,
+          truncated: true,
+          message: "partial result",
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.metadata).toMatchObject({
+      toolName: "spawn_agent",
+      status: "completed",
+      childRunId: "run_child_partial",
+      role: "trace auditor",
+      stepLimitReached: true,
+      truncated: true,
+      finality: "partial",
+    });
+  });
+
+  it("extracts spawn_agent child finality metadata from failures", () => {
+    const formatter = new DefaultObservationFormatter();
+
+    const item = formatter.format({
+      toolName: "spawn_agent",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_spawn_failed" as never,
+        status: "failed",
+        error: {
+          code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+          message: "child failed",
+          metadata: {
+            childRunId: "run_child_failed",
+            role: "counter",
+            signal: "failed",
+            stopReason: "tool_doom_loop",
+            stepLimitReached: false,
+            truncated: false,
+            finality: "partial",
+          },
+        },
+        artifacts: [],
+      },
+    });
+
+    expect(item.metadata).toMatchObject({
+      toolName: "spawn_agent",
+      status: "failed",
+      childRunId: "run_child_failed",
+      role: "counter",
+      stepLimitReached: false,
+      truncated: false,
+      finality: "partial",
+    });
   });
 });
 

@@ -128,4 +128,109 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("draft proposal first");
     expect(text).toContain("apply only when requested");
   });
+
+  it("displays indexed Skill source paths through workspace-relative projection", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          tools: [],
+          skills: {
+            indexed: [
+              {
+                name: "demo-skill",
+                description: "Demo skill.",
+                sourcePath: "/tmp/work/.sparkwright/skills/demo-skill/SKILL.md",
+              },
+            ],
+            loaded: [],
+          },
+          mcp: { statuses: [] },
+          agents: { profiles: [], delegateTools: [] },
+        }}
+        loading={false}
+        view="skills"
+        workspaceRoot="/tmp/work"
+        onClose={() => {}}
+      />,
+      24,
+    );
+
+    expect(text).toContain(".sparkwright/skills/demo-skill/SKILL.md");
+    expect(text).not.toContain("/tmp/work/.sparkwright");
+  });
+
+  it("renders configured in-process delegates from the snapshot", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          tools: [
+            {
+              name: "delegate_writer",
+              origin: "in_process:writer",
+              risk: "risky",
+            },
+          ],
+          skills: { indexed: [], loaded: [] },
+          mcp: { statuses: [] },
+          agents: {
+            profiles: [{ id: "writer", name: "Writer", mode: "child" }],
+            delegateTools: [
+              {
+                toolName: "delegate_writer",
+                profileId: "writer",
+                profileName: "Writer",
+                protocol: "in_process",
+                risk: "risky",
+                requiresApproval: false,
+                forbidNesting: true,
+                sideEffects: ["model", "workspace"],
+                workspaceAccess: "read_write",
+                shellAccess: false,
+                processSpawn: false,
+                gatedByRunWrite: true,
+              },
+            ],
+          },
+        }}
+        loading={false}
+        view="agents"
+        onClose={() => {}}
+      />,
+      24,
+    );
+
+    expect(text).toContain("1 delegates");
+    expect(text).toContain("delegate_writer");
+    expect(text).toContain("in_process");
+    expect(text).toContain("workspace read_write");
+    expect(text).toContain("requires --write");
+  });
+
+  it("does not count the built-in primary main profile as a configured agent", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          tools: [],
+          skills: { indexed: [], loaded: [] },
+          mcp: { statuses: [] },
+          agents: {
+            profiles: [
+              { id: "main", name: "SparkWright", mode: "primary" },
+              { id: "writer", name: "Writer", mode: "child" },
+            ],
+            delegateTools: [],
+          },
+        }}
+        loading={false}
+        view="agents"
+        onClose={() => {}}
+      />,
+      24,
+    );
+
+    expect(text).toContain("Available now: 0 tools, 0 loaded Skills, 1 agents");
+    expect(text).toContain("agents (1 / 0 delegates)");
+    expect(text).toContain("Writer");
+    expect(text).not.toContain("SparkWright");
+  });
 });

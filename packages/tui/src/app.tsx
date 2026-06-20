@@ -85,6 +85,7 @@ import {
   type TuiConfigFile,
   type ValidationError,
 } from "./lib/config.js";
+import { formatWorkspaceDisplayPath } from "./lib/path-display.js";
 
 export interface CliOverrides {
   workspaceRoot?: string;
@@ -645,7 +646,10 @@ function AppReady(
         variant: "success",
         title: "created",
         message: result.path
-          ? `${result.message} · ${result.path}`
+          ? `${result.message} · ${formatWorkspaceDisplayPath(result.path, {
+              workspaceRoot: resolved.workspaceRoot,
+              maxCols: 72,
+            })}`
           : result.message,
       });
       const snapshot = await controller.inspectCapabilities();
@@ -911,7 +915,13 @@ function AppReady(
         toasts.push({
           variant: "success",
           title: "skill learn",
-          message: `${result.mode} -> ${result.path}`,
+          message: `${result.mode} -> ${formatWorkspaceDisplayPath(
+            result.path,
+            {
+              workspaceRoot: resolved.workspaceRoot,
+              maxCols: 72,
+            },
+          )}`,
         });
         void reloadConfig(true);
       })

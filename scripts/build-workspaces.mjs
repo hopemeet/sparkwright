@@ -1,4 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -38,6 +44,7 @@ for (const workspace of ordered) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+  writeBuildStamp(workspace);
 }
 
 function visit(workspace, stack) {
@@ -89,6 +96,24 @@ function discoverWorkspaceDirs(patterns) {
 
 function readPackage(dir) {
   return JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+}
+
+function writeBuildStamp(workspace) {
+  const dist = join(root, workspace.dir, "dist");
+  if (!existsSync(dist)) return;
+  writeFileSync(
+    join(root, workspace.dir, ".sparkwright-build-stamp.json"),
+    `${JSON.stringify(
+      {
+        workspace: workspace.packageJson.name,
+        dir: workspace.dir,
+        builtAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  rmSync(join(dist, ".sparkwright-build-stamp.json"), { force: true });
 }
 
 function npmCommand() {

@@ -210,4 +210,24 @@ describe("renderTranscript", () => {
     expect(md).toContain("<details><summary>Raw events (1)</summary>");
     expect(md).toContain("[1] weird.event");
   });
+
+  it("does not collect internal run machinery into the raw list", () => {
+    const events: RunEvent[] = [
+      { type: "run.budget.checked", sequence: 1, payload: { x: 1 } },
+      {
+        type: "workflow_hook.started",
+        sequence: 2,
+        payload: { hookName: "h" },
+      },
+      { type: "usage.updated", sequence: 3, payload: { tokens: 1 } },
+    ];
+    const md = renderTranscript(
+      { sessionId: "s", workspaceRoot: "/x" },
+      events,
+    );
+    expect(md).not.toContain("Raw events");
+    expect(md).not.toContain("run.budget.checked");
+    expect(md).not.toContain("workflow_hook.started");
+    expect(md).not.toContain("usage.updated");
+  });
 });

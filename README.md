@@ -284,6 +284,10 @@ Every CLI and TUI run writes a JSONL trace under:
 <workspace>/.sparkwright/sessions/<session-id>/trace.jsonl
 ```
 
+Per-run directories under `agents/<agent-id>/runs/<run-id>/` store run state
+and include `trace-pointer.json`, which points back to the session and agent
+trace files.
+
 Useful diagnostics:
 
 ```bash

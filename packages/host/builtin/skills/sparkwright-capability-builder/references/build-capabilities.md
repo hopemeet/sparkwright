@@ -94,10 +94,9 @@ Project config example:
       "servers": [
         {
           "type": "stdio",
-          "name": "workspace",
+          "name": "search",
           "command": "node",
-          "args": ["./tools/workspace-mcp.js"],
-          "cwd": ".",
+          "args": ["/absolute/path/to/search-mcp.js"],
           "enabled": true
         }
       ],
@@ -115,6 +114,9 @@ Project config example:
 Rules:
 
 - Keep credentials out of project config.
+- Omit `cwd` by default. Stdio MCP servers without `cwd` run from a neutral
+  temporary directory; set `cwd` explicitly only for trusted servers that need
+  project access.
 - Set conservative policy for tools that can mutate workspace state, reach
   network services, or touch external systems.
 - Use `capabilities inspect` after editing to confirm the server appears.

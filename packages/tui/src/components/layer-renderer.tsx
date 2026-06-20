@@ -129,6 +129,7 @@ export function LayerRenderer(props: {
           snapshot={props.capabilitySnapshot}
           loading={props.loadingCapabilities}
           view={capabilityViewFromPayload(props.entry.payload)}
+          workspaceRoot={props.resolved.workspaceRoot}
           onClose={props.onCloseTop}
         />
       );
@@ -162,6 +163,7 @@ export function LayerRenderer(props: {
         <SkillReviewDialog
           review={props.skillReviewSnapshot}
           loading={props.loadingSkillReview}
+          workspaceRoot={props.resolved.workspaceRoot}
           onApply={props.onApplySkillReviewProposal}
           onReject={props.onRejectSkillReviewProposal}
           onCancel={props.onCloseTop}

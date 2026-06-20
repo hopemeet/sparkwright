@@ -53,6 +53,7 @@ export interface CreateExternalCommandDelegateToolInput {
   requiresApproval?: boolean;
   forbidNesting?: boolean;
   maxDepth?: number;
+  entrypoint?: "external_command" | "delegates_run";
   allowReadWriteWorkspaceAccess?: boolean;
   sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
   sandboxRuntime?: ShellSandboxRuntime;
@@ -145,6 +146,7 @@ export function createExternalCommandDelegateTool(
     args: config.args,
     timeoutMs: config.timeoutMs,
     workspaceAccess,
+    allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
     outputLimits: {
       stdoutBytes: config.maxStdoutBytes ?? config.maxOutputBytes,
       stderrBytes: config.maxStderrBytes ?? config.maxOutputBytes,
@@ -209,8 +211,13 @@ export function createExternalCommandDelegateTool(
         goal: parsed.goal,
       };
       const meta = {
+        agentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        delegateTool: input.toolName,
+        childRunId,
+        parentRunId: parent.record.id,
+        entrypoint: input.entrypoint ?? "external_command",
         protocol: "external_command",
         workspaceAccess,
         subagentDepth,
@@ -223,6 +230,21 @@ export function createExternalCommandDelegateTool(
           toolName: input.toolName,
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
+        if (workspaceAccess === "read_write") {
+          parent.events.emit(
+            "workspace.write.untracked_access_granted",
+            {
+              childRunId,
+              parentRunId: parent.record.id,
+              toolName: input.toolName,
+              agentProfileId: input.profile.id,
+              protocol: "external_command",
+              marker: "untracked-write-capable",
+              access: "granted",
+            },
+            meta,
+          );
+        }
         const result = await runExternalCommand({
           config,
           workspaceRoot: input.workspaceRoot,

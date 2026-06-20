@@ -31,14 +31,17 @@ export {
   catalogEntryOrigin,
   catalogToolDefinitions,
   createCliDiagnosticToolCatalog,
+  createConfiguredDelegateChildToolCatalog,
   createMainHostToolCatalog,
   createReadOnlyChildToolCatalog,
+  resolveConfiguredToolAllowlist,
 } from "./tool-catalog.js";
 export type {
   HostToolCatalogEntry,
   HostToolCatalogSource,
 } from "./tool-catalog.js";
 export {
+  DISCOVERY_TOOL_NAME,
   TOOL_USE_SELECTORS,
   WORKSPACE_READ_TOOL_NAMES,
   WORKSPACE_WRITE_TOOL_NAMES,
@@ -47,6 +50,7 @@ export {
   intersectToolUseSelectors,
   isToolUseSelector,
   resolveSelectorAllowlist,
+  shouldAppendDiscoveryTool,
 } from "./tool-selectors.js";
 export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
@@ -105,6 +109,11 @@ export type {
   SkillDoctorSeverity,
   SkillDoctorStatus,
 } from "./skill-doctor.js";
+export type { WorkspaceDisplayPathOptions } from "@sparkwright/core";
+export {
+  formatWorkspaceDisplayPath,
+  middleEllipsisPath,
+} from "@sparkwright/core";
 export {
   applySkillProposal,
   createSkillCreateProposal,

@@ -118,6 +118,9 @@ describe("ACP round trip", () => {
     const runJson = JSON.parse(
       await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
     ) as { metadata?: Record<string, unknown> };
+    const tracePointer = JSON.parse(
+      await readFile(join(runsDir, runIds[0]!, "trace-pointer.json"), "utf8"),
+    ) as Record<string, unknown>;
     expect(runJson.metadata).toMatchObject({
       source: "acp",
       traceLevel: "debug",
@@ -127,6 +130,13 @@ describe("ACP round trip", () => {
     });
     expect(runJson.metadata?.capabilitySnapshot).toMatchObject({
       tools: expect.any(Number),
+    });
+    expect(tracePointer).toMatchObject({
+      schemaVersion: "trace-pointer.v1",
+      sessionId: session.sessionId,
+      agentId: "main",
+      tracePath: "../../../../trace.jsonl",
+      agentTracePath: "../../trace.jsonl",
     });
 
     agentConnection.signal.throwIfAborted?.();

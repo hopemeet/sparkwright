@@ -66,8 +66,13 @@ const header: TranscriptHeaderInfo = {
   sessionId: "s1",
 };
 
-function ev(type: string, sequence: number, payload?: unknown): RunEvent {
-  return { type, sequence, id: String(sequence), payload };
+function ev(
+  type: string,
+  sequence: number,
+  payload?: unknown,
+  metadata?: Record<string, unknown>,
+): RunEvent {
+  return { type, sequence, id: String(sequence), payload, metadata };
 }
 
 function stream(events: RunEvent[]): React.ReactElement {
@@ -349,6 +354,77 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("last command: npm test passed");
   });
 
+  it("renders subagent lifecycle as a depth-aware tree", async () => {
+    const events = [
+      ev(
+        "subagent.requested",
+        1,
+        {
+          goal: "audit docs",
+          childRunId: "run_child_1234567890",
+          parentRunId: "run_parent",
+        },
+        {
+          agentName: "reviewer",
+          agentId: "reviewer",
+          delegateTool: "delegate_review",
+          entrypoint: "delegate",
+          subagentDepth: 1,
+          childRunId: "run_child_1234567890",
+          parentRunId: "run_parent",
+        },
+      ),
+      ev(
+        "subagent.completed",
+        2,
+        {
+          terminalState: "step_limit",
+          stepLimitReached: true,
+          childRunId: "run_child_1234567890",
+          parentRunId: "run_parent",
+        },
+        {
+          agentName: "reviewer",
+          agentId: "reviewer",
+          delegateTool: "delegate_review",
+          entrypoint: "delegate",
+          subagentDepth: 1,
+          childRunId: "run_child_1234567890",
+          parentRunId: "run_parent",
+        },
+      ),
+      ev(
+        "subagent.requested",
+        3,
+        {
+          goal: "nested check",
+          childRunId: "run_nested",
+          parentRunId: "run_child_1234567890",
+        },
+        {
+          agentName: "nested",
+          entrypoint: "spawn_agent",
+          subagentDepth: 2,
+          childRunId: "run_nested",
+          parentRunId: "run_child_1234567890",
+        },
+      ),
+    ];
+
+    const text = await renderToText(stream(events));
+
+    expect(text).toContain("└─ reviewer requested");
+    expect(text).toContain("depth 1");
+    expect(text).toContain("via delegate_review");
+    expect(text).toContain("audit docs");
+    expect(text).toContain("reviewer completed · step_limit");
+    expect(text).toContain("└─ nested requested");
+    expect(text).toContain("depth 2");
+    expect(text).toContain("spawn_agent");
+    expect(text).not.toContain("subagent");
+    expect(text).not.toContain('"terminalState"');
+  });
+
   it("suppresses internal cancel/state-machine events but keeps the cancel card", async () => {
     const events = [
       ev("run.cancelled", 1, {}),
@@ -363,6 +439,19 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain("state_transition");
     // but the user-facing cancel card from run.completed is still shown
     expect(text).toContain("run cancelled");
+  });
+
+  it("suppresses internal run budget checks", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.budget.checked", 1, {
+          requested: { modelCalls: 1 },
+          remaining: { modelCalls: 4 },
+        }),
+      ]),
+    );
+    expect(text).not.toContain("run.budget.checked");
+    expect(text).not.toContain("modelCalls");
   });
 
   it("suppresses successful workflow hook machinery", async () => {

@@ -135,4 +135,30 @@ describe("inspectSkill", () => {
       "markdown_remote_secret",
     );
   });
+
+  it("flags inline shell and gates mutating inline shell", () => {
+    const passive: SkillManifest = {
+      name: "probe",
+      description: "Probe skill.",
+      instructions: "Version: !`node -v`",
+    };
+    const passiveDecision = inspectSkill(passive, { trust: "agent-created" });
+    expect(passiveDecision.findings.map((f) => f.ruleId)).toContain(
+      "inline_shell_present",
+    );
+    expect(passiveDecision.kind).toBe("allow");
+
+    const mutating: SkillManifest = {
+      name: "mutating",
+      description: "Mutating skill.",
+      instructions: 'Write marker: !`node -e \'fs.writeFileSync("x","y")\'`',
+    };
+    const mutatingDecision = inspectSkill(mutating, {
+      trust: "agent-created",
+    });
+    expect(mutatingDecision.kind).toBe("ask");
+    expect(mutatingDecision.findings.map((f) => f.ruleId)).toContain(
+      "inline_shell_mutation",
+    );
+  });
 });

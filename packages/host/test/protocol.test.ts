@@ -137,6 +137,28 @@ async function rmWhenReady(path: string, attempts = 10): Promise<void> {
   throw lastError;
 }
 
+async function readFileWhenReady(
+  path: string,
+  contains: string,
+  timeoutMs = 12000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const content = await readFile(path, "utf8");
+      if (content.includes(contains)) return content;
+    } catch {
+      // The session run store may still be flushing the child trace.
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for ${path} to contain "${contains}"`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 describe("host protocol", () => {
   it("rejects requests before handshake", async () => {
     const pair = createConnectionPair();
@@ -1159,6 +1181,22 @@ describe("host protocol", () => {
               { id: "main", mode: "primary" },
               { id: "reviewer", name: "Reviewer", mode: "child" },
             ],
+            delegateTools: [
+              {
+                toolName: "delegate_reviewer",
+                profileId: "reviewer",
+                profileName: "Reviewer",
+                protocol: "in_process",
+                risk: "risky",
+                requiresApproval: false,
+                forbidNesting: true,
+                sideEffects: ["model", "workspace"],
+                workspaceAccess: "read_write",
+                shellAccess: false,
+                processSpawn: false,
+                gatedByRunWrite: true,
+              },
+            ],
           },
         },
       });
@@ -1333,6 +1371,404 @@ describe("host protocol", () => {
         message: "Auto-approved by test.",
         autoApproved: true,
       });
+    } finally {
+      pair.close();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("lets configured in-process delegates write through the parent approval path", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-delegate-write-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "delegate_writer",
+            arguments: { goal: "Patch README.md from the writer delegate." },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: "apply_patch",
+            arguments: {
+              path: "README.md",
+              reason: "delegate write regression",
+              patch: [
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1 +1,3 @@",
+                " # Demo",
+                "+",
+                "+Written by configured delegate.",
+                "",
+              ].join("\n"),
+            },
+          },
+        ],
+      },
+      { message: "child patched README.md" },
+      { message: "parent observed delegate result" },
+    ]);
+
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              profiles: [
+                { id: "main", mode: "primary" },
+                {
+                  id: "writer",
+                  name: "Writer",
+                  mode: "child",
+                  prompt: "Apply the requested workspace patch.",
+                  use: ["workspace.write"],
+                  allowedTools: ["apply_patch"],
+                  maxSteps: 3,
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "writer",
+                  toolName: "delegate_writer",
+                },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "start",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "delegate a README write",
+          model: "scripted",
+          shouldWrite: true,
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
+
+      const approval = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "approval.requested",
+      );
+      if (
+        approval.envelope !== "event" ||
+        approval.kind !== "approval.requested"
+      ) {
+        throw new Error("approval request was not emitted");
+      }
+      pair.clientSend({
+        envelope: "request",
+        id: "approve",
+        kind: "approval.resolve",
+        timestamp: TIMESTAMP,
+        payload: {
+          approvalId: approval.payload.approvalId,
+          decision: "approved",
+          message: "Approved delegate write.",
+          autoApproved: true,
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "approve" && m.ok,
+      );
+      const terminal = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+      expect(terminal).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+      });
+      await expect(
+        readFile(join(workspace, "README.md"), "utf8"),
+      ).resolves.toBe("# Demo\n\nWritten by configured delegate.\n");
+
+      const events = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      // The delegate's write is surfaced to the parent by rolling up the child
+      // run's own `workspace.write.completed` events onto `subagent.completed`,
+      // not by a parent-side filesystem snapshot.
+      const subagentCompleted = events.find(
+        (event) => event.type === "subagent.completed",
+      );
+      expect(subagentCompleted?.payload).toMatchObject({ workspaceWrites: 1 });
+      expect(subagentCompleted?.metadata).toMatchObject({
+        agentId: "writer",
+        agentProfileId: "writer",
+        delegateTool: "delegate_writer",
+        entrypoint: "delegate",
+        subagentDepth: 1,
+      });
+    } finally {
+      pair.close();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("emits subagentDepth metadata for dynamic spawn_agent children", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-dynamic-spawn-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "spawn_agent",
+            arguments: {
+              goal: "Read README.md.",
+              role: "reader",
+              prompt: "Read only.",
+              allowedTools: ["read_file"],
+              maxSteps: 2,
+            },
+          },
+        ],
+      },
+      { message: "child done" },
+      { message: "parent observed child" },
+    ]);
+
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "start",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "spawn a reader",
+          model: "scripted",
+          sessionId: "session_dynamic_spawn",
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const events = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      const completed = events.find(
+        (event) => event.type === "subagent.completed",
+      );
+      expect(completed?.metadata).toMatchObject({
+        agentId: "dynamic_reader",
+        agentProfileId: "dynamic_reader",
+        delegateTool: "spawn_agent",
+        entrypoint: "spawn_agent",
+        subagentDepth: 1,
+      });
+      expect(completed?.payload).toMatchObject({
+        terminalState: "completed",
+      });
+    } finally {
+      pair.close();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("lets configured in-process delegates run shell through the parent approval path", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-delegate-shell-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "delegate_runner",
+            arguments: { goal: "Run a tiny shell command." },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: "shell",
+            arguments: { command: "printf child-shell" },
+          },
+        ],
+      },
+      { message: "child ran shell" },
+      { message: "parent observed shell delegate" },
+    ]);
+
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          shell: { sandbox: { mode: "off" } },
+          capabilities: {
+            agents: {
+              profiles: [
+                { id: "main", mode: "primary" },
+                {
+                  id: "runner",
+                  name: "Runner",
+                  mode: "child",
+                  prompt: "Run the requested shell command.",
+                  use: ["shell"],
+                  allowedTools: ["shell"],
+                  maxSteps: 4,
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "runner",
+                  toolName: "delegate_runner",
+                },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "start",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "delegate a shell command",
+          model: "scripted",
+          sessionId: "session_delegate_shell",
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "start");
+
+      const approval = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "approval.requested",
+      );
+      if (
+        approval.envelope !== "event" ||
+        approval.kind !== "approval.requested"
+      ) {
+        throw new Error("approval request was not emitted");
+      }
+      expect(approval.payload).toMatchObject({
+        details: {
+          toolName: "shell",
+          arguments: { command: "printf child-shell" },
+        },
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "approve",
+        kind: "approval.resolve",
+        timestamp: TIMESTAMP,
+        payload: {
+          approvalId: approval.payload.approvalId,
+          decision: "approved",
+          message: "Approved delegate shell.",
+          autoApproved: true,
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "approve" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const childTrace = await readFileWhenReady(
+        join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          "session_delegate_shell",
+          "agents",
+          "runner",
+          "trace.jsonl",
+        ),
+        "child-shell",
+      );
+      expect(childTrace).toContain('"toolName":"shell"');
+      expect(childTrace).toContain("child-shell");
     } finally {
       pair.close();
       if (previousScript === undefined) {

@@ -309,10 +309,15 @@ export class DefaultObservationFormatter implements ObservationFormatter {
           metadata: input.result.error.metadata,
         }
       : undefined;
-    const extractedMetadata = extractObservationMetadata(
-      input.toolName,
-      input.result.output,
-    );
+    const extractedMetadata = {
+      ...extractObservationMetadata(input.toolName, input.result.output),
+      ...(input.toolName === "spawn_agent"
+        ? extractObservationMetadata(
+            input.toolName,
+            input.result.error?.metadata,
+          )
+        : {}),
+    };
 
     return {
       id: createContextItemId(),
@@ -369,6 +374,29 @@ function extractObservationMetadata(
   const nextOffset = output["nextOffset"];
   if (typeof nextOffset === "number" && Number.isFinite(nextOffset)) {
     metadata.nextOffset = nextOffset;
+  }
+
+  if (toolName === "spawn_agent") {
+    const childRunId = firstString(output, ["childRunId"]);
+    if (childRunId) metadata.childRunId = childRunId;
+
+    const role = firstString(output, ["role", "agentName"]);
+    if (role) metadata.role = role;
+
+    const stepLimitReached = output["stepLimitReached"];
+    if (typeof stepLimitReached === "boolean") {
+      metadata.stepLimitReached = stepLimitReached;
+    }
+
+    const finality = output["finality"];
+    if (typeof finality === "string" && finality.length > 0) {
+      metadata.finality = finality;
+    } else {
+      metadata.finality =
+        stepLimitReached === true || metadata.truncated === true
+          ? "partial"
+          : "complete";
+    }
   }
 
   return metadata;
@@ -1499,7 +1527,17 @@ function stabilityForContextItem(item: ContextItem): ContextStability {
 }
 
 function describeContextItem(item: ContextItem): string {
-  return item.source?.path ?? item.source?.uri ?? `${item.type}:${item.id}`;
+  const skillSourcePath = promptMetadataString(
+    item.metadata,
+    "skillSourcePath",
+  );
+  const skillName = promptMetadataString(item.metadata, "skillName");
+  return (
+    item.source?.path ??
+    skillSourcePath ??
+    item.source?.uri ??
+    (skillName ? `skill:${skillName}` : `${item.type}:${item.id}`)
+  );
 }
 
 function eagerTools(tools: ToolDescriptor[]): ToolDescriptor[] {
@@ -1669,13 +1707,39 @@ function formatContextItems(items: ContextItem[]): string {
       [
         `Context ${index + 1}:`,
         `type: ${item.type}`,
-        `source: ${item.source?.path ?? item.source?.uri ?? item.source?.kind ?? "unknown"}`,
+        `source: ${describeContextSourceForModel(item)}`,
         `layer: ${String(item.metadata.layer ?? layerForContextItem(item))}`,
         "content:",
         item.content,
       ].join("\n"),
     ),
   ].join("\n\n");
+}
+
+function describeContextSourceForModel(item: ContextItem): string {
+  const kind = item.source?.kind;
+  if (kind === "skill") {
+    const skillName = promptMetadataString(item.metadata, "skillName");
+    return skillName ? `skill:${skillName}` : "skill";
+  }
+  if (kind === "skill_index") return "skill_index";
+
+  const path = item.source?.path;
+  if (path && !isLikelyHostAbsoluteLocator(path)) return path;
+
+  const uri = item.source?.uri;
+  if (uri && !isLikelyHostAbsoluteLocator(uri)) return uri;
+
+  return kind ?? item.type;
+}
+
+function isLikelyHostAbsoluteLocator(value: string): boolean {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("\\\\") ||
+    value.startsWith("file:/") ||
+    /^[A-Za-z]:[\\/]/.test(value)
+  );
 }
 
 function summarizeArtifactRef(artifact: Artifact): {

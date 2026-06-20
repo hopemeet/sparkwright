@@ -5,7 +5,7 @@ import type { RunHandle } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 
-export type DelegateProtocol = "acp" | "external_command";
+export type DelegateProtocol = "acp" | "external_command" | "in_process";
 export type DelegateWorkspaceAccess = "none" | "read_write";
 export type DelegateFailureCode =
   | "DELEGATE_APPROVAL_DENIED"
@@ -23,16 +23,31 @@ export interface DelegateCapabilityDescriptor {
   profileName?: string;
   protocol: DelegateProtocol;
   risk: "risky";
+  /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
   requiresApproval: boolean;
+  approvalRequiredUnderCurrentRun: boolean;
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  approvalReasons: string[];
+  /** @reserved Public capability-inspection field consumed by permission UIs. */
+  approvalRunOptions?: {
+    shouldWrite?: boolean;
+  };
   forbidNesting: boolean;
   sideEffects: string[];
   workspaceAccess: DelegateWorkspaceAccess;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
-  shellAccess: false;
+  shellAccess: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
-  processSpawn: true;
-  command: string;
-  args: string[];
+  processSpawn: boolean;
+  /**
+   * True when the descriptor advertises profile-selected write/shell capability
+   * that still requires the parent run to opt into workspace writes.
+   *
+   * @reserved Public capability-inspection field consumed by permission UIs.
+   */
+  gatedByRunWrite?: boolean;
+  command?: string;
+  args?: string[];
   timeoutMs?: number;
   outputLimits?: {
     stdoutBytes?: number;
@@ -120,13 +135,18 @@ export function delegateToolName(
 export function describeDelegateCapability(input: {
   delegate: CapabilityDelegateToolConfig;
   profile: AgentProfile;
-  protocol: DelegateProtocol;
+  protocol: Exclude<DelegateProtocol, "in_process">;
   command: string;
   args?: string[];
   timeoutMs?: number;
   workspaceAccess?: DelegateWorkspaceAccess;
+  allowReadWriteWorkspaceAccess?: boolean;
   outputLimits?: DelegateCapabilityDescriptor["outputLimits"];
 }): DelegateCapabilityDescriptor {
+  const approval = effectiveDelegateApprovalFacts({
+    configuredRequiresApproval: input.delegate.requiresApproval,
+    runWriteEnabled: input.allowReadWriteWorkspaceAccess,
+  });
   return {
     toolName: delegateToolName(input.delegate),
     profileId: input.profile.id,
@@ -134,6 +154,7 @@ export function describeDelegateCapability(input: {
     protocol: input.protocol,
     risk: "risky",
     requiresApproval: input.delegate.requiresApproval ?? true,
+    ...approval,
     forbidNesting: input.delegate.forbidNesting ?? true,
     sideEffects: ["external"],
     workspaceAccess: input.workspaceAccess ?? "none",
@@ -144,6 +165,69 @@ export function describeDelegateCapability(input: {
     timeoutMs: input.timeoutMs,
     outputLimits: input.outputLimits,
   };
+}
+
+export function describeInProcessDelegateCapability(input: {
+  delegate: CapabilityDelegateToolConfig;
+  profile: AgentProfile;
+  workspaceAccess: DelegateWorkspaceAccess;
+  shellAccess: boolean;
+  gatedByRunWrite?: boolean;
+  allowReadWriteWorkspaceAccess?: boolean;
+}): DelegateCapabilityDescriptor {
+  const approval = effectiveDelegateApprovalFacts({
+    configuredRequiresApproval: input.delegate.requiresApproval,
+    runWriteEnabled: input.allowReadWriteWorkspaceAccess,
+    gatedByRunWrite: input.gatedByRunWrite,
+  });
+  return {
+    toolName: delegateToolName(input.delegate),
+    profileId: input.profile.id,
+    profileName: input.profile.name,
+    protocol: "in_process",
+    risk: "risky",
+    requiresApproval: input.delegate.requiresApproval === true,
+    ...approval,
+    forbidNesting: input.delegate.forbidNesting ?? true,
+    sideEffects: [
+      "model",
+      ...(input.workspaceAccess === "read_write" ? ["workspace"] : []),
+      ...(input.shellAccess ? ["shell"] : []),
+    ],
+    workspaceAccess: input.workspaceAccess,
+    shellAccess: input.shellAccess,
+    processSpawn: false,
+    gatedByRunWrite: input.gatedByRunWrite,
+  };
+}
+
+function effectiveDelegateApprovalFacts(input: {
+  configuredRequiresApproval?: boolean;
+  runWriteEnabled?: boolean;
+  gatedByRunWrite?: boolean;
+}): Pick<
+  DelegateCapabilityDescriptor,
+  "approvalRequiredUnderCurrentRun" | "approvalReasons" | "approvalRunOptions"
+> {
+  const approvalReasons = ["tool.risk:risky"];
+  if (input.configuredRequiresApproval === true) {
+    approvalReasons.push("delegate.requiresApproval:true");
+  } else if (input.configuredRequiresApproval === false) {
+    approvalReasons.push("runtime.risk_gate_overrides_delegate_config:false");
+  }
+  if (input.gatedByRunWrite) {
+    approvalReasons.push("gated_by_run_write");
+  }
+  const facts: Pick<
+    DelegateCapabilityDescriptor,
+    "approvalRequiredUnderCurrentRun" | "approvalReasons"
+  > = {
+    approvalRequiredUnderCurrentRun: true,
+    approvalReasons,
+  };
+  return input.runWriteEnabled === undefined
+    ? facts
+    : { ...facts, approvalRunOptions: { shouldWrite: input.runWriteEnabled } };
 }
 
 export function describeExternalDelegateCapability(input: {

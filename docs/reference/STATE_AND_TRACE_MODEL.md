@@ -153,11 +153,15 @@ Default file layout for session-scoped run traces:
   transcript.jsonl
   agents/<agent-id>/trace.jsonl
   agents/<agent-id>/transcript.jsonl
+  agents/<agent-id>/runs/<run-id>/trace-pointer.json
   agents/<agent-id>/runs/<run-id>/run.json
   agents/<agent-id>/runs/<run-id>/result.json
   artifacts/
   blobs/
 ```
+
+Session-scoped run directories hold per-run state. `trace-pointer.json` points
+back to the session and agent trace files that contain the run's events.
 
 ### 4. Runtime Live State
 
@@ -268,7 +272,9 @@ sparkwright session resume <session-id> "next goal" --workspace <repo>
 `trace report` is the human-oriented diagnostic layer over the same raw trace:
 it highlights verdict, efficiency, failure recovery, safety posture, repeated
 reads, and cost-reporting gaps without replacing `summary`, `timeline`, or
-`verify`.
+`verify`. Public `summary.errorCount` remains a raw event count for analytics;
+report verdicts derive their high-severity runtime-error findings from
+reportable failures after tool-outcome recovery and companion-event correlation.
 
 Host clients can request the same inspection bundle with `session.inspect`,
 which returns trace summary, consistency report, and timeline phases in one

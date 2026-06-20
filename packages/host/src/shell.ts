@@ -1,14 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { TaskManager } from "@sparkwright/agent-runtime";
 import { createBufferedEmitter, openSpan } from "@sparkwright/core";
 import {
@@ -39,23 +29,18 @@ import type {
 } from "@sparkwright/core";
 import type { ShellToolInput, ShellToolOutput } from "@sparkwright/shell-tool";
 import { TracedProcessRunner } from "./traced-process-runner.js";
+import {
+  diffWorkspaceSnapshots,
+  isManagedCapabilityPath,
+  rollbackWorkspaceSnapshot,
+  snapshotWorkspace,
+  type WorkspaceMutationChange,
+  type WorkspaceRollbackResult,
+  type WorkspaceSnapshot,
+} from "./workspace-snapshot.js";
 
 const PROMOTED_SHELL_KIND = "shell.promoted";
 const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
-const SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES = 2 * 1024 * 1024;
-const SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES = 25 * 1024 * 1024;
-const AUDIT_EXCLUDED_DIRS = new Set([
-  ".git",
-  "node_modules",
-  "__pycache__",
-  ".pytest_cache",
-]);
-const AUDIT_EXCLUDED_PATHS = new Set([".sparkwright/sessions"]);
-const MANAGED_CAPABILITY_PREFIXES = [
-  ".sparkwright/skills/",
-  ".sparkwright/agents/",
-  ".sparkwright/command/",
-];
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -656,25 +641,6 @@ function errorCodeFromCause(cause: unknown): string {
   return "TASK_RUNNER_FAILED";
 }
 
-interface WorkspaceSnapshotEntry {
-  hash: string;
-  content?: Buffer;
-}
-
-type WorkspaceSnapshot = Map<string, WorkspaceSnapshotEntry>;
-
-interface WorkspaceMutationChange {
-  path: string;
-  kind: "created" | "modified" | "deleted";
-}
-
-interface WorkspaceRollbackResult {
-  restored: string[];
-  removed: string[];
-  failed: Array<{ path: string; error: string }>;
-  incomplete: string[];
-}
-
 class UntrackedWorkspaceMutationError extends Error {
   readonly code = "UNTRACKED_WORKSPACE_MUTATION";
   readonly metadata: Record<string, unknown>;
@@ -696,125 +662,4 @@ class UntrackedWorkspaceMutationError extends Error {
     this.name = "UntrackedWorkspaceMutationError";
     this.metadata = { changes, rollback };
   }
-}
-
-async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
-  const snapshot: WorkspaceSnapshot = new Map();
-  let capturedBytes = 0;
-
-  async function visit(relativeDir: string): Promise<void> {
-    const absoluteDir = relativeDir ? join(root, relativeDir) : root;
-    const entries = await readdir(absoluteDir, { withFileTypes: true }).catch(
-      () => [],
-    );
-
-    for (const entry of entries) {
-      const relativePath = relativeDir
-        ? `${relativeDir}/${entry.name}`
-        : entry.name;
-      if (entry.isDirectory()) {
-        if (shouldSkipAuditDirectory(relativePath, entry.name)) continue;
-        await visit(relativePath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-
-      const absolutePath = join(root, relativePath);
-      const stat = await lstat(absolutePath).catch(() => undefined);
-      if (!stat?.isFile()) continue;
-      const content = await readFile(absolutePath).catch(() => undefined);
-      if (content === undefined) continue;
-
-      const canCapture =
-        content.byteLength <= SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES &&
-        capturedBytes + content.byteLength <=
-          SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES;
-      if (canCapture) capturedBytes += content.byteLength;
-      snapshot.set(relativePath, {
-        hash: hashBuffer(content),
-        ...(canCapture ? { content } : {}),
-      });
-    }
-  }
-
-  await visit("");
-  return snapshot;
-}
-
-function shouldSkipAuditDirectory(relativePath: string, name: string): boolean {
-  return (
-    AUDIT_EXCLUDED_DIRS.has(name) || AUDIT_EXCLUDED_PATHS.has(relativePath)
-  );
-}
-
-function isManagedCapabilityPath(path: string): boolean {
-  return MANAGED_CAPABILITY_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-function diffWorkspaceSnapshots(
-  before: WorkspaceSnapshot,
-  after: WorkspaceSnapshot,
-): WorkspaceMutationChange[] {
-  const changes: WorkspaceMutationChange[] = [];
-  const paths = new Set([...before.keys(), ...after.keys()]);
-  for (const path of [...paths].sort()) {
-    const prior = before.get(path);
-    const next = after.get(path);
-    if (!prior && next) changes.push({ path, kind: "created" });
-    else if (prior && !next) changes.push({ path, kind: "deleted" });
-    else if (prior && next && prior.hash !== next.hash) {
-      changes.push({ path, kind: "modified" });
-    }
-  }
-  return changes;
-}
-
-async function rollbackWorkspaceSnapshot(
-  root: string,
-  before: WorkspaceSnapshot,
-  after: WorkspaceSnapshot,
-): Promise<WorkspaceRollbackResult> {
-  const restored: string[] = [];
-  const removed: string[] = [];
-  const failed: WorkspaceRollbackResult["failed"] = [];
-  const incomplete: string[] = [];
-  const paths = new Set([...before.keys(), ...after.keys()]);
-
-  for (const path of [...paths].sort()) {
-    const prior = before.get(path);
-    const next = after.get(path);
-    if (!prior && next) {
-      try {
-        await rm(join(root, path), { force: true });
-        removed.push(path);
-      } catch (error) {
-        failed.push({ path, error: formatError(error) });
-      }
-      continue;
-    }
-    if (!prior) continue;
-    if (next && next.hash === prior.hash) continue;
-    if (!prior.content) {
-      incomplete.push(path);
-      continue;
-    }
-    try {
-      const absolutePath = join(root, path);
-      await mkdir(dirname(absolutePath), { recursive: true });
-      await writeFile(absolutePath, prior.content);
-      restored.push(path);
-    } catch (error) {
-      failed.push({ path, error: formatError(error) });
-    }
-  }
-
-  return { restored, removed, failed, incomplete };
-}
-
-function hashBuffer(buffer: Buffer): string {
-  return createHash("sha256").update(buffer).digest("hex");
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

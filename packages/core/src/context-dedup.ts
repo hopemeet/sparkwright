@@ -321,7 +321,49 @@ function defaultOneLineRender(item: ContextItem): string {
     typeof meta["status"] === "string" ? ` status=${meta["status"]}` : "";
   const lineCount =
     item.content.length === 0 ? 0 : item.content.split("\n").length;
-  return `[${toolName}]${status}${exitCode} ${item.content.length} chars, ${lineCount} lines (collapsed)`;
+  const toolDetails =
+    toolName === "spawn_agent" ? renderSpawnAgentOneLineDetails(meta) : "";
+  return `[${toolName}]${status}${exitCode}${toolDetails} ${item.content.length} chars, ${lineCount} lines (collapsed)`;
+}
+
+function renderSpawnAgentOneLineDetails(meta: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const role = metadataString(meta, "role");
+  if (role) parts.push(`role=${compactOneLineValue(role, 48)}`);
+
+  const childRunId = metadataString(meta, "childRunId");
+  if (childRunId) parts.push(`child=${compactOneLineValue(childRunId, 72)}`);
+
+  const finality = metadataString(meta, "finality");
+  if (finality) parts.push(`finality=${compactOneLineValue(finality, 24)}`);
+
+  const stepLimitReached = meta["stepLimitReached"] === true;
+  const truncated = meta["truncated"] === true;
+  if (stepLimitReached || truncated || finality === "partial") {
+    const reasons = [
+      stepLimitReached ? "stepLimit" : undefined,
+      truncated ? "truncated" : undefined,
+    ].filter((value): value is string => typeof value === "string");
+    parts.push(
+      `partial=true${reasons.length > 0 ? `(${reasons.join("+")})` : ""}`,
+    );
+  }
+
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
+}
+
+function metadataString(
+  meta: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = meta[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function compactOneLineValue(value: string, maxChars: number): string {
+  const compacted = value.trim().replace(/\s+/g, "_");
+  if (compacted.length <= maxChars) return compacted;
+  return `${compacted.slice(0, Math.max(0, maxChars - 1))}~`;
 }
 
 // ---------------------------------------------------------------------------

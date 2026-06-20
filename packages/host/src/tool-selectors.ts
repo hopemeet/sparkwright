@@ -27,8 +27,17 @@ export const TOOL_USE_SELECTORS = [
   "tasks",
   "cron",
   "mcp",
-  "core.discovery",
 ] as const;
+
+/**
+ * `tool_search` is derived infrastructure, not a user-authorized tool. It is
+ * appended only when the final tool set still contains deferred tools (so the
+ * model can load their schemas) and its descriptor source lists only
+ * already-filtered tools — so it is exempt from selector/allow filtering. There
+ * is therefore no selector that maps to it; discovery is decided structurally
+ * by {@link shouldAppendDiscoveryTool}.
+ */
+export const DISCOVERY_TOOL_NAME = "tool_search";
 
 export const WORKSPACE_READ_TOOL_NAMES = [
   "read_file",
@@ -39,6 +48,7 @@ export const WORKSPACE_READ_TOOL_NAMES = [
 ] as const;
 
 export const WORKSPACE_WRITE_TOOL_NAMES = [
+  "write_file",
   "edit_anchored_text",
   "apply_patch",
 ] as const;
@@ -87,26 +97,31 @@ export function resolveSelectorAllowlist(
   if (selectors === undefined) return undefined;
 
   const selected = new Set<string>();
-  let selectedHasDeferredTool = false;
   for (const selector of selectors) {
     for (const entry of entries) {
       if (entryMatchesSelector(entry, selector)) {
-        selected.add(entry.definition.name);
-        selectedHasDeferredTool =
-          selectedHasDeferredTool || entry.definition.deferLoading === true;
-      }
-    }
-  }
-
-  if (selectedHasDeferredTool) {
-    for (const entry of entries) {
-      if (entry.source === "core" && entry.definition.name === "tool_search") {
         selected.add(entry.definition.name);
       }
     }
   }
 
   return [...selected];
+}
+
+/**
+ * Decide whether the discovery tool (`tool_search`) should be appended to a
+ * filtered tool set. This is the single owner of that rule, shared by the host
+ * catalog and the CLI capability inspector so both paths stay consistent: it is
+ * derived from the presence of a deferred tool in the *already-filtered* set and
+ * is never subject to `allowed`/selector filtering. An explicit `tools.disabled`
+ * entry is the only way to opt out of discovery.
+ */
+export function shouldAppendDiscoveryTool(input: {
+  hasDeferredTool: boolean;
+  disabled?: readonly string[];
+}): boolean {
+  if (!input.hasDeferredTool) return false;
+  return !(input.disabled?.includes(DISCOVERY_TOOL_NAME) ?? false);
 }
 
 export function assertCodingToolsCoveredByWorkspaceSelectors(
@@ -159,8 +174,6 @@ function entryMatchesSelector(
       return entry.source === "cron";
     case "mcp":
       return entry.source === "mcp";
-    case "core.discovery":
-      return entry.source === "core";
     default:
       return matchesMcpServerSelector(entry, selector);
   }

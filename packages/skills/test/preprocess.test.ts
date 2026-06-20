@@ -29,9 +29,7 @@ describe("preprocessSkillContent", () => {
     const out = preprocessSkillContent("!`exit 1; printf nope`", {
       inlineShell: true,
     });
-    // empty stdout + nonzero exit -> we get either "" or stderr marker; just
-    // assert preprocessing did not blow up.
-    expect(typeof out).toBe("string");
+    expect(out).toBe("[inline-shell error: PROCESS_FAILED exitCode=1]");
   });
 
   it("routes async inline shell through an injected runner", async () => {

@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import {
   createArtifactId,
   openSpan,
@@ -66,6 +66,7 @@ export interface TracedProcessInput {
   command: string;
   args?: readonly string[];
   cwd: string;
+  cwdBase?: string;
   env?: Record<string, string | undefined>;
   stdin?: string;
   timeoutMs?: number;
@@ -102,6 +103,7 @@ export interface TracedStreamingProcessInput {
   command?: string;
   args?: readonly string[];
   cwd?: string;
+  cwdBase?: string;
   streaming: ShellStreamingResult;
   startedAt?: string | number;
   initialStdout?: string;
@@ -971,6 +973,7 @@ function processBase(
     command?: string;
     args?: readonly string[];
     cwd?: string;
+    cwdBase?: string;
   },
   invocationId: string,
 ): ProcessInvocationBase {
@@ -980,9 +983,30 @@ function processBase(
     kind: input.kind,
     runtime: input.runtime ?? "custom",
     ...(input.command ? { commandPreview: input.command } : {}),
-    argsPreview: [...(input.args ?? [])],
-    ...(input.cwd ? { cwd: input.cwd } : {}),
+    argsPreview:
+      input.kind === "skill_script"
+        ? summarizeSkillScriptArgs(input.args ?? [])
+        : [...(input.args ?? [])],
+    ...(input.cwd ? { cwd: displayCwd(input.cwd, input.cwdBase) } : {}),
   };
+}
+
+function summarizeSkillScriptArgs(args: readonly string[]): string[] {
+  const text = args.join("\0");
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+  return [
+    `<skill_script args sha256:${hash} bytes:${Buffer.byteLength(text, "utf8")}>`,
+  ];
+}
+
+function displayCwd(cwd: string, base: string | undefined): string {
+  if (!base) return cwd;
+  const resolvedBase = resolve(base);
+  const resolvedCwd = resolve(cwd);
+  const rel = relative(resolvedBase, resolvedCwd);
+  if (!rel) return ".";
+  if (rel === ".." || rel.startsWith(`..${sep}`)) return cwd;
+  return rel;
 }
 
 function processStartedAtMs(startedAt: string | number | undefined): number {

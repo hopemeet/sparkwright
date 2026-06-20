@@ -611,6 +611,36 @@ describe("mcp-adapter", () => {
     });
   });
 
+  it("does not inherit the caller workspace cwd when stdio cwd is omitted", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-mcp-cwd-"));
+    const previousCwd = process.cwd();
+    let prepared: Awaited<ReturnType<typeof prepareMcpServer>> | undefined;
+    try {
+      process.chdir(workspace);
+      prepared = await prepareMcpServer(
+        mcpEchoServerConfig("neutral", {
+          toolRegistrations: [
+            "server.registerTool('cwd', { description: 'Return cwd.', inputSchema: {} }, async () => ({ content: [{ type: 'text', text: process.cwd() }] }));",
+          ],
+        }),
+      );
+      expect(prepared.status).toEqual({ status: "connected" });
+      const toolName = prepared.toolNameMap.find(
+        (entry) => entry.mcpToolName === "cwd",
+      )?.toolName;
+      const tool = prepared.tools.find((entry) => entry.name === toolName);
+      expect(tool).toBeDefined();
+      const result = (await tool!.execute({}, {} as never)) as {
+        content?: Array<{ text?: string }>;
+      };
+      expect(result.content?.[0]?.text).not.toBe(workspace);
+      expect(result.content?.[0]?.text).toContain("sparkwright-mcp-neutral-");
+    } finally {
+      await prepared?.close();
+      process.chdir(previousCwd);
+    }
+  });
+
   it("defers MCP stdio startup until a lazy MCP tool is executed", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-mcp-lazy-"));
     const markerPath = join(root, "started.txt");
@@ -1098,7 +1128,11 @@ function unavailableRuntime(): ShellSandboxRuntime {
 
 function mcpEchoServerConfig(
   name: string,
-  options: { prelude?: string; cwd?: string } = {},
+  options: {
+    prelude?: string;
+    cwd?: string;
+    toolRegistrations?: string[];
+  } = {},
 ) {
   const require = createRequire(import.meta.url);
   const script = [
@@ -1108,6 +1142,7 @@ function mcpEchoServerConfig(
     `import { z } from ${JSON.stringify(pathToFileURL(require.resolve("zod")).href)};`,
     "const server = new McpServer({ name: 'mcp-adapter-test', version: '0.0.1' });",
     "server.registerTool('echo', { description: 'Echo text.', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }] }));",
+    ...(options.toolRegistrations ?? []),
     "await server.connect(new StdioServerTransport());",
   ].join("\n");
   return {

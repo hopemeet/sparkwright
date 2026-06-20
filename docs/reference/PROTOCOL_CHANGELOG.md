@@ -12,6 +12,25 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — `CapabilityDelegateToolSummary` may
+  include optional `gatedByRunWrite`. Hosts use it when an in-process delegate
+  advertises profile-selected workspace write or shell capability that still
+  requires the parent run to enable workspace writes. Migration: none; clients
+  should treat the field as optional.
+
+- `host-message.schema.json`: additive — `CapabilitySnapshot.skills` may include
+  `inlineShell`, a path-free summary of the effective Skill inline-shell policy
+  (`enabled`, timeout/output caps, sandbox mode, write policy, and fail-closed
+  status). Migration: none; clients should treat the field as optional.
+
+- Trace/tool behavior: `skill_load` now reports missing, denied, or missing
+  resource loads as structured `tool.failed` results with `SKILL_LOAD_FAILED`
+  and emits `skill.failed` with the original `toolCallId`. Trace reports use
+  that correlation to avoid double-counting recovered companion failures as
+  high-severity trace errors. Migration: consumers that previously inspected
+  successful `skill_load` outputs for `resource_not_found` should also handle
+  `tool.failed`.
+
 - `config.schema.json`: additive — new optional
   `capabilities.skills.inlineShell` config surface. When `enabled: true`, host
   skill loading may expand `` !`cmd` `` snippets through a host-injected runner
@@ -24,6 +43,13 @@ Conventions:
   Skill proposal package. Migration: none; consumers may render it as
   capability/package mutation evidence and keep workspace-write handling
   unchanged.
+
+- `event.schema.json`: `external.side_effect.completed` was not adopted as a
+  public event. MCP stdio servers now default to a neutral temporary cwd when
+  `cwd` is omitted; configure an explicit `cwd` for servers that intentionally
+  need project files. Consumers should rely on normal `tool.*` events plus
+  managed `workspace.write.*` events rather than filesystem side-effect
+  forensics.
 
 - `config.schema.json`: additive — new optional
   `capabilities.verification` config surface. Hosts can define named

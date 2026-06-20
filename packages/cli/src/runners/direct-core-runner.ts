@@ -37,7 +37,7 @@ import {
   shouldCheckDocumentedCommands,
   summarizeDocumentedCommandIssues,
 } from "../documented-command-check.js";
-import { formatEvent } from "../event-format.js";
+import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
 import {
@@ -69,6 +69,7 @@ export interface DirectCoreRunInput {
   modelName?: string;
   sessionId: string;
   contextItems?: ContextItem[];
+  verbose?: boolean;
 }
 
 export interface DirectCoreRunResult {
@@ -204,11 +205,12 @@ export async function startDirectCoreRun(
 
   const eventSummary = createCliRunEventSummary();
   let documentedCommandIssueCount = 0;
+  const liveEvents = createLiveEventFormatter({ verbose: parsed.verbose });
 
   function recordEvent(event: SparkwrightEvent) {
     trace.append(event);
     updateCliRunEventSummary(eventSummary, event);
-    writeLine(io.stdout, formatEvent(event));
+    for (const line of liveEvents.format(event)) writeLine(io.stdout, line);
   }
 
   for (const event of run.events.all()) {
@@ -219,6 +221,7 @@ export async function startDirectCoreRun(
 
   try {
     const result = await run.start();
+    for (const line of liveEvents.flush()) writeLine(io.stdout, line);
     const runFailureSummary = summarizeRunFailure(eventSummary, {
       state: result.state,
       stopReason: result.stopReason,
@@ -275,6 +278,8 @@ export async function startDirectCoreRun(
         skipped: eventSummary.writeSkipped,
         denied: eventSummary.writeDenied,
         capabilityMutations: eventSummary.capabilityMutationCompleted,
+        mcpWorkspaceCwdServers: eventSummary.mcpWorkspaceCwdServers,
+        subagentWrites: eventSummary.subagentWriteCompleted,
         toolReportedChanges: eventSummary.toolReportedChanges,
       }),
     );
@@ -434,11 +439,11 @@ function createDeterministicModel(input: {
                   },
                 }
               : {
-                  toolName: "apply_patch",
+                  toolName: "write_file",
                   arguments: {
                     path: input.targetPath,
-                    patch: `@@ -0,0 +1,3 @@\n+## ${heading}\n+\n+${body}\n`,
-                    reason: `Append ${heading}`,
+                    content: `## ${heading}\n\n${body}\n`,
+                    reason: `Create ${heading}`,
                   },
                 },
           ],

@@ -166,7 +166,7 @@ function collectTraceStats(
       continue;
     }
     if (event.type === "skill.failed") {
-      collectSkillFailed(byName, event);
+      collectSkillFailed(byName, run, event);
       continue;
     }
     if (event.type === "skill.loaded") {
@@ -223,14 +223,20 @@ function collectSkillIndexed(
 
 function collectSkillFailed(
   byName: Map<string, MutableSkillStatsEntry>,
+  run: RunStats,
   event: SparkwrightEvent,
 ): void {
   if (!isRecord(event.payload)) return;
   const source = stringValue(event.payload.source);
-  const name = source ? inferSkillNameFromSource(source) : undefined;
+  const name =
+    stringValue(event.payload.name) ??
+    stringValue(event.payload.requestedName) ??
+    (source ? inferSkillNameFromSource(source) : undefined);
   if (!name) return;
   const entry = ensureEntry(byName, name, { sourcePath: source });
   entry.loadFailureCount += 1;
+  if (event.metadata.mode === "on_demand_tool") entry.explicitLoadCount += 1;
+  recordRunAndSession(entry, run);
 }
 
 function collectSkillLoaded(

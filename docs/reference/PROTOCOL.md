@@ -260,6 +260,11 @@ Current event types:
   (e.g. the desired content was already present) and emitted no write
   proposal. Payload: `{ path: string, reason?: string }`. Useful so callers
   can distinguish "no write attempted" from "write attempted and applied".
+- `workspace.write.untracked_access_granted`: an external command delegate was
+  granted direct read/write workspace access outside the managed
+  `workspace.write.*` APIs. This marker records access granted /
+  untracked-write-capable only; it does not claim any file was written and is
+  not counted as a managed workspace write.
 - `usage.updated`: a per-run usage aggregator emitted a fresh snapshot
   (tokens, cost, wall time, per-tool, per-model). Payload: `UsageSnapshot`.
 - `hook.failed`: a `RunHook.*` callback threw. Payload:
@@ -292,8 +297,13 @@ Current event types:
   only — does not alter the run.
 - `subagent.requested` / `subagent.started` / `subagent.completed` /
   `subagent.failed`: parent-run view of child agent lifecycle emitted by
-  `@sparkwright/agent-runtime`. The child still has its own `run.*` event
-  stream; these events let a parent trace show fan-out and completion status.
+  `@sparkwright/agent-runtime` or host delegate adapters. When backed by a
+  SparkWright child run, the child still has its own `run.*` event stream; these
+  events let a parent trace show fan-out and completion status.
+  Metadata carries additive audit fields such as `childRunId`, `parentRunId`,
+  `agentId`, `subagentDepth`, `delegateTool`, and `entrypoint`. Terminal
+  payloads add `terminalState` plus `stepLimitReached` / `truncated` when the
+  child `run.*` outcome reports them.
 - `task.created` / `task.started` / `task.output` / `task.completed` /
   `task.failed` / `task.cancelled`: background-task lifecycle events emitted
   by `@sparkwright/agent-runtime` Tasks. Tasks are spawned by a run and live
@@ -352,6 +362,7 @@ Common metadata:
 ```json
 {
   "payload": {
+    "toolCallId": "call_01h",
     "source": ".sparkwright/skills/bad/SKILL.md",
     "message": "Skill description must be a non-empty string: ..."
   },
@@ -363,6 +374,10 @@ Common metadata:
   }
 }
 ```
+
+When `skill.failed` mirrors an on-demand `skill_load` tool failure, the payload
+includes the original `toolCallId` so trace diagnostics can join the companion
+event back to the recovery-aware tool outcome.
 
 `skill.loaded`:
 
@@ -959,6 +974,13 @@ Current local run store layout:
 ```
 
 `run.json` stores the latest persisted run record and is rewritten with terminal state when a run finishes. `result.json` stores the terminal `RunResult`. `trace.jsonl` is append-only and contains filtered events according to the selected trace level.
+
+Session-scoped stores aggregate trace events at
+`.sparkwright/sessions/<session-id>/trace.jsonl` and also write an agent trace
+under `agents/<agent-id>/trace.jsonl`. Each
+`agents/<agent-id>/runs/<run-id>/` directory stores per-run state plus
+`trace-pointer.json`, whose relative paths point back to those aggregate trace
+files.
 
 Trace levels:
 

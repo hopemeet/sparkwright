@@ -17,6 +17,7 @@ import {
   evaluateShellSafety,
   isDestructive,
   parseCommand,
+  stripHereDocBodies,
   type ShellPromotionRequest,
 } from "../src/index.js";
 
@@ -184,6 +185,23 @@ describe("parseCommand", () => {
     const parsed = parseCommand("echo 'a && b; c'");
     expect(parsed.hasChain).toBe(false);
     expect(parsed.argv).toEqual(["echo", "a && b; c"]);
+  });
+
+  it("can strip heredoc bodies before coarse parsing", () => {
+    const stripped = stripHereDocBodies(
+      [
+        "cat > notes/run.js <<'EOF'",
+        "#!/usr/bin/env node",
+        "console.log('/etc/passwd')",
+        "EOF",
+        'node <<< "$source"',
+      ].join("\n"),
+    );
+
+    expect(stripped).toContain("cat > notes/run.js <<'EOF'");
+    expect(stripped).toContain('node <<< "$source"');
+    expect(stripped).not.toContain("/usr/bin/env");
+    expect(stripped).not.toContain("/etc/passwd");
   });
 });
 
@@ -481,6 +499,47 @@ describe("createShellTool", () => {
       { command: "cat notes/demo.md" },
       runtimeContext(),
     );
+    expect(result.stdout).toBe("ok\n");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not scan heredoc bodies for absolute path arguments", async () => {
+    const calls: ShellExecutionRequest[] = [];
+    const environment: ExecutionEnvironment = {
+      id: "test-env",
+      kind: "test",
+      capabilities: ["shell.execute"],
+      describe: () => ({ id: "test-env" }),
+      executeShell: async () => completedResult(""),
+      executeShellStreaming: async (request) => {
+        calls.push(request);
+        return streamingEnv({
+          stdoutChunks: ["ok\n"],
+          stderrChunks: [],
+          completeAfterMs: 1,
+          exitCode: 0,
+        }).executeShellStreaming!(request);
+      },
+    };
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 1000,
+      onPromote: () => ({ taskId: "unused" }),
+      workspaceRoot: "/workspace",
+    });
+
+    const result = await tool.execute(
+      {
+        command: [
+          "cat > notes/run.js <<'EOF'",
+          "#!/usr/bin/env node",
+          "console.log('/etc/passwd appears in source text only');",
+          "EOF",
+        ].join("\n"),
+      },
+      runtimeContext(),
+    );
+
     expect(result.stdout).toBe("ok\n");
     expect(calls).toHaveLength(1);
   });

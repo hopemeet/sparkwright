@@ -185,16 +185,20 @@ export interface BuildAgentPromptBuilderOptions {
  * Without this, a goal like "create notes/demo.md" sends the model down an
  * `ls`/`mkdir`/`cat >` path — each a separate approval round-trip, and the
  * heredoc redirect trips the shell path guard — before it falls back to
- * `append_file`. Injected only when a file-writing tool is actually present.
+ * `write_file`/`apply_patch`. Injected only when a file-writing tool is
+ * actually present.
  */
 const FILE_TOOL_GUIDANCE = [
   "Workspace file edits:",
-  "- To create or append to a file in the workspace, call the dedicated file",
-  "  tool (e.g. append_file) directly. It creates the file and any missing",
+  "- To create or replace a file in the workspace, call the dedicated file",
+  "  tool (e.g. write_file or apply_patch) directly. write_file creates the file and any missing",
   "  parent directories for you — do NOT pre-check with `ls`, create dirs with",
   "  `mkdir`, or write via shell redirection (`cat > file`, `tee`).",
   "- Reserve the shell tool for running commands, not for reading or writing",
-  "  workspace files (use the read/append file tools for that).",
+  "  workspace files (use the read/write file tools for that).",
+  "- After a successful workspace write, if the task asks for tests or a known",
+  "  verification command is available, run that command next instead of",
+  "  re-reading files you just wrote or files that have not changed.",
   "- When two files disagree (for example docs vs config), choose one smallest",
   "  source of truth to edit. After an edit is accepted, do not switch to the",
   "  other file to reverse the same decision unless new evidence proves the",
@@ -228,7 +232,7 @@ const SHELL_VALIDATION_GUIDANCE = [
 const WORKSPACE_PATH_GUIDANCE = [
   "Workspace path resolution:",
   "- Paths for the workspace tools (read_file, glob, grep,",
-  "  append_file) are relative to the workspace root shown as `cwd` in <env>.",
+  "  write_file, apply_patch) are relative to the workspace root shown as `cwd` in <env>.",
   "- Do NOT prefix paths with the workspace folder's own name. If cwd ends in",
   "  `/myrepo`, read `examples/x`, not `myrepo/examples/x` — the latter resolves",
   "  under `myrepo/myrepo/...` and will not be found.",

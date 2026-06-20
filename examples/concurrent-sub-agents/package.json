@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/fan-out.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/stamp-workspace-build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run typecheck && node dist/fan-out.js"
   },

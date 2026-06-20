@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Static, Text, useStdout } from "ink";
-import type { RunEvent } from "../lib/event-type.js";
+import { isInternalTranscriptEvent, type RunEvent } from "../lib/event-type.js";
 import { formatEvent } from "../lib/format-event.js";
 import { parseUnifiedDiff } from "../lib/diff.js";
 import { sanitizeAnsiForRender } from "../lib/text.js";
@@ -16,6 +16,7 @@ import {
   type ToolDisplayTone,
   type ToolResultDisplay,
 } from "../lib/tool-display.js";
+import { middleEllipsisPath } from "../lib/path-display.js";
 
 export { oneLine } from "../lib/tool-display.js";
 
@@ -184,6 +185,9 @@ function HeaderRow(props: {
   header: TranscriptHeaderInfo;
 }): React.ReactElement {
   const h = props.header;
+  const { stdout } = useStdout();
+  const columns = stdout?.columns ?? 120;
+  const cwd = middleEllipsisPath(h.workspaceRoot, Math.max(16, columns - 6));
   return (
     <Box flexDirection="column" paddingX={1} marginBottom={1}>
       <Text>
@@ -192,7 +196,7 @@ function HeaderRow(props: {
       </Text>
       <Text>
         <Text dimColor>cwd </Text>
-        {h.workspaceRoot}
+        {cwd}
       </Text>
       <Text>
         <Text dimColor>model </Text>
@@ -211,6 +215,11 @@ function rec(value: unknown): Record<string, unknown> {
 }
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function createRunFacts(): RunFacts {
@@ -343,6 +352,10 @@ function commandStatus(fact: ShellFact): string {
   if (fact.exitCode === 0) return `${command} passed`;
   if (typeof fact.exitCode === "number") return `${command} failed`;
   return `${command} completed`;
+}
+
+function shortRunId(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
 }
 
 function RunFactsLine(props: {
@@ -702,25 +715,47 @@ function EventCard(props: {
     case "subagent.failed": {
       const phase = ev.type.slice("subagent.".length);
       const meta = rec(ev.metadata);
+      const depth = optionalNumber(meta.subagentDepth) ?? 0;
       const name =
         str(meta.agentName) ||
         str(p.agentName) ||
+        str(meta.agentId) ||
         str(meta.agentProfileId) ||
         str(p.childRunId) ||
         "subagent";
+      const childRunId = str(meta.childRunId) || str(p.childRunId);
+      const parentRunId = str(meta.parentRunId) || str(p.parentRunId);
+      const entrypoint = str(meta.entrypoint);
+      const delegateTool = str(meta.delegateTool);
+      const terminalState = str(p.terminalState);
+      const lifecycle = terminalState || str(p.reason) || str(p.stopReason);
       // The goal doesn't change across phases, so showing it on started AND
       // completed just reprints the same sentence twice more. Introduce it once
       // on `requested`; later phases carry only their own news (the stop reason).
       const goal = phase === "requested" ? str(p.goal) : "";
-      const reason = str(p.reason) || str(p.stopReason);
       const color = phase === "failed" ? theme.error : theme.accent2;
+      const branch = depth > 0 ? "└─ " : "agent ";
+      const details = [
+        `depth ${depth}`,
+        entrypoint,
+        delegateTool ? `via ${delegateTool}` : undefined,
+        childRunId ? `child ${shortRunId(childRunId)}` : undefined,
+        parentRunId ? `parent ${shortRunId(parentRunId)}` : undefined,
+      ].filter((value): value is string => typeof value === "string");
       return (
-        <Box paddingX={1} marginTop={phase === "requested" ? 1 : 0}>
-          <Text color={color}>subagent </Text>
+        <Box
+          paddingLeft={1 + depth * 2}
+          paddingRight={1}
+          marginTop={phase === "requested" ? 1 : 0}
+        >
+          <Text color={color}>{branch}</Text>
           <Text bold>{name}</Text>
           <Text color={theme.muted}> {phase}</Text>
+          {lifecycle ? <Text color={theme.muted}> · {lifecycle}</Text> : null}
+          {details.length > 0 ? (
+            <Text color={theme.muted}> · {details.join(" · ")}</Text>
+          ) : null}
           {goal ? <Text color={theme.muted}> · {goal}</Text> : null}
-          {reason ? <Text color={theme.muted}> · {reason}</Text> : null}
         </Box>
       );
     }
@@ -783,49 +818,8 @@ function EventCard(props: {
       );
     }
 
-    // Intermediate / low-signal scaffolding: hidden so the transcript reads
-    // as a conversation. (Full payloads are still inspectable via /events.)
-    // Context-management scaffolding and span brackets are also hidden for the
-    // same reason: users should see the conversation, not the machinery.
-    // The cancel/state-machine plumbing (run.cancelled / run.cancel_requested /
-    // run.state_transition.rejected) is hidden too: the user-facing cancel is
-    // surfaced by the run.completed (state=cancelled) card and the "cancelling…"
-    // toast, so these would otherwise leak as raw "[seq] type" debug rows.
-    case "workflow_hook.started":
-    case "workflow_hook.completed":
-    case "run.started":
-    case "run.created":
-    case "run.cancelled":
-    case "run.cancel_requested":
-    case "run.state_transition.rejected":
-    case "context.assembled":
-    case "context.cache_break.detected":
-    case "context.compaction_requested":
-    case "context.compaction.started":
-    case "context.compaction.completed":
-    case "context.compaction.failed":
-    case "skill.indexed":
-    case "prompt.built":
-    case "model.turn.started":
-    case "model.turn.completed":
-    case "model.requested":
-    case "model.retrying":
-    case "model.stream.failed":
-    case "model.stream.started":
-    case "model.stream.chunk":
-    case "model.stream.completed":
-    case "tool.batch.completed":
-    case "tool.started":
-    case "tool.progress":
-    case "workspace.write.requested":
-    case "artifact.created":
-    case "approval.requested":
-    case "interaction.requested":
-    case "interaction.resolved":
-    case "usage.updated":
-      return null;
-
     default: {
+      if (isInternalTranscriptEvent(ev.type)) return null;
       const f = formatEvent(ev);
       return (
         <Box paddingX={1}>

@@ -1,5 +1,5 @@
 import { readdir, stat, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   buildTraceTimelineFile,
   asSessionId,
@@ -97,6 +97,7 @@ import {
   type RunInputPart,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
+  type CapabilitySkillInlineShellSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { loadHostConfig, type CapabilityMcpConfig } from "./config.js";
@@ -110,6 +111,7 @@ import { createModel } from "./model-factory.js";
 import {
   catalogEntryOrigin,
   catalogToolDefinitions,
+  createConfiguredDelegateChildToolCatalog,
   createMainHostToolCatalog,
   createReadOnlyChildToolCatalog,
   type HostToolCatalogEntry,
@@ -126,13 +128,17 @@ import { createSkillInlineShellRunner } from "./skill-inline-shell.js";
 import {
   assertSubagentDepthAllowed,
   describeDelegateCapability,
+  describeInProcessDelegateCapability,
   delegateToolName,
+  type DelegateWorkspaceAccess,
   type DelegateCapabilityDescriptor,
 } from "./delegate-capability.js";
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
 import { createDocumentedCommandStopHook } from "./documented-command-check.js";
 import {
+  DISCOVERY_TOOL_NAME,
+  WORKSPACE_WRITE_TOOL_NAMES,
   intersectToolUseSelectors,
   resolveSelectorAllowlist,
 } from "./tool-selectors.js";
@@ -237,6 +243,7 @@ function mcpToolSchemaLoad(
 
 async function createRuntimeMcpTools(input: {
   config: RuntimeMcpConfig | undefined;
+  workspaceRoot: string;
   emitter?: EventEmitter;
   agentId?: string;
   shellSandbox?: ReturnType<typeof resolveShellSandboxConfig>;
@@ -254,10 +261,36 @@ async function createRuntimeMcpTools(input: {
     shellSandbox: input.shellSandbox,
   };
   const startup = mcpStartupMode(config);
-  if (startup === "lazy") {
-    return createLazyMcpToolsForRun(common);
-  }
-  return prepareMcpToolsForRun(common);
+  const prepared =
+    startup === "lazy"
+      ? createLazyMcpToolsForRun(common)
+      : await prepareMcpToolsForRun(common);
+  return prepared;
+}
+
+function configuredMcpWorkspaceCwdServers(
+  config: RuntimeMcpConfig | undefined,
+  workspaceRoot: string,
+): string[] {
+  if (!config?.servers?.length) return [];
+  return config.servers
+    .filter((server) => {
+      if (server.type !== "stdio" || server.enabled === false || !server.cwd) {
+        return false;
+      }
+      const cwd = isAbsolute(server.cwd)
+        ? server.cwd
+        : resolve(workspaceRoot, server.cwd);
+      return isSameOrInsidePath(workspaceRoot, cwd);
+    })
+    .map((server) => server.name);
+}
+
+function isSameOrInsidePath(parent: string, candidate: string): boolean {
+  const parentPath = resolve(parent);
+  const candidatePath = resolve(candidate);
+  const rel = relative(parentPath, candidatePath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function requireActiveRunId(value: string | null): RunId {
@@ -715,6 +748,7 @@ export class HostRuntime {
       skillConfig,
       emitter: pendingExtensionEvents,
       sandbox: mcpShellSandbox,
+      workspaceRoot,
     });
     const existingPreparedSkillRoots = await existingSkillRoots(skillRoots);
     let preparedSkills: PreparedSkills | null = null;
@@ -775,6 +809,7 @@ export class HostRuntime {
     };
     const preparedMcp = await createRuntimeMcpTools({
       config: mcpConfig,
+      workspaceRoot,
       emitter: mcpEventEmitter,
       agentId: MAIN_AGENT_ID,
       shellSandbox: mcpShellSandbox,
@@ -798,14 +833,21 @@ export class HostRuntime {
       confidentialPaths: input.confidentialPaths,
       writeGuardrails,
     });
-    const childToolCatalog = createReadOnlyChildToolCatalog({
+    const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
       workspaceRoot,
       toolConfig,
+    });
+    const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog({
+      workspaceRoot,
+      toolConfig,
+      shell: shellConfig,
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     const derivedAgents = deriveConfiguredAgents(
       mainAgent,
       resolvedProfiles,
-      childToolCatalog,
+      delegateChildToolCatalog,
       pendingExtensionEvents,
     );
     const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
@@ -821,15 +863,17 @@ export class HostRuntime {
         }),
         metadata: { source: "host" },
       });
-    const childTools = catalogToolDefinitions(childToolCatalog);
+    const readOnlyChildTools = catalogToolDefinitions(readOnlyChildToolCatalog);
+    const delegateChildTools = catalogToolDefinitions(delegateChildToolCatalog);
     const delegateTools = createConfiguredDelegateTools({
       getParent: () => parentRunRef.current,
       delegates: agentConfig?.delegateTools ?? [],
       derivedAgents,
       model: model.adapter,
-      childTools,
+      childTools: delegateChildTools,
       workspaceRoot,
       parentRunPolicy,
+      approvalResolver,
       sandbox: shellConfig?.sandbox,
       skillRoots: skillRoots.map((root) => root.root),
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -840,11 +884,13 @@ export class HostRuntime {
     const delegateDescriptors = describeConfiguredDelegateTools({
       delegates: agentConfig?.delegateTools ?? [],
       derivedAgents,
+      delegateChildToolCatalog,
+      allowReadWriteWorkspaceAccess: input.shouldWrite,
     });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
       model: model.adapter,
-      childTools,
+      childTools: readOnlyChildTools,
       parentRunPolicy,
       childRunStoreFactory,
       maxDepth: agentConfig?.maxDepth,
@@ -890,6 +936,10 @@ export class HostRuntime {
       toolCatalog,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
       loadedSkills: preparedSkills?.loadedSkills ?? [],
+      skillInlineShell: inlineShellCapabilitySummary(
+        skillConfig?.inlineShell,
+        shellSandbox,
+      ),
       mcpStatuses: preparedMcp?.statuses ?? {},
       mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
       agentProfiles: [
@@ -900,6 +950,10 @@ export class HostRuntime {
       shellSandbox,
     });
 
+    const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
+      mcpConfig,
+      workspaceRoot,
+    );
     const runMetadata: Record<string, unknown> = {
       source: "host",
       ...(input.runMetadata ?? {}),
@@ -907,6 +961,7 @@ export class HostRuntime {
       workspaceRoot,
       permissionMode: input.permissionMode,
       traceLevel,
+      ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
       ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
       resolvedModel: model.resolved,
       capabilitySnapshot: summarizeCapabilitySnapshot(
@@ -1886,21 +1941,36 @@ export class HostRuntime {
         : null;
     const preparedMcp = await createRuntimeMcpTools({
       config: mcpConfig,
+      workspaceRoot: this.opts.workspaceRoot,
       shellSandbox: mcpShellSandbox,
     });
     try {
       const mainAgent = mainAgentProfile(resolvedProfiles);
       const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
-      const childToolCatalog = createReadOnlyChildToolCatalog({
+      const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
         toolConfig,
       });
+      const delegateChildToolCatalog = createConfiguredDelegateChildToolCatalog(
+        {
+          workspaceRoot: this.opts.workspaceRoot,
+          toolConfig,
+          shell: shellConfig,
+          skillRoots: skillRoots.map((root) => root.root),
+          configPaths: loadedConfig.attempted.map((entry) => entry.path),
+        },
+      );
       const derivedAgents = deriveConfiguredAgents(
         mainAgent,
         resolvedProfiles,
-        childToolCatalog,
+        delegateChildToolCatalog,
       );
-      const childTools = catalogToolDefinitions(childToolCatalog);
+      const readOnlyChildTools = catalogToolDefinitions(
+        readOnlyChildToolCatalog,
+      );
+      const delegateChildTools = catalogToolDefinitions(
+        delegateChildToolCatalog,
+      );
       const delegateTools = createConfiguredDelegateTools({
         getParent: () => undefined,
         delegates: agentConfig?.delegateTools ?? [],
@@ -1910,7 +1980,7 @@ export class HostRuntime {
             return { message: "" };
           },
         },
-        childTools,
+        childTools: delegateChildTools,
         workspaceRoot: this.opts.workspaceRoot,
         parentRunPolicy: createDefaultPolicy(),
         sandbox: shellConfig?.sandbox,
@@ -1929,7 +1999,7 @@ export class HostRuntime {
             return { message: "" };
           },
         },
-        childTools,
+        childTools: readOnlyChildTools,
         parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
         maxDepth: agentConfig?.maxDepth,
@@ -1957,6 +2027,10 @@ export class HostRuntime {
         toolCatalog,
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
+        skillInlineShell: inlineShellCapabilitySummary(
+          skillConfig?.inlineShell,
+          shellSandbox,
+        ),
         mcpStatuses:
           preparedMcp?.statuses ??
           Object.fromEntries(
@@ -1975,6 +2049,8 @@ export class HostRuntime {
         delegateTools: describeConfiguredDelegateTools({
           delegates: agentConfig?.delegateTools ?? [],
           derivedAgents,
+          delegateChildToolCatalog,
+          allowReadWriteWorkspaceAccess: false,
         }),
         shellSandbox,
         automation,
@@ -2419,6 +2495,7 @@ function buildCapabilitySnapshot(input: {
   toolCatalog: HostToolCatalogEntry[];
   indexedSkills: SkillIndexEntry[];
   loadedSkills: LoadedSkill[];
+  skillInlineShell?: CapabilitySkillInlineShellSummary;
   mcpStatuses?: Record<string, McpStatus | { status: "configured" }>;
   mcpToolNameMap?: McpToolNameMapping[];
   agentProfiles?: AgentProfile[];
@@ -2451,6 +2528,9 @@ function buildCapabilitySnapshot(input: {
         version: skill.version,
         selectionReason: skill.selectionReason,
       })),
+      ...(input.skillInlineShell
+        ? { inlineShell: input.skillInlineShell }
+        : {}),
     },
     mcp: {
       statuses: Object.entries(input.mcpStatuses ?? {}).map(
@@ -2499,6 +2579,25 @@ function buildCapabilitySnapshot(input: {
   };
 }
 
+function inlineShellCapabilitySummary(
+  inlineShell: CapabilitySkillsConfig["inlineShell"] | undefined,
+  shellSandbox: ShellSandboxStatus | undefined,
+): CapabilitySkillInlineShellSummary {
+  const enabled = inlineShell?.enabled === true;
+  return {
+    enabled,
+    ...(inlineShell?.timeoutMs !== undefined
+      ? { timeoutMs: inlineShell.timeoutMs }
+      : {}),
+    ...(inlineShell?.maxOutputChars !== undefined
+      ? { maxOutputChars: inlineShell.maxOutputChars }
+      : {}),
+    sandboxMode: enabled ? "enforce" : (shellSandbox?.mode ?? "disabled"),
+    writePolicy: enabled ? "no-write" : "disabled",
+    failClosed: enabled,
+  };
+}
+
 async function inspectShellSandboxStatus(input: {
   workspaceRoot: string;
   shellConfig?: ShellConfig;
@@ -2521,6 +2620,7 @@ function createSkillPreprocessOptions(input: {
   skillConfig?: CapabilitySkillsConfig;
   emitter: EventEmitter;
   sandbox: ResolvedShellSandboxConfig;
+  workspaceRoot: string;
 }): SkillPreprocessOptions | undefined {
   const inlineShell = input.skillConfig?.inlineShell;
   if (inlineShell?.enabled !== true) return undefined;
@@ -2531,6 +2631,7 @@ function createSkillPreprocessOptions(input: {
     inlineShellRunner: createSkillInlineShellRunner({
       emitter: input.emitter,
       sandbox: input.sandbox,
+      workspaceRoot: input.workspaceRoot,
     }),
   };
 }
@@ -2742,14 +2843,41 @@ function applyAgentProfileToolUse(
     childToolCatalog,
     profile.use,
   );
-  if (selectorAllowed === undefined) return profile;
+  let allowedTools =
+    selectorAllowed === undefined
+      ? profile.allowedTools
+      : intersectToolNameAllowlists(profile.allowedTools, selectorAllowed);
+  allowedTools = includeDiscoveryForDeferredAllowedTools(
+    allowedTools,
+    childToolCatalog,
+  );
+  if (allowedTools === profile.allowedTools) return profile;
   return {
     ...profile,
-    allowedTools: intersectToolNameAllowlists(
-      profile.allowedTools,
-      selectorAllowed,
-    ),
+    allowedTools,
   };
+}
+
+function includeDiscoveryForDeferredAllowedTools(
+  allowedTools: readonly string[] | undefined,
+  childToolCatalog: readonly HostToolCatalogEntry[],
+): string[] | undefined {
+  if (allowedTools === undefined) return undefined;
+  if (allowedTools.includes(DISCOVERY_TOOL_NAME)) return [...allowedTools];
+  const allowed = new Set(allowedTools);
+  const allowsDeferred = childToolCatalog.some(
+    (entry) =>
+      entry.definition.name !== DISCOVERY_TOOL_NAME &&
+      entry.definition.deferLoading === true &&
+      allowed.has(entry.definition.name),
+  );
+  if (!allowsDeferred) return [...allowedTools];
+  const hasDiscovery = childToolCatalog.some(
+    (entry) => entry.definition.name === DISCOVERY_TOOL_NAME,
+  );
+  return hasDiscovery
+    ? [...allowedTools, DISCOVERY_TOOL_NAME]
+    : [...allowedTools];
 }
 
 function intersectToolNameAllowlists(
@@ -2790,7 +2918,7 @@ function withDelegatedAgentPrompt(prompt?: string): string {
     : DELEGATED_AGENT_CONTRACT;
 }
 
-function createConfiguredDelegateTools(input: {
+export function createConfiguredDelegateTools(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   delegates: CapabilityDelegateToolConfig[];
   derivedAgents: DerivedChildAgentProfile[];
@@ -2798,6 +2926,7 @@ function createConfiguredDelegateTools(input: {
   childTools: ToolDefinition[];
   workspaceRoot: string;
   parentRunPolicy: Policy;
+  approvalResolver?: ApprovalResolver;
   sandbox?: Parameters<typeof createExternalCommandDelegateTool>[0]["sandbox"];
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
@@ -2862,47 +2991,64 @@ function createConfiguredDelegateTools(input: {
       continue;
     }
     const childProfile = withDelegatedAgentContract(profile);
-    tools.push(
-      createAgentTool(input.getParent, {
-        name: toolName,
-        description:
-          delegate.description ??
-          `Delegate a bounded task to ${profile.name ?? profile.id}.`,
-        requiresApproval: delegate.requiresApproval,
-        forbidNesting: delegate.forbidNesting ?? true,
-        buildSpawnInput: (args, parent) => {
-          const subagentDepth = assertSubagentDepthAllowed({
-            parent,
-            maxDepth: input.maxDepth,
-            toolName,
-          });
-          return {
-            goal: args.goal,
-            model: input.model,
-            tools: input.childTools,
-            childAgentProfile: childProfile,
-            policy: createLayeredPolicy([
-              input.parentRunPolicy,
-              createAgentProfilePolicy(childProfile),
-            ]),
-            maxSteps: delegate.maxSteps ?? profile.maxSteps,
-            runBudget: profile.runBudget,
-            interactionChannel: null,
-            // Persist the child's trace under its own agent dir + register it in
-            // session.json, and roll its usage up into the parent run's tracker.
-            runStore: input.childRunStoreFactory(profile.id),
-            parentUsageTracker: parent.getUsageTracker(),
-            metadata: {
-              ...(args.metadata ?? {}),
-              subagentDepth,
-              agentId: profile.id,
-              agentProfileId: profile.id,
-              agentName: profile.name,
-            },
-          };
-        },
-      }),
+    const profileChildTools = childToolsForAgentProfile(
+      input.childTools,
+      profile,
     );
+    const agentTool = createAgentTool(input.getParent, {
+      name: toolName,
+      description:
+        delegate.description ??
+        `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+      requiresApproval: delegate.requiresApproval,
+      forbidNesting: delegate.forbidNesting ?? true,
+      buildSpawnInput: (args, parent) => {
+        const subagentDepth = assertSubagentDepthAllowed({
+          parent,
+          maxDepth: input.maxDepth,
+          toolName,
+        });
+        return {
+          goal: args.goal,
+          model: input.model,
+          // Configured in-process delegates are stable profile-backed child
+          // agents: their tool catalog can include workspace writes selected
+          // by profile `use`/`allowedTools`, but every call is still checked
+          // against the parent run policy plus the child profile policy.
+          tools: profileChildTools,
+          childAgentProfile: childProfile,
+          policy: createLayeredPolicy([
+            input.parentRunPolicy,
+            createAgentProfilePolicy(childProfile),
+          ]),
+          maxSteps: delegate.maxSteps ?? profile.maxSteps,
+          runBudget: profile.runBudget,
+          interactionChannel: null,
+          approvalResolver: input.approvalResolver,
+          // Persist the child's trace under its own agent dir + register it in
+          // session.json, and roll its usage up into the parent run's tracker.
+          runStore: input.childRunStoreFactory(profile.id),
+          parentUsageTracker: parent.getUsageTracker(),
+          metadata: {
+            ...(args.metadata ?? {}),
+            subagentDepth,
+            agentId: profile.id,
+            agentProfileId: profile.id,
+            agentName: profile.name,
+            delegateTool: toolName,
+            entrypoint: "delegate",
+          },
+        };
+      },
+    });
+    // In-process delegate workspace writes are surfaced to the parent run-end
+    // summary by rolling up the child's own `workspace.write.completed` events
+    // (see `spawnSubAgent` in @sparkwright/agent-runtime), not by re-detecting
+    // changes with a parent-side filesystem snapshot. The child catalog has no
+    // untracked writer — `shell` rolls back unmanaged file mutations and there
+    // is no MCP in the delegate child catalog — so the child's write events are
+    // a complete, accurately-attributed record.
+    tools.push(agentTool);
   }
   return tools;
 }
@@ -2910,6 +3056,8 @@ function createConfiguredDelegateTools(input: {
 function describeConfiguredDelegateTools(input: {
   delegates: CapabilityDelegateToolConfig[];
   derivedAgents: DerivedChildAgentProfile[];
+  delegateChildToolCatalog: readonly HostToolCatalogEntry[];
+  allowReadWriteWorkspaceAccess: boolean;
 }): DelegateCapabilityDescriptor[] {
   const byProfile = new Map(
     input.derivedAgents.map((derived) => [
@@ -2931,32 +3079,95 @@ function describeConfiguredDelegateTools(input: {
           args: acpConfig.args,
           timeoutMs: acpConfig.timeoutMs,
           workspaceAccess: acpConfig.workspaceAccess ?? "none",
+          allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
         }),
       ];
     }
     const externalCommandConfig =
       externalCommandConfigFromAgentProfile(profile);
-    if (!externalCommandConfig) return [];
+    if (externalCommandConfig) {
+      return [
+        describeDelegateCapability({
+          delegate,
+          profile,
+          protocol: "external_command",
+          command: externalCommandConfig.command,
+          args: externalCommandConfig.args,
+          timeoutMs: externalCommandConfig.timeoutMs,
+          workspaceAccess: externalCommandConfig.workspaceAccess ?? "none",
+          allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+          outputLimits: {
+            stdoutBytes:
+              externalCommandConfig.maxStdoutBytes ??
+              externalCommandConfig.maxOutputBytes,
+            stderrBytes:
+              externalCommandConfig.maxStderrBytes ??
+              externalCommandConfig.maxOutputBytes,
+          },
+        }),
+      ];
+    }
+    const workspaceAccess = inProcessDelegateWorkspaceAccess({
+      profile,
+      delegateChildToolCatalog: input.delegateChildToolCatalog,
+    });
+    const shellAccess = inProcessDelegateHasTool(
+      profile,
+      input.delegateChildToolCatalog,
+      "shell",
+    );
     return [
-      describeDelegateCapability({
+      describeInProcessDelegateCapability({
         delegate,
         profile,
-        protocol: "external_command",
-        command: externalCommandConfig.command,
-        args: externalCommandConfig.args,
-        timeoutMs: externalCommandConfig.timeoutMs,
-        workspaceAccess: externalCommandConfig.workspaceAccess ?? "none",
-        outputLimits: {
-          stdoutBytes:
-            externalCommandConfig.maxStdoutBytes ??
-            externalCommandConfig.maxOutputBytes,
-          stderrBytes:
-            externalCommandConfig.maxStderrBytes ??
-            externalCommandConfig.maxOutputBytes,
-        },
+        workspaceAccess,
+        shellAccess,
+        gatedByRunWrite:
+          !input.allowReadWriteWorkspaceAccess &&
+          (workspaceAccess === "read_write" || shellAccess),
+        allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
       }),
     ];
   });
+}
+
+function inProcessDelegateWorkspaceAccess(input: {
+  profile: AgentProfile;
+  delegateChildToolCatalog: readonly HostToolCatalogEntry[];
+}): DelegateWorkspaceAccess {
+  const hasWriteTool = WORKSPACE_WRITE_TOOL_NAMES.some((toolName) =>
+    inProcessDelegateHasTool(
+      input.profile,
+      input.delegateChildToolCatalog,
+      toolName,
+    ),
+  );
+  return hasWriteTool ? "read_write" : "none";
+}
+
+function inProcessDelegateHasTool(
+  profile: AgentProfile,
+  delegateChildToolCatalog: readonly HostToolCatalogEntry[],
+  toolName: string,
+): boolean {
+  if (
+    !delegateChildToolCatalog.some(
+      (entry) => entry.definition.name === toolName,
+    )
+  ) {
+    return false;
+  }
+  if (profile.allowedTools === undefined) return true;
+  return profile.allowedTools.includes(toolName);
+}
+
+function childToolsForAgentProfile(
+  childTools: readonly ToolDefinition[],
+  profile: AgentProfile,
+): ToolDefinition[] {
+  if (profile.allowedTools === undefined) return [...childTools];
+  const allowed = new Set(profile.allowedTools);
+  return childTools.filter((tool) => allowed.has(tool.name));
 }
 
 /**
@@ -3119,6 +3330,8 @@ export function createDynamicSpawnAgentTool(input: {
           agentId,
           agentProfileId: agentId,
           agentName: parsed.role,
+          delegateTool: "spawn_agent",
+          entrypoint: "spawn_agent",
           allowedTools: childTools.map((tool) => tool.name),
         },
       });
@@ -3130,6 +3343,23 @@ export function createDynamicSpawnAgentTool(input: {
       const stepLimitReached =
         (result.metadata as { stepLimitReached?: unknown } | undefined)
           ?.stepLimitReached === true;
+      const childTruncated =
+        (result.metadata as { truncated?: unknown } | undefined)?.truncated ===
+          true || stepLimitReached;
+      const finality =
+        result.signal !== "completed" || childTruncated
+          ? "partial"
+          : "complete";
+      const resultMessage =
+        typeof result.message === "string" ? result.message : undefined;
+      const message =
+        stepLimitReached && resultMessage
+          ? [
+              "Warning: this child hit its step budget and wrapped up early; its answer may be incomplete. Do not re-spawn the same scope unless you raise maxSteps or need a different concrete scope; summarize from the partial result when possible.",
+              "",
+              resultMessage,
+            ].join("\n")
+          : result.message;
       // A child that failed (doom-loop, step-limit, error) never emitted a final
       // answer, so salvage its most recent successful tool results — otherwise
       // the parent only sees an error string and must re-spawn to rediscover the
@@ -3146,7 +3376,9 @@ export function createDynamicSpawnAgentTool(input: {
         signal: result.signal,
         stopReason: result.stopReason,
         stepLimitReached,
-        message: result.message,
+        truncated: childTruncated,
+        finality,
+        message,
         ...(partialObservations && partialObservations.length > 0
           ? { partialObservations }
           : {}),
@@ -3194,6 +3426,8 @@ export function createDynamicSpawnAgentTool(input: {
               signal: result.signal,
               stopReason: result.stopReason,
               stepLimitReached,
+              truncated: childTruncated,
+              finality,
               ...(childMessage ? { childMessage } : {}),
               ...(partialObservations && partialObservations.length > 0
                 ? { partialObservations }
@@ -3405,6 +3639,7 @@ function mergeCapabilitySnapshots(
     skills: {
       indexed: mergeByName(configured.skills.indexed, last.skills.indexed),
       loaded: last.skills.loaded,
+      inlineShell: last.skills.inlineShell ?? configured.skills.inlineShell,
     },
     mcp: {
       statuses: last.mcp.statuses.length

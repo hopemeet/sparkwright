@@ -61,6 +61,41 @@ describe("TracedProcessRunner", () => {
     expect(processEvents[1]?.spanId).toBe(processEvents[0]?.spanId);
   });
 
+  it("redacts skill_script argument previews to a stable summary", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = new TracedProcessRunner();
+
+    await runner.run({
+      emitter: events,
+      runId,
+      name: "skill-inline-shell",
+      kind: "skill_script",
+      runtime: "shell",
+      command: "bash",
+      args: ["-c", "echo FAKE_INLINE_SECRET_VALUE"],
+      cwd: join(process.cwd(), "packages"),
+      cwdBase: process.cwd(),
+    });
+
+    const started = events
+      .all()
+      .find((event) => event.type === "extension.process.started");
+    expect(started).toMatchObject({
+      payload: expect.objectContaining({
+        argsPreview: [
+          expect.stringMatching(
+            /^<skill_script args sha256:[a-f0-9]{16} bytes:\d+>$/,
+          ),
+        ],
+        cwd: "packages",
+      }),
+    });
+    expect(JSON.stringify(started?.payload)).not.toContain(
+      "FAKE_INLINE_SECRET_VALUE",
+    );
+  });
+
   it("routes inbox progress through the lifecycle span", async () => {
     const runId = createRunId();
     const events = new EventLog(runId);

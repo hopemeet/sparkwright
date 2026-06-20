@@ -4,7 +4,7 @@
 // and an ExecutionEnvironment that re-validates at execute time.
 
 import { isDestructive } from "./destructive-patterns.js";
-import { parseCommand } from "./command-parser.js";
+import { parseCommand, stripHereDocBodies } from "./command-parser.js";
 
 /**
  * Tri-state safety decision returned by {@link evaluateShellSafety}.
@@ -95,7 +95,7 @@ export function evaluateShellSafety(
   command: string,
   options: ShellSafetyOptions = {},
 ): ShellSafetyResult {
-  const trimmed = command.trim();
+  const trimmed = stripHereDocBodies(command).trim();
   if (trimmed.length === 0) {
     return { decision: "deny", reason: "Command is empty." };
   }

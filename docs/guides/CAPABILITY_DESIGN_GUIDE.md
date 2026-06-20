@@ -79,6 +79,8 @@ Do not let MCP bypass the harness boundary. A safe MCP integration records:
 - tool origin such as `mcp:<server-name>`
 - default risk and approval policy
 - execution result and trace events
+- stdio cwd posture: omit `cwd` for neutral temporary cwd, and set it
+  explicitly only for trusted servers that need project access
 
 Capability runtime config supports MCP server descriptors through
 [schemas/mcp-server-config.schema.json](../../schemas/mcp-server-config.schema.json).

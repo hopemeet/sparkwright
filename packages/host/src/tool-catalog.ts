@@ -1,9 +1,12 @@
+import { join } from "node:path";
 import {
   createTaskControl,
   createTodoTools,
-  type TaskManager,
+  InMemoryTaskStore,
+  TaskManager,
 } from "@sparkwright/agent-runtime";
 import {
+  createRunId,
   createToolSearchTool,
   type EventEmitter,
   type RunId,
@@ -29,8 +32,13 @@ import {
   createSkillInspectorTool,
   createSkillManagerTool,
   createSkillUpdateTool,
+  createWriteFileTool,
 } from "./tools.js";
-import { resolveSelectorAllowlist } from "./tool-selectors.js";
+import {
+  resolveSelectorAllowlist,
+  shouldAppendDiscoveryTool,
+  type ToolSelectorCatalogEntry,
+} from "./tool-selectors.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 
@@ -66,6 +74,32 @@ export function createReadOnlyChildToolCatalog(input: {
       catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
       catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
     ],
+    input.toolConfig,
+  );
+}
+
+export function createConfiguredDelegateChildToolCatalog(input: {
+  workspaceRoot: string;
+  toolConfig?: CapabilityToolsConfig;
+  shell?: ShellConfig;
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
+}): HostToolCatalogEntry[] {
+  return withDeferredToolSearch(
+    applyToolConfigToCatalog(
+      [
+        ...createCoreCodingToolCatalog(input.workspaceRoot),
+        catalogEntry(
+          createHostShellTool(input.workspaceRoot, {
+            sandbox: input.shell?.sandbox,
+            skillRoots: input.skillRoots,
+            extraForcedDenyWrite: input.configPaths,
+          }),
+          "shell",
+        ),
+      ],
+      input.toolConfig,
+    ),
     input.toolConfig,
   );
 }
@@ -115,25 +149,34 @@ function withDeferredToolSearch(
   entries: HostToolCatalogEntry[],
   config: CapabilityToolsConfig | undefined,
 ): HostToolCatalogEntry[] {
-  if (!entries.some((entry) => entry.definition.deferLoading === true)) {
+  // `entries` is already filtered (selectors/allowed/disabled applied). The
+  // discovery tool is derived infrastructure, not a filtered tool: append it
+  // when a deferred tool survived, exempt from allow/selector filtering, and
+  // only honor an explicit `tools.disabled` opt-out. See shouldAppendDiscoveryTool.
+  const hasDeferredTool = entries.some(
+    (entry) => entry.definition.deferLoading === true,
+  );
+  if (
+    !shouldAppendDiscoveryTool({
+      hasDeferredTool,
+      disabled: config?.disabled,
+    })
+  ) {
     return entries;
   }
 
   const deferredCatalog = entries.map((entry) => entry.definition);
-  return applyToolConfigToCatalog(
-    [
-      ...entries,
-      catalogEntry(
-        createToolSearchTool({
-          source: {
-            listDescriptors: () => deferredCatalog.map(toolToDescriptor),
-          },
-        }),
-        "core",
-      ),
-    ],
-    config,
-  );
+  return [
+    ...entries,
+    catalogEntry(
+      createToolSearchTool({
+        source: {
+          listDescriptors: () => deferredCatalog.map(toolToDescriptor),
+        },
+      }),
+      "core",
+    ),
+  ];
 }
 
 export function catalogEntryOrigin(
@@ -240,6 +283,7 @@ function createCoreCodingToolCatalog(
     catalogEntry(createGrepTextTool(workspaceRoot), "coding"),
     catalogEntry(createListDirTool(workspaceRoot), "coding"),
     catalogEntry(createReadAnchoredTextTool(), "coding"),
+    catalogEntry(createWriteFileTool(), "coding"),
     catalogEntry(createEditAnchoredTextTool(), "coding"),
     catalogEntry(createApplyPatchTool(), "coding"),
   ];
@@ -283,6 +327,49 @@ function intersectAllowlists(
     if (rightSet.has(entry) && !out.includes(entry)) out.push(entry);
   }
   return out;
+}
+
+/**
+ * Resolve the effective concrete-tool allowlist implied by `tools.use`
+ * selectors and `tools.allowed`, using the real main host catalog as the single
+ * source of name→source truth. Returns `undefined` when neither is configured
+ * (no restriction).
+ *
+ * Diagnostics that lack a live runtime snapshot (e.g. CLI `capabilities inspect`
+ * when runtime inspection fails) call this so they apply the same selector
+ * semantics as a real run instead of re-deriving tool sources from a hand-kept
+ * list. The catalog is built with inert stubs (no I/O happens at construction).
+ */
+export function resolveConfiguredToolAllowlist(input: {
+  workspaceRoot: string;
+  toolConfig: CapabilityToolsConfig | undefined;
+  mcpTools?: readonly { name: string; serverName: string }[];
+}): string[] | undefined {
+  const config = input.toolConfig;
+  if (config?.use === undefined && config?.allowed === undefined) {
+    return undefined;
+  }
+  const selectorEntries: ToolSelectorCatalogEntry[] = [
+    ...createMainHostToolCatalogList({
+      workspaceRoot: input.workspaceRoot,
+      skillRoots: [],
+      taskManager: new TaskManager({ store: new InMemoryTaskStore() }),
+      getParentRunId: () => createRunId(),
+      todoPath: join(input.workspaceRoot, ".sparkwright", "inspect-todo.md"),
+    }).map((entry) => ({ definition: entry.definition, source: entry.source })),
+    ...(input.mcpTools ?? []).map((tool) => ({
+      definition: {
+        name: tool.name,
+        governance: { origin: { kind: "mcp" as const, name: tool.serverName } },
+      },
+      source: "mcp" as const,
+    })),
+  ];
+  const selectorAllowed = resolveSelectorAllowlist(
+    selectorEntries,
+    config?.use,
+  );
+  return intersectAllowlists(config?.allowed, selectorAllowed);
 }
 
 function catalogEntry(

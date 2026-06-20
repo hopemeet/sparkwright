@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { spawn, type IOType } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { PassThrough, type Stream } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -729,6 +732,7 @@ export async function prepareMcpServer(
 
     // Build + connect a fresh client. Reused for the initial connection and,
     // when `reconnect` is configured, for each reconnection attempt.
+    const transportCleanups = new Set<() => Promise<void>>();
     const connect = async (): Promise<Client> => {
       const next = new Client(
         { name: CLIENT_NAME, version: CLIENT_VERSION },
@@ -748,7 +752,15 @@ export async function prepareMcpServer(
         options.shellSandboxRuntime,
       );
       sandbox = preparedTransport.sandbox;
-      await next.connect(preparedTransport.transport, { timeout: timeoutMs });
+      if (preparedTransport.cleanup) {
+        transportCleanups.add(preparedTransport.cleanup);
+      }
+      try {
+        await next.connect(preparedTransport.transport, { timeout: timeoutMs });
+      } catch (cause) {
+        await preparedTransport.cleanup?.();
+        throw cause;
+      }
       return next;
     };
 
@@ -760,6 +772,7 @@ export async function prepareMcpServer(
     // route through it rather than the initial `client` reference.
     let closeClient: () => Promise<void> = async () => {
       await client?.close();
+      await Promise.all([...transportCleanups].map((cleanup) => cleanup()));
     };
     let liveClient: McpClientLike = client;
     if (config.reconnect) {
@@ -769,7 +782,10 @@ export async function prepareMcpServer(
         options: config.reconnect,
       });
       liveClient = reconnecting;
-      closeClient = () => reconnecting.close();
+      closeClient = async () => {
+        await reconnecting.close();
+        await Promise.all([...transportCleanups].map((cleanup) => cleanup()));
+      };
     }
 
     // Per-server calls are serialized by default; opt in to concurrency only
@@ -989,25 +1005,55 @@ function disabledMcpSandboxSummary(
   };
 }
 
+async function resolveMcpStdioCwd(
+  config: Extract<McpServerConfig, { type: "stdio" }>,
+  name: string,
+): Promise<{ path: string; cleanup?: () => Promise<void> }> {
+  if (config.cwd) return { path: config.cwd };
+  const safeName =
+    name.replace(/[^a-zA-Z0-9._-]/gu, "_").slice(0, 32) || "server";
+  const path = await mkdtemp(join(tmpdir(), `sparkwright-mcp-${safeName}-`));
+  return {
+    path,
+    cleanup: onceCleanup(async () => {
+      await rm(path, { recursive: true, force: true });
+    }),
+  };
+}
+
+function onceCleanup(cleanup: () => Promise<void>): () => Promise<void> {
+  let cleaned = false;
+  return async () => {
+    if (cleaned) return;
+    cleaned = true;
+    await cleanup();
+  };
+}
+
 async function buildMcpTransport(
   config: McpServerConfig,
   name: string,
   onStdioStderr?: (input: McpStdioStderrChunk) => void,
   shellSandbox?: ResolvedShellSandboxConfig,
   shellSandboxRuntime?: ShellSandboxRuntime,
-): Promise<{ transport: Transport; sandbox?: McpSandboxSummary }> {
+): Promise<{
+  transport: Transport;
+  sandbox?: McpSandboxSummary;
+  cleanup?: () => Promise<void>;
+}> {
   if (config.type === "stdio") {
     if (shellSandbox && shellSandbox.mode !== "off") {
       const runtime =
         shellSandboxRuntime ?? createPlatformShellSandboxRuntime();
       const available = await runtime.isAvailable();
       if (available) {
+        const cwd = await resolveMcpStdioCwd(config, name);
         const invocation = await prepareSandboxedProcessInvocation(
           runtime,
           {
             command: config.command,
             args: config.args,
-            cwd: config.cwd ?? process.cwd(),
+            cwd: cwd.path,
             env: config.env,
             metadata: {
               sandboxed: true,
@@ -1017,6 +1063,12 @@ async function buildMcpTransport(
           },
           shellSandbox,
         );
+        const originalCleanup = invocation.cleanup;
+        const cleanup = onceCleanup(async () => {
+          await originalCleanup?.();
+          await cwd.cleanup?.();
+        });
+        invocation.cleanup = cleanup;
         const transport = new SandboxedStdioClientTransport({
           invocation,
           stderr: "pipe",
@@ -1032,6 +1084,7 @@ async function buildMcpTransport(
             available: true,
             enforced: shellSandbox.failIfUnavailable,
           },
+          cleanup,
         };
       }
       const reason = `MCP stdio sandbox runtime "${runtime.id}" is unavailable on ${runtime.platform}.`;
@@ -1046,10 +1099,11 @@ async function buildMcpTransport(
           enforced: true,
         });
       }
+      const cwd = await resolveMcpStdioCwd(config, name);
       const transport = new StdioClientTransport({
         command: config.command,
         args: config.args,
-        cwd: config.cwd,
+        cwd: cwd.path,
         env: config.env,
         stderr: "pipe",
       });
@@ -1065,13 +1119,15 @@ async function buildMcpTransport(
           fallbackReason: reason,
           enforced: false,
         },
+        cleanup: cwd.cleanup,
       };
     }
 
+    const cwd = await resolveMcpStdioCwd(config, name);
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
-      cwd: config.cwd,
+      cwd: cwd.path,
       env: config.env,
       stderr: "pipe",
     });
@@ -1087,6 +1143,7 @@ async function buildMcpTransport(
             enforced: false,
           }
         : undefined,
+      cleanup: cwd.cleanup,
     };
   }
   if (config.type === "sse") {

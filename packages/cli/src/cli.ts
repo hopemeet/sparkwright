@@ -9,7 +9,7 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 import {
@@ -52,6 +52,7 @@ import {
 import {
   isPermissionMode,
   isTraceLevel,
+  type CapabilityDelegateToolSummary,
   type CapabilitySnapshot,
   type PermissionMode,
   type RunInputPayload,
@@ -103,8 +104,10 @@ import {
   HostRuntime,
   projectSkillRoot,
   resolveCapabilityDirs,
+  resolveConfiguredToolAllowlist,
   resolveSkillRootsForRuntime,
   runConfiguredDelegate,
+  shouldAppendDiscoveryTool,
   userConfigCandidatePaths,
   userConfigPath,
   validateRunInput,
@@ -130,7 +133,7 @@ import {
   resolveShellSandboxConfig,
 } from "@sparkwright/shell-sandbox";
 import { createCliApprovalResolver } from "./cli-approval.js";
-import { formatEvent } from "./event-format.js";
+import { createLiveEventFormatter, formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
 import { writeLine } from "./io.js";
 import {
@@ -187,6 +190,7 @@ interface ParsedArgs {
   force: boolean;
   fromTrace: boolean;
   directCore: boolean;
+  verbose: boolean;
   resolveMcp: boolean;
   delegateGoal?: string;
 }
@@ -315,6 +319,13 @@ export async function runCli(
     return { exitCode: 1 };
   }
 
+  const firstRunScaffold = await maybeScaffoldFirstRunUserConfig({
+    cfg,
+    env,
+    io,
+  });
+  if (firstRunScaffold) return firstRunScaffold;
+
   maybePrintFirstRunConfigHint({
     cfg,
     cwd: parsed.value.workspaceRoot,
@@ -363,6 +374,23 @@ export async function runCli(
         io,
         env,
       );
+}
+
+export async function scaffoldFirstRunUserConfigIfMissing(input: {
+  argv: string[];
+  cwd: string;
+  env: Record<string, string | undefined>;
+  io: CliIO;
+}): Promise<CliRunResult | undefined> {
+  const cfg = await loadHostConfig(
+    workspaceBootstrapRoot(input.argv, input.cwd),
+    input.env,
+  );
+  return maybeScaffoldFirstRunUserConfig({
+    cfg,
+    env: input.env,
+    io: input.io,
+  });
 }
 
 function directCoreEnabled(env: Record<string, string | undefined>): boolean {
@@ -488,6 +516,42 @@ function maybePrintFirstRunConfigHint(input: {
       "Inspect config with `sparkwright config inspect --format text`.",
     ].join("\n"),
   );
+}
+
+async function maybeScaffoldFirstRunUserConfig(input: {
+  cfg: Awaited<ReturnType<typeof loadHostConfig>>;
+  env: Record<string, string | undefined>;
+  io: CliIO;
+}): Promise<CliRunResult | undefined> {
+  if (input.io.stdinIsTTY !== true) return undefined;
+  if (input.cfg.errors.length > 0) return undefined;
+  if (input.cfg.attempted.some((entry) => entry.loaded)) return undefined;
+
+  try {
+    const result = await createUserConfigTemplateFile(input.env);
+    if (result.status !== "created") return undefined;
+    writeLine(
+      input.io.stderr,
+      [
+        "No Sparkwright config found yet.",
+        `Created user config: ${result.path}`,
+        'Next: set "identity.providers.openai.apiKey" or export OPENAI_API_KEY, then rerun your command.',
+        "For repo-specific settings later, run `sparkwright init --project` inside that workspace.",
+        "Inspect config with `sparkwright config inspect --format text`.",
+      ].join("\n"),
+    );
+    return { exitCode: 0 };
+  } catch (error) {
+    writeLine(
+      input.io.stderr,
+      [
+        "No Sparkwright config found yet.",
+        `Failed to create user config: ${error instanceof Error ? error.message : String(error)}`,
+        "Create one manually with `sparkwright init`.",
+      ].join("\n"),
+    );
+    return { exitCode: 1 };
+  }
 }
 
 async function validateCliRunInput(
@@ -712,6 +776,7 @@ function parseArgs(
   let force = false;
   let fromTrace = false;
   let directCore = false;
+  let verbose = false;
   let resolveMcp = false;
   let delegateGoal: string | undefined;
 
@@ -1027,6 +1092,13 @@ function parseArgs(
       continue;
     }
 
+    if (arg === "--verbose") {
+      verbose = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
     if (arg === "--resolve-mcp") {
       resolveMcp = true;
       args.splice(index, 1);
@@ -1254,6 +1326,7 @@ function parseArgs(
       force,
       fromTrace,
       directCore,
+      verbose,
       resolveMcp,
       delegateGoal,
     },
@@ -1698,9 +1771,13 @@ interface CapabilityInspectReport {
       effective: string;
     };
   };
-  skills: SkillReport;
+  skills: SkillReport & {
+    inlineShell: SkillInlineShellInspect;
+  };
   agents: AgentReport & {
-    delegateTools: DelegateCapabilityDescriptor[];
+    delegateTools: Array<
+      DelegateCapabilityDescriptor | CapabilityDelegateToolSummary
+    >;
   };
   mcp: {
     servers: Array<{
@@ -1734,6 +1811,15 @@ interface CapabilityInspectReport {
   command: {
     dirs: Array<{ layer: string; path: string; exists: boolean }>;
   };
+}
+
+interface SkillInlineShellInspect {
+  enabled: boolean;
+  timeoutMs?: number;
+  maxOutputChars?: number;
+  sandboxMode: string;
+  writePolicy: "disabled" | "no-write";
+  failClosed: boolean;
 }
 
 interface CapabilityToolInspectEntry {
@@ -1968,11 +2054,9 @@ async function loadCapabilityInspectReport(
     }
   }
 
-  // Split configured delegates into external (ACP / command, which carry a
-  // descriptor) and in-process (config child agents). Both become real tools at
-  // runtime; only the external ones have a DelegateCapabilityDescriptor, so the
-  // in-process ones must be surfaced separately or the inventory under-reports
-  // them (e.g. a `delegate_reviewer` that a real run actually exposes).
+  // External descriptors are retained as the snapshot-less fallback. When a
+  // host runtime is available, it is the authoritative source for configured
+  // delegate descriptors, including in-process child-agent delegates.
   const configuredDelegates = capabilities?.agents?.delegateTools ?? [];
   const externalDelegateDescriptors = configuredDelegates.flatMap(
     (delegate) => {
@@ -1985,13 +2069,9 @@ async function loadCapabilityInspectReport(
       return descriptor ? [descriptor] : [];
     },
   );
-  const inProcessDelegateTools = configuredDelegates.flatMap((delegate) => {
-    const profile = profileById.get(delegate.profileId);
-    if (!profile || !delegate.toolName) return [];
-    if (describeExternalDelegateCapability({ delegate, profile })) return [];
-    return [{ toolName: delegate.toolName, profileId: delegate.profileId }];
-  });
   const runtime = await inspectRuntimeCapabilities(workspaceRoot);
+  const delegateDescriptors =
+    runtime?.agents.delegateTools ?? externalDelegateDescriptors;
 
   return {
     workspace: workspaceRoot,
@@ -2000,11 +2080,11 @@ async function loadCapabilityInspectReport(
     tools: {
       ...(loaded.config.tools ?? {}),
       available: buildCapabilityToolInventory({
+        workspaceRoot,
         config: loaded.config.tools ?? {},
         runtime,
         mcpServers,
-        delegateTools: externalDelegateDescriptors,
-        inProcessDelegateTools,
+        delegateTools: delegateDescriptors,
       }),
     },
     shell: {
@@ -2019,20 +2099,15 @@ async function loadCapabilityInspectReport(
         effective: shellSandboxEffective(shellSandbox),
       },
     },
-    skills,
+    skills: {
+      ...skills,
+      inlineShell: buildSkillInlineShellInspect(
+        capabilities?.skills?.inlineShell,
+      ),
+    },
     agents: {
       ...agents,
-      delegateTools: (capabilities?.agents?.delegateTools ?? []).flatMap(
-        (delegate) => {
-          const profile = profileById.get(delegate.profileId);
-          if (!profile) return [];
-          const descriptor = describeExternalDelegateCapability({
-            delegate,
-            profile,
-          });
-          return descriptor ? [descriptor] : [];
-        },
-      ),
+      delegateTools: delegateDescriptors,
     },
     mcp: {
       servers: mcpServers,
@@ -2070,6 +2145,30 @@ function shellSandboxEffective(input: {
   return input.failIfUnavailable ? "enforce-unavailable" : "fallback";
 }
 
+function buildSkillInlineShellInspect(
+  inlineShell:
+    | {
+        enabled?: boolean;
+        timeoutMs?: number;
+        maxOutputChars?: number;
+      }
+    | undefined,
+): SkillInlineShellInspect {
+  const enabled = inlineShell?.enabled === true;
+  return {
+    enabled,
+    ...(inlineShell?.timeoutMs !== undefined
+      ? { timeoutMs: inlineShell.timeoutMs }
+      : {}),
+    ...(inlineShell?.maxOutputChars !== undefined
+      ? { maxOutputChars: inlineShell.maxOutputChars }
+      : {}),
+    sandboxMode: enabled ? "enforce" : "disabled",
+    writePolicy: enabled ? "no-write" : "disabled",
+    failClosed: enabled,
+  };
+}
+
 const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
   {
     name: "read_file",
@@ -2093,6 +2192,12 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     name: "read_anchored_text",
     source: "builtin",
     risk: "safe",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "write_file",
+    source: "builtin",
+    risk: "risky",
     origin: "local:sparkwright",
   },
   {
@@ -2170,26 +2275,23 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
 ];
 
 function buildCapabilityToolInventory(input: {
+  workspaceRoot: string;
   config: ToolsConfigShape;
   runtime?: CapabilitySnapshot;
   mcpServers: CapabilityInspectReport["mcp"]["servers"];
-  delegateTools: DelegateCapabilityDescriptor[];
-  /** In-process (config child-agent) delegates — real tools without an external descriptor. */
-  inProcessDelegateTools?: Array<{ toolName: string; profileId: string }>;
+  delegateTools: Array<
+    DelegateCapabilityDescriptor | CapabilityDelegateToolSummary
+  >;
 }): CapabilityToolInspectEntry[] {
-  const externalDelegateByName = new Map(
+  const delegateByName = new Map(
     input.delegateTools.map((tool) => [tool.toolName, tool]),
-  );
-  const inProcessDelegateByName = new Map(
-    (input.inProcessDelegateTools ?? []).map((tool) => [tool.toolName, tool]),
   );
   if (input.runtime) {
     return input.runtime.tools
       .map((tool) =>
         runtimeToolToInspectEntry({
           tool,
-          externalDelegateByName,
-          inProcessDelegateByName,
+          delegateByName,
         }),
       )
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -2213,21 +2315,26 @@ function buildCapabilityToolInventory(input: {
       origin: `${tool.protocol}:${tool.profileId}`,
     }),
   );
-  const inProcessDelegateTools: CapabilityToolInspectEntry[] = (
-    input.inProcessDelegateTools ?? []
-  ).map((tool) => ({
-    name: tool.toolName,
-    source: "delegate" as const,
-    risk: "risky" as const,
-    origin: `in_process:${tool.profileId}`,
-  }));
-  const available = [
-    ...BUILTIN_CAPABILITY_TOOLS,
-    ...mcpTools,
-    ...delegateTools,
-    ...inProcessDelegateTools,
-  ]
-    .filter((tool) => toolAllowedByConfig(tool.name, input.config))
+  // Resolve `tools.use` selectors (and `tools.allowed`) into a concrete-name
+  // allowlist using the real host catalog as the source of name→source truth, so
+  // this snapshot-less fallback applies the same selector semantics as a run
+  // instead of being selector-blind.
+  const effectiveAllowed = resolveConfiguredToolAllowlist({
+    workspaceRoot: input.workspaceRoot,
+    toolConfig: input.config,
+    mcpTools: input.mcpServers.flatMap((server) =>
+      (server.tools ?? []).map((tool) => ({
+        name: tool.toolName,
+        serverName: server.name,
+      })),
+    ),
+  });
+  const effectiveConfig: ToolsConfigShape = {
+    ...input.config,
+    allowed: effectiveAllowed,
+  };
+  const available = [...BUILTIN_CAPABILITY_TOOLS, ...mcpTools, ...delegateTools]
+    .filter((tool) => toolAllowedByConfig(tool.name, effectiveConfig))
     .map((tool) => ({
       ...tool,
       ...(tool.deferred === true ||
@@ -2235,9 +2342,14 @@ function buildCapabilityToolInventory(input: {
         ? { deferred: true }
         : {}),
     }));
+  // tool_search is derived infrastructure (see shouldAppendDiscoveryTool): it is
+  // appended when a deferred tool survived and is exempt from allow/selector
+  // filtering — only an explicit `tools.disabled` entry opts out.
   if (
-    available.some((tool) => tool.deferred === true) &&
-    toolAllowedByConfig("tool_search", input.config)
+    shouldAppendDiscoveryTool({
+      hasDeferredTool: available.some((tool) => tool.deferred === true),
+      disabled: input.config.disabled,
+    })
   ) {
     available.push({
       name: "tool_search",
@@ -2251,27 +2363,18 @@ function buildCapabilityToolInventory(input: {
 
 function runtimeToolToInspectEntry(input: {
   tool: CapabilitySnapshot["tools"][number];
-  externalDelegateByName: Map<string, DelegateCapabilityDescriptor>;
-  inProcessDelegateByName: Map<string, { toolName: string; profileId: string }>;
+  delegateByName: Map<
+    string,
+    DelegateCapabilityDescriptor | CapabilityDelegateToolSummary
+  >;
 }): CapabilityToolInspectEntry {
-  const inProcessDelegate = input.inProcessDelegateByName.get(input.tool.name);
-  if (inProcessDelegate) {
+  const delegate = input.delegateByName.get(input.tool.name);
+  if (delegate) {
     return {
       name: input.tool.name,
       source: "delegate",
       risk: "risky",
-      origin: `in_process:${inProcessDelegate.profileId}`,
-      ...(input.tool.deferred === true ? { deferred: true } : {}),
-    };
-  }
-
-  const externalDelegate = input.externalDelegateByName.get(input.tool.name);
-  if (externalDelegate) {
-    return {
-      name: input.tool.name,
-      source: "delegate",
-      risk: "risky",
-      origin: `${externalDelegate.protocol}:${externalDelegate.profileId}`,
+      origin: `${delegate.protocol}:${delegate.profileId}`,
       ...(input.tool.deferred === true ? { deferred: true } : {}),
     };
   }
@@ -2330,6 +2433,7 @@ function formatCapabilityInspectReport(
     `runtime tools: ${report.runtime?.tools.length ?? "unavailable"}`,
     `diagnostic tools: ${report.tools.available.length}`,
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
+    `skill inline shell: enabled=${String(report.skills.inlineShell.enabled)}; writePolicy=${report.skills.inlineShell.writePolicy}; sandbox=${report.skills.inlineShell.sandboxMode}; failClosed=${String(report.skills.inlineShell.failClosed)}${report.skills.inlineShell.timeoutMs !== undefined ? `; timeoutMs=${report.skills.inlineShell.timeoutMs}` : ""}${report.skills.inlineShell.maxOutputChars !== undefined ? `; maxOutputChars=${report.skills.inlineShell.maxOutputChars}` : ""}`,
   ];
   for (const tool of report.runtime?.tools ?? []) {
     lines.push(
@@ -2360,8 +2464,11 @@ function formatCapabilityInspectReport(
     );
   }
   for (const tool of report.agents.delegateTools) {
+    const writeGate = tool.gatedByRunWrite ? "; gated=--write" : "";
+    const approvalRequired =
+      tool.approvalRequiredUnderCurrentRun ?? tool.requiresApproval;
     lines.push(
-      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}; approval=${tool.requiresApproval ? "required" : "not-required"}; workspace=${tool.workspaceAccess})`,
+      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}; approval=current-run:${approvalRequired ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
     );
   }
   if (report.agents.shadows.length > 0) {
@@ -4368,7 +4475,7 @@ const CONFIG_EXAMPLES: Record<string, unknown> = {
             name: "block-generated",
             hook: "PreToolUse",
             matcher: {
-              toolName: ["edit_anchored_text", "apply_patch"],
+              toolName: ["write_file", "edit_anchored_text", "apply_patch"],
               pathGlob: "src/generated/**",
             },
             action: {
@@ -5175,7 +5282,27 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (isHelpArg(argv[0])) return usage();
 
   const command = argv[0];
-  if (!isHelpArg(argv[1])) return undefined;
+  const supportsNestedHelp = new Set([
+    "agents",
+    "capabilities",
+    "config",
+    "cron",
+    "delegates",
+    "doctor",
+    "session",
+    "skills",
+    "tasks",
+    "tools",
+    "trace",
+  ]);
+  if (
+    !isHelpArg(argv[1]) &&
+    !(
+      supportsNestedHelp.has(command) &&
+      argv.slice(2).some((arg) => isHelpArg(arg))
+    )
+  )
+    return undefined;
 
   if (command === "init") {
     return [
@@ -5447,6 +5574,7 @@ async function handleRunResumeCommand(
         traceLevel: parsed.traceLevel,
         fromTrace: parsed.fromTrace,
         force: parsed.force,
+        verbose: parsed.verbose,
       },
       io,
       env,
@@ -5606,10 +5734,13 @@ async function handleRunResumeCommand(
     return { exitCode: 1, sessionId: resolvedSessionId };
   }
 
+  const liveEvents = createLiveEventFormatter({ verbose: parsed.verbose });
   for (const event of run.events.all()) {
-    writeLine(io.stdout, formatEvent(event));
+    for (const line of liveEvents.format(event)) writeLine(io.stdout, line);
   }
-  run.events.subscribe((event) => writeLine(io.stdout, formatEvent(event)));
+  run.events.subscribe((event) => {
+    for (const line of liveEvents.format(event)) writeLine(io.stdout, line);
+  });
 
   try {
     const result = await run.start();
@@ -5621,6 +5752,7 @@ async function handleRunResumeCommand(
       stopReason: result.stopReason,
     };
   } finally {
+    for (const line of liveEvents.flush()) writeLine(io.stdout, line);
     writeLine(
       io.stdout,
       `Resumed run ${run.record.state}${run.record.stopReason ? ` (${run.record.stopReason})` : ""}`,
@@ -5679,9 +5811,9 @@ function formatTraceSummary(summary: TraceSummary): string {
     `unresolved tool failures: ${summary.toolFailures?.unresolved?.total ?? 0} total${unresolvedToolFailures ? ` (${unresolvedToolFailures})` : ""}`,
     `recovered tool failures: ${summary.toolFailures?.recovered?.total ?? 0} total${recoveredToolFailures ? ` (${recoveredToolFailures})` : ""}`,
     `command failures: ${summary.commandFailures?.total ?? 0} total${topCommandFailures ? ` (${topCommandFailures})` : ""}`,
-    `verification failures: ${summary.commandFailures?.verification?.total ?? 0} total, ${summary.commandFailures?.verification?.unresolved ?? 0} unresolved${summary.commandFailures?.verification?.lastCommand ? `, last ${summary.commandFailures.verification.lastCommand}` : ""}`,
+    `verification failures: ${summary.commandFailures?.verification?.total ?? 0} total, ${summary.commandFailures?.verification?.unresolved ?? 0} unresolved${summary.commandFailures?.verification?.lastCommand ? `, last unresolved ${summary.commandFailures.verification.lastCommand}` : ""}${summary.commandFailures?.verification?.lastSuccessfulVerificationCommand ? `, last success ${summary.commandFailures.verification.lastSuccessfulVerificationCommand}` : ""}`,
     `approvals: ${summary.safety?.approvals?.requested ?? 0} requested, ${summary.safety?.approvals?.approved ?? 0} approved, ${summary.safety?.approvals?.denied ?? 0} denied, ${summary.safety?.approvals?.autoApproved ?? 0} auto-approved`,
-    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped, capability mutations ${summary.safety?.capabilityMutations?.completed ?? 0} completed`,
+    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, managed workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped, untracked write-capable external processes ${summary.safety?.workspaceWrites?.untrackedWriteCapableProcesses ?? 0}, capability mutations ${summary.safety?.capabilityMutations?.completed ?? 0} completed`,
     `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
@@ -5849,10 +5981,15 @@ function parseNonNegativeInteger(
 // NOTE: init templates emit the preferred grouped form
 // (identity/policy/run/ui) as commented YAML. Existing JSON configs keep
 // working, and write commands preserve whichever format already exists.
+function renderConfigSchemaDirective(): string {
+  return `# yaml-language-server: $schema=${pathToFileURL(join(findConfigSchemaDir(), "config.schema.json")).href}`;
+}
+
 function renderUserConfigTemplate(): string {
   return [
-    "# yaml-language-server: $schema=https://sparkwright.dev/schemas/v0/config.schema.json",
+    renderConfigSchemaDirective(),
     "# Personal Sparkwright config. Keep API keys here; do not commit this file.",
+    "# Created by `sparkwright init` or the first interactive run.",
     "identity:",
     "  model: openai/gpt-5.4-mini",
     "  providers:",
@@ -5862,27 +5999,49 @@ function renderUserConfigTemplate(): string {
     "      models:",
     "        gpt-5.4-mini: {}",
     "        gpt-5.4: {}",
-    "    anthropic:",
-    "      npm: '@ai-sdk/anthropic'",
-    "      baseURL: https://api.anthropic.com/v1",
-    "      apiKey: REPLACE_WITH_YOUR_API_KEY",
-    "      models:",
-    "        claude-sonnet-4-6: {}",
-    "        claude-haiku-4-5: {}",
-    "    google:",
-    "      npm: '@ai-sdk/google'",
-    "      baseURL: https://generativelanguage.googleapis.com/v1beta",
-    "      apiKey: REPLACE_WITH_YOUR_API_KEY",
-    "      models:",
-    "        gemini-3.1-pro: {}",
-    "        gemini-3-flash: {}",
+    "",
+    "    # anthropic:",
+    "    #   npm: '@ai-sdk/anthropic'",
+    "    #   baseURL: https://api.anthropic.com/v1",
+    "    #   apiKey: REPLACE_WITH_YOUR_API_KEY",
+    "    #   models:",
+    "    #     claude-sonnet-4-6: {}",
+    "    #     claude-haiku-4-5: {}",
+    "",
+    "    # google:",
+    "    #   npm: '@ai-sdk/google'",
+    "    #   baseURL: https://generativelanguage.googleapis.com/v1beta",
+    "    #   apiKey: REPLACE_WITH_YOUR_API_KEY",
+    "    #   models:",
+    "    #     gemini-3.1-pro: {}",
+    "    #     gemini-3-flash: {}",
+    "",
+    "policy:",
+    "  permissionMode: default",
+    "  # write:",
+    "  #   maxFiles: 10",
+    "  #   allowDeletions: true",
+    "  # confidentialPaths: ['.env', '.env.*', 'secrets/**']",
+    "",
+    "run:",
+    "  budget:",
+    "    maxModelCalls: 80",
+    "    maxCostUsd: 2.0",
+    "  # traceLevel: standard",
+    "",
+    "ui:",
+    "  theme: dark",
+    "  mouse: true",
+    "",
+    "# tools:",
+    "#   use: [workspace.read, workspace.write, shell, planning, skills, agents, mcp]",
     "",
   ].join("\n");
 }
 
 function renderProjectConfigTemplate(): string {
   return [
-    "# yaml-language-server: $schema=https://sparkwright.dev/schemas/v0/config.schema.json",
+    renderConfigSchemaDirective(),
     "# Project Sparkwright config. Safe to commit; keep provider keys in your user config.",
     "# Unset tools.use means all tools. Set it to a tightening selector whitelist.",
     "tools:",
@@ -5944,32 +6103,42 @@ async function initConfigTarget(
   return target.exists ? target : { path: defaultYamlPath, exists: false };
 }
 
+async function createUserConfigTemplateFile(
+  env: Record<string, string | undefined>,
+): Promise<{ status: "created" | "exists"; path: string }> {
+  const { writeFile, mkdir, chmod } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const target = await initConfigTarget(
+    userConfigPath(env),
+    userConfigCandidatePaths(env)[1]!,
+  );
+  if (target.exists) {
+    return { status: "exists", path: target.path };
+  }
+
+  await mkdir(dirname(target.path), { recursive: true });
+  await writeFile(target.path, renderUserConfigTemplate(), {
+    mode: 0o600,
+  });
+  // mkdir/umask can leave looser perms; force 600 since this holds a secret.
+  await chmod(target.path, 0o600);
+  return { status: "created", path: target.path };
+}
+
 async function scaffoldUserConfig(
   io: CliIO,
   env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
-  const { writeFile, mkdir, chmod } = await import("node:fs/promises");
-  const { dirname } = await import("node:path");
   let path = "";
   try {
-    const target = await initConfigTarget(
-      userConfigPath(env),
-      userConfigCandidatePaths(env)[1]!,
-    );
-    path = target.path;
+    const result = await createUserConfigTemplateFile(env);
+    path = result.path;
 
-    if (target.exists) {
+    if (result.status === "exists") {
       writeLine(io.stdout, `Config already exists: ${path}`);
       writeLine(io.stdout, "Edit it directly, or delete it and re-run init.");
       return { exitCode: 0 };
     }
-
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, renderUserConfigTemplate(), {
-      mode: 0o600,
-    });
-    // mkdir/umask can leave looser perms; force 600 since this holds a secret.
-    await chmod(path, 0o600);
   } catch (error) {
     writeLine(
       io.stderr,
@@ -5985,7 +6154,7 @@ async function scaffoldUserConfig(
   );
   writeLine(
     io.stdout,
-    'The template seeds openai, anthropic, and google — switch with "identity.model: <provider>/<model>", e.g. "anthropic/claude-haiku-4-5".',
+    'The template enables openai by default and includes commented anthropic/google examples — switch with "identity.model: <provider>/<model>".',
   );
   return { exitCode: 0 };
 }
@@ -6062,14 +6231,15 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]',
+    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model] [--verbose]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
+    "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
     "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode]',
-    "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model]",
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--verbose]',
+    "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");
 }
 

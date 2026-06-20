@@ -252,11 +252,12 @@ describe("buildAgentPromptBuilder", () => {
 
     expect(await guidanceOf([])).toBeUndefined();
     expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
-    expect(await guidanceOf([{ name: "append_file" }])).toContain(
-      "append_file",
-    );
-    expect(await guidanceOf([{ name: "append_file" }])).toContain(
+    expect(await guidanceOf([{ name: "write_file" }])).toContain("write_file");
+    expect(await guidanceOf([{ name: "write_file" }])).toContain(
       "source of truth",
+    );
+    expect(await guidanceOf([{ name: "write_file" }])).toContain(
+      "run that command next",
     );
   });
 

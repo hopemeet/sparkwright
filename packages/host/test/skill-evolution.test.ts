@@ -162,6 +162,55 @@ describe("skill proposal application", () => {
     }
   });
 
+  it("renders proposal markdown with display paths while metadata keeps absolute paths", async () => {
+    const workspace = await makeWorkspace();
+    const sourceRoot = await mkdtemp(
+      join(tmpdir(), "sparkwright-user-skills-"),
+    );
+    try {
+      const sourceSkill = join(sourceRoot, "display-skill");
+      await mkdir(sourceSkill, { recursive: true });
+      await writeFile(
+        join(sourceSkill, "SKILL.md"),
+        skillMarkdown("display-skill"),
+      );
+
+      const proposal = await createSkillUpdateProposal({
+        workspaceRoot: workspace,
+        skillRoots: [{ root: sourceRoot, layer: "user" }],
+        name: "display-skill",
+        description: "Tidy display paths",
+        applyEdit: (content) => content.replace("Body.", "Display body."),
+      });
+      const metadata = JSON.parse(
+        await readFile(join(proposal.path, "metadata.json"), "utf8"),
+      ) as { targetPath: string; sourcePath: string };
+      const proposalMarkdown = await readFile(
+        join(proposal.path, "proposal.md"),
+        "utf8",
+      );
+
+      expect(metadata.targetPath).toBe(
+        join(workspace, ".sparkwright", "skills", "display-skill"),
+      );
+      expect(metadata.sourcePath).toBe(
+        join(sourceRoot, "display-skill", "SKILL.md"),
+      );
+      expect(proposalMarkdown).toContain(
+        "Target: .sparkwright/skills/display-skill",
+      );
+      expect(proposalMarkdown).toContain(
+        "Source: user:…/display-skill/SKILL.md",
+      );
+      expect(proposalMarkdown).not.toContain(workspace);
+      expect(proposalMarkdown).not.toContain(sourceRoot);
+      expect(proposal.proposalMarkdown).toBe(proposalMarkdown);
+    } finally {
+      await rm(sourceRoot, { recursive: true, force: true });
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("records guard findings and gates dangerous content behind force", async () => {
     const workspace = await makeWorkspace();
     try {

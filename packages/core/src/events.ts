@@ -119,6 +119,7 @@ export type EventType =
   | "workspace.write.denied"
   | "workspace.write.completed"
   | "workspace.write.skipped"
+  | "workspace.write.untracked_access_granted"
   | "usage.updated"
   | "hook.failed"
   | "workflow_hook.started"

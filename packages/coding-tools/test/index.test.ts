@@ -34,6 +34,8 @@ import {
   type ReadAnchoredTextResult,
   type ReadTextInput,
   type ReadTextResult,
+  type WriteFileInput,
+  type WriteFileResult,
 } from "../src/index.js";
 
 describe("coding tools", () => {
@@ -41,6 +43,7 @@ describe("coding tools", () => {
     expect(createCodingTools().map((tool) => tool.name)).toEqual([
       "read_text",
       "read_anchored_text",
+      "write_file",
       "edit_anchored_text",
       "apply_patch",
       "list_dir",
@@ -194,6 +197,67 @@ describe("coding tools", () => {
     expect(result).toMatchObject({ changed: true, hunksApplied: 1 });
     await expect(readFile(join(root, "app.ts"), "utf8")).resolves.toBe(
       "one\nTWO\nthree\nfour\n",
+    );
+  });
+
+  it("creates a nested UTF-8 file through the workspace write path", async () => {
+    const { root, ctx } = await createWorkspace({});
+    const tool = getTool<WriteFileInput, WriteFileResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "write_file",
+    );
+
+    const result = await tool.execute(
+      {
+        path: "notes/demo.md",
+        content: "# Demo\n\nhello\n",
+        reason: "create note",
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      path: "notes/demo.md",
+      changed: true,
+      created: true,
+      bytes: "# Demo\n\nhello\n".length,
+      lineCount: 3,
+    });
+    await expect(readFile(join(root, "notes/demo.md"), "utf8")).resolves.toBe(
+      "# Demo\n\nhello\n",
+    );
+  });
+
+  it("allows empty file content and can refuse to overwrite", async () => {
+    const { root, ctx } = await createWorkspace({
+      "existing.txt": "keep\n",
+    });
+    const tool = getTool<WriteFileInput, WriteFileResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "write_file",
+    );
+
+    const created = await tool.execute(
+      { path: "empty.txt", content: "", reason: "touch empty file" },
+      ctx,
+    );
+    expect(created).toMatchObject({
+      path: "empty.txt",
+      changed: true,
+      created: true,
+      bytes: 0,
+      lineCount: 0,
+    });
+    await expect(readFile(join(root, "empty.txt"), "utf8")).resolves.toBe("");
+
+    await expect(
+      tool.execute(
+        { path: "existing.txt", content: "replace\n", overwrite: false },
+        ctx,
+      ),
+    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    await expect(readFile(join(root, "existing.txt"), "utf8")).resolves.toBe(
+      "keep\n",
     );
   });
 

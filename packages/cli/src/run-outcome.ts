@@ -12,11 +12,13 @@ export type { VerificationProfileResult };
 export interface CliRunEventSummary {
   events: SparkwrightEvent[];
   toolFailures: Array<{ code?: string }>;
-  skillFailures: Array<{ source?: string; message?: string }>;
+  skillFailures: CliSkillFailureSummary[];
   writeCompleted: number;
   writeSkipped: number;
   writeDenied: number;
   capabilityMutationCompleted: number;
+  mcpWorkspaceCwdServers: string[];
+  subagentWriteCompleted: number;
   toolReportedChanges: number;
   runFailure?: CliRunFailureSummary;
 }
@@ -34,6 +36,17 @@ export interface CliRunFailureSummary {
   metadata?: Record<string, unknown>;
 }
 
+export interface CliSkillFailureSummary {
+  name?: string;
+  source?: string;
+  message?: string;
+  status?: string;
+  resource?: string;
+  errorCode?: string;
+  exitCode?: number;
+  timedOut?: boolean;
+}
+
 export function createCliRunEventSummary(): CliRunEventSummary {
   return {
     events: [],
@@ -43,6 +56,8 @@ export function createCliRunEventSummary(): CliRunEventSummary {
     writeSkipped: 0,
     writeDenied: 0,
     capabilityMutationCompleted: 0,
+    mcpWorkspaceCwdServers: [],
+    subagentWriteCompleted: 0,
     toolReportedChanges: 0,
   };
 }
@@ -60,6 +75,13 @@ export function updateCliRunEventSummary(
     if (toolCompletedChanged(event)) summary.toolReportedChanges += 1;
   } else if (event.type === "capability.mutation.completed") {
     summary.capabilityMutationCompleted += 1;
+  } else if (event.type === "run.started") {
+    mergeMcpWorkspaceCwdServers(summary, event);
+  } else if (
+    event.type === "subagent.completed" ||
+    event.type === "subagent.failed"
+  ) {
+    summary.subagentWriteCompleted += subagentWorkspaceWriteCount(event);
   } else if (event.type === "workspace.write.completed")
     summary.writeCompleted += 1;
   else if (event.type === "workspace.write.skipped") summary.writeSkipped += 1;
@@ -159,27 +181,71 @@ export function summarizeWorkspaceMutations(input: {
   skipped: number;
   denied: number;
   capabilityMutations?: number;
+  mcpWorkspaceCwdServers?: readonly string[];
+  subagentWrites?: number;
   toolReportedChanges?: number;
 }): string {
   const { shouldWrite, completed, skipped, denied } = input;
   const capabilityMutations = input.capabilityMutations ?? 0;
+  const mcpWorkspaceCwdServers = input.mcpWorkspaceCwdServers ?? [];
+  const subagentWrites = input.subagentWrites ?? 0;
   const toolReportedChanges = input.toolReportedChanges ?? 0;
+  let summary: string;
   if (completed === 0 && skipped === 0 && denied === 0) {
     if (capabilityMutations > 0) {
-      return `Capability mutations: ${capabilityMutations} completed; no workspace write was applied.`;
+      summary = `Capability mutations: ${capabilityMutations} completed; no workspace write was applied.`;
+    } else if (subagentWrites > 0) {
+      summary = `Workspace changes applied by sub-agent(s): ${subagentWrites} write${subagentWrites === 1 ? "" : "s"}.`;
+    } else if (toolReportedChanges > 0) {
+      summary = `Capability changes: ${toolReportedChanges} tool-reported; no workspace write was applied.`;
+    } else {
+      summary = shouldWrite
+        ? "No workspace changes were made (no workspace write was applied)."
+        : "No workspace changes were made (read-only run).";
     }
-    if (toolReportedChanges > 0) {
-      return `Capability changes: ${toolReportedChanges} tool-reported; no workspace write was applied.`;
-    }
-    return shouldWrite
-      ? "No workspace changes were made (no workspace write was applied)."
-      : "No workspace changes were made (read-only run).";
+  } else {
+    const parts: string[] = [];
+    if (completed > 0) parts.push(`${completed} applied`);
+    if (skipped > 0) parts.push(`${skipped} skipped (no-op)`);
+    if (denied > 0) parts.push(`${denied} denied`);
+    if (subagentWrites > 0) parts.push(`${subagentWrites} by sub-agent`);
+    summary = `Workspace writes: ${parts.join(", ")}.`;
   }
-  const parts: string[] = [];
-  if (completed > 0) parts.push(`${completed} applied`);
-  if (skipped > 0) parts.push(`${skipped} skipped (no-op)`);
-  if (denied > 0) parts.push(`${denied} denied`);
-  return `Workspace writes: ${parts.join(", ")}.`;
+  return withMcpWorkspaceCwdDisclosure(summary, mcpWorkspaceCwdServers);
+}
+
+function mergeMcpWorkspaceCwdServers(
+  summary: CliRunEventSummary,
+  event: SparkwrightEvent,
+): void {
+  if (!isRecord(event.payload)) return;
+  const servers = Array.isArray(event.payload.mcpWorkspaceCwdServers)
+    ? event.payload.mcpWorkspaceCwdServers.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : [];
+  for (const server of servers) {
+    if (!summary.mcpWorkspaceCwdServers.includes(server)) {
+      summary.mcpWorkspaceCwdServers.push(server);
+    }
+  }
+}
+
+function withMcpWorkspaceCwdDisclosure(
+  summary: string,
+  servers: readonly string[],
+): string {
+  if (servers.length === 0) return summary;
+  const names = servers.join(", ");
+  return `${summary} MCP servers configured with workspace cwd (${names}) are not counted as managed workspace writes.`;
+}
+
+function subagentWorkspaceWriteCount(event: SparkwrightEvent): number {
+  if (!isRecord(event.payload)) return 0;
+  return typeof event.payload.workspaceWrites === "number" &&
+    Number.isFinite(event.payload.workspaceWrites)
+    ? event.payload.workspaceWrites
+    : 0;
 }
 
 export function summarizeUnhandledToolFailures(
@@ -245,10 +311,9 @@ export function summarizeSkillLoadFailures(
 ): string | undefined {
   const failures = summary.skillFailures;
   if (failures.length === 0) return undefined;
-  const first = failures[0];
-  const where = first?.source ? ` First: ${first.source}` : "";
-  const why = first?.message ? ` — ${first.message}` : "";
-  return `Run completed with ${failures.length} skill load failure${failures.length === 1 ? "" : "s"}; affected skills were not indexed for this run.${where}${why}`;
+  const first = failures[0] ? formatSkillFailure(failures[0]) : undefined;
+  const detail = first ? ` First: ${first}.` : "";
+  return `Run completed with ${failures.length} skill load/preparation failure${failures.length === 1 ? "" : "s"}; affected skills may be missing or degraded for this run.${detail}`;
 }
 
 export function summarizeDeniedWorkspaceWrites(
@@ -369,15 +434,58 @@ function toolFailureCode(event: SparkwrightEvent): string | undefined {
   return payload.error?.code;
 }
 
-function skillFailureDetail(event: SparkwrightEvent): {
-  source?: string;
-  message?: string;
-} {
+function skillFailureDetail(event: SparkwrightEvent): CliSkillFailureSummary {
   if (!isRecord(event.payload)) return {};
   return {
+    name: stringValue(event.payload.name),
     source: stringValue(event.payload.source),
     message: stringValue(event.payload.message),
+    status: stringValue(event.payload.status),
+    resource: stringValue(event.payload.resource),
+    errorCode: stringValue(event.payload.errorCode),
+    exitCode: numberValue(event.payload.exitCode),
+    timedOut: booleanValue(event.payload.timedOut),
   };
+}
+
+function formatSkillFailure(failure: CliSkillFailureSummary): string {
+  const subject =
+    failure.name ?? skillNameFromSource(failure.source) ?? "unknown skill";
+  const status = failure.status ?? "failed";
+  const resource = failure.resource ? ` resource=${failure.resource}` : "";
+  if (status === "inline_shell_failed") {
+    const code = failure.errorCode ? ` ${failure.errorCode}` : "";
+    const exit =
+      failure.exitCode !== undefined ? ` exitCode=${failure.exitCode}` : "";
+    const timeout = failure.timedOut ? " timed out" : "";
+    return `${subject} inline shell failed${code}${exit}${timeout}`.trim();
+  }
+  const message = previewSingleLine(redactSkillPaths(failure.message));
+  return `${subject} ${status}${resource}${message ? ` - ${message}` : ""}`;
+}
+
+function skillNameFromSource(source: string | undefined): string | undefined {
+  if (!source) return undefined;
+  const parts = source.split(/[\\/]+/u).filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const leaf = parts.at(-1);
+  if (leaf === "SKILL.md" && parts.length >= 2) return parts.at(-2);
+  return leaf;
+}
+
+function previewSingleLine(value: string | undefined, max = 180): string {
+  if (!value) return "";
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > max
+    ? `${normalized.slice(0, Math.max(0, max - 3))}...`
+    : normalized;
+}
+
+function redactSkillPaths(value: string | undefined): string | undefined {
+  return value?.replace(
+    /(?:[A-Za-z]:)?[\\/](?:[^\s'"`]+[\\/])*SKILL\.md/gu,
+    "<skill path>",
+  );
 }
 
 function toolCompletedChanged(event: SparkwrightEvent): boolean {

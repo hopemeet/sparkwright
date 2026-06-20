@@ -3,12 +3,14 @@ import { Box, Text, useInput, useStdout } from "ink";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { useTheme } from "../lib/theme-context.js";
 import type { CapabilityView } from "../lib/layer-payload.js";
+import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 export function CapabilitiesPanel(props: {
   snapshot: CapabilitySnapshot | null;
   loading: boolean;
   view: CapabilityView;
+  workspaceRoot?: string;
   onClose: () => void;
 }): React.ReactElement {
   const theme = useTheme();
@@ -20,7 +22,7 @@ export function CapabilitiesPanel(props: {
   const indexedSkills = snapshot?.skills.indexed ?? [];
   const loadedSkills = snapshot?.skills.loaded ?? [];
   const mcpServers = snapshot?.mcp.statuses ?? [];
-  const agents = snapshot?.agents.profiles ?? [];
+  const agents = configuredAgentProfiles(snapshot?.agents.profiles ?? []);
   const delegateTools = snapshot?.agents.delegateTools ?? [];
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
@@ -36,6 +38,7 @@ export function CapabilitiesPanel(props: {
         mcpServers,
         cronTools,
         automation: snapshot.automation,
+        workspaceRoot: props.workspaceRoot,
         theme: {
           accent: theme.accent,
           error: theme.error,
@@ -93,6 +96,14 @@ export function CapabilitiesPanel(props: {
   );
 }
 
+function configuredAgentProfiles(
+  profiles: CapabilitySnapshot["agents"]["profiles"],
+): CapabilitySnapshot["agents"]["profiles"] {
+  return profiles.filter(
+    (profile) => !(profile.id === "main" && profile.mode === "primary"),
+  );
+}
+
 function footerText(scrollable: boolean, more: number): string {
   if (!scrollable) return "esc close";
   return `esc close · ↑/↓ j/k scroll · u/d page${
@@ -111,6 +122,7 @@ function capabilityRows(input: {
   mcpServers: CapabilitySnapshot["mcp"]["statuses"];
   cronTools: CapabilitySnapshot["tools"];
   automation?: CapabilitySnapshot["automation"];
+  workspaceRoot?: string;
 }): React.ReactElement[] {
   const rows: React.ReactElement[] = [];
   addOverviewRows(rows, input);
@@ -118,7 +130,13 @@ function capabilityRows(input: {
     addToolsRows(rows, input.tools, input.theme);
   }
   if (input.view === "all" || input.view === "skills") {
-    addSkillsRows(rows, input.indexedSkills, input.loadedSkills, input.theme);
+    addSkillsRows(
+      rows,
+      input.indexedSkills,
+      input.loadedSkills,
+      input.theme,
+      input.workspaceRoot,
+    );
   }
   if (input.view === "all" || input.view === "agents") {
     addAgentsRows(rows, input.agents, input.delegateTools, input.theme);
@@ -372,6 +390,7 @@ function addSkillsRows(
   indexed: CapabilitySnapshot["skills"]["indexed"],
   loaded: CapabilitySnapshot["skills"]["loaded"],
   theme: CapabilityRowTheme,
+  workspaceRoot?: string,
 ): void {
   pushSectionHeader(
     rows,
@@ -397,7 +416,14 @@ function addSkillsRows(
           <Text color={theme.muted}>indexed </Text>
           {skill.name}
           {skill.sourcePath ? (
-            <Text color={theme.muted}> · {skill.sourcePath}</Text>
+            <Text color={theme.muted}>
+              {" "}
+              ·{" "}
+              {formatWorkspaceDisplayPath(skill.sourcePath, {
+                workspaceRoot,
+                maxCols: 72,
+              })}
+            </Text>
           ) : null}
         </Text>,
       );
@@ -443,6 +469,7 @@ function addAgentsRows(
           → {tool.profileId} · {tool.protocol} ·{" "}
           {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
           {tool.workspaceAccess}
+          {tool.gatedByRunWrite ? " · requires --write" : ""}
         </Text>
       </Text>,
     );

@@ -27,6 +27,54 @@ export interface ParsedCommand {
   leadingProgram: string;
 }
 
+interface HereDocDelimiter {
+  marker: string;
+  stripTabs: boolean;
+}
+
+/**
+ * Remove here-doc bodies while preserving the command lines that declare them.
+ * The shell parser and safety classifier only need argv/operators; source text
+ * inside a here-doc (for example a shebang) must not be treated as arguments.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export function stripHereDocBodies(command: string): string {
+  const lines = command.split("\n");
+  const pending: HereDocDelimiter[] = [];
+  const kept: string[] = [];
+
+  for (const line of lines) {
+    if (pending.length > 0) {
+      const current = pending[0]!;
+      const candidate = current.stripTabs ? line.replace(/^\t+/, "") : line;
+      if (candidate === current.marker) {
+        pending.shift();
+      }
+      kept.push("");
+      continue;
+    }
+
+    kept.push(line);
+    pending.push(...extractHereDocDelimiters(line));
+  }
+
+  return kept.join("\n");
+}
+
+function extractHereDocDelimiters(line: string): HereDocDelimiter[] {
+  const delimiters: HereDocDelimiter[] = [];
+  const pattern = /<<(?!<)(-)?\s*(?:"([^"]+)"|'([^']+)'|(\\?[^\s;&|()<>]+))/g;
+  for (const match of line.matchAll(pattern)) {
+    const rawMarker = match[2] ?? match[3] ?? match[4] ?? "";
+    const marker = rawMarker.startsWith("\\") ? rawMarker.slice(1) : rawMarker;
+    if (marker.length === 0) continue;
+    delimiters.push({ marker, stripTabs: match[1] === "-" });
+  }
+  return delimiters;
+}
+
 /**
  * Tokenize a command line. Honors single/double quotes and backslash escapes
  * sufficient to keep operators inside quoted segments from being misread as

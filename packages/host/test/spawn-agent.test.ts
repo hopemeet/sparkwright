@@ -406,11 +406,22 @@ describe("host spawn_agent wiring", () => {
           maxSteps: 1,
         },
         { run: parent.record } as never,
-      )) as { signal: string; stopReason: string; stepLimitReached?: boolean };
+      )) as {
+        signal: string;
+        stopReason: string;
+        stepLimitReached?: boolean;
+        truncated?: boolean;
+        finality?: string;
+        message?: string;
+      };
 
       expect(output.signal).toBe("completed");
       expect(output.stopReason).toBe("final_answer");
       expect(output.stepLimitReached).toBe(true);
+      expect(output.truncated).toBe(true);
+      expect(output.finality).toBe("partial");
+      expect(output.message).toContain("hit its step budget");
+      expect(output.message).toContain("partial list");
     } finally {
       // Child session-store writes can still be flushing as the run resolves;
       // retry the cleanup rather than racing them into an ENOTEMPTY.
@@ -778,6 +789,8 @@ describe("host spawn_agent wiring", () => {
         metadata?: {
           signal?: string;
           stopReason?: string;
+          truncated?: boolean;
+          finality?: string;
           partialObservations?: { toolName: string; output: string }[];
         };
       };
@@ -785,6 +798,8 @@ describe("host spawn_agent wiring", () => {
       expect(err.message).not.toContain("{");
       expect(err.metadata?.signal).toBe("failed");
       expect(err.metadata?.stopReason).toBe("tool_doom_loop");
+      expect(err.metadata?.truncated).toBe(false);
+      expect(err.metadata?.finality).toBe("partial");
 
       // The child's discovered data rides along in metadata for the parent.
       const observations = err.metadata?.partialObservations;

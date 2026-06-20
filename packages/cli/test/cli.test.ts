@@ -71,6 +71,7 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain(
       "sparkwright cron list|status|run|tick",
     );
+    expect(output.stdoutText()).toContain("sparkwright trace report");
     expect(output.stdoutText()).toContain('sparkwright run "your goal"');
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
@@ -92,6 +93,26 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain('Usage: sparkwright run "your goal"');
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+  });
+
+  it("prints nested command help without executing the subcommand", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["capabilities", "inspect", "--help"], {
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "Usage: sparkwright capabilities inspect",
+    );
+    expect(output.stdoutText()).not.toContain("runtime tools");
+    expect(output.stdoutText()).not.toContain("tools.available");
     expect(output.stderrText()).toBe("");
   });
 
@@ -446,9 +467,19 @@ describe("runCli", () => {
                 allowedTools: ["read_file"],
                 maxSteps: 3,
               },
+              {
+                id: "writer",
+                name: "Writer",
+                mode: "child",
+                prompt: "Patch files.",
+                use: ["workspace.write"],
+                allowedTools: ["apply_patch"],
+                maxSteps: 3,
+              },
             ],
             delegateTools: [
               { profileId: "reviewer", toolName: "delegate_reviewer" },
+              { profileId: "writer", toolName: "delegate_writer" },
             ],
           },
         },
@@ -479,6 +510,39 @@ describe("runCli", () => {
     expect(tool).toBeTruthy();
     expect(tool.source).toBe("delegate");
     expect(tool.origin).toBe("in_process:reviewer");
+    expect(report.agents?.delegateTools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          toolName: "delegate_reviewer",
+          profileId: "reviewer",
+          profileName: "Reviewer",
+          protocol: "in_process",
+          requiresApproval: false,
+          approvalRequiredUnderCurrentRun: true,
+          approvalReasons: expect.arrayContaining(["tool.risk:risky"]),
+          approvalRunOptions: { shouldWrite: false },
+          workspaceAccess: "none",
+          shellAccess: false,
+          processSpawn: false,
+        }),
+        expect.objectContaining({
+          toolName: "delegate_writer",
+          profileId: "writer",
+          profileName: "Writer",
+          protocol: "in_process",
+          approvalRequiredUnderCurrentRun: true,
+          approvalReasons: expect.arrayContaining([
+            "tool.risk:risky",
+            "gated_by_run_write",
+          ]),
+          approvalRunOptions: { shouldWrite: false },
+          workspaceAccess: "read_write",
+          shellAccess: false,
+          processSpawn: false,
+          gatedByRunWrite: true,
+        }),
+      ]),
+    );
   });
 
   it("rejects an invalid skill name with a clear, specific message", async () => {
@@ -1137,6 +1201,11 @@ describe("runCli", () => {
     });
     expect(created.exitCode).toBe(0);
     expect(first.stdoutText()).toContain(configPath);
+    const configText = await readFile(configPath, "utf8");
+    expect(configText).toContain("# yaml-language-server: $schema=file://");
+    expect(configText).toContain("ui:");
+    expect(configText).toContain("  theme: dark");
+    expect(configText).toContain("  mouse: true");
 
     const cwd = await mkdtemp(join(tmpdir(), "sw-"));
     tempDirs.push(cwd);
@@ -1147,6 +1216,10 @@ describe("runCli", () => {
     expect(loaded.config.providers?.openai?.apiKey).toBe(
       "REPLACE_WITH_YOUR_API_KEY",
     );
+    expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.runBudget?.maxModelCalls).toBe(80);
+    expect(loaded.config.runBudget?.maxCostUsd).toBe(2.0);
+    expect(loaded.config.tools).toBeUndefined();
     if (process.platform !== "win32") {
       // Secret-bearing file must not be group/world readable on POSIX.
       const mode = (await stat(configPath)).mode & 0o777;
@@ -1366,8 +1439,13 @@ describe("runCli", () => {
     expect(explain.stdoutText()).not.toContain("sk-secret");
   });
 
-  it("prints a first-run config hint for interactive runs", async () => {
+  it("scaffolds user config for first interactive runs", async () => {
     const workspace = await createWorkspace("");
+    const configPath = join(
+      process.env.XDG_CONFIG_HOME as string,
+      "sparkwright",
+      "config.yaml",
+    );
     const output = createOutputCapture();
 
     const result = await runCli(["run", "hello", "--workspace", workspace], {
@@ -1379,14 +1457,15 @@ describe("runCli", () => {
     });
 
     expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toBe("");
     expect(output.stderrText()).toContain("No Sparkwright config found yet");
+    expect(output.stderrText()).toContain(`Created user config: ${configPath}`);
     expect(output.stderrText()).toContain(
-      join(process.env.XDG_CONFIG_HOME as string, "sparkwright", "config.yaml"),
+      'set "identity.providers.openai.apiKey" or export OPENAI_API_KEY',
     );
-    expect(output.stderrText()).toContain(
-      join(workspace, ".sparkwright", "config.yaml"),
+    await expect(readFile(configPath, "utf8")).resolves.toContain(
+      "# yaml-language-server: $schema=file://",
     );
-    expect(output.stderrText()).toContain("sparkwright init");
   });
 
   it("config example prints a paste-ready grouped snippet", async () => {
@@ -1426,6 +1505,7 @@ describe("runCli", () => {
       "grep",
       "list_dir",
       "read_anchored_text",
+      "write_file",
       "edit_anchored_text",
       "apply_patch",
       "tool_search",
@@ -3953,8 +4033,9 @@ describe("runCli", () => {
     expect(result.exitCode).toBe(0);
     // The malformed skill is surfaced as a warning (so the author knows it was
     // dropped) without aborting the run.
-    expect(output.stderrText()).toContain("skill load failure");
-    expect(output.stderrText()).toContain(
+    expect(output.stderrText()).toContain("skill load/preparation failure");
+    expect(output.stderrText()).toContain("bad failed");
+    expect(output.stderrText()).not.toContain(
       join(workspace, ".sparkwright", "skills", "bad", "SKILL.md"),
     );
     const events = await readTrace(result.tracePath);
@@ -4194,7 +4275,7 @@ describe("runCli", () => {
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("events:");
     expect(textOutput.stdoutText()).toContain(
-      "cost: unavailable (not reported)",
+      "cost: unavailable (usage_not_reported:",
     );
     expect(textOutput.stdoutText()).toContain("tool calls:");
     expect(textOutput.stdoutText()).toContain("tool failures: 0 total");
@@ -4975,6 +5056,278 @@ describe("runCli", () => {
             .output?.content?.[0]?.text === "sparkwright cli host model smoke",
       ),
     ).toBeTruthy();
+  });
+
+  it("runs stdio MCP servers without a configured cwd from a neutral cwd", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            startup: "prepare",
+            servers: [
+              mcpEchoServerConfig("qa", {
+                toolRegistrations: [
+                  "server.registerTool('write_note', { description: 'Write a local note.', inputSchema: { path: z.string(), text: z.string() } }, async ({ path, text }) => { const { writeFile } = await import('node:fs/promises'); const { resolve } = await import('node:path'); await writeFile(path, text, 'utf8'); return { content: [{ type: 'text', text: `cwd=${process.cwd()} resolved=${resolve(path)}` }] }; });",
+                ],
+              }),
+            ],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "use MCP write note",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "mcp_qa_write_note",
+                  arguments: { path: "cwd-note.txt", text: "from mcp" },
+                },
+              ],
+            },
+            {
+              message: "mcp wrote the note in its own cwd",
+            },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    await expect(
+      readFile(join(workspace, "cwd-note.txt"), "utf8"),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; payload?: unknown });
+    const toolCompleted = traceEvents.find(
+      (event) =>
+        event.type === "tool.completed" &&
+        (event.payload as { toolName?: string }).toolName ===
+          "mcp_qa_write_note",
+    );
+    const text = (
+      toolCompleted?.payload as {
+        output?: { content?: Array<{ text?: string }> };
+      }
+    )?.output?.content?.[0]?.text;
+    expect(text).toMatch(/cwd=.*resolved=/u);
+    const cwd = text?.match(/cwd=([^ ]+) resolved=/u)?.[1];
+    expect(cwd).toBeTruthy();
+    expect(cwd).not.toBe(workspace);
+  });
+
+  it("discloses MCP servers explicitly configured with workspace cwd", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          mcp: {
+            namePrefix: "mcp",
+            startup: "prepare",
+            servers: [
+              mcpEchoServerConfig("qa", {
+                cwd: workspace,
+              }),
+            ],
+            defaultPolicy: { risk: "safe", requiresApproval: false },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "check MCP workspace cwd disclosure",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "done",
+            },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "MCP servers configured with workspace cwd (qa) are not counted as managed workspace writes.",
+    );
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; payload?: unknown });
+    expect(
+      traceEvents.find((event) => event.type === "run.started"),
+    ).toMatchObject({
+      payload: { mcpWorkspaceCwdServers: ["qa"] },
+    });
+  });
+
+  it("reports configured delegate workspace side effects in the parent run summary", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            profiles: [
+              { id: "main", mode: "primary" },
+              {
+                id: "writer",
+                name: "Writer",
+                mode: "child",
+                prompt: "Patch files as requested.",
+                use: ["workspace.read", "workspace.write"],
+                allowedTools: ["read_file", "apply_patch"],
+                maxSteps: 3,
+              },
+            ],
+            delegateTools: [
+              { profileId: "writer", toolName: "delegate_writer" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const run = await runCli(
+      [
+        "run",
+        "delegate a README patch",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--write",
+        "--yes",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "delegate_writer",
+                  arguments: { goal: "Patch README.md from the delegate." },
+                },
+              ],
+            },
+            {
+              toolCalls: [
+                {
+                  toolName: "apply_patch",
+                  arguments: {
+                    path: "README.md",
+                    reason: "delegate summary regression",
+                    patch: [
+                      "--- a/README.md",
+                      "+++ b/README.md",
+                      "@@ -1 +1,3 @@",
+                      " # Demo",
+                      "+",
+                      "+Written by configured delegate.",
+                      "",
+                    ].join("\n"),
+                  },
+                },
+              ],
+            },
+            { message: "child patched README.md" },
+            { message: "parent observed delegate result" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(run.exitCode).toBe(0);
+    await expect(readFile(join(workspace, "README.md"), "utf8")).resolves.toBe(
+      "# Demo\n\nWritten by configured delegate.\n",
+    );
+    expect(output.stdoutText()).toContain(
+      "Workspace changes applied by sub-agent(s): 1 write.",
+    );
+    const traceEvents = (await readFile(run.tracePath!, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            type: string;
+            payload?: unknown;
+            metadata?: unknown;
+          },
+      );
+    // The delegate write is rolled up onto the parent's `subagent.completed`
+    // from the child run's own write events; no parent-side filesystem snapshot.
+    expect(
+      traceEvents.find((event) => event.type === "subagent.completed"),
+    ).toMatchObject({
+      payload: { workspaceWrites: 1 },
+      metadata: { agentProfileId: "writer" },
+    });
   });
 
   it("applies configured workflow hooks in host runs", async () => {
@@ -6248,6 +6601,88 @@ describe("runCli", () => {
     expect(trace).toContain('"type":"subagent.completed"');
   });
 
+  it("enforces maxDepth for direct external command delegates", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const commandPath = join(workspace, "delegate-fixture.mjs");
+    await writeFile(
+      commandPath,
+      "process.stdout.write('should not run');\n",
+      "utf8",
+    );
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              maxDepth: 0,
+              profiles: [
+                {
+                  id: "external_cli_fixture",
+                  metadata: {
+                    externalCommand: {
+                      command: process.execPath,
+                      args: [commandPath],
+                      input: "none",
+                    },
+                  },
+                },
+              ],
+              delegateTools: [
+                {
+                  profileId: "external_cli_fixture",
+                  toolName: "delegate_external_cli_fixture",
+                },
+              ],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_external_cli_fixture",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--yes",
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "exceeded capabilities.agents.maxDepth (0)",
+    );
+    const parsed = JSON.parse(output.stdoutText()) as {
+      ok: boolean;
+      code: string;
+      message: string;
+    };
+    expect(parsed).toMatchObject({
+      ok: false,
+      code: "DELEGATE_EXECUTION_FAILED",
+    });
+    expect(parsed.message).toContain("maxDepth (0)");
+  });
+
   it("requires --write before a direct delegate can receive read-write workspace access", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const commandPath = join(workspace, "delegate-fixture.mjs");
@@ -6336,6 +6771,10 @@ describe("runCli", () => {
         workspace,
         "--write",
         "--yes",
+        "--session-id",
+        "delegate-write-marker-test",
+        "--trace-level",
+        "debug",
         "--format",
         "json",
       ],
@@ -6349,6 +6788,7 @@ describe("runCli", () => {
     );
     expect(approved.exitCode).toBe(0);
     const parsed = JSON.parse(approvedOutput.stdoutText()) as {
+      tracePath: string;
       output: { stdout: string };
     };
     const delegateInvocation = JSON.parse(parsed.output.stdout) as {
@@ -6361,11 +6801,45 @@ describe("runCli", () => {
     expect(await realpath(delegateInvocation.cwd)).toBe(
       await realpath(workspace),
     );
+    const trace = await readFile(parsed.tracePath, "utf8");
+    expect(trace).toContain(
+      '"type":"workspace.write.untracked_access_granted"',
+    );
+    expect(trace).toContain('"marker":"untracked-write-capable"');
+
+    const summaryOutput = createOutputCapture();
+    const summary = await runCli(
+      ["trace", "summary", parsed.tracePath, "--format", "json"],
+      {
+        io: {
+          stdout: summaryOutput.stdout,
+          stderr: summaryOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+    expect(summary.exitCode).toBe(0);
+    const parsedSummary = JSON.parse(summaryOutput.stdoutText()) as {
+      safety: {
+        workspaceWrites: {
+          completed: number;
+          untrackedWriteCapableProcesses: number;
+        };
+      };
+    };
+    expect(parsedSummary.safety.workspaceWrites.completed).toBe(0);
+    expect(
+      parsedSummary.safety.workspaceWrites.untrackedWriteCapableProcesses,
+    ).toBe(1);
   });
 
   function mcpEchoServerConfig(
     name: string,
-    options: { prelude?: string } = {},
+    options: {
+      prelude?: string;
+      toolRegistrations?: string[];
+      cwd?: string;
+    } = {},
   ) {
     const repoRoot = findRepoRoot(process.cwd());
     const mcpPath = resolve(
@@ -6387,6 +6861,7 @@ describe("runCli", () => {
       `import { z } from ${JSON.stringify(pathToFileURL(zodPath).href)};`,
       "const server = new McpServer({ name: 'cli-test-mcp', version: '0.0.1' });",
       "server.registerTool('echo', { description: 'Echo text.', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }] }));",
+      ...(options.toolRegistrations ?? []),
       "await server.connect(new StdioServerTransport());",
     ].join("\n");
     return {
@@ -6398,6 +6873,7 @@ describe("runCli", () => {
       // Generous ceiling so a cold node + ESM SDK load on the slow Windows CI
       // runner has room to connect (not a delay on fast machines).
       timeoutMs: 15000,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
     };
   }
 

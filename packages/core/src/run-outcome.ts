@@ -374,9 +374,16 @@ export interface CommandOutcomeSnapshot {
   verification: {
     total: number;
     unresolved: number;
+    /** Legacy field: last unresolved verification failure, if any. */
     lastCommand?: string;
     lastExitCode?: number | null;
     lastTimedOut?: boolean;
+    /** Last verification failure observed, even if a later success recovered it. */
+    lastFailureCommand?: string;
+    lastFailureExitCode?: number | null;
+    lastFailureTimedOut?: boolean;
+    /** Last successful verification command observed after/among failures. */
+    lastSuccessfulVerificationCommand?: string;
   };
 }
 
@@ -392,16 +399,39 @@ export function commandOutcomeSnapshot(
 ): CommandOutcomeSnapshot | undefined {
   const outcomes = analyzeCommandOutcomes(events);
   if (outcomes.failures.length === 0) return undefined;
-  const last = outcomes.verificationFailures.at(-1);
+  const lastFailure = outcomes.verificationFailures.at(-1);
+  const lastUnresolved = outcomes.unresolvedVerificationFailures.at(-1);
+  const lastVerificationSuccess = outcomes.successes
+    .filter((success) => success.verificationRelevant)
+    .at(-1);
   return {
     total: outcomes.failures.length,
     byExitCode: outcomes.byExitCode,
     verification: {
       total: outcomes.verificationFailures.length,
       unresolved: outcomes.unresolvedVerificationFailures.length,
-      ...(last?.command ? { lastCommand: last.command } : {}),
-      ...(last
-        ? { lastExitCode: last.exitCode, lastTimedOut: last.timedOut }
+      ...(lastUnresolved?.command
+        ? { lastCommand: lastUnresolved.command }
+        : {}),
+      ...(lastUnresolved
+        ? {
+            lastExitCode: lastUnresolved.exitCode,
+            lastTimedOut: lastUnresolved.timedOut,
+          }
+        : {}),
+      ...(lastFailure?.command
+        ? { lastFailureCommand: lastFailure.command }
+        : {}),
+      ...(lastFailure
+        ? {
+            lastFailureExitCode: lastFailure.exitCode,
+            lastFailureTimedOut: lastFailure.timedOut,
+          }
+        : {}),
+      ...(lastVerificationSuccess?.command
+        ? {
+            lastSuccessfulVerificationCommand: lastVerificationSuccess.command,
+          }
         : {}),
     },
   };

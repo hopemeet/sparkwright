@@ -278,6 +278,9 @@ Use DingTalk only when notification is requested.
     ]);
     expect(prepared.context).toHaveLength(2);
     expect(prepared.context[0]?.metadata.layer).toBe("skill_index");
+    expect(prepared.context[0]?.content).not.toContain(root);
+    expect(prepared.context[0]?.content).not.toContain("sourcePath");
+    expect(prepared.context[0]?.content).not.toContain("contentHash");
     expect(prepared.context[1]?.metadata).toMatchObject({
       layer: "resident",
       skillName: "dingtalk-notifier",
@@ -725,6 +728,15 @@ Review only the requested change.
       content: "Rule one.\nRule two.\n",
     });
 
+    const emptyResource = await tool.execute(
+      { name: "code-reviewer", resource: "" },
+      ctx,
+    );
+    expect(emptyResource).toMatchObject({
+      status: "loaded",
+      name: "code-reviewer",
+    });
+
     // Containment: a traversal path must not read outside the skill directory.
     const escaped = await tool.execute(
       { name: "code-reviewer", resource: "../../../../etc/hosts" },
@@ -837,7 +849,6 @@ Review only the requested change.
     expect(context.type).toBe("system");
     expect(context.source).toEqual({
       kind: "skill",
-      path: "SKILL.md",
     });
     expect(context.content).toContain("Review only the requested change.");
     expect(context.metadata).toMatchObject({
@@ -845,6 +856,7 @@ Review only the requested change.
       stability: "session",
       skillName: "code-reviewer",
       skillVersion: "2",
+      skillSourcePath: "SKILL.md",
       selectionReason: "Matched goal.",
     });
   });

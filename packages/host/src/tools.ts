@@ -14,6 +14,7 @@ import {
   createGrepTextTool as createGrepTextToolBase,
   createListDirTool as createListDirToolBase,
   createReadAnchoredTextTool as createReadAnchoredTextToolBase,
+  createWriteFileTool as createWriteFileToolBase,
 } from "@sparkwright/coding-tools";
 import {
   createCronTool as createCronToolBase,
@@ -42,6 +43,7 @@ import {
   inspectProposedSkillContent,
   type SkillProposalProvenance,
 } from "./skill-evolution.js";
+import { delegateToolName } from "./delegate-capability.js";
 import { projectSkillRoot } from "./skill-roots.js";
 import { loadLayeredSkillReport } from "./skill-report.js";
 
@@ -314,6 +316,15 @@ export function createReadAnchoredTextTool() {
 }
 
 /**
+ * Built-in write tool: create or replace a whole UTF-8 file through the
+ * workspace write path. Parent directories are handled by the workspace
+ * runtime, and policy/approval/diff events stay centralized there.
+ */
+export function createWriteFileTool() {
+  return createWriteFileToolBase();
+}
+
+/**
  * Built-in write tool: apply verified anchored edits (replace/delete/append/
  * prepend relative to a unique text anchor) through the workspace write path.
  * Supports in-place line replacement — needed for "make one minimal fix" tasks
@@ -473,6 +484,19 @@ export function createSkillManagerTool(
         content,
         `Create Skill ${input.name}`,
       );
+      ctx.reportCapabilityMutationCompleted?.({
+        action: "create_skill",
+        path: write.path,
+        reason: `Create Skill ${input.name}`,
+        fileCount: 1,
+        files: [
+          {
+            relativePath: "SKILL.md",
+            size: Buffer.byteLength(content, "utf8"),
+          },
+        ],
+        metadata: { kind: "skill", name: input.name },
+      });
       return {
         action: "create",
         name: input.name,
@@ -597,8 +621,10 @@ export function createAgentManagerTool(workspaceRoot: string) {
     description:
       "Create or remove project agent profiles in the project Sparkwright config. " +
       "To create, pass action='create' with a unique id and a prompt (the " +
-      "system prompt used when the profile is spawned). Use list_agents to " +
-      "list or validate profiles.",
+      "system prompt used when the profile is spawned). Profiles are inspectable " +
+      "by default; pass delegateToolName (for example delegate_reviewer) when " +
+      "the main agent should be able to call the profile as a delegate tool. " +
+      "Use list_agents to list or validate profiles.",
     inputSchema: {
       type: "object",
       properties: {
@@ -612,7 +638,12 @@ export function createAgentManagerTool(workspaceRoot: string) {
         },
         name: { type: "string" },
         description: { type: "string" },
-        mode: { type: "string", enum: ["primary", "child", "all"] },
+        mode: {
+          type: "string",
+          enum: ["primary", "child", "all"],
+          description:
+            "Use child/all for reusable delegate profiles. primary profiles shape the main run and are not callable as child delegates.",
+        },
         prompt: {
           type: "string",
           description: "System prompt used when this profile is spawned.",
@@ -635,7 +666,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
         delegateToolName: {
           type: "string",
           description:
-            "Optional delegate tool name to expose this profile to the main agent.",
+            "Optional delegate tool name to expose this child/all profile to the main agent.",
         },
         force: {
           type: "boolean",
@@ -675,6 +706,14 @@ export function createAgentManagerTool(workspaceRoot: string) {
         }
         setAgentConfigShape(config.data, agents);
         const write = await writeProjectConfig(ctx, config.path, config.data);
+        ctx.reportCapabilityMutationCompleted?.({
+          action: "remove_agent_profile",
+          path: write.path,
+          reason: `Remove Agent profile ${input.id}`,
+          fileCount: 1,
+          files: [{ relativePath: write.path }],
+          metadata: { kind: "agent", id: input.id },
+        });
         return {
           action: "remove",
           id: input.id,
@@ -746,6 +785,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
             changed: false,
             status: "already_exists",
             profile,
+            ...agentCallabilityFields(profile, agents),
             agents,
             errors,
           };
@@ -757,6 +797,21 @@ export function createAgentManagerTool(workspaceRoot: string) {
 
       setAgentConfigShape(config.data, nextAgents);
       const write = await writeProjectConfig(ctx, config.path, config.data);
+      ctx.reportCapabilityMutationCompleted?.({
+        action:
+          existingIndex >= 0 ? "update_agent_profile" : "create_agent_profile",
+        path: write.path,
+        reason: `${existingIndex >= 0 ? "Update" : "Create"} Agent profile ${input.id}`,
+        fileCount: 1,
+        files: [{ relativePath: write.path }],
+        metadata: {
+          kind: "agent",
+          id: input.id,
+          ...(input.delegateToolName
+            ? { delegateToolName: input.delegateToolName }
+            : {}),
+        },
+      });
       return {
         action: "create",
         id: input.id,
@@ -765,6 +820,7 @@ export function createAgentManagerTool(workspaceRoot: string) {
         diffArtifactId: write.diffArtifactId,
         writeSummary: write.summary,
         profile,
+        ...agentCallabilityFields(profile, nextAgents),
         agents: nextAgents,
         errors,
       };
@@ -1172,6 +1228,59 @@ function validateAgentConfigShape(
   return errors;
 }
 
+function agentCallabilityFields(
+  profile: AgentProfile,
+  agents: AgentConfigShape,
+): {
+  callable: boolean;
+  callability: {
+    callable: boolean;
+    mode: AgentProfile["mode"];
+    reason: string;
+    delegateToolName?: string;
+    suggestedDelegateToolName?: string;
+  };
+} {
+  const mode = profile.mode ?? "child";
+  const childEligible = mode === "child" || mode === "all";
+  const delegate = agents.delegateTools.find(
+    (tool) => tool.profileId === profile.id,
+  );
+  const resolvedDelegateToolName = delegate
+    ? delegateToolName(delegate)
+    : undefined;
+  if (resolvedDelegateToolName && childEligible) {
+    return {
+      callable: true,
+      callability: {
+        callable: true,
+        mode,
+        delegateToolName: resolvedDelegateToolName,
+        reason: `Main agents can call this profile through ${resolvedDelegateToolName}.`,
+      },
+    };
+  }
+
+  const suggestedDelegateToolName = delegateToolName({ profileId: profile.id });
+  const reason = resolvedDelegateToolName
+    ? `This profile has delegate tool ${resolvedDelegateToolName}, but mode=${mode} is not eligible for child/delegate runs; use mode=child or mode=all.`
+    : mode === "primary"
+      ? `This primary profile shapes the main run and is not exposed as a delegate tool; use mode=child or mode=all with delegateToolName=${suggestedDelegateToolName} if the main agent should call it.`
+      : `This profile is inspectable but not callable because no delegate tool exposes it; set delegateToolName=${suggestedDelegateToolName} if the main agent should call it.`;
+
+  return {
+    callable: false,
+    callability: {
+      callable: false,
+      mode,
+      reason,
+      ...(resolvedDelegateToolName
+        ? { delegateToolName: resolvedDelegateToolName }
+        : { suggestedDelegateToolName }),
+    },
+  };
+}
+
 /** Read-only agent profile report shared by `list_agents`. */
 async function loadAgentReport(
   workspaceRoot: string,
@@ -1230,6 +1339,10 @@ function parseAgentManagerArgs(args: unknown): {
       "create_agent maxSteps must be a positive integer.",
     );
   }
+  const delegateTool =
+    typeof record.delegateToolName === "string"
+      ? record.delegateToolName.trim()
+      : undefined;
   return {
     action,
     ...(typeof record.id === "string" ? { id: record.id.trim() } : {}),
@@ -1251,9 +1364,7 @@ function parseAgentManagerArgs(args: unknown): {
       ? { deniedTools: stringArrayArg(record.deniedTools, "deniedTools") }
       : {}),
     ...(maxSteps !== undefined ? { maxSteps: maxSteps as number } : {}),
-    ...(typeof record.delegateToolName === "string"
-      ? { delegateToolName: record.delegateToolName.trim() }
-      : {}),
+    ...(delegateTool ? { delegateToolName: delegateTool } : {}),
     ...(typeof record.force === "boolean" ? { force: record.force } : {}),
   };
 }

@@ -68,6 +68,25 @@ Save it as:
 .sparkwright/agents/reviewer.md
 ```
 
+Implementation delegates should usually combine read and write selectors:
+
+```md
+---
+name: Implementer
+description: Make scoped code changes.
+mode: child
+use: [workspace.read, workspace.write]
+allowedTools: [read_file, glob, apply_patch, edit_anchored_text]
+maxSteps: 8
+---
+
+Make the requested change, then summarize exactly what changed.
+```
+
+Avoid `workspace.write` without `workspace.read` unless the delegate is driven
+by a deterministic script. Most model-backed implementers need read tools to
+find anchors before they can produce safe patches.
+
 ## Make It Callable
 
 Defining a profile only makes it inspectable. To let the main agent call it,

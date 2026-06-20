@@ -86,6 +86,9 @@ Server descriptors support:
 
 Default policy for MCP capabilities should be conservative. Record server name,
 tool origin, policy decision, approval result, and execution result in trace.
+Stdio MCP servers without an explicit `cwd` run from a neutral temporary
+directory rather than the workspace; configure `cwd` only for trusted servers
+that intentionally need project files.
 Configured MCP servers default to `startup: "lazy"`: normal runs expose MCP
 gateway tools but do not connect until the server is actually used. Use
 `startup: "prepare"` when concrete MCP tool names must be discoverable through

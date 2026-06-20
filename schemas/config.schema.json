@@ -307,8 +307,7 @@
                   "agents",
                   "tasks",
                   "cron",
-                  "mcp",
-                  "core.discovery"
+                  "mcp"
                 ]
               },
               {

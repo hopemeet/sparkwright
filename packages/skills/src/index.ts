@@ -327,10 +327,13 @@ export async function loadSkill(
 ): Promise<SkillDefinition> {
   const sourcePath = resolve(path);
   const rawContent = await readFile(sourcePath, "utf8");
+  const rawSkillName = inferSkillName(rawContent);
   const content = options.preprocess
     ? await preprocessSkillContentAsync(rawContent, {
         ...options.preprocess,
         skillDir: dirname(sourcePath),
+        skillName: rawSkillName,
+        sourcePath,
       })
     : rawContent;
   const skill = parseSkill(content, sourcePath);
@@ -341,6 +344,17 @@ export async function loadSkill(
     ...(options.layer === "builtin" ? { trust: "builtin" } : {}),
   };
   return skill;
+}
+
+function inferSkillName(content: string): string | undefined {
+  try {
+    const parsed = parseSkillMarkdown(content);
+    return typeof parsed.frontmatter.name === "string"
+      ? parsed.frontmatter.name
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeSkillRoot(input: SkillRootInput): SkillRoot {
@@ -606,8 +620,10 @@ export function createSkillLoaderTool(
         };
       }
 
-      if (args.resource !== undefined) {
-        return await readSkillResource(skill, args.resource);
+      const resource =
+        typeof args.resource === "string" ? args.resource.trim() : undefined;
+      if (resource) {
+        return await readSkillResource(skill, resource);
       }
 
       if (loadedNames.has(skill.name)) {
@@ -673,8 +689,7 @@ export function createSkillIndexContext(
           name: skill.name,
           description: skill.description,
           version: skill.version,
-          sourcePath: skill.sourcePath,
-          contentHash: skill.contentHash,
+          relevance: skill.relevance,
         })),
       },
       null,
@@ -698,7 +713,6 @@ export function createLoadedSkillContext(
     type: "system",
     source: {
       kind: "skill",
-      path: skill.sourcePath,
     },
     content: [
       `Skill: ${skill.name}`,
@@ -1131,6 +1145,7 @@ export {
   preprocessSkillContentAsync,
   preprocessSkillContent,
   substituteTemplateVars,
+  extractInlineShellCommands,
   expandInlineShellAsync,
   expandInlineShell,
   type InlineShellCommandInput,

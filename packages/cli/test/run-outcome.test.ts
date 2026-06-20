@@ -133,6 +133,57 @@ describe("CLI run outcome", () => {
     );
   });
 
+  it("adds static disclosure for MCP servers configured with workspace cwd", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    updateCliRunEventSummary(
+      summary,
+      log.emit("run.started", {
+        mcpWorkspaceCwdServers: ["workspace"],
+      }),
+    );
+
+    expect(summary.mcpWorkspaceCwdServers).toEqual(["workspace"]);
+    expect(
+      summarizeWorkspaceMutations({
+        shouldWrite: false,
+        completed: summary.writeCompleted,
+        skipped: summary.writeSkipped,
+        denied: summary.writeDenied,
+        mcpWorkspaceCwdServers: summary.mcpWorkspaceCwdServers,
+      }),
+    ).toBe(
+      "No workspace changes were made (read-only run). MCP servers configured with workspace cwd (workspace) are not counted as managed workspace writes.",
+    );
+  });
+
+  it("summarizes sub-agent workspace writes rolled up from a child run", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    updateCliRunEventSummary(
+      summary,
+      log.emit("subagent.completed", {
+        childRunId: "child",
+        parentRunId: "parent",
+        spanId: "span",
+        goal: "write README",
+        stopReason: "final_answer",
+        workspaceWrites: 2,
+      }),
+    );
+
+    expect(summary.subagentWriteCompleted).toBe(2);
+    expect(
+      summarizeWorkspaceMutations({
+        shouldWrite: true,
+        completed: summary.writeCompleted,
+        skipped: summary.writeSkipped,
+        denied: summary.writeDenied,
+        subagentWrites: summary.subagentWriteCompleted,
+      }),
+    ).toBe("Workspace changes applied by sub-agent(s): 2 writes.");
+  });
+
   it("summarizes configured verification profile results", () => {
     const summary = createCliRunEventSummary();
     const log = new EventLog(createRunId());
@@ -247,7 +298,8 @@ describe("CLI run outcome", () => {
       log.emit("run.created", { goal: "Help me get release-ready" }),
       log.emit("skill.failed", {
         source: "/ws/.sparkwright/skills/release-readiness/SKILL.md",
-        message: "Unsupported skill frontmatter line:   - release",
+        message:
+          "Unsupported skill frontmatter line:   - release in /ws/.sparkwright/skills/release-readiness/SKILL.md",
       }),
       log.emit("run.completed", { reason: "final_answer" }),
     ]) {
@@ -255,14 +307,39 @@ describe("CLI run outcome", () => {
     }
 
     const message = summarizeSkillLoadFailures(summary);
-    expect(message).toContain("1 skill load failure");
-    expect(message).toContain("release-readiness/SKILL.md");
+    expect(message).toContain("1 skill load/preparation failure");
+    expect(message).toContain("release-readiness");
     expect(message).toContain("Unsupported skill frontmatter line");
+    expect(message).toContain("<skill path>");
+    expect(message).not.toContain("/ws/");
     // A malformed skill is an authoring warning, not a run failure.
     expect(completedRunHasCliIssues(summary)).toBe(false);
     expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
       0,
     );
+  });
+
+  it("summarizes inline shell failures without leaking stderr payloads", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    updateCliRunEventSummary(
+      summary,
+      log.emit("skill.failed", {
+        name: "probe",
+        source: "/tmp/work/skills/probe/SKILL.md",
+        status: "inline_shell_failed",
+        errorCode: "PROCESS_FAILED",
+        exitCode: 1,
+        message:
+          "Error: EPERM: operation not permitted, open '/tmp/work/secret-marker.txt'\n    at Object.writeFileSync",
+      }),
+    );
+
+    const message = summarizeSkillLoadFailures(summary);
+    expect(message).toContain("probe inline shell failed PROCESS_FAILED");
+    expect(message).toContain("exitCode=1");
+    expect(message).not.toContain("secret-marker");
+    expect(message).not.toContain("writeFileSync");
   });
 
   it("returns no skill-failure summary for a clean run", () => {

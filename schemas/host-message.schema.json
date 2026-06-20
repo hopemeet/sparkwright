@@ -545,6 +545,9 @@
             "loaded": {
               "type": "array",
               "items": { "$ref": "#/$defs/CapabilitySkillSummary" }
+            },
+            "inlineShell": {
+              "$ref": "#/$defs/CapabilitySkillInlineShellSummary"
             }
           },
           "additionalProperties": false
@@ -630,6 +633,22 @@
       },
       "additionalProperties": false
     },
+    "CapabilitySkillInlineShellSummary": {
+      "type": "object",
+      "required": ["enabled", "sandboxMode", "writePolicy", "failClosed"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "timeoutMs": { "type": "number" },
+        "maxOutputChars": { "type": "number" },
+        "sandboxMode": { "type": "string" },
+        "writePolicy": {
+          "type": "string",
+          "enum": ["disabled", "no-write"]
+        },
+        "failClosed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "CapabilityMcpStatus": {
       "type": "object",
       "required": ["serverName", "status", "toolNames"],
@@ -665,25 +684,36 @@
         "sideEffects",
         "workspaceAccess",
         "shellAccess",
-        "processSpawn",
-        "command",
-        "args"
+        "processSpawn"
       ],
       "properties": {
         "toolName": { "type": "string", "minLength": 1 },
         "profileId": { "type": "string", "minLength": 1 },
         "profileName": { "type": "string" },
-        "protocol": { "type": "string", "enum": ["acp", "external_command"] },
+        "protocol": {
+          "type": "string",
+          "enum": ["acp", "external_command", "in_process"]
+        },
         "risk": { "const": "risky" },
         "requiresApproval": { "type": "boolean" },
+        "approvalRequiredUnderCurrentRun": { "type": "boolean" },
+        "approvalReasons": { "type": "array", "items": { "type": "string" } },
+        "approvalRunOptions": {
+          "type": "object",
+          "properties": {
+            "shouldWrite": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
         "forbidNesting": { "type": "boolean" },
         "sideEffects": { "type": "array", "items": { "type": "string" } },
         "workspaceAccess": {
           "type": "string",
           "enum": ["none", "read_write"]
         },
-        "shellAccess": { "const": false },
-        "processSpawn": { "const": true },
+        "shellAccess": { "type": "boolean" },
+        "processSpawn": { "type": "boolean" },
+        "gatedByRunWrite": { "type": "boolean" },
         "command": { "type": "string", "minLength": 1 },
         "args": { "type": "array", "items": { "type": "string" } },
         "timeoutMs": { "type": "number" },

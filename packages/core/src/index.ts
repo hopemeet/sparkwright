@@ -147,6 +147,13 @@ export {
   toolTargetFingerprint,
 } from "./run-outcome.js";
 
+// Display-safe path projection helpers shared by diagnostics/UI layers.
+export type { WorkspaceDisplayPathOptions } from "./path-display.js";
+export {
+  formatWorkspaceDisplayPath,
+  middleEllipsisPath,
+} from "./path-display.js";
+
 // Prompt-cache integrity detector.
 export type { CacheBreakDetectorOptions } from "./cache-break.js";
 export { wrapPromptBuilderWithCacheBreakDetector } from "./cache-break.js";

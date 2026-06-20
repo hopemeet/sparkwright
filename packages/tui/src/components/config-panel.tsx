@@ -1,6 +1,7 @@
 import React from "react";
-import { Text, useInput } from "ink";
+import { Text, useInput, useStdout } from "ink";
 import { DialogFrame } from "./dialog-frame.js";
+import { middleEllipsisPath } from "../lib/path-display.js";
 
 export interface ConfigPanelResolved {
   workspaceRoot: string;
@@ -19,11 +20,17 @@ export function ConfigPanel(props: {
   resolved: ConfigPanelResolved;
   onClose: () => void;
 }): React.ReactElement {
+  const { stdout } = useStdout();
   useInput((_input, key) => {
     if (key.escape || key.return) props.onClose();
   });
 
   const resolved = props.resolved;
+  const columns = stdout?.columns ?? 120;
+  const workspace = middleEllipsisPath(
+    resolved.workspaceRoot,
+    Math.max(16, columns - 18),
+  );
   return (
     <DialogFrame borderColor="cyan">
       <Text color="cyan" bold>
@@ -31,7 +38,7 @@ export function ConfigPanel(props: {
       </Text>
       <Text>
         <Text dimColor>workspace: </Text>
-        {resolved.workspaceRoot}
+        {workspace}
         <Text dimColor> ({resolved.sources.workspace ?? "?"})</Text>
       </Text>
       <Text>

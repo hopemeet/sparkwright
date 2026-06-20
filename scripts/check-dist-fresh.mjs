@@ -14,6 +14,7 @@ for (const dir of workspaceDirs.sort()) {
   const packageRoot = join(root, dir);
   const srcRoot = join(packageRoot, "src");
   const distRoot = join(packageRoot, "dist");
+  const buildStamp = join(packageRoot, ".sparkwright-build-stamp.json");
   if (!existsSync(srcRoot)) continue;
 
   const newestSource = newestMtime([
@@ -21,7 +22,9 @@ for (const dir of workspaceDirs.sort()) {
     join(packageRoot, "package.json"),
     join(packageRoot, "tsconfig.json"),
   ]);
-  const newestDist = existsSync(distRoot) ? newestMtime([distRoot]) : undefined;
+  const newestDist = existsSync(distRoot)
+    ? newestMtime([distRoot, buildStamp])
+    : undefined;
 
   checked.push(`${packageJson.name ?? dir}`);
   if (newestSource === undefined) continue;

@@ -78,8 +78,9 @@ files remain the precise-control layer.
 ## Scaffold
 
 Installing Sparkwright does not write config files. The first interactive CLI
-or TUI run prints the user and project config paths if no config exists yet.
-Create files only when you choose to scaffold them:
+or TUI run scaffolds the user config if no config exists yet, then stops and
+asks you to set a provider key or environment variable before rerunning. You
+can also create files explicitly:
 
 Scaffold the two common layers separately:
 
@@ -88,9 +89,11 @@ sparkwright init             # ~/.config/sparkwright/config.yaml
 sparkwright init --project   # <workspace>/.sparkwright/config.yaml
 ```
 
-`sparkwright init` creates a personal provider template. Set the `apiKey` for
-the provider you want, or leave keys out of the file and use environment
-variables.
+`sparkwright init` creates the same personal config template used by first-run
+scaffolding. Set the `apiKey` for the provider you want, or leave keys out of
+the file and use environment variables. YAML templates point
+`yaml-language-server` at the local `config.schema.json` shipped with the
+installed CLI, so editor validation works without a schema server.
 
 `sparkwright init --project` creates a committable project template plus the
 convention directories:
@@ -477,10 +480,9 @@ Add a server under project `capabilities.mcp.servers`:
       "servers": [
         {
           "type": "stdio",
-          "name": "workspace",
+          "name": "search",
           "command": "node",
-          "args": ["./tools/workspace-mcp.js"],
-          "cwd": ".",
+          "args": ["/absolute/path/to/search-mcp.js"],
           "enabled": true
         }
       ],
@@ -496,11 +498,14 @@ Add a server under project `capabilities.mcp.servers`:
 }
 ```
 
-MCP `cwd` resolves from the config file that declares it. Stdio MCP servers use
-the same `shell.sandbox` process boundary as the built-in shell tool; HTTP and
-SSE MCP servers are remote transports and are governed by MCP policy rather
-than local process sandboxing. Prefer `requiresApproval: true` for tools that
-can touch workspace state, credentials, network services, or external systems.
+When `cwd` is omitted, stdio MCP servers start from a neutral temporary
+directory rather than the workspace. This keeps relative-path writes out of the
+project by default. If a server intentionally needs project files, set `cwd`
+explicitly and use a risky policy with approval. Relative MCP `cwd` values
+resolve from the config file that declares them; in a project
+`.sparkwright/config.json`, `"cwd": ".."` points at the workspace root while
+`"cwd": "."` points at `.sparkwright/`. HTTP and SSE MCP servers are remote
+transports and are governed by MCP policy rather than local process cwd.
 
 Configured MCP servers default to `startup: "lazy"`: a normal run records the
 server as configured but does not connect to it until an MCP gateway tool is
@@ -665,8 +670,9 @@ wins and a warning is reported.
 A full JSON Schema ships at `schemas/config.schema.json`, and the CLI package
 also includes the same schema under `dist/schemas/` so installed CLIs can use
 it for `config validate`. YAML files created by `sparkwright init` include a
-`yaml-language-server` schema directive. For JSON files, or for projects that
-prefer local schema paths, add editor mappings. In VS Code, add a
+`yaml-language-server` schema directive pointing at that local installed schema
+with a `file://` URI. For JSON files, or for projects that prefer explicit
+workspace mappings, add editor mappings. In VS Code, add a
 `json.schemas` mapping for JSON files or the YAML extension's `yaml.schemas`
 mapping for YAML files. Keep it in your workspace or user settings
 (`.vscode/` is gitignored here, so this stays a personal setting):
@@ -721,11 +727,20 @@ Top-level `tools` is the preferred tool configuration surface.
   initial provider tool schema until discovered through `tool_search`.
 
 Selectors are: `workspace.read`, `workspace.write`, `shell`, `planning`,
-`skills`, `agents`, `tasks`, `cron`, `mcp`, `mcp:<server>`, and
-`core.discovery`. Multiple selectors in one file are a union; multiple config
-layers intersect, so a project can narrow a user setting. For example, user
-`use: ["mcp"]` plus project `use: ["mcp:demo"]` yields only the `demo` MCP
-server tools.
+`skills`, `agents`, `tasks`, `cron`, `mcp`, and `mcp:<server>`. Multiple
+selectors in one file are a union; multiple config layers intersect, so a
+project can narrow a user setting. For example, user `use: ["mcp"]` plus project
+`use: ["mcp:demo"]` yields only the `demo` MCP server tools.
+Model-backed implementation delegates should usually select both
+`workspace.read` and `workspace.write`; write-only delegates often cannot find
+safe patch anchors. Delegates that select `shell` still require a write-enabled
+run, because shell is policy-gated as a side-effecting capability even when a
+particular command appears read-only.
+
+The `tool_search` discovery tool is not a selector. It is appended
+automatically whenever the resolved tool set still contains deferred tools (so
+their schemas can be loaded on demand) and is exempt from `use`/`allowed`
+filtering; add `tool_search` to `disabled` to opt out of discovery entirely.
 
 When `defer` is omitted, SparkWright applies a small default defer list for
 low-frequency tools (`todo_write`, `read_anchored_text`,
@@ -772,6 +787,8 @@ server's own `toolSchemaLoad` to override the MCP default for that server.
 
 These settings only decide which tools the host prepares before a run. Tool
 execution still goes through policy, approval, validation, and trace.
+Stdio MCP servers without `cwd` run from a neutral temporary directory; set
+`cwd` explicitly only for trusted servers that need local project access.
 
 The CLI can manage user-level tool settings in the first existing user config
 file, preserving JSON or YAML formatting:
@@ -809,6 +826,13 @@ resident up front, and the model pulls bodies it judges relevant via
 
 Set `loadSelectedSkills: true` only when you deliberately want matched Skill
 bodies resident before the first model call.
+
+`capabilities.skills.inlineShell.enabled` opts into `` !`cmd` `` preprocessing
+inside `SKILL.md`. Host runs execute those snippets as no-write, fail-closed
+skill scripts: sandbox enforcement is forced, workspace writes are disabled,
+and failure inserts only a short marker into the Skill body while trace retains
+bounded diagnostics. Inspect the effective policy with
+`sparkwright capabilities inspect --workspace . --format text`.
 
 ## Agent Profiles
 
@@ -915,8 +939,8 @@ state, and workspace state paths without starting a run.
 Sparkwright treats config and project capabilities as user-owned assets:
 
 - Package installation does not create or modify config files.
-- First interactive use points at the expected config paths and suggests
-  `sparkwright init` or `sparkwright init --project`.
+- First interactive use may scaffold the user config once, using the same
+  non-overwriting template as `sparkwright init`.
 - `init` and `init --project` do not overwrite existing config files.
 - Project upgrade or reinstall must not overwrite existing Skills, agents,
   commands, sessions, tasks, or config.

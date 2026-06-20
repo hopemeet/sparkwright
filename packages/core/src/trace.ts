@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { assertSafePathSegment } from "./ids.js";
 import type { PromptMessage } from "./context.js";
 import type { SparkwrightEvent } from "./events.js";
@@ -32,6 +32,7 @@ import {
   type CommandOutcomeSnapshot,
   type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
+import { evaluateTrajectory } from "./eval.js";
 
 export type TraceLevel = "standard" | "debug";
 export type TraceRedactor = (event: SparkwrightEvent) => SparkwrightEvent;
@@ -132,6 +133,10 @@ export interface TraceSummary {
       lastCommand?: string;
       lastExitCode?: number | null;
       lastTimedOut?: boolean;
+      lastFailureCommand?: string;
+      lastFailureExitCode?: number | null;
+      lastFailureTimedOut?: boolean;
+      lastSuccessfulVerificationCommand?: string;
     };
   };
   /** @reserved Public trace-summary field consumed by diagnostics UIs. */
@@ -150,6 +155,7 @@ export interface TraceSummary {
       completed: number;
       denied: number;
       skipped: number;
+      untrackedWriteCapableProcesses: number;
     };
     capabilityMutations: {
       completed: number;
@@ -262,6 +268,14 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
   const topTools = firstEntries(summary.toolCalls, 8);
   const repeatedToolRequests = collectRepeatedToolRequests(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
+  const trajectory = evaluateTrajectory(events);
+  const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
+  const verificationLag = collectVerificationLagAfterLastWrite(events);
+  const reportableTraceErrors = collectReportableTraceErrors(events);
+  const incompleteSubagents = collectIncompleteSubagentTerminals(events);
+  const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
+  const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
+  const untrackedWriteAccess = collectUntrackedWriteAccessMarkers(events);
 
   if (summary.toolFailures.unresolved.total > 0) {
     findings.push({
@@ -277,14 +291,14 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (summary.errorCount > 0) {
+  if (reportableTraceErrors.total > 0) {
     findings.push({
       severity: "high",
       code: "TRACE_ERRORS",
       title: "Trace contains runtime error events",
       evidence: [
-        `${summary.errorCount} error event(s)`,
-        formatCountRecord(summary.errorCodes),
+        `${reportableTraceErrors.total} reportable error event(s)`,
+        formatCountRecord(reportableTraceErrors.byCode),
       ].filter(Boolean),
       recommendation:
         "Use trace events filtered by error type/code to find the failing layer.",
@@ -319,9 +333,63 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
       evidence: [
         `${summary.commandFailures.total} command failure(s)`,
         formatCountRecord(summary.commandFailures.byExitCode),
-      ].filter(Boolean),
+        summary.commandFailures.verification.lastSuccessfulVerificationCommand
+          ? `last successful verification: ${summary.commandFailures.verification.lastSuccessfulVerificationCommand}`
+          : undefined,
+        summary.commandFailures.verification.lastFailureCommand
+          ? `last verification failure: ${summary.commandFailures.verification.lastFailureCommand}`
+          : undefined,
+      ].filter((value): value is string => typeof value === "string"),
       recommendation:
         "Inspect the failed shell command output before treating the run as clean.",
+    });
+  }
+
+  if (incompleteSubagents.length > 0) {
+    findings.push({
+      severity: "high",
+      code: "SUBAGENT_INCOMPLETE",
+      title: "Sub-agent results may be incomplete",
+      evidence: incompleteSubagents.slice(0, 5).map((item) => item.label),
+      recommendation:
+        "Inspect the child run trace before trusting the parent result; rerun with more child steps if the child was truncated or hit its step limit.",
+    });
+  }
+
+  if (repeatedApprovalDenials.length > 0) {
+    findings.push({
+      severity: "high",
+      code: "REPEATED_APPROVAL_DENIALS",
+      title: "Approvals were denied repeatedly",
+      evidence: repeatedApprovalDenials
+        .slice(0, 5)
+        .map((item) => `${item.count}x ${item.label}`),
+      recommendation:
+        "Treat the denied action as a hard constraint; choose a different plan instead of requesting the same approval again.",
+    });
+  }
+
+  if (inFlightDuplicateStorms.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "IN_FLIGHT_DUPLICATE_STORM",
+      title: "Concurrent duplicate tool calls were skipped",
+      evidence: inFlightDuplicateStorms
+        .slice(0, 5)
+        .map((item) => `${item.count}x ${item.label}`),
+      recommendation:
+        "Deduplicate same-batch tool requests before dispatch or feed the skipped duplicate diagnostics back into the model prompt.",
+    });
+  }
+
+  if (untrackedWriteAccess.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
+      title: "External process had untracked workspace write capability",
+      evidence: untrackedWriteAccess.slice(0, 5).map((item) => item.label),
+      recommendation:
+        "Audit the external command output and workspace diff separately; the trace records access granted, not per-file writes.",
     });
   }
 
@@ -403,6 +471,18 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
         "Stop retrying unchanged failing commands; inspect the first failure and change the plan or inputs.",
     });
   }
+
+  const efficiencyFinding = buildLowNetProgressFinding({
+    modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
+    toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
+    budgetCheckCount: trajectory.metrics.budgetCheckCount,
+    workspaceWrites: summary.safety.workspaceWrites.completed,
+    uniqueWritePaths: uniqueWritePaths.length,
+    topDuplicateReads,
+    repeatedToolRequests,
+    verificationLag,
+  });
+  if (efficiencyFinding) findings.push(efficiencyFinding);
 
   if (summary.toolFailures.recovered.total > 0) {
     findings.push({
@@ -930,6 +1010,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
         completed: 0,
         denied: 0,
         skipped: 0,
+        untrackedWriteCapableProcesses: 0,
       },
       capabilityMutations: {
         completed: 0,
@@ -1595,6 +1676,7 @@ export class FileRunStore implements RunStore {
       writeIfMissing(this.tracePath, "");
     }
     mkdirSync(this.runDir, { recursive: true });
+    this.writeTracePointer(run);
     // Never overwrite an existing run.json: re-opening a `FileRunStore`
     // for replay/loadEvents/SessionRunStore's lazy inner-store path used
     // to clobber a finished `run.json` back to a stale `running` status,
@@ -1945,6 +2027,28 @@ export class FileRunStore implements RunStore {
     return eventWithIdentity;
   }
 
+  private writeTracePointer(run: RunRecord): void {
+    if (!this.sessionId || !this.sessionTracePath || !this.agentTracePath) {
+      return;
+    }
+    writeIfMissing(
+      join(this.runDir, "trace-pointer.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: "trace-pointer.v1",
+          runId: run.id,
+          sessionId: this.sessionId,
+          agentId: this.agentId ?? "main",
+          tracePath: relativeJsonPath(this.runDir, this.sessionTracePath),
+          agentTracePath: relativeJsonPath(this.runDir, this.agentTracePath),
+          note: "This run directory stores per-run state; trace events are aggregated in the listed trace files.",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
+
   private materializeArtifact(artifact: Artifact): void {
     assertSafePathSegment(artifact.id, "artifact id");
     const prepared = this.redactArtifacts ? redactArtifact(artifact) : artifact;
@@ -2227,6 +2331,10 @@ function transcriptEntryForEvent(
 
 function writeIfMissing(path: string, content: string): void {
   if (!existsSync(path)) atomicWriteFileSync(path, content);
+}
+
+function relativeJsonPath(fromDir: string, toPath: string): string {
+  return relative(fromDir, toPath).split("\\").join("/");
 }
 
 function atomicWriteFileSync(path: string, content: string): void {
@@ -3210,6 +3318,40 @@ function collectToolFailure(
     (summary.toolFailures.byCode[code] ?? 0) + 1;
 }
 
+function collectReportableTraceErrors(events: readonly SparkwrightEvent[]): {
+  total: number;
+  byCode: Record<string, number>;
+} {
+  const toolFailureCallIds = new Set(
+    analyzeToolOutcomes(events)
+      .failures.map((failure) => failure.toolCallId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const byCode: Record<string, number> = {};
+  let total = 0;
+
+  for (const event of events) {
+    if (isExpectedDenialEvent(event)) continue;
+    if (!isTraceErrorEvent(event)) continue;
+    if (event.type === "tool.failed") continue;
+    if (isToolFailureCompanionEvent(event, toolFailureCallIds)) continue;
+
+    total += 1;
+    const code = traceErrorCode(event) ?? event.type;
+    byCode[code] = (byCode[code] ?? 0) + 1;
+  }
+
+  return { total, byCode };
+}
+
+function isToolFailureCompanionEvent(
+  event: SparkwrightEvent,
+  toolFailureCallIds: ReadonlySet<string>,
+): boolean {
+  const toolCallId = relatedToolCallId(event);
+  return Boolean(toolCallId && toolFailureCallIds.has(toolCallId));
+}
+
 function collectClassifiedToolFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
@@ -3312,6 +3454,25 @@ function persistedCommandOutcome(
         ...(typeof verification.lastTimedOut === "boolean"
           ? { lastTimedOut: verification.lastTimedOut }
           : {}),
+        ...(typeof verification.lastFailureCommand === "string"
+          ? { lastFailureCommand: verification.lastFailureCommand }
+          : {}),
+        ...("lastFailureExitCode" in verification
+          ? {
+              lastFailureExitCode: verification.lastFailureExitCode as
+                | number
+                | null,
+            }
+          : {}),
+        ...(typeof verification.lastFailureTimedOut === "boolean"
+          ? { lastFailureTimedOut: verification.lastFailureTimedOut }
+          : {}),
+        ...(typeof verification.lastSuccessfulVerificationCommand === "string"
+          ? {
+              lastSuccessfulVerificationCommand:
+                verification.lastSuccessfulVerificationCommand,
+            }
+          : {}),
       },
     };
   }
@@ -3402,6 +3563,10 @@ function collectSafetySummary(
       summary.safety.workspaceWrites.skipped += 1;
       continue;
     }
+    if (event.type === "workspace.write.untracked_access_granted") {
+      summary.safety.workspaceWrites.untrackedWriteCapableProcesses += 1;
+      continue;
+    }
     if (event.type === "capability.mutation.completed") {
       summary.safety.capabilityMutations.completed += 1;
       continue;
@@ -3449,6 +3614,158 @@ function traceReportHeadline(
   const top = findings[0];
   if (!top) return "Trace has diagnostic findings.";
   return `${top.title}${findings.length > 1 ? ` (+${findings.length - 1} more)` : ""}.`;
+}
+
+function buildLowNetProgressFinding(input: {
+  modelCalls: number;
+  toolCalls: number;
+  budgetCheckCount: number;
+  workspaceWrites: number;
+  uniqueWritePaths: number;
+  topDuplicateReads: Record<string, number>;
+  repeatedToolRequests: Array<{ label: string; count: number }>;
+  verificationLag?: { modelCallsAfterLastWrite: number; command: string };
+}): TraceReportFinding | undefined {
+  const lowMutationWork =
+    input.modelCalls >= 8 &&
+    input.toolCalls >= 6 &&
+    input.uniqueWritePaths <= 2;
+  const noMutationWork =
+    input.modelCalls >= 6 &&
+    input.toolCalls >= 10 &&
+    input.workspaceWrites === 0;
+  const repeatedRead = Object.values(input.topDuplicateReads).some(
+    (count) => count >= 3,
+  );
+  const delayedVerification =
+    (input.verificationLag?.modelCallsAfterLastWrite ?? 0) >= 2;
+
+  // Every trigger requires a meaningful number of model calls: the finding's
+  // headline is "many cycles for little file progress", so a short run that
+  // merely verified a couple of turns after its last write must not match.
+  if (
+    !lowMutationWork &&
+    !noMutationWork &&
+    !(input.modelCalls >= 6 && repeatedRead) &&
+    !(input.modelCalls >= 6 && delayedVerification)
+  ) {
+    return undefined;
+  }
+
+  const duplicateReads = firstEntries(input.topDuplicateReads, 3);
+  const evidence = [
+    `${input.modelCalls} model call(s)`,
+    `${input.toolCalls} tool call(s)`,
+    `${input.uniqueWritePaths} unique written file(s)`,
+    input.workspaceWrites !== input.uniqueWritePaths
+      ? `${input.workspaceWrites} completed write event(s)`
+      : undefined,
+    input.budgetCheckCount > 0
+      ? `${input.budgetCheckCount} budget check event(s)`
+      : undefined,
+    Object.keys(duplicateReads).length > 0
+      ? `duplicate reads: ${formatCountRecord(duplicateReads)}`
+      : undefined,
+    input.repeatedToolRequests.length > 0
+      ? `repeated tool requests: ${input.repeatedToolRequests
+          .slice(0, 3)
+          .map((item) => `${item.count}x ${item.label}`)
+          .join("; ")}`
+      : undefined,
+    input.verificationLag && delayedVerification
+      ? `verification ran ${input.verificationLag.modelCallsAfterLastWrite} model call(s) after the last write: ${input.verificationLag.command}`
+      : undefined,
+  ].filter((value): value is string => typeof value === "string");
+
+  return {
+    severity: "medium",
+    code: "LOW_NET_PROGRESS",
+    title: "Run spent many cycles for little file progress",
+    evidence,
+    recommendation:
+      "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
+  };
+}
+
+function collectUniqueCompletedWritePaths(
+  events: readonly SparkwrightEvent[],
+): string[] {
+  const paths = new Set<string>();
+  for (const event of events) {
+    if (event.type !== "workspace.write.completed") continue;
+    if (!isRecord(event.payload)) continue;
+    const path = stringValue(event.payload.path);
+    if (path) paths.add(path);
+  }
+  return [...paths].sort();
+}
+
+function collectVerificationLagAfterLastWrite(
+  events: readonly SparkwrightEvent[],
+): { modelCallsAfterLastWrite: number; command: string } | undefined {
+  let lastWriteSequence: number | undefined;
+  for (const event of events) {
+    if (event.type === "workspace.write.completed") {
+      lastWriteSequence = event.sequence;
+    }
+  }
+  if (lastWriteSequence === undefined) return undefined;
+
+  const commandByCallId = new Map<string, string>();
+  let modelCallsAfterLastWrite = 0;
+
+  for (const event of events) {
+    if (!isRecord(event.payload)) continue;
+
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const args = recordValue(event.payload.arguments);
+      const command = stringValue(args?.command);
+      if (toolName === "shell" && callId && command) {
+        commandByCallId.set(callId, command);
+      }
+      continue;
+    }
+
+    if (event.sequence <= lastWriteSequence) continue;
+    if (event.type === "model.completed") {
+      modelCallsAfterLastWrite += 1;
+      continue;
+    }
+
+    if (event.type !== "tool.completed") continue;
+    const toolName = stringValue(event.payload.toolName);
+    const callId = stringValue(event.payload.toolCallId, event.payload.id);
+    if (toolName !== "shell" || !callId) continue;
+    const command =
+      commandByCallId.get(callId) ??
+      stringValue(recordValue(event.payload.output)?.command);
+    if (!command || !isLikelyVerificationCommand(command)) continue;
+    const output = recordValue(event.payload.output);
+    const exitCode = optionalNumberValue(output?.exitCode);
+    const timedOut = output?.timedOut === true;
+    if (timedOut || exitCode !== 0) continue;
+    return { modelCallsAfterLastWrite, command };
+  }
+
+  return undefined;
+}
+
+function isLikelyVerificationCommand(command: string): boolean {
+  const normalized = command.trim();
+  return (
+    /\b(npm|pnpm|yarn|bun|deno)\s+(run\s+)?(test|verify|check|lint)\b/.test(
+      normalized,
+    ) ||
+    /\b(vitest|jest|mocha|pytest|ruff|mypy|rspec|phpunit)\b/.test(normalized) ||
+    /\b(go test|cargo test|cargo check|dotnet test|bazel test|ctest)\b/.test(
+      normalized,
+    ) ||
+    /\b(make|rake)\s+(test|check|verify|lint)\b/.test(normalized) ||
+    /(?:^|[\s/])(gradlew|tox)\b/.test(normalized) ||
+    /\brails\s+test\b/.test(normalized)
+  );
 }
 
 function collectRepeatedToolRequests(
@@ -3515,6 +3832,168 @@ function collectRepeatedCommandFailures(
   return [...counts.values()]
     .filter((item) => item.count >= 2)
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function collectIncompleteSubagentTerminals(
+  events: readonly SparkwrightEvent[],
+): Array<{ label: string }> {
+  const out: Array<{ label: string }> = [];
+
+  for (const event of events) {
+    if (
+      event.type !== "subagent.completed" &&
+      event.type !== "subagent.failed"
+    ) {
+      continue;
+    }
+    if (!isRecord(event.payload)) continue;
+    const state = stringValue(event.payload.terminalState);
+    const stepLimitReached = booleanValue(event.payload.stepLimitReached);
+    const truncated = booleanValue(event.payload.truncated);
+    if (
+      state !== "step_limit" &&
+      state !== "truncated" &&
+      stepLimitReached !== true &&
+      truncated !== true
+    ) {
+      continue;
+    }
+
+    const name = stringValue(
+      event.metadata.agentName,
+      event.metadata.agentId,
+      event.metadata.agentProfileId,
+      event.payload.childRunId,
+      "subagent",
+    )!;
+    const childRunId = stringValue(
+      event.metadata.childRunId,
+      event.payload.childRunId,
+    );
+    const terminal =
+      state === "truncated" || state === "step_limit"
+        ? state
+        : truncated
+          ? "truncated"
+          : "step_limit";
+    const depth = optionalNumberValue(event.metadata.subagentDepth);
+    const pieces = [
+      `${name} ${terminal}`,
+      childRunId ? `child ${childRunId}` : undefined,
+      depth !== undefined ? `depth ${depth}` : undefined,
+    ].filter((value): value is string => typeof value === "string");
+    out.push({ label: truncateDiagnostic(pieces.join(" · "), 220) });
+  }
+
+  return out;
+}
+
+function collectInFlightDuplicateStorms(
+  events: readonly SparkwrightEvent[],
+): Array<{ label: string; count: number }> {
+  const counts = new Map<string, { label: string; count: number }>();
+
+  for (const event of events) {
+    if (event.type !== "tool.failed" || !isRecord(event.payload)) continue;
+    const error = recordValue(event.payload.error);
+    const metadata = recordValue(error?.metadata);
+    if (metadata?.duplicateKind !== "in_flight_duplicate") continue;
+    const toolName = stringValue(event.payload.toolName) ?? "tool";
+    const key = toolName;
+    const label = truncateDiagnostic(`${toolName} in-flight duplicate`, 180);
+    const existing = counts.get(key);
+    if (existing) existing.count += 1;
+    else counts.set(key, { label, count: 1 });
+  }
+
+  return [...counts.values()]
+    .filter((item) => item.count >= 3)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function collectRepeatedApprovalDenials(
+  events: readonly SparkwrightEvent[],
+): Array<{ label: string; count: number }> {
+  const requested = new Map<string, string>();
+  const counts = new Map<string, { label: string; count: number }>();
+
+  for (const event of events) {
+    if (!isRecord(event.payload)) continue;
+
+    if (event.type === "approval.requested") {
+      const id = stringValue(event.payload.id, event.payload.approvalId);
+      if (!id) continue;
+      const details = recordValue(event.payload.details);
+      const toolName = stringValue(details?.toolName);
+      const action = stringValue(event.payload.action);
+      const fallbackLabel =
+        [action, toolName ? `tool ${toolName}` : undefined]
+          .filter((value): value is string => typeof value === "string")
+          .join(" · ") || "approval";
+      const label = stringValue(event.payload.summary) ?? fallbackLabel;
+      requested.set(id, truncateDiagnostic(label, 180));
+      continue;
+    }
+
+    if (event.type !== "approval.resolved") continue;
+    const decision = stringValue(
+      event.payload.decision,
+      recordValue(event.payload.response)?.decision,
+    );
+    if (decision !== "denied") continue;
+    const id = stringValue(event.payload.approvalId, event.payload.id);
+    const label = (id ? requested.get(id) : undefined) ?? "approval denied";
+    const existing = counts.get(label);
+    if (existing) existing.count += 1;
+    else counts.set(label, { label, count: 1 });
+  }
+
+  const deniedTotal = [...counts.values()].reduce(
+    (sum, item) => sum + item.count,
+    0,
+  );
+  if (deniedTotal < 2) return [];
+  return [...counts.values()].sort(
+    (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+  );
+}
+
+function collectUntrackedWriteAccessMarkers(
+  events: readonly SparkwrightEvent[],
+): Array<{ label: string }> {
+  const out: Array<{ label: string }> = [];
+
+  for (const event of events) {
+    if (
+      event.type !== "workspace.write.untracked_access_granted" ||
+      !isRecord(event.payload)
+    ) {
+      continue;
+    }
+    const toolName = stringValue(
+      event.payload.toolName,
+      event.metadata.delegateTool,
+      "external process",
+    )!;
+    const agent = stringValue(
+      event.payload.agentProfileId,
+      event.metadata.agentProfileId,
+      event.metadata.agentId,
+    );
+    const childRunId = stringValue(
+      event.payload.childRunId,
+      event.metadata.childRunId,
+    );
+    const pieces = [
+      toolName,
+      agent ? `agent ${agent}` : undefined,
+      childRunId ? `child ${childRunId}` : undefined,
+      "access granted",
+    ].filter((value): value is string => typeof value === "string");
+    out.push({ label: truncateDiagnostic(pieces.join(" · "), 220) });
+  }
+
+  return out;
 }
 
 function firstEntries(
@@ -3602,6 +4081,16 @@ function traceErrorCode(event: SparkwrightEvent): string | undefined {
       ? "MCP_SERVER_PREPARE_FAILED"
       : undefined,
     event.type.endsWith(".denied") ? event.type : undefined,
+  );
+}
+
+function relatedToolCallId(event: SparkwrightEvent): string | undefined {
+  const payload = isRecord(event.payload) ? event.payload : undefined;
+  return stringValue(
+    payload?.toolCallId,
+    payload?.relatedToolCallId,
+    event.metadata.toolCallId,
+    event.metadata.relatedToolCallId,
   );
 }
 

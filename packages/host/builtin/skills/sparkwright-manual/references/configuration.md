@@ -49,10 +49,10 @@ npm exec sparkwright -- init --project
 ```
 
 Package installation does not write config files. The first interactive CLI or
-TUI run points at the expected user and project config paths if no config
-exists yet.
+TUI run scaffolds the user config if no config exists yet, then asks the user
+to set a provider key or environment variable before rerunning.
 
-`init` scaffolds the personal provider config. `init --project` scaffolds a
+`init` scaffolds the same personal config template. `init --project` scaffolds a
 committable project config plus `.sparkwright/skills`, `.sparkwright/agents`,
 and `.sparkwright/command`. Both commands are non-destructive: they do not
 overwrite existing config files. `init --project` may recreate missing
@@ -185,10 +185,9 @@ task inspection/control and `apply_patch` for ordinary file writes.
       "servers": [
         {
           "type": "stdio",
-          "name": "workspace",
+          "name": "search",
           "command": "node",
-          "args": ["./tools/workspace-mcp.js"],
-          "cwd": ".",
+          "args": ["/absolute/path/to/search-mcp.js"],
           "enabled": true
         }
       ],
@@ -204,9 +203,13 @@ task inspection/control and `apply_patch` for ordinary file writes.
 }
 ```
 
-MCP `cwd` resolves from the config file that declares it. Prefer
-`requiresApproval: true` for tools that can touch workspace state,
-credentials, network services, or external systems.
+When `cwd` is omitted, stdio MCP servers start from a neutral temporary
+directory rather than the workspace. Set `cwd` explicitly only for trusted
+servers that need local project access. Relative MCP `cwd` values resolve from
+the config file that declares them; in project `.sparkwright/config.json`,
+`"cwd": ".."` points at the workspace root while `"cwd": "."` points at
+`.sparkwright/`. Prefer `requiresApproval: true` for tools that can touch
+workspace state, credentials, network services, or external systems.
 
 Configured MCP servers default to `startup: "lazy"`: normal host runs do not
 connect to them until an MCP gateway tool is used. Set `startup: "prepare"` to
@@ -515,7 +518,8 @@ surfaces such as tools, Skills, agents, MCP, cron, and command directories.
 SparkWright treats config and project capabilities as user-owned assets:
 
 - package installation does not create or modify config files
-- first interactive use suggests `init` paths instead of silently writing files
+- first interactive use may scaffold the user config once, using the same
+  non-overwriting template as `init`
 - `init` and `init --project` do not overwrite existing config files
 - upgrade or reinstall must not overwrite existing Skills, agents, commands,
   sessions, tasks, or config
