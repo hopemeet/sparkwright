@@ -1083,6 +1083,22 @@ export function parseTraceJsonl(
     });
 }
 
+/**
+ * Number of sequence numbers consumed by events that were folded out of the
+ * persisted trace immediately before `event`. At standard level the trace store
+ * collapses each `extension.process.progress` event into the terminal
+ * `extension.process.completed`/`.failed` event's `progressCount`, dropping the
+ * progress events' own sequence numbers. Verify never sees those events, so the
+ * terminal event's sequence legitimately jumps forward by the folded count.
+ * Mirrors `observedSequenceEnd`'s handling of folded `model.stream.text` chunks.
+ *
+ * The written terminal event's `progressCount` equals the number of folded
+ * progress events: the runner increments it only when a progress event is
+ * actually emitted (dropped samples land in `progressDropped`, which never
+ * consumes a sequence number). At debug level the progress events are persisted
+ * with their own sequences, so the terminal event has no gap and the base
+ * `expected` already matches — this skip is only consulted when a gap exists.
+ */
 export function foldedSequenceSkipBefore(event: SparkwrightEvent): number {
   if (
     (event.type === "extension.process.completed" ||
