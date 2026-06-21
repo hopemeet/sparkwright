@@ -13,6 +13,7 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 - `packages/core/src/trace.ts`
 - `packages/core/src/trace-codec.ts`
 - `packages/core/src/trace-store.ts`
+- `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/events.ts`
 - `docs/adr/0006-jsonl-traces-with-tiered-detail.md`
 - `docs/reference/PROTOCOL.md`
@@ -104,13 +105,15 @@ EventLog emits full event
 - Date: 2026-06-21
 - Read: `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`,
   `packages/core/src/trace-store.ts`,
-  `packages/core/src/trace-diagnostics.ts`, `packages/core/src/index.ts`,
-  `packages/core/src/internal.ts`, `packages/core/test/trace.test.ts`,
+  `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/trace-session-consistency.ts`,
+  `packages/core/src/index.ts`, `packages/core/src/internal.ts`,
+  `packages/core/test/trace.test.ts`,
   `packages/cli/test/cli.test.ts`,
   `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
   `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`,
   `docs/_internal/project-map/maps/session/session-store.md`.
-- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-session-consistency.ts packages/core/src/trace-store.ts`;
   `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
   `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.
