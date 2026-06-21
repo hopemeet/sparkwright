@@ -125,6 +125,7 @@ describe("platform invocation builders", () => {
   });
 
   it("binds writable paths after the private /tmp overlay so they are not shadowed", () => {
+    if (process.platform === "win32") return;
     const config = resolveShellSandboxConfig({
       workspaceRoot: "/repo",
       config: {

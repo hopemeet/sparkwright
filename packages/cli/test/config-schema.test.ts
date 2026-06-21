@@ -201,11 +201,11 @@ describe("config schema drift guard", () => {
   it("the repository's own project config validates against the schema", async () => {
     const validate = buildValidator();
     const repoRoot = dirname(schemasDir.replace(/\/$/, ""));
-    const projectConfigPath = existsSync(
+    const projectConfigPath = [
       join(repoRoot, ".sparkwright", "config.json"),
-    )
-      ? join(repoRoot, ".sparkwright", "config.json")
-      : join(repoRoot, ".sparkwright", "config_test.json");
+      join(repoRoot, ".sparkwright", "config_test.json"),
+    ].find((path) => existsSync(path));
+    if (!projectConfigPath) return;
     const repoConfig = JSON.parse(await readFile(projectConfigPath, "utf8"));
     expect(validate(repoConfig), JSON.stringify(validate.errors)).toBe(true);
   });

@@ -55,7 +55,14 @@ describe("runCli", () => {
       delete process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE;
     else process.env.SPARKWRIGHT_ENABLE_DIRECT_CORE = prevDirectCore;
     await Promise.all(
-      tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+      tempDirs.map((dir) =>
+        rm(dir, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        }),
+      ),
     );
   });
 
@@ -1936,7 +1943,9 @@ describe("runCli", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain(configPath);
+    expect((JSON.parse(output.stdoutText()) as { path?: string }).path).toBe(
+      configPath,
+    );
     const contents = await readFile(configPath, "utf8");
     expect(contents).toContain("apply_patch");
     await expect(

@@ -544,6 +544,15 @@ export class TracedProcessRunner {
               child.kill("SIGTERM");
               killTimer = setTimeout(() => {
                 child.kill("SIGKILL");
+                finish({
+                  exitCode: null,
+                  signal: "SIGKILL",
+                  timedOut: true,
+                  error: {
+                    code: "PROCESS_TIMEOUT",
+                    message: "Process timed out.",
+                  },
+                });
               }, TIMEOUT_KILL_GRACE_MS);
             }, input.timeoutMs)
           : undefined;
