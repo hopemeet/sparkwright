@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SESSION_COMPACT_SCHEMA_VERSION } from "@sparkwright/core";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
 
@@ -95,7 +96,14 @@ describe("TUI ↔ host via sdk-node", () => {
       store,
     });
 
-    await controller.start("compact smoke");
+    await controller.start(
+      [
+        "compact smoke for packages/tui/src/app.tsx.",
+        "Must preserve skippedReason warnings and do not hide compaction failures.",
+        "Wrote packages/tui/src/state/run-controller.ts after validation.",
+        "Repeat realistic session context ".repeat(120),
+      ].join("\n"),
+    );
     await waitForDone(store);
     const result = await controller.compactSession();
 
@@ -103,6 +111,8 @@ describe("TUI ↔ host via sdk-node", () => {
       compactedRunCount: 1,
       throughRunId: expect.any(String),
     });
+    expect(result?.freedChars).toBeGreaterThan(0);
+    expect(result?.skippedReason).toBeUndefined();
     const events = store.getSnapshot().events;
     expect(events[events.length - 1]).toMatchObject({
       type: "tui.notice",
@@ -121,8 +131,9 @@ describe("TUI ↔ host via sdk-node", () => {
       ),
     ) as Record<string, unknown>;
     expect(artifact).toMatchObject({
-      schemaVersion: "session-compact.v1",
+      schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
       compactedRunCount: 1,
+      freedChars: result?.freedChars,
     });
     controller.shutdown();
   }, 30_000);

@@ -108,6 +108,14 @@ export interface ContextUsageHint {
   totalTokens: number;
   /** Accumulated cost in USD across the run so far. */
   costUsd: number;
+  /**
+   * Whether `costUsd` is enforceable (`estimated`/`partial`) or unavailable
+   * because pricing metadata was missing. Expensive optional stages must not
+   * confuse a missing price with a zero-dollar run.
+   */
+  costStatus?: "estimated" | "unavailable" | "partial";
+  /** Best-effort reasons collected when cost is unavailable. */
+  costUnavailableReasons?: Record<string, number>;
   /** Number of model calls completed so far. */
   modelCalls: number;
   /** The most recent model call's reported input token count, when available. */

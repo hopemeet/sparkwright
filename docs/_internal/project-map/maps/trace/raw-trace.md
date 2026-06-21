@@ -11,6 +11,8 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 ## Main Files
 
 - `packages/core/src/trace.ts`
+- `packages/core/src/trace-codec.ts`
+- `packages/core/src/trace-store.ts`
 - `packages/core/src/events.ts`
 - `docs/adr/0006-jsonl-traces-with-tiered-detail.md`
 - `docs/reference/PROTOCOL.md`
@@ -20,8 +22,8 @@ and [../session/session-store.md](../session/session-store.md) for session layou
 
 ```txt
 EventLog emits full event
-  -> FileRunStore.prepareTraceEvent()
-  -> filterTraceEvent(level)
+  -> FileRunStore.prepareTraceEvent() in trace-store.ts
+  -> filterTraceEvent(level) in trace-codec.ts
   -> redactor
   -> append trace.jsonl
   -> materialize artifact files when needed
@@ -37,6 +39,9 @@ EventLog emits full event
   into the matching `extension.process.completed` / `failed` event as
   `progressHead`, `progressTail`, and counts; `debug` traces keep raw progress.
 - Redaction happens at persistence/forwarding boundaries.
+- `trace.ts` remains the named facade for public/core-internal imports; raw
+  trace storage is implemented in `trace-store.ts`, while codec/filter/redaction
+  primitives are implemented in the dependency-leaf `trace-codec.ts`.
 - `artifact.created` remains the materialization boundary for large process
   stdout/stderr logs referenced by `ProcessOutputSummary.artifactIds`.
 - Promoted shell task output is traced as `task.output` under the task span and
@@ -52,6 +57,12 @@ EventLog emits full event
   without a child `run.*` source.
   MCP tools use normal `tool.*` events; raw traces do not perform filesystem
   side-effect detection.
+- External command delegates keep `subagent.*` as their parent-facing lifecycle
+  and suppress `extension.process.*`, but still pass a constrained
+  `SPARKWRIGHT_TRACE_EVENTS` JSONL inbox to the child process. Accepted progress
+  lines are surfaced as a bounded summary on the delegate tool result and
+  `subagent.completed.payload.result` (`progressCount`, `progressDropped`,
+  `progressHead`, `progressTail`), rather than as raw process lifecycle rows.
 - `workspace.write.untracked_access_granted` is an audit-boundary marker for
   external command delegates granted direct read/write workspace access. It
   records access granted / untracked-write-capable only and is not counted as a
@@ -90,6 +101,16 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-20
-- Read: `packages/core/src/events.ts`, `packages/core/src/run.ts`, `packages/core/src/trace.ts`, `packages/agent-runtime/src/index.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/acp-child-agent.ts`, `docs/reference/PROTOCOL.md`, `docs/reference/RUN_EVENTS.md`, `schemas/event.schema.json`.
-- Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts -t "in-flight duplicates|same-batch"`; `npm --workspace @sparkwright/agent-runtime test -- index.test.ts`; `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "external command delegate|read-write workspace access|capabilities inspect"`; `npm --workspace @sparkwright/core run build`.
+- Date: 2026-06-21
+- Read: `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`,
+  `packages/core/src/trace-store.ts`,
+  `packages/core/src/trace-diagnostics.ts`, `packages/core/src/index.ts`,
+  `packages/core/src/internal.ts`, `packages/core/test/trace.test.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
+  `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`,
+  `docs/_internal/project-map/maps/session/session-store.md`.
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+  `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
+  `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

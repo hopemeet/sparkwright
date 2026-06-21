@@ -3455,6 +3455,10 @@ export class SparkwrightRun implements RunHandle {
       outputTokens: snapshot.tokens.output,
       totalTokens: snapshot.tokens.total,
       costUsd: snapshot.costUsd,
+      ...(snapshot.costStatus ? { costStatus: snapshot.costStatus } : {}),
+      ...(snapshot.costUnavailableReasons
+        ? { costUnavailableReasons: snapshot.costUnavailableReasons }
+        : {}),
       modelCalls: snapshot.modelCalls,
       ...(lastInputTokens !== undefined ? { lastInputTokens } : {}),
       ...(contextWindowPressure !== undefined ? { contextWindowPressure } : {}),

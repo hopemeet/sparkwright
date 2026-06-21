@@ -348,10 +348,11 @@ may seed prior context from the compact artifact plus later un-compacted turns.
 
 **Payload**
 
-| Field       | Type   | Required | Notes                                  |
-| ----------- | ------ | -------- | -------------------------------------- |
-| `sessionId` | string | yes      | Session id.                            |
-| `reason`    | string | no       | Optional caller label for diagnostics. |
+| Field       | Type    | Required | Notes                                                                                                                                                                      |
+| ----------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionId` | string  | yes      | Session id.                                                                                                                                                                |
+| `reason`    | string  | no       | Optional caller label for diagnostics.                                                                                                                                     |
+| `llm`       | boolean | no       | Explicitly requests the Tier 3 summarizer path. Provider/scripted model refs use model-backed summarization; deterministic refs use the preview path and return a warning. |
 
 **Response result**
 
@@ -362,7 +363,44 @@ may seed prior context from the compact artifact plus later un-compacted turns.
   "throughRunId": "run_123",
   "originalCharCount": 12000,
   "summaryCharCount": 2400,
+  "freedChars": 9600,
+  "measurement": {
+    "sourceRunCount": 3,
+    "savingsRatio": 0.8,
+    "freedByTier": {
+      "dedup": 0,
+      "extract": 1200,
+      "evict": 0,
+      "summarize": 8400
+    },
+    "regime": "density_bound",
+    "signalCount": 8
+  },
   "artifactPath": "/workspace/.sparkwright/sessions/session_abc/compact.json"
+}
+```
+
+`skippedReason` and `warnings` are omitted when there is nothing to report.
+Successful compaction writes a `session-compact.v2` artifact whose top-level
+fields include `sourceRunIds`, `throughRunId`, `originalCharCount`,
+`summaryCharCount`, and `freedChars`; stage diagnostics live under `metadata`.
+Model-backed Tier 3 summaries also record `metadata.summaryFingerprint`
+(`modelId`, prompt/oracle versions, input hash, source run ids, through run, and
+effective budget) plus `metadata.measurement`.
+When compaction is unnecessary or best-effort compaction cannot safely persist
+an artifact, the response remains `ok: true`, `artifactPath` is `null`,
+`freedChars` is `0`, and `skippedReason` explains why.
+
+```json
+{
+  "sessionId": "session_abc",
+  "compactedRunCount": 0,
+  "throughRunId": null,
+  "originalCharCount": 900,
+  "summaryCharCount": 900,
+  "freedChars": 0,
+  "skippedReason": "no_savings",
+  "artifactPath": null
 }
 ```
 

@@ -27,9 +27,9 @@
 // =============================================================================
 
 import type {
+  CompactionResult,
   CompactionStage,
   CompactionStageInput,
-  CompactionStageResult,
 } from "./pipeline.js";
 import { createContextItemId, type ContextItemId } from "./ids.js";
 import type { ContextItem } from "./types.js";
@@ -130,6 +130,7 @@ export function createFileReadDedupStage(
 
   return {
     name: options.name ?? "file_read_dedup",
+    tier: "dedup",
     trigger: "micro",
     shouldRun(input: CompactionStageInput): boolean {
       const seen = new Set<string>();
@@ -142,7 +143,7 @@ export function createFileReadDedupStage(
       }
       return false;
     },
-    apply(input: CompactionStageInput): CompactionStageResult {
+    apply(input: CompactionStageInput): CompactionResult {
       // Walk newest-to-oldest so the first occurrence we see wins.
       const items = input.items;
       const latestIdByKey = new Map<string, ContextItemId>();
@@ -252,6 +253,7 @@ export function createObservationOneLineStage(
 
   return {
     name: options.name ?? "observation_one_line",
+    tier: "dedup",
     trigger: "micro",
     shouldRun(input: CompactionStageInput): boolean {
       // Identify tool_result indices; if any older-than-keepRecent item
@@ -266,7 +268,7 @@ export function createObservationOneLineStage(
       }
       return false;
     },
-    apply(input: CompactionStageInput): CompactionStageResult {
+    apply(input: CompactionStageInput): CompactionResult {
       const items = [...input.items];
       const indices = collectIndices(items);
       const collapsible = indices.slice(

@@ -235,6 +235,119 @@ describe("trace", () => {
     });
   });
 
+  it("verify tolerates the sequence gap from folded standard-level progress", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-verify-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root });
+
+    store.append(log.emit("run.started", {}));
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    // Two progress events fold into the completed event's progressCount,
+    // dropping sequences 3 and 4 from the persisted standard trace.
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "first",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "second",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+      }),
+    );
+    store.append(log.emit("run.completed", { state: "completed" }));
+
+    const jsonl = await readFile(store.tracePath, "utf8");
+    // Persisted file skips the two folded progress sequences (2 -> 5).
+    const sequences = jsonl
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as SparkwrightEvent).sequence);
+    expect(sequences).toEqual([1, 2, 5, 6]);
+
+    const report = verifyTraceJsonl(jsonl);
+    expect(
+      report.findings.filter((f) => f.code === "TRACE_SEQUENCE_INVALID"),
+    ).toEqual([]);
+  });
+
+  it("verify still flags a genuine sequence gap that progress folding cannot explain", async () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const started = log.emit("extension.process.started", {
+      invocationId: "proc_1",
+      name: "hook",
+      kind: "workflow_hook",
+      runtime: "custom",
+    });
+    // progressCount of 1 explains a single-sequence gap; this completed event
+    // jumps by two, so verify must still report the break.
+    const completed: SparkwrightEvent = {
+      ...log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressCount: 1,
+      }),
+      sequence: started.sequence + 3,
+    };
+    const jsonl = `${serializeEventJsonl(started)}${serializeEventJsonl(completed)}`;
+
+    const report = verifyTraceJsonl(jsonl);
+    expect(
+      report.findings.some((f) => f.code === "TRACE_SEQUENCE_INVALID"),
+    ).toBe(true);
+  });
+
+  it("verify does not treat bare progressCount as folded progress evidence", async () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const started = log.emit("extension.process.started", {
+      invocationId: "proc_1",
+      name: "hook",
+      kind: "workflow_hook",
+      runtime: "custom",
+    });
+    const completed: SparkwrightEvent = {
+      ...log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressCount: 1,
+      }),
+      sequence: started.sequence + 2,
+    };
+    const jsonl = `${serializeEventJsonl(started)}${serializeEventJsonl(completed)}`;
+
+    const report = verifyTraceJsonl(jsonl);
+    expect(
+      report.findings.some((f) => f.code === "TRACE_SEQUENCE_INVALID"),
+    ).toBe(true);
+  });
+
   it("keeps extension process progress at debug level", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-process-debug-"));
     tempDirs.push(root);
@@ -2410,6 +2523,56 @@ describe("trace", () => {
           eventTypes: expect.arrayContaining([
             "workspace.anchored_edit.requested",
           ]),
+        }),
+      ]),
+    );
+  });
+
+  it("pairs subagent lifecycle events by child run id before spans in trace timelines", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const span = (spanId: string) => ({
+      __span: { traceId: "trace_1", spanId },
+    });
+    const child = {
+      childRunId: "cmd_doc_reviewer_1",
+      parentRunId: run.id,
+    };
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("subagent.requested", child, span("span_subagent_request")),
+      log.emit("subagent.started", child, span("span_subagent_child")),
+      log.emit(
+        "subagent.completed",
+        { ...child, stopReason: "completed" },
+        span("span_subagent_child"),
+      ),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "completed",
+          eventTypes: [
+            "subagent.requested",
+            "subagent.started",
+            "subagent.completed",
+          ],
+          startSequence: 2,
+          endSequence: 4,
+        }),
+      ]),
+    );
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["subagent.requested"]),
         }),
       ]),
     );

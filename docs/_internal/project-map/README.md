@@ -50,7 +50,7 @@ follow the active maps below for the current contract.
 
 ## Touch File -> Read Docs
 
-- `packages/core/src/trace.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
+- `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`, `packages/core/src/trace-diagnostics.ts`, or `packages/core/src/trace-store.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/events.ts` or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/session.ts`: [modules/core.md](modules/core.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
@@ -91,7 +91,19 @@ trace/session inspection.
 
 ## Last Verified
 
-- Status: Read-only
-- Date: 2026-06-20
-- Read: `docs/_internal/project-map/README.md`, `docs/_internal/project-map/maintenance/doc-maintenance.md`, `docs/_internal/project-map/modules/host.md`, `docs/_internal/project-map/modules/cli.md`, `docs/_internal/project-map/maps/capabilities/README.md`, `docs/_internal/project-map/maps/runtime/tool-orchestration.md`, `docs/_internal/project-map/designs/config-redesign.md`.
-- Tests: not run; cleanup-only map audit.
+- Status: Verified
+- Date: 2026-06-21
+- Read: `docs/_internal/project-map/README.md`,
+  `docs/_internal/project-map/maintenance/doc-maintenance.md`,
+  `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
+  `docs/_internal/project-map/modules/core.md`,
+  `docs/_internal/project-map/maps/trace/raw-trace.md`,
+  `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`,
+  `docs/_internal/project-map/maps/session/session-store.md`,
+  `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`,
+  `packages/core/src/trace-diagnostics.ts`, `packages/core/src/trace-store.ts`,
+  `packages/core/src/index.ts`, `packages/core/src/internal.ts`.
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+  `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
+  `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

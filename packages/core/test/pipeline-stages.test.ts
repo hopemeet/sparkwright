@@ -332,6 +332,7 @@ describe("gateStageByUsage", () => {
     let applyCount = 0;
     const stage: CompactionStage = {
       name: "spy",
+      tier: "summarize",
       trigger: "auto",
       shouldRun: () => true,
       apply: (input) => {

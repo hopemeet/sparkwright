@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type HostMessage } from "@sparkwright/protocol";
 import {
+  asSessionId,
+  type ContextItem,
   FileSessionStore,
+  SESSION_COMPACT_SCHEMA_VERSION,
   type RunId,
   type SparkwrightEvent,
 } from "@sparkwright/core";
@@ -238,6 +241,22 @@ describe("host protocol", () => {
       (m) => m.envelope === "response" && m.id === "bad",
     );
     expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "invalid_payload" },
+    });
+
+    pair.clientSend({
+      envelope: "request",
+      id: "bad-cancel",
+      kind: "run.cancel",
+      timestamp: TIMESTAMP,
+      payload: { runId: "run_cancel_unknown", llm: true },
+    } as unknown as HostMessage);
+    const cancelResp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "bad-cancel",
+    );
+    expect(cancelResp).toMatchObject({
       envelope: "response",
       ok: false,
       error: { code: "invalid_payload" },
@@ -2161,14 +2180,23 @@ describe("host protocol", () => {
       await mkdir(runDir, { recursive: true });
       await writeFile(
         join(runDir, "run.json"),
-        JSON.stringify({ id: runId, goal: "please refactor the TUI" }),
+        JSON.stringify({
+          id: runId,
+          goal: "please refactor the TUI and preserve packages/tui/src/app.tsx behavior",
+        }),
         "utf8",
       );
       await writeFile(
         join(runDir, "result.json"),
         JSON.stringify({
-          message:
-            "Refactored the TUI layer renderer and extracted the capabilities panel.",
+          message: [
+            "Must keep session compact warnings visible and do not hide skipped reasons.",
+            "Wrote packages/tui/src/app.tsx and packages/tui/src/state/run-controller.ts.",
+            "Verification passed after protocol compact.",
+            "Refactored the TUI layer renderer and extracted the capabilities panel. ".repeat(
+              80,
+            ),
+          ].join("\n"),
         }),
         "utf8",
       );
@@ -2195,7 +2223,7 @@ describe("host protocol", () => {
         id: "compact",
         kind: "session.compact",
         timestamp: TIMESTAMP,
-        payload: { sessionId, reason: "test" },
+        payload: { sessionId, reason: "test", llm: true },
       });
       const compactResp = await pair.waitFor(
         (m) => m.envelope === "response" && m.id === "compact",
@@ -2211,16 +2239,381 @@ describe("host protocol", () => {
           artifactPath: join(sessionRootDir, sessionId, "compact.json"),
         },
       });
+      if (compactResp.envelope !== "response" || !compactResp.ok) {
+        throw new Error("expected compact response");
+      }
+      expect(compactResp.result.freedChars).toBeGreaterThan(0);
+      expect(compactResp.result.skippedReason).toBeUndefined();
+      expect(compactResp.result.measurement).toMatchObject({
+        regime: "density_bound",
+        summarizer: expect.objectContaining({
+          applied: true,
+          mode: "deterministic_stub",
+        }),
+      });
+      expect(compactResp.result.warnings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+          }),
+        ]),
+      );
       const artifact = JSON.parse(
         await readFile(join(sessionRootDir, sessionId, "compact.json"), "utf8"),
       ) as Record<string, unknown>;
       expect(artifact).toMatchObject({
-        schemaVersion: "session-compact.v1",
+        schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
         sessionId,
         throughRunId: runId,
         compactedRunCount: 1,
+        freedChars: compactResp.result.freedChars,
       });
-      expect(String(artifact.content)).toContain("please refactor the TUI");
+      expect(String(artifact.content)).toContain(
+        "Session deterministic-summary preview.",
+      );
+      expect(String(artifact.content)).toContain("packages/tui/src/app.tsx");
+      expect(artifact.metadata).toMatchObject({
+        mode: "deterministic-v2",
+        warnings: expect.arrayContaining([
+          expect.objectContaining({
+            code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+          }),
+        ]),
+      });
+      expect(
+        (
+          artifact.metadata as {
+            appliedStages?: Array<Record<string, unknown>>;
+          }
+        ).appliedStages,
+      ).toContainEqual(
+        expect.objectContaining({
+          name: "session_summarize",
+          tier: "summarize",
+        }),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a model-backed session summarizer when llm is requested with a real model ref", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    try {
+      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+      const sessionId = "session_compact_model_protocol";
+      const runId = "run_model_compact_protocol" as RunId;
+      const store = new FileSessionStore({ rootDir: sessionRootDir });
+      await store.create({ id: sessionId });
+      await store.append(sessionId, runId);
+      const runDir = join(
+        sessionRootDir,
+        sessionId,
+        "agents",
+        "main",
+        "runs",
+        runId,
+      );
+      await mkdir(runDir, { recursive: true });
+      await writeFile(
+        join(runDir, "run.json"),
+        JSON.stringify({
+          id: runId,
+          goal: "Must preserve packages/host/src/runtime.ts.",
+        }),
+        "utf8",
+      );
+      await writeFile(
+        join(runDir, "result.json"),
+        JSON.stringify({
+          message: [
+            "Wrote packages/host/src/runtime.ts.",
+            "Verification passed.",
+            "Model-backed compaction detail ".repeat(120),
+          ].join("\n"),
+        }),
+        "utf8",
+      );
+      process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+        {
+          message: JSON.stringify({
+            content:
+              "Model summary: User: Must preserve packages/host/src/runtime.ts. Constraints: Must preserve packages/host/src/runtime.ts. Wrote packages/host/src/runtime.ts. Verification passed. workspace_write verification run_model_compact_protocol",
+            coveredSignalIds: [],
+            unknownSignalIds: [],
+          }),
+        },
+      ]);
+
+      const pair = createConnectionPair();
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted/session-summarizer",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "compact-model",
+        kind: "session.compact",
+        timestamp: TIMESTAMP,
+        payload: { sessionId, reason: "test", llm: true },
+      });
+      const compactResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "compact-model",
+      );
+
+      expect(compactResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          sessionId,
+          compactedRunCount: 1,
+          throughRunId: runId,
+          artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+          measurement: {
+            regime: "density_bound",
+            summarizer: expect.objectContaining({
+              applied: true,
+              mode: "llm",
+              modelId: "scripted/session-summarizer",
+              promptVersion: "session-summarizer.prompt.v1",
+              oracleVersion: "session-signals.v1",
+            }),
+          },
+        },
+      });
+      if (compactResp.envelope !== "response" || !compactResp.ok) {
+        throw new Error("expected compact response");
+      }
+      const warnings = Array.isArray(compactResp.result.warnings)
+        ? (compactResp.result.warnings as Array<{ code?: string }>)
+        : [];
+      expect(
+        warnings.some(
+          (warning) =>
+            warning.code === "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+        ),
+      ).not.toBe(true);
+      const artifact = JSON.parse(
+        await readFile(join(sessionRootDir, sessionId, "compact.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(String(artifact.content)).toContain("Model summary:");
+      expect(artifact.metadata).toMatchObject({
+        mode: "llm",
+        summaryFingerprint: expect.objectContaining({
+          modelId: "scripted/session-summarizer",
+          promptVersion: "session-summarizer.prompt.v1",
+          oracleVersion: "session-signals.v1",
+          throughRunId: runId,
+        }),
+        measurement: expect.objectContaining({
+          summarizer: expect.objectContaining({
+            mode: "llm",
+          }),
+        }),
+      });
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("applies project task budget config to manual session summarization", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          tasks: {
+            compaction: {
+              budget: { maxSourceChars: 10, maxOutputTokens: 100 },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+      const sessionId = "session_compact_budget_protocol";
+      const runId = "run_compact_budget_protocol" as RunId;
+      const store = new FileSessionStore({ rootDir: sessionRootDir });
+      await store.create({ id: sessionId });
+      await store.append(sessionId, runId);
+      const runDir = join(
+        sessionRootDir,
+        sessionId,
+        "agents",
+        "main",
+        "runs",
+        runId,
+      );
+      await mkdir(runDir, { recursive: true });
+      await writeFile(
+        join(runDir, "run.json"),
+        JSON.stringify({
+          id: runId,
+          goal: "Must preserve packages/host/src/runtime.ts.",
+        }),
+        "utf8",
+      );
+      await writeFile(
+        join(runDir, "result.json"),
+        JSON.stringify({
+          message: [
+            "Wrote packages/host/src/runtime.ts.",
+            "Verification passed.",
+            "Budgeted compaction detail ".repeat(120),
+          ].join("\n"),
+        }),
+        "utf8",
+      );
+
+      const pair = createConnectionPair();
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "compact-budget",
+        kind: "session.compact",
+        timestamp: TIMESTAMP,
+        payload: { sessionId, llm: true },
+      });
+      const compactResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "compact-budget",
+      );
+
+      expect(compactResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          sessionId,
+          compactedRunCount: 1,
+          artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+          warnings: expect.arrayContaining([
+            expect.objectContaining({
+              code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+            }),
+            expect.objectContaining({
+              code: "SESSION_SUMMARIZER_SOURCE_TOO_LARGE",
+            }),
+          ]),
+        },
+      });
+      const artifact = JSON.parse(
+        await readFile(join(sessionRootDir, sessionId, "compact.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(String(artifact.content)).not.toContain(
+        "Session deterministic-summary preview.",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inject stale compact artifacts as conversation history", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+      const sessionId = "session_compact_stale_artifact";
+      const runId = "run_compact_live" as RunId;
+      const staleRunId = "run_compact_stale" as RunId;
+      const store = new FileSessionStore({ rootDir: sessionRootDir });
+      await store.create({ id: sessionId });
+      await store.append(sessionId, runId);
+      const runDir = join(
+        sessionRootDir,
+        sessionId,
+        "agents",
+        "main",
+        "runs",
+        runId,
+      );
+      await mkdir(runDir, { recursive: true });
+      await writeFile(
+        join(runDir, "run.json"),
+        JSON.stringify({ id: runId, goal: "live goal" }),
+        "utf8",
+      );
+      await writeFile(
+        join(runDir, "result.json"),
+        JSON.stringify({ message: "live answer" }),
+        "utf8",
+      );
+      await writeFile(
+        join(sessionRootDir, sessionId, "compact.json"),
+        JSON.stringify(
+          {
+            schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
+            sessionId: asSessionId(sessionId),
+            createdAt: "2026-06-21T00:00:00.000Z",
+            throughRunId: staleRunId,
+            compactedRunCount: 1,
+            sourceRunIds: [staleRunId],
+            content: "stale compact content that must not be injected",
+            originalCharCount: 1000,
+            summaryCharCount: 50,
+            freedChars: 950,
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      );
+
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        sessionRootDir,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const history = await (
+        runtime as unknown as {
+          loadConversationHistory(
+            rootDir: string,
+            id: string,
+          ): Promise<ContextItem[]>;
+        }
+      ).loadConversationHistory(sessionRootDir, sessionId);
+
+      expect(history.map((item) => item.source?.kind)).toEqual([
+        "session_compact_warning",
+        "session_turn",
+        "session_turn",
+      ]);
+      expect(history[0]?.content).toContain("ignored");
+      expect(history.map((item) => item.content).join("\n")).not.toContain(
+        "stale compact content",
+      );
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

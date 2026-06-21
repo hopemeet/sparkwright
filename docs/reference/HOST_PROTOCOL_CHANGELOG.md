@@ -11,6 +11,15 @@ major; breaking changes bump the major.
   policy/flag-driven approvals structurally.
 - Add `session.compact` request for host-owned manual session context
   compaction.
+- Extend `session.compact` responses with `freedChars`, `measurement`, optional
+  `skippedReason`, and optional `warnings`.
+- Add optional `llm` to `session.compact` payloads. Provider/scripted model refs
+  route to the model-backed Tier 3 summarizer; deterministic refs keep the
+  preview path and return a warning.
+- Promote persisted compact artifacts to `session-compact.v2` with top-level
+  `freedChars`; unsupported v1 artifacts are ignored rather than migrated.
+- Add `metadata.summaryFingerprint` and `metadata.measurement` to compact
+  artifacts when available.
 
 ## 1.3 (2026-06-14)
 

@@ -105,23 +105,42 @@ Compression is optional in v0.
 
 #### Cost-aware compaction
 
-Compaction decisions can be driven by live spend, not just character/token
-budgets. The run loop projects the `UsageTracker` snapshot into
-`ContextHints.usage` (a `ContextUsageHint`: accumulated input/output/total
-tokens, `costUsd`, `modelCalls`, the last call's `lastInputTokens`, and a
-derived `contextWindowPressure` in `[0,1]` computed from `lastInputTokens`
-against the active model's `contextWindowTokens`). Every compaction stage
-receives this on `input.hints.usage`, closing the loop between cost
-observability and context optimization.
+Compaction stages report through a shared `CompactionResult` shape:
+`items`, `freedChars`, optional `skippedReason`, optional `warnings`, and
+optional metadata. A stage with `freedChars <= 0` is treated as skipped rather
+than applied, which keeps no-op/growth cases visible.
 
-`gateStageByUsage(stage, thresholds)` wraps any stage so it runs only once
+Stages are tagged with a `tier`: `dedup`, `extract`, `evict`, or `summarize`.
+Runtime deterministic stages operate on runtime/tool observations. Session
+compaction uses separate deterministic turn stages for duplicate turn collapse,
+lossy long-turn extraction, and old compacted-turn eviction; it does not reuse
+tool-result-only stages for user/assistant history. The `dedup` tier is reserved
+for genuinely redundant content so regime classifiers can distinguish redundancy
+from density-bound lossy compression.
+
+Compaction decisions can be driven by live spend, not just character/token
+budgets, when a caller deliberately opts into cost gates. The run loop projects
+the `UsageTracker` snapshot into
+`ContextHints.usage` (a `ContextUsageHint`: accumulated input/output/total
+tokens, `costUsd`, `costStatus`, `costUnavailableReasons`, `modelCalls`, the
+last call's `lastInputTokens`, and a derived `contextWindowPressure` in `[0,1]`
+computed from `lastInputTokens` against the active model's
+`contextWindowTokens`). Every compaction stage receives this on
+`input.hints.usage`, closing the loop between cost observability and context
+optimization.
+
+`gateStageByUsage(stage, thresholds)` wraps runtime stages so they run only once
 usage clears `minContextWindowPressure` / `minCostUsd` / `minTotalTokens`
-(logical AND). This is the canonical way to defer an expensive model-backed
-summarizer until the window is genuinely near full, or to cap spend on a
-long-running run. Reactive overflow recovery (`input.reactive === true`)
-bypasses the gate, since the model already reported the context is too large.
-A missing `usage` never opens a cost gate — cost-aware compaction is
-intentionally conservative and waits for measured pressure.
+(logical AND). Reactive overflow recovery (`input.reactive === true`) bypasses
+that runtime helper, since the model already reported the context is too large.
+Session Tier 3 summarization uses a dedicated non-bypassable wake/spend gate
+instead: `maxSourceChars` and `maxOutputTokens` are the enforceable floor,
+`maxCostUsd` is only enforceable when pricing is known, and explicit unknown
+cost policy is recorded in warnings/metadata.
+When the gate accepts a provider/scripted model-backed session summary, the
+artifact records `summaryFingerprint` and `measurement`; deterministic model
+refs use the preview summarizer and surface that fact as a warning on explicit
+`llm` requests.
 
 #### Tool-result clearing
 
@@ -442,13 +461,15 @@ Current and candidate event types:
 
 - `context.assembled`
 - `context.compaction_requested`
+- `context.compaction.started`
+- `context.compaction.completed`
+- `context.compaction.failed`
 - `context.item.included`
 - `context.item.omitted`
-- `context.compacted`
 - `skill.loaded`
 - `prompt.built`
 
-v0 emits `context.assembled` for every context assembly and `context.compaction_requested` when budget pressure causes truncation or omission. It does not perform LLM compaction yet.
+v0 emits `context.assembled` for every context assembly and `context.compaction_requested` when budget pressure causes truncation or omission. Runtime deterministic compaction can also emit `context.compaction.started`, `context.compaction.completed`, and `context.compaction.failed`; model-backed session compaction is available through the opt-in `session.compact` path, while the main run loop does not trigger it automatically.
 
 ## Relationship To Provider Adapters
 

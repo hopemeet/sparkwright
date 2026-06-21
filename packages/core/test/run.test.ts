@@ -4072,6 +4072,46 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("preserves streamed cost-availability status in model.completed usage", async () => {
+    const run = createRun({
+      goal: "stream usage with unavailable pricing",
+      model: {
+        async complete() {
+          throw new Error("complete() should not be called");
+        },
+        async *stream() {
+          yield { type: "text_delta" as const, text: "done" };
+          yield {
+            type: "usage" as const,
+            usage: {
+              inputTokens: 5,
+              outputTokens: 6,
+              totalTokens: 11,
+              costStatus: "unavailable" as const,
+              costUnavailableReason: "missing_pricing",
+            },
+          };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    const modelCompleted = run.events
+      .all()
+      .find((event) => event.type === "model.completed");
+    // The merged streaming usage must keep the adapter's cost signal so the
+    // trace can explain why cost is unavailable rather than looking silent.
+    expect(modelCompleted?.payload).toMatchObject({
+      usage: {
+        totalTokens: 11,
+        costStatus: "unavailable",
+        costUnavailableReason: "missing_pricing",
+      },
+    });
+  });
+
   it("threads live usage (cost / context-window pressure) into compaction hints", async () => {
     const echo = defineTool({
       name: "echo",
@@ -4111,6 +4151,7 @@ describe("SparkwrightRun", () => {
     > = [];
     const captureStage = {
       name: "capture-usage",
+      tier: "summarize" as const,
       trigger: "auto" as const,
       shouldRun(input: { hints: { usage?: unknown } }) {
         seenUsage.push(

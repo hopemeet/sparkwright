@@ -33,6 +33,9 @@ createRun/resumeRunFromCheckpoint
 - Do not infer terminal run outcome from `model.completed` or `tool.completed`.
 - State transitions emit diagnostics when rejected.
 - Budget and max-step behavior are part of runtime semantics.
+- Runtime compaction stages run before prompt-bound model calls when configured.
+  Stage results with no net savings are reported as skipped rather than applied,
+  and compaction failures preserve partial progress and continue.
 - Same-turn repeated tool-call fan-out remains a doom-loop signal even when the
   duplicate observations are labeled as in-flight rather than completed-result
   repeats.
@@ -59,6 +62,6 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-20
-- Read: `packages/core/src/run.ts`, `packages/core/test/run.test.ts`, `docs/reference/RUN_EVENTS.md`, `docs/reference/STATE_AND_TRACE_MODEL.md`, `docs/_internal/project-map/maps/runtime/tool-orchestration.md`.
-- Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts -t "detects doom loop from repeated tool calls within a single step|honors the doomLoopRepeatLimit override|marks duplicate same-batch calls"`; `npm --workspace @sparkwright/core test -- test/run.test.ts -t "in-flight duplicates|same-batch"`.
+- Date: 2026-06-21
+- Read: `packages/core/src/run.ts`, `packages/core/src/pipeline.ts`, `packages/core/test/run.test.ts`, `packages/core/test/run-loop-extensions.test.ts`, `docs/reference/RUN_EVENTS.md`, `docs/reference/STATE_AND_TRACE_MODEL.md`, `docs/_internal/project-map/maps/runtime/tool-orchestration.md`.
+- Tests: `npm --workspace @sparkwright/core test`; `npm run build`; `npm run typecheck:test`.

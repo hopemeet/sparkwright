@@ -18,6 +18,7 @@ export interface BuildAdapterInput {
 export interface ProviderRuntimeSources {
   apiKey: string;
   baseURL?: string;
+  pricing: "configured" | "builtin" | "unavailable";
 }
 
 /**
@@ -95,8 +96,9 @@ export async function buildConfiguredAdapter(
   });
 
   // Pricing precedence: explicit config `cost` > built-in OpenAI table > none.
-  const pricing =
-    costToPricing(selection.cost) ?? OPENAI_MODEL_PRICING[selection.modelId];
+  const configuredPricing = costToPricing(selection.cost);
+  const builtinPricing = OPENAI_MODEL_PRICING[selection.modelId];
+  const pricing = configuredPricing ?? builtinPricing;
   const registry = new ProviderRegistry([
     createOpenAiProvider({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,6 +124,11 @@ export async function buildConfiguredAdapter(
     ),
     sources: {
       apiKey: envApiKey ? `env:${npmInfo.apiKeyEnv}` : "config",
+      pricing: configuredPricing
+        ? "configured"
+        : builtinPricing
+          ? "builtin"
+          : "unavailable",
       ...(baseURL
         ? {
             baseURL: baseUrlEnv ? `env:${npmInfo.baseUrlEnv}` : "config",

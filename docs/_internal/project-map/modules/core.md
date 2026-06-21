@@ -14,7 +14,12 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 
 - `packages/core/src/run.ts`
 - `packages/core/src/context.ts`
+- `packages/core/src/pipeline.ts`
+- `packages/core/src/session-compaction.ts`
 - `packages/core/src/trace.ts`
+- `packages/core/src/trace-codec.ts`
+- `packages/core/src/trace-diagnostics.ts`
+- `packages/core/src/trace-store.ts`
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
@@ -32,6 +37,7 @@ Owns:
 - per-run state transitions and `RunResult`
 - append-only run event contracts and run-local `sequence`
 - `RunStore`, `FileRunStore`, `TraceSink`, `MemoryTrace`
+- trace JSONL codec, redaction, and standard/debug payload filtering
 - trace summary, timeline, report, and verification primitives
 - `SessionStore` interfaces and file/memory implementations
 - checkpoint save/load and best-effort reconstruction from trace
@@ -51,6 +57,12 @@ Does not own:
 - `event.sequence` is per run, not per session.
 - Trace levels are `standard` and `debug`; `minimal` is not a valid mode.
 - `traceId`, `spanId`, and `parentSpanId` are correlation fields only.
+- `trace.ts` is the stable named facade used by `index.ts` and `internal.ts`;
+  storage lives in `trace-store.ts`, diagnostics live in
+  `trace-diagnostics.ts`, and codec/filter/redaction primitives live in the
+  leaf `trace-codec.ts`.
+- `trace-store.ts` may import `trace-codec.ts` but not diagnostics; moved trace
+  endpoint modules must not import the `trace.ts` facade.
 - `ProcessInvocationBase`, `ProcessOutputSummary`, and `SandboxSummary` are
   shared process-observation shapes; host runners own execution and core owns
   the event vocabulary plus trace persistence behavior.
@@ -77,6 +89,10 @@ Does not own:
 - Trace reports include a `LOW_NET_PROGRESS` advisory when many model/tool
   cycles produce little file-write progress, repeated unchanged reads, or
   delayed verification after the last write.
+- Trace timelines use semantic phase keys before span fallback; `subagent.*`
+  lifecycle rows are grouped by child run id so a parent request and child
+  terminal event do not split into pending and completed phases when spans
+  differ.
 - Trace reports score multi-agent auditability facts from the raw trace:
   incomplete child terminal states (`SUBAGENT_INCOMPLETE`), in-flight duplicate
   storms, repeated approval denials, and untracked write-capable external
@@ -94,6 +110,20 @@ Does not own:
   companion-event correlation.
 - `path-display.ts` owns shared display-only path projection: workspace paths
   become relative, and external absolute paths collapse to non-host locators.
+- Compaction stages return the shared `CompactionResult` protocol
+  (`items`, `freedChars`, optional `skippedReason`/`warnings`/metadata) and are
+  tagged by tier (`dedup`, `extract`, `evict`, `summarize`).
+  `CompactionStageResult` is not a separate public alias.
+- `session.ts` owns the `session-compact.v2` artifact parser/writer; artifacts
+  require top-level `freedChars` and are ignored when the schema or
+  `throughRunId` anchor is invalid.
+- `session-compaction.ts` owns deterministic session-turn extraction and
+  old-turn eviction over completed user/assistant turns; it also exposes the
+  `SessionSummarizer` seam, deterministic summarizer preview, trace-derived
+  `SessionSignals` oracle, and dedicated Tier 3 wake/spend/acceptance gates.
+  Accepted summarizer output carries fingerprint metadata and every result
+  carries P3d `measurement`; host owns when to call it and how to expose
+  protocol responses.
 
 ## Consumers
 
@@ -122,5 +152,15 @@ Does not own:
 
 - Status: Verified
 - Date: 2026-06-21
-- Read: `packages/core/src/context.ts`, `packages/core/src/context-dedup.ts`, `packages/host/src/runtime.ts`, `packages/core/test/context.test.ts`, `packages/core/test/runtime-guardrails.test.ts`, `packages/host/test/spawn-agent.test.ts`.
-- Tests: `npm --workspace @sparkwright/core test -- test/context.test.ts test/runtime-guardrails.test.ts`; `npm --workspace @sparkwright/host test -- test/spawn-agent.test.ts`.
+- Read: `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`,
+  `packages/core/src/trace-diagnostics.ts`, `packages/core/src/trace-store.ts`,
+  `packages/core/src/index.ts`, `packages/core/src/internal.ts`,
+  `packages/core/test/trace.test.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
+  `docs/_internal/project-map/maps/trace/raw-trace.md`,
+  `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`,
+  `docs/_internal/project-map/maps/session/session-store.md`.
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+  `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
+  `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

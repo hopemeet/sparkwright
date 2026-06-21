@@ -303,7 +303,9 @@ Current event types:
   Metadata carries additive audit fields such as `childRunId`, `parentRunId`,
   `agentId`, `subagentDepth`, `delegateTool`, and `entrypoint`. Terminal
   payloads add `terminalState` plus `stepLimitReached` / `truncated` when the
-  child `run.*` outcome reports them.
+  child `run.*` outcome reports them. External-command delegate terminal
+  results may also carry bounded child progress summaries (`progressCount`,
+  `progressDropped`, `progressHead`, `progressTail`).
 - `task.created` / `task.started` / `task.output` / `task.completed` /
   `task.failed` / `task.cancelled`: background-task lifecycle events emitted
   by `@sparkwright/agent-runtime` Tasks. Tasks are spawned by a run and live
@@ -636,7 +638,10 @@ Tool-result validation failures are returned to the model as failed tool observa
 
 ### Context Compaction Request
 
-`context.compaction_requested` records context budget pressure. It is a signal for callers and future compaction components; v0 does not compact through an LLM automatically.
+`context.compaction_requested` records context budget pressure. It is a signal
+for callers and compaction components; the main run loop does not compact
+through an LLM automatically. Host `session.compact` can invoke the opt-in
+model-backed session summarizer.
 
 ```json
 {
@@ -652,7 +657,11 @@ Tool-result validation failures are returned to the model as failed tool observa
 }
 ```
 
-Future compaction implementations should emit `context.compaction.started`, `context.compaction.completed`, or `context.compaction.failed` around summary creation. The original trace should remain intact even when compaction fails.
+Compaction implementations emit `context.compaction.started`,
+`context.compaction.completed`, or `context.compaction.failed` around each
+stage. Completed events report the stage `tier`, `freedChars`, optional
+`skippedReason`, optional `warnings`, and metadata. The original trace should
+remain intact even when compaction fails.
 
 ### Tool Batch Events
 

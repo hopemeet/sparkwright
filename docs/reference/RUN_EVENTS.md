@@ -40,6 +40,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Tool call                         | `tool.requested`, `tool.started`, `tool.progress`, `tool.completed`, `tool.failed`                                                                                            | Group by tool call id or enclosing span when available                            |
 | Approval                          | `approval.requested`, `approval.resolved`, `interaction.requested`, `interaction.resolved`                                                                                    | Show pending review and final decision                                            |
 | Workspace mutation                | `workspace.write.requested`, `artifact.created`, `workspace.write.completed`, `workspace.write.denied`, `workspace.write.skipped`, `workspace.write.untracked_access_granted` | Link diff artifacts, final mutation state, and untracked write-capable boundaries |
+| Sub-agent lifecycle               | `subagent.requested`, `subagent.started`, `subagent.completed`, `subagent.failed`                                                                                             | Group by `childRunId`; show parent request and child terminal status together     |
 | Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                                                              | Stream output incrementally; cap retained inline output                           |
 | Host-controlled process           | `extension.process.started`, `extension.process.progress`, `extension.process.completed`, `extension.process.failed`                                                          | Show external process invocation, bounded output summary, and progress            |
 | Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                                                    | Show capability changes as environment/context evidence                           |
@@ -161,6 +162,11 @@ Consumption guidance:
 - Show `context.compaction_requested` as a warning or timeline marker.
 - Treat `context.compaction.started`, `context.compaction.completed`, and
   `context.compaction.failed` as the summary lifecycle when present.
+- `context.compaction.started` includes the stage name, `tier`, trigger,
+  reactive flag, and current size estimate. `context.compaction.completed`
+  includes `freedChars`; when a stage runs but produces no savings it includes
+  `skippedReason` instead of counting as an applied stage. Completed events may
+  also include `warnings` and stage metadata.
 - Do not remove earlier events from a replay view after compaction. Compaction
   changes future context, not history.
 - If `context.compaction.completed` indicates prompt-cache reset metadata,

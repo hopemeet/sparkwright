@@ -284,9 +284,11 @@ export {
 // Loop pipeline extensions (compaction, prefetch, summarizer)
 export type {
   CompactionTrigger,
+  CompactionTier,
+  CompactionWarning,
+  CompactionResult,
   CompactionStage,
   CompactionStageInput,
-  CompactionStageResult,
   CompactionPipelineOptions,
   CompactionPipelineInput,
   CompactionPipelineResult,
@@ -305,6 +307,45 @@ export {
   gateStageByUsage,
   usageMeetsGate,
 } from "./pipeline.js";
+
+export type {
+  SessionCompactionTurn,
+  SessionCompactionOptions,
+  SessionCompactionAppliedResult,
+  SessionCompactionSkippedResult,
+  SessionCompactionResult,
+  SessionTraceFacts,
+  SessionSignalKind,
+  SessionSignal,
+  SessionSignals,
+  SessionUnknownCostPolicy,
+  SessionSummarizerBudget,
+  SessionSummaryResult,
+  SessionSummarizer,
+  SessionSummarizerWakePolicy,
+  SessionSummarizerTrigger,
+  SessionCompactionRegime,
+  SessionCompactionSummarizerMeasurement,
+  SessionCompactionMeasurement,
+  SessionCompactionCorpusCase,
+  SessionCompactionCorpusReport,
+} from "./session-compaction.js";
+export {
+  sessionTurnToContextItems,
+  sessionTurnsToContextItems,
+  compactSessionTurns,
+  measureSessionCompactionCorpus,
+  createDefaultSessionCompactionStages,
+  createSessionDuplicateTurnStage,
+  createSessionTurnExtractionStage,
+  createSessionOldTurnEvictionStage,
+  createSessionSummarizerStage,
+  createDeterministicSessionSummarizer,
+  extractSessionSignals,
+  extractSessionSignalsFromItems,
+  DEFAULT_SESSION_SUMMARIZER_BUDGET,
+  SESSION_SUMMARY_ORACLE_VERSION,
+} from "./session-compaction.js";
 
 // Eval / trajectory
 export type {
@@ -544,6 +585,7 @@ export {
   sessionCompactArtifactToContextItem,
   writeSessionCompactArtifact,
   SESSION_COMPACT_FILENAME,
+  SESSION_COMPACT_SCHEMA_VERSION,
 } from "./session.js";
 export type { ForkSessionInput, ForkSessionResult } from "./session.js";
 export type {

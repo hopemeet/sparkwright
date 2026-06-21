@@ -286,6 +286,17 @@ npm exec sparkwright -- session repair <session-id> --workspace examples/repo-pi
 npm exec sparkwright -- session resume <session-id> "continue the investigation" --workspace examples/repo-pilot
 ```
 
+Normal resume uses the saved `checkpoint.json` for the prior run. When a
+checkpoint is missing, `--from-trace` is a best-effort recovery path: it
+reconstructs counters from `run.json` and `trace.jsonl`, but cannot restore the
+full in-memory context, pending summaries, or in-flight tool/model work. Because
+the reconstruction is partial, it requires explicit `--force`:
+
+```bash
+npm exec sparkwright -- run resume <run-id> --workspace examples/repo-pilot \
+  --session <session-id> --from-trace --force
+```
+
 Trace levels are:
 
 - `standard`: useful debugging detail for normal runs.

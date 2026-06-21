@@ -382,6 +382,24 @@ export class RunController {
     throughRunId: string | null;
     originalCharCount: number;
     summaryCharCount: number;
+    freedChars: number;
+    measurement: {
+      sourceRunCount: number;
+      originalCharCount: number;
+      summaryCharCount: number;
+      freedChars: number;
+      savingsRatio: number;
+      freedByTier: Record<string, number>;
+      regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
+      signalCount: number;
+      summarizer?: Record<string, unknown>;
+    };
+    skippedReason?: string;
+    warnings?: Array<{
+      code: string;
+      message: string;
+      metadata?: Record<string, unknown>;
+    }>;
     artifactPath: string | null;
   } | null> {
     try {
@@ -391,9 +409,9 @@ export class RunController {
         reason: "tui /compact",
       });
       this.store.appendNotice(
-        result.compactedRunCount > 0
-          ? `compacted ${result.compactedRunCount} prior turn${result.compactedRunCount === 1 ? "" : "s"} for future context`
-          : "compact skipped: no completed turns yet",
+        result.skippedReason
+          ? `compact skipped: ${result.skippedReason}`
+          : `compacted ${result.compactedRunCount} prior turn${result.compactedRunCount === 1 ? "" : "s"} for future context`,
       );
       return result;
     } catch (err) {

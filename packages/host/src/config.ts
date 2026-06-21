@@ -82,6 +82,10 @@ import {
   PROVIDER_MODEL_CONFIG_KEYS,
   RUN_BUDGET_CONFIG_KEYS,
   RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS,
+  TASK_BUDGET_CONFIG_KEYS,
+  TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS,
+  TASK_CONFIG_KEYS,
+  TASK_UNKNOWN_COST_POLICIES,
   SHELL_CONFIG_KEYS,
   SHELL_SANDBOX_MODES,
   SHELL_SANDBOX_CONFIG_KEYS,
@@ -137,6 +141,8 @@ import type {
   ProviderConfig,
   ProviderModelConfig,
   ShellConfig,
+  TaskBudgetConfig,
+  TaskConfig,
   WriteGuardrailsConfig,
 } from "./config-zod-schema.js";
 export type {
@@ -163,6 +169,8 @@ export type {
   ProviderConfig,
   ProviderModelConfig,
   ShellConfig,
+  TaskBudgetConfig,
+  TaskConfig,
   WriteGuardrailsConfig,
 } from "./config-zod-schema.js";
 
@@ -230,6 +238,8 @@ export interface SharedConfig {
   shell?: ShellConfig;
   /** Preferred top-level tool exposure/loading config. */
   tools?: CapabilityToolsConfig;
+  /** Shared routing and budget defaults for model-backed auxiliary tasks. */
+  tasks?: Record<string, TaskConfig>;
   capabilities?: CapabilityConfig;
   /**
    * Resource budget for the interactive main run. `maxModelCalls` is the
@@ -312,6 +322,7 @@ export interface SharedConfigSourceMap {
   traceLevel?: string;
   approvals?: string;
   providers?: Record<string, string>;
+  tasks?: string;
 }
 
 export interface SharedConfigError {
@@ -1794,6 +1805,123 @@ function validateRunBudget(
       filePath,
       errors,
     );
+  }
+  return out;
+}
+
+function validateTasksConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): Record<string, TaskConfig> | undefined {
+  const tasks: Record<string, TaskConfig> = {};
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "tasks",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  for (const [name, value] of Object.entries(raw)) {
+    const field = `tasks.${name}`;
+    if (!isRecord(value)) {
+      errors.push({ file: filePath, field, message: "must be an object" });
+      continue;
+    }
+    const allowed = new Set<string>(TASK_CONFIG_KEYS);
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) {
+        errors.push({
+          file: filePath,
+          field: `${field}.${key}`,
+          message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+        });
+      }
+    }
+    const task: TaskConfig = {};
+    if (value.enabled !== undefined) {
+      task.enabled = validateOptionalBoolean(
+        value.enabled,
+        `${field}.enabled`,
+        filePath,
+        errors,
+      );
+    }
+    if (value.model !== undefined) {
+      const model = validateZodValue(
+        modelSchema,
+        value.model,
+        `${field}.model`,
+        filePath,
+        errors,
+        "must be a non-empty model reference",
+      );
+      if (model !== undefined) task.model = model;
+    }
+    if (value.budget !== undefined) {
+      const budget = validateTaskBudget(
+        value.budget,
+        `${field}.budget`,
+        filePath,
+        errors,
+      );
+      if (budget) task.budget = budget;
+    }
+    tasks[name] = task;
+  }
+  return tasks;
+}
+
+function validateTaskBudget(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): TaskBudgetConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const out: TaskBudgetConfig = {};
+  const allowed = new Set<string>(TASK_BUDGET_CONFIG_KEYS);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  for (const key of TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS) {
+    if (raw[key] !== undefined) {
+      out[key] = validateOptionalPositiveInteger(
+        raw[key],
+        `${field}.${key}`,
+        filePath,
+        errors,
+      );
+    }
+  }
+  if (raw.maxCostUsd !== undefined) {
+    out.maxCostUsd = validateOptionalPositiveNumber(
+      raw.maxCostUsd,
+      `${field}.maxCostUsd`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.unknownCostPolicy !== undefined) {
+    if (isStringOption(raw.unknownCostPolicy, TASK_UNKNOWN_COST_POLICIES)) {
+      out.unknownCostPolicy = raw.unknownCostPolicy;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.unknownCostPolicy`,
+        message: "must be skip or token_cap_only",
+      });
+    }
   }
   return out;
 }
@@ -3368,6 +3496,13 @@ function validateShared(
     if (tools) {
       config.tools = tools;
       sources.tools = origin;
+    }
+  }
+  if (obj.tasks !== undefined) {
+    const tasks = validateTasksConfig(obj.tasks, filePath, errors);
+    if (tasks) {
+      config.tasks = tasks;
+      sources.tasks = origin;
     }
   }
   if (obj.capabilities !== undefined) {

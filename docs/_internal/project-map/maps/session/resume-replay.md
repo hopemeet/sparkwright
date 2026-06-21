@@ -32,6 +32,11 @@ Session resume
   -> replay session run events
   -> summary/context items
   -> new run in same session
+
+Future run in compacted session
+  -> load compact.json when throughRunId matches completed turns
+  -> compact context item + later un-compacted turns
+  -> warning context item if compact artifact cannot be anchored
 ```
 
 ## Contracts
@@ -40,6 +45,9 @@ Session resume
 - From-trace resume is best-effort recovery; it restores counters/coarse step data, not full in-loop context.
 - Reconstructed checkpoints are marked not fully resumable and require explicit force.
 - Session replay projects persisted events into context; it is not live-process restoration.
+- Session compact artifacts seed future context only when `throughRunId` can be
+  matched to completed turns. A mismatch produces an explicit
+  conversation-layer warning item and falls back to replaying completed turns.
 - TUI session switch replays persisted events for display and filters stream-only events.
 
 ## Consumers
@@ -59,10 +67,16 @@ Session resume
 
 - Reconstructed resume cannot restore pending summaries, in-flight tool/model work, or full context.
 - Replay-derived context can become noisy for long sessions.
+- Deterministic session compact and opt-in model-backed Tier 3 summarization
+  reduce future context noise; background auto-trigger policy still needs a
+  run-loop integration.
 
 ## Last Verified
 
-- Status: Read-only
-- Date: 2026-06-18
-- Read: `packages/core/src/run.ts`, `packages/core/src/trace.ts`, `packages/core/src/session.ts`, `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`, `packages/tui/src/state/run-controller.ts`.
-- Tests: not run; documentation-only map pass.
+- Status: Verified
+- Date: 2026-06-21
+- Read: `packages/core/src/run.ts`, `packages/core/src/trace.ts`, `packages/core/src/session.ts`, `packages/core/src/session-compaction.ts`, `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`, `packages/tui/src/state/run-controller.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- session-compact.test.ts`;
+  `npm --workspace @sparkwright/host test -- protocol.test.ts`;
+  `npm --workspace @sparkwright/tui test -- sdk-cutover.test.ts`;
+  `npm run release:check`.

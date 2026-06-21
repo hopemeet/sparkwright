@@ -192,6 +192,7 @@ interface ParsedArgs {
   directCore: boolean;
   verbose: boolean;
   resolveMcp: boolean;
+  llm: boolean;
   delegateGoal?: string;
 }
 
@@ -778,6 +779,7 @@ function parseArgs(
   let directCore = false;
   let verbose = false;
   let resolveMcp = false;
+  let llm = false;
   let delegateGoal: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -954,6 +956,13 @@ function parseArgs(
       }
       format = value;
       args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--llm") {
+      llm = true;
+      args.splice(index, 1);
       index -= 1;
       continue;
     }
@@ -1148,12 +1157,13 @@ function parseArgs(
     subcommand !== "summary" &&
     subcommand !== "check" &&
     subcommand !== "repair" &&
+    subcommand !== "compact" &&
     subcommand !== "resume"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]",
+        "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]",
     };
   }
 
@@ -1328,6 +1338,7 @@ function parseArgs(
       directCore,
       verbose,
       resolveMcp,
+      llm,
       delegateGoal,
     },
   };
@@ -5323,7 +5334,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]";
   }
   if (command === "session") {
-    return "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]";
+    return "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]";
   }
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
@@ -5428,7 +5439,7 @@ async function handleSessionCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session <summary|check|repair|resume> <session-id> [goal] [--workspace path] [--session-root path]",
+      "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]",
     );
     return { exitCode: 1 };
   }
@@ -5466,6 +5477,31 @@ async function handleSessionCommand(
       parsed.format === "text"
         ? formatRepairReport(report)
         : JSON.stringify(report, null, 2),
+    );
+    return { exitCode: 0, sessionId };
+  }
+
+  if (parsed.subcommand === "compact") {
+    const runtime = new HostRuntime({
+      workspaceRoot: parsed.workspaceRoot,
+      sessionRootDir: parsed.sessionRootDir,
+      defaultModel: parsed.modelName,
+      emit: () => {},
+    });
+    const result = await runtime.compactSession(
+      sessionId,
+      "cli session compact",
+      { llm: parsed.llm },
+    );
+    if (!result.ok) {
+      writeLine(io.stderr, `${result.error.code}: ${result.error.message}`);
+      return { exitCode: 1, sessionId };
+    }
+    writeLine(
+      io.stdout,
+      parsed.format === "text"
+        ? formatSessionCompactResult(result)
+        : JSON.stringify(result, null, 2),
     );
     return { exitCode: 0, sessionId };
   }
@@ -5934,6 +5970,30 @@ function formatConsistencyReport(
   return lines.join("\n");
 }
 
+type SessionCompactCliResult = Extract<
+  Awaited<ReturnType<HostRuntime["compactSession"]>>,
+  { ok: true }
+>;
+
+function formatSessionCompactResult(result: SessionCompactCliResult): string {
+  const lines = [
+    `status: ${result.skippedReason ? `skipped (${result.skippedReason})` : "compacted"}`,
+    `session: ${result.sessionId}`,
+    `compactedRunCount: ${result.compactedRunCount}`,
+    `throughRunId: ${result.throughRunId ?? "(none)"}`,
+    `originalCharCount: ${result.originalCharCount}`,
+    `summaryCharCount: ${result.summaryCharCount}`,
+    `freedChars: ${result.freedChars}`,
+    `regime: ${result.measurement.regime}`,
+    `savingsRatio: ${result.measurement.savingsRatio.toFixed(4)}`,
+    `artifactPath: ${result.artifactPath ?? "(none)"}`,
+  ];
+  for (const warning of result.warnings ?? []) {
+    lines.push(`warning ${warning.code}: ${warning.message}`);
+  }
+  return lines.join("\n");
+}
+
 function formatTraceVerificationReport(
   report: TraceVerificationReport,
 ): string {
@@ -6028,6 +6088,16 @@ function renderUserConfigTemplate(): string {
     "    maxModelCalls: 80",
     "    maxCostUsd: 2.0",
     "  # traceLevel: standard",
+    "",
+    "# tasks:",
+    "#   compaction:",
+    "#     enabled: false",
+    "#     # model defaults to identity.model when unset",
+    "#     # model: openai/gpt-5.4-mini",
+    "#     budget:",
+    "#       maxSourceChars: 60000",
+    "#       maxOutputTokens: 1600",
+    "#       unknownCostPolicy: skip",
     "",
     "ui:",
     "  theme: dark",
@@ -6237,7 +6307,7 @@ function usage(): string {
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
     "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
-    "       sparkwright session <summary|check|repair> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
+    "       sparkwright session <summary|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
     '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");

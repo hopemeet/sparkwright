@@ -344,6 +344,59 @@
       "additionalProperties": false,
       "description": "Preferred tool exposure/loading settings. Standard tools are enabled by default."
     },
+    "tasks": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^/]+(\\/.+)?$",
+            "description": "Active model in the form \"provider/model\"."
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "maxSourceChars": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "maxInputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "maxCostUsd": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "unknownCostPolicy": {
+                "type": "string",
+                "enum": ["skip", "token_cap_only"]
+              }
+            },
+            "additionalProperties": false,
+            "description": "Shared budget contract for model-backed auxiliary tasks."
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Model-backed auxiliary task routing and budget defaults."
+    },
     "capabilities": {
       "type": "object",
       "properties": {

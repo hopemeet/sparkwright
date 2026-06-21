@@ -15,7 +15,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
-import type { RunId } from "@sparkwright/core";
+import {
+  FileSessionStore,
+  SESSION_COMPACT_SCHEMA_VERSION,
+  type RunId,
+} from "@sparkwright/core";
 import { createSkillCreateProposal, loadHostConfig } from "@sparkwright/host";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
@@ -1206,6 +1210,9 @@ describe("runCli", () => {
     expect(configText).toContain("ui:");
     expect(configText).toContain("  theme: dark");
     expect(configText).toContain("  mouse: true");
+    expect(configText).toContain("# tasks:");
+    expect(configText).toContain("#   compaction:");
+    expect(configText).toContain("#       maxSourceChars: 60000");
 
     const cwd = await mkdtemp(join(tmpdir(), "sw-"));
     tempDirs.push(cwd);
@@ -4599,6 +4606,102 @@ describe("runCli", () => {
     expect(JSON.parse(summaryOutput.stdoutText())).toMatchObject({
       sessionIds: [run.sessionId],
     });
+  });
+
+  it("compacts a persisted session from the CLI with explicit LLM stub", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+    const sessionId = "session_cli_compact";
+    const runId = "run_cli_compact" as RunId;
+    const store = new FileSessionStore({ rootDir: sessionRootDir });
+    await store.create({ id: sessionId });
+    await store.append(sessionId, runId);
+
+    const runDir = join(
+      sessionRootDir,
+      sessionId,
+      "agents",
+      "main",
+      "runs",
+      runId,
+    );
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "run.json"),
+      JSON.stringify({
+        id: runId,
+        goal: "compact CLI session for packages/cli/src/cli.ts and preserve warnings",
+      }),
+      "utf8",
+    );
+    await writeFile(
+      join(runDir, "result.json"),
+      JSON.stringify({
+        message: [
+          "Must expose skippedReason and warnings in CLI output.",
+          "Wrote packages/cli/src/cli.ts after validation.",
+          "Verification passed for session compact.",
+          "Repeated compact session content ".repeat(100),
+        ].join("\n"),
+      }),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "session",
+        "compact",
+        sessionId,
+        "--llm",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(output.stdoutText()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      ok: true,
+      sessionId,
+      compactedRunCount: 1,
+      throughRunId: runId,
+    });
+    expect(payload.freedChars).toEqual(expect.any(Number));
+    expect(payload.freedChars).toBeGreaterThan(0);
+    expect(payload.measurement).toMatchObject({
+      regime: "density_bound",
+      summarizer: expect.objectContaining({
+        applied: true,
+        mode: "deterministic_stub",
+      }),
+    });
+    expect(payload.artifactPath).toBe(
+      join(sessionRootDir, sessionId, "compact.json"),
+    );
+    expect(payload.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+        }),
+      ]),
+    );
+    const artifact = JSON.parse(
+      await readFile(join(sessionRootDir, sessionId, "compact.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(artifact).toMatchObject({
+      schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
+      freedChars: payload.freedChars,
+    });
+    expect(String(artifact.content)).toContain(
+      "Session deterministic-summary preview.",
+    );
+    expect(String(artifact.content)).toContain("packages/cli/src/cli.ts");
   });
 
   it("repairs derived session metadata on request", async () => {

@@ -124,6 +124,24 @@ export interface ProtocolError {
   details?: Record<string, unknown>;
 }
 
+export interface CompactionWarning {
+  code: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionCompactionMeasurement {
+  sourceRunCount: number;
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  savingsRatio: number;
+  freedByTier: Record<string, number>;
+  regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
+  signalCount: number;
+  summarizer?: Record<string, unknown>;
+}
+
 export interface RunFailureEnvelope {
   category?: string;
   code: string;
@@ -276,6 +294,12 @@ export interface SessionCompactRequestPayload {
    * @reserved Public session-compaction field consumed by host diagnostics.
    */
   reason?: string;
+  /**
+   * Explicitly request the Tier-3 session summarizer path. Provider/scripted
+   * model refs use model-backed summarization; deterministic refs use the
+   * preview path and return a warning.
+   */
+  llm?: boolean;
 }
 
 export interface CapabilityInspectRequestPayload {
@@ -353,6 +377,10 @@ export interface ResponseResults {
     throughRunId: string | null;
     originalCharCount: number;
     summaryCharCount: number;
+    freedChars: number;
+    measurement: SessionCompactionMeasurement;
+    skippedReason?: string;
+    warnings?: CompactionWarning[];
     artifactPath: string | null;
   };
   "capability.inspect": CapabilitySnapshot;

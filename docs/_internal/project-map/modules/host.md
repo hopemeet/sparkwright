@@ -59,6 +59,16 @@ Does not own:
   normalizes them into core `ContextItem.parts` while keeping `goal`/`content`
   as text summaries.
 - `session.inspect` returns summary, consistency, and timeline derived from `trace.jsonl`.
+- `session.compact` is best-effort and uses core `compactSessionTurns()` over
+  completed user/assistant turns. Successful responses include `freedChars`,
+  `measurement`, optional `skippedReason`, optional `warnings`, and
+  `artifactPath`; no-savings or write-failure outcomes return `ok: true` with
+  `artifactPath: null`. Explicit `llm` requests resolve through the host model
+  factory: provider/scripted refs use the model-backed Tier 3 summarizer, while
+  deterministic refs use the preview path and return a warning.
+- Future run context consumes `compact.json` only when its `throughRunId`
+  anchors to completed turns; otherwise host injects a conversation-layer
+  warning item instead of silently dropping the artifact.
 - Resume prefers `checkpoint.json`; `fromTrace` reconstruction is best-effort and requires force when not fully resumable.
 - Host runtime accepts trace detail `standard` or `debug`; `minimal` is rejected
   at protocol/config/CLI validation.
@@ -78,7 +88,8 @@ Does not own:
   subsections, `capabilities.verification` subsections, `capabilities.mcp`,
   `capabilities.mcp.defaultPolicy`, `capabilities.agents`, and
   `capabilities.agents.delegateTools`,
-  `capabilities.agents.profiles`, and external delegate metadata sections
+  `capabilities.agents.profiles`, `tasks.<name>` auxiliary task routing and
+  shared `budget` blocks, and external delegate metadata sections
   (`metadata.acp`, `metadata.externalCommand`), and grouped config sections
   (`identity`, `policy`, `run`, `ui`), provider definitions, provider model
   entries, provider cost blocks, and workflow hook action branches is also
@@ -189,7 +200,11 @@ Does not own:
 - External command delegates keep `subagent.*` as the parent-visible lifecycle
   and reuse `TracedProcessRunner` with `emitLifecycle: false` so process output,
   sandbox fallback, timeout, and artifact handling stay consistent without
-  duplicating lifecycle rows. Read/write external command delegates emit
+  duplicating lifecycle rows. Their constrained `SPARKWRIGHT_TRACE_EVENTS`
+  progress inbox is collected into bounded `progressCount` / `progressDropped`
+  / `progressHead` / `progressTail` summaries on the delegate tool result and
+  `subagent.completed.payload.result`, not routed as `extension.process.*`.
+  Read/write external command delegates emit
   `workspace.write.untracked_access_granted` when direct workspace access is
   granted; this is a boundary marker, not a managed write event.
 - Promoted shell tasks adopt the already-started shell stream through
@@ -225,5 +240,15 @@ Does not own:
 
 - Status: Verified
 - Date: 2026-06-21
-- Read: `packages/host/src/runtime.ts`, `packages/core/src/context.ts`, `packages/core/src/context-dedup.ts`, `packages/host/test/spawn-agent.test.ts`, `packages/core/test/context.test.ts`, `packages/core/test/runtime-guardrails.test.ts`.
-- Tests: `npm --workspace @sparkwright/host test -- test/spawn-agent.test.ts`; `npm --workspace @sparkwright/core test -- test/context.test.ts test/runtime-guardrails.test.ts`.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/external-command-agent.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `packages/core/src/session-compaction.ts`, `packages/core/src/session.ts`,
+  `packages/protocol/src/index.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/host/test/external-command-agent.test.ts`,
+  `packages/tui/src/state/run-controller.ts`, `packages/cli/src/cli.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- protocol.test.ts`;
+  `npm --workspace @sparkwright/host test -- external-command-agent.test.ts`;
+  `npm --workspace @sparkwright/cli test -- cli.test.ts`;
+  `npm --workspace @sparkwright/tui test -- sdk-cutover.test.ts`;
+  `npm run release:check`.

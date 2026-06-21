@@ -290,6 +290,11 @@ must gate the final answer.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
+- `tasks`: routing and budget defaults for model-backed auxiliary tasks such as
+  session compaction. `tasks.<name>.budget.maxSourceChars` is the
+  always-enforced input floor; `maxInputTokens` is currently an advisory
+  tokenizer-aware refinement, and dollar caps are only enforceable when pricing
+  is known.
 - `capabilities.hooks.workflow`: deterministic project workflow hooks.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool

@@ -996,11 +996,13 @@ function AppReady(
       run: () => {
         void controller.compactSession().then((result) => {
           if (!result) return;
-          if (result.compactedRunCount === 0) {
+          if (result.skippedReason) {
             toasts.push({
               variant: "info",
               title: "compact",
-              message: "no completed turns yet",
+              message: result.warnings?.[0]?.message
+                ? `${result.skippedReason}: ${result.warnings[0].message}`
+                : result.skippedReason,
             });
             return;
           }

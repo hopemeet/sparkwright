@@ -24,7 +24,7 @@ Owns:
 - command parsing and text/JSON formatting
 - CLI approval defaults and non-interactive behavior
 - trace commands: `summary`, `events`, `timeline`, `report`, `verify`
-- session commands: `summary`, `check`, `repair`, `resume`
+- session commands: `summary`, `check`, `repair`, `compact`, `resume`
 - local capability management commands
 - user-facing diagnostics such as `doctor paths`
 
@@ -41,6 +41,12 @@ Does not own:
 - Top-level help must list every trace diagnostic subcommand, including
   `trace report`; subcommand usage remains owned by command-specific handlers.
 - `sparkwright session *` resolves a session id under the session root.
+- `sparkwright session compact` calls the host session compaction path and
+  prints `freedChars`, measurement regime/savings ratio, optional
+  `skippedReason`, optional `warnings`, and the artifact path in JSON/text
+  formats. `--llm` explicitly requests the Tier 3 path; provider/scripted model
+  refs use the model-backed summarizer, while deterministic refs use the
+  preview path and return a warning.
 - Nested command help such as `sparkwright capabilities inspect --help` prints
   the subcommand usage without executing the subcommand.
 - Run flags expose `--trace-level standard|debug`.
@@ -130,6 +136,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-20
-- Read: `packages/cli/src/cli.ts`, `packages/cli/src/event-format.ts`, `packages/cli/src/runners/direct-core-runner.ts`, `packages/cli/src/runners/host-runner.ts`, `packages/cli/test/cli.test.ts`, `packages/cli/test/event-format.test.ts`, `packages/protocol/src/index.ts`, `scripts/build-workspaces.mjs`, `scripts/check-dist-fresh.mjs`, `scripts/stamp-workspace-build.mjs`, workspace `package.json` build scripts.
-- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "external command delegate|read-write workspace access|capabilities inspect"`; `npm --workspace @sparkwright/cli run build`.
+- Date: 2026-06-21
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`, `packages/host/src/runtime.ts`, `packages/protocol/src/index.ts`, `docs/reference/HOST_PROTOCOL.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- cli.test.ts`;
+  `npm run release:check`.

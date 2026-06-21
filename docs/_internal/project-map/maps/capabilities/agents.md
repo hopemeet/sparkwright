@@ -94,9 +94,13 @@ configured profiles/delegates
   shared depth budget and trace tree.
 - External command delegates keep `subagent.*` as their parent-facing lifecycle
   and use `TracedProcessRunner` with `emitLifecycle: false` for shared process
-  output, sandbox fallback, timeout, and artifact handling. When a read/write
-  external command delegate is granted direct workspace access it emits an
-  untracked write-capable marker, not managed write events.
+  output, sandbox fallback, timeout, and artifact handling. Their constrained
+  progress inbox is summarized back onto the delegate tool result and
+  `subagent.completed.payload.result` as `progressCount`, `progressDropped`,
+  `progressHead`, and `progressTail`; it does not create `extension.process.*`
+  lifecycle rows. When a read/write external command delegate is granted direct
+  workspace access it emits an untracked write-capable marker, not managed write
+  events.
 
 ## Consumers
 
@@ -124,5 +128,14 @@ configured profiles/delegates
 
 - Status: Verified
 - Date: 2026-06-21
-- Read: `packages/host/src/runtime.ts`, `packages/core/src/context.ts`, `packages/core/src/context-dedup.ts`, `packages/host/test/spawn-agent.test.ts`, `packages/core/test/context.test.ts`, `packages/core/test/runtime-guardrails.test.ts`.
-- Tests: `npm --workspace @sparkwright/host test -- test/spawn-agent.test.ts`; `npm --workspace @sparkwright/core test -- test/context.test.ts test/runtime-guardrails.test.ts`.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/external-command-agent.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `packages/core/src/context.ts`, `packages/core/src/context-dedup.ts`,
+  `packages/host/test/external-command-agent.test.ts`,
+  `packages/host/test/spawn-agent.test.ts`, `packages/core/test/context.test.ts`,
+  `packages/core/test/runtime-guardrails.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- external-command-agent.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/spawn-agent.test.ts`;
+  `npm --workspace @sparkwright/core test -- test/context.test.ts test/runtime-guardrails.test.ts`;
+  `npm run release:check`.

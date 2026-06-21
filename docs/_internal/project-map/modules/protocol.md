@@ -35,6 +35,13 @@ Does not own:
 ## Contracts
 
 - Request kinds include `run.start`, `run.resume`, `run.inject_message`, `run.cancel`, `approval.resolve`, `session.list`, `session.inspect`, `session.fork`, `session.compact`, and `capability.inspect`.
+- `session.compact` response results include `freedChars`, optional
+  `skippedReason`, optional `warnings`, and `measurement` alongside the session
+  id, compacted run count, through run id, char counts, and artifact path.
+- `session.compact` payloads may include optional `llm: true` to request the
+  Tier 3 session summarizer path. Provider/scripted model refs can run the
+  model-backed summarizer; deterministic refs use the preview path and return a
+  deterministic-preview warning in `warnings`.
 - `run.start` and `run.inject_message` keep their text fields (`goal` and
   `content`) as required user-turn summaries and may add `input.parts` for
   extensible text/image/file/audio content.
@@ -79,6 +86,8 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-20
-- Read: `packages/protocol/src/index.ts`, `packages/cli/src/cli.ts`, `docs/reference/HOST_PROTOCOL.md`, `docs/reference/PROTOCOL.md`, `schemas/host-message.schema.json`.
-- Tests: `npm --workspace @sparkwright/protocol run build`; `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capabilities inspect"`.
+- Date: 2026-06-21
+- Read: `packages/protocol/src/index.ts`, `packages/host/src/server.ts`, `packages/host/src/runtime.ts`, `packages/sdk-core/src/client.ts`, `packages/tui/src/state/run-controller.ts`, `docs/reference/HOST_PROTOCOL.md`, `docs/reference/PROTOCOL.md`, `schemas/host-message.schema.json`.
+- Tests: `npm --workspace @sparkwright/host test -- protocol.test.ts`;
+  `npm --workspace @sparkwright/tui test -- sdk-cutover.test.ts`;
+  `npm run release:check`.

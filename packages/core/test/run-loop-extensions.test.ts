@@ -290,6 +290,7 @@ describe("run loop extensions", () => {
     const calls: string[] = [];
     const tinyStage: CompactionStage = {
       name: "tiny",
+      tier: "evict",
       trigger: "snip",
       shouldRun: () => true,
       apply(input) {
@@ -342,6 +343,7 @@ describe("run loop extensions", () => {
   it("can build a pipeline outside the loop for unit testing stages", async () => {
     const stage: CompactionStage = {
       name: "noop",
+      tier: "evict",
       trigger: "snip",
       shouldRun: () => true,
       apply(input) {
@@ -360,7 +362,9 @@ describe("run loop extensions", () => {
       ],
       hints: {},
     });
-    expect(result.appliedStages).toHaveLength(1);
+    expect(result.appliedStages).toHaveLength(0);
+    expect(result.skippedStages).toHaveLength(1);
+    expect(result.skippedReason).toBe("no_savings");
     expect(result.freedChars).toBe(0);
   });
 
@@ -467,6 +471,7 @@ describe("run loop extensions", () => {
     let attempts = 0;
     const compactor: CompactionStage = {
       name: "drop-all",
+      tier: "evict",
       trigger: "reactive",
       shouldRun: () => true,
       apply(input) {

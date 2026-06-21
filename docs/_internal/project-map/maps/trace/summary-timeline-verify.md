@@ -11,6 +11,8 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 ## Main Files
 
 - `packages/core/src/trace.ts`
+- `packages/core/src/trace-diagnostics.ts`
+- `packages/core/src/trace-codec.ts`
 - `packages/cli/src/cli.ts`
 - `packages/host/src/runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
@@ -20,6 +22,7 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 ```txt
 trace.jsonl
+  -> trace-diagnostics.ts parse/load helpers
   -> summarizeTraceFile()
   -> buildTraceTimelineFile()
   -> buildTraceReportFile()
@@ -39,6 +42,10 @@ trace.jsonl
   `approval.resolved.payload.autoApproved`; old traces without the field fall
   back to resolver message text for compatibility.
 - Timeline projects events into phases and groups by event family.
+- Timeline groups `subagent.requested` / `subagent.started` /
+  `subagent.completed` / `subagent.failed` by child run id before falling back
+  to span id, so parent requests and child terminal states remain one phase even
+  when adapters emit them under different spans.
 - Timeline categorizes `extension.process.*` under `extension` and labels
   process phases from `{kind}:{name}` while treating progress as detail.
 - Report turns summary/raw-event evidence into a concise verdict and findings
@@ -58,14 +65,33 @@ trace.jsonl
   from raw trace facts; they do not alter raw trace semantics.
 - Unresolved verification command failures are high-severity report findings;
   they must outrank low-severity cost reporting gaps.
+- `ModelUsage.costStatus` / `costUnavailableReason` must survive streaming
+  accumulation: `mergeModelUsage` (run-trace-build.ts) carries them so the
+  terminal `model.completed` usage and the usage tracker can record
+  `unavailable`/`missing_pricing` instead of looking silent. The report's
+  low-severity `COST_UNAVAILABLE` finding fires only when tokens were recorded
+  with **no** cost status at all; a reported `costStatus:"unavailable"` is a
+  known state, not a gap, so it does not downgrade the verdict to
+  `passed_with_issues`.
 - Persisted command-outcome snapshots keep legacy `verification.lastCommand`
   scoped to the last unresolved verification failure. Recovered verification
   failures are preserved separately as `lastFailure*` plus
   `lastSuccessfulVerificationCommand` so summaries can distinguish "failed
   then passed" from "still failing".
 - Verify checks JSONL validity, sequence continuity, monotonic timing, terminal event count, approval pairs, write pairs, and artifact duplication.
+- Sequence continuity tolerates the gaps left by standard-level folding. Folded
+  `model.stream.text` chunks advance the expected sequence via
+  `observedSequenceEnd` (chunkCount), and folded `extension.process.progress`
+  events advance it via `foldedSequenceSkipBefore` (the terminal
+  `extension.process.completed`/`.failed` event's folded progress summary:
+  `progressCount` plus `progressHead`/`progressTail` evidence). A gap not
+  matching the declared fold count is still reported as `TRACE_SEQUENCE_INVALID`.
+  The same skip applies to session-consistency `RUN_EVENT_SEQUENCE_INVALID`.
 - Trace diagnostics operate over persisted raw `trace.jsonl`; valid trace
   levels are `standard` and `debug`.
+- `trace-diagnostics.ts` owns summary/timeline/report/verify and their pure
+  helpers. `trace.ts` re-exports those names as the phase-1 facade and keeps
+  session trace consistency/repair helpers at the facade seam.
 - CLI live run output may suppress high-volume debug events through protocol
   `isLiveDebugNoiseEventType()` for readability; the CLI aggregates suppressed
   live events into `live.debug.suppressed` lines unless `--verbose` is set. This
@@ -96,6 +122,16 @@ trace.jsonl
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-20
-- Read: `packages/core/src/eval.ts`, `packages/core/src/run-outcome.ts`, `packages/core/src/run.ts`, `packages/core/src/trace.ts`, `packages/core/src/usage.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/event-format.ts`, `packages/cli/src/runners/direct-core-runner.ts`, `packages/cli/src/runners/host-runner.ts`, `packages/protocol/src/index.ts`, `packages/core/test/run.test.ts`, `packages/core/test/trace.test.ts`, `packages/core/test/usage.test.ts`, `packages/cli/test/cli.test.ts`, `packages/cli/test/event-format.test.ts`.
-- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`; `npm --workspace @sparkwright/core test -- test/run.test.ts -t "in-flight duplicates|same-batch"`; `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "external command delegate|read-write workspace access|capabilities inspect"`; `npm --workspace @sparkwright/core run build`; `npm --workspace @sparkwright/cli run build`.
+- Date: 2026-06-21
+- Read: `packages/core/src/trace.ts`,
+  `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/trace-codec.ts`, `packages/core/src/trace-store.ts`,
+  `packages/core/src/index.ts`, `packages/core/src/internal.ts`,
+  `packages/core/test/trace.test.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
+  `docs/_internal/project-map/maps/trace/raw-trace.md`,
+  `docs/_internal/project-map/maps/session/session-store.md`.
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+  `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
+  `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

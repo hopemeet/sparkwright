@@ -44,6 +44,10 @@ Does not own:
   `run.start.input.parts`; `/clear-images` clears pending attachments before
   submission.
 - `switchSession()` reloads persisted events from session trace and replays them into TUI state.
+- `/compact` calls host `session.compact`; success toasts use
+  `compactedRunCount`/char savings, while skipped outcomes surface
+  `skippedReason` and the first warning message instead of assuming zero runs
+  always means "no completed turns".
 - `/export` writes Markdown under `.sparkwright/exports/`.
 - `/export` does not mutate or replace `trace.jsonl`.
 - `/export` reconstructs trace-shaped tool sections from `tool.requested`/`tool.completed` pairs when needed.
@@ -103,6 +107,7 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-20
-- Read: `packages/tui/src/app.tsx`, `packages/tui/src/components/capabilities-panel.tsx`, `packages/tui/src/components/config-panel.tsx`, `packages/tui/src/components/event-stream.tsx`, `packages/tui/src/components/layer-renderer.tsx`, `packages/tui/src/components/skill-review-dialog.tsx`, `packages/tui/src/lib/path-display.ts`, `packages/tui/test/capabilities-panel-render.test.tsx`, `packages/tui/test/event-stream-render.test.ts`, `packages/tui/test/path-display.test.ts`, `packages/tui/test/skill-review-dialog-render.test.tsx`, `packages/protocol/src/index.ts`.
-- Tests: `npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts`; `npm --workspace @sparkwright/tui run build`.
+- Date: 2026-06-21
+- Read: `packages/tui/src/app.tsx`, `packages/tui/src/state/run-controller.ts`, `packages/tui/test/sdk-cutover.test.ts`, `packages/protocol/src/index.ts`, `packages/host/src/runtime.ts`.
+- Tests: `npm --workspace @sparkwright/tui test -- sdk-cutover.test.ts`;
+  `npm run release:check`.

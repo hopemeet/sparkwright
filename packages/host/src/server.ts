@@ -222,6 +222,7 @@ async function handleRequest(
       const r = await runtime.compactSession(
         req.payload.sessionId,
         req.payload.reason,
+        { llm: req.payload.llm },
       );
       if (r.ok) {
         respondOk(conn, req.id, {
@@ -230,6 +231,10 @@ async function handleRequest(
           throughRunId: r.throughRunId,
           originalCharCount: r.originalCharCount,
           summaryCharCount: r.summaryCharCount,
+          freedChars: r.freedChars,
+          measurement: r.measurement,
+          skippedReason: r.skippedReason,
+          warnings: r.warnings,
           artifactPath: r.artifactPath,
         });
       } else {
@@ -388,9 +393,10 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "session.compact":
       return (
-        requireOnly(req.payload, ["sessionId", "reason"]) ??
+        requireOnly(req.payload, ["sessionId", "reason", "llm"]) ??
         requireString(req.payload, "sessionId") ??
-        optionalString(req.payload, "reason")
+        optionalString(req.payload, "reason") ??
+        optionalBoolean(req.payload, "llm")
       );
     case "capability.inspect":
       return (

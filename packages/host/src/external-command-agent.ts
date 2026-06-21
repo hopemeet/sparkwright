@@ -27,7 +27,13 @@ import {
   workspaceAccessField,
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
-import { TracedProcessRunner } from "./traced-process-runner.js";
+import {
+  type ProgressChunk,
+  TracedProcessRunner,
+} from "./traced-process-runner.js";
+
+const EXTERNAL_COMMAND_PROGRESS_HEAD_LIMIT = 5;
+const EXTERNAL_COMMAND_PROGRESS_TAIL_LIMIT = 5;
 
 export interface ExternalCommandAgentConfig {
   command: string;
@@ -83,6 +89,14 @@ export interface ExternalCommandDelegateToolResult {
   output: ProcessOutputSummary;
   /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
   sandbox?: ExternalCommandSandboxSummary;
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressCount: number;
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressDropped: number;
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressHead: ProgressChunk[];
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressTail: ProgressChunk[];
 }
 
 export interface ExternalCommandSandboxSummary {
@@ -294,6 +308,10 @@ export function createExternalCommandDelegateTool(
               outputTruncated: result.outputTruncated,
               output: result.output,
               sandbox: result.sandbox,
+              progressCount: result.progressCount,
+              progressDropped: result.progressDropped,
+              progressHead: result.progressHead,
+              progressTail: result.progressTail,
             },
           },
           meta,
@@ -347,6 +365,10 @@ async function runExternalCommand(input: {
     | "outputTruncated"
     | "output"
     | "sandbox"
+    | "progressCount"
+    | "progressDropped"
+    | "progressHead"
+    | "progressTail"
   >
 > {
   const inputMode = input.config.input ?? "argument";
@@ -408,6 +430,7 @@ async function runExternalCommand(input: {
         ? renderStdin(input.goal, input.metadata)
         : undefined;
     const runner = new TracedProcessRunner();
+    const progress = createExternalCommandProgressCollector();
     const result = await runner.run({
       emitter: input.emitter,
       runId: input.runId,
@@ -423,6 +446,9 @@ async function runExternalCommand(input: {
       sandbox: effectiveSandboxConfig,
       sandboxRuntime: input.sandboxRuntime,
       emitLifecycle: false,
+      onProgress: (chunk) => {
+        progress.record(chunk);
+      },
       outputLimits: {
         previewBytes,
         artifactBytes: input.config.maxOutputBytes ?? previewBytes,
@@ -478,10 +504,57 @@ async function runExternalCommand(input: {
         result.output.stdoutTruncated || result.output.stderrTruncated,
       output: result.output,
       sandbox,
+      ...progress.summary({
+        progressCount: result.progressCount,
+        progressDropped: result.progressDropped,
+      }),
     };
   } finally {
     await executionWorkspace.cleanup();
   }
+}
+
+function createExternalCommandProgressCollector(): {
+  record(chunk: ProgressChunk): void;
+  summary(input: {
+    progressCount: number;
+    progressDropped: number;
+  }): Pick<
+    ExternalCommandDelegateToolResult,
+    "progressCount" | "progressDropped" | "progressHead" | "progressTail"
+  >;
+} {
+  const progressHead: ProgressChunk[] = [];
+  const progressTail: ProgressChunk[] = [];
+  return {
+    record(chunk) {
+      const sample = cloneProgressChunk(chunk);
+      if (progressHead.length < EXTERNAL_COMMAND_PROGRESS_HEAD_LIMIT) {
+        progressHead.push(sample);
+        return;
+      }
+      progressTail.push(sample);
+      if (progressTail.length > EXTERNAL_COMMAND_PROGRESS_TAIL_LIMIT) {
+        progressTail.shift();
+      }
+    },
+    summary(input) {
+      return {
+        progressCount: input.progressCount,
+        progressDropped: input.progressDropped,
+        progressHead: progressHead.map(cloneProgressChunk),
+        progressTail: progressTail.map(cloneProgressChunk),
+      };
+    },
+  };
+}
+
+function cloneProgressChunk(chunk: ProgressChunk): ProgressChunk {
+  return {
+    ...(chunk.message !== undefined ? { message: chunk.message } : {}),
+    ...(chunk.channel !== undefined ? { channel: chunk.channel } : {}),
+    ...(chunk.data !== undefined ? { data: { ...chunk.data } } : {}),
+  };
 }
 
 function delegateSandboxConfig(input: {

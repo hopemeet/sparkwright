@@ -5,6 +5,7 @@ import {
   asSessionId,
   createBufferedEmitter,
   createContextItemId,
+  createDeterministicSessionSummarizer,
   createRunId,
   createDefaultPolicy,
   createLayeredPolicy,
@@ -12,6 +13,7 @@ import {
   createSessionId,
   createSessionRunStoreFactory,
   loadSessionCompactArtifact,
+  loadTraceEventsFile,
   createPermissionModePolicy,
   createRun,
   createWorkspaceMutationPolicy,
@@ -23,10 +25,14 @@ import {
   loadCheckpointFromRunDir,
   resumeRunFromCheckpoint,
   summarizeTraceFile,
+  compactSessionTurns,
   sessionCompactArtifactToContextItem,
+  sessionTurnToContextItems,
+  SESSION_COMPACT_SCHEMA_VERSION,
   validateSessionTraceConsistency,
   writeSessionCompactArtifact,
   type ApprovalResolver,
+  type CompactionWarning,
   type ContentPart,
   type ContextItem,
   type EventEmitter,
@@ -36,7 +42,11 @@ import {
   type RunBudget,
   type RunRecord,
   type RunResult,
+  type ContextUsageHint,
+  type SessionCompactionMeasurement,
+  type SessionCompactionOptions,
   type SparkwrightEvent,
+  type SessionTraceFacts,
   type ToolDefinition,
   type ToolOrigin,
   type WorkflowHook,
@@ -79,6 +89,7 @@ import type {
   CapabilityDelegateToolConfig,
   CapabilityToolsConfig,
   ShellConfig,
+  TaskConfig,
   WriteGuardrailsConfig,
 } from "./config.js";
 import {
@@ -100,14 +111,19 @@ import {
   type CapabilitySkillInlineShellSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
-import { loadHostConfig, type CapabilityMcpConfig } from "./config.js";
+import {
+  DETERMINISTIC_PROVIDER,
+  loadHostConfig,
+  type CapabilityMcpConfig,
+} from "./config.js";
 import { resolveAgentProfiles } from "./agent-profiles.js";
 import {
   existingSkillRoots,
   resolveSkillRootsForRuntime,
 } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
-import { createModel } from "./model-factory.js";
+import { createModel, type ResolvedModelConfig } from "./model-factory.js";
+import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
   catalogEntryOrigin,
   catalogToolDefinitions,
@@ -341,6 +357,7 @@ interface CompletedConversationTurn {
   runId: RunId;
   goal: string;
   message: string;
+  traceFacts?: SessionTraceFacts;
 }
 
 type PreparedSkills = Awaited<ReturnType<typeof prepareSkillsForRun>>;
@@ -1833,12 +1850,22 @@ export class HostRuntime {
       sessionRootDir,
       sessionId,
     );
-    if (turns.length === 0) return [];
-
     const compact = await loadSessionCompactArtifact({
       sessionRootDir,
       sessionId,
     });
+    if (turns.length === 0) {
+      return compact
+        ? [
+            sessionCompactWarningContextItem(
+              sessionId,
+              `Session compact artifact ignored because no completed turns were available to anchor throughRunId ${compact.throughRunId}.`,
+              { throughRunId: compact.throughRunId },
+            ),
+          ]
+        : [];
+    }
+
     const items: ContextItem[] = [];
     let startAt = 0;
     if (compact) {
@@ -1848,11 +1875,19 @@ export class HostRuntime {
       if (compactedThrough >= 0) {
         items.push(sessionCompactArtifactToContextItem(compact));
         startAt = compactedThrough + 1;
+      } else {
+        items.push(
+          sessionCompactWarningContextItem(
+            sessionId,
+            `Session compact artifact ignored because throughRunId ${compact.throughRunId} was not found in completed session turns.`,
+            { throughRunId: compact.throughRunId },
+          ),
+        );
       }
     }
 
     for (const turn of turns.slice(startAt)) {
-      items.push(...conversationTurnContextItems(turn));
+      items.push(...sessionTurnToContextItems(turn));
     }
     return items;
   }
@@ -1871,6 +1906,10 @@ export class HostRuntime {
     }
     if (runIds.length === 0) return [];
 
+    const traceFacts = await this.loadSessionTraceFacts(
+      sessionRootDir,
+      sessionId,
+    );
     const runsDir = join(sessionRootDir, sessionId, "agents", "main", "runs");
     const turns: CompletedConversationTurn[] = [];
     for (const runId of runIds) {
@@ -1886,9 +1925,32 @@ export class HostRuntime {
       // exchange; a still-running or failed run with no final message is
       // skipped so we never thread a dangling half-turn.
       if (!goal || !message) continue;
-      turns.push({ runId, goal, message });
+      turns.push({ runId, goal, message, traceFacts: traceFacts.get(runId) });
     }
     return turns;
+  }
+
+  private async loadSessionTraceFacts(
+    sessionRootDir: string,
+    sessionId: string,
+  ): Promise<Map<RunId, SessionTraceFacts>> {
+    let events: SparkwrightEvent[];
+    try {
+      events = await loadTraceEventsFile(
+        join(sessionRootDir, sessionId, "trace.jsonl"),
+      );
+    } catch {
+      return new Map();
+    }
+    const byRun = new Map<RunId, SessionTraceFacts>();
+    for (const event of events) {
+      const runId = event.runId;
+      if (!runId) continue;
+      const facts = byRun.get(runId) ?? {};
+      collectSessionTraceFact(facts, event);
+      byRun.set(runId, facts);
+    }
+    return byRun;
   }
 
   private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
@@ -2319,6 +2381,9 @@ export class HostRuntime {
   async compactSession(
     sessionId: string,
     reason?: string,
+    options: {
+      llm?: boolean;
+    } = {},
   ): Promise<
     | {
         ok: true;
@@ -2327,6 +2392,10 @@ export class HostRuntime {
         throughRunId: string | null;
         originalCharCount: number;
         summaryCharCount: number;
+        freedChars: number;
+        measurement: SessionCompactionMeasurement;
+        skippedReason?: string;
+        warnings?: CompactionWarning[];
         artifactPath: string | null;
       }
     | { ok: false; error: ProtocolError }
@@ -2373,62 +2442,193 @@ export class HostRuntime {
       sessionRootDir,
       safeSessionId,
     );
-    if (turns.length === 0) {
+    const taskConfig = await this.loadTaskConfig("compaction");
+    const preparedCompaction = await this.sessionCompactionOptionsForTask({
+      reason,
+      taskConfig,
+      manualLlm: options.llm === true,
+    });
+    const sessionCompactionOptions = preparedCompaction.options;
+
+    let compacted: Awaited<ReturnType<typeof compactSessionTurns>>;
+    try {
+      compacted = await compactSessionTurns(turns, sessionCompactionOptions);
+    } catch (error) {
+      const warnings = mergeCompactionWarnings(preparedCompaction.warnings, [
+        {
+          code: "SESSION_COMPACTION_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ]);
+      const originalCharCount = turns.reduce(
+        (sum, turn) => sum + turn.goal.length + turn.message.length,
+        0,
+      );
       return {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: 0,
         throughRunId: null,
-        originalCharCount: 0,
-        summaryCharCount: 0,
+        originalCharCount,
+        summaryCharCount: originalCharCount,
+        freedChars: 0,
+        measurement: emptySessionCompactionMeasurement({
+          sourceRunCount: turns.length,
+          originalCharCount,
+        }),
         artifactPath: null,
+        skippedReason: "compaction_failed",
+        warnings,
       };
     }
 
-    const content = renderSessionCompactSummary(turns);
-    const originalCharCount = turns.reduce(
-      (sum, turn) => sum + turn.goal.length + turn.message.length,
-      0,
+    const warnings = mergeCompactionWarnings(
+      preparedCompaction.warnings,
+      compacted.warnings,
     );
-    const throughRunId = turns[turns.length - 1].runId;
+
+    if (compacted.skippedReason !== undefined) {
+      return {
+        ok: true,
+        sessionId: safeSessionId,
+        compactedRunCount: compacted.compactedRunCount,
+        throughRunId: compacted.throughRunId,
+        originalCharCount: compacted.originalCharCount,
+        summaryCharCount: compacted.summaryCharCount,
+        freedChars: compacted.freedChars,
+        measurement: compacted.measurement,
+        artifactPath: null,
+        skippedReason: compacted.skippedReason,
+        warnings,
+      };
+    }
+
+    const throughRunId = compacted.throughRunId;
     try {
       const artifactPath = await writeSessionCompactArtifact({
         sessionRootDir,
         artifact: {
-          schemaVersion: "session-compact.v1",
+          schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
           sessionId: asSessionId(safeSessionId),
           createdAt: new Date().toISOString(),
           throughRunId,
-          compactedRunCount: turns.length,
-          sourceRunIds: turns.map((turn) => turn.runId),
-          content,
-          originalCharCount,
-          summaryCharCount: content.length,
-          metadata: {
-            source: "host",
-            mode: "deterministic",
-            ...(reason ? { reason } : {}),
-          },
+          compactedRunCount: compacted.compactedRunCount,
+          sourceRunIds: compacted.sourceRunIds,
+          content: compacted.content,
+          originalCharCount: compacted.originalCharCount,
+          summaryCharCount: compacted.summaryCharCount,
+          freedChars: compacted.freedChars,
+          metadata: sessionCompactArtifactMetadata({
+            compacted,
+            warnings,
+            reason,
+          }),
         },
       });
       return {
         ok: true,
         sessionId: safeSessionId,
-        compactedRunCount: turns.length,
+        compactedRunCount: compacted.compactedRunCount,
         throughRunId,
-        originalCharCount,
-        summaryCharCount: content.length,
+        originalCharCount: compacted.originalCharCount,
+        summaryCharCount: compacted.summaryCharCount,
+        freedChars: compacted.freedChars,
+        measurement: compacted.measurement,
         artifactPath,
+        warnings,
       };
     } catch (error) {
       return {
-        ok: false,
-        error: {
-          code: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
+        ok: true,
+        sessionId: safeSessionId,
+        compactedRunCount: 0,
+        throughRunId: null,
+        originalCharCount: compacted.originalCharCount,
+        summaryCharCount: compacted.originalCharCount,
+        freedChars: 0,
+        measurement: {
+          ...compacted.measurement,
+          summaryCharCount: compacted.originalCharCount,
+          freedChars: 0,
+          savingsRatio: 0,
+          regime: "no_savings",
         },
+        artifactPath: null,
+        skippedReason: "artifact_write_failed",
+        warnings: [
+          ...(warnings ?? []),
+          {
+            code: "SESSION_COMPACT_ARTIFACT_WRITE_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ],
       };
     }
+  }
+
+  private async loadTaskConfig(name: string): Promise<TaskConfig | undefined> {
+    const loaded = await loadHostConfig(this.opts.workspaceRoot);
+    return loaded.config.tasks?.[name];
+  }
+
+  private async sessionCompactionOptionsForTask(input: {
+    reason?: string;
+    taskConfig?: TaskConfig;
+    manualLlm: boolean;
+  }): Promise<{
+    options: SessionCompactionOptions;
+    warnings?: CompactionWarning[];
+  }> {
+    const enabled = input.manualLlm || input.taskConfig?.enabled === true;
+    const options: SessionCompactionOptions = { reason: input.reason };
+    if (!enabled) return { options };
+
+    const modelRef = input.taskConfig?.model ?? this.opts.defaultModel;
+    const model = await createModel({
+      modelRef,
+      goal: "Summarize completed session history for future context.",
+      workspaceRoot: this.opts.workspaceRoot,
+    });
+    if (!model.ok) {
+      return {
+        options,
+        warnings: [
+          {
+            code: "SESSION_SUMMARIZER_MODEL_UNAVAILABLE",
+            message: model.message,
+          },
+        ],
+      };
+    }
+
+    const modelId = model.resolved.modelRef;
+    const deterministicPreview =
+      model.resolved.providerKey === DETERMINISTIC_PROVIDER;
+    return {
+      options: {
+        ...options,
+        summarizer: deterministicPreview
+          ? createDeterministicSessionSummarizer()
+          : createModelSessionSummarizer({
+              model: model.adapter,
+              modelId,
+            }),
+        summarizerTrigger: input.manualLlm ? "manual" : "auto",
+        summarizerBudget: input.taskConfig?.budget,
+        summarizerUsage: sessionSummarizerUsageHint(model.resolved),
+        summarizerModelId: modelId,
+      },
+      warnings:
+        deterministicPreview && input.manualLlm
+          ? [
+              {
+                code: "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+                message:
+                  "Session compaction used the deterministic summarizer preview because the resolved compaction model is deterministic.",
+              },
+            ]
+          : undefined,
+    };
   }
 
   /**
@@ -3512,53 +3712,220 @@ function objectField(
   return value as Record<string, unknown>;
 }
 
+function collectSessionTraceFact(
+  facts: SessionTraceFacts,
+  event: SparkwrightEvent,
+): void {
+  if (event.type === "approval.requested") {
+    facts.approvals = {
+      ...(facts.approvals ?? {}),
+      requested: (facts.approvals?.requested ?? 0) + 1,
+    };
+    return;
+  }
+  if (event.type === "approval.resolved") {
+    const decision = recordString(event.payload, "decision");
+    facts.approvals = {
+      ...(facts.approvals ?? {}),
+      ...(decision === "approved"
+        ? { approved: (facts.approvals?.approved ?? 0) + 1 }
+        : {}),
+      ...(decision === "denied"
+        ? { denied: (facts.approvals?.denied ?? 0) + 1 }
+        : {}),
+    };
+    return;
+  }
+
+  if (
+    event.type === "workspace.write.completed" ||
+    event.type === "workspace.write.denied" ||
+    event.type === "workspace.write.skipped"
+  ) {
+    const key =
+      event.type === "workspace.write.completed"
+        ? "completed"
+        : event.type === "workspace.write.denied"
+          ? "denied"
+          : "skipped";
+    const path = recordString(event.payload, "path") ?? "(unknown)";
+    const writes = facts.workspaceWrites ?? {};
+    const next = new Set(writes[key] ?? []);
+    next.add(path);
+    facts.workspaceWrites = { ...writes, [key]: [...next] };
+    return;
+  }
+
+  if (event.type === "subagent.completed" || event.type === "subagent.failed") {
+    const childRunId =
+      recordString(event.payload, "childRunId") ??
+      recordString(event.metadata, "childRunId");
+    if (!childRunId) return;
+    const finality =
+      recordString(event.payload, "finality") ??
+      (event.type === "subagent.completed" ? "complete" : "partial");
+    addSessionSubagentFact(facts, {
+      childRunId,
+      finality,
+      role: recordString(event.payload, "role"),
+    });
+    return;
+  }
+
+  if (event.type === "tool.completed" || event.type === "tool.failed") {
+    const payload = isPlainRecord(event.payload) ? event.payload : undefined;
+    const toolName = payload
+      ? (recordString(payload, "toolName") ?? recordString(payload, "name"))
+      : undefined;
+    if (toolName !== "spawn_agent") return;
+    const childRunId =
+      findNestedString(event.payload, "childRunId") ??
+      findNestedString(event.metadata, "childRunId");
+    if (!childRunId) return;
+    addSessionSubagentFact(facts, {
+      childRunId,
+      finality: findNestedString(event.payload, "finality"),
+      role: findNestedString(event.payload, "role"),
+    });
+  }
+}
+
+function addSessionSubagentFact(
+  facts: SessionTraceFacts,
+  fact: NonNullable<SessionTraceFacts["subagents"]>[number],
+): void {
+  const existing = new Map(
+    (facts.subagents ?? []).map((entry) => [entry.childRunId, entry]),
+  );
+  existing.set(fact.childRunId, { ...existing.get(fact.childRunId), ...fact });
+  facts.subagents = [...existing.values()];
+}
+
+function mergeCompactionWarnings(
+  ...groups: Array<CompactionWarning[] | undefined>
+): CompactionWarning[] | undefined {
+  const warnings = groups.flatMap((group) => group ?? []);
+  return warnings.length > 0 ? warnings : undefined;
+}
+
+function sessionSummarizerUsageHint(
+  resolved: ResolvedModelConfig,
+): ContextUsageHint {
+  const costUnavailable = resolved.pricingSource === "unavailable";
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    modelCalls: 0,
+    costStatus: costUnavailable ? "unavailable" : "estimated",
+    ...(costUnavailable
+      ? { costUnavailableReasons: { missing_pricing: 1 } }
+      : {}),
+  };
+}
+
+function sessionCompactArtifactMetadata(input: {
+  compacted: {
+    appliedStages: Array<{
+      tier: string;
+      metadata?: Record<string, unknown>;
+    }>;
+    skippedStages: Array<Record<string, unknown>>;
+    measurement: SessionCompactionMeasurement;
+  };
+  warnings?: CompactionWarning[];
+  reason?: string;
+}): Record<string, unknown> {
+  const summarizeMetadata = input.compacted.appliedStages.find(
+    (stage) => stage.tier === "summarize",
+  )?.metadata;
+  const mode =
+    recordString(summarizeMetadata, "mode") === "llm"
+      ? "llm"
+      : "deterministic-v2";
+  const summaryFingerprint = isPlainRecord(
+    summarizeMetadata?.summaryFingerprint,
+  )
+    ? { ...summarizeMetadata.summaryFingerprint }
+    : undefined;
+  return {
+    source: "host",
+    mode,
+    appliedStages: input.compacted.appliedStages,
+    skippedStages: input.compacted.skippedStages,
+    measurement: input.compacted.measurement,
+    ...(summaryFingerprint ? { summaryFingerprint } : {}),
+    ...(input.warnings ? { warnings: input.warnings } : {}),
+    ...(input.reason ? { reason: input.reason } : {}),
+  };
+}
+
+function emptySessionCompactionMeasurement(input: {
+  sourceRunCount: number;
+  originalCharCount: number;
+}): SessionCompactionMeasurement {
+  return {
+    sourceRunCount: input.sourceRunCount,
+    originalCharCount: input.originalCharCount,
+    summaryCharCount: input.originalCharCount,
+    freedChars: 0,
+    savingsRatio: 0,
+    freedByTier: {
+      dedup: 0,
+      extract: 0,
+      evict: 0,
+      summarize: 0,
+    },
+    regime: "no_savings",
+    signalCount: 0,
+  };
+}
+
+function recordString(value: unknown, key: string): string | undefined {
+  return isPlainRecord(value) && typeof value[key] === "string"
+    ? (value[key] as string)
+    : undefined;
+}
+
+function findNestedString(value: unknown, key: string): string | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const direct = recordString(value, key);
+  if (direct) return direct;
+  for (const nested of Object.values(value)) {
+    const found = findNestedString(nested, key);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function sanitizeToolSegment(value: string): string {
   const clean = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
   return clean.replace(/^_+|_+$/g, "") || "agent";
 }
 
-function conversationTurnContextItems(
-  turn: CompletedConversationTurn,
-): ContextItem[] {
-  return [
-    {
-      id: `ctx_${turn.runId}_user` as ContextItem["id"],
-      type: "user",
-      content: turn.goal.trim(),
-      metadata: { layer: "conversation", stability: "session" },
+function sessionCompactWarningContextItem(
+  sessionId: string,
+  message: string,
+  metadata: Record<string, unknown> = {},
+): ContextItem {
+  return {
+    id: createContextItemId(),
+    type: "summary",
+    source: { kind: "session_compact_warning", uri: sessionId },
+    content: message,
+    metadata: {
+      layer: "conversation",
+      stability: "session",
+      sessionId,
+      compactionWarning: true,
+      ...metadata,
     },
-    {
-      id: `ctx_${turn.runId}_assistant` as ContextItem["id"],
-      type: "assistant",
-      content: turn.message.trim(),
-      metadata: { layer: "conversation", stability: "session" },
-    },
-  ];
-}
-
-function renderSessionCompactSummary(
-  turns: CompletedConversationTurn[],
-): string {
-  const lines = [
-    "Manual compacted session summary.",
-    `Compacted turns: ${turns.length}`,
-    `Through run: ${turns[turns.length - 1]?.runId ?? "unknown"}`,
-    "",
-  ];
-  for (let i = 0; i < turns.length; i += 1) {
-    const turn = turns[i];
-    lines.push(`Turn ${i + 1} (${turn.runId})`);
-    lines.push(`User: ${compactLine(turn.goal, 800)}`);
-    lines.push(`Assistant: ${compactLine(turn.message, 1200)}`);
-    lines.push("");
-  }
-  return lines.join("\n").trim();
-}
-
-function compactLine(value: string, maxChars: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  };
 }
 
 /** A summarized successful tool result salvaged from a child run's events. */

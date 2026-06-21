@@ -610,6 +610,12 @@ Put user arguments in prompt text instead.
   `maxToolCalls`, `maxDurationMs`, `maxTokens`, `maxCostUsd`). `maxModelCalls`
   is the tightest natural step bound. An explicit main agent profile under
   `capabilities.agents` overrides this.
+- `tasks`: routing and budget defaults for model-backed auxiliary tasks such as
+  session compaction. Each `tasks.<name>` entry may set `enabled`, `model`, and
+  `budget` (`maxSourceChars`, `maxInputTokens`, `maxOutputTokens`,
+  `maxCostUsd`, `unknownCostPolicy`). `maxSourceChars` is the always-enforced
+  floor; `maxInputTokens` is currently an advisory tokenizer-aware refinement,
+  and dollar caps are only enforceable when pricing is known.
 - `maxSteps`: explicit main-run step ceiling. Overrides the value derived from
   `runBudget` and the safety backstop.
 - `traceLevel`: default trace verbosity (`standard`, `debug`) when an

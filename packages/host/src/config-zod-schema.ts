@@ -137,6 +137,27 @@ export const RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS = runBudgetSchema
   })
   .keyof().options;
 
+export const taskUnknownCostPolicySchema = z.enum(["skip", "token_cap_only"]);
+export const TASK_UNKNOWN_COST_POLICIES = taskUnknownCostPolicySchema.options;
+export const taskBudgetSchema = z
+  .object({
+    maxSourceChars: positiveInteger.optional(),
+    maxOutputTokens: positiveInteger.optional(),
+    maxInputTokens: positiveInteger.optional(),
+    maxCostUsd: positiveNumber.optional(),
+    unknownCostPolicy: taskUnknownCostPolicySchema.optional(),
+  })
+  .strict()
+  .describe("Shared budget contract for model-backed auxiliary tasks.");
+export const TASK_BUDGET_CONFIG_KEYS = taskBudgetSchema.keyof().options;
+export const TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS = taskBudgetSchema
+  .pick({
+    maxSourceChars: true,
+    maxOutputTokens: true,
+    maxInputTokens: true,
+  })
+  .keyof().options;
+
 export const approvalsSchema = z
   .object({
     shellSafe: z
@@ -671,6 +692,17 @@ export const providersSchema = z
 export const modelSchema = nonEmptyString
   .regex(/^[^/]+(\/.+)?$/)
   .describe('Active model in the form "provider/model".');
+export const taskConfigSchema = z
+  .object({
+    enabled: booleanSchema.optional(),
+    model: modelSchema.optional(),
+    budget: taskBudgetSchema.optional(),
+  })
+  .strict();
+export const TASK_CONFIG_KEYS = taskConfigSchema.keyof().options;
+export const tasksSchema = z
+  .record(nonEmptyString, taskConfigSchema)
+  .describe("Model-backed auxiliary task routing and budget defaults.");
 export const confidentialPathsSchema = nonEmptyStringArray.describe(
   "Opt-in read-confidentiality paths or globs whose contents a run must not read.",
 );
@@ -781,6 +813,7 @@ export const sparkwrightConfigZodSchema = z
     approvals: approvalsSchema.optional(),
     shell: shellSchema.optional(),
     tools: toolsSchema.optional(),
+    tasks: tasksSchema.optional(),
     capabilities: capabilitiesSchema.optional(),
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
@@ -801,6 +834,8 @@ export type ProviderModelConfig = z.output<typeof providerModelConfigSchema>;
 export type ProviderConfig = z.output<typeof providerConfigSchema>;
 export type WriteGuardrailsConfig = z.output<typeof writeGuardrailsSchema>;
 export type ApprovalDefaults = z.output<typeof approvalsSchema>;
+export type TaskBudgetConfig = z.output<typeof taskBudgetSchema>;
+export type TaskConfig = z.output<typeof taskConfigSchema>;
 export type ShellConfig = Omit<z.output<typeof shellSchema>, "sandbox"> & {
   sandbox?: ShellSandboxConfig;
 };

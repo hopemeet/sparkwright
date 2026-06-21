@@ -12,6 +12,17 @@ Conventions:
 
 ## Unreleased
 
+- `host protocol`: additive — `session.compact` results now include
+  `measurement` (savings ratio, tier savings, regime, signal count, and optional
+  summarizer metrics). Migration: none; clients should treat the field as
+  informational.
+
+- `config.schema.json`: additive — new optional `tasks` map for model-backed
+  auxiliary task routing. Each task can set `enabled`, `model`, and a shared
+  `budget` block (`maxSourceChars`, `maxInputTokens`, `maxOutputTokens`,
+  `maxCostUsd`, `unknownCostPolicy`). Migration: none; omitted tasks preserve
+  existing behavior.
+
 - `host-message.schema.json`: additive — `CapabilityDelegateToolSummary` may
   include optional `gatedByRunWrite`. Hosts use it when an in-process delegate
   advertises profile-selected workspace write or shell capability that still

@@ -208,6 +208,118 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("loads shared auxiliary task routing and budget config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tasks: {
+          compaction: {
+            enabled: true,
+            model: "openai/gpt-5-mini",
+            budget: {
+              maxSourceChars: 60_000,
+              maxInputTokens: 12_000,
+              maxOutputTokens: 1_200,
+              maxCostUsd: 0.05,
+              unknownCostPolicy: "token_cap_only",
+            },
+          },
+          approvalTriage: {
+            enabled: false,
+            budget: {
+              maxSourceChars: 8_000,
+              maxOutputTokens: 400,
+              unknownCostPolicy: "skip",
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.tasks).toEqual({
+        compaction: {
+          enabled: true,
+          model: "openai/gpt-5-mini",
+          budget: {
+            maxSourceChars: 60_000,
+            maxInputTokens: 12_000,
+            maxOutputTokens: 1_200,
+            maxCostUsd: 0.05,
+            unknownCostPolicy: "token_cap_only",
+          },
+        },
+        approvalTriage: {
+          enabled: false,
+          budget: {
+            maxSourceChars: 8_000,
+            maxOutputTokens: 400,
+            unknownCostPolicy: "skip",
+          },
+        },
+      });
+      expect(loaded.sources.tasks).toContain("user:");
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid auxiliary task config fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tasks: {
+          compaction: {
+            enabled: "yes",
+            model: "",
+            extra: true,
+            budget: {
+              maxSourceChars: 0,
+              maxOutputTokens: "many",
+              maxCostUsd: 0,
+              unknownCostPolicy: "allow",
+              extra: true,
+            },
+          },
+          invalidTask: true,
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.tasks?.compaction).toBeDefined();
+      expect(loaded.config.tasks?.invalidTask).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "tasks.compaction.enabled" }),
+          expect.objectContaining({ field: "tasks.compaction.model" }),
+          expect.objectContaining({ field: "tasks.compaction.extra" }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.maxSourceChars",
+          }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.maxOutputTokens",
+          }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.maxCostUsd",
+          }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.unknownCostPolicy",
+          }),
+          expect.objectContaining({ field: "tasks.compaction.budget.extra" }),
+          expect.objectContaining({ field: "tasks.invalidTask" }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("lets the project config override the user config", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
