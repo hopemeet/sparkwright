@@ -21,8 +21,9 @@ Run the daemon:
 sparkwright-im-gateway run
 ```
 
-The gateway stores config in `~/.sparkwright/im-gateway.json` and runtime
-routing state in `~/.sparkwright/im-gateway/state.json`.
+The gateway stores config in `~/.config/sparkwright/im-gateway.json` and
+runtime routing state in `~/.local/state/sparkwright/im-gateway/state.json`
+by default.
 
 ## Current Scope
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isAgentToolResult } from "../src/components/event-stream.js";
+import {
+  classifyToolResult,
+  isAgentToolResult,
+} from "../src/lib/tool-result-summary.js";
 
 describe("isAgentToolResult", () => {
   it("recognises a spawn_agent / delegate result envelope", () => {
@@ -15,6 +18,14 @@ describe("isAgentToolResult", () => {
         usage: { tokens: 1234 },
       }),
     ).toBe(true);
+    expect(
+      classifyToolResult({
+        childRunId: "run_mpvwzgt2zxn3rubv",
+        signal: "completed",
+        stopReason: "final_answer",
+        message: "done",
+      }),
+    ).toBe("agent");
   });
 
   it("recognises an envelope whose stopReason is undefined", () => {

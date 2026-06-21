@@ -55,7 +55,7 @@ Expected result:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal
+  --trace-level standard
 ```
 
 Expected result:
@@ -179,10 +179,10 @@ Expected result:
 
 `--trace-level` controls per-event payload verbosity, not the number of
 events. Use this smoke when a change touches trace filtering or the
-minimal/standard payload helpers.
+standard/debug payload helpers.
 
 ```bash
-for L in minimal standard debug; do
+for L in standard debug; do
   rm -rf "/tmp/sparkwright-trace-$L"
   mkdir -p "/tmp/sparkwright-trace-$L"
   printf '# T\n' > "/tmp/sparkwright-trace-$L/README.md"
@@ -199,11 +199,9 @@ done
 
 Expected result:
 
-- All three runs produce the same event count.
-- `minimal` byte count is materially smaller than `standard` and `debug`
-  (only structural fields survive minimal redaction).
-- `debug` is roughly the same size as `standard` (debug preserves all
-  fields; standard is already close to full payload).
+- Both runs produce the same event count.
+- `debug` is roughly the same size as `standard` (debug preserves all fields;
+  standard is already close to full payload).
 
 ## Host And SDK
 
@@ -1189,7 +1187,7 @@ parses the JSONL trace. Requires `python3` (>= 3.9) on PATH.
 cd examples/python-subprocess
 python3 run_agent.py "inspect this repo" \
   --workspace ../../examples/repo-pilot \
-  --trace-level minimal
+  --trace-level standard
 cd ../..
 ```
 

@@ -62,6 +62,7 @@ import {
   compilePromptCacheBlocks,
   type ContextAssembler,
   type ContextBudget,
+  type ContentPart,
   type ContextUsageHint,
   type ObservationFormatter,
   type PromptBuilder,
@@ -88,6 +89,7 @@ import {
   toolBatchEventPayload,
   partitionToolCalls,
   runToolBatch,
+  type ToolCallBatch,
   type RequestedToolCall,
 } from "./tool-orchestration.js";
 import {
@@ -395,6 +397,7 @@ export interface RunHandle {
    */
   injectUserMessage(input: {
     content: string;
+    parts?: ContentPart[];
     metadata?: Record<string, unknown>;
   }): void;
   requestApproval(input: {
@@ -1441,6 +1444,10 @@ export class SparkwrightRun implements RunHandle {
         // share a span id, and every per-tool call inside `runToolBatch`
         // (including the concurrent path, which fans out under this frame via
         // AsyncLocalStorage) nests beneath it.
+        const toolExecutionDiagnostics = createToolExecutionDiagnostics(
+          batch,
+          this.maxToolConcurrency,
+        );
         const results = await withSpan(
           this.events,
           {
@@ -1452,7 +1459,15 @@ export class SparkwrightRun implements RunHandle {
             runToolBatch(
               batch,
               (requestedCall) =>
-                this.processToolCall(requestedCall, state, batchResults),
+                this.processToolCall(
+                  requestedCall,
+                  state,
+                  batchResults,
+                  diagnoseToolExecution(
+                    toolExecutionDiagnostics,
+                    requestedCall,
+                  ),
+                ),
               { maxConcurrency: this.maxToolConcurrency },
             ),
         );
@@ -2136,11 +2151,13 @@ export class SparkwrightRun implements RunHandle {
 
   injectUserMessage(input: {
     content: string;
+    parts?: ContentPart[];
     metadata?: Record<string, unknown>;
   }): void {
     this.enqueueCommand({
       type: "user_message",
       content: input.content,
+      parts: input.parts,
       metadata: input.metadata,
     });
   }
@@ -2173,6 +2190,10 @@ export class SparkwrightRun implements RunHandle {
         });
       }
 
+      const commandParts = command.parts ?? [];
+      const commandImageCount = commandParts.filter(
+        (part) => part.type === "image",
+      ).length;
       state.context.push({
         id: (this.loopServices.createContextItemId ?? createContextItemId)(),
         type: "user",
@@ -2181,10 +2202,20 @@ export class SparkwrightRun implements RunHandle {
           uri: "run.command.user_message",
         },
         content: command.content,
+        ...(commandParts.length > 0 ? { parts: commandParts } : {}),
         metadata: {
           layer: "runtime",
           stability: "turn",
           injected: true,
+          ...(commandParts.length > 0
+            ? {
+                multimodal: true,
+                attachmentCount: commandParts.length,
+                ...(commandImageCount > 0
+                  ? { imageCount: commandImageCount }
+                  : {}),
+              }
+            : {}),
           ...(command.metadata ?? {}),
         },
       });
@@ -2241,6 +2272,7 @@ export class SparkwrightRun implements RunHandle {
     requestedCall: RequestedToolCall,
     state: RunLoopState,
     batchResults?: ToolResult[],
+    executionDiagnostic?: ToolExecutionDiagnostic,
   ): Promise<RunResult | undefined> {
     const preToolHooks = await this.runWorkflowHookPhase(
       "PreToolUse",
@@ -2426,6 +2458,18 @@ export class SparkwrightRun implements RunHandle {
       payload: call,
     });
 
+    if (executionDiagnostic?.duplicateKind === "in_flight_duplicate") {
+      return runWithSpan(span.frame, () =>
+        this.emitInFlightDuplicateToolCall(
+          call,
+          requestedCall,
+          state,
+          batchResults,
+          span,
+        ),
+      );
+    }
+
     // One step before the hard doom-loop stop, skip the (redundant) execution
     // and feed back a corrective tool result instead. A repeated identical call
     // cannot produce new information, so re-running it wastes a step; weaker
@@ -2455,6 +2499,54 @@ export class SparkwrightRun implements RunHandle {
     return runWithSpan(span.frame, () =>
       this.runToolCallInSpan(call, requestedCall, state, batchResults, span),
     );
+  }
+
+  /**
+   * Skip a duplicate requested in the same concurrent batch while the first
+   * identical call is still outstanding. The caller has already counted the
+   * repeated request for same-turn doom-loop detection; this result only avoids
+   * the misleading completed-result wording and does not mark the semantic
+   * target as failed/no-op for next-turn bookkeeping.
+   */
+  private async emitInFlightDuplicateToolCall(
+    call: ReturnType<typeof createToolCall>,
+    requestedCall: RequestedToolCall,
+    state: RunLoopState,
+    batchResults: ToolResult[] | undefined,
+    span: ReturnType<typeof openSpan>,
+  ): Promise<RunResult | undefined> {
+    const skipped: ToolResult = {
+      toolCallId: call.id,
+      status: "failed",
+      error: {
+        code: "DUPLICATE_TOOL_CALL_SKIPPED",
+        message:
+          `Skipped: \`${requestedCall.toolName}\` was already requested ` +
+          "with identical arguments in this concurrent batch and is still " +
+          "running. Wait for that result before deciding whether to call it " +
+          "again.",
+        metadata: {
+          duplicateKind: "in_flight_duplicate",
+        },
+      },
+      artifacts: [],
+    };
+    span.close("tool.failed", {
+      ...skipped,
+      toolName: requestedCall.toolName,
+    });
+    this.usageTracker.recordToolUsage({
+      toolName: requestedCall.toolName,
+      status: skipped.status,
+    });
+    this.appendToolResultContext(
+      state.context,
+      requestedCall.toolName,
+      skipped,
+    );
+    await this.runAfterToolCallHook(state, requestedCall, skipped);
+    batchResults?.push(skipped);
+    return undefined;
   }
 
   /**
@@ -2703,16 +2795,20 @@ export class SparkwrightRun implements RunHandle {
         step: state.step,
       },
     );
-    const annotatedResult =
-      checkedResult.status === "failed"
-        ? this.annotateReplayRiskOnFailure(call.toolName, checkedResult)
+    const normalizedResult =
+      requestedCall.toolName === "skill_load"
+        ? this.normalizeSkillLoadResult(checkedResult)
         : checkedResult;
+    const annotatedResult =
+      normalizedResult.status === "failed"
+        ? this.annotateReplayRiskOnFailure(call.toolName, normalizedResult)
+        : normalizedResult;
     span.close(
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
       { ...annotatedResult, toolName: requestedCall.toolName },
     );
     if (requestedCall.toolName === "skill_load") {
-      this.emitSkillLoadedFromToolResult(annotatedResult);
+      this.emitSkillEventFromToolResult(annotatedResult);
     }
     if (requestedCall.toolName === "tool_search") {
       this.loadDeferredToolsFromToolSearch(annotatedResult);
@@ -2731,7 +2827,69 @@ export class SparkwrightRun implements RunHandle {
     return undefined;
   }
 
-  private emitSkillLoadedFromToolResult(result: ToolResult): void {
+  private normalizeSkillLoadResult(result: ToolResult): ToolResult {
+    if (result.status !== "completed" || !isRecord(result.output)) {
+      return result;
+    }
+    const status = getStringProperty(result.output, "status");
+    if (
+      status !== "not_found" &&
+      status !== "resource_not_found" &&
+      status !== "resource_denied"
+    ) {
+      return result;
+    }
+    const name =
+      getStringProperty(result.output, "name") ??
+      getStringProperty(result.output, "requestedName");
+    const resource = getStringProperty(result.output, "resource");
+    const message =
+      getStringProperty(result.output, "message") ??
+      (name
+        ? `Skill load failed for ${name}: ${status}`
+        : `Skill load failed: ${status}`);
+    return {
+      toolCallId: result.toolCallId,
+      status: "failed",
+      error: {
+        code: "SKILL_LOAD_FAILED",
+        message,
+        metadata: omitUndefined({
+          skillName: name,
+          skillLoadStatus: status,
+          resource,
+        }),
+      },
+      artifacts: result.artifacts,
+    };
+  }
+
+  private emitSkillEventFromToolResult(result: ToolResult): void {
+    if (result.status === "failed") {
+      const metadata = isRecord(result.error?.metadata)
+        ? result.error.metadata
+        : {};
+      const name = getStringProperty(metadata, "skillName");
+      if (!name) return;
+      this.events.emit(
+        "skill.failed",
+        {
+          toolCallId: result.toolCallId,
+          name,
+          message: result.error?.message ?? "Skill load failed.",
+          status:
+            getStringProperty(metadata, "skillLoadStatus") ?? "load_failed",
+          resource: getStringProperty(metadata, "resource"),
+        },
+        {
+          sourcePackage: "@sparkwright/skills",
+          mode: "on_demand_tool",
+          phase: "load",
+        },
+      );
+      return;
+    }
+
     if (result.status !== "completed" || !isRecord(result.output)) return;
     if (result.output.status !== "loaded") return;
     const name = getStringProperty(result.output, "name");
@@ -2873,7 +3031,11 @@ export class SparkwrightRun implements RunHandle {
     // unchanged todo_write ledger); treat that as non-progress so repeated
     // no-op bookkeeping can use the same nudge/doom-loop path without blocking
     // the first harmless no-op.
-    if (result.status === "failed") {
+    if (isInFlightDuplicateToolResult(result)) {
+      // Same-batch duplicate diagnostics are advisory; they do not mean the
+      // target failed or made no progress, so they must not feed doom-loop
+      // bookkeeping for the next turn.
+    } else if (result.status === "failed") {
       state.lastFailedToolTarget = {
         key: semanticToolTarget(
           requestedCall.toolName,
@@ -3293,6 +3455,10 @@ export class SparkwrightRun implements RunHandle {
       outputTokens: snapshot.tokens.output,
       totalTokens: snapshot.tokens.total,
       costUsd: snapshot.costUsd,
+      ...(snapshot.costStatus ? { costStatus: snapshot.costStatus } : {}),
+      ...(snapshot.costUnavailableReasons
+        ? { costUnavailableReasons: snapshot.costUnavailableReasons }
+        : {}),
       modelCalls: snapshot.modelCalls,
       ...(lastInputTokens !== undefined ? { lastInputTokens } : {}),
       ...(contextWindowPressure !== undefined ? { contextWindowPressure } : {}),
@@ -3751,8 +3917,8 @@ export class SparkwrightRun implements RunHandle {
           )
         : undefined;
     // Persist the command- and tool-outcome verdicts (computed over the full
-    // event stream) so trace summaries stay correct even when a minimal trace
-    // has stripped the tool.completed output / tool.requested arguments they
+    // event stream) so trace summaries stay correct for legacy traces that
+    // may not retain the tool.completed output / tool.requested arguments they
     // would otherwise be recomputed from.
     const commandOutcome = commandOutcomeSnapshot(this.events.all());
     const toolOutcome = toolOutcomeSnapshot(this.events.all());
@@ -3889,6 +4055,44 @@ function isTerminalState(state: RunState): boolean {
   return state === "completed" || state === "failed" || state === "cancelled";
 }
 
+interface ToolExecutionDiagnostics {
+  enabled: boolean;
+  startedCalls: RequestedToolCall[];
+}
+
+interface ToolExecutionDiagnostic {
+  duplicateKind?: "in_flight_duplicate";
+}
+
+function createToolExecutionDiagnostics(
+  batch: ToolCallBatch,
+  maxConcurrency: number,
+): ToolExecutionDiagnostics {
+  return {
+    enabled: batch.mode === "concurrent" && maxConcurrency > 1,
+    startedCalls: [],
+  };
+}
+
+function diagnoseToolExecution(
+  diagnostics: ToolExecutionDiagnostics,
+  call: RequestedToolCall,
+): ToolExecutionDiagnostic | undefined {
+  if (!diagnostics.enabled) return undefined;
+  const duplicate = diagnostics.startedCalls.some((started) =>
+    isRepeatedToolCall(started, call),
+  );
+  diagnostics.startedCalls.push(call);
+  return duplicate ? { duplicateKind: "in_flight_duplicate" } : undefined;
+}
+
+function isInFlightDuplicateToolResult(result: ToolResult): boolean {
+  return (
+    result.status === "failed" &&
+    result.error?.metadata?.duplicateKind === "in_flight_duplicate"
+  );
+}
+
 function isRepeatedToolCall(
   previous: { toolName: string; arguments: unknown } | undefined,
   next: { toolName: string; arguments: unknown },
@@ -3908,6 +4112,13 @@ function isRepeatedToolCall(
 function semanticToolTarget(toolName: string, args: unknown): string {
   if (args && typeof args === "object") {
     const record = args as Record<string, unknown>;
+    if (toolName === "shell" && typeof record.command === "string") {
+      const cwd =
+        typeof record.cwd === "string" && record.cwd.length > 0
+          ? `\u0000cwd:${record.cwd}`
+          : "";
+      return `${toolName}::command::${record.command}${cwd}`;
+    }
     if (typeof record.path === "string") {
       return `${toolName}::path::${record.path}`;
     }
@@ -3955,7 +4166,15 @@ function runStartedPayload(
   metadata: Record<string, unknown>,
 ): Record<string, unknown> {
   const resolvedModel = metadata.resolvedModel;
-  return isRecord(resolvedModel) ? { resolvedModel } : {};
+  const mcpWorkspaceCwdServers = Array.isArray(metadata.mcpWorkspaceCwdServers)
+    ? metadata.mcpWorkspaceCwdServers.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : [];
+  return {
+    ...(isRecord(resolvedModel) ? { resolvedModel } : {}),
+    ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
+  };
 }
 
 class ModelOutputInvalidError extends Error {

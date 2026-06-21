@@ -3,11 +3,14 @@ import { Box, Text, useInput, useStdout } from "ink";
 import type { CapabilitySnapshot } from "@sparkwright/protocol";
 import { useTheme } from "../lib/theme-context.js";
 import type { CapabilityView } from "../lib/layer-payload.js";
+import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 export function CapabilitiesPanel(props: {
   snapshot: CapabilitySnapshot | null;
   loading: boolean;
   view: CapabilityView;
+  workspaceRoot?: string;
   onClose: () => void;
 }): React.ReactElement {
   const theme = useTheme();
@@ -19,7 +22,7 @@ export function CapabilitiesPanel(props: {
   const indexedSkills = snapshot?.skills.indexed ?? [];
   const loadedSkills = snapshot?.skills.loaded ?? [];
   const mcpServers = snapshot?.mcp.statuses ?? [];
-  const agents = snapshot?.agents.profiles ?? [];
+  const agents = configuredAgentProfiles(snapshot?.agents.profiles ?? []);
   const delegateTools = snapshot?.agents.delegateTools ?? [];
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
@@ -35,6 +38,7 @@ export function CapabilitiesPanel(props: {
         mcpServers,
         cronTools,
         automation: snapshot.automation,
+        workspaceRoot: props.workspaceRoot,
         theme: {
           accent: theme.accent,
           error: theme.error,
@@ -68,12 +72,7 @@ export function CapabilitiesPanel(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Text color={theme.accent} bold>
         {capabilityPanelTitle(props.view)}
         <Text color={theme.muted}>
@@ -89,18 +88,27 @@ export function CapabilitiesPanel(props: {
         <Box flexDirection="column" marginTop={1}>
           {visible}
           <Box marginTop={1}>
-            <Text color={theme.muted}>esc close</Text>
-            {maxScroll > 0 ? (
-              <Text color={theme.muted}>
-                {" · ↑/↓ j/k scroll · u/d page"}
-                {more > 0 ? ` · ${more} more ↓` : " · end"}
-              </Text>
-            ) : null}
+            <Text color={theme.muted}>{footerText(maxScroll > 0, more)}</Text>
           </Box>
         </Box>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
+}
+
+function configuredAgentProfiles(
+  profiles: CapabilitySnapshot["agents"]["profiles"],
+): CapabilitySnapshot["agents"]["profiles"] {
+  return profiles.filter(
+    (profile) => !(profile.id === "main" && profile.mode === "primary"),
+  );
+}
+
+function footerText(scrollable: boolean, more: number): string {
+  if (!scrollable) return "esc close";
+  return `esc close · ↑/↓ j/k scroll · u/d page${
+    more > 0 ? ` · ${more} more ↓` : " · end"
+  }`;
 }
 
 function capabilityRows(input: {
@@ -114,6 +122,7 @@ function capabilityRows(input: {
   mcpServers: CapabilitySnapshot["mcp"]["statuses"];
   cronTools: CapabilitySnapshot["tools"];
   automation?: CapabilitySnapshot["automation"];
+  workspaceRoot?: string;
 }): React.ReactElement[] {
   const rows: React.ReactElement[] = [];
   addOverviewRows(rows, input);
@@ -121,7 +130,13 @@ function capabilityRows(input: {
     addToolsRows(rows, input.tools, input.theme);
   }
   if (input.view === "all" || input.view === "skills") {
-    addSkillsRows(rows, input.indexedSkills, input.loadedSkills, input.theme);
+    addSkillsRows(
+      rows,
+      input.indexedSkills,
+      input.loadedSkills,
+      input.theme,
+      input.workspaceRoot,
+    );
   }
   if (input.view === "all" || input.view === "agents") {
     addAgentsRows(rows, input.agents, input.delegateTools, input.theme);
@@ -178,12 +193,17 @@ function addOverviewRows(
     0,
     props.indexedSkills.length - props.loadedSkills.length,
   );
+  const toolGroups = groupTools(props.tools);
   rows.push(
     <Text key="overview-available">
       <Text color={props.theme.success}>Available now: </Text>
       {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
       {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
       {props.mcpServers.length} MCP servers
+    </Text>,
+    <Text key="overview-tool-map" color={props.theme.muted}>
+      Tool map: {toolGroups.ready.length} ready, {toolGroups.deferred.length}{" "}
+      via tool_search, {toolGroups.highRiskTotal} approval/high-risk.
     </Text>,
     <Text key="overview-skills" color={props.theme.muted}>
       Indexed Skills are discoverable examples; loaded Skills were selected for
@@ -223,32 +243,133 @@ function addToolsRows(
   tools: CapabilitySnapshot["tools"],
   theme: CapabilityRowTheme,
 ): void {
-  pushSectionHeader(rows, `tools (${tools.length})`, "no tools reported");
-  for (const tool of tools.slice(0, 24)) {
+  const groups = groupTools(tools);
+  addToolGroupRows(rows, "ready tools", groups.ready, theme, {
+    empty: "no ready tools reported",
+    limit: 16,
+  });
+  addToolGroupRows(rows, "deferred via tool_search", groups.deferred, theme, {
+    empty: "no deferred tools reported",
+    limit: 16,
+    prefix: "deferred ",
+  });
+  addToolGroupRows(rows, "approval / high risk", groups.risky, theme, {
+    empty: "no high-risk tools reported",
+    limit: 16,
+    prefix: "check ",
+  });
+  addToolSourceRows(rows, groups.sourceCounts, theme);
+}
+
+function addToolGroupRows(
+  rows: React.ReactElement[],
+  title: string,
+  tools: CapabilitySnapshot["tools"],
+  theme: CapabilityRowTheme,
+  options: { empty: string; limit: number; prefix?: string },
+): void {
+  pushSectionHeader(
+    rows,
+    `${title} (${tools.length})`,
+    options.empty,
+    tools.length,
+  );
+  for (const tool of tools.slice(0, options.limit)) {
     const hint = skillToolHint(tool.name);
     rows.push(
-      <Text key={`tool:${tool.name}`}>
+      <Text key={`${title}:tool:${tool.name}`}>
         <Text color={theme.success}>• </Text>
+        {options.prefix ? (
+          <Text color={theme.muted}>{options.prefix}</Text>
+        ) : null}
         {tool.name}
         {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
+        {tool.deferred ? (
+          <Text color={theme.muted}> · load on demand</Text>
+        ) : null}
         {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
       </Text>,
     );
     if (hint) {
       rows.push(
-        <Text key={`tool-hint:${tool.name}`} color={theme.muted}>
+        <Text key={`${title}:tool-hint:${tool.name}`} color={theme.muted}>
           {"  " + hint}
         </Text>,
       );
     }
   }
-  if (tools.length > 24) {
+  if (tools.length > options.limit) {
     rows.push(
-      <Text key="tools-more" color={theme.muted}>
-        … {tools.length - 24} more
+      <Text key={`${title}:more`} color={theme.muted}>
+        … {tools.length - options.limit} more
       </Text>,
     );
   }
+}
+
+function addToolSourceRows(
+  rows: React.ReactElement[],
+  sourceCounts: Array<{ source: string; count: number }>,
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(
+    rows,
+    `tool sources (${sourceCounts.length})`,
+    "no tool sources reported",
+    sourceCounts.length,
+  );
+  for (const source of sourceCounts) {
+    rows.push(
+      <Text key={`tool-source:${source.source}`}>
+        <Text color={theme.success}>• </Text>
+        {source.source}
+        <Text color={theme.muted}> · {source.count} tools</Text>
+      </Text>,
+    );
+  }
+}
+
+function groupTools(tools: CapabilitySnapshot["tools"]): {
+  ready: CapabilitySnapshot["tools"];
+  deferred: CapabilitySnapshot["tools"];
+  risky: CapabilitySnapshot["tools"];
+  highRiskTotal: number;
+  sourceCounts: Array<{ source: string; count: number }>;
+} {
+  const ready = tools.filter(
+    (tool) => tool.deferred !== true && tool.risk !== "risky",
+  );
+  const deferred = tools.filter((tool) => tool.deferred === true);
+  const risky = tools.filter(
+    (tool) => tool.risk === "risky" && tool.deferred !== true,
+  );
+  const highRiskTotal = tools.filter((tool) => tool.risk === "risky").length;
+  const sourceCounts = new Map<string, number>();
+  for (const tool of tools) {
+    const source = toolSourceLabel(tool.origin);
+    sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
+  }
+  return {
+    ready,
+    deferred,
+    risky,
+    highRiskTotal,
+    sourceCounts: [...sourceCounts]
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source)),
+  };
+}
+
+function toolSourceLabel(origin: string | undefined): string {
+  if (!origin) return "unspecified";
+  if (origin.startsWith("mcp:")) return "MCP";
+  if (origin.startsWith("local:@sparkwright/coding-tools")) {
+    return "coding tools";
+  }
+  if (origin.startsWith("local:sparkwright")) return "SparkWright";
+  if (origin.startsWith("local:@sparkwright/shell-tool")) return "shell";
+  if (origin.startsWith("local:@sparkwright/core")) return "core";
+  return origin;
 }
 
 function skillToolHint(name: string): string {
@@ -269,6 +390,7 @@ function addSkillsRows(
   indexed: CapabilitySnapshot["skills"]["indexed"],
   loaded: CapabilitySnapshot["skills"]["loaded"],
   theme: CapabilityRowTheme,
+  workspaceRoot?: string,
 ): void {
   pushSectionHeader(
     rows,
@@ -294,7 +416,14 @@ function addSkillsRows(
           <Text color={theme.muted}>indexed </Text>
           {skill.name}
           {skill.sourcePath ? (
-            <Text color={theme.muted}> · {skill.sourcePath}</Text>
+            <Text color={theme.muted}>
+              {" "}
+              ·{" "}
+              {formatWorkspaceDisplayPath(skill.sourcePath, {
+                workspaceRoot,
+                maxCols: 72,
+              })}
+            </Text>
           ) : null}
         </Text>,
       );
@@ -340,6 +469,7 @@ function addAgentsRows(
           → {tool.profileId} · {tool.protocol} ·{" "}
           {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
           {tool.workspaceAccess}
+          {tool.gatedByRunWrite ? " · requires --write" : ""}
         </Text>
       </Text>,
     );

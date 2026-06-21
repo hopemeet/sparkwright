@@ -4,6 +4,6 @@
   "stopReason": "final_answer",
   "message": "Run completed with a final answer.",
   "metadata": {
-    "traceLevel": "minimal"
+    "traceLevel": "standard"
   }
 }

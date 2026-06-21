@@ -1,11 +1,25 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
 import { stderr, stdin, stdout } from "node:process";
-import { runCli } from "./cli.js";
+import { runCli, scaffoldFirstRunUserConfigIfMissing } from "./cli.js";
 
 const args = process.argv.slice(2);
 
 if (args[0] === "tui") {
+  const firstRunScaffold = await scaffoldFirstRunUserConfigIfMissing({
+    argv: args.slice(1),
+    cwd: process.cwd(),
+    env: process.env,
+    io: {
+      stdout,
+      stderr,
+      stdinIsTTY: stdin.isTTY,
+    },
+  });
+  if (firstRunScaffold) {
+    process.exitCode = firstRunScaffold.exitCode;
+    process.exit(process.exitCode ?? 0);
+  }
   // Lazy import so Ink/React are not loaded for non-interactive runs.
   const { runTui } = await import("@sparkwright/tui");
   const result = await runTui(args.slice(1), { workspaceRoot: process.cwd() });

@@ -62,13 +62,16 @@ export function installTerminalRestore(
   };
 
   const onExit = (): void => restore();
-  // For signals, restore then re-exit with the conventional 128+signal code so
-  // the parent sees we died from that signal. We don't try to unmount Ink here
-  // — this is the last-resort path; the normal quit flow goes through the app.
+  // For hard termination signals, restore then re-exit with the conventional
+  // 128+signal code so the parent sees we died from that signal. SIGINT is
+  // intentionally softer: real terminals can deliver Ctrl+C either as raw ETX
+  // (handled by Ink/useInput) or as process SIGINT, so the App owns SIGINT and
+  // applies the same two-press quit guard in both cases.
   const onSignal = (code: number) => (): void => {
     restore();
     process.exit(code);
   };
+  const onSigint = (): void => restore();
   const onUncaught = (err: unknown): void => {
     restore();
     // Surface the error after restoring so it isn't swallowed.
@@ -76,19 +79,18 @@ export function installTerminalRestore(
     process.exit(1);
   };
 
-  const sigint = onSignal(130);
   const sigterm = onSignal(143);
   const sighup = onSignal(129);
 
   process.once("exit", onExit);
-  process.once("SIGINT", sigint);
+  process.on("SIGINT", onSigint);
   process.once("SIGTERM", sigterm);
   process.once("SIGHUP", sighup);
   process.once("uncaughtException", onUncaught);
 
   return () => {
     process.off("exit", onExit);
-    process.off("SIGINT", sigint);
+    process.off("SIGINT", onSigint);
     process.off("SIGTERM", sigterm);
     process.off("SIGHUP", sighup);
     process.off("uncaughtException", onUncaught);

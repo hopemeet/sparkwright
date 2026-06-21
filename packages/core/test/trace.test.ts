@@ -17,6 +17,7 @@ import {
 } from "../src/session.js";
 import {
   createSessionFileRunStoreFactory,
+  buildTraceReportJsonl,
   buildTraceTimelineJsonl,
   createTraceRedactor,
   FileRunStore,
@@ -171,6 +172,254 @@ describe("trace", () => {
       "model.stream.chunk",
       "model.stream.chunk",
       "model.stream.completed",
+    ]);
+  });
+
+  it("summarizes extension process progress at standard level", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root });
+
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "first",
+        data: { files: 1 },
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "second",
+        data: { files: 2 },
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressDropped: 3,
+      }),
+    );
+
+    const lines = (await readFile(store.tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+
+    expect(lines.map((line) => line.type)).toEqual([
+      "extension.process.started",
+      "extension.process.completed",
+    ]);
+    expect(lines[1]?.payload).toMatchObject({
+      progressCount: 2,
+      progressDropped: 3,
+      progressHead: [
+        expect.objectContaining({ message: "first" }),
+        expect.objectContaining({ message: "second" }),
+      ],
+      progressTail: [],
+    });
+  });
+
+  it("verify tolerates the sequence gap from folded standard-level progress", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-verify-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root });
+
+    store.append(log.emit("run.started", {}));
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    // Two progress events fold into the completed event's progressCount,
+    // dropping sequences 3 and 4 from the persisted standard trace.
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "first",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "second",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+      }),
+    );
+    store.append(log.emit("run.completed", { state: "completed" }));
+
+    const jsonl = await readFile(store.tracePath, "utf8");
+    // Persisted file skips the two folded progress sequences (2 -> 5).
+    const sequences = jsonl
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as SparkwrightEvent).sequence);
+    expect(sequences).toEqual([1, 2, 5, 6]);
+
+    const report = verifyTraceJsonl(jsonl);
+    expect(
+      report.findings.filter((f) => f.code === "TRACE_SEQUENCE_INVALID"),
+    ).toEqual([]);
+  });
+
+  it("verify still flags a genuine sequence gap that progress folding cannot explain", async () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const started = log.emit("extension.process.started", {
+      invocationId: "proc_1",
+      name: "hook",
+      kind: "workflow_hook",
+      runtime: "custom",
+    });
+    // progressCount of 1 explains a single-sequence gap; this completed event
+    // jumps by two, so verify must still report the break.
+    const completed: SparkwrightEvent = {
+      ...log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressCount: 1,
+      }),
+      sequence: started.sequence + 3,
+    };
+    const jsonl = `${serializeEventJsonl(started)}${serializeEventJsonl(completed)}`;
+
+    const report = verifyTraceJsonl(jsonl);
+    expect(
+      report.findings.some((f) => f.code === "TRACE_SEQUENCE_INVALID"),
+    ).toBe(true);
+  });
+
+  it("verify does not treat bare progressCount as folded progress evidence", async () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const started = log.emit("extension.process.started", {
+      invocationId: "proc_1",
+      name: "hook",
+      kind: "workflow_hook",
+      runtime: "custom",
+    });
+    const completed: SparkwrightEvent = {
+      ...log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressCount: 1,
+      }),
+      sequence: started.sequence + 2,
+    };
+    const jsonl = `${serializeEventJsonl(started)}${serializeEventJsonl(completed)}`;
+
+    const report = verifyTraceJsonl(jsonl);
+    expect(
+      report.findings.some((f) => f.code === "TRACE_SEQUENCE_INVALID"),
+    ).toBe(true);
+  });
+
+  it("keeps extension process progress at debug level", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-debug-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.progress", {
+        invocationId: "proc_1",
+        message: "first",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+      }),
+    );
+
+    const types = (await readFile(store.tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as SparkwrightEvent).type);
+
+    expect(types).toEqual([
+      "extension.process.started",
+      "extension.process.progress",
+      "extension.process.completed",
+    ]);
+  });
+
+  it("groups extension processes in the trace timeline", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const timeline = buildTraceTimelineJsonl(
+      [
+        log.emit("extension.process.started", {
+          invocationId: "proc_1",
+          name: "pre-check",
+          kind: "workflow_hook",
+          runtime: "custom",
+        }),
+        log.emit("extension.process.completed", {
+          invocationId: "proc_1",
+          name: "pre-check",
+          kind: "workflow_hook",
+          runtime: "custom",
+          exitCode: 0,
+        }),
+      ]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
+
+    expect(timeline.phases).toEqual([
+      expect.objectContaining({
+        category: "extension",
+        label: "extension workflow_hook:pre-check",
+        status: "completed",
+      }),
     ]);
   });
 
@@ -600,7 +849,7 @@ describe("trace", () => {
     const { loadCheckpointFromRunDir, resumeRunFromCheckpoint } =
       await import("../src/index.js");
 
-    // Build a run dir from scratch with a non-terminal run.json + minimal trace.
+    // Build a run dir from scratch with a non-terminal run.json and trace.
     const runId = createRunId();
     const runDir = join(root, runId);
     const { mkdir, writeFile } = await import("node:fs/promises");
@@ -801,6 +1050,17 @@ describe("trace", () => {
     expect(store.runDir).toBe(
       join(sessionDir, "agents", "agent_a", "runs", run.id),
     );
+    const tracePointer = JSON.parse(
+      await readFile(join(store.runDir, "trace-pointer.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(tracePointer).toMatchObject({
+      schemaVersion: "trace-pointer.v1",
+      runId: run.id,
+      sessionId: "session_trace",
+      agentId: "agent_a",
+      tracePath: "../../../../trace.jsonl",
+      agentTracePath: "../../trace.jsonl",
+    });
     expect(sessionTrace).toBe(agentTrace);
     expect(sessionEvents[0]?.metadata).toMatchObject({
       sessionId: "session_trace",
@@ -981,6 +1241,551 @@ describe("trace", () => {
     });
   });
 
+  it("builds a human-oriented trace report from noisy successful runs", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+    ];
+
+    for (let i = 0; i < 25; i += 1) {
+      events.push(
+        log.emit("model.completed", {
+          step: i + 1,
+          usage: {
+            inputTokens: 10,
+            outputTokens: 1,
+            totalTokens: 11,
+          },
+        }),
+      );
+    }
+    for (let i = 0; i < 85; i += 1) {
+      events.push(
+        log.emit("tool.requested", {
+          id: `call_${i}`,
+          toolName: i % 2 === 0 ? "read_file" : "grep",
+          arguments: { path: i % 2 === 0 ? "README.md" : "packages" },
+        }),
+      );
+    }
+    for (let i = 0; i < 1000; i += 1) {
+      events.push(
+        log.emit("workspace.read", {
+          path: i < 20 ? "packages/core/src/trace.ts" : `packages/file-${i}.ts`,
+        }),
+      );
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("passed_with_issues");
+    expect(report.summary).toMatchObject({
+      modelCalls: 25,
+      toolCalls: 85,
+      totalTokens: 275,
+      workspaceWrites: 0,
+      approvalsRequested: 0,
+    });
+    expect(report.findings.map((finding) => finding.code)).toEqual(
+      expect.arrayContaining([
+        "EXCESSIVE_TOOL_CALLS",
+        "EXCESSIVE_MODEL_CALLS",
+        "WORKSPACE_READ_NOISE",
+        "DUPLICATE_WORKSPACE_READS",
+        "REPEATED_TOOL_REQUESTS",
+        "COST_UNAVAILABLE",
+      ]),
+    );
+    expect(report.topDuplicateReads).toMatchObject({
+      "packages/core/src/trace.ts": 20,
+    });
+  });
+
+  it("reports multi-agent auditability findings from structured trace facts", () => {
+    const log = new EventLog(createRunId());
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "audit agents" }, { sessionId: "s1" }),
+      log.emit(
+        "subagent.completed",
+        {
+          childRunId: "run_child_1",
+          parentRunId: "run_parent",
+          terminalState: "truncated",
+          truncated: true,
+        },
+        {
+          agentName: "reviewer",
+          childRunId: "run_child_1",
+          parentRunId: "run_parent",
+          subagentDepth: 1,
+        },
+      ),
+      log.emit("approval.requested", {
+        id: "approval_1",
+        action: "tool.execute",
+        summary: "delegate_review",
+      }),
+      log.emit("approval.resolved", {
+        approvalId: "approval_1",
+        decision: "denied",
+      }),
+      log.emit("approval.requested", {
+        id: "approval_2",
+        action: "tool.execute",
+        summary: "delegate_review",
+      }),
+      log.emit("approval.resolved", {
+        approvalId: "approval_2",
+        decision: "denied",
+      }),
+      ...Array.from({ length: 3 }, (_, index) =>
+        log.emit("tool.failed", {
+          toolCallId: `dup_${index}`,
+          toolName: "delegate_review",
+          status: "failed",
+          error: {
+            code: "DUPLICATE_TOOL_CALL_SKIPPED",
+            message: "still running",
+            metadata: { duplicateKind: "in_flight_duplicate" },
+          },
+        }),
+      ),
+      log.emit("workspace.write.untracked_access_granted", {
+        childRunId: "cmd_writer",
+        parentRunId: "run_parent",
+        toolName: "delegate_external",
+        agentProfileId: "writer",
+        marker: "untracked-write-capable",
+        access: "granted",
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "SUBAGENT_INCOMPLETE",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("reviewer truncated"),
+          ]),
+        }),
+        expect.objectContaining({
+          severity: "high",
+          code: "REPEATED_APPROVAL_DENIALS",
+          evidence: ["2x delegate_review"],
+        }),
+        expect.objectContaining({
+          severity: "medium",
+          code: "IN_FLIGHT_DUPLICATE_STORM",
+          evidence: ["3x delegate_review in-flight duplicate"],
+        }),
+        expect.objectContaining({
+          severity: "medium",
+          code: "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("delegate_external"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("does not report an in-flight duplicate storm for one skipped duplicate", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "one duplicate" }),
+      log.emit("tool.failed", {
+        toolCallId: "dup_1",
+        toolName: "read_file",
+        status: "failed",
+        error: {
+          code: "DUPLICATE_TOOL_CALL_SKIPPED",
+          message: "still running",
+          metadata: { duplicateKind: "in_flight_duplicate" },
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "IN_FLIGHT_DUPLICATE_STORM",
+    );
+  });
+
+  it("reports repeated failing shell commands without lowering max steps", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
+    ];
+
+    for (let i = 0; i < 2; i += 1) {
+      events.push(
+        log.emit("tool.requested", {
+          id: `call_${i}`,
+          toolName: "shell",
+          arguments: { command: "npm test -- --runInBand" },
+        }),
+        log.emit("tool.completed", {
+          toolCallId: `call_${i}`,
+          toolName: "shell",
+          status: "completed",
+          output: { exitCode: 1, timedOut: false },
+        }),
+      );
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNRESOLVED_VERIFICATION_FAILURES",
+        }),
+        expect.objectContaining({
+          code: "REPEATED_COMMAND_FAILURES",
+          evidence: ["2x npm test -- --runInBand (exit 1)"],
+        }),
+      ]),
+    );
+  });
+
+  it("reports low net progress across many model and tool calls", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "fix a small bug" }, { sessionId: "s1" }),
+    ];
+
+    for (let i = 0; i < 9; i += 1) {
+      events.push(
+        log.emit("model.requested", { step: i }),
+        log.emit("model.completed", { step: i, message: `step ${i}` }),
+        log.emit("tool.requested", {
+          id: `read_${i}`,
+          toolName: "read_file",
+          arguments: { path: "src/foo.ts" },
+        }),
+        log.emit("tool.completed", {
+          toolCallId: `read_${i}`,
+          toolName: "read_file",
+          status: "completed",
+          output: { path: "src/foo.ts" },
+        }),
+        log.emit("workspace.read", { path: "src/foo.ts" }),
+      );
+      if (i === 2) {
+        events.push(
+          log.emit("workspace.write.completed", {
+            path: "src/foo.ts",
+            bytes: 42,
+          }),
+        );
+      }
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("passed_with_issues");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "LOW_NET_PROGRESS",
+          evidence: expect.arrayContaining([
+            "9 model call(s)",
+            "9 tool call(s)",
+            "1 unique written file(s)",
+            "duplicate reads: src/foo.ts:9",
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("does not flag low net progress for a short run that verified late", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "fix a small bug" }, { sessionId: "s1" }),
+    ];
+
+    // Four model calls: write once, read twice, then verify. Verification runs
+    // several calls after the last write, but the run is too short to be "many
+    // cycles" — it must not produce a LOW_NET_PROGRESS finding.
+    events.push(
+      log.emit("model.requested", { step: 0 }),
+      log.emit("model.completed", { step: 0, message: "write" }),
+      log.emit("workspace.write.completed", { path: "src/foo.ts", bytes: 42 }),
+    );
+    for (let i = 1; i < 3; i += 1) {
+      events.push(
+        log.emit("model.requested", { step: i }),
+        log.emit("model.completed", { step: i, message: `read ${i}` }),
+        log.emit("tool.completed", {
+          toolCallId: `read_${i}`,
+          toolName: "read_file",
+          status: "completed",
+          output: { path: `src/bar${i}.ts` },
+        }),
+      );
+    }
+    events.push(
+      log.emit("model.requested", { step: 3 }),
+      log.emit("model.completed", { step: 3, message: "verify" }),
+      log.emit("tool.requested", {
+        id: "verify",
+        toolName: "shell",
+        arguments: { command: "make test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(
+      report.findings.some((finding) => finding.code === "LOW_NET_PROGRESS"),
+    ).toBe(false);
+  });
+
+  it("flags delayed verification with a non-npm command across enough cycles", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "fix a small bug" }, { sessionId: "s1" }),
+    ];
+
+    // Write once, then drift through several read/think cycles before verifying
+    // with `make test` — proving both the model-call gate and that the
+    // verification matcher recognizes non-npm runners.
+    events.push(
+      log.emit("model.requested", { step: 0 }),
+      log.emit("model.completed", { step: 0, message: "write" }),
+      log.emit("workspace.write.completed", { path: "src/foo.ts", bytes: 42 }),
+    );
+    for (let i = 1; i < 5; i += 1) {
+      events.push(
+        log.emit("model.requested", { step: i }),
+        log.emit("model.completed", { step: i, message: `read ${i}` }),
+        log.emit("tool.completed", {
+          toolCallId: `read_${i}`,
+          toolName: "read_file",
+          status: "completed",
+          output: { path: `src/bar${i}.ts` },
+        }),
+      );
+    }
+    events.push(
+      log.emit("model.requested", { step: 5 }),
+      log.emit("model.completed", { step: 5, message: "verify" }),
+      log.emit("tool.requested", {
+        id: "verify",
+        toolName: "shell",
+        arguments: { command: "make test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "LOW_NET_PROGRESS",
+          evidence: expect.arrayContaining([
+            "verification ran 5 model call(s) after the last write: make test",
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("reports unresolved verification command failures as high severity", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.completed", {
+        toolCallId: "call_shell",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("run.completed", {
+        state: "completed",
+        reason: "final_answer",
+        commandOutcome: {
+          total: 1,
+          byExitCode: { "1": 1 },
+          verification: {
+            total: 1,
+            unresolved: 1,
+            lastCommand: "npm test",
+            lastExitCode: 1,
+            lastTimedOut: false,
+          },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "UNRESOLVED_VERIFICATION_FAILURES",
+          evidence: expect.arrayContaining([
+            "1 unresolved verification failure(s)",
+            "last command: npm test",
+            "last exit code: 1",
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("does not fail reports for recovered skill-load companion failures", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "use a skill" }, { sessionId: "s1" }),
+      log.emit("tool.requested", {
+        id: "call_load_1",
+        toolName: "skill_load",
+        arguments: { name: "reviewer" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_load_1",
+        toolName: "skill_load",
+        status: "failed",
+        error: { code: "SKILL_LOAD_FAILED", message: "missing resource" },
+      }),
+      log.emit("skill.failed", {
+        toolCallId: "call_load_1",
+        name: "reviewer",
+        status: "resource_not_found",
+        message: "missing resource",
+      }),
+      log.emit("tool.requested", {
+        id: "call_load_2",
+        toolName: "skill_load",
+        arguments: { name: "reviewer" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_load_2",
+        toolName: "skill_load",
+        status: "completed",
+        output: { status: "loaded", name: "reviewer" },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(1);
+    expect(summary.toolFailures).toMatchObject({
+      total: 1,
+      unresolved: { total: 0, byCode: {} },
+      recovered: { total: 1, byCode: { SKILL_LOAD_FAILED: 1 } },
+    });
+    expect(report.verdict).toBe("passed_with_issues");
+    expect(report.findings.map((finding) => finding.code)).toContain(
+      "RECOVERED_TOOL_FAILURES",
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_ERRORS",
+    );
+  });
+
+  it("does not double count non-skill companion failures tied to tool failures", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "recover from a bad read" }),
+      log.emit("tool.requested", {
+        id: "call_bad_read",
+        toolName: "read_file",
+        arguments: { path: "missing.md" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_bad_read",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "ENOENT", message: "missing" },
+      }),
+      log.emit("subagent.failed", {
+        toolCallId: "call_bad_read",
+        errorCode: "ENOENT",
+        message: "synthetic companion failure",
+      }),
+      log.emit("tool.requested", {
+        id: "call_good_read",
+        toolName: "read_file",
+        arguments: { path: "README.md" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_good_read",
+        toolName: "read_file",
+        status: "completed",
+        output: { path: "README.md" },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(1);
+    expect(summary.toolFailures.recovered.total).toBe(1);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_ERRORS",
+    );
+  });
+
   it("summarizes capability mutation events", () => {
     const log = new EventLog(createRunId());
     const jsonl = [
@@ -1002,7 +1807,7 @@ describe("trace", () => {
     expect(summary.safety.capabilityMutations.completed).toBe(1);
   });
 
-  it("reads the persisted tool outcome on a minimal trace", () => {
+  it("classifies tool outcomes from standard payloads", () => {
     const run = createRunRecord();
     // The verdict computed over full events: the failure on a.txt is NOT
     // recovered, because the later success is on a *different* file (b.txt) and
@@ -1044,27 +1849,22 @@ describe("trace", () => {
       ];
       return summarizeTraceJsonl(
         events
-          .map((event) => filterTraceEvent(event, "minimal"))
+          .map((event) => filterTraceEvent(event, "standard"))
           .map(serializeEventJsonl)
           .join(""),
       );
     };
 
-    // With the persisted verdict, the minimal trace reports the failure as
-    // unresolved (correct).
     const withVerdict = buildEvents(true);
     expect(withVerdict.toolFailures.unresolved.total).toBe(1);
     expect(withVerdict.toolFailures.recovered.total).toBe(0);
 
-    // Regression guard: without the verdict, recomputing from the minimal trace
-    // collapses both reads to one target (arguments are stripped) and *falsely*
-    // marks the failure recovered — hiding a real unresolved failure.
     const withoutVerdict = buildEvents(false);
-    expect(withoutVerdict.toolFailures.recovered.total).toBe(1);
-    expect(withoutVerdict.toolFailures.unresolved.total).toBe(0);
+    expect(withoutVerdict.toolFailures.recovered.total).toBe(0);
+    expect(withoutVerdict.toolFailures.unresolved.total).toBe(1);
   });
 
-  it("reads the persisted command outcome on a minimal trace", () => {
+  it("reads the persisted command outcome on a standard trace", () => {
     const run = createRunRecord();
     const commandOutcome = {
       total: 1,
@@ -1075,13 +1875,14 @@ describe("trace", () => {
         lastCommand: "npm test",
         lastExitCode: 254,
         lastTimedOut: false,
+        lastFailureCommand: "npm test",
+        lastFailureExitCode: 254,
+        lastFailureTimedOut: false,
       },
     };
     const log = new EventLog(run.id);
-    const minimalJsonl = [
+    const standardJsonl = [
       log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
-      // tool.completed output (which command analysis needs) is stripped at
-      // minimal; only the persisted verdict survives.
       log.emit("tool.completed", {
         toolCallId: "call_1",
         toolName: "shell",
@@ -1090,11 +1891,11 @@ describe("trace", () => {
       }),
       log.emit("run.completed", { reason: "final_answer", commandOutcome }),
     ]
-      .map((event) => filterTraceEvent(event, "minimal"))
+      .map((event) => filterTraceEvent(event, "standard"))
       .map(serializeEventJsonl)
       .join("");
 
-    const summary = summarizeTraceJsonl(minimalJsonl);
+    const summary = summarizeTraceJsonl(standardJsonl);
 
     expect(summary.commandFailures.total).toBe(1);
     expect(summary.commandFailures.byExitCode).toEqual({ "254": 1 });
@@ -1103,15 +1904,15 @@ describe("trace", () => {
       unresolved: 1,
       lastCommand: "npm test",
       lastExitCode: 254,
+      lastFailureCommand: "npm test",
+      lastFailureExitCode: 254,
     });
   });
 
-  it("under-reports command failures on a minimal trace without a persisted outcome", () => {
-    // Guards the regression the persisted snapshot fixes: with output stripped
-    // and no verdict to read, the summary cannot recover the failure.
+  it("keeps command failures on standard traces without a persisted outcome", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
-    const minimalJsonl = [
+    const standardJsonl = [
       log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
       log.emit("tool.completed", {
         toolCallId: "call_1",
@@ -1121,16 +1922,16 @@ describe("trace", () => {
       }),
       log.emit("run.completed", { reason: "final_answer" }),
     ]
-      .map((event) => filterTraceEvent(event, "minimal"))
+      .map((event) => filterTraceEvent(event, "standard"))
       .map(serializeEventJsonl)
       .join("");
 
-    expect(summarizeTraceJsonl(minimalJsonl).commandFailures.total).toBe(0);
+    expect(summarizeTraceJsonl(standardJsonl).commandFailures.total).toBe(1);
   });
 
-  it("counts an approval denial the same at minimal and standard trace levels", () => {
+  it("counts an approval denial the same at standard and debug trace levels", () => {
     const run = createRunRecord();
-    const buildJsonl = (level: "minimal" | "standard") => {
+    const buildJsonl = (level: "standard" | "debug") => {
       const log = new EventLog(run.id);
       return [
         log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
@@ -1152,17 +1953,14 @@ describe("trace", () => {
         .join("");
     };
 
-    const minimal = summarizeTraceJsonl(buildJsonl("minimal"));
     const standard = summarizeTraceJsonl(buildJsonl("standard"));
+    const debug = summarizeTraceJsonl(buildJsonl("debug"));
 
-    // The minimal trace flattens the code to `errorCode`; the denial must still
-    // be classified as an expected denial, not an unresolved tool failure.
-    expect(minimal.expectedDenialCount).toBe(1);
-    expect(minimal.expectedDenialCodes).toEqual({ TOOL_APPROVAL_DENIED: 1 });
-    expect(minimal.toolFailures.unresolved.total).toBe(0);
-    // ...and identical to the standard-level verdict.
-    expect(minimal.expectedDenialCount).toBe(standard.expectedDenialCount);
-    expect(minimal.toolFailures.unresolved.total).toBe(
+    expect(standard.expectedDenialCount).toBe(1);
+    expect(standard.expectedDenialCodes).toEqual({ TOOL_APPROVAL_DENIED: 1 });
+    expect(standard.toolFailures.unresolved.total).toBe(0);
+    expect(debug.expectedDenialCount).toBe(standard.expectedDenialCount);
+    expect(debug.toolFailures.unresolved.total).toBe(
       standard.toolFailures.unresolved.total,
     );
   });
@@ -1280,7 +2078,8 @@ describe("trace", () => {
       log.emit("approval.resolved", {
         approvalId: "approval_write",
         decision: "approved",
-        message: "Auto-approved by --yes-edits.",
+        message: "Approved by policy.",
+        autoApproved: true,
       }),
       log.emit("approval.requested", {
         id: "approval_shell",
@@ -1724,6 +2523,56 @@ describe("trace", () => {
           eventTypes: expect.arrayContaining([
             "workspace.anchored_edit.requested",
           ]),
+        }),
+      ]),
+    );
+  });
+
+  it("pairs subagent lifecycle events by child run id before spans in trace timelines", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const span = (spanId: string) => ({
+      __span: { traceId: "trace_1", spanId },
+    });
+    const child = {
+      childRunId: "cmd_doc_reviewer_1",
+      parentRunId: run.id,
+    };
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("subagent.requested", child, span("span_subagent_request")),
+      log.emit("subagent.started", child, span("span_subagent_child")),
+      log.emit(
+        "subagent.completed",
+        { ...child, stopReason: "completed" },
+        span("span_subagent_child"),
+      ),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "completed",
+          eventTypes: [
+            "subagent.requested",
+            "subagent.started",
+            "subagent.completed",
+          ],
+          startSequence: 2,
+          endSequence: 4,
+        }),
+      ]),
+    );
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["subagent.requested"]),
         }),
       ]),
     );
@@ -2376,53 +3225,64 @@ describe("trace", () => {
     });
   });
 
-  it("keeps only execution skeleton for minimal traces", () => {
+  it("summarizes large tool output for standard traces", () => {
     const log = new EventLog(createRunId());
-    const event = log.emit("model.completed", {
-      message: "full response",
-      toolCalls: [{ toolName: "echo", arguments: { text: "secret" } }],
+    const event = log.emit("tool.completed", {
+      toolCallId: "call_1",
+      toolName: "echo",
+      status: "completed",
+      output: { text: "x".repeat(600) },
+      artifacts: [],
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const standard = filterTraceEvent(event, "standard");
 
-    expect(filtered.payload).toEqual({
-      hasMessage: true,
-      toolCallCount: 1,
+    expect(standard.payload).toMatchObject({
+      toolCallId: "call_1",
+      toolName: "echo",
+      status: "completed",
     });
   });
 
-  it("applies trace level filtering to file-backed traces", async () => {
+  it("applies standard filtering to file-backed traces", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-store-"));
     tempDirs.push(root);
     const run = createRunRecord();
     const log = new EventLog(run.id);
     const store = new FileRunStore(run, {
       rootDir: root,
-      traceLevel: "minimal",
+      traceLevel: "standard",
       redact: false,
     });
 
     store.append(
-      log.emit("model.completed", {
-        message: "full response",
-        toolCalls: [{ toolName: "echo", arguments: { text: "secret" } }],
-        usage: { totalTokens: 3 },
+      log.emit("tool.completed", {
+        toolCallId: "call_1",
+        toolName: "echo",
+        status: "completed",
+        output: { text: "x".repeat(600) },
+        artifacts: [],
       }),
     );
 
     const trace = await readFile(store.tracePath, "utf8");
     const persisted = JSON.parse(trace) as { payload: unknown };
 
-    expect(persisted.payload).toEqual({
-      hasMessage: true,
-      toolCallCount: 1,
-      totalTokens: 3,
+    expect(store.traceLevel).toBe("standard");
+    expect(persisted.payload).toMatchObject({
+      toolCallId: "call_1",
+      toolName: "echo",
+      status: "completed",
+      output: {
+        text: {
+          type: "string",
+          length: 600,
+        },
+      },
     });
-    expect(trace).not.toContain("full response");
-    expect(trace).not.toContain("secret");
   });
 
-  it("keeps workspace write proposal ids in minimal traces", () => {
+  it("keeps workspace write proposal summaries in standard traces", () => {
     const runId = createRunId();
     const log = new EventLog(runId);
     const event = log.emit("workspace.write.requested", {
@@ -2436,16 +3296,20 @@ describe("trace", () => {
       metadata: {},
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const filtered = filterTraceEvent(event, "standard");
 
     expect(filtered.payload).toEqual({
       id: "write_1",
+      runId,
       path: "README.md",
       reason: "test write",
+      diffSummary: "--- a/README.md\n+++ b/README.md\n",
+      createdAt: expect.any(String),
+      metadata: {},
     });
   });
 
-  it("keeps anchored edit evidence in minimal traces", () => {
+  it("keeps anchored edit evidence in standard traces", () => {
     const log = new EventLog(createRunId());
     const event = log.emit("workspace.anchored_edit.rejected", {
       path: "README.md",
@@ -2463,16 +3327,18 @@ describe("trace", () => {
       },
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const filtered = filterTraceEvent(event, "standard");
 
-    expect(filtered.payload).toEqual({
+    expect(filtered.payload).toMatchObject({
       path: "README.md",
       reason: "Anchor hash does not match current line: 2#ABCD",
-      errorCode: "ANCHOR_HASH_MISMATCH",
+      error: {
+        code: "ANCHOR_HASH_MISMATCH",
+      },
     });
   });
 
-  it("keeps validation evidence in minimal traces", () => {
+  it("keeps validation evidence in standard traces", () => {
     const log = new EventLog(createRunId());
     const event = log.emit("validation.failed", {
       hookName: "final-answer-policy",
@@ -2491,13 +3357,19 @@ describe("trace", () => {
       },
     });
 
-    const filtered = filterTraceEvent(event, "minimal");
+    const filtered = filterTraceEvent(event, "standard");
 
-    expect(filtered.payload).toEqual({
+    expect(filtered.payload).toMatchObject({
       hookName: "final-answer-policy",
       stage: "final_output",
-      status: "failed",
-      findingCount: 1,
+      result: {
+        status: "failed",
+        findings: [
+          {
+            code: "FINAL_TOO_LOOSE",
+          },
+        ],
+      },
     });
   });
 

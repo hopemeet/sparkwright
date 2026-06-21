@@ -5,6 +5,19 @@
   "timestamp": "2026-05-24T12:00:01.000Z",
   "payload": {
     "goal": "inspect this repo",
+    "input": {
+      "parts": [
+        {
+          "type": "image",
+          "data": "iVBORw0KGgo=",
+          "mediaType": "image/png",
+          "name": "screenshot.png"
+        }
+      ],
+      "metadata": {
+        "imageCount": 1
+      }
+    },
     "sessionId": "session_abc123",
     "shouldWrite": true,
     "model": "openai/gpt-4o-mini",

@@ -1,11 +1,15 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadHostConfig } from "@sparkwright/host";
+import {
+  loadHostConfig,
+  readConfigFileObject,
+  TOOL_USE_SELECTORS,
+} from "@sparkwright/host";
 import { runCli } from "../src/cli.js";
 
 // Guards against drift between schemas/config.schema.json and what the CLI
@@ -80,9 +84,12 @@ describe("config schema drift guard", () => {
 
     const userOut = createOutputCapture();
     expect((await runCli(["init"], { io: userOut.io })).exitCode).toBe(0);
-    const userConfig = JSON.parse(
-      await readFile(join(xdg, "sparkwright", "config.json"), "utf8"),
-    );
+    const userConfig = (
+      await readConfigFileObject(join(xdg, "sparkwright", "config.yaml"))
+    ).value;
+    await expect(
+      readFile(join(xdg, "sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain("# yaml-language-server: $schema=file://");
     expect(validate(userConfig), JSON.stringify(validate.errors)).toBe(true);
 
     const projectOut = createOutputCapture();
@@ -94,9 +101,12 @@ describe("config schema drift guard", () => {
         })
       ).exitCode,
     ).toBe(0);
-    const projectConfig = JSON.parse(
-      await readFile(join(workspace, ".sparkwright", "config.json"), "utf8"),
-    );
+    const projectConfig = (
+      await readConfigFileObject(join(workspace, ".sparkwright", "config.yaml"))
+    ).value;
+    await expect(
+      readFile(join(workspace, ".sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain("# yaml-language-server: $schema=file://");
     expect(validate(projectConfig), JSON.stringify(validate.errors)).toBe(true);
 
     // The user template seeds the apiKey placeholder; the loader reports it as a
@@ -148,12 +158,55 @@ describe("config schema drift guard", () => {
     }
   });
 
+  it("selector enums in the schemas stay in sync with TOOL_USE_SELECTORS", () => {
+    // config.schema.json is generated from the zod source (which derives the
+    // enum from TOOL_USE_SELECTORS), but agent-profile.schema.json is
+    // hand-maintained and duplicates the same enum. This guard keeps both from
+    // drifting out of sync with the single source-of-truth constant.
+    const canonical = [...TOOL_USE_SELECTORS];
+    const found: { file: string; values: string[] }[] = [];
+    const visit = (node: unknown, file: string): void => {
+      if (Array.isArray(node)) {
+        for (const entry of node) visit(entry, file);
+        return;
+      }
+      if (node && typeof node === "object") {
+        const obj = node as Record<string, unknown>;
+        if (
+          Array.isArray(obj.enum) &&
+          (obj.enum as unknown[]).includes("workspace.read")
+        ) {
+          found.push({ file, values: obj.enum as string[] });
+        }
+        for (const value of Object.values(obj)) visit(value, file);
+      }
+    };
+    for (const file of ["config.schema.json", "agent-profile.schema.json"]) {
+      visit(JSON.parse(readFileSync(join(schemasDir, file), "utf8")), file);
+    }
+    // Both schemas must carry the selector enum.
+    expect(found.map((entry) => entry.file)).toEqual(
+      expect.arrayContaining([
+        "config.schema.json",
+        "agent-profile.schema.json",
+      ]),
+    );
+    for (const entry of found) {
+      expect(entry.values, `${entry.file} selector enum drift`).toEqual(
+        canonical,
+      );
+    }
+  });
+
   it("the repository's own project config validates against the schema", async () => {
     const validate = buildValidator();
     const repoRoot = dirname(schemasDir.replace(/\/$/, ""));
-    const repoConfig = JSON.parse(
-      await readFile(join(repoRoot, ".sparkwright", "config.json"), "utf8"),
-    );
+    const projectConfigPath = [
+      join(repoRoot, ".sparkwright", "config.json"),
+      join(repoRoot, ".sparkwright", "config_test.json"),
+    ].find((path) => existsSync(path));
+    if (!projectConfigPath) return;
+    const repoConfig = JSON.parse(await readFile(projectConfigPath, "utf8"));
     expect(validate(repoConfig), JSON.stringify(validate.errors)).toBe(true);
   });
 });

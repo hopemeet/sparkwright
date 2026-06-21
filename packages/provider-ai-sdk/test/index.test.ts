@@ -443,6 +443,39 @@ describe("toModelMessages", () => {
       },
     ]);
   });
+
+  it("maps image content parts to AI SDK user content parts", () => {
+    expect(
+      toModelMessages([
+        {
+          role: "user",
+          content: "Describe this screenshot.",
+          stability: "turn",
+          parts: [
+            {
+              type: "image",
+              data: "iVBORw0KGgo=",
+              mediaType: "image/png",
+              name: "screen.png",
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Describe this screenshot." },
+          {
+            type: "image",
+            image: "iVBORw0KGgo=",
+            mediaType: "image/png",
+          },
+        ],
+        providerOptions: EPHEMERAL,
+      },
+    ]);
+  });
 });
 
 describe("cacheBreakpointIndexes", () => {

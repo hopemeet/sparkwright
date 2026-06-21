@@ -12,14 +12,10 @@ import type { ReactNode } from "react";
 
 export type LayerName =
   | "approval"
-  | "palette"
   | "sessions"
-  | "quick-switch"
   | "events"
-  | "stash"
   | "model"
-  | "timeline"
-  | "search"
+  | "fork"
   | "help"
   | "config"
   | "capabilities"
@@ -42,15 +38,11 @@ type Listener = () => void;
 const PRIORITY: Record<LayerName, number> = {
   // Approval is the most important — it blocks the run; it MUST be on top.
   approval: 100,
-  palette: 80,
-  "quick-switch": 75,
   "session-rename": 70, // above sessions so it can stack
   events: 65,
   sessions: 60,
-  stash: 55,
   model: 58,
-  timeline: 62,
-  search: 63,
+  fork: 62,
   capabilities: 57,
   create: 57,
   "skill-create": 57,

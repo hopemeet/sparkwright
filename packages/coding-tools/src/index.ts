@@ -74,6 +74,7 @@ export interface CodingToolsOptions {
 export type CodingToolName =
   | "read_text"
   | "read_anchored_text"
+  | "write_file"
   | "edit_anchored_text"
   | "apply_patch"
   | "list_dir"
@@ -144,6 +145,23 @@ export interface ApplyPatchResult {
   content: string;
   /** @reserved Public tool-output field consumed by coding UIs. */
   hunksApplied: number;
+}
+
+export interface WriteFileInput {
+  path: string;
+  content: string;
+  reason?: string;
+  /** Refuse to replace an existing file when false. Default true. */
+  overwrite?: boolean;
+}
+
+export interface WriteFileResult {
+  path: string;
+  /** @reserved Public tool-output field consumed by coding UIs. */
+  changed: boolean;
+  created: boolean;
+  bytes: number;
+  lineCount: number;
 }
 
 export interface ListDirInput {
@@ -226,6 +244,7 @@ export function createCodingTools(
   return [
     createReadTextTool(options),
     createReadAnchoredTextTool(options),
+    createWriteFileTool(),
     createEditAnchoredTextTool(),
     createApplyPatchTool(),
     createListDirTool(options),
@@ -294,6 +313,71 @@ export function createReadAnchoredTextTool(
         })),
         metadata: anchored.metadata,
         truncated: selected.truncated || bounded.truncated,
+      };
+    },
+  });
+}
+
+export function createWriteFileTool(): ToolDefinition<
+  WriteFileInput,
+  WriteFileResult
+> {
+  return defineTool<WriteFileInput, WriteFileResult>({
+    name: "write_file",
+    description:
+      "Create or replace a UTF-8 text file through the workspace write path. " +
+      "Use this for new files or full-file replacement; parent directories are created automatically.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Workspace-relative file path." },
+        content: {
+          type: "string",
+          description: "Complete UTF-8 file content.",
+        },
+        reason: { type: "string", description: "Why this write is needed." },
+        overwrite: {
+          type: "boolean",
+          description:
+            "When false, fail if the target already exists. Default true.",
+        },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+    policy: { risk: "safe" },
+    governance: {
+      sideEffects: ["write"],
+      idempotency: "conditional",
+      dataSensitivity: "internal",
+      origin: { kind: "local", name: "@sparkwright/coding-tools" },
+    },
+    isConcurrencySafe: () => false,
+    async execute(args, ctx) {
+      const workspace = requireWorkspace(ctx);
+      const input = normalizeWriteFileInput(args);
+      const before = await workspace.readText(input.path).catch((error) => {
+        if (isNodeErrorCode(error, "ENOENT")) return undefined;
+        throw error;
+      });
+      if (before !== undefined && input.overwrite === false) {
+        throw toolArgumentsInvalid(
+          `write_file target already exists: ${input.path}`,
+        );
+      }
+      const changed = before !== input.content;
+      if (changed) {
+        await workspace.writeText(input.path, input.content, {
+          reason: input.reason,
+        });
+      }
+      return {
+        path: await canonicalOutputPath(ctx, input.path),
+        changed,
+        created: before === undefined,
+        bytes: input.content.length,
+        lineCount:
+          input.content.length === 0 ? 0 : splitLines(input.content).length,
       };
     },
   });
@@ -424,6 +508,21 @@ function normalizeApplyPatchInput(args: ApplyPatchInput): ApplyPatchInput {
   }
   const reason = typeof args.reason === "string" ? args.reason : undefined;
   return { path, patch, reason };
+}
+
+function normalizeWriteFileInput(args: WriteFileInput): WriteFileInput {
+  assertRecord(args, "write_file input");
+  const path = normalizeFileUrlPath(readString(args, "path"));
+  const content = readStringAllowEmpty(args, "content");
+  return {
+    path,
+    content,
+    reason:
+      typeof args.reason === "string" && args.reason.length > 0
+        ? args.reason
+        : undefined,
+    overwrite: args.overwrite === false ? false : true,
+  };
 }
 
 interface PatchLine {
@@ -1423,6 +1522,26 @@ function readString(record: Record<string, unknown>, key: string): string {
     throw toolArgumentsInvalid(`${key} must be a non-empty string.`);
   }
   return value;
+}
+
+function readStringAllowEmpty(
+  record: Record<string, unknown>,
+  key: string,
+): string {
+  const value = record[key];
+  if (typeof value !== "string") {
+    throw toolArgumentsInvalid(`${key} must be a string.`);
+  }
+  return value;
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
 
 function readOptionalPositiveInteger(

@@ -13,6 +13,7 @@ import {
   listSkillResourceFiles,
   listSkillPackageFiles,
   lockSkills,
+  loadSkill,
   loadSkills,
   parseSkill,
   prepareSkillsForRun,
@@ -277,6 +278,9 @@ Use DingTalk only when notification is requested.
     ]);
     expect(prepared.context).toHaveLength(2);
     expect(prepared.context[0]?.metadata.layer).toBe("skill_index");
+    expect(prepared.context[0]?.content).not.toContain(root);
+    expect(prepared.context[0]?.content).not.toContain("sourcePath");
+    expect(prepared.context[0]?.content).not.toContain("contentHash");
     expect(prepared.context[1]?.metadata).toMatchObject({
       layer: "resident",
       skillName: "dingtalk-notifier",
@@ -651,6 +655,36 @@ Review only the requested change.
     expect(loaded.content).not.toContain(root);
   });
 
+  it("preprocesses skill bodies when loadSkill opts in", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
+    const skillDir = join(root, "dynamic");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      `---
+name: dynamic
+description: Dynamic preprocessing.
+---
+dir=\${SPARKWRIGHT_SKILL_DIR}
+value=!\`printf source\`
+`,
+    );
+
+    const skill = await loadSkill(join(skillDir, "SKILL.md"), {
+      preprocess: {
+        inlineShell: true,
+        inlineShellRunner: async ({ cwd, command }) => {
+          expect(cwd).toBe(skillDir);
+          expect(command).toBe("printf source");
+          return "expanded";
+        },
+      },
+    });
+
+    expect(skill.body).toContain(`dir=${skillDir}`);
+    expect(skill.body).toContain("value=expanded");
+  });
+
   it("reads a skill reference file through the resource argument", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-skills-"));
     await mkdir(join(root, "reviewer", "references"), { recursive: true });
@@ -692,6 +726,15 @@ Review only the requested change.
       name: "code-reviewer",
       resource: "references/rules.md",
       content: "Rule one.\nRule two.\n",
+    });
+
+    const emptyResource = await tool.execute(
+      { name: "code-reviewer", resource: "" },
+      ctx,
+    );
+    expect(emptyResource).toMatchObject({
+      status: "loaded",
+      name: "code-reviewer",
     });
 
     // Containment: a traversal path must not read outside the skill directory.
@@ -806,7 +849,6 @@ Review only the requested change.
     expect(context.type).toBe("system");
     expect(context.source).toEqual({
       kind: "skill",
-      path: "SKILL.md",
     });
     expect(context.content).toContain("Review only the requested change.");
     expect(context.metadata).toMatchObject({
@@ -814,6 +856,7 @@ Review only the requested change.
       stability: "session",
       skillName: "code-reviewer",
       skillVersion: "2",
+      skillSourcePath: "SKILL.md",
       selectionReason: "Matched goal.",
     });
   });

@@ -1399,7 +1399,13 @@ function mergeModelUsage(
     inputTokens: next.inputTokens ?? current?.inputTokens,
     outputTokens: next.outputTokens ?? current?.outputTokens,
     totalTokens: next.totalTokens ?? current?.totalTokens,
+    cacheReadTokens: next.cacheReadTokens ?? current?.cacheReadTokens,
+    cacheCreationTokens:
+      next.cacheCreationTokens ?? current?.cacheCreationTokens,
     costUsd: next.costUsd ?? current?.costUsd,
+    costStatus: next.costStatus ?? current?.costStatus,
+    costUnavailableReason:
+      next.costUnavailableReason ?? current?.costUnavailableReason,
   };
 }
 

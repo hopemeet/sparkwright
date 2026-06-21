@@ -74,7 +74,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Entry point**: `packages/core/src/events.ts` (`EventType` union)
 - **Interface to implement**: extend the `EventType` union; emit through `EventLog.emit`
 - **Must read**: `docs/reference/PROTOCOL.md` (event envelope), `docs/reference/TRACE_EXTENSION_EVENTS.md`
-- **Must update on change**: `schemas/event.schema.json` (add the new type to the enum and any payload constraints); add filter rules in `packages/core/src/trace.ts` for `minimal` / `standard` so the event is summarized appropriately
+- **Must update on change**: `schemas/event.schema.json` (add the new type to the enum and any payload constraints); add filter rules in `packages/core/src/trace.ts` for `standard` so the event is summarized appropriately
 - **Wire in via**: emit at the boundary that produces the new fact; subscribers and `FileRunStore` pick it up automatically
 - **Notes**: Prefer reusing existing types with new `metadata` fields when possible (see ADR 0002).
 
@@ -83,7 +83,7 @@ Read the linked entry file first, then the linked docs, then make the change. Do
 - **Entry point**: `packages/core/src/trace.ts` (look at the `applyTraceLevel` / redactor path)
 - **Interface to implement**: extend `EventType`, extend the level-summarizer, and confirm the default redactor walks any new payload shape
 - **Must read**: `docs/reference/PROTOCOL.md` (trace levels), `docs/reference/TRACE_EXTENSION_EVENTS.md`, `docs/archive/HARNESS_PRINCIPLES.md` ("Trace Is The Primary Interface")
-- **Must update on change**: `schemas/event.schema.json`; add tests in `packages/core/test/trace.test.ts` covering minimal/standard/debug and redaction
+- **Must update on change**: `schemas/event.schema.json`; add tests in `packages/core/test/trace.test.ts` covering standard/debug and redaction
 - **Wire in via**: nothing extra at the run boundary; redaction is applied inside `FileRunStore` (or any `RunStore`)
 - **Notes**: New payloads carrying secrets must match the existing key/value regex patterns or extend them.
 

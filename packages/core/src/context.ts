@@ -108,6 +108,14 @@ export interface ContextUsageHint {
   totalTokens: number;
   /** Accumulated cost in USD across the run so far. */
   costUsd: number;
+  /**
+   * Whether `costUsd` is enforceable (`estimated`/`partial`) or unavailable
+   * because pricing metadata was missing. Expensive optional stages must not
+   * confuse a missing price with a zero-dollar run.
+   */
+  costStatus?: "estimated" | "unavailable" | "partial";
+  /** Best-effort reasons collected when cost is unavailable. */
+  costUnavailableReasons?: Record<string, number>;
   /** Number of model calls completed so far. */
   modelCalls: number;
   /** The most recent model call's reported input token count, when available. */
@@ -148,9 +156,36 @@ export interface CompactingContextAssemblerOptions {
   compactOnOmissionReasons?: string[];
 }
 
+export interface TextContentPart {
+  type: "text";
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MediaContentPart {
+  type: "image" | "file" | "audio";
+  /** Base64-encoded bytes or provider-native data content. */
+  data?: string;
+  /** URL or URI reference when the provider can fetch/read it directly. */
+  uri?: string;
+  mediaType?: string;
+  name?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Provider-neutral multimodal input part. Text-only callers can keep using
+ * `content`; media-capable callers attach parts alongside the text summary.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export type ContentPart = TextContentPart | MediaContentPart;
+
 export interface PromptMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  parts?: ContentPart[];
   stability?: ContextStability;
   metadata?: Record<string, unknown>;
 }
@@ -282,10 +317,15 @@ export class DefaultObservationFormatter implements ObservationFormatter {
           metadata: input.result.error.metadata,
         }
       : undefined;
-    const extractedMetadata = extractObservationMetadata(
-      input.toolName,
-      input.result.output,
-    );
+    const extractedMetadata = {
+      ...extractObservationMetadata(input.toolName, input.result.output),
+      ...(input.toolName === "spawn_agent"
+        ? extractObservationMetadata(
+            input.toolName,
+            input.result.error?.metadata,
+          )
+        : {}),
+    };
 
     return {
       id: createContextItemId(),
@@ -342,6 +382,29 @@ function extractObservationMetadata(
   const nextOffset = output["nextOffset"];
   if (typeof nextOffset === "number" && Number.isFinite(nextOffset)) {
     metadata.nextOffset = nextOffset;
+  }
+
+  if (toolName === "spawn_agent") {
+    const childRunId = firstString(output, ["childRunId"]);
+    if (childRunId) metadata.childRunId = childRunId;
+
+    const role = firstString(output, ["role", "agentName"]);
+    if (role) metadata.role = role;
+
+    const stepLimitReached = output["stepLimitReached"];
+    if (typeof stepLimitReached === "boolean") {
+      metadata.stepLimitReached = stepLimitReached;
+    }
+
+    const finality = output["finality"];
+    if (typeof finality === "string" && finality.length > 0) {
+      metadata.finality = finality;
+    } else {
+      metadata.finality =
+        stepLimitReached === true || metadata.truncated === true
+          ? "partial"
+          : "complete";
+    }
   }
 
   return metadata;
@@ -895,6 +958,7 @@ export function createDefaultPromptSections(
         return history.map((item) => ({
           role: item.type === "assistant" ? "assistant" : "user",
           content: item.content,
+          ...(item.parts && item.parts.length > 0 ? { parts: item.parts } : {}),
           stability: "session" as const,
           metadata: { kind: "conversation_history", sourceItemId: item.id },
         }));
@@ -956,14 +1020,23 @@ export function createDefaultPromptSections(
           !isSkillIndexContextItem(item),
       );
       if (items.length === 0) return null;
-      return {
-        role: "user",
-        content: formatContextItems(items),
-        stability: "turn",
-        metadata: {
-          kind: "selected_context",
-        },
-      };
+      const plainItems = items.filter((item) => !hasContentParts(item));
+      const mediaItems = items.filter(hasContentParts);
+      const messages: PromptMessage[] = [];
+      if (plainItems.length > 0) {
+        messages.push({
+          role: "user",
+          content: formatContextItems(plainItems),
+          stability: "turn",
+          metadata: {
+            kind: "selected_context",
+          },
+        });
+      }
+      for (const item of mediaItems) {
+        messages.push(contextItemToPromptMessage(item));
+      }
+      return messages;
     },
   });
 
@@ -986,6 +1059,28 @@ export function createDefaultPromptSections(
   }
 
   return sections;
+}
+
+function contextItemToPromptMessage(
+  item: ContextItem & { parts: ContentPart[] },
+): PromptMessage {
+  return {
+    role: item.type === "assistant" ? "assistant" : "user",
+    content: formatContextItems([item]),
+    parts: [{ type: "text", text: formatContextItems([item]) }, ...item.parts],
+    stability: (item.metadata.stability as ContextStability) ?? "turn",
+    metadata: {
+      kind: "selected_context",
+      sourceItemId: item.id,
+      mediaPartCount: item.parts.length,
+    },
+  };
+}
+
+function hasContentParts(
+  item: ContextItem,
+): item is ContextItem & { parts: ContentPart[] } {
+  return Array.isArray(item.parts) && item.parts.length > 0;
 }
 
 export interface AppPromptSectionOptions {
@@ -1440,7 +1535,17 @@ function stabilityForContextItem(item: ContextItem): ContextStability {
 }
 
 function describeContextItem(item: ContextItem): string {
-  return item.source?.path ?? item.source?.uri ?? `${item.type}:${item.id}`;
+  const skillSourcePath = promptMetadataString(
+    item.metadata,
+    "skillSourcePath",
+  );
+  const skillName = promptMetadataString(item.metadata, "skillName");
+  return (
+    item.source?.path ??
+    skillSourcePath ??
+    item.source?.uri ??
+    (skillName ? `skill:${skillName}` : `${item.type}:${item.id}`)
+  );
 }
 
 function eagerTools(tools: ToolDescriptor[]): ToolDescriptor[] {
@@ -1610,13 +1715,39 @@ function formatContextItems(items: ContextItem[]): string {
       [
         `Context ${index + 1}:`,
         `type: ${item.type}`,
-        `source: ${item.source?.path ?? item.source?.uri ?? item.source?.kind ?? "unknown"}`,
+        `source: ${describeContextSourceForModel(item)}`,
         `layer: ${String(item.metadata.layer ?? layerForContextItem(item))}`,
         "content:",
         item.content,
       ].join("\n"),
     ),
   ].join("\n\n");
+}
+
+function describeContextSourceForModel(item: ContextItem): string {
+  const kind = item.source?.kind;
+  if (kind === "skill") {
+    const skillName = promptMetadataString(item.metadata, "skillName");
+    return skillName ? `skill:${skillName}` : "skill";
+  }
+  if (kind === "skill_index") return "skill_index";
+
+  const path = item.source?.path;
+  if (path && !isLikelyHostAbsoluteLocator(path)) return path;
+
+  const uri = item.source?.uri;
+  if (uri && !isLikelyHostAbsoluteLocator(uri)) return uri;
+
+  return kind ?? item.type;
+}
+
+function isLikelyHostAbsoluteLocator(value: string): boolean {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("\\\\") ||
+    value.startsWith("file:/") ||
+    /^[A-Za-z]:[\\/]/.test(value)
+  );
 }
 
 function summarizeArtifactRef(artifact: Artifact): {

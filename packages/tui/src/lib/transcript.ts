@@ -15,7 +15,11 @@
  * export is lossless without being overwhelming.
  */
 
-import type { RunEvent } from "./event-type.js";
+import { isInternalTranscriptEvent, type RunEvent } from "./event-type.js";
+import {
+  formatToolRequestPreview,
+  summarizeToolResultForDisplay,
+} from "./tool-display.js";
 
 export interface TranscriptHeader {
   sessionId: string;
@@ -45,12 +49,22 @@ export function renderTranscript(
   // model.stream.started and model.stream.completed. We keep buffers per
   // run so concurrent streams don't cross-contaminate (rare today, future-proof).
   const streamBuffers = new Map<string, string>();
+  const toolRequests = new Map<
+    string,
+    { toolName?: string; arguments?: unknown }
+  >();
 
   const tail: RunEvent[] = []; // events we didn't render as a section
 
   for (const ev of events) {
     const p = (ev.payload ?? {}) as Record<string, unknown>;
-    const runId = typeof p.runId === "string" ? p.runId : "main";
+    const eventRunId = (ev as unknown as { runId?: unknown }).runId;
+    const runId =
+      typeof p.runId === "string"
+        ? p.runId
+        : typeof eventRunId === "string"
+          ? eventRunId
+          : "main";
 
     switch (ev.type) {
       case "run.started": {
@@ -111,32 +125,64 @@ export function renderTranscript(
       }
       case "tool.requested": {
         const name = typeof p.toolName === "string" ? p.toolName : "?";
+        const id = typeof p.id === "string" ? p.id : undefined;
+        const args = p.input ?? p.args ?? p.arguments;
+        if (id) toolRequests.set(id, { toolName: name, arguments: args });
         out.push(`### Tool: \`${name}\``);
-        const args = p.input ?? p.args;
         if (args !== undefined) {
           out.push("");
-          out.push("```json");
-          out.push(safeJson(args));
-          out.push("```");
+          const preview = formatToolRequestPreview(name, args, 140);
+          if (preview) {
+            out.push(`_Args:_ ${preview}`);
+          } else {
+            out.push("```json");
+            out.push(safeJson(args));
+            out.push("```");
+          }
         }
         out.push("");
         break;
       }
       case "tool.completed": {
-        const name = typeof p.toolName === "string" ? p.toolName : "?";
+        const toolCallId =
+          typeof p.toolCallId === "string" ? p.toolCallId : undefined;
+        const request = toolCallId ? toolRequests.get(toolCallId) : undefined;
+        const name =
+          typeof p.toolName === "string"
+            ? p.toolName
+            : (request?.toolName ?? "?");
         const result = p.result ?? p.output;
         if (result !== undefined) {
           out.push(`_Result of \`${name}\`:_`);
           out.push("");
-          out.push("```");
-          out.push(typeof result === "string" ? result : safeJson(result));
-          out.push("```");
+          const display = summarizeToolResultForDisplay({
+            toolName: name,
+            result,
+            mode: "export",
+          });
+          if (display.kind === "summary") {
+            if (display.head) out.push(display.head);
+            for (const line of display.details) out.push(`- ${line}`);
+          } else if (display.kind === "markdown") {
+            out.push(display.text);
+            for (const line of display.details) out.push(`- ${line}`);
+          } else {
+            out.push("```");
+            out.push(typeof result === "string" ? result : safeJson(result));
+            out.push("```");
+          }
           out.push("");
         }
         break;
       }
       case "tool.failed": {
-        const name = typeof p.toolName === "string" ? p.toolName : "?";
+        const toolCallId =
+          typeof p.toolCallId === "string" ? p.toolCallId : undefined;
+        const request = toolCallId ? toolRequests.get(toolCallId) : undefined;
+        const name =
+          typeof p.toolName === "string"
+            ? p.toolName
+            : (request?.toolName ?? "?");
         const err =
           typeof p.error === "object" && p.error !== null
             ? safeJson(p.error)
@@ -181,7 +227,13 @@ export function renderTranscript(
       }
       case "run.completed": {
         const stopReason =
-          typeof p.stopReason === "string" ? p.stopReason : "completed";
+          typeof p.stopReason === "string"
+            ? p.stopReason
+            : typeof p.reason === "string"
+              ? p.reason
+              : typeof p.state === "string"
+                ? p.state
+                : "completed";
         out.push("---");
         out.push("");
         out.push(`_Run completed: **${stopReason}**_`);
@@ -202,7 +254,7 @@ export function renderTranscript(
         break;
       }
       default:
-        tail.push(ev);
+        if (!isInternalTranscriptEvent(ev.type)) tail.push(ev);
     }
   }
 
@@ -230,83 +282,4 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-/**
- * Return the text of the most recent assistant turn, or null if there isn't
- * one. `model.completed` (and the eager-tool `model.assistant_text`) carry the
- * final text at `payload.message` for both providers; we scan backward so the
- * latest reply wins. Used by /copy to put the answer on the clipboard.
- */
-export interface TranscriptMessage {
-  role: "user" | "assistant";
-  /** Full message text (used when copying). */
-  text: string;
-}
-
-export interface TranscriptMatch extends TranscriptMessage {
-  /** One-line snippet around the first match (used for the results list). */
-  snippet: string;
-}
-
-/** Collect the conversation's user goals and assistant answers, in order. */
-export function collectTranscriptMessages(
-  events: RunEvent[],
-): TranscriptMessage[] {
-  const out: TranscriptMessage[] = [];
-  for (const ev of events) {
-    if (ev.type === "tui.user") {
-      const goal = (ev.payload as { goal?: unknown } | null)?.goal;
-      if (typeof goal === "string" && goal.trim())
-        out.push({ role: "user", text: goal });
-    } else if (
-      ev.type === "model.completed" ||
-      ev.type === "model.assistant_text"
-    ) {
-      const message = (ev.payload as { message?: unknown } | null)?.message;
-      if (typeof message === "string" && message.trim())
-        out.push({ role: "assistant", text: message });
-    }
-  }
-  return out;
-}
-
-/**
- * Case-insensitive substring search over the conversation. An empty query
- * returns every message (so the dialog can list them). Each match carries a
- * one-line snippet windowed around the first hit. The committed transcript
- * lives in terminal scrollback (can't be programmatically scrolled), so this
- * powers "find → copy", not "find → jump".
- */
-export function searchTranscript(
-  events: RunEvent[],
-  query: string,
-  snippetWidth = 72,
-): TranscriptMatch[] {
-  const q = query.trim().toLowerCase();
-  const out: TranscriptMatch[] = [];
-  for (const msg of collectTranscriptMessages(events)) {
-    const flat = msg.text.replace(/\s+/g, " ").trim();
-    const lower = flat.toLowerCase();
-    const hit = q ? lower.indexOf(q) : 0;
-    if (q && hit < 0) continue;
-    const start = Math.max(0, hit - Math.floor(snippetWidth / 3));
-    let snippet = flat.slice(start, start + snippetWidth);
-    if (start > 0) snippet = "…" + snippet;
-    if (start + snippetWidth < flat.length) snippet = snippet + "…";
-    out.push({ role: msg.role, text: msg.text, snippet });
-  }
-  return out;
-}
-
-export function lastAssistantMessage(events: RunEvent[]): string | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const ev = events[i];
-    if (ev.type !== "model.completed" && ev.type !== "model.assistant_text") {
-      continue;
-    }
-    const message = (ev.payload as { message?: unknown } | null)?.message;
-    if (typeof message === "string" && message.trim()) return message;
-  }
-  return null;
 }

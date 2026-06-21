@@ -18,7 +18,7 @@ import {
   type ToolGovernance,
 } from "@sparkwright/core";
 
-import { parseCommand } from "./command-parser.js";
+import { parseCommand, stripHereDocBodies } from "./command-parser.js";
 import {
   evaluateShellSafety,
   type ShellSafetyDecision,
@@ -695,7 +695,7 @@ async function assertShellPathScope(
     });
   }
 
-  const parsed = parseCommand(input.command);
+  const parsed = parseCommand(stripHereDocBodies(input.command));
   for (const arg of parsed.argv.slice(1)) {
     const escaped = await firstEscapedAbsolutePath(roots, arg);
     if (escaped) {

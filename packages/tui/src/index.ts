@@ -27,6 +27,9 @@ interface CliOverrides {
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   shouldWrite?: boolean;
+  approveAll?: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   modelName?: string;
   sessionId?: string;
   help?: boolean;
@@ -52,6 +55,12 @@ function parseArgs(
       else out.modelName = argv[++i];
     } else if (a === "--write") {
       out.shouldWrite = true;
+    } else if (a === "--yes" || a === "--yes-all") {
+      out.approveAll = true;
+    } else if (a === "--yes-edits") {
+      out.approveEdits = true;
+    } else if (a === "--yes-shell-safe") {
+      out.approveShellSafe = true;
     } else if (a === "--permission-mode") {
       const v = argv[i + 1];
       if (!v) errors.push("Usage: --permission-mode requires a value");
@@ -71,9 +80,7 @@ function parseArgs(
         out.traceLevel = v;
         i += 1;
       } else {
-        errors.push(
-          "Usage: --trace-level must be one of: minimal, standard, debug",
-        );
+        errors.push("Usage: --trace-level must be one of: standard, debug");
         i += 1;
       }
     } else if (a === "--session-id") {
@@ -164,7 +171,8 @@ async function maybePrintFirstRunConfigHint(initialCwd: string): Promise<void> {
 
 function tuiUsage(): string {
   return [
-    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level minimal|standard|debug] [--session-id id]",
+    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
+    "       sparkwright tui [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
     "       node packages/tui/dist/index.js [same options]",
   ].join("\n");
 }

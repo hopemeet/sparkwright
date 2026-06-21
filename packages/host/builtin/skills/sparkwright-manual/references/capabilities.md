@@ -86,6 +86,9 @@ Server descriptors support:
 
 Default policy for MCP capabilities should be conservative. Record server name,
 tool origin, policy decision, approval result, and execution result in trace.
+Stdio MCP servers without an explicit `cwd` run from a neutral temporary
+directory rather than the workspace; configure `cwd` only for trusted servers
+that intentionally need project files.
 Configured MCP servers default to `startup: "lazy"`: normal runs expose MCP
 gateway tools but do not connect until the server is actually used. Use
 `startup: "prepare"` when concrete MCP tool names must be discoverable through
@@ -185,8 +188,9 @@ In-run, agent profile capabilities are split across two tools so read-only
 inspection never triggers an approval prompt:
 
 - `list_agents` — `list` / `validate`. Read-only, no approval.
-- `create_agent` — `create` / `remove`. Writes `.sparkwright/config.json`, so
-  it requires approval. `create` needs an `id` and a `prompt`.
+- `create_agent` — `create` / `remove`. Writes the project
+  `.sparkwright/config.{json,yaml,yml}` file, preserving an existing YAML config,
+  so it requires approval. `create` needs an `id` and a `prompt`.
 
 Skills follow the same split: `list_skills` (`list` / `validate`, read-only)
 and `create_skill` (`create`, writes a SKILL.md, requires approval).

@@ -353,6 +353,66 @@ describe("SparkwrightRun", () => {
     expect(event?.payload).toHaveProperty("toolCallId");
   });
 
+  it("correlates on-demand skill load failures with the failed tool call", async () => {
+    const skillLoad = defineTool({
+      name: "skill_load",
+      description: "Load a skill.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+        },
+        required: ["name"],
+      },
+      policy: { risk: "safe" },
+      execute() {
+        return {
+          status: "not_found",
+          requestedName: "missing-skill",
+          message: "Skill not found.",
+        };
+      },
+    });
+    const run = createRun({
+      goal: "load missing skill",
+      tools: [skillLoad],
+      maxSteps: 2,
+      model: {
+        async complete(input) {
+          if (input.step === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "skill_load",
+                  arguments: { name: "missing-skill" },
+                },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    const toolFailed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    const skillFailed = run.events
+      .all()
+      .find((event) => event.type === "skill.failed");
+    const toolPayload = toolFailed?.payload as
+      | { toolCallId?: string }
+      | undefined;
+    expect(toolPayload?.toolCallId).toEqual(expect.any(String));
+    expect(skillFailed?.payload).toMatchObject({
+      toolCallId: toolPayload?.toolCallId,
+      name: "missing-skill",
+      status: "not_found",
+    });
+  });
+
   it("uses a configured context assembler before model calls", async () => {
     const run = createRun({
       goal: "custom context",
@@ -1052,6 +1112,51 @@ describe("SparkwrightRun", () => {
       toolName: "read",
       status: "failed",
     });
+  });
+
+  it("stops repeated shell commands even when timeoutMs varies", async () => {
+    let executed = 0;
+    let step = 0;
+
+    const shell = defineTool({
+      name: "shell",
+      description: "Run a shell command.",
+      inputSchema: { type: "object" },
+      execute() {
+        executed += 1;
+        throw new Error("command failed");
+      },
+    });
+
+    const run = createRun({
+      goal: "hammer a failing shell command",
+      tools: [shell],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          step += 1;
+          return {
+            toolCalls: [
+              {
+                toolName: "shell",
+                arguments: { command: "printf same", timeoutMs: step * 1000 },
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result).toMatchObject({
+      signal: "failed",
+      state: "failed",
+      stopReason: "tool_doom_loop",
+      failure: { category: "tool", code: "TOOL_DOOM_LOOP" },
+    });
+    expect(executed).toBe(1);
+    expect(step).toBeLessThan(8);
   });
 
   it("nudges the model one step before the doom-loop stop and lets it recover", async () => {
@@ -3687,6 +3792,73 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("marks duplicate same-batch calls as in-flight duplicates", async () => {
+    let executed = 0;
+    let modelCalls = 0;
+    const read = defineTool({
+      name: "read",
+      description: "Read-only test tool.",
+      inputSchema: { type: "object", properties: { path: { type: "string" } } },
+      governance: { sideEffects: ["read"], idempotency: "conditional" },
+      async execute() {
+        executed += 1;
+        await sleep(20);
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "same batch duplicate",
+      tools: [read],
+      maxToolConcurrency: 2,
+      maxSteps: 3,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "read", arguments: { path: "README.md" } },
+                { toolName: "read", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const duplicate = run.events.all().find(
+      (event) =>
+        event.type === "tool.failed" &&
+        (
+          event.payload as {
+            error?: { metadata?: { duplicateKind?: string } };
+          }
+        ).error?.metadata?.duplicateKind === "in_flight_duplicate",
+    );
+
+    expect(result.signal).toBe("completed");
+    expect(executed).toBe(1);
+    expect(duplicate).toBeDefined();
+    expect(
+      (duplicate?.payload as { error?: { message?: string } }).error?.message,
+    ).toContain("still running");
+    expect(
+      (duplicate?.payload as { error?: { message?: string } }).error?.message,
+    ).not.toContain("returned the same result");
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "run.failed" &&
+            (event.payload as { code?: string }).code === "TOOL_DOOM_LOOP",
+        ),
+    ).toBe(false);
+  });
+
   it("nests tool-call spans under the batch span under the run span", async () => {
     let modelCalls = 0;
     const readTool = (name: string) =>
@@ -3900,6 +4072,46 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("preserves streamed cost-availability status in model.completed usage", async () => {
+    const run = createRun({
+      goal: "stream usage with unavailable pricing",
+      model: {
+        async complete() {
+          throw new Error("complete() should not be called");
+        },
+        async *stream() {
+          yield { type: "text_delta" as const, text: "done" };
+          yield {
+            type: "usage" as const,
+            usage: {
+              inputTokens: 5,
+              outputTokens: 6,
+              totalTokens: 11,
+              costStatus: "unavailable" as const,
+              costUnavailableReason: "missing_pricing",
+            },
+          };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    const modelCompleted = run.events
+      .all()
+      .find((event) => event.type === "model.completed");
+    // The merged streaming usage must keep the adapter's cost signal so the
+    // trace can explain why cost is unavailable rather than looking silent.
+    expect(modelCompleted?.payload).toMatchObject({
+      usage: {
+        totalTokens: 11,
+        costStatus: "unavailable",
+        costUnavailableReason: "missing_pricing",
+      },
+    });
+  });
+
   it("threads live usage (cost / context-window pressure) into compaction hints", async () => {
     const echo = defineTool({
       name: "echo",
@@ -3939,6 +4151,7 @@ describe("SparkwrightRun", () => {
     > = [];
     const captureStage = {
       name: "capture-usage",
+      tier: "summarize" as const,
       trigger: "auto" as const,
       shouldRun(input: { hints: { usage?: unknown } }) {
         seenUsage.push(

@@ -1,7 +1,7 @@
 # Configuration
 
-Sparkwright configuration is user-editable JSON shared by the CLI, TUI, and
-host runtime. The schema is
+Sparkwright configuration is user-editable JSON or YAML shared by the CLI,
+TUI, and host runtime. The schema is
 [schemas/config.schema.json](../../schemas/config.schema.json).
 
 Use this guide in two passes: first choose the right configuration layer, then
@@ -12,13 +12,15 @@ field before running SparkWright.
 ## Choose The Right Layer
 
 ```txt
-Personal config: ~/.config/sparkwright/config.json
+Personal config: ~/.config/sparkwright/config.yaml
   Put private provider settings here: model, providers, API keys, personal TUI
   preferences. This file is created by `sparkwright init` and is chmod 600.
+  Existing config.json/config.yaml/config.yml files are also loaded.
 
-Project config: <workspace>/.sparkwright/config.json
+Project config: <workspace>/.sparkwright/config.yaml
   Put team-safe runtime defaults here: permissionMode, tools, skills, MCP,
   agents. This file is safe to commit when it does not contain secrets.
+  Existing config.json/config.yaml/config.yml files are also loaded.
 
 Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
   Use these for one-off runs, CI jobs, or local experiments.
@@ -27,15 +29,35 @@ Temporary overrides: SPARKWRIGHT_CONFIG, environment variables, CLI flags
 Do not put provider API keys in project config. Keep credentials in the user
 file or environment variables.
 
+## Where Files Live
+
+SparkWright keeps installation, configuration, state, and project artifacts in
+separate locations:
+
+| What                                       | Default path                 | Notes                                                                                       |
+| ------------------------------------------ | ---------------------------- | ------------------------------------------------------------------------------------------- |
+| Program install                            | `~/.sparkwright`             | Used by source installs for `versions/`, `current`, and `bin/sparkwright`.                  |
+| User config and user-authored capabilities | `~/.config/sparkwright`      | Personal `config.{json,yaml,yml}`, user Skills, agents, and commands.                       |
+| User runtime state                         | `~/.local/state/sparkwright` | Cron jobs/output, IM gateway routing state, host crash logs, and other machine-local state. |
+| Project data                               | `<workspace>/.sparkwright`   | Project config, project Skills/agents/commands, sessions, tasks, and exports.               |
+
+`~/.sparkwright` is not a config or state directory. Treat it as replaceable
+program files owned by source install and uninstall scripts.
+
 ## Load Order
 
 Configuration is loaded in this order, with later sources overriding earlier
 ones:
 
-1. `~/.config/sparkwright/config.json`
-2. `<workspace>/.sparkwright/config.json`
+1. `~/.config/sparkwright/config.{json,yaml,yml}`
+2. `<workspace>/.sparkwright/config.{json,yaml,yml}`
 3. `$SPARKWRIGHT_CONFIG`
 4. CLI flags and environment variables
+
+Within the user or project layer, SparkWright loads the first existing file in
+this order: `config.json`, `config.yaml`, then `config.yml`. If multiple files
+exist in the same layer, the first one still wins and validation reports a
+same-layer conflict so the duplicate can be removed deliberately.
 
 The `providers` map is merged by provider key. The security boundaries —
 `permissionMode`, `confidentialPaths`, `write`, and `shell.sandbox` — merge
@@ -50,25 +72,28 @@ Precedence, weak to strong:
 convention markdown files < user config < project config < $SPARKWRIGHT_CONFIG / CLI
 ```
 
-That means markdown files are a team-default convenience layer, while
-`config.json` remains the precise-control layer.
+That means markdown files are a team-default convenience layer, while config
+files remain the precise-control layer.
 
 ## Scaffold
 
 Installing Sparkwright does not write config files. The first interactive CLI
-or TUI run prints the user and project config paths if no config exists yet.
-Create files only when you choose to scaffold them:
+or TUI run scaffolds the user config if no config exists yet, then stops and
+asks you to set a provider key or environment variable before rerunning. You
+can also create files explicitly:
 
 Scaffold the two common layers separately:
 
 ```bash
-sparkwright init             # ~/.config/sparkwright/config.json
-sparkwright init --project   # <workspace>/.sparkwright/config.json
+sparkwright init             # ~/.config/sparkwright/config.yaml
+sparkwright init --project   # <workspace>/.sparkwright/config.yaml
 ```
 
-`sparkwright init` creates a personal provider template. Set the `apiKey` for
-the provider you want, or leave keys out of the file and use environment
-variables.
+`sparkwright init` creates the same personal config template used by first-run
+scaffolding. Set the `apiKey` for the provider you want, or leave keys out of
+the file and use environment variables. YAML templates point
+`yaml-language-server` at the local `config.schema.json` shipped with the
+installed CLI, so editor validation works without a schema server.
 
 `sparkwright init --project` creates a committable project template plus the
 convention directories:
@@ -111,7 +136,8 @@ The reserved `deterministic` provider is built in and does not need a
 
 ### Personal OpenAI-Compatible Provider
 
-Put this in `~/.config/sparkwright/config.json`:
+Put this in your user config file, for example
+`~/.config/sparkwright/config.yaml`:
 
 ```json
 {
@@ -176,7 +202,7 @@ summary deltas.
 
 ### Safe Project Defaults
 
-Put project-wide behavior in `<workspace>/.sparkwright/config.json`:
+Put project-wide behavior in `<workspace>/.sparkwright/config.yaml`:
 
 ```json
 {
@@ -206,11 +232,14 @@ Put project-wide behavior in `<workspace>/.sparkwright/config.json`:
 }
 ```
 
-Standard tools are enabled by default. `tools.disabled` is the only project
-setting that closes tools; `tools.defer` only delays provider schema loading for
-the listed built-in tools. MCP tools use `capabilities.mcp.toolSchemaLoad`
-instead of wildcard tool names. The `write` block caps a run to a single file
-with no line deletions; raise `maxFiles`/`maxDiffLines` or set
+Standard tools are enabled by default. Use `tools.use` when a run should only
+see broad tool groups, use `tools.allowed` for concrete-name allowlists, and use
+`tools.disabled` to close specific tools. `tools.defer` only delays provider
+schema loading for the listed built-in tools; it is not a permission boundary.
+MCP tools use
+`capabilities.mcp.toolSchemaLoad` instead of wildcard tool names. The `write`
+block caps a run to a single file with no line deletions; raise
+`maxFiles`/`maxDiffLines` or set
 `allowDeletions: true` for projects that expect broader edits. Because `write`
 merges conservatively, a personal config can tighten these further but a
 project config cannot loosen a stricter personal setting.
@@ -232,7 +261,11 @@ stdio MCP servers:
         "allowRead": ["."],
         "allowWrite": ["."],
         "denyRead": [".env", ".ssh", ".aws"],
-        "denyWrite": [".sparkwright/config.json"],
+        "denyWrite": [
+          ".sparkwright/config.json",
+          ".sparkwright/config.yaml",
+          ".sparkwright/config.yml"
+        ],
         "tmp": true
       },
       "network": {
@@ -447,10 +480,9 @@ Add a server under project `capabilities.mcp.servers`:
       "servers": [
         {
           "type": "stdio",
-          "name": "workspace",
+          "name": "search",
           "command": "node",
-          "args": ["./tools/workspace-mcp.js"],
-          "cwd": ".",
+          "args": ["/absolute/path/to/search-mcp.js"],
           "enabled": true
         }
       ],
@@ -466,11 +498,14 @@ Add a server under project `capabilities.mcp.servers`:
 }
 ```
 
-MCP `cwd` resolves from the config file that declares it. Stdio MCP servers use
-the same `shell.sandbox` process boundary as the built-in shell tool; HTTP and
-SSE MCP servers are remote transports and are governed by MCP policy rather
-than local process sandboxing. Prefer `requiresApproval: true` for tools that
-can touch workspace state, credentials, network services, or external systems.
+When `cwd` is omitted, stdio MCP servers start from a neutral temporary
+directory rather than the workspace. This keeps relative-path writes out of the
+project by default. If a server intentionally needs project files, set `cwd`
+explicitly and use a risky policy with approval. Relative MCP `cwd` values
+resolve from the config file that declares them; in a project
+`.sparkwright/config.json`, `"cwd": ".."` points at the workspace root while
+`"cwd": "."` points at `.sparkwright/`. HTTP and SSE MCP servers are remote
+transports and are governed by MCP policy rather than local process cwd.
 
 Configured MCP servers default to `startup: "lazy"`: a normal run records the
 server as configured but does not connect to it until an MCP gateway tool is
@@ -575,13 +610,21 @@ Put user arguments in prompt text instead.
   `maxToolCalls`, `maxDurationMs`, `maxTokens`, `maxCostUsd`). `maxModelCalls`
   is the tightest natural step bound. An explicit main agent profile under
   `capabilities.agents` overrides this.
+- `tasks`: routing and budget defaults for model-backed auxiliary tasks such as
+  session compaction. Each `tasks.<name>` entry may set `enabled`, `model`, and
+  `budget` (`maxSourceChars`, `maxInputTokens`, `maxOutputTokens`,
+  `maxCostUsd`, `unknownCostPolicy`). `maxSourceChars` is the always-enforced
+  floor; `maxInputTokens` is currently an advisory tokenizer-aware refinement,
+  and dollar caps are only enforceable when pricing is known.
 - `maxSteps`: explicit main-run step ceiling. Overrides the value derived from
   `runBudget` and the safety backstop.
-- `traceLevel`: default trace verbosity (`minimal`, `standard`, `debug`) when an
+- `traceLevel`: default trace verbosity (`standard`, `debug`) when an
   entrypoint does not pass one. CLI `--trace-level` overrides.
-- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`). CLI
-  flags (`--yes`, `--yes-edits`, `--yes-shell-safe`) still override.
-- `tools`: preferred tool disable/defer settings.
+- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`) plus
+  `cronMode` for unattended cron run/tick defaults. CLI flags
+  (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--permission-mode`) still
+  override.
+- `tools`: preferred tool selector, allow/disable, and defer settings.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
   schema loading.
@@ -630,10 +673,15 @@ wins and a warning is reported.
 
 ### Editor autocomplete and validation
 
-A full JSON Schema ships at `schemas/config.schema.json`. Wire it to your editor
-to get completion, hovers, and validation while authoring config — no hosted URL
-required. In VS Code, add a `json.schemas` mapping to your workspace or user
-settings (`.vscode/` is gitignored here, so this stays a personal setting):
+A full JSON Schema ships at `schemas/config.schema.json`, and the CLI package
+also includes the same schema under `dist/schemas/` so installed CLIs can use
+it for `config validate`. YAML files created by `sparkwright init` include a
+`yaml-language-server` schema directive pointing at that local installed schema
+with a `file://` URI. For JSON files, or for projects that prefer explicit
+workspace mappings, add editor mappings. In VS Code, add a
+`json.schemas` mapping for JSON files or the YAML extension's `yaml.schemas`
+mapping for YAML files. Keep it in your workspace or user settings
+(`.vscode/` is gitignored here, so this stays a personal setting):
 
 ```jsonc
 // .vscode/settings.json
@@ -644,12 +692,21 @@ settings (`.vscode/` is gitignored here, so this stays a personal setting):
       "url": "./schemas/config.schema.json",
     },
   ],
+  "yaml.schemas": {
+    "./schemas/config.schema.json": [
+      "**/.sparkwright/config.yaml",
+      "**/.sparkwright/config.yml",
+      "sparkwright/config.yaml",
+      "sparkwright/config.yml",
+    ],
+  },
 }
 ```
 
-Downstream projects can point `url` at the shipped copy under `node_modules`.
-The schema also permits a top-level `"$schema"` key if you prefer to reference a
-copy directly; the scaffolds do not emit one.
+Downstream projects can point `url` at the shipped copy under
+`node_modules/@sparkwright/cli/dist/schemas/config.schema.json`. The schema also
+permits a top-level `"$schema"` key if you prefer to reference a copy directly
+from JSON.
 
 ## Permission Modes
 
@@ -666,17 +723,55 @@ do not grant authority by themselves.
 
 Top-level `tools` is the preferred tool configuration surface.
 
+- `use`: high-level source/capability selectors retained in the prepared run
+  tool set. Omit it to keep the default "all otherwise enabled tools" behavior.
+- `allowed`: advanced concrete tool names retained in the prepared run tool
+  set. When both `use` and `allowed` are set, SparkWright keeps only tools that
+  pass both filters.
 - `disabled`: concrete tool names removed from the prepared run tool set.
 - `defer`: concrete built-in tool names kept available but omitted from the
   initial provider tool schema until discovered through `tool_search`.
 
+Selectors are: `workspace.read`, `workspace.write`, `shell`, `planning`,
+`skills`, `agents`, `tasks`, `cron`, `mcp`, and `mcp:<server>`. Multiple
+selectors in one file are a union; multiple config layers intersect, so a
+project can narrow a user setting. For example, user `use: ["mcp"]` plus project
+`use: ["mcp:demo"]` yields only the `demo` MCP server tools.
+Model-backed implementation delegates should usually select both
+`workspace.read` and `workspace.write`; write-only delegates often cannot find
+safe patch anchors. Delegates that select `shell` still require a write-enabled
+run, because shell is policy-gated as a side-effecting capability even when a
+particular command appears read-only.
+
+The `tool_search` discovery tool is not a selector. It is appended
+automatically whenever the resolved tool set still contains deferred tools (so
+their schemas can be loaded on demand) and is exempt from `use`/`allowed`
+filtering; add `tool_search` to `disabled` to opt out of discovery entirely.
+
 When `defer` is omitted, SparkWright applies a small default defer list for
 low-frequency tools (`todo_write`, `read_anchored_text`,
 `edit_anchored_text`). Use an explicit empty list (`"defer": []`) to disable
-that default. `tools.disabled` and `tools.defer` accept only concrete tool
-names (no wildcards); inspect available names before editing. The legacy
-`capabilities.tools` surface (including its `enabled` allowlist and wildcard
-patterns) has been removed — move any such config to top-level `tools`.
+that default. `tools.allowed`, `tools.disabled`, and `tools.defer` accept only
+concrete tool names (no wildcards); inspect available names before editing. When
+multiple config layers set `allowed`, the effective allowlist is their
+intersection. `disabled` is still stricter and removes a tool even if it is also
+listed in `use` or `allowed`. Selector-filtered deferred tools keep
+`tool_search` available automatically; if you use a concrete `allowed` list for
+deferred tools, either also allow `tool_search` or set `"defer": []` so the
+provider receives their schemas up front.
+
+For a run surface that should only expose one MCP server, prefer a selector:
+
+```json
+{
+  "tools": {
+    "use": ["mcp:demo"]
+  }
+}
+```
+
+The legacy `capabilities.tools` surface (including its `enabled` allowlist and
+wildcard patterns) has been removed — move any such config to top-level `tools`.
 
 MCP server tools are controlled under `capabilities.mcp`:
 
@@ -698,24 +793,29 @@ server's own `toolSchemaLoad` to override the MCP default for that server.
 
 These settings only decide which tools the host prepares before a run. Tool
 execution still goes through policy, approval, validation, and trace.
+Stdio MCP servers without `cwd` run from a neutral temporary directory; set
+`cwd` explicitly only for trusted servers that need local project access.
 
-The CLI can manage user-level tool settings in
-`~/.config/sparkwright/config.json`:
+The CLI can manage user-level tool settings in the first existing user config
+file, preserving JSON or YAML formatting:
 
 ```bash
-sparkwright tools list --format text
 sparkwright tools disable shell
+sparkwright tools allow mcp_demo_list_tools mcp_demo_call_tool
 sparkwright tools defer todo_write
 ```
 
 Add `--workspace <path>` to manage project defaults in
-`<workspace>/.sparkwright/config.json` instead:
+`<workspace>/.sparkwright/config.{json,yaml,yml}` instead:
 
 ```bash
-sparkwright tools list --workspace . --format text
 sparkwright tools disable shell --workspace .
+sparkwright tools allow mcp_demo_list_tools mcp_demo_call_tool --workspace .
 sparkwright tools defer todo_write --workspace .
 ```
+
+Use `sparkwright capabilities inspect --workspace . --format text` for the
+runtime tool inventory.
 
 ## Skill Loading
 
@@ -733,6 +833,13 @@ resident up front, and the model pulls bodies it judges relevant via
 Set `loadSelectedSkills: true` only when you deliberately want matched Skill
 bodies resident before the first model call.
 
+`capabilities.skills.inlineShell.enabled` opts into `` !`cmd` `` preprocessing
+inside `SKILL.md`. Host runs execute those snippets as no-write, fail-closed
+skill scripts: sandbox enforcement is forced, workspace writes are disabled,
+and failure inserts only a short marker into the Skill body while trace retains
+bounded diagnostics. Inspect the effective policy with
+`sparkwright capabilities inspect --workspace . --format text`.
+
 ## Agent Profiles
 
 Workspace agent profiles can be managed through the project config file and
@@ -743,6 +850,7 @@ sparkwright agents list --workspace .
 sparkwright agents validate --workspace .
 sparkwright agents create reviewer \
   --prompt "Inspect changes for correctness and risk." \
+  --use workspace.read \
   --allow read_file \
   --allow glob \
   --delegate delegate_reviewer \
@@ -750,8 +858,11 @@ sparkwright agents create reviewer \
 ```
 
 Markdown profiles are folded under `capabilities.agents.profiles`; if the same
-id exists in `config.json`, the config entry wins. Advanced fields such as
-policy and run budget should stay in `config.json`.
+id exists in a config file, the config entry wins. `use` accepts the same broad
+tool selectors as top-level `tools.use`; it is intersected with inherited
+selectors and concrete `allowedTools`. `capabilities.agents.maxDepth` can cap
+nested child/delegate spawning globally. Advanced fields such as policy and run
+budget should stay in the config file.
 
 ## Cost Metadata
 
@@ -798,7 +909,8 @@ metadata.
 `theme`, `mouse`, and `keybindings` are TUI-only. Provider, model, permission,
 and workspace settings apply to both CLI and TUI surfaces.
 `palette.open` and `quick.switch` are unbound by default; use `/palette` and
-`/quick`, or add bindings here if you want direct shortcuts.
+`/quick` (the quick mode of `/sessions`), or add bindings here if you want
+direct shortcuts.
 
 ## Inspect And Troubleshoot
 
@@ -811,34 +923,38 @@ sparkwright config inspect --workspace .       # effective config, redacted
 sparkwright config explain --workspace .       # field origins and values
 sparkwright config example hooks               # paste-ready grouped snippet
 sparkwright capabilities inspect --workspace . --format text
-sparkwright tools list --format text
 sparkwright agents validate --workspace .
 sparkwright skills validate --workspace .
 ```
 
 `config path` lists the resolution order and whether each layer loaded.
-`config validate` loads the merged config and prints any field problems,
-exiting non-zero when there are errors. `config inspect` prints the effective
-merged config with secret-looking fields redacted. `config explain` focuses on
-where each resolved field came from. `config example <name>` prints a
-copy-pasteable snippet in the grouped form (names: `write`, `sandbox`, `run`,
-`hooks`, `verification`, `mcp`, `agent`). `capabilities inspect` is read-only.
+`config validate` loads the config, checks each loaded file against the shipped
+schema, runs loader/semantic validation, and exits non-zero when there are
+errors. `config inspect` prints the effective merged config with secret-looking
+fields redacted. `config explain` focuses on where each resolved field came
+from. `config example <name>` prints a copy-pasteable snippet in the grouped
+form (names: `write`, `sandbox`, `run`, `hooks`, `verification`, `mcp`,
+`agent`). `capabilities inspect` is read-only.
 It summarizes the workspace, effective tool filters, Skill roots and shadows,
 agent roots and shadows, MCP servers, cron state paths, and command
-directories.
+directories. `doctor paths` prints the installation, config, capability, user
+state, and workspace state paths without starting a run.
 
 ## Install And Upgrade Safety
 
 Sparkwright treats config and project capabilities as user-owned assets:
 
 - Package installation does not create or modify config files.
-- First interactive use points at the expected config paths and suggests
-  `sparkwright init` or `sparkwright init --project`.
+- First interactive use may scaffold the user config once, using the same
+  non-overwriting template as `sparkwright init`.
 - `init` and `init --project` do not overwrite existing config files.
 - Project upgrade or reinstall must not overwrite existing Skills, agents,
   commands, sessions, tasks, or config.
 - Commands that can replace an existing user asset require an explicit
   `--force` or a dedicated apply/approval flow.
+- User-level runtime state belongs under `~/.local/state/sparkwright`; program
+  installation may use `~/.sparkwright`, but package install and upgrade should
+  not place config, credentials, sessions, or gateway state there.
 - Future config migrations should be inspectable and preferably dry-run before
   writing.
 
@@ -848,8 +964,8 @@ Sparkwright treats config and project capabilities as user-owned assets:
   and that the provider key exists under `providers`.
 - If an API key is ignored, check whether the matching environment variable is
   overriding config.
-- If a tool disappeared, look for `tools.disabled`, legacy allowlists, and MCP
-  server `enabled` settings.
+- If a tool disappeared, look for top-level `tools.use`, `tools.allowed`,
+  `tools.disabled`, `tools.defer`, and MCP server `enabled` settings.
 - If a project setting does not combine with a user setting, remember that most
   fields other than `providers` are replaced wholesale — except the security
   boundaries (`permissionMode`, `confidentialPaths`, `write`, `shell.sandbox`),
@@ -868,7 +984,7 @@ Recommended rules:
 - Provider keys and endpoint changes require explicit approval.
 - Permission mode changes require explicit approval.
 - Workspace root changes require explicit approval.
-- Tool enable/disable/defer changes should be visible in trace.
+- Tool allow/disable/defer changes should be visible in trace.
 - TUI-only cosmetic changes may be lower risk.
 - Agent-generated config diffs should be stored as artifacts.
 

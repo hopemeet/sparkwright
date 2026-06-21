@@ -24,6 +24,12 @@ export function mergeModelUsage(
     cacheCreationTokens:
       next.cacheCreationTokens ?? current?.cacheCreationTokens,
     costUsd: next.costUsd ?? current?.costUsd,
+    // Carry the cost-availability signal through streaming accumulation;
+    // dropping it here erases the adapter's "unavailable"/"missing_pricing"
+    // status so the merged usage on `model.completed` looks merely silent.
+    costStatus: next.costStatus ?? current?.costStatus,
+    costUnavailableReason:
+      next.costUnavailableReason ?? current?.costUnavailableReason,
   };
 }
 

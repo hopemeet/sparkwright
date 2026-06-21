@@ -219,6 +219,54 @@ describe("host spawn_agent wiring", () => {
     // taking >5s). The test budget must exceed the helper's own 12s deadline.
   }, 20000);
 
+  it("enforces maxDepth before spawning a dynamic child", async () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: {
+        async complete() {
+          return { message: "child done" };
+        },
+      },
+      childTools: [createReadFileTool()],
+      parentRunPolicy: createDefaultPolicy(),
+      maxDepth: 0,
+      childRunStoreFactory: (childAgentId: string) =>
+        createSessionRunStoreFactory({
+          sessionStore: new FileSessionStore({
+            rootDir: join(tmpdir(), "sparkwright-unused-session"),
+          }),
+          sessionId: "unused",
+          runStoreFactory: createSessionFileRunStoreFactory({
+            sessionRootDir: tmpdir(),
+            sessionId: "unused",
+            agentId: childAgentId,
+            traceLevel: "standard",
+          }),
+          metadata: { source: "test" },
+        }),
+    });
+
+    await expect(
+      spawnTool.execute(
+        {
+          goal: "read",
+          role: "reader",
+          prompt: "Read.",
+        },
+        { run: parent.record } as never,
+      ),
+    ).rejects.toThrow("capabilities.agents.maxDepth (0)");
+  });
+
   it("applies parent read-scope policy to dynamic child workspace reads", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-read-"));
     try {
@@ -358,11 +406,22 @@ describe("host spawn_agent wiring", () => {
           maxSteps: 1,
         },
         { run: parent.record } as never,
-      )) as { signal: string; stopReason: string; stepLimitReached?: boolean };
+      )) as {
+        signal: string;
+        stopReason: string;
+        stepLimitReached?: boolean;
+        truncated?: boolean;
+        finality?: string;
+        message?: string;
+      };
 
       expect(output.signal).toBe("completed");
       expect(output.stopReason).toBe("final_answer");
       expect(output.stepLimitReached).toBe(true);
+      expect(output.truncated).toBe(true);
+      expect(output.finality).toBe("partial");
+      expect(output.message).toContain("hit its step budget");
+      expect(output.message).toContain("partial list");
     } finally {
       // Child session-store writes can still be flushing as the run resolves;
       // retry the cleanup rather than racing them into an ENOTEMPTY.
@@ -730,6 +789,8 @@ describe("host spawn_agent wiring", () => {
         metadata?: {
           signal?: string;
           stopReason?: string;
+          truncated?: boolean;
+          finality?: string;
           partialObservations?: { toolName: string; output: string }[];
         };
       };
@@ -737,6 +798,8 @@ describe("host spawn_agent wiring", () => {
       expect(err.message).not.toContain("{");
       expect(err.metadata?.signal).toBe("failed");
       expect(err.metadata?.stopReason).toBe("tool_doom_loop");
+      expect(err.metadata?.truncated).toBe(false);
+      expect(err.metadata?.finality).toBe("partial");
 
       // The child's discovered data rides along in metadata for the parent.
       const observations = err.metadata?.partialObservations;

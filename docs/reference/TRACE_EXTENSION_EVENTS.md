@@ -1,9 +1,9 @@
 # Trace Extension Events
 
-This document defines experimental trace metadata and event shapes for extension
-packages. These names are not required in the core event schema yet; extension
-packages may attach the same data to run metadata or existing events until the
-shapes stabilize.
+This document defines trace metadata and event shapes for extension packages.
+Some names are promoted into the core event schema (`extension.process.*`,
+`skill.*`, `mcp.server.prepared`, `agent.profile.derived`); newer shapes may
+start as documentation contracts before they stabilize.
 
 The goal is reproducibility: a trace consumer should be able to explain which
 extension influenced model context, tool availability, policy, or external side
@@ -24,6 +24,93 @@ agent.profile.derived
 Core may later promote stable events into `event.schema.json`. Until then,
 these shapes are documentation contracts for extension packages and product
 shells.
+
+## extension.process.\*
+
+Emitted by host-controlled process runners for external commands, workflow hook
+commands, skill scripts, user hooks, external agents, and custom process
+invocations.
+
+Events:
+
+- `extension.process.started`
+- `extension.process.progress`
+- `extension.process.completed`
+- `extension.process.failed`
+
+Payload base:
+
+```json
+{
+  "invocationId": "proc_...",
+  "name": "pre-check",
+  "kind": "workflow_hook",
+  "runtime": "custom",
+  "commandPreview": "node",
+  "argsPreview": ["script.js"],
+  "cwd": "/workspace"
+}
+```
+
+Terminal events add:
+
+```json
+{
+  "exitCode": 0,
+  "signal": null,
+  "timedOut": false,
+  "durationMs": 120,
+  "output": {
+    "stdoutPreview": "ok\n",
+    "stderrPreview": "",
+    "stdoutBytes": 3,
+    "stderrBytes": 0,
+    "stdoutTruncated": false,
+    "stderrTruncated": false,
+    "artifactIds": ["artifact_..."]
+  },
+  "progressCount": 2,
+  "progressDropped": 0
+}
+```
+
+External scripts do not write Sparkwright events directly. A host runner may
+inject:
+
+```txt
+SPARKWRIGHT_TRACE_PROTOCOL=extension-jsonl-v1
+SPARKWRIGHT_TRACE_INVOCATION_ID=<invocationId>
+SPARKWRIGHT_TRACE_EVENTS=<private temp dir>/events.jsonl
+```
+
+Scripts may append JSONL progress records only:
+
+```json
+{ "type": "progress", "message": "indexed files", "data": { "files": 42 } }
+```
+
+The host ignores script-supplied event ids, sequence numbers, timestamps,
+span ids, and arbitrary event types. Progress timestamps and `monotonicUs`
+are host ingest-time values. `standard` traces suppress raw
+`extension.process.progress` rows and aggregate `progressHead` /
+`progressTail` onto the terminal event; `debug` traces keep raw progress rows.
+
+Foreground shell commands promoted to background tasks are different: the host
+adopts an already running process, so the user-visible lifecycle remains
+`task.started` / `task.output` / terminal `task.*`. The shared runner still
+collects bounded output summaries and artifacts, but it does not emit
+`extension.process.*` for that adopted task process.
+
+Skill inline shell preprocessing, when enabled, uses the same process contract
+with `name: "skill-inline-shell"` and `kind: "skill_script"`. These commands
+run during host skill loading, before the run event log may exist; hosts buffer
+their `extension.process.*` events and flush them once the run starts. The
+script still reports only progress JSONL through the host-owned inbox.
+`skill_script` command arguments are redacted in process lifecycle previews to a
+stable hash/byte summary, and `cwd` is rendered relative to the workspace when
+possible. Failed inline shell output is not inserted into the model-facing Skill
+body; the body receives a short marker, while trace terminal events retain
+bounded stdout/stderr previews for diagnostics.
 
 ## skill.indexed
 
@@ -50,11 +137,15 @@ indexed and used.
 
 ```json
 {
+  "toolCallId": "call_01h",
   "source": ".sparkwright/skills/bad/SKILL.md",
   "message": "Skill description must be a non-empty string: ...",
   "phase": "load"
 }
 ```
+
+On-demand loader failures include `toolCallId` when this event is the
+Skill-specific companion to a `tool.failed` result.
 
 ## skill.loaded
 

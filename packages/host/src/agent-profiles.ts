@@ -95,6 +95,8 @@ export function parseAgentProfileFile(id: string, raw: string): AgentProfile {
   const description = scalar(frontmatter, "description");
   if (description) profile.description = description;
 
+  const use = list(frontmatter, "use");
+  if (use.length > 0) profile.use = use;
   const allowedTools = list(frontmatter, "allowedtools");
   if (allowedTools.length > 0) profile.allowedTools = allowedTools;
   const deniedTools = list(frontmatter, "deniedtools");

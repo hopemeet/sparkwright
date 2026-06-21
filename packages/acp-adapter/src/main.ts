@@ -124,7 +124,7 @@ function printHelp(): void {
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
       "  --write                    allow approval-gated workspace writes",
       "  --permission-mode <mode>   plan | default | accept_edits | dont_ask | bypass_permissions",
-      "  --trace-level <level>      minimal | standard | debug",
+      "  --trace-level <level>      standard | debug",
       "",
     ].join("\n"),
   );

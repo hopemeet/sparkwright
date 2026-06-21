@@ -20,6 +20,13 @@ const permissionOptions: PermissionOption[] = [
   { optionId: "reject", kind: "reject_once", name: "Reject" },
 ];
 
+interface AcpTextRoutingState {
+  streamedMessageIds: Set<string>;
+  streamedRunIds: Set<string>;
+}
+
+const textRoutingBySession = new WeakMap<AcpSessionInfo, AcpTextRoutingState>();
+
 export async function routeHostEventToAcp(input: {
   session: AcpSessionInfo;
   connection: AcpConnection;
@@ -31,7 +38,7 @@ export async function routeHostEventToAcp(input: {
     return;
   }
 
-  const updates = hostEventToSessionUpdates(event);
+  const updates = hostEventToSessionUpdates(event, textRoutingState(session));
   for (const update of updates) {
     await connection.sessionUpdate({
       sessionId: session.sessionId,
@@ -42,18 +49,13 @@ export async function routeHostEventToAcp(input: {
 
 export function hostEventToSessionUpdates(
   event: HostEvent,
+  state?: AcpTextRoutingState,
 ): SessionNotification["update"][] {
   switch (event.kind) {
     case "run.event":
-      return coreEventToSessionUpdates(event.payload.event);
+      return coreEventToSessionUpdates(event.payload.event, state);
     case "run.completed":
-      return [
-        agentText(
-          event.payload.todoHandoff?.message ??
-            `Run ${event.payload.state}: ${event.payload.stopReason ?? "complete"}`,
-          event.payload.runId,
-        ),
-      ];
+      return [];
     case "run.failed":
       return [
         agentText(
@@ -62,12 +64,7 @@ export function hostEventToSessionUpdates(
         ),
       ];
     case "run.continuation":
-      return [
-        agentText(
-          `Continuing run (${event.payload.reason}, #${event.payload.continuationCount}).`,
-          event.payload.runId,
-        ),
-      ];
+      return [];
     case "host.log":
       return [];
     case "host.ready":
@@ -78,25 +75,30 @@ export function hostEventToSessionUpdates(
 
 function coreEventToSessionUpdates(
   event: unknown,
+  state?: AcpTextRoutingState,
 ): SessionNotification["update"][] {
   if (!isRecord(event)) return [];
   const type = stringValue(event.type);
   const payload = isRecord(event.payload) ? event.payload : {};
-  const messageId = stringValue(event.id) ?? stringValue(event.runId);
+  const runId = stringValue(event.runId) ?? stringValue(payload.runId);
+  const messageId =
+    stringValue(payload.messageId) ??
+    stringValue(payload.id) ??
+    runId ??
+    stringValue(event.id);
 
   switch (type) {
-    case "model.stream.chunk":
-      return textFromAny(payload, ["text", "delta", "content"])
-        ? [
-            agentText(
-              textFromAny(payload, ["text", "delta", "content"])!,
-              messageId,
-            ),
-          ]
-        : [];
+    case "model.stream.chunk": {
+      const text = textFromAny(payload, ["text", "delta", "content"]);
+      if (!text) return [];
+      if (messageId) state?.streamedMessageIds.add(messageId);
+      if (runId) state?.streamedRunIds.add(runId);
+      return [agentText(text, messageId)];
+    }
     case "model.assistant_text":
     case "model.completed": {
       const text = textFromAny(payload, ["message", "text", "content"]);
+      if (hasStreamedText(state, { messageId, runId })) return [];
       return text ? [agentText(text, messageId)] : [];
     }
     case "tool.requested":
@@ -151,23 +153,32 @@ function coreEventToSessionUpdates(
         },
       ];
     case "workspace.write.completed":
-      return [
-        agentText(
-          `Workspace write completed${pathSuffix(payload)}.`,
-          messageId,
-        ),
-      ];
     case "workspace.write.denied":
-      return [
-        agentText(`Workspace write denied${pathSuffix(payload)}.`, messageId),
-      ];
     case "artifact.created":
-      return [
-        agentText(`Artifact created${artifactSuffix(payload)}.`, messageId),
-      ];
+      return [];
     default:
       return [];
   }
+}
+
+function textRoutingState(session: AcpSessionInfo): AcpTextRoutingState {
+  const existing = textRoutingBySession.get(session);
+  if (existing) return existing;
+  const created = {
+    streamedMessageIds: new Set<string>(),
+    streamedRunIds: new Set<string>(),
+  };
+  textRoutingBySession.set(session, created);
+  return created;
+}
+
+function hasStreamedText(
+  state: AcpTextRoutingState | undefined,
+  input: { messageId: string | undefined; runId: string | undefined },
+): boolean {
+  if (!state) return false;
+  if (input.messageId) return state.streamedMessageIds.has(input.messageId);
+  return Boolean(input.runId && state.streamedRunIds.has(input.runId));
 }
 
 async function requestApprovalThroughAcp(input: {
@@ -278,19 +289,6 @@ function summarizeToolOutput(payload: Record<string, unknown>): string {
   } catch {
     return "Tool completed.";
   }
-}
-
-function pathSuffix(payload: Record<string, unknown>): string {
-  const path = stringValue(payload.path);
-  return path ? ` for ${path}` : "";
-}
-
-function artifactSuffix(payload: Record<string, unknown>): string {
-  const id = stringValue(payload.id);
-  const type = stringValue(payload.type);
-  if (type && id) return `: ${type} ${id}`;
-  if (id) return `: ${id}`;
-  return "";
 }
 
 function textFromAny(

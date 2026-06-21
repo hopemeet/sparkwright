@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { LayerStack } from "../src/state/layer-stack.js";
 
 describe("LayerStack", () => {
-  it("orders by priority — approval floats above palette", () => {
+  it("orders by priority — approval floats above ordinary panels", () => {
     const s = new LayerStack();
-    s.push("palette");
+    s.push("help");
     s.push("approval", { id: "a1" });
     const top = s.top();
     expect(top?.name).toBe("approval");
@@ -21,17 +21,17 @@ describe("LayerStack", () => {
 
   it("pop by name removes only that layer", () => {
     const s = new LayerStack();
-    s.push("palette");
+    s.push("events");
     s.push("help");
-    s.pop("palette");
+    s.pop("events");
     expect(s.getSnapshot().map((l) => l.name)).toEqual(["help"]);
   });
 
   it("toggle pushes then pops", () => {
     const s = new LayerStack();
-    s.toggle("palette");
-    expect(s.has("palette")).toBe(true);
-    s.toggle("palette");
-    expect(s.has("palette")).toBe(false);
+    s.toggle("help");
+    expect(s.has("help")).toBe(true);
+    s.toggle("help");
+    expect(s.has("help")).toBe(false);
   });
 });

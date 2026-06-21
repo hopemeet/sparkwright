@@ -6,7 +6,11 @@ export {
   isDestructive,
   type DestructiveScanResult,
 } from "./destructive-patterns.js";
-export { parseCommand, type ParsedCommand } from "./command-parser.js";
+export {
+  parseCommand,
+  stripHereDocBodies,
+  type ParsedCommand,
+} from "./command-parser.js";
 export {
   evaluateShellSafety,
   type ShellSafetyDecision,

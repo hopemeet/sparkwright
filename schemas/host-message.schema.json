@@ -319,6 +319,7 @@
       "required": ["goal"],
       "properties": {
         "goal": { "type": "string", "minLength": 1 },
+        "input": { "$ref": "#/$defs/RunInputPayload" },
         "sessionId": { "type": "string", "minLength": 1 },
         "targetPath": {
           "type": "string",
@@ -342,7 +343,7 @@
         },
         "traceLevel": {
           "type": "string",
-          "enum": ["minimal", "standard", "debug"]
+          "enum": ["standard", "debug"]
         },
         "metadata": { "type": "object" }
       },
@@ -401,7 +402,7 @@
         },
         "traceLevel": {
           "type": "string",
-          "enum": ["minimal", "standard", "debug"]
+          "enum": ["standard", "debug"]
         },
         "metadata": { "type": "object" }
       },
@@ -413,9 +414,58 @@
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
         "content": { "type": "string", "minLength": 1 },
+        "input": { "$ref": "#/$defs/RunInputPayload" },
         "metadata": { "type": "object" }
       },
       "additionalProperties": false
+    },
+    "RunInputPayload": {
+      "type": "object",
+      "properties": {
+        "parts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RunInputPart" }
+        },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "RunInputPart": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "text"],
+          "properties": {
+            "type": { "const": "text" },
+            "text": { "type": "string" },
+            "metadata": { "type": "object" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "enum": ["image", "file", "audio"] },
+            "data": { "type": "string", "minLength": 1 },
+            "uri": { "type": "string", "minLength": 1 },
+            "mediaType": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "metadata": { "type": "object" }
+          },
+          "anyOf": [
+            {
+              "properties": { "data": { "type": "string", "minLength": 1 } },
+              "required": ["data"]
+            },
+            {
+              "properties": { "uri": { "type": "string", "minLength": 1 } },
+              "required": ["uri"]
+            }
+          ],
+          "additionalProperties": false
+        }
+      ]
     },
     "ApprovalResolveRequestPayload": {
       "type": "object",
@@ -423,7 +473,8 @@
       "properties": {
         "approvalId": { "type": "string", "minLength": 1 },
         "decision": { "type": "string", "enum": ["approved", "denied"] },
-        "message": { "type": "string" }
+        "message": { "type": "string" },
+        "autoApproved": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -494,6 +545,9 @@
             "loaded": {
               "type": "array",
               "items": { "$ref": "#/$defs/CapabilitySkillSummary" }
+            },
+            "inlineShell": {
+              "$ref": "#/$defs/CapabilitySkillInlineShellSummary"
             }
           },
           "additionalProperties": false
@@ -579,6 +633,22 @@
       },
       "additionalProperties": false
     },
+    "CapabilitySkillInlineShellSummary": {
+      "type": "object",
+      "required": ["enabled", "sandboxMode", "writePolicy", "failClosed"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "timeoutMs": { "type": "number" },
+        "maxOutputChars": { "type": "number" },
+        "sandboxMode": { "type": "string" },
+        "writePolicy": {
+          "type": "string",
+          "enum": ["disabled", "no-write"]
+        },
+        "failClosed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "CapabilityMcpStatus": {
       "type": "object",
       "required": ["serverName", "status", "toolNames"],
@@ -614,25 +684,36 @@
         "sideEffects",
         "workspaceAccess",
         "shellAccess",
-        "processSpawn",
-        "command",
-        "args"
+        "processSpawn"
       ],
       "properties": {
         "toolName": { "type": "string", "minLength": 1 },
         "profileId": { "type": "string", "minLength": 1 },
         "profileName": { "type": "string" },
-        "protocol": { "type": "string", "enum": ["acp", "external_command"] },
+        "protocol": {
+          "type": "string",
+          "enum": ["acp", "external_command", "in_process"]
+        },
         "risk": { "const": "risky" },
         "requiresApproval": { "type": "boolean" },
+        "approvalRequiredUnderCurrentRun": { "type": "boolean" },
+        "approvalReasons": { "type": "array", "items": { "type": "string" } },
+        "approvalRunOptions": {
+          "type": "object",
+          "properties": {
+            "shouldWrite": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
         "forbidNesting": { "type": "boolean" },
         "sideEffects": { "type": "array", "items": { "type": "string" } },
         "workspaceAccess": {
           "type": "string",
           "enum": ["none", "read_write"]
         },
-        "shellAccess": { "const": false },
-        "processSpawn": { "const": true },
+        "shellAccess": { "type": "boolean" },
+        "processSpawn": { "type": "boolean" },
+        "gatedByRunWrite": { "type": "boolean" },
         "command": { "type": "string", "minLength": 1 },
         "args": { "type": "array", "items": { "type": "string" } },
         "timeoutMs": { "type": "number" },

@@ -137,6 +137,52 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports unknown provider model and cost fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+            extra: true,
+            models: {
+              "gpt-5.4-nano": {
+                extra: true,
+                cost: {
+                  input: 1,
+                  unexpected: 2,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(
+        loaded.config.providers?.openai?.models?.["gpt-5.4-nano"]?.cost,
+      ).toEqual({ input: 1 });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "providers.openai.extra",
+          }),
+          expect.objectContaining({
+            field: "providers.openai.models.gpt-5.4-nano.extra",
+          }),
+          expect.objectContaining({
+            field: "providers.openai.models.gpt-5.4-nano.cost.unexpected",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reads shared fields and applies them, ignoring UI-only keys", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
@@ -156,6 +202,118 @@ describe("loadHostConfig", () => {
         "https://example.test/v1",
       );
       expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads shared auxiliary task routing and budget config", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tasks: {
+          compaction: {
+            enabled: true,
+            model: "openai/gpt-5-mini",
+            budget: {
+              maxSourceChars: 60_000,
+              maxInputTokens: 12_000,
+              maxOutputTokens: 1_200,
+              maxCostUsd: 0.05,
+              unknownCostPolicy: "token_cap_only",
+            },
+          },
+          approvalTriage: {
+            enabled: false,
+            budget: {
+              maxSourceChars: 8_000,
+              maxOutputTokens: 400,
+              unknownCostPolicy: "skip",
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.tasks).toEqual({
+        compaction: {
+          enabled: true,
+          model: "openai/gpt-5-mini",
+          budget: {
+            maxSourceChars: 60_000,
+            maxInputTokens: 12_000,
+            maxOutputTokens: 1_200,
+            maxCostUsd: 0.05,
+            unknownCostPolicy: "token_cap_only",
+          },
+        },
+        approvalTriage: {
+          enabled: false,
+          budget: {
+            maxSourceChars: 8_000,
+            maxOutputTokens: 400,
+            unknownCostPolicy: "skip",
+          },
+        },
+      });
+      expect(loaded.sources.tasks).toContain("user:");
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid auxiliary task config fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tasks: {
+          compaction: {
+            enabled: "yes",
+            model: "",
+            extra: true,
+            budget: {
+              maxSourceChars: 0,
+              maxOutputTokens: "many",
+              maxCostUsd: 0,
+              unknownCostPolicy: "allow",
+              extra: true,
+            },
+          },
+          invalidTask: true,
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.tasks?.compaction).toBeDefined();
+      expect(loaded.config.tasks?.invalidTask).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "tasks.compaction.enabled" }),
+          expect.objectContaining({ field: "tasks.compaction.model" }),
+          expect.objectContaining({ field: "tasks.compaction.extra" }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.maxSourceChars",
+          }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.maxOutputTokens",
+          }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.maxCostUsd",
+          }),
+          expect.objectContaining({
+            field: "tasks.compaction.budget.unknownCostPolicy",
+          }),
+          expect.objectContaining({ field: "tasks.compaction.budget.extra" }),
+          expect.objectContaining({ field: "tasks.invalidTask" }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -226,7 +384,7 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("rejects the removed legacy capabilities.tools surface", async () => {
+  it("rejects the removed legacy capabilities.tools surface with migration guidance", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
@@ -242,7 +400,12 @@ describe("loadHostConfig", () => {
         loaded.errors.some(
           (error) =>
             error.field === "capabilities.tools" &&
-            error.message.includes("unknown field"),
+            error.message.includes(
+              "legacy capabilities.tools has been removed",
+            ) &&
+            error.message.includes(
+              "top-level tools.use/tools.allowed/tools.disabled/tools.defer",
+            ),
         ),
       ).toBe(true);
       expect(loaded.config.tools).toBeUndefined();
@@ -252,18 +415,18 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("rejects wildcard patterns in top-level tool config", async () => {
+  it("rejects wildcard patterns in top-level tool allowed config", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
-        tools: { disabled: ["mcp_*"] },
+        tools: { allowed: ["mcp_*"] },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(
         loaded.errors.some(
           (error) =>
-            error.field === "tools.disabled" &&
+            error.field === "tools.allowed" &&
             error.message.includes("wildcard patterns are not supported"),
         ),
       ).toBe(true);
@@ -273,12 +436,36 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("loads top-level tool config with replace defer and union disabled semantics", async () => {
+  it("rejects unknown top-level tool selectors", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        tools: { use: ["workspace.read", "workspace.delete"] },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.tools?.use).toBeUndefined();
+      expect(
+        loaded.errors.some(
+          (error) =>
+            error.field === "tools.use" &&
+            error.message.includes('unknown tool selector "workspace.delete"'),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads top-level tool config with intersect allowed, union disabled, and replace defer semantics", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
       await writeUserConfig(xdg, {
         tools: {
+          use: ["workspace.read", "mcp"],
+          allowed: ["read_file", "shell", "edit_anchored_text"],
           disabled: ["shell"],
           defer: ["todo_write", "read_anchored_text"],
         },
@@ -288,6 +475,8 @@ describe("loadHostConfig", () => {
         join(cwd, ".sparkwright", "config.json"),
         JSON.stringify({
           tools: {
+            use: ["workspace.read", "mcp:demo"],
+            allowed: ["read_file", "grep", "edit_anchored_text"],
             disabled: ["grep"],
             defer: ["edit_anchored_text"],
           },
@@ -298,6 +487,8 @@ describe("loadHostConfig", () => {
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.tools).toEqual({
+        use: ["workspace.read", "mcp:demo"],
+        allowed: ["read_file", "edit_anchored_text"],
         disabled: ["shell", "grep"],
         defer: ["edit_anchored_text"],
       });
@@ -555,7 +746,7 @@ describe("loadHostConfig", () => {
           budget: { maxModelCalls: 12 },
           maxSteps: 30,
           traceLevel: "debug",
-          approvals: { shellSafe: true },
+          approvals: { shellSafe: true, cronMode: "accept_edits" },
         },
         ui: { theme: "dark" },
       });
@@ -571,7 +762,88 @@ describe("loadHostConfig", () => {
       expect(loaded.config.runBudget).toEqual({ maxModelCalls: 12 });
       expect(loaded.config.maxSteps).toBe(30);
       expect(loaded.config.traceLevel).toBe("debug");
-      expect(loaded.config.approvals).toEqual({ shellSafe: true });
+      expect(loaded.config.approvals).toEqual({
+        shellSafe: true,
+        cronMode: "accept_edits",
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads YAML config files from the same user/project candidate layers", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await mkdir(join(xdg, "sparkwright"), { recursive: true });
+      await writeFile(
+        join(xdg, "sparkwright", "config.yaml"),
+        [
+          "identity:",
+          "  model: openai/yaml-model",
+          "  providers:",
+          "    openai:",
+          "      apiKey: sk-yaml",
+          "tools:",
+          "  use: [workspace.read]",
+          "capabilities:",
+          "  agents:",
+          "    maxDepth: 2",
+          "    profiles:",
+          "      - id: reviewer",
+          "        mode: child",
+          "        use: [workspace.read]",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.model).toBe("openai/yaml-model");
+      expect(loaded.config.providers?.openai?.apiKey).toBe("sk-yaml");
+      expect(loaded.config.tools?.use).toEqual(["workspace.read"]);
+      expect(loaded.config.capabilities?.agents?.maxDepth).toBe(2);
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]?.use).toEqual([
+        "workspace.read",
+      ]);
+      expect(
+        loaded.attempted.find((entry) => entry.path.endsWith("config.yaml"))
+          ?.loaded,
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports same-layer config file conflicts and loads the first candidate", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({ model: "openai/json-model" }),
+        "utf8",
+      );
+      await writeFile(
+        join(cwd, ".sparkwright", "config.yaml"),
+        "identity:\n  model: openai/yaml-model\n",
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.model).toBe("openai/json-model");
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "(root)",
+          message: expect.stringContaining("multiple config files found"),
+        }),
+      ]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -615,6 +887,61 @@ describe("loadHostConfig", () => {
           message: expect.stringContaining("unknown field"),
         }),
       ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid approval cronMode values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        run: { approvals: { cronMode: "always" } },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.approvals).toEqual({});
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "approvals.cronMode",
+          message: expect.stringContaining("must be one of"),
+        }),
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid agent selectors and maxDepth values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            maxDepth: -1,
+            profiles: [{ id: "reviewer", use: ["not-a-selector"] }],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.agents?.maxDepth).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.agents.maxDepth",
+            message: "must be a non-negative integer",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.use",
+            message: expect.stringContaining("unknown tool selector"),
+          }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -671,6 +998,47 @@ describe("loadHostConfig", () => {
         },
         network: { mode: "deny" },
       });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid trace and sandbox enum values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        traceLevel: "verbose",
+        shell: {
+          sandbox: {
+            mode: "audit",
+            network: { mode: "maybe" },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.traceLevel).toBeUndefined();
+      expect(loaded.config.shell?.sandbox?.mode).toBeUndefined();
+      expect(loaded.config.shell?.sandbox?.network?.mode).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "traceLevel",
+            message: "must be one of standard | debug",
+          }),
+          expect.objectContaining({
+            field: "shell.sandbox.mode",
+            message: "must be off, warn, or enforce",
+          }),
+          expect.objectContaining({
+            field: "shell.sandbox.network.mode",
+            message: "must be allow or deny",
+          }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -955,6 +1323,51 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports unknown workflow hook action fields without dropping valid actions", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "extra-action-field",
+                hook: "Stop",
+                action: {
+                  type: "command",
+                  command: "npm",
+                  reason: "not a command action field",
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.hooks?.workflow).toMatchObject([
+        {
+          name: "extra-action-field",
+          hook: "Stop",
+          action: { type: "command", command: "npm" },
+        },
+      ]);
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.hooks.workflow.0.action.reason",
+            message: expect.stringContaining("unknown field"),
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("drops invalid top-level tool fields with validation errors", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
@@ -962,14 +1375,17 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         tools: {
           enabled: ["read_file"],
+          allowed: [false],
           disabled: [false],
           defer: ["read_anchored_text"],
         },
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.tools?.allowed).toBeUndefined();
       expect(loaded.config.tools?.disabled).toBeUndefined();
       expect(loaded.config.tools?.defer).toEqual(["read_anchored_text"]);
       expect(loaded.errors.some((e) => e.field === "tools.enabled")).toBe(true);
+      expect(loaded.errors.some((e) => e.field === "tools.allowed")).toBe(true);
       expect(loaded.errors.some((e) => e.field === "tools.disabled")).toBe(
         true,
       );
@@ -992,6 +1408,11 @@ describe("loadHostConfig", () => {
             evolution: {
               mode: "always",
             },
+            inlineShell: {
+              enabled: "yes",
+              timeoutMs: 0,
+              extra: true,
+            },
           },
         },
       });
@@ -1013,6 +1434,21 @@ describe("loadHostConfig", () => {
       expect(
         loaded.errors.some(
           (e) => e.field === "capabilities.skills.evolution.mode",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.inlineShell.enabled",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.inlineShell.timeoutMs",
+        ),
+      ).toBe(true);
+      expect(
+        loaded.errors.some(
+          (e) => e.field === "capabilities.skills.inlineShell.extra",
         ),
       ).toBe(true);
     } finally {
@@ -1146,15 +1582,86 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("reports unknown MCP and delegate tool fields", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          mcp: {
+            unexpected: true,
+            defaultPolicy: { risk: "safe", extra: true },
+          },
+          agents: {
+            unexpected: true,
+            delegateTools: [
+              {
+                profileId: "reviewer",
+                toolName: "delegate_reviewer",
+                extra: true,
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.capabilities?.mcp?.defaultPolicy).toEqual({
+        risk: "safe",
+      });
+      expect(loaded.config.capabilities?.agents?.delegateTools?.[0]).toEqual({
+        profileId: "reviewer",
+        toolName: "delegate_reviewer",
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.mcp.unexpected",
+          }),
+          expect.objectContaining({
+            field: "capabilities.mcp.defaultPolicy.extra",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.unexpected",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.delegateTools.0.extra",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("reports a validation error for a bad field and drops it", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { model: 123, providers: "nope" });
+      await writeUserConfig(xdg, {
+        model: 123,
+        providers: "nope",
+        permissionMode: "always",
+        workspace: "",
+        confidentialPaths: ["secrets/**", ""],
+        maxSteps: 0,
+      });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.model).toBeUndefined();
-      expect(loaded.errors.some((e) => e.field === "model")).toBe(true);
-      expect(loaded.errors.some((e) => e.field === "providers")).toBe(true);
+      expect(loaded.config.permissionMode).toBeUndefined();
+      expect(loaded.config.workspace).toBeUndefined();
+      expect(loaded.config.confidentialPaths).toBeUndefined();
+      expect(loaded.config.maxSteps).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "model" }),
+          expect.objectContaining({ field: "providers" }),
+          expect.objectContaining({ field: "permissionMode" }),
+          expect.objectContaining({ field: "workspace" }),
+          expect.objectContaining({ field: "confidentialPaths" }),
+          expect.objectContaining({ field: "maxSteps" }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -1219,6 +1726,7 @@ describe("loadHostConfig", () => {
                     args: "nope",
                     envMode: "ambient",
                     workspaceAccess: "read_only",
+                    extra: true,
                   },
                   externalCommand: {
                     command: "",
@@ -1229,6 +1737,7 @@ describe("loadHostConfig", () => {
                     maxStdoutBytes: "64",
                     maxStderrBytes: "64",
                     successExitCodes: ["0"],
+                    extra: true,
                   },
                 },
               },
@@ -1246,6 +1755,7 @@ describe("loadHostConfig", () => {
           "capabilities.agents.profiles.0.metadata.acp.args: must be an array of strings",
           "capabilities.agents.profiles.0.metadata.acp.envMode: must be inherit or explicit",
           "capabilities.agents.profiles.0.metadata.acp.workspaceAccess: must be none or read_write",
+          "capabilities.agents.profiles.0.metadata.acp.extra: unknown field (allowed: transport, command, args, cwd, env, envMode, workspaceAccess, timeoutMs)",
           "capabilities.agents.profiles.0.metadata.externalCommand.command: must be a non-empty string",
           "capabilities.agents.profiles.0.metadata.externalCommand.args: must be an array of strings",
           "capabilities.agents.profiles.0.metadata.externalCommand.envMode: must be inherit or explicit",
@@ -1254,6 +1764,7 @@ describe("loadHostConfig", () => {
           "capabilities.agents.profiles.0.metadata.externalCommand.maxStdoutBytes: must be a number",
           "capabilities.agents.profiles.0.metadata.externalCommand.maxStderrBytes: must be a number",
           "capabilities.agents.profiles.0.metadata.externalCommand.successExitCodes: must be an array of integers",
+          "capabilities.agents.profiles.0.metadata.externalCommand.extra: unknown field (allowed: command, args, cwd, env, envMode, workspaceAccess, timeoutMs, input, maxOutputBytes, maxStdoutBytes, maxStderrBytes, successExitCodes)",
         ]),
       );
     } finally {

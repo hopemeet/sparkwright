@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { preprocessSkillContent } from "../src/index.js";
+import {
+  preprocessSkillContent,
+  preprocessSkillContentAsync,
+} from "../src/index.js";
 
 describe("preprocessSkillContent", () => {
   it("substitutes known tokens, leaves unknown tokens", () => {
@@ -26,8 +29,28 @@ describe("preprocessSkillContent", () => {
     const out = preprocessSkillContent("!`exit 1; printf nope`", {
       inlineShell: true,
     });
-    // empty stdout + nonzero exit -> we get either "" or stderr marker; just
-    // assert preprocessing did not blow up.
-    expect(typeof out).toBe("string");
+    expect(out).toBe("[inline-shell error: PROCESS_FAILED exitCode=1]");
+  });
+
+  it("routes async inline shell through an injected runner", async () => {
+    const out = await preprocessSkillContentAsync("v=!`echo ignored`", {
+      inlineShell: true,
+      inlineShellRunner: async (input) => {
+        expect(input).toMatchObject({
+          command: "echo ignored",
+          timeoutMs: 10_000,
+          maxOutputChars: 4000,
+        });
+        return "runner-output";
+      },
+    });
+    expect(out).toBe("v=runner-output");
+  });
+
+  it("keeps async inline shell disabled by default", async () => {
+    const out = await preprocessSkillContentAsync("v=!`echo ignored`", {
+      inlineShellRunner: async () => "runner-output",
+    });
+    expect(out).toBe("v=!`echo ignored`");
   });
 });

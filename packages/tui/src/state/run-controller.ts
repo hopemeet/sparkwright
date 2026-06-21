@@ -1,15 +1,18 @@
-import { writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { basename, extname, join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
   createHostClientRunMetadata,
   createHostStartRunRequest,
   recordHostClientStartFailure,
+  resolveHostClientApprovalByPolicy,
   resolveHostStdioSpawn,
 } from "@sparkwright/host";
 import type {
   CapabilitySnapshot,
   PermissionMode,
+  RunInputPayload,
+  RunInputPart,
   TraceLevel,
 } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
@@ -25,6 +28,9 @@ export interface RunControllerOptions {
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   shouldWrite?: boolean;
+  approveAll?: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
   /** Model reference shown by the TUI. Only request-sourced models are sent to the host. */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -41,6 +47,7 @@ type ApprovalDecision = "approved" | "denied";
  * replay to tell a continuation run apart from a real user turn.
  */
 const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
+const MAX_TUI_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Drives runs against a Sparkwright host. The host is launched lazily on
@@ -51,9 +58,8 @@ const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
  * lifetime share the same sessionId so the host accumulates events on disk
  * under `<workspace>/.sparkwright/sessions/<id>/`.
  *
- * /trace dumps the SDK's in-memory event log for the current run; the
- * host's on-disk trace is the canonical record but copying it via stdio
- * isn't worth a protocol round-trip just yet.
+ * Host on-disk session traces are the canonical record; this controller keeps
+ * only the live event stream needed to render and export the current session.
  */
 export class RunController {
   private opts: RunControllerOptions;
@@ -71,6 +77,7 @@ export class RunController {
   // it. start() only ever receives real user goals (todo-continuation runs are
   // driven by the host/replay path, not start()), so no filtering is needed.
   private lastGoal: string | null = null;
+  private pendingInputParts: RunInputPart[] = [];
 
   constructor(opts: RunControllerOptions) {
     this.opts = opts;
@@ -188,6 +195,16 @@ export class RunController {
     this.opts.traceLevel = traceLevel;
   }
 
+  updateApprovalDefaults(input: {
+    approveAll: boolean;
+    approveEdits: boolean;
+    approveShellSafe: boolean;
+  }): void {
+    this.opts.approveAll = input.approveAll;
+    this.opts.approveEdits = input.approveEdits;
+    this.opts.approveShellSafe = input.approveShellSafe;
+  }
+
   isRunning(): boolean {
     return this.activeRunId !== null;
   }
@@ -195,6 +212,58 @@ export class RunController {
   /** The last user goal, or null if nothing has been run yet (for /retry). */
   getLastGoal(): string | null {
     return this.lastGoal;
+  }
+
+  pendingAttachmentCount(): number {
+    return this.pendingInputParts.length;
+  }
+
+  clearPendingAttachments(): void {
+    this.pendingInputParts = [];
+  }
+
+  async attachImage(
+    imagePath: string,
+  ): Promise<
+    { ok: true; name: string; count: number } | { ok: false; message: string }
+  > {
+    const trimmed = imagePath.trim();
+    if (!trimmed) return { ok: false, message: "usage: /image <path>" };
+    const resolved = resolve(this.opts.workspaceRoot, trimmed);
+    const mediaType = mediaTypeForImagePath(resolved);
+    if (!mediaType) {
+      return {
+        ok: false,
+        message: "unsupported image type; use png, jpg, jpeg, gif, or webp",
+      };
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(resolved);
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (bytes.byteLength > MAX_TUI_IMAGE_BYTES) {
+      return {
+        ok: false,
+        message: `image is too large (${bytes.byteLength} bytes); limit is ${MAX_TUI_IMAGE_BYTES}`,
+      };
+    }
+    const name = basename(trimmed);
+    this.pendingInputParts.push({
+      type: "image",
+      data: bytes.toString("base64"),
+      mediaType,
+      name,
+      metadata: {
+        sourcePath: trimmed,
+        byteLength: bytes.byteLength,
+      },
+    });
+    return { ok: true, name, count: this.pendingInputParts.length };
   }
 
   /**
@@ -227,9 +296,11 @@ export class RunController {
 
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
+      const input = this.pendingRunInput();
       const { runId } = await client.startRun(
         createHostStartRunRequest({
           goal,
+          input,
           sessionId: this.sessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
@@ -241,6 +312,7 @@ export class RunController {
       );
       this.activeRunId = runId;
       this.cancelRequested = false;
+      if (input) this.clearPendingAttachments();
     } catch (err) {
       const message = formatError(err);
       if (!this.hasTerminalRunEvent()) {
@@ -275,7 +347,7 @@ export class RunController {
   > {
     try {
       const client = await this.ensureClient();
-      const result = await client.listSessions({ limit: 20 });
+      const result = await client.listSessions({ limit: 200 });
       return result.sessions;
     } catch (err) {
       this.store.setError(formatError(err));
@@ -310,6 +382,24 @@ export class RunController {
     throughRunId: string | null;
     originalCharCount: number;
     summaryCharCount: number;
+    freedChars: number;
+    measurement: {
+      sourceRunCount: number;
+      originalCharCount: number;
+      summaryCharCount: number;
+      freedChars: number;
+      savingsRatio: number;
+      freedByTier: Record<string, number>;
+      regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
+      signalCount: number;
+      summarizer?: Record<string, unknown>;
+    };
+    skippedReason?: string;
+    warnings?: Array<{
+      code: string;
+      message: string;
+      metadata?: Record<string, unknown>;
+    }>;
     artifactPath: string | null;
   } | null> {
     try {
@@ -319,9 +409,9 @@ export class RunController {
         reason: "tui /compact",
       });
       this.store.appendNotice(
-        result.compactedRunCount > 0
-          ? `compacted ${result.compactedRunCount} prior turn${result.compactedRunCount === 1 ? "" : "s"} for future context`
-          : "compact skipped: no completed turns yet",
+        result.skippedReason
+          ? `compact skipped: ${result.skippedReason}`
+          : `compacted ${result.compactedRunCount} prior turn${result.compactedRunCount === 1 ? "" : "s"} for future context`,
       );
       return result;
     } catch (err) {
@@ -371,17 +461,6 @@ export class RunController {
       this.currentSessionEvents as RunEvent[],
     );
     await writeFile(path, body, "utf8");
-    return path;
-  }
-
-  async dumpTrace(): Promise<string> {
-    const dir = join(this.opts.workspaceRoot, ".sparkwright", "tui-traces");
-    await mkdir(dir, { recursive: true });
-    const path = join(dir, `trace-${this.sessionId}-${Date.now()}.jsonl`);
-    const body = this.currentSessionEvents
-      .map((e) => JSON.stringify(e))
-      .join("\n");
-    await writeFile(path, body + (body ? "\n" : ""), "utf8");
     return path;
   }
 
@@ -469,15 +548,28 @@ export class RunController {
     input: { traceLevel?: TraceLevel } = {},
   ): Record<string, unknown> {
     const traceLevel = input.traceLevel ?? this.opts.traceLevel ?? "standard";
-    return createHostClientRunMetadata({
-      source: "tui",
-      sessionId: this.sessionId,
-      workspaceRoot: this.opts.workspaceRoot,
-      permissionMode: this.opts.permissionMode ?? "default",
-      traceLevel,
-      shouldWrite: this.shouldWrite(),
-      modelName: this.opts.modelName,
-    });
+    return {
+      ...createHostClientRunMetadata({
+        source: "tui",
+        sessionId: this.sessionId,
+        workspaceRoot: this.opts.workspaceRoot,
+        permissionMode: this.opts.permissionMode ?? "default",
+        traceLevel,
+        shouldWrite: this.shouldWrite(),
+        modelName: this.opts.modelName,
+      }),
+      ...inputMetadataRecord(this.pendingRunInput()),
+    };
+  }
+
+  private pendingRunInput(): RunInputPayload | undefined {
+    if (this.pendingInputParts.length === 0) return undefined;
+    const parts = [...this.pendingInputParts];
+    const summary = inputSummary(parts);
+    return {
+      parts,
+      metadata: summary,
+    };
   }
 
   private shouldWrite(): boolean {
@@ -497,7 +589,7 @@ export class RunController {
   private attachListeners(client: Client): void {
     client.on("run.event", (msg) => {
       // Pass through to the store. EventStore handles streaming chunk
-      // assembly; we keep a parallel array for /trace dump.
+      // assembly; we keep a parallel array for exports and replay checks.
       this.currentSessionEvents.push(msg.payload.event);
       // The host's SparkwrightEvent is opaque to the protocol layer
       // (`unknown`); the store's appendEvent expects the runtime shape.
@@ -512,6 +604,23 @@ export class RunController {
     client.on("approval.requested", (msg) => {
       const details = (msg.payload.details ?? {}) as Record<string, unknown>;
       const action = msg.payload.action;
+      const policyDecision = resolveHostClientApprovalByPolicy(
+        this.approvalPolicyInput(),
+        {
+          approvalId: msg.payload.approvalId,
+          runId: msg.payload.runId,
+          action,
+          summary: msg.payload.summary,
+          details,
+          createdAt: msg.timestamp,
+        },
+      );
+      if (policyDecision) {
+        void client
+          .resolveApproval(policyDecision)
+          .catch((err) => this.store.setError(formatError(err)));
+        return;
+      }
       const kind:
         | "workspace.write"
         | "tool.execute"
@@ -600,6 +709,15 @@ export class RunController {
     // host.log events go unhandled in the TUI today — a future log panel
     // can subscribe via client.on('host.log', …).
   }
+
+  private approvalPolicyInput() {
+    return {
+      approveAll: this.opts.approveAll,
+      approveEdits: this.opts.approveEdits,
+      approveShellSafe: this.opts.approveShellSafe,
+      permissionMode: this.opts.permissionMode,
+    };
+  }
 }
 
 function validateSessionId(id: string): string {
@@ -610,6 +728,40 @@ function validateSessionId(id: string): string {
     throw new Error("Session id must be a safe path segment.");
   }
   return id;
+}
+
+function mediaTypeForImagePath(path: string): string | undefined {
+  switch (extname(path).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    default:
+      return undefined;
+  }
+}
+
+function inputMetadataRecord(
+  input: RunInputPayload | undefined,
+): Record<string, unknown> {
+  const summary = inputSummary(input?.parts ?? []);
+  return summary.attachmentCount > 0 ? { input: summary } : {};
+}
+
+function inputSummary(parts: readonly RunInputPart[]): {
+  attachmentCount: number;
+  imageCount?: number;
+} {
+  const imageCount = parts.filter((part) => part.type === "image").length;
+  return {
+    attachmentCount: parts.length,
+    ...(imageCount > 0 ? { imageCount } : {}),
+  };
 }
 
 /** The most recent goal carried by a loaded event stream, or null. */

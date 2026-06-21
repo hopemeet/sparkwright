@@ -19,6 +19,10 @@ const DEFAULT_MAX_OUTPUT = 4000;
 export interface PreprocessSkillOptions {
   /** Used to resolve `${SPARKWRIGHT_SKILL_DIR}` and as `cwd` for inline shell. */
   skillDir?: string;
+  /** Best-effort skill name from frontmatter, used only for host diagnostics. */
+  skillName?: string;
+  /** Absolute or host-resolved `SKILL.md` path, used only for diagnostics. */
+  sourcePath?: string;
   /** Used to resolve `${SPARKWRIGHT_SESSION_ID}`. */
   sessionId?: string;
   /** Enable backtick-shell expansion. **Default: false** — this executes commands. */
@@ -27,7 +31,27 @@ export interface PreprocessSkillOptions {
   inlineShellTimeoutMs?: number;
   /** Hard cap on each inline-shell stdout. Default 4000 chars. */
   maxOutputChars?: number;
+  /**
+   * Optional async host runner for inline shell. The synchronous
+   * `preprocessSkillContent` helper keeps using the built-in local runner;
+   * hosts that need sandboxing/tracing should call
+   * `preprocessSkillContentAsync`.
+   */
+  inlineShellRunner?: InlineShellRunner;
 }
+
+export interface InlineShellCommandInput {
+  command: string;
+  cwd?: string;
+  skillName?: string;
+  sourcePath?: string;
+  timeoutMs: number;
+  maxOutputChars: number;
+}
+
+export type InlineShellRunner = (
+  input: InlineShellCommandInput,
+) => string | Promise<string>;
 
 /**
  * Substitute `${SPARKWRIGHT_SKILL_DIR}` / `${SPARKWRIGHT_SESSION_ID}` tokens
@@ -48,6 +72,23 @@ export function preprocessSkillContent(
   if (!content) return content;
   let out = substituteTemplateVars(content, options);
   if (options.inlineShell) out = expandInlineShell(out, options);
+  return out;
+}
+
+/**
+ * Async preprocessing variant for hosts that need to route inline shell through
+ * their own sandboxing and trace layer.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export async function preprocessSkillContentAsync(
+  content: string,
+  options: PreprocessSkillOptions = {},
+): Promise<string> {
+  if (!content) return content;
+  let out = substituteTemplateVars(content, options);
+  if (options.inlineShell) out = await expandInlineShellAsync(out, options);
   return out;
 }
 
@@ -83,6 +124,58 @@ export function expandInlineShell(
   });
 }
 
+/** @internal Shared by the guard so it evaluates the same inline-shell syntax. */
+export function extractInlineShellCommands(content: string): string[] {
+  if (!content.includes("!`")) return [];
+  return [...content.matchAll(INLINE_SHELL_RE)]
+    .map((match) => (match[1] ?? "").trim())
+    .filter((command) => command.length > 0);
+}
+
+/** @internal */
+export async function expandInlineShellAsync(
+  content: string,
+  options: PreprocessSkillOptions,
+): Promise<string> {
+  if (!content.includes("!`")) return content;
+  const timeoutMs = options.inlineShellTimeoutMs ?? 10_000;
+  const maxOutput = options.maxOutputChars ?? DEFAULT_MAX_OUTPUT;
+  const runner = options.inlineShellRunner ?? runInlineShellFromInput;
+  let out = "";
+  let lastIndex = 0;
+
+  for (const match of content.matchAll(INLINE_SHELL_RE)) {
+    const index = match.index ?? 0;
+    out += content.slice(lastIndex, index);
+    lastIndex = index + match[0].length;
+    const cmd = (match[1] ?? "").trim();
+    if (!cmd) continue;
+    try {
+      out += await runner({
+        command: cmd,
+        cwd: options.skillDir,
+        skillName: options.skillName,
+        sourcePath: options.sourcePath,
+        timeoutMs,
+        maxOutputChars: maxOutput,
+      });
+    } catch (cause) {
+      out += `[inline-shell error: ${(cause as Error).message}]`;
+    }
+  }
+
+  return out + content.slice(lastIndex);
+}
+
+function runInlineShellFromInput(input: InlineShellCommandInput): string {
+  return runInlineShell(
+    input.command,
+    input.cwd,
+    input.timeoutMs,
+    input.maxOutputChars,
+  );
+}
+
 function runInlineShell(
   command: string,
   cwd: string | undefined,
@@ -98,12 +191,15 @@ function runInlineShell(
     if (result.error) {
       // ETIMEDOUT manifests via .signal === "SIGTERM" on some platforms.
       if (result.signal === "SIGTERM") {
-        return `[inline-shell timeout after ${timeoutMs}ms: ${command}]`;
+        return `[inline-shell timeout after ${timeoutMs}ms]`;
       }
-      return `[inline-shell error: ${result.error.message}]`;
+      return `[inline-shell error: ${result.error.name || "PROCESS_FAILED"}]`;
     }
     if (result.signal === "SIGTERM") {
-      return `[inline-shell timeout after ${timeoutMs}ms: ${command}]`;
+      return `[inline-shell timeout after ${timeoutMs}ms]`;
+    }
+    if ((result.status ?? 0) !== 0) {
+      return `[inline-shell error: PROCESS_FAILED exitCode=${result.status ?? "unknown"}]`;
     }
     let output = (result.stdout ?? "").replace(/\n$/, "");
     if (!output && result.stderr) output = result.stderr.replace(/\n$/, "");

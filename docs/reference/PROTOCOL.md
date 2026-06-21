@@ -260,6 +260,11 @@ Current event types:
   (e.g. the desired content was already present) and emitted no write
   proposal. Payload: `{ path: string, reason?: string }`. Useful so callers
   can distinguish "no write attempted" from "write attempted and applied".
+- `workspace.write.untracked_access_granted`: an external command delegate was
+  granted direct read/write workspace access outside the managed
+  `workspace.write.*` APIs. This marker records access granted /
+  untracked-write-capable only; it does not claim any file was written and is
+  not counted as a managed workspace write.
 - `usage.updated`: a per-run usage aggregator emitted a fresh snapshot
   (tokens, cost, wall time, per-tool, per-model). Payload: `UsageSnapshot`.
 - `hook.failed`: a `RunHook.*` callback threw. Payload:
@@ -271,6 +276,16 @@ Current event types:
   Payloads carry `{ hookName, hookId?, hook, step?, metadata }`; completion
   includes the normalized hook result, blocked includes reason/findings, and
   failed includes `{ error: { code, message } }`.
+- `extension.process.started` / `extension.process.progress` /
+  `extension.process.completed` / `extension.process.failed`: host-controlled
+  external process invocation evidence. External processes cannot write
+  arbitrary Sparkwright events; host runners may expose a JSONL progress inbox
+  and re-emit accepted progress with host-owned `event.sequence`, `timestamp`,
+  `monotonicUs`, and span fields. Terminal payloads include a shared
+  `ProcessOutputSummary` with bounded stdout/stderr previews, byte counts,
+  truncation flags, and optional `artifactIds` for materialized logs.
+  `standard` traces suppress raw progress events and fold progress head/tail
+  samples into the terminal event; `debug` traces keep raw progress.
 - `interaction.requested`: the runtime asked the InteractionChannel for an
   approval / question / notification. Payload:
   `{ kind: "approval"|"question"|"notification", request|notification }`.
@@ -282,8 +297,15 @@ Current event types:
   only — does not alter the run.
 - `subagent.requested` / `subagent.started` / `subagent.completed` /
   `subagent.failed`: parent-run view of child agent lifecycle emitted by
-  `@sparkwright/agent-runtime`. The child still has its own `run.*` event
-  stream; these events let a parent trace show fan-out and completion status.
+  `@sparkwright/agent-runtime` or host delegate adapters. When backed by a
+  SparkWright child run, the child still has its own `run.*` event stream; these
+  events let a parent trace show fan-out and completion status.
+  Metadata carries additive audit fields such as `childRunId`, `parentRunId`,
+  `agentId`, `subagentDepth`, `delegateTool`, and `entrypoint`. Terminal
+  payloads add `terminalState` plus `stepLimitReached` / `truncated` when the
+  child `run.*` outcome reports them. External-command delegate terminal
+  results may also carry bounded child progress summaries (`progressCount`,
+  `progressDropped`, `progressHead`, `progressTail`).
 - `task.created` / `task.started` / `task.output` / `task.completed` /
   `task.failed` / `task.cancelled`: background-task lifecycle events emitted
   by `@sparkwright/agent-runtime` Tasks. Tasks are spawned by a run and live
@@ -302,7 +324,7 @@ trigger, runId, source?, stdout?, stderr?, output?, data? }`.
 
 The extension packages may emit experimental edge lifecycle events through the
 generic event envelope. Payloads remain intentionally small. Reproducibility and
-audit facts should live in event `metadata` so minimal trace filtering can keep
+audit facts should live in event `metadata` so standard trace filtering can keep
 the useful evidence.
 
 Common metadata:
@@ -342,6 +364,7 @@ Common metadata:
 ```json
 {
   "payload": {
+    "toolCallId": "call_01h",
     "source": ".sparkwright/skills/bad/SKILL.md",
     "message": "Skill description must be a non-empty string: ..."
   },
@@ -353,6 +376,10 @@ Common metadata:
   }
 }
 ```
+
+When `skill.failed` mirrors an on-demand `skill_load` tool failure, the payload
+includes the original `toolCallId` so trace diagnostics can join the companion
+event back to the recovery-aware tool outcome.
 
 `skill.loaded`:
 
@@ -611,7 +638,10 @@ Tool-result validation failures are returned to the model as failed tool observa
 
 ### Context Compaction Request
 
-`context.compaction_requested` records context budget pressure. It is a signal for callers and future compaction components; v0 does not compact through an LLM automatically.
+`context.compaction_requested` records context budget pressure. It is a signal
+for callers and compaction components; the main run loop does not compact
+through an LLM automatically. Host `session.compact` can invoke the opt-in
+model-backed session summarizer.
 
 ```json
 {
@@ -627,7 +657,11 @@ Tool-result validation failures are returned to the model as failed tool observa
 }
 ```
 
-Future compaction implementations should emit `context.compaction.started`, `context.compaction.completed`, or `context.compaction.failed` around summary creation. The original trace should remain intact even when compaction fails.
+Compaction implementations emit `context.compaction.started`,
+`context.compaction.completed`, or `context.compaction.failed` around each
+stage. Completed events report the stage `tier`, `freedChars`, optional
+`skippedReason`, optional `warnings`, and metadata. The original trace should
+remain intact even when compaction fails.
 
 ### Tool Batch Events
 
@@ -857,7 +891,8 @@ Allowed statuses:
 {
   "approvalId": "approval_01h",
   "decision": "approved",
-  "message": "Looks good."
+  "message": "Looks good.",
+  "autoApproved": false
 }
 ```
 
@@ -865,6 +900,10 @@ Allowed decisions:
 
 - `approved`
 - `denied`
+
+`autoApproved` is optional. When present and `true`, it marks approvals resolved
+by policy or command-line flags without requiring consumers to parse `message`.
+Older traces may only expose this fact through message text.
 
 ## Artifact
 
@@ -901,9 +940,21 @@ Initial artifact types:
     "path": "README.md"
   },
   "content": "# Sparkwright\n",
+  "parts": [
+    {
+      "type": "image",
+      "data": "base64...",
+      "mediaType": "image/png",
+      "name": "screenshot.png"
+    }
+  ],
   "metadata": {}
 }
 ```
+
+`parts` is optional and carries extensible multimodal input associated with the
+textual `content` summary. Current part types are `text`, `image`, `file`, and
+`audio`; media parts use either base64 `data` or a resolvable `uri`.
 
 Initial context types:
 
@@ -933,9 +984,15 @@ Current local run store layout:
 
 `run.json` stores the latest persisted run record and is rewritten with terminal state when a run finishes. `result.json` stores the terminal `RunResult`. `trace.jsonl` is append-only and contains filtered events according to the selected trace level.
 
+Session-scoped stores aggregate trace events at
+`.sparkwright/sessions/<session-id>/trace.jsonl` and also write an agent trace
+under `agents/<agent-id>/trace.jsonl`. Each
+`agents/<agent-id>/runs/<run-id>/` directory stores per-run state plus
+`trace-pointer.json`, whose relative paths point back to those aggregate trace
+files.
+
 Trace levels:
 
-- `minimal`: keep event structure and compact payloads to identifiers, statuses, and counts
 - `standard`: keep useful summaries while truncating large values
 - `debug`: preserve full event payloads
 

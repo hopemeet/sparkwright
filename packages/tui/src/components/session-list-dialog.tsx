@@ -1,10 +1,17 @@
 import React, { useMemo, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdout } from "ink";
 import type { SessionDiagnostics, SessionSummary } from "../lib/sessions.js";
+import { displayWidth, toGraphemes } from "../lib/graphemes.js";
+import {
+  DialogFrame,
+  dialogFrameWidth,
+  resolveDialogColumns,
+} from "./dialog-frame.js";
 
 /**
  * Session browser with inline filter + diagnostics + actions:
  *   "/"      toggle filter mode (type to filter id/label/preview)
+ *   "1"-"9"  resume one of the first nine listed sessions
  *   j/k ↑↓   navigate
  *   enter    resume
  *   i        inspect (diagnostics)
@@ -24,8 +31,13 @@ export function SessionListDialog(props: {
   onRename: (id: string) => void;
   onCancel: () => void;
 }): React.ReactElement {
+  const { stdout } = useStdout();
   const [cursor, setCursor] = useState(0);
   const [filter, setFilter] = useState<string | null>(null);
+  const rowWidth = Math.max(
+    20,
+    dialogFrameWidth(resolveDialogColumns(stdout?.columns)) - 4,
+  );
 
   const filtered = useMemo(
     () => rankSessions(props.sessions, props.labels, filter ?? ""),
@@ -33,6 +45,12 @@ export function SessionListDialog(props: {
   );
 
   const safeCursor = Math.min(cursor, Math.max(0, filtered.length - 1));
+  const pageSize = Math.max(4, Math.min(12, (stdout?.rows ?? 24) - 10));
+  const { start: visibleStart, visible } = sessionWindow(
+    filtered,
+    safeCursor,
+    pageSize,
+  );
 
   useInput((input, key) => {
     // Filter-mode owns most keys when active.
@@ -75,6 +93,12 @@ export function SessionListDialog(props: {
       setFilter("");
       return;
     }
+    const digit = Number.parseInt(input, 10);
+    if (digit >= 1 && digit <= Math.min(9, filtered.length)) {
+      const pick = filtered[digit - 1];
+      if (pick) props.onPick(pick.id);
+      return;
+    }
     if (key.upArrow || input === "k") {
       setCursor((c) => Math.max(0, c - 1));
     } else if (key.downArrow || input === "j") {
@@ -93,38 +117,24 @@ export function SessionListDialog(props: {
 
   if (props.sessions.length === 0) {
     return (
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor="cyan"
-        paddingX={1}
-      >
+      <DialogFrame borderColor="cyan">
         <Text color="cyan" bold>
           sessions
         </Text>
         <Text dimColor>
           (none found in .sparkwright/sessions — press esc to close)
         </Text>
-      </Box>
+      </DialogFrame>
     );
   }
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-    >
-      <Box>
-        <Text color="cyan" bold>
-          sessions
-        </Text>
-        <Text dimColor>
-          {"  "}↑/↓ navigate · enter resume · i inspect · r rename · / filter ·
-          esc close
-        </Text>
-      </Box>
+    <DialogFrame borderColor="cyan">
+      <Text color="cyan" bold>
+        sessions
+      </Text>
+      <Text dimColor>1-9 quick resume · ↑/↓ navigate · enter resume</Text>
+      <Text dimColor>i inspect · r rename · / filter · esc close</Text>
       {filter !== null ? (
         <Box>
           <Text color="yellow">filter: </Text>
@@ -135,39 +145,82 @@ export function SessionListDialog(props: {
           </Text>
         </Box>
       ) : null}
-      {filtered.slice(0, 12).map((s, i) => {
-        const selected = i === safeCursor;
+      {visibleStart > 0 ? <Text dimColor>↑ {visibleStart} more</Text> : null}
+      {visible.map((s, i) => {
+        const index = visibleStart + i;
+        const selected = index === safeCursor;
         const label = props.labels[s.id];
         const ts = new Date(s.mtimeMs)
           .toISOString()
           .replace("T", " ")
           .slice(0, 19);
+        const title = label ?? s.preview ?? "(no preview)";
+        const line = truncatePlain(
+          `${sessionRowPrefix(selected, index)}${ts} ${s.id.slice(0, 12)} ${title}`,
+          rowWidth,
+        );
         return (
-          <Box key={s.id}>
-            <Text color={selected ? "green" : undefined}>
-              {selected ? "› " : "  "}
-            </Text>
-            <Text color={selected ? "green" : undefined}>{ts}</Text>
-            <Text> </Text>
-            <Text dimColor>{s.id.slice(0, 12)}</Text>
-            <Text> </Text>
-            {label ? (
-              <Text color="cyan">{label}</Text>
-            ) : (
-              <Text dimColor>{s.preview || "(no preview)"}</Text>
-            )}
-          </Box>
+          <Text
+            key={s.id}
+            color={selected ? "green" : label ? "cyan" : undefined}
+          >
+            {line}
+          </Text>
         );
       })}
-      {filtered.length > 12 ? (
-        <Text dimColor>… +{filtered.length - 12} more (narrow filter)</Text>
+      {visibleStart + visible.length < filtered.length ? (
+        <Text dimColor>
+          ↓ {filtered.length - visibleStart - visible.length} more
+        </Text>
+      ) : null}
+      {filtered.length > pageSize ? (
+        <Text dimColor>
+          {visibleStart + 1}-{visibleStart + visible.length} of{" "}
+          {filtered.length}
+        </Text>
       ) : null}
       <SessionDiagnosticsPanel
         diagnostics={props.diagnostics}
         loadingFor={props.loadingDiagnosticsFor}
       />
-    </Box>
+    </DialogFrame>
   );
+}
+
+function sessionRowPrefix(selected: boolean, index: number): string {
+  const digit = index < 9 ? String(index + 1) : " ";
+  return `${selected ? "›" : " "} ${digit} `;
+}
+
+function truncatePlain(text: string, max: number): string {
+  if (displayWidth(text) <= max) return text;
+  const budget = Math.max(0, max - 1);
+  let out = "";
+  let width = 0;
+  for (const g of toGraphemes(text)) {
+    const w = displayWidth(g);
+    if (width + w > budget) break;
+    out += g;
+    width += w;
+  }
+  return `${out}…`;
+}
+
+export function sessionWindow<T>(
+  items: readonly T[],
+  cursor: number,
+  windowSize: number,
+): { start: number; visible: readonly T[] } {
+  const size = Math.max(1, windowSize);
+  const safeCursor = Math.max(
+    0,
+    Math.min(cursor, Math.max(0, items.length - 1)),
+  );
+  const start = Math.max(
+    0,
+    Math.min(items.length - size, safeCursor - Math.floor(size / 2)),
+  );
+  return { start, visible: items.slice(start, start + size) };
 }
 
 /**

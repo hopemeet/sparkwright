@@ -41,6 +41,8 @@ export interface ResolvedModelConfig {
   authSource?: string;
   /** @reserved Trace/reporting field consumed by CLI, TUI, and diagnostics. */
   baseURLSource?: string;
+  /** Pricing provenance for cost-aware auxiliary task gates. */
+  pricingSource?: "configured" | "builtin" | "unavailable" | "not_applicable";
 }
 
 /**
@@ -86,6 +88,7 @@ export async function createModel(
           : "default",
         adapterId: SCRIPTED_PROVIDER,
         modelSource,
+        pricingSource: "not_applicable",
       },
     };
   }
@@ -365,6 +368,7 @@ function deterministicResolvedModel(
     modelId: DETERMINISTIC_PROVIDER,
     adapterId: DETERMINISTIC_PROVIDER,
     modelSource,
+    pricingSource: "not_applicable",
   };
 }
 
@@ -384,6 +388,7 @@ function configuredResolvedModel(input: {
     modelSource: input.modelSource,
     ...(input.providerSource ? { providerSource: input.providerSource } : {}),
     authSource: input.runtimeSources.apiKey,
+    pricingSource: input.runtimeSources.pricing,
     ...(input.runtimeSources.baseURL
       ? { baseURLSource: input.runtimeSources.baseURL }
       : {}),

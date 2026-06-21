@@ -84,7 +84,8 @@ export async function runConfiguredDelegate(
     };
   }
 
-  const delegates = loaded.config.capabilities?.agents?.delegateTools ?? [];
+  const agentConfig = loaded.config.capabilities?.agents;
+  const delegates = agentConfig?.delegateTools ?? [];
   const delegate = delegates.find(
     (item) => delegateToolName(item) === input.toolName,
   );
@@ -144,6 +145,7 @@ export async function runConfiguredDelegate(
       protocol === "acp"
         ? (acpConfig!.workspaceAccess ?? "none")
         : (externalCommandConfig!.workspaceAccess ?? "none"),
+    allowReadWriteWorkspaceAccess: input.shouldWrite === true,
     outputLimits:
       protocol === "external_command"
         ? {
@@ -188,6 +190,8 @@ export async function runConfiguredDelegate(
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          maxDepth: agentConfig?.maxDepth,
+          entrypoint: "delegates_run",
           allowReadWriteWorkspaceAccess: input.shouldWrite === true,
         })
       : createExternalCommandDelegateTool({
@@ -200,6 +204,8 @@ export async function runConfiguredDelegate(
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
+          maxDepth: agentConfig?.maxDepth,
+          entrypoint: "delegates_run",
           allowReadWriteWorkspaceAccess: input.shouldWrite === true,
           sandbox: loaded.config.shell?.sandbox,
           skillRoots: skillRoots.map((root) => root.root),

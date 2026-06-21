@@ -156,7 +156,11 @@ async function handleRequest(
     case "run.inject_message": {
       const r = runtime.injectRunMessage(req.payload.runId, {
         content: req.payload.content,
-        metadata: req.payload.metadata,
+        parts: req.payload.input?.parts,
+        metadata: {
+          ...(req.payload.input?.metadata ?? {}),
+          ...(req.payload.metadata ?? {}),
+        },
       });
       if (r.ok) respondOk(conn, req.id, {});
       else respondError(conn, req.id, r.error);
@@ -172,6 +176,8 @@ async function handleRequest(
       const r = runtime.resolveApproval(
         req.payload.approvalId,
         req.payload.decision,
+        req.payload.message,
+        req.payload.autoApproved,
       );
       if (r.ok) respondOk(conn, req.id, {});
       else respondError(conn, req.id, r.error);
@@ -216,6 +222,7 @@ async function handleRequest(
       const r = await runtime.compactSession(
         req.payload.sessionId,
         req.payload.reason,
+        { llm: req.payload.llm },
       );
       if (r.ok) {
         respondOk(conn, req.id, {
@@ -224,6 +231,10 @@ async function handleRequest(
           throughRunId: r.throughRunId,
           originalCharCount: r.originalCharCount,
           summaryCharCount: r.summaryCharCount,
+          freedChars: r.freedChars,
+          measurement: r.measurement,
+          skippedReason: r.skippedReason,
+          warnings: r.warnings,
           artifactPath: r.artifactPath,
         });
       } else {
@@ -297,11 +308,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "dont_ask",
           "bypass_permissions",
         ]) ??
-        optionalEnum(req.payload, "traceLevel", [
-          "minimal",
-          "standard",
-          "debug",
-        ]) ??
+        optionalEnum(req.payload, "traceLevel", ["standard", "debug"]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.resume":
@@ -334,11 +341,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "dont_ask",
           "bypass_permissions",
         ]) ??
-        optionalEnum(req.payload, "traceLevel", [
-          "minimal",
-          "standard",
-          "debug",
-        ]) ??
+        optionalEnum(req.payload, "traceLevel", ["standard", "debug"]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.inject_message":
@@ -356,11 +359,17 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "approval.resolve":
       return (
-        requireOnly(req.payload, ["approvalId", "decision", "message"]) ??
+        requireOnly(req.payload, [
+          "approvalId",
+          "decision",
+          "message",
+          "autoApproved",
+        ]) ??
         requireString(req.payload, "approvalId") ??
         optionalEnum(req.payload, "decision", ["approved", "denied"]) ??
         requireString(req.payload, "decision") ??
-        optionalString(req.payload, "message")
+        optionalString(req.payload, "message") ??
+        optionalBoolean(req.payload, "autoApproved")
       );
     case "session.list":
       return (
@@ -384,9 +393,10 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "session.compact":
       return (
-        requireOnly(req.payload, ["sessionId", "reason"]) ??
+        requireOnly(req.payload, ["sessionId", "reason", "llm"]) ??
         requireString(req.payload, "sessionId") ??
-        optionalString(req.payload, "reason")
+        optionalString(req.payload, "reason") ??
+        optionalBoolean(req.payload, "llm")
       );
     case "capability.inspect":
       return (

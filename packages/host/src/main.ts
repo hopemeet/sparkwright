@@ -87,7 +87,7 @@ function printHelp(): void {
       '  --model <ref>              model reference "provider/model" (or "deterministic")',
       "  --write                    allow approval-gated workspace writes for requests that omit shouldWrite",
       "  --permission-mode <mode>   plan | default | accept_edits | dont_ask | bypass_permissions",
-      "  --trace-level <level>      minimal | standard | debug",
+      "  --trace-level <level>      standard | debug",
       "  --auth-token <token>       require WS clients to provide Bearer token or ?token=...",
       "                             (also SPARKWRIGHT_HOST_TOKEN)",
       "",

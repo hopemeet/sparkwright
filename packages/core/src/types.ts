@@ -17,6 +17,7 @@ import type {
 } from "./ids.js";
 import type { SparkwrightEvent } from "./events.js";
 import type {
+  ContentPart,
   ContextLayer,
   ContextStability,
   ModelContextHints,
@@ -287,6 +288,7 @@ export interface ContextItem {
   type: ContextItemType;
   source?: ContextSourceRef;
   content: string;
+  parts?: ContentPart[];
   metadata: ContextItemMetadata;
 }
 
@@ -566,6 +568,7 @@ export type RunCommand =
   | {
       type: "user_message";
       content: string;
+      parts?: ContentPart[];
       metadata?: Record<string, unknown>;
     }
   | {
@@ -700,4 +703,5 @@ export interface ApprovalResponse {
   approvalId: ApprovalId;
   decision: "approved" | "denied";
   message?: string;
+  autoApproved?: boolean;
 }

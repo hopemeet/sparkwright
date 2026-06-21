@@ -29,21 +29,23 @@ present. Their absence is valid; consumers should fall back to a flat sequence.
 
 A timeline should be built from event families rather than exact payload shapes.
 
-| Timeline row                      | Primary events                                                                                                                    | Stable rendering guidance                                             |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Run lifecycle                     | `run.created`, `run.started`, `run.completed`, `run.failed`, `run.cancelled`                                                      | One run-level row with terminal state and `stopReason` when available |
-| Model turn                        | `model.requested`, `model.completed`, `model.retrying`                                                                            | Show request, retry, and completed output summary                     |
-| Streaming model turn              | `model.stream.*`                                                                                                                  | Attach chunks to the active model turn; collapse noisy chunks by UI   |
-| Context and prompt                | `context.assembled`, `prompt.built`, `context.cache_break.detected`                                                               | Show counts, sections, cache blocks, and cache-break diagnostics      |
-| Compaction                        | `context.compaction_requested`, `context.compaction.started`, `context.compaction.completed`, `context.compaction.failed`         | Show budget pressure and summary lifecycle                            |
-| Tool batch                        | `tool.batch.requested`, `tool.batch.completed`                                                                                    | Show batch mode and tool count                                        |
-| Tool call                         | `tool.requested`, `tool.started`, `tool.progress`, `tool.completed`, `tool.failed`                                                | Group by tool call id or enclosing span when available                |
-| Approval                          | `approval.requested`, `approval.resolved`, `interaction.requested`, `interaction.resolved`                                        | Show pending review and final decision                                |
-| Workspace mutation                | `workspace.write.requested`, `artifact.created`, `workspace.write.completed`, `workspace.write.denied`, `workspace.write.skipped` | Link diff artifacts and final mutation state                          |
-| Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                  | Stream output incrementally; cap retained inline output               |
-| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`        | Show capability changes as environment/context evidence               |
-| User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                     | Show as host automation, not model-authored work                      |
-| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                               | Show deterministic lifecycle automation and blocking decisions        |
+| Timeline row                      | Primary events                                                                                                                                                                | Stable rendering guidance                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Run lifecycle                     | `run.created`, `run.started`, `run.completed`, `run.failed`, `run.cancelled`                                                                                                  | One run-level row with terminal state and `stopReason` when available             |
+| Model turn                        | `model.requested`, `model.completed`, `model.retrying`                                                                                                                        | Show request, retry, and completed output summary                                 |
+| Streaming model turn              | `model.stream.*`                                                                                                                                                              | Attach chunks to the active model turn; collapse noisy chunks by UI               |
+| Context and prompt                | `context.assembled`, `prompt.built`, `context.cache_break.detected`                                                                                                           | Show counts, sections, cache blocks, and cache-break diagnostics                  |
+| Compaction                        | `context.compaction_requested`, `context.compaction.started`, `context.compaction.completed`, `context.compaction.failed`                                                     | Show budget pressure and summary lifecycle                                        |
+| Tool batch                        | `tool.batch.requested`, `tool.batch.completed`                                                                                                                                | Show batch mode and tool count                                                    |
+| Tool call                         | `tool.requested`, `tool.started`, `tool.progress`, `tool.completed`, `tool.failed`                                                                                            | Group by tool call id or enclosing span when available                            |
+| Approval                          | `approval.requested`, `approval.resolved`, `interaction.requested`, `interaction.resolved`                                                                                    | Show pending review and final decision                                            |
+| Workspace mutation                | `workspace.write.requested`, `artifact.created`, `workspace.write.completed`, `workspace.write.denied`, `workspace.write.skipped`, `workspace.write.untracked_access_granted` | Link diff artifacts, final mutation state, and untracked write-capable boundaries |
+| Sub-agent lifecycle               | `subagent.requested`, `subagent.started`, `subagent.completed`, `subagent.failed`                                                                                             | Group by `childRunId`; show parent request and child terminal status together     |
+| Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                                                              | Stream output incrementally; cap retained inline output                           |
+| Host-controlled process           | `extension.process.started`, `extension.process.progress`, `extension.process.completed`, `extension.process.failed`                                                          | Show external process invocation, bounded output summary, and progress            |
+| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                                                    | Show capability changes as environment/context evidence                           |
+| User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                                                                 | Show as host automation, not model-authored work                                  |
+| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation and blocking decisions                    |
 
 A backend projection can materialize these rows into a read model, but the
 source of truth should remain the append-only event log plus `run.json`,
@@ -117,6 +119,8 @@ Frontend guidance:
   the request id or proposal id in the payload.
 - When `approval.resolved` appears, close or mark the approval UI with the
   final decision.
+- `approval.resolved.autoApproved` is the structured signal for approvals made
+  by policy or flags; legacy traces may only carry this in the message text.
 - When `interaction.requested` has `kind: "question"`, render the request using
   the structured question shape rather than parsing text.
 - When both approval and interaction events exist for the same exchange, merge
@@ -158,6 +162,11 @@ Consumption guidance:
 - Show `context.compaction_requested` as a warning or timeline marker.
 - Treat `context.compaction.started`, `context.compaction.completed`, and
   `context.compaction.failed` as the summary lifecycle when present.
+- `context.compaction.started` includes the stage name, `tier`, trigger,
+  reactive flag, and current size estimate. `context.compaction.completed`
+  includes `freedChars`; when a stage runs but produces no savings it includes
+  `skippedReason` instead of counting as an applied stage. Completed events may
+  also include `warnings` and stage metadata.
 - Do not remove earlier events from a replay view after compaction. Compaction
   changes future context, not history.
 - If `context.compaction.completed` indicates prompt-cache reset metadata,
@@ -209,7 +218,8 @@ Skill events explain capability/context changes at the edge of the run.
 
 - `skill.indexed` means a Skill source was scanned and reduced to metadata.
 - `skill.failed` means one Skill source could not be loaded; other valid Skills
-  may still be available.
+  may still be available. When it is a companion to an on-demand `skill_load`
+  tool failure, it should carry that tool's `toolCallId`.
 - `skill.loaded` means a selected Skill body was loaded into context or through
   a governed loader tool.
 - Related edge events such as `mcp.server.prepared` and
@@ -243,3 +253,9 @@ Stable consumption guidance:
   inspect details.
 - Keep approval and question UI keyed by request identity so reconnects restore
   pending prompts without duplicates.
+
+Promoted shell tasks keep the task lifecycle as the user-visible row: stdout
+and stderr are buffered in `TaskStore`, mirrored as `task.output` events under
+the task span, and the terminal `task.completed` / `task.failed` /
+`task.cancelled` event carries a `ProcessOutputSummary`. They do not emit a
+second `extension.process.*` lifecycle.

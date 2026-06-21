@@ -10,12 +10,15 @@ import {
 import { FileIndex, type IndexedFile } from "../lib/files.js";
 import { loadFrecency, type Frecency } from "../lib/frecency.js";
 import { clearDraftOnSubmit, saveDraft, type StashFile } from "../lib/stash.js";
+import { resolveDialogColumns } from "./dialog-frame.js";
 import {
+  displayWidth,
   graphemeAt,
   nextGraphemeBoundary,
   nextWordBoundary,
   prevGraphemeBoundary,
   prevWordBoundary,
+  toGraphemes,
 } from "../lib/graphemes.js";
 import { vimKey, type VimMode, type VimState } from "../lib/vim-mode.js";
 
@@ -25,27 +28,34 @@ import { vimKey, type VimMode, type VimState } from "../lib/vim-mode.js";
  *    completes; Enter dispatches via onCommand.
  *  - MENTION (`@…` token at cursor): workspace file picker; Tab/Enter
  *    replaces the @-token with the chosen path.
- *  - NORMAL: ↑/↓ recalls history; Enter submits; large pastes turn into
- *    [Pasted #N · M lines] placeholders that re-expand on submit.
+ *  - NORMAL: ↑/↓ recalls history for single-line drafts, or moves vertically
+ *    inside multi-line drafts; Enter submits.
  *
  * The cursor is a numeric index into `value`. We render the char under the
  * cursor as inverse text so users have a visible caret.
  *
- * Paste detection is heuristic (single useInput event with >=
- * PASTE_THRESHOLD chars). We also enable bracketed paste on mount so
- * terminals that support it deliver pastes as a single chunk reliably.
+ * Bracketed paste is enabled on mount so terminals deliver pasted text as one
+ * chunk with CSI markers; we strip those markers and keep the pasted content
+ * directly editable in the input buffer.
  */
 
-interface PastePart {
-  id: number;
-  text: string;
-  lines: number;
-}
-
-const PASTE_THRESHOLD = 50;
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
-const PASTE_PLACEHOLDER_RE = /\[Pasted #(\d+) · \d+ lines?\]/g;
+const INPUT_MIN_WIDTH = 20;
+const INPUT_MIN_VISIBLE_LINES = 5;
+const INPUT_MAX_VISIBLE_LINES = 8;
+
+export function inputBoxWidth(columns: number | undefined): number {
+  return Math.max(INPUT_MIN_WIDTH, (columns ?? 100) - 2);
+}
+
+export function inputMaxVisibleLines(rows: number | undefined): number {
+  if (rows === undefined) return INPUT_MAX_VISIBLE_LINES;
+  return Math.max(
+    INPUT_MIN_VISIBLE_LINES,
+    Math.min(INPUT_MAX_VISIBLE_LINES, rows - 9),
+  );
+}
 
 export interface InputBoxHandle {
   /** Imperative: replace the current value (used by the stash picker). */
@@ -71,6 +81,7 @@ export function InputBox(props: {
    */
   onEscape?: () => void;
   onQuit?: (presses?: number) => void;
+  onQuitClear?: () => void;
   /** Stash snapshot bridge — parent owns the latest StashFile. */
   stashRef: { current: StashFile };
   onStashChange: (next: StashFile) => void;
@@ -79,12 +90,15 @@ export function InputBox(props: {
 }): React.ReactElement {
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
+  const valueRef = useRef(value);
+  const cursorRef = useRef(cursor);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyIdx, setHistoryIdx] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
-  const [pastes, setPastes] = useState<Map<number, PastePart>>(new Map());
-  const pasteIdRef = useRef(1);
   const { stdout } = useStdout();
+  const inputWidth = inputBoxWidth(resolveDialogColumns(stdout?.columns));
+  const inputTextWidth = Math.max(1, inputWidth - 7);
+  const maxVisibleInputLines = inputMaxVisibleLines(stdout?.rows);
   // ctrl+r reverse-search overlay state — when not null, captures input.
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [searchCursor, setSearchCursor] = useState(0);
@@ -92,6 +106,10 @@ export function InputBox(props: {
   // fresh prompt types immediately; Esc drops to normal.
   const [vimMode, setVimMode] = useState<VimMode>("insert");
   const [vimPending, setVimPending] = useState<VimState["pending"]>(null);
+  const pasteModeRef = useRef(false);
+
+  valueRef.current = value;
+  cursorRef.current = cursor;
 
   // Lazy file index — only constructed when needed.
   const fileIndex = useMemo(
@@ -127,7 +145,8 @@ export function InputBox(props: {
     }
   }, [props.workspaceRoot]);
 
-  // Expose imperative setValue so the parent's /stash dialog can inject text.
+  // Expose imperative setValue so parent flows (for example fork-and-edit)
+  // can inject text.
   useEffect(() => {
     if (!props.handleRef) return;
     props.handleRef.current = {
@@ -209,16 +228,24 @@ export function InputBox(props: {
     return "";
   }, [slash, slashSuggestions, safeSugCursor, cursor, value]);
 
-  function update(
-    next: string,
-    nextCursor?: number,
-    nextPastes?: Map<number, PastePart>,
-  ): void {
+  function update(next: string, nextCursor?: number): void {
+    valueRef.current = next;
+    cursorRef.current = nextCursor ?? next.length;
     setValue(next);
     setCursor(nextCursor ?? next.length);
     setHistoryIdx(null);
     setSugCursor(0);
-    if (nextPastes) setPastes(nextPastes);
+  }
+
+  function insertText(text: string): void {
+    if (!text) return;
+    const currentValue = valueRef.current;
+    const currentCursor = cursorRef.current;
+    const next =
+      currentValue.slice(0, currentCursor) +
+      text +
+      currentValue.slice(currentCursor);
+    update(next, currentCursor + text.length);
   }
 
   /**
@@ -299,13 +326,6 @@ export function InputBox(props: {
     });
   }
 
-  function expandPastes(text: string): string {
-    return text.replace(PASTE_PLACEHOLDER_RE, (m, id) => {
-      const p = pastes.get(Number(id));
-      return p ? p.text : m;
-    });
-  }
-
   // History reverse-search: scan newest-first for entries containing the query.
   const searchMatches = useMemo(() => {
     if (searchQuery === null) return [];
@@ -332,6 +352,19 @@ export function InputBox(props: {
     // — which would otherwise be typed into the goal. Swallow them. (Switching
     // macOS spaces/apps is what makes the terminal fire these.)
     if (input === "[I" || input === "[O") return;
+
+    // Bracketed paste can arrive split across several Ink events. Handle this
+    // before Enter/submission logic so pasted newlines stay in the draft.
+    const paste = normalizeBracketedPasteChunk(
+      input,
+      key.return,
+      pasteModeRef.current,
+    );
+    if (paste.handled) {
+      pasteModeRef.current = paste.inPaste;
+      insertText(paste.text);
+      return;
+    }
 
     // --- ctrl+r reverse-search overlay owns input while active ------------
     if (searchQuery !== null) {
@@ -419,6 +452,13 @@ export function InputBox(props: {
     const quitPresses =
       ctrlCPressCount(input) || (key.ctrl && input === "c" ? 1 : 0);
     if (quitPresses > 0) {
+      if (valueRef.current.length > 0) {
+        pasteModeRef.current = false;
+        props.onQuitClear?.();
+        update("", 0);
+        setDraft("");
+        return;
+      }
       props.onQuit?.(quitPresses);
       return;
     }
@@ -524,9 +564,8 @@ export function InputBox(props: {
           return;
         }
       }
-      const expanded = expandPastes(trimmed);
-      props.onSubmit(expanded);
-      void appendHistory(props.workspaceRoot, expanded, history).then(
+      props.onSubmit(trimmed);
+      void appendHistory(props.workspaceRoot, trimmed, history).then(
         setHistory,
       );
       void clearDraftOnSubmit(props.workspaceRoot, props.stashRef.current).then(
@@ -536,7 +575,6 @@ export function InputBox(props: {
       setCursor(0);
       setHistoryIdx(null);
       setDraft("");
-      setPastes(new Map());
       // Next prompt starts fresh in insert mode so typing works immediately.
       if (props.vim) {
         setVimMode("insert");
@@ -571,27 +609,17 @@ export function InputBox(props: {
     }
     if (key.backspace || key.delete) {
       if (cursor === 0) return;
-      // If we're deleting through a placeholder, drop the matching paste
-      // entry so memory doesn't leak across the session.
-      const placeholderHit = matchPlaceholderAt(value, cursor - 1);
-      let nextPastes = pastes;
       // Default: delete one grapheme cluster before the caret (so an emoji /
       // combining sequence is removed whole, not one code unit at a time).
-      let removeFrom = prevGraphemeBoundary(value, cursor);
-      let removeLen = cursor - removeFrom;
-      if (placeholderHit) {
-        nextPastes = new Map(pastes);
-        nextPastes.delete(placeholderHit.id);
-        removeFrom = placeholderHit.start;
-        removeLen = placeholderHit.end - placeholderHit.start;
-      }
+      const removeFrom = prevGraphemeBoundary(value, cursor);
+      const removeLen = cursor - removeFrom;
       const next =
         value.slice(0, removeFrom) + value.slice(removeFrom + removeLen);
-      update(next, removeFrom, nextPastes);
+      update(next, removeFrom);
       return;
     }
     if (key.ctrl && input === "u") {
-      update("", 0, new Map());
+      update("", 0);
       return;
     }
     if (key.ctrl && input === "w") {
@@ -626,30 +654,19 @@ export function InputBox(props: {
 
     if (!input || input.length === 0) return;
 
-    // --- paste detection --------------------------------------------------
-    const stripped = stripBracketedPaste(input);
-    const isPaste =
-      stripped.wasBracketed ||
-      stripped.text.length >= PASTE_THRESHOLD ||
-      stripped.text.includes("\n");
-    if (isPaste && stripped.text.length > 0) {
-      const id = pasteIdRef.current++;
-      const lines = stripped.text.split("\n").length;
-      const placeholder = `[Pasted #${id} · ${lines} line${lines === 1 ? "" : "s"}]`;
-      const next = value.slice(0, cursor) + placeholder + value.slice(cursor);
-      const nextPastes = new Map(pastes);
-      nextPastes.set(id, { id, text: stripped.text, lines });
-      update(next, cursor + placeholder.length, nextPastes);
-      return;
-    }
-
     const next = value.slice(0, cursor) + input + value.slice(cursor);
     update(next, cursor + input.length);
   });
 
   return (
-    <Box flexDirection="column">
-      <Box borderStyle="round" paddingX={1} flexDirection="column">
+    <Box flexDirection="column" width={inputWidth} flexShrink={0}>
+      <Box
+        borderStyle="round"
+        paddingX={1}
+        flexDirection="column"
+        width={inputWidth}
+        flexShrink={0}
+      >
         {value.length === 0 ? (
           <Box>
             <Text color={props.disabled ? "gray" : "cyan"}>{"› "}</Text>
@@ -663,6 +680,8 @@ export function InputBox(props: {
             slash={!!slash}
             disabled={props.disabled}
             ghost={ghost}
+            wrapWidth={inputTextWidth}
+            maxVisibleLines={maxVisibleInputLines}
           />
         )}
       </Box>
@@ -716,11 +735,14 @@ function RenderedInput(props: {
   cursor: number;
   slash: boolean;
   disabled: boolean;
+  maxVisibleLines: number;
+  wrapWidth: number;
   /** Dimmed inline completion appended after the last line (slash mode). */
   ghost?: string;
 }): React.ReactElement {
   const { value, cursor } = props;
   const lines = value.split("\n");
+  const visualLines = inputVisualLines(lines, props.wrapWidth);
 
   // Locate the caret's (line, column). `column` is a code-unit offset into the
   // line; movement keeps the global cursor on grapheme boundaries, so the
@@ -737,37 +759,150 @@ function RenderedInput(props: {
     }
     acc += len + 1; // + the newline
   }
+  const caretVisualLine = visualLines.findIndex(
+    (line) =>
+      line.logicalLine === caretLine &&
+      caretCol >= line.startCol &&
+      (caretCol < line.endCol ||
+        (line.endCol === lines[caretLine].length && caretCol <= line.endCol)),
+  );
+  const viewport = inputLineViewport(
+    visualLines.length,
+    caretVisualLine >= 0 ? caretVisualLine : visualLines.length - 1,
+    props.maxVisibleLines,
+  );
+  const visibleLines = visualLines
+    .slice(viewport.start, viewport.end)
+    .map((line, index) => ({ ...line, visualIndex: viewport.start + index }));
 
   return (
     <Box flexDirection="column">
-      {lines.map((line, li) => (
-        <Box key={li}>
+      {viewport.hiddenBefore > 0 ? (
+        <Text dimColor>
+          ↑ {viewport.hiddenBefore} hidden line
+          {viewport.hiddenBefore === 1 ? "" : "s"}
+        </Text>
+      ) : null}
+      {visibleLines.map((line) => (
+        <Box key={`${line.logicalLine}:${line.startCol}:${line.endCol}`}>
           <Text color={props.disabled ? "gray" : "cyan"}>
-            {li === 0 ? "› " : "  "}
+            {line.logicalLine === 0 && line.startCol === 0 ? "› " : "  "}
           </Text>
           <LineView
-            line={line}
-            slash={props.slash && li === 0}
-            caretCol={!props.disabled && li === caretLine ? caretCol : null}
+            line={lines[line.logicalLine]}
+            visibleStart={line.startCol}
+            visibleEnd={line.endCol}
+            slash={props.slash && line.logicalLine === 0}
+            caretCol={
+              !props.disabled && line.visualIndex === caretVisualLine
+                ? caretCol
+                : null
+            }
           />
-          {props.ghost && li === lines.length - 1 ? (
+          {props.ghost &&
+          line.logicalLine === lines.length - 1 &&
+          line.endCol === lines[lines.length - 1].length ? (
             <Text dimColor>{props.ghost}</Text>
           ) : null}
         </Box>
       ))}
+      {viewport.hiddenAfter > 0 ? (
+        <Text dimColor>
+          ↓ {viewport.hiddenAfter} hidden line
+          {viewport.hiddenAfter === 1 ? "" : "s"}
+        </Text>
+      ) : null}
     </Box>
   );
+}
+
+export interface InputVisualLine {
+  logicalLine: number;
+  startCol: number;
+  endCol: number;
+}
+
+export function inputVisualLines(
+  lines: readonly string[],
+  wrapWidth: number,
+): InputVisualLine[] {
+  const width = Math.max(1, wrapWidth);
+  const out: InputVisualLine[] = [];
+  for (let logicalLine = 0; logicalLine < lines.length; logicalLine += 1) {
+    const line = lines[logicalLine] ?? "";
+    if (line.length === 0) {
+      out.push({ logicalLine, startCol: 0, endCol: 0 });
+      continue;
+    }
+    let startCol = 0;
+    let cursor = 0;
+    let currentWidth = 0;
+    for (const g of toGraphemes(line)) {
+      const w = displayWidth(g);
+      if (cursor > startCol && currentWidth + w > width) {
+        out.push({ logicalLine, startCol, endCol: cursor });
+        startCol = cursor;
+        currentWidth = 0;
+      }
+      cursor += g.length;
+      currentWidth += w;
+    }
+    out.push({ logicalLine, startCol, endCol: line.length });
+  }
+  return out;
+}
+
+export function inputLineViewport(
+  lineCount: number,
+  caretLine: number,
+  maxVisibleLines: number,
+): {
+  start: number;
+  end: number;
+  hiddenBefore: number;
+  hiddenAfter: number;
+} {
+  const total = Math.max(0, lineCount);
+  const size = Math.max(1, Math.min(maxVisibleLines, total || 1));
+  const safeCaret = Math.max(0, Math.min(caretLine, Math.max(0, total - 1)));
+  const start = Math.max(
+    0,
+    Math.min(total - size, safeCaret - Math.floor(size / 2)),
+  );
+  const end = Math.min(total, start + size);
+  return {
+    start,
+    end,
+    hiddenBefore: start,
+    hiddenAfter: Math.max(0, total - end),
+  };
 }
 
 /** One transcript line of the draft, with an optional inverse caret. */
 function LineView(props: {
   line: string;
+  visibleStart: number;
+  visibleEnd: number;
   slash: boolean;
   /** Code-unit column of the caret on this line, or null if not the caret line. */
   caretCol: number | null;
 }): React.ReactElement {
-  const segments = colorizeSegments(props.line, props.slash);
-  if (props.caretCol === null) {
+  const segments = sliceSegments(
+    colorizeSegments(props.line, props.slash),
+    props.visibleStart,
+    props.visibleEnd,
+  );
+  const caretCol =
+    props.caretCol === null
+      ? null
+      : Math.max(
+          0,
+          Math.min(
+            props.caretCol - props.visibleStart,
+            Math.max(0, props.visibleEnd - props.visibleStart),
+          ),
+        );
+  if (caretCol === null) {
     // Render a single space for an empty line so the row keeps its height.
     if (segments.length === 0) return <Text> </Text>;
     return (
@@ -778,7 +913,6 @@ function LineView(props: {
       </>
     );
   }
-  const caretCol = props.caretCol;
   const out: React.ReactElement[] = [];
   let consumed = 0;
   let placed = false;
@@ -827,24 +961,43 @@ function colorizeSegments(value: string, slash: boolean): Segment[] {
   if (slash) {
     return [{ text: value, color: "magenta" }];
   }
-  // Walk value, emitting [normal][placeholder][normal][mention][normal] etc.
-  const pattern = /(\[Pasted #\d+ · \d+ lines?\])|(@(?:"[^"]+"|[^\s]+))/g;
+  // Walk value, emitting [normal][mention][normal] etc.
+  const pattern = /(@(?:"[^"]+"|[^\s]+))/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(value)) !== null) {
     if (match.index > cursor) {
       segments.push({ text: value.slice(cursor, match.index) });
     }
-    if (match[1]) {
-      segments.push({ text: match[1], dim: true });
-    } else if (match[2]) {
-      segments.push({ text: match[2], color: "cyan" });
-    }
+    segments.push({ text: match[1], color: "cyan" });
     cursor = match.index + match[0].length;
   }
   if (cursor < value.length) {
     segments.push({ text: value.slice(cursor) });
   }
   return segments;
+}
+
+function sliceSegments(
+  segments: Segment[],
+  start: number,
+  end: number,
+): Segment[] {
+  const out: Segment[] = [];
+  let consumed = 0;
+  for (const seg of segments) {
+    const segStart = consumed;
+    const segEnd = consumed + seg.text.length;
+    const from = Math.max(start, segStart);
+    const to = Math.min(end, segEnd);
+    if (from < to) {
+      out.push({
+        ...seg,
+        text: seg.text.slice(from - segStart, to - segStart),
+      });
+    }
+    consumed = segEnd;
+  }
+  return out;
 }
 
 function Segment(props: { seg: Segment }): React.ReactElement | null {
@@ -1045,22 +1198,52 @@ export function stripBracketedPaste(input: string): {
   return { text, wasBracketed: true };
 }
 
-/**
- * Find a `[Pasted #N · M lines]` placeholder that contains the given index.
- * Returns its bounds + id, or null.
- */
-function matchPlaceholderAt(
-  value: string,
-  index: number,
-): { start: number; end: number; id: number } | null {
-  PASTE_PLACEHOLDER_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = PASTE_PLACEHOLDER_RE.exec(value)) !== null) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (index >= start && index < end) {
-      return { start, end, id: Number(m[1]) };
-    }
+export function normalizeBracketedPasteChunk(
+  input: string,
+  isReturn: boolean,
+  inPaste: boolean,
+): {
+  handled: boolean;
+  text: string;
+  inPaste: boolean;
+} {
+  if (inPaste && isReturn) {
+    return { handled: true, text: "\n", inPaste: true };
   }
-  return null;
+
+  const start = PASTE_START_RE.exec(input);
+  if (start) {
+    const afterStart = input.slice(start.index + start[0].length);
+    const end = PASTE_END_RE.exec(afterStart);
+    return {
+      handled: true,
+      text: normalizePasteText(
+        end ? afterStart.slice(0, end.index) : afterStart,
+      ),
+      inPaste: !end,
+    };
+  }
+
+  const end = PASTE_END_RE.exec(input);
+  if (inPaste) {
+    return {
+      handled: true,
+      text: normalizePasteText(end ? input.slice(0, end.index) : input),
+      inPaste: !end,
+    };
+  }
+
+  if (end) {
+    return {
+      handled: true,
+      text: normalizePasteText(input.replace(PASTE_END_RE, "")),
+      inPaste: false,
+    };
+  }
+
+  return { handled: false, text: input, inPaste: false };
+}
+
+function normalizePasteText(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
 }

@@ -124,6 +124,37 @@ describe("platform invocation builders", () => {
     );
   });
 
+  it("binds writable paths after the private /tmp overlay so they are not shadowed", () => {
+    if (process.platform === "win32") return;
+    const config = resolveShellSandboxConfig({
+      workspaceRoot: "/repo",
+      config: {
+        filesystem: { allowWrite: ["/tmp/sparkwright-trace-x"] },
+        network: { mode: "allow" },
+      },
+    });
+
+    const invocation = buildBubblewrapInvocation({
+      request: { command: "true", cwd: "/repo", env: {} },
+      config,
+      tmpRoot: "/tmp/sw",
+    });
+
+    const tmpBind = invocation.args.findIndex(
+      (arg, i) =>
+        arg === "--bind" &&
+        invocation.args[i + 1] === "/tmp/sw" &&
+        invocation.args[i + 2] === "/tmp",
+    );
+    const writeBind = invocation.args.findIndex(
+      (arg, i) =>
+        arg === "--bind-try" &&
+        invocation.args[i + 1] === "/tmp/sparkwright-trace-x",
+    );
+    expect(tmpBind).toBeGreaterThanOrEqual(0);
+    expect(writeBind).toBeGreaterThan(tmpBind);
+  });
+
   it("builds macOS sandbox profiles with explicit deny-list controls", () => {
     const config = resolveShellSandboxConfig({
       workspaceRoot: "/repo",

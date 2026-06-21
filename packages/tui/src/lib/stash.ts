@@ -8,7 +8,8 @@
  *    debounce as the user types (above MIN_CHARS). Loaded on InputBox mount
  *    and offered as initial value when the input would otherwise be empty.
  *  - "stash list" — N most recently stashed drafts (snapshot whenever the
- *    current draft is overwritten / cleared). `/stash` browses it.
+ *    current draft is overwritten / cleared) so future restore surfaces have
+ *    durable state to read from.
  *
  * Stored at `<workspace>/.sparkwright/tui-stash.json`:
  *   { current: { text, ts } | null, list: [{ text, ts }, ...] }

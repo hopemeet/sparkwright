@@ -29,19 +29,22 @@
     "lint": "eslint .",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
-    "schema:check": "node scripts/validate-schemas.mjs",
+    "schema:generate": "tsx scripts/generate-config-schema.ts",
+    "schema:check": "tsx scripts/generate-config-schema.ts --check && node scripts/validate-schemas.mjs",
+    "check:dist-fresh": "node scripts/check-dist-fresh.mjs",
     "check:workspace-lock": "node scripts/check-workspace-lock.mjs",
     "check:internal-imports": "node scripts/check-internal-imports.mjs",
     "check:package-boundaries": "node scripts/check-package-boundaries.mjs",
     "check:reserved": "node scripts/check-reserved-fields.mjs",
     "check:reserved:strict": "node scripts/check-reserved-fields.mjs --strict",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
-    "check": "npm run build && npm run typecheck --workspaces && npm run typecheck:test && npm run lint && npm run format:check && npm run schema:check && npm run check:workspace-lock && npm run check:internal-imports && npm run check:package-boundaries && npm run check:reserved:strict && npm run test --workspaces",
-    "release:check": "npm run check && node packages/cli/dist/index.js run \"inspect this repo\" --workspace examples/repo-pilot --target README.md --trace-level minimal --model deterministic && npm run release:install-smoke",
+    "check": "npm run build && npm run check:dist-fresh && npm run typecheck --workspaces && npm run typecheck:test && npm run lint && npm run format:check && npm run schema:check && npm run check:workspace-lock && npm run check:internal-imports && npm run check:package-boundaries && npm run check:reserved:strict && npm run test --workspaces",
+    "release:check": "npm run check && node packages/cli/dist/index.js run \"inspect this repo\" --workspace examples/repo-pilot --target README.md --trace-level standard --model deterministic && npm run source:install-smoke && npm run release:install-smoke",
     "regression:matrix": "node scripts/regression-matrix.mjs",
     "regression:real-model": "node scripts/regression-real-model.mjs",
     "regression:real-skill-capabilities": "node scripts/regression-real-skill-capabilities.mjs",
-    "release:install-smoke": "node scripts/release-install-smoke.mjs"
+    "release:install-smoke": "node scripts/release-install-smoke.mjs",
+    "source:install-smoke": "node scripts/source-install-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -54,6 +57,7 @@
     "tsx": "^4.22.4",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.59.3",
-    "vitest": "^3.2.6"
+    "vitest": "^3.2.6",
+    "yaml": "^2.9.0"
   }
 }

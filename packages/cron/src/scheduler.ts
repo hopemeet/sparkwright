@@ -3,7 +3,6 @@ import type { CronJob } from "./model.js";
 import { withFileLock } from "./lock.js";
 import { runCronJob, type RunCronJobOptions } from "./runner.js";
 import { CronStore } from "./store.js";
-import { legacyConfigCronRoot } from "./paths.js";
 
 export interface CronSchedulerOptions extends Omit<
   RunCronJobOptions,
@@ -31,7 +30,6 @@ export async function tickCron(
       options.store ??
       new CronStore({
         rootDir: options.rootDir,
-        legacyRootDir: legacyConfigCronRoot(),
       });
     const now = options.now ?? new Date();
     const due = await store.getDueJobs(now);
@@ -60,7 +58,6 @@ export async function runCronJobByRef(
     options.store ??
     new CronStore({
       rootDir: options.rootDir,
-      legacyRootDir: legacyConfigCronRoot(),
     });
   const job = await store.getJob(ref);
   const now = options.now ?? new Date();

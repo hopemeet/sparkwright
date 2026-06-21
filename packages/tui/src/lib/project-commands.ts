@@ -6,9 +6,8 @@
 // shell-tool safety floor: deny/unknown commands are blocked, not executed.
 
 import { exec } from "node:child_process";
-import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { userConfigPath } from "@sparkwright/host";
+import { resolveCapabilityDirs } from "@sparkwright/host";
 import {
   buildStartRunIntent,
   createSafetyGatedShellRunner,
@@ -28,7 +27,10 @@ export async function loadProjectCommands(
   env: NodeJS.ProcessEnv = process.env,
   reservedNames?: Iterable<string>,
 ): Promise<ProjectCommandDescriptor[]> {
-  const userCommandDir = join(dirname(userConfigPath(env)), "command");
+  const userCommandDir = resolveCapabilityDirs("command", {
+    cwd: workspaceRoot,
+    env,
+  }).find((dir) => dir.layer === "user")?.dir;
   return discoverProjectCommands({
     cwd: workspaceRoot,
     userCommandDir,

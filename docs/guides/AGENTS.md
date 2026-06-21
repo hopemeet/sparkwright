@@ -19,8 +19,9 @@ Project markdown profile
   Best for role prompt, description, mode, simple tool allow/deny, and maxSteps.
 
 Project config
-  <workspace>/.sparkwright/config.json
-  Best for delegateTools, advanced policy, budgets, and exact profile records.
+  <workspace>/.sparkwright/config.{json,yaml,yml}
+  Best for delegateTools, advanced policy, budgets, maxDepth, and exact profile
+  records.
 ```
 
 If the same id exists in markdown and config, the config profile wins.
@@ -33,14 +34,16 @@ The fastest path is the CLI:
 sparkwright agents create reviewer \
   --name "Reviewer" \
   --prompt "Inspect changes for correctness and risk." \
+  --use workspace.read \
   --allow read_file \
   --allow glob \
   --max-steps 4 \
   --workspace .
 ```
 
-This writes a profile into `.sparkwright/config.json` under
-`capabilities.agents.profiles`.
+This writes a profile into the project config under
+`capabilities.agents.profiles`. If a project YAML config already exists, the CLI
+preserves it; otherwise it creates `.sparkwright/config.json`.
 
 You can also commit a markdown profile:
 
@@ -49,6 +52,7 @@ You can also commit a markdown profile:
 name: Reviewer
 description: Inspect changes for correctness, risk, and missing tests.
 mode: child
+use: [workspace.read]
 allowedTools: [read_file, glob]
 deniedTools: [shell]
 maxSteps: 4
@@ -64,6 +68,25 @@ Save it as:
 .sparkwright/agents/reviewer.md
 ```
 
+Implementation delegates should usually combine read and write selectors:
+
+```md
+---
+name: Implementer
+description: Make scoped code changes.
+mode: child
+use: [workspace.read, workspace.write]
+allowedTools: [read_file, glob, apply_patch, edit_anchored_text]
+maxSteps: 8
+---
+
+Make the requested change, then summarize exactly what changed.
+```
+
+Avoid `workspace.write` without `workspace.read` unless the delegate is driven
+by a deterministic script. Most model-backed implementers need read tools to
+find anchors before they can produce safe patches.
+
 ## Make It Callable
 
 Defining a profile only makes it inspectable. To let the main agent call it,
@@ -73,6 +96,7 @@ add a delegate tool:
 sparkwright agents create reviewer \
   --name "Reviewer" \
   --prompt "Inspect changes for correctness and risk." \
+  --use workspace.read \
   --allow read_file \
   --allow glob \
   --max-steps 4 \
@@ -86,12 +110,14 @@ The config shape is:
 {
   "capabilities": {
     "agents": {
+      "maxDepth": 1,
       "profiles": [
         {
           "id": "reviewer",
           "name": "Reviewer",
           "mode": "child",
           "prompt": "Inspect changes for correctness and risk.",
+          "use": ["workspace.read"],
           "allowedTools": ["read_file", "glob"],
           "maxSteps": 4
         }
@@ -111,7 +137,10 @@ The config shape is:
 ```
 
 `profiles` defines the agent. `delegateTools` exposes a callable tool for the
-main agent.
+main agent. `use` is a broad selector list shared with top-level `tools.use`;
+`allowedTools` remains the concrete-name allowlist. When both are set, the child
+only receives tools that pass both filters. `maxDepth` caps nested
+child/delegate spawning for this workspace.
 
 ## Inspect And Validate
 
@@ -135,7 +164,8 @@ Look for:
 
 - Defining a profile but forgetting `delegateTools`: the agent exists, but the
   main agent cannot call it.
-- Giving a child agent too many tools: prefer narrow `allowedTools`.
+- Giving a child agent too many tools: prefer narrow `use` selectors first, then
+  concrete `allowedTools` when needed.
 - Expecting markdown to override config: config wins for the same id.
 - Putting secrets in agent prompts or project config: keep credentials in user
   config or environment variables.

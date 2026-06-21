@@ -6,6 +6,7 @@ export {
   defaultConfigPath,
   defaultDataDir,
   loadConfig,
+  resolveConfigPathForRead,
   writeConfig,
   type ImGatewayConfig,
   type TelegramGatewayConfig,

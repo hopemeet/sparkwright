@@ -4,6 +4,7 @@ import {
   defaultConfigPath,
   defaultDataDir,
   loadConfig,
+  resolveConfigPathForRead,
   writeConfig,
   type ImGatewayConfig,
 } from "./config.js";
@@ -31,8 +32,9 @@ async function setup(args: string[]): Promise<void> {
   if (!token) {
     throw new Error("missing --telegram-token or TELEGRAM_BOT_TOKEN");
   }
-  const path = readFlag(args, "--config") ?? defaultConfigPath();
-  const existing = await loadConfigIfExists(path);
+  const explicitPath = readFlag(args, "--config");
+  const path = explicitPath ?? defaultConfigPath();
+  const existing = await loadConfigIfExists(explicitPath);
   const config: ImGatewayConfig = {
     ...existing,
     hostUrl: readFlag(args, "--host-url") ?? existing.hostUrl,
@@ -53,7 +55,8 @@ async function setup(args: string[]): Promise<void> {
 }
 
 async function run(args: string[]): Promise<void> {
-  const path = readFlag(args, "--config") ?? defaultConfigPath();
+  const explicitPath = readFlag(args, "--config");
+  const path = resolveConfigPathForRead(explicitPath);
   const config = await loadConfig(path);
   if (!config.telegram?.token) {
     throw new Error(`telegram token missing in ${path}`);
@@ -89,7 +92,7 @@ function printHelp(): void {
 
 Commands:
   setup --telegram-token <token> [--host-url ws://127.0.0.1:...] [--allowed-user-ids 123,456]
-  run [--config ~/.sparkwright/im-gateway.json]
+  run [--config ~/.config/sparkwright/im-gateway.json]
 `);
 }
 
@@ -99,7 +102,9 @@ function readFlag(args: string[], name: string): string | undefined {
   return args[index + 1];
 }
 
-async function loadConfigIfExists(path: string): Promise<ImGatewayConfig> {
+async function loadConfigIfExists(
+  path: string | undefined,
+): Promise<ImGatewayConfig> {
   try {
     return await loadConfig(path);
   } catch {

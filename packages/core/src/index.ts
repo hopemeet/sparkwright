@@ -62,6 +62,9 @@ export type {
   SparkwrightEvent,
   EventEmitter,
   BufferedEmitter,
+  ProcessOutputSummary,
+  SandboxSummary,
+  ProcessInvocationBase,
 } from "./events.js";
 export { createBufferedEmitter } from "./events.js";
 
@@ -144,6 +147,13 @@ export {
   toolTargetFingerprint,
 } from "./run-outcome.js";
 
+// Display-safe path projection helpers shared by diagnostics/UI layers.
+export type { WorkspaceDisplayPathOptions } from "./path-display.js";
+export {
+  formatWorkspaceDisplayPath,
+  middleEllipsisPath,
+} from "./path-display.js";
+
 // Prompt-cache integrity detector.
 export type { CacheBreakDetectorOptions } from "./cache-break.js";
 export { wrapPromptBuilderWithCacheBreakDetector } from "./cache-break.js";
@@ -208,6 +218,16 @@ export {
 // Approval
 export type { ApprovalResolver } from "./approval.js";
 export { createApprovalRequest, resolveApproval } from "./approval.js";
+export type {
+  ApprovalEnforcementMode,
+  ApprovalPolicy,
+  ApprovalPolicyOptions,
+  ApprovalScope,
+} from "./approval-policy.js";
+export {
+  createApprovalPolicy,
+  resolveApprovalByPolicy,
+} from "./approval-policy.js";
 
 // Context
 export type {
@@ -221,6 +241,9 @@ export type {
   ContextAssembler,
   ContextHints,
   ContextUsageHint,
+  TextContentPart,
+  MediaContentPart,
+  ContentPart,
   Compactor,
   CompactingContextAssemblerOptions,
   PromptMessage,
@@ -261,9 +284,11 @@ export {
 // Loop pipeline extensions (compaction, prefetch, summarizer)
 export type {
   CompactionTrigger,
+  CompactionTier,
+  CompactionWarning,
+  CompactionResult,
   CompactionStage,
   CompactionStageInput,
-  CompactionStageResult,
   CompactionPipelineOptions,
   CompactionPipelineInput,
   CompactionPipelineResult,
@@ -282,6 +307,45 @@ export {
   gateStageByUsage,
   usageMeetsGate,
 } from "./pipeline.js";
+
+export type {
+  SessionCompactionTurn,
+  SessionCompactionOptions,
+  SessionCompactionAppliedResult,
+  SessionCompactionSkippedResult,
+  SessionCompactionResult,
+  SessionTraceFacts,
+  SessionSignalKind,
+  SessionSignal,
+  SessionSignals,
+  SessionUnknownCostPolicy,
+  SessionSummarizerBudget,
+  SessionSummaryResult,
+  SessionSummarizer,
+  SessionSummarizerWakePolicy,
+  SessionSummarizerTrigger,
+  SessionCompactionRegime,
+  SessionCompactionSummarizerMeasurement,
+  SessionCompactionMeasurement,
+  SessionCompactionCorpusCase,
+  SessionCompactionCorpusReport,
+} from "./session-compaction.js";
+export {
+  sessionTurnToContextItems,
+  sessionTurnsToContextItems,
+  compactSessionTurns,
+  measureSessionCompactionCorpus,
+  createDefaultSessionCompactionStages,
+  createSessionDuplicateTurnStage,
+  createSessionTurnExtractionStage,
+  createSessionOldTurnEvictionStage,
+  createSessionSummarizerStage,
+  createDeterministicSessionSummarizer,
+  extractSessionSignals,
+  extractSessionSignalsFromItems,
+  DEFAULT_SESSION_SUMMARIZER_BUDGET,
+  SESSION_SUMMARY_ORACLE_VERSION,
+} from "./session-compaction.js";
 
 // Eval / trajectory
 export type {
@@ -362,12 +426,19 @@ export type {
   TraceTimelinePhaseCategory,
   TraceTimelinePhaseStatus,
   TraceEventFilter,
+  TraceReport,
+  TraceReportFinding,
+  TraceReportFindingSeverity,
+  TraceReportVerdict,
   TraceSummary,
   TraceVerificationFinding,
   TraceVerificationReport,
   ValidateSessionTraceConsistencyOptions,
 } from "./trace.js";
 export {
+  buildTraceReport,
+  buildTraceReportFile,
+  buildTraceReportJsonl,
   buildTraceTimeline,
   buildTraceTimelineFile,
   buildTraceTimelineJsonl,
@@ -514,6 +585,7 @@ export {
   sessionCompactArtifactToContextItem,
   writeSessionCompactArtifact,
   SESSION_COMPACT_FILENAME,
+  SESSION_COMPACT_SCHEMA_VERSION,
 } from "./session.js";
 export type { ForkSessionInput, ForkSessionResult } from "./session.js";
 export type {

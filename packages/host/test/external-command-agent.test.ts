@@ -84,6 +84,7 @@ describe("external command delegate tool", () => {
       stdout: string;
       exitCode: number;
       agentProfileId: string;
+      output: { stdoutBytes: number; stdoutPreview?: string };
     };
 
     expect(result).toMatchObject({
@@ -95,6 +96,10 @@ describe("external command delegate tool", () => {
       argv: ["--goal", "review the patch"],
       stdin: "",
     });
+    expect(result.output).toMatchObject({
+      stdoutBytes: result.stdout.length,
+      stdoutPreview: result.stdout,
+    });
     expect(parent.events.all().map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "subagent.requested",
@@ -102,6 +107,9 @@ describe("external command delegate tool", () => {
         "subagent.completed",
       ]),
     );
+    expect(
+      parent.events.all().some((event) => event.type.startsWith("extension.")),
+    ).toBe(false);
     expect(parent.events.all()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -112,6 +120,85 @@ describe("external command delegate tool", () => {
               exitCode: 0,
               stdoutTruncated: false,
               stderrTruncated: false,
+              output: expect.objectContaining({
+                stdoutBytes: result.stdout.length,
+              }),
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("summarizes trace inbox progress on the external delegate result", async () => {
+    const fixture = await createProgressFixtureCommand();
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const profile: AgentProfile = {
+      id: "external_progress",
+      name: "External Progress",
+      metadata: {
+        externalCommand: {
+          command: process.execPath,
+          args: [fixture.commandPath],
+          input: "none",
+        },
+      },
+    };
+    const tool = createExternalCommandDelegateTool({
+      getParent: () => parent,
+      profile,
+      toolName: "delegate_external_progress",
+      description: "Delegate to fixture command.",
+      workspaceRoot: fixture.cwd,
+    });
+
+    const result = (await tool.execute({ goal: "review the patch" }, {
+      run: parent.record,
+    } as never)) as {
+      stdout: string;
+      progressCount: number;
+      progressDropped: number;
+      progressHead: Array<Record<string, unknown>>;
+      progressTail: Array<Record<string, unknown>>;
+    };
+
+    expect(JSON.parse(result.stdout)).toEqual({ traceInbox: true });
+    expect(result).toMatchObject({
+      progressCount: 7,
+      progressDropped: 0,
+      progressHead: [
+        { channel: "event", message: "phase 1", data: { index: 1 } },
+        { channel: "event", message: "phase 2", data: { index: 2 } },
+        { channel: "event", message: "phase 3", data: { index: 3 } },
+        { channel: "event", message: "phase 4", data: { index: 4 } },
+        { channel: "event", message: "phase 5", data: { index: 5 } },
+      ],
+      progressTail: [
+        { channel: "event", message: "phase 6", data: { index: 6 } },
+        { channel: "event", message: "phase 7", data: { index: 7 } },
+      ],
+    });
+    expect(
+      parent.events.all().some((event) => event.type.startsWith("extension.")),
+    ).toBe(false);
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "subagent.completed",
+          payload: expect.objectContaining({
+            result: expect.objectContaining({
+              progressCount: 7,
+              progressDropped: 0,
+              progressHead: result.progressHead,
+              progressTail: result.progressTail,
             }),
           }),
         }),
@@ -541,6 +628,7 @@ describe("external command delegate tool", () => {
       stdoutTruncated: boolean;
       stderrTruncated: boolean;
       outputTruncated: boolean;
+      output: { artifactIds?: string[] };
     };
 
     expect(result).toMatchObject({
@@ -550,6 +638,17 @@ describe("external command delegate tool", () => {
       stderrTruncated: true,
       outputTruncated: true,
     });
+    expect(result.output.artifactIds).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^artifact_/)]),
+    );
+    expect(parent.events.all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "artifact.created",
+          payload: expect.objectContaining({ type: "log" }),
+        }),
+      ]),
+    );
   });
 
   it("fails closed when enforce-mode sandbox is unavailable", async () => {
@@ -722,6 +821,40 @@ process.stdin.on("end", () => {
   ${extraCode}
 });
 process.stdin.resume();
+`,
+    "utf8",
+  );
+  return { cwd, commandPath };
+}
+
+async function createProgressFixtureCommand(): Promise<{
+  cwd: string;
+  commandPath: string;
+}> {
+  const cwd = await mkdtemp(join(tmpdir(), "sparkwright-external-progress-"));
+  const commandPath = join(cwd, "progress.mjs");
+  await writeFile(
+    commandPath,
+    `
+import { appendFileSync } from "node:fs";
+
+const inbox = process.env.SPARKWRIGHT_TRACE_EVENTS;
+if (inbox) {
+  for (let index = 1; index <= 7; index += 1) {
+    appendFileSync(
+      inbox,
+      JSON.stringify({
+        type: "progress",
+        channel: "event",
+        message: \`phase \${index}\`,
+        data: { index },
+      }) + "\\n",
+      "utf8",
+    );
+  }
+}
+
+process.stdout.write(JSON.stringify({ traceInbox: Boolean(inbox) }));
 `,
     "utf8",
   );

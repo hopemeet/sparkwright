@@ -8,6 +8,7 @@ import {
   type ContentPolicy,
 } from "@sparkwright/core";
 import type { SkillManifest } from "./types.js";
+import { extractInlineShellCommands } from "./preprocess.js";
 
 export type SkillTrustLevel =
   | "builtin"
@@ -45,6 +46,10 @@ const DNS_SECRET_RE =
   /\b(?:dig|nslookup|host)\s+[^\n;|&]*\$\{?[A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)[A-Za-z0-9_]*}?/i;
 const TMP_EXFIL_RE = /\/tmp\/[^\s;&|]+[\s\S]{0,160}\b(?:curl|wget|scp|nc)\b/i;
 const DANGEROUS_SCRIPT_ASSET_RE = /(^|\/)scripts\/.*\.(?:sh|bash|zsh|ps1)$/i;
+const INLINE_SHELL_MUTATION_RE =
+  /(^|[\s;&|()])(?:tee|touch|rm|mv|cp|install|mkdir|rmdir)\b|>>?|(?:fs\.)?(?:writeFile|writeFileSync|appendFile|appendFileSync|copyFile|copyFileSync|rename|renameSync|rm|rmSync|unlink|unlinkSync|mkdir|mkdirSync)\s*\(/i;
+const INLINE_SHELL_NETWORK_RE =
+  /(^|[\s;&|()])(?:curl|wget|scp|nc|netcat|ssh|sftp|ftp)\b/i;
 
 export function inspectSkill(
   skill: SkillManifest,
@@ -97,6 +102,43 @@ export function inspectSkill(
     "Skill stages data in /tmp near a network exfiltration command.",
     "caution",
   );
+
+  const inlineShellCommands = extractInlineShellCommands(skill.instructions);
+  if (inlineShellCommands.length > 0) {
+    findings.push({
+      ruleId: "inline_shell_present",
+      severity: "caution",
+      message:
+        "Skill contains inline shell that executes during Skill loading.",
+      location: "instructions",
+    });
+    if (
+      inlineShellCommands.some((command) =>
+        INLINE_SHELL_MUTATION_RE.test(command),
+      )
+    ) {
+      findings.push({
+        ruleId: "inline_shell_mutation",
+        severity: "dangerous",
+        message:
+          "Inline shell appears to mutate local files or directories during Skill loading.",
+        location: "instructions",
+      });
+    }
+    if (
+      inlineShellCommands.some((command) =>
+        INLINE_SHELL_NETWORK_RE.test(command),
+      )
+    ) {
+      findings.push({
+        ruleId: "inline_shell_network",
+        severity: "dangerous",
+        message:
+          "Inline shell appears to use network-capable commands during Skill loading.",
+        location: "instructions",
+      });
+    }
+  }
 
   for (const asset of Object.values(skill.assets ?? {}).flat()) {
     if (DANGEROUS_SCRIPT_ASSET_RE.test(asset)) {

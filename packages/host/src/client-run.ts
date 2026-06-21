@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type {
   PermissionMode,
+  RunInputPayload,
   RunResumeRequestPayload,
   RunStartRequestPayload,
   TraceLevel,
@@ -53,9 +54,11 @@ export function createHostStartRunRequest(input: {
   confidentialPaths?: readonly string[];
   shouldWrite: boolean;
   metadata: Record<string, unknown>;
+  input?: RunInputPayload;
 }): RunStartRequestPayload {
   return {
     goal: input.goal,
+    ...(input.input ? { input: input.input } : {}),
     sessionId: input.sessionId,
     model: resolveHostRequestModel(input),
     permissionMode: input.permissionMode,

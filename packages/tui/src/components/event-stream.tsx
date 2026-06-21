@@ -1,11 +1,24 @@
 import React from "react";
-import { Box, Static, Text } from "ink";
-import type { RunEvent } from "../lib/event-type.js";
+import { Box, Static, Text, useStdout } from "ink";
+import { isInternalTranscriptEvent, type RunEvent } from "../lib/event-type.js";
 import { formatEvent } from "../lib/format-event.js";
 import { parseUnifiedDiff } from "../lib/diff.js";
 import { sanitizeAnsiForRender } from "../lib/text.js";
 import { Markdown } from "./markdown.js";
 import { useTheme } from "../lib/theme-context.js";
+import { resolveDialogColumns } from "./dialog-frame.js";
+import { isShellResult } from "../lib/tool-result-summary.js";
+import {
+  formatToolRequestPreview,
+  oneLine,
+  compactMutationPath,
+  summarizeToolResultForDisplay,
+  type ToolDisplayTone,
+  type ToolResultDisplay,
+} from "../lib/tool-display.js";
+import { middleEllipsisPath } from "../lib/path-display.js";
+
+export { oneLine } from "../lib/tool-display.js";
 
 export interface TranscriptHeaderInfo {
   workspaceRoot: string;
@@ -15,7 +28,46 @@ export interface TranscriptHeaderInfo {
 
 type Row =
   | { kind: "header"; key: string; header: TranscriptHeaderInfo }
-  | { kind: "event"; key: string; event: RunEvent; inBatch: boolean };
+  | {
+      kind: "event";
+      key: string;
+      event: RunEvent;
+      inBatch: boolean;
+      facts?: RunFactsSnapshot;
+    };
+
+interface RunFacts {
+  toolCalls: number;
+  writePaths: Set<string>;
+  approvalsRequested: number;
+  approvalsApproved: number;
+  approvalsDenied: number;
+  shellRequests: string[];
+  shellResults: ShellFact[];
+}
+
+interface RunFactsSnapshot {
+  toolCalls: number;
+  changedFiles: number;
+  approvalsRequested: number;
+  approvalsApproved: number;
+  approvalsDenied: number;
+  lastShell?: ShellFact;
+  commandOutcome?: CommandOutcomeFact;
+}
+
+interface ShellFact {
+  command?: string;
+  exitCode: number | null;
+  timedOut: boolean;
+}
+
+interface CommandOutcomeFact {
+  lastCommand?: string;
+  lastExitCode?: number;
+  lastTimedOut?: boolean;
+  unresolvedVerificationFailures?: number;
+}
 
 /**
  * Committed transcript. A one-time session header sits at the very top, then
@@ -42,20 +94,29 @@ export function EventStream(props: {
   // batch.requested has already been seen, so each row's `inBatch` is stable and
   // never changes on a later commit.
   let batchDepth = 0;
+  let facts = createRunFacts();
   const rows: Row[] = [
     { kind: "header", key: "__header", header: props.header },
     ...props.events.map((event): Row => {
+      if (event.type === "run.started") facts = createRunFacts();
       // The batch.requested header itself is NOT a member (depth flips after
       // it); the batch.completed closer drops back out before this row.
       if (event.type === "tool.batch.completed" && batchDepth > 0) batchDepth--;
       const inBatch = batchDepth > 0;
       if (event.type === "tool.batch.requested") batchDepth++;
-      return {
+      const row: Row = {
         kind: "event",
         key: event.id ?? `${event.sequence}`,
         event,
         inBatch,
       };
+      if (event.type === "run.completed") {
+        row.facts = snapshotRunFacts(facts, event);
+        facts = createRunFacts();
+      } else {
+        recordRunFact(facts, event);
+      }
+      return row;
     }),
   ];
   return (
@@ -68,6 +129,7 @@ export function EventStream(props: {
             key={row.key}
             event={row.event}
             inBatch={row.inBatch}
+            facts={row.facts}
           />
         )
       }
@@ -83,10 +145,14 @@ export function EventStream(props: {
  * to its own row and degrades to a dim diagnostic line instead.
  */
 class EventCardBoundary extends React.Component<
-  { event: RunEvent; inBatch: boolean },
+  { event: RunEvent; inBatch: boolean; facts?: RunFactsSnapshot },
   { error: Error | null }
 > {
-  constructor(props: { event: RunEvent; inBatch: boolean }) {
+  constructor(props: {
+    event: RunEvent;
+    inBatch: boolean;
+    facts?: RunFactsSnapshot;
+  }) {
     super(props);
     this.state = { error: null };
   }
@@ -105,7 +171,13 @@ class EventCardBoundary extends React.Component<
         </Box>
       );
     }
-    return <EventCard event={this.props.event} inBatch={this.props.inBatch} />;
+    return (
+      <EventCard
+        event={this.props.event}
+        inBatch={this.props.inBatch}
+        facts={this.props.facts}
+      />
+    );
   }
 }
 
@@ -113,6 +185,9 @@ function HeaderRow(props: {
   header: TranscriptHeaderInfo;
 }): React.ReactElement {
   const h = props.header;
+  const { stdout } = useStdout();
+  const columns = stdout?.columns ?? 120;
+  const cwd = middleEllipsisPath(h.workspaceRoot, Math.max(16, columns - 6));
   return (
     <Box flexDirection="column" paddingX={1} marginBottom={1}>
       <Text>
@@ -121,7 +196,7 @@ function HeaderRow(props: {
       </Text>
       <Text>
         <Text dimColor>cwd </Text>
-        {h.workspaceRoot}
+        {cwd}
       </Text>
       <Text>
         <Text dimColor>model </Text>
@@ -141,6 +216,155 @@ function rec(value: unknown): Record<string, unknown> {
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function createRunFacts(): RunFacts {
+  return {
+    toolCalls: 0,
+    writePaths: new Set<string>(),
+    approvalsRequested: 0,
+    approvalsApproved: 0,
+    approvalsDenied: 0,
+    shellRequests: [],
+    shellResults: [],
+  };
+}
+
+function recordRunFact(facts: RunFacts, event: RunEvent): void {
+  const p = rec(event.payload);
+  switch (event.type) {
+    case "tool.requested": {
+      facts.toolCalls += 1;
+      if (str(p.toolName) === "shell") {
+        const args = rec(p.arguments ?? p.input ?? p.args);
+        const command = str(args.command);
+        if (command) facts.shellRequests.push(command);
+      }
+      return;
+    }
+    case "tool.completed": {
+      const result = p.result ?? p.output;
+      if (isShellResult(result)) {
+        const r = result as Record<string, unknown>;
+        facts.shellResults.push({
+          command: facts.shellRequests.shift(),
+          exitCode: typeof r.exitCode === "number" ? r.exitCode : null,
+          timedOut: r.timedOut === true,
+        });
+      }
+      return;
+    }
+    case "workspace.write.applied":
+    case "workspace.write.completed": {
+      const path = str(p.path);
+      if (path) facts.writePaths.add(path);
+      return;
+    }
+    case "approval.requested":
+      facts.approvalsRequested += 1;
+      return;
+    case "approval.resolved": {
+      const decision = str(p.decision);
+      if (decision === "approved") facts.approvalsApproved += 1;
+      else if (decision === "denied") facts.approvalsDenied += 1;
+      return;
+    }
+  }
+}
+
+function snapshotRunFacts(
+  facts: RunFacts,
+  completed: RunEvent,
+): RunFactsSnapshot {
+  const p = rec(completed.payload);
+  return {
+    toolCalls: facts.toolCalls,
+    changedFiles: facts.writePaths.size,
+    approvalsRequested: facts.approvalsRequested,
+    approvalsApproved: facts.approvalsApproved,
+    approvalsDenied: facts.approvalsDenied,
+    lastShell: facts.shellResults[facts.shellResults.length - 1],
+    commandOutcome: commandOutcomeFact(p.commandOutcome),
+  };
+}
+
+function commandOutcomeFact(value: unknown): CommandOutcomeFact | undefined {
+  const r = rec(value);
+  if (Object.keys(r).length === 0) return undefined;
+  const verification = rec(r.verification);
+  const fact: CommandOutcomeFact = {};
+  const lastCommand = str(verification.lastCommand);
+  if (lastCommand) fact.lastCommand = lastCommand;
+  if (typeof verification.lastExitCode === "number") {
+    fact.lastExitCode = verification.lastExitCode;
+  }
+  if (typeof verification.lastTimedOut === "boolean") {
+    fact.lastTimedOut = verification.lastTimedOut;
+  }
+  if (typeof verification.unresolved === "number") {
+    fact.unresolvedVerificationFailures = verification.unresolved;
+  }
+  return Object.keys(fact).length > 0 ? fact : undefined;
+}
+
+function runFactsParts(facts: RunFactsSnapshot | undefined): string[] {
+  if (!facts) return [];
+  const parts: string[] = [];
+  if (facts.changedFiles > 0) {
+    parts.push(
+      `changed ${facts.changedFiles} file${facts.changedFiles === 1 ? "" : "s"}`,
+    );
+  }
+  if (facts.approvalsRequested > 0) {
+    const resolved = facts.approvalsApproved + facts.approvalsDenied;
+    const suffix =
+      facts.approvalsDenied > 0 ? `, ${facts.approvalsDenied} denied` : "";
+    parts.push(`approvals ${resolved}/${facts.approvalsRequested}${suffix}`);
+  }
+  if (facts.toolCalls > 0) {
+    parts.push(`tools ${facts.toolCalls}`);
+  }
+  const command = commandFact(facts);
+  if (command) parts.push(command);
+  return parts;
+}
+
+function commandFact(facts: RunFactsSnapshot): string | undefined {
+  const shell = facts.lastShell;
+  if (shell?.command) return `last command: ${commandStatus(shell)}`;
+  const outcome = facts.commandOutcome;
+  if (!outcome?.lastCommand) return undefined;
+  return `last command: ${commandStatus({
+    command: outcome.lastCommand,
+    exitCode:
+      typeof outcome.lastExitCode === "number" ? outcome.lastExitCode : null,
+    timedOut: outcome.lastTimedOut === true,
+  })}`;
+}
+
+function commandStatus(fact: ShellFact): string {
+  const command = fact.command ?? "shell";
+  if (fact.timedOut) return `${command} timed out`;
+  if (fact.exitCode === 0) return `${command} passed`;
+  if (typeof fact.exitCode === "number") return `${command} failed`;
+  return `${command} completed`;
+}
+
+function shortRunId(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
+}
+
+function RunFactsLine(props: {
+  facts: RunFactsSnapshot | undefined;
+}): React.ReactElement | null {
+  const parts = runFactsParts(props.facts);
+  if (parts.length === 0) return null;
+  return <Text dimColor>run facts {parts.join(" · ")}</Text>;
+}
 
 /**
  * One committed event → one typed card. Intermediate / noisy events
@@ -152,8 +376,10 @@ function str(value: unknown): string {
 function EventCard(props: {
   event: RunEvent;
   inBatch: boolean;
+  facts?: RunFactsSnapshot;
 }): React.ReactElement | null {
   const theme = useTheme();
+  const { stdout } = useStdout();
   const ev = props.event;
   const p = rec(ev.payload);
   // Batch members are indented one extra step and packed tightly (no per-card
@@ -264,165 +490,56 @@ function EventCard(props: {
     case "tool.requested": {
       const name = str(p.toolName) || "tool";
       const args = p.arguments ?? p.input ?? p.args;
-      const preview = formatToolRequestPreview(name, args);
+      const cols = resolveDialogColumns(stdout?.columns) ?? 120;
+      const marker = inBatch ? "› " : "⚙ ";
+      const nameBudget = Math.max(8, Math.min(24, cols - childPad - 4));
+      const visibleName = truncatePlain(name, nameBudget);
+      const previewBudget = Math.max(
+        0,
+        cols - childPad - marker.length - visibleName.length - 4,
+      );
+      const preview = formatToolRequestPreview(name, args, previewBudget);
       return (
         <Box
           paddingLeft={childPad}
           paddingRight={1}
           marginTop={inBatch ? 0 : 1}
         >
-          <Text color={theme.accent}>{inBatch ? "› " : "⚙ "}</Text>
-          <Text color={theme.accent} bold>
-            {name}
+          <Text>
+            <Text color={theme.accent} bold>
+              {marker}
+              {visibleName}
+            </Text>
+            {preview ? <Text dimColor>{"  " + preview}</Text> : null}
           </Text>
-          {preview ? <Text dimColor>{"  " + preview}</Text> : null}
         </Box>
       );
     }
 
     case "tool.completed": {
+      const toolName = str(p.toolName) || undefined;
       const result = p.result ?? p.output;
       const artifacts = Array.isArray(p.artifacts) ? p.artifacts : [];
       if (result === undefined && artifacts.length === 0) return null;
-      // read_file returns a structured envelope ({ path, content, totalLines,
-      // bytes, … }). Dumping it via oneLine floods the transcript with the
-      // entire file body as JSON — but more than that, a read_file call already
-      // emitted a `workspace.read` line (ControlledWorkspace.readText fires it
-      // from inside the tool), so a tool.completed card here would just repeat
-      // "read <path>". Recognise the envelope structurally and render nothing;
-      // the workspace.read line is the canonical row for a file read.
-      if (isFileReadResult(result)) {
+      const display =
+        result === undefined
+          ? ({ kind: "hidden", reason: "no_result" } as const)
+          : summarizeToolResultForDisplay({
+              toolName,
+              result,
+              mode: "live",
+            });
+      if (display.kind === "hidden") {
         return artifacts.length > 0 ? (
           <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
         ) : null;
       }
-      if (isAnchoredReadResult(result)) {
-        return artifacts.length > 0 ? (
-          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
-        ) : null;
-      }
-      if (isWorkspaceWriteToolResult(result)) {
-        return artifacts.length > 0 ? (
-          <ArtifactHint artifacts={artifacts} paddingLeft={childPad} />
-        ) : null;
-      }
-      if (isSkillMutationToolResult(result)) {
-        return (
-          <SkillMutationToolSummary
-            result={result}
-            artifacts={artifacts}
-            paddingLeft={childPad}
-          />
-        );
-      }
-      if (isShellResult(result)) {
-        const { head, lines, timedOut } = summarizeShellResult(result);
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Text color={timedOut ? theme.warning : theme.muted}>{head}</Text>
-            {lines.map((line, i) => (
-              <Text key={i} dimColor>
-                {"  " + line}
-              </Text>
-            ))}
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // A sub-agent tool (delegate_* / spawn_agent) returns a structured
-      // envelope { childRunId, signal, stopReason, message, usage, … }. Dumping
-      // it via oneLine floods the transcript with raw JSON (spanId, token
-      // counts, promotionHint). The only part worth committing is the child's
-      // own answer (`message`); the `subagent.completed` line already marked the
-      // run done, and the rest stays inspectable via /events.
-      if (isAgentToolResult(result)) {
-        const message = str(rec(result).message).trim();
-        if (!message) return null;
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Markdown text={message} />
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // A `skill_load` result carries the whole skill body in `content`, which
-      // oneLine would truncate to a meaningless ~200-char JSON stub (hiding the
-      // one fact that matters: did the body actually come back?). Render a
-      // proof-of-load summary — status + body length + resource count — and
-      // leave the full envelope inspectable via /events.
-      if (isSkillLoadResult(result)) {
-        const r = rec(result);
-        if (r.status === "not_found") {
-          const avail = Array.isArray(r.availableSkills)
-            ? r.availableSkills.join(", ")
-            : "";
-          return (
-            <Box paddingLeft={childPad} paddingRight={1}>
-              <Text color={theme.error}>
-                {`skill_load ${str(r.requestedName)} → not found`}
-              </Text>
-              {avail ? <Text dimColor>{"  available: " + avail}</Text> : null}
-            </Box>
-          );
-        }
-        const bodyChars = str(r.content).length;
-        const resources = Array.isArray(r.resourceFiles)
-          ? r.resourceFiles.length
-          : 0;
-        const version = str(r.version);
-        return (
-          <Box paddingLeft={childPad} paddingRight={1}>
-            <Text color={theme.success}>
-              {`skill_load ${str(r.name)} → loaded`}
-            </Text>
-            <Text dimColor>
-              {`  body ${bodyChars} chars · ${resources} resource file${
-                resources === 1 ? "" : "s"
-              }${version ? " · v" + version : ""}`}
-            </Text>
-          </Box>
-        );
-      }
-      // A `list_dir` result carries an `entries` array that oneLine would dump
-      // as truncated JSON (`{"path":".","entries":[{"path":"dist",…`). Render a
-      // compact "N entries + names" summary instead; the full listing stays
-      // inspectable via /events.
-      if (isListDirResult(result)) {
-        const { head, detail } = summarizeListDir(result);
-        return (
-          <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-            <Text color={theme.muted}>{head}</Text>
-            {detail ? <Text dimColor>{"  " + detail}</Text> : null}
-            {artifacts.length > 0 ? (
-              <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-            ) : null}
-          </Box>
-        );
-      }
-      // Tool output (shell stdout especially) is the most likely carrier of
-      // raw escape sequences — strip them so a `clear`/cursor-move in stdout
-      // can't scramble the transcript.
-      const text = sanitizeAnsiForRender(
-        typeof result === "string" ? result : oneLine(result, 200),
-      );
-      const lines = text.split("\n").slice(0, 6);
-      const truncated = text.split("\n").length > 6;
       return (
-        <Box flexDirection="column" paddingLeft={childPad} paddingRight={1}>
-          {lines.map((l, i) => (
-            <Text key={i} dimColor>
-              {"  " + l}
-            </Text>
-          ))}
-          {truncated ? <Text dimColor>{"  …"}</Text> : null}
-          {artifacts.length > 0 ? (
-            <ArtifactHint artifacts={artifacts} paddingLeft={0} />
-          ) : null}
-        </Box>
+        <ToolResultDisplayBlock
+          display={display}
+          artifacts={artifacts}
+          paddingLeft={childPad}
+        />
       );
     }
 
@@ -598,25 +715,47 @@ function EventCard(props: {
     case "subagent.failed": {
       const phase = ev.type.slice("subagent.".length);
       const meta = rec(ev.metadata);
+      const depth = optionalNumber(meta.subagentDepth) ?? 0;
       const name =
         str(meta.agentName) ||
         str(p.agentName) ||
+        str(meta.agentId) ||
         str(meta.agentProfileId) ||
         str(p.childRunId) ||
         "subagent";
+      const childRunId = str(meta.childRunId) || str(p.childRunId);
+      const parentRunId = str(meta.parentRunId) || str(p.parentRunId);
+      const entrypoint = str(meta.entrypoint);
+      const delegateTool = str(meta.delegateTool);
+      const terminalState = str(p.terminalState);
+      const lifecycle = terminalState || str(p.reason) || str(p.stopReason);
       // The goal doesn't change across phases, so showing it on started AND
       // completed just reprints the same sentence twice more. Introduce it once
       // on `requested`; later phases carry only their own news (the stop reason).
       const goal = phase === "requested" ? str(p.goal) : "";
-      const reason = str(p.reason) || str(p.stopReason);
       const color = phase === "failed" ? theme.error : theme.accent2;
+      const branch = depth > 0 ? "└─ " : "agent ";
+      const details = [
+        `depth ${depth}`,
+        entrypoint,
+        delegateTool ? `via ${delegateTool}` : undefined,
+        childRunId ? `child ${shortRunId(childRunId)}` : undefined,
+        parentRunId ? `parent ${shortRunId(parentRunId)}` : undefined,
+      ].filter((value): value is string => typeof value === "string");
       return (
-        <Box paddingX={1} marginTop={phase === "requested" ? 1 : 0}>
-          <Text color={color}>subagent </Text>
+        <Box
+          paddingLeft={1 + depth * 2}
+          paddingRight={1}
+          marginTop={phase === "requested" ? 1 : 0}
+        >
+          <Text color={color}>{branch}</Text>
           <Text bold>{name}</Text>
           <Text color={theme.muted}> {phase}</Text>
+          {lifecycle ? <Text color={theme.muted}> · {lifecycle}</Text> : null}
+          {details.length > 0 ? (
+            <Text color={theme.muted}> · {details.join(" · ")}</Text>
+          ) : null}
           {goal ? <Text color={theme.muted}> · {goal}</Text> : null}
-          {reason ? <Text color={theme.muted}> · {reason}</Text> : null}
         </Box>
       );
     }
@@ -635,25 +774,28 @@ function EventCard(props: {
           reason ||
           "run failed";
         return (
-          <Box paddingX={1} marginTop={1}>
+          <Box flexDirection="column" paddingX={1} marginTop={1}>
             <Text color={theme.error}>── run failed: {err}</Text>
+            <RunFactsLine facts={props.facts} />
           </Box>
         );
       }
       if (state === "cancelled") {
         return (
-          <Box paddingX={1} marginTop={1}>
+          <Box flexDirection="column" paddingX={1} marginTop={1}>
             <Text color={theme.error}>
               ── run cancelled: {reason || "cancelled"}
             </Text>
+            <RunFactsLine facts={props.facts} />
           </Box>
         );
       }
       const displayReason = reason || "completed";
       const isFinal = displayReason === "final_answer";
       return (
-        <Box paddingX={1} marginTop={1}>
+        <Box flexDirection="column" paddingX={1} marginTop={1}>
           <Text dimColor>{isFinal ? "─────" : `── run ${displayReason}`}</Text>
+          <RunFactsLine facts={props.facts} />
         </Box>
       );
     }
@@ -676,47 +818,8 @@ function EventCard(props: {
       );
     }
 
-    // Intermediate / low-signal scaffolding: hidden so the transcript reads
-    // as a conversation. (Full payloads are still inspectable via /events.)
-    // Context-management scaffolding and span brackets are also hidden for the
-    // same reason: users should see the conversation, not the machinery.
-    // The cancel/state-machine plumbing (run.cancelled / run.cancel_requested /
-    // run.state_transition.rejected) is hidden too: the user-facing cancel is
-    // surfaced by the run.completed (state=cancelled) card and the "cancelling…"
-    // toast, so these would otherwise leak as raw "[seq] type" debug rows.
-    case "run.started":
-    case "run.created":
-    case "run.cancelled":
-    case "run.cancel_requested":
-    case "run.state_transition.rejected":
-    case "context.assembled":
-    case "context.cache_break.detected":
-    case "context.compaction_requested":
-    case "context.compaction.started":
-    case "context.compaction.completed":
-    case "context.compaction.failed":
-    case "skill.indexed":
-    case "prompt.built":
-    case "model.turn.started":
-    case "model.turn.completed":
-    case "model.requested":
-    case "model.retrying":
-    case "model.stream.failed":
-    case "model.stream.started":
-    case "model.stream.chunk":
-    case "model.stream.completed":
-    case "tool.batch.completed":
-    case "tool.started":
-    case "tool.progress":
-    case "workspace.write.requested":
-    case "artifact.created":
-    case "approval.requested":
-    case "interaction.requested":
-    case "interaction.resolved":
-    case "usage.updated":
-      return null;
-
     default: {
+      if (isInternalTranscriptEvent(ev.type)) return null;
       const f = formatEvent(ev);
       return (
         <Box paddingX={1}>
@@ -772,67 +875,64 @@ function CompactDiff(props: { diff: string }): React.ReactElement {
   );
 }
 
-function formatToolRequestPreview(name: string, args: unknown): string {
-  const r = rec(args);
-  if (r && (name === "create_skill" || name === "update_skill")) {
-    const action = str(r.action);
-    const skill = str(r.name);
-    const force = r.force === true ? " · force" : "";
-    return [action, skill].filter(Boolean).join(" ") + force;
-  }
-  return args !== undefined ? oneLine(args, 80) : "";
-}
-
-function compactMutationPath(path: string): string {
-  if (!path) return "";
-  const marker = `${path.includes("\\") ? "\\" : "/"}.sparkwright${
-    path.includes("\\") ? "\\" : "/"
-  }`;
-  const idx = path.indexOf(marker);
-  if (idx >= 0) return path.slice(idx + 1);
-  const parts = path.split(/[\\/]+/).filter(Boolean);
-  if (parts.length <= 4) return path;
-  return `…/${parts.slice(-4).join("/")}`;
-}
-
-function SkillMutationToolSummary(props: {
-  result: unknown;
+function ToolResultDisplayBlock(props: {
+  display: Exclude<ToolResultDisplay, { kind: "hidden" }>;
   artifacts: unknown[];
   paddingLeft: number;
 }): React.ReactElement {
   const theme = useTheme();
-  const r = rec(props.result);
-  const action = str(r.action) || "skill";
-  const name = str(r.name);
-  const path = compactMutationPath(str(r.path) || str(r.proposalPath));
-  const proposalId = str(r.proposalId);
-  const changed = r.changed === false ? "unchanged" : "changed";
-  const label =
-    action === "draft"
-      ? "skill proposal"
-      : action === "apply"
-        ? "skill proposal applied"
-        : "skill mutation";
+  if (props.display.kind === "markdown") {
+    return (
+      <Box
+        flexDirection="column"
+        paddingLeft={props.paddingLeft}
+        paddingRight={1}
+      >
+        <Markdown text={props.display.text} />
+        {props.display.details.map((line, i) => (
+          <Text key={i} dimColor>
+            {"  " + line}
+          </Text>
+        ))}
+        {props.artifacts.length > 0 ? (
+          <ArtifactHint artifacts={props.artifacts} paddingLeft={0} />
+        ) : null}
+      </Box>
+    );
+  }
+
   return (
     <Box
       flexDirection="column"
       paddingLeft={props.paddingLeft}
       paddingRight={1}
     >
-      <Text>
-        <Text color={theme.success}>{label} </Text>
-        <Text bold>{proposalId || name || action}</Text>
-        <Text dimColor>{` · ${changed}`}</Text>
-      </Text>
-      {path ? <Text dimColor>{"  " + path}</Text> : null}
-      {action === "draft" ? (
-        <Text dimColor>{"  draft only; original Skill package unchanged"}</Text>
+      {props.display.head ? (
+        <Text color={toolToneColor(props.display.tone, theme)}>
+          {props.display.head}
+        </Text>
       ) : null}
+      {props.display.details.map((line, i) => (
+        <Text key={i} dimColor>
+          {"  " + line}
+        </Text>
+      ))}
       {props.artifacts.length > 0 ? (
         <ArtifactHint artifacts={props.artifacts} paddingLeft={0} />
       ) : null}
     </Box>
   );
+}
+
+function toolToneColor(
+  tone: ToolDisplayTone,
+  theme: ReturnType<typeof useTheme>,
+): string | undefined {
+  if (tone === "success") return theme.success;
+  if (tone === "warning") return theme.warning;
+  if (tone === "error") return theme.error;
+  if (tone === "muted") return theme.muted;
+  return undefined;
 }
 
 function ArtifactHint(props: {
@@ -858,224 +958,7 @@ function ArtifactHint(props: {
   );
 }
 
-/**
- * Recognise a `read_file` result envelope by its shape: a record carrying a
- * string `path`, a string `content`, and numeric `totalLines`/`bytes`. The
- * committed renderer has no toolCallId correlation, so this structural check is
- * how `tool.completed` knows a result is a file read (and can suppress its card
- * in favour of the `workspace.read` line). Returns true for a file-read result.
- */
-export function isFileReadResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.path === "string" &&
-    typeof r.content === "string" &&
-    typeof r.totalLines === "number" &&
-    typeof r.bytes === "number"
-  );
-}
-
-export function isAnchoredReadResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.path === "string" &&
-    typeof r.content === "string" &&
-    typeof r.anchorSetId === "string" &&
-    typeof r.lineCount === "number" &&
-    Array.isArray(r.lines)
-  );
-}
-
-export function isWorkspaceWriteToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.path === "string" &&
-    (typeof r.changed === "boolean" ||
-      typeof r.hunksApplied === "number" ||
-      typeof r.proposalId === "string") &&
-    ("content" in r || "diff" in r || "summary" in r)
-  );
-}
-
-export function isSkillMutationToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (typeof r.action !== "string" || typeof r.changed !== "boolean") {
-    return false;
-  }
-  if (r.action === "create") {
-    return typeof r.name === "string" && typeof r.path === "string";
-  }
-  if (r.action === "draft") {
-    return (
-      typeof r.proposalId === "string" && typeof r.proposalPath === "string"
-    );
-  }
-  if (r.action === "apply") {
-    return typeof r.proposalId === "string";
-  }
-  return false;
-}
-
-export function isShellResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.stdout === "string" &&
-    typeof r.stderr === "string" &&
-    (typeof r.exitCode === "number" || r.exitCode === null) &&
-    typeof r.timedOut === "boolean"
-  );
-}
-
-export function summarizeShellResult(
-  value: unknown,
-  maxLines = 4,
-): { head: string; lines: string[]; timedOut: boolean } {
-  const r = value as Record<string, unknown>;
-  const exitCode =
-    typeof r.exitCode === "number" ? String(r.exitCode) : String(r.exitCode);
-  const timedOut = r.timedOut === true;
-  const head = timedOut
-    ? `shell timed out exit ${exitCode}`
-    : `shell exit ${exitCode}`;
-  const stdout = sanitizeAnsiForRender(str(r.stdout));
-  const stderr = sanitizeAnsiForRender(str(r.stderr));
-  const combined = [stdout, stderr ? `stderr: ${stderr}` : ""]
-    .filter(Boolean)
-    .join("\n");
-  const lines = combined
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, maxLines);
-  return { head, lines, timedOut };
-}
-
-/**
- * Recognise a sub-agent tool result envelope by its shape: a record carrying a
- * string `childRunId`, a string `signal`, and a `stopReason`. Both the stable
- * delegate tool (`AgentToolResult`) and the dynamic `spawn_agent` output share
- * this core. The committed renderer has no toolCallId correlation, so this
- * structural check is how `tool.completed` knows to surface only the child's
- * `message` instead of dumping the whole envelope as JSON. Returns true for a
- * sub-agent result.
- */
-export function isAgentToolResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  return (
-    typeof r.childRunId === "string" &&
-    typeof r.signal === "string" &&
-    "stopReason" in r
-  );
-}
-
-/**
- * Recognise a `skill_load` tool result by its shape: a record with a string
- * `status` that is either a loaded skill (`name` + string `content` body) or a
- * `not_found` miss (`requestedName`). The committed renderer has no toolCallId
- * correlation, so this structural check is how `tool.completed` knows to render
- * a proof-of-load summary instead of dumping/truncating the body-bearing
- * envelope as JSON. Returns true for a skill_load result.
- */
-export function isSkillLoadResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (r.status === "loaded") {
-    return typeof r.name === "string" && typeof r.content === "string";
-  }
-  return r.status === "not_found" && typeof r.requestedName === "string";
-}
-
-/**
- * Recognise a `list_dir` tool result by its shape: a record with a string `path`
- * and an `entries` array of `{ name, type }`. Like read_file/skill_load, the
- * committed renderer has no toolCallId correlation, so this structural check is
- * how `tool.completed` knows to render a compact directory summary instead of
- * dumping the entries array as truncated JSON. Returns true for a list_dir result.
- */
-export function isListDirResult(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const r = value as Record<string, unknown>;
-  if (typeof r.path !== "string" || !Array.isArray(r.entries)) return false;
-  return r.entries.every(
-    (e) =>
-      typeof e === "object" &&
-      e !== null &&
-      typeof (e as Record<string, unknown>).name === "string" &&
-      typeof (e as Record<string, unknown>).type === "string",
-  );
-}
-
-/**
- * Compact one-or-two-line summary of a `list_dir` result: a count headline plus
- * a sample of entry names (directories suffixed with `/`), capped so a large
- * directory can't flood the transcript. Pure for testing.
- */
-export function summarizeListDir(
-  value: unknown,
-  maxNames = 8,
-): { head: string; detail: string } {
-  const r = value as { path?: unknown; entries?: unknown };
-  const path = typeof r.path === "string" && r.path ? r.path : ".";
-  const entries = Array.isArray(r.entries) ? r.entries : [];
-  const head = `list_dir ${path} → ${entries.length} ${
-    entries.length === 1 ? "entry" : "entries"
-  }`;
-  const names = entries.slice(0, maxNames).map((e) => {
-    const rec = e as Record<string, unknown>;
-    const name = String(rec.name ?? "");
-    return rec.type === "directory" ? `${name}/` : name;
-  });
-  const more = entries.length - names.length;
-  const detail = names.join(" · ") + (more > 0 ? ` · +${more} more` : "");
-  return { head, detail };
-}
-
-/** Best-effort one-line preview of a value (object → compact JSON). */
-export function oneLine(value: unknown, max: number): string {
-  let s: string;
-  if (typeof value === "string") s = value;
-  else if (value === undefined || value === null) s = "";
-  else {
-    try {
-      // JSON.stringify returns undefined for undefined/functions/symbols, so
-      // fall back to String() to guarantee a string (the .replace below would
-      // otherwise throw on undefined).
-      s = JSON.stringify(value) ?? String(value);
-    } catch {
-      s = String(value);
-    }
-  }
-  // Strip raw escape/control sequences (a tool arg can echo terminal codes)
-  // before folding so a preview can't carry cursor moves or OSC sets.
-  s = sanitizeAnsiForRender(s);
-  // JSON.stringify renders newlines/tabs inside strings as the two literal
-  // characters `\n` / `\t`, which the whitespace collapse below would miss —
-  // fold those escape sequences to a space first so previews stay one line.
-  s = s
-    .replace(/\\[nrt]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+function truncatePlain(text: string, max: number): string {
+  if (max <= 0) return "";
+  return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "…" : text;
 }

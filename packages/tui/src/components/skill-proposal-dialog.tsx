@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { useTheme } from "../lib/theme-context.js";
 import type { TuiSkillProposalInput } from "../lib/skill-evolution.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 type FieldKey = "name" | "description";
 export type SkillProposalDialogAction = "create" | "update";
@@ -131,12 +132,7 @@ export function SkillProposalDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Text color={theme.accent} bold>
         skill proposal
         <Text color={theme.muted}> enter next/save | esc cancel</Text>
@@ -163,7 +159,7 @@ export function SkillProposalDialog(props: {
         {error ? <Text color={theme.error}>{error}</Text> : null}
         <Text color={theme.muted}>up/down switch field | ctrl+u clear</Text>
       </Box>
-    </Box>
+    </DialogFrame>
   );
 }
 

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { DialogFrame } from "./dialog-frame.js";
 
 /**
  * Inline rename prompt. Takes a sessionId + current label, lets the user edit
@@ -56,12 +57,7 @@ export function SessionRenameDialog(props: {
   const overlong = value.length > 80;
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-    >
+    <DialogFrame borderColor="cyan">
       <Box>
         <Text color="cyan" bold>
           rename session
@@ -76,7 +72,7 @@ export function SessionRenameDialog(props: {
         {value.length}/80 · enter save · ctrl+u clear · esc cancel
         {overlong ? " · will be truncated" : ""}
       </Text>
-    </Box>
+    </DialogFrame>
   );
 }
 

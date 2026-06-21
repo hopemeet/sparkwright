@@ -29,7 +29,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/chmod-bin.mjs dist/index.js",
+    "build": "tsc -p tsconfig.json && node ../../scripts/copy-cli-schemas.mjs && node ../../scripts/chmod-bin.mjs dist/index.js && node ../../scripts/stamp-workspace-build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
@@ -42,12 +42,14 @@
     "@sparkwright/host": "0.1.0",
     "@sparkwright/mcp-adapter": "0.1.0",
     "@sparkwright/project-context": "0.1.0",
+    "@sparkwright/protocol": "0.1.0",
     "@sparkwright/provider-ai-sdk": "0.1.0",
     "@sparkwright/provider-registry": "0.1.0",
     "@sparkwright/sdk-node": "0.1.0",
     "@sparkwright/shell-sandbox": "0.1.0",
     "@sparkwright/skills": "0.1.0",
     "@sparkwright/tui": "0.1.0",
+    "ajv": "^8.20.0",
     "undici": "^7.26.0"
   },
   "publishConfig": {

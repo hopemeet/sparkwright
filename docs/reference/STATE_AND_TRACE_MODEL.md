@@ -131,6 +131,12 @@ event facts. Lightweight analytics should read the trace and derive summaries
 with helpers such as `summarizeTraceJsonl` / `summarizeTraceFile`; they should
 not become a second source of truth.
 
+Host-controlled process runners (`extension.process.*`) follow the same rule:
+external scripts may report progress only through a host-owned inbox, while the
+host assigns event ids, sequence, timestamps, and span fields. Redaction remains
+at the trace persistence boundary (`FileRunStore`), and large stdout/stderr
+content should be summarized inline and materialized through `artifact.created`.
+
 For local integrity checks, `validateSessionTraceConsistency` inspects a
 session directory and verifies that session events, run membership, trace
 metadata, per-run event sequences, and run/result files agree.
@@ -147,11 +153,15 @@ Default file layout for session-scoped run traces:
   transcript.jsonl
   agents/<agent-id>/trace.jsonl
   agents/<agent-id>/transcript.jsonl
+  agents/<agent-id>/runs/<run-id>/trace-pointer.json
   agents/<agent-id>/runs/<run-id>/run.json
   agents/<agent-id>/runs/<run-id>/result.json
   artifacts/
   blobs/
 ```
+
+Session-scoped run directories hold per-run state. `trace-pointer.json` points
+back to the session and agent trace files that contain the run's events.
 
 ### 4. Runtime Live State
 
@@ -253,10 +263,18 @@ The CLI exposes these primitives directly:
 sparkwright trace summary <trace.jsonl> --format text
 sparkwright trace events <trace.jsonl> --type tool.failed --limit 20 --jsonl
 sparkwright trace timeline <trace.jsonl> --format text
+sparkwright trace report <trace.jsonl> --format text
 sparkwright session check <session-id> --workspace <repo> --format text
 sparkwright session repair <session-id> --workspace <repo> --dry-run
 sparkwright session resume <session-id> "next goal" --workspace <repo>
 ```
+
+`trace report` is the human-oriented diagnostic layer over the same raw trace:
+it highlights verdict, efficiency, failure recovery, safety posture, repeated
+reads, and cost-reporting gaps without replacing `summary`, `timeline`, or
+`verify`. Public `summary.errorCount` remains a raw event count for analytics;
+report verdicts derive their high-severity runtime-error findings from
+reportable failures after tool-outcome recovery and companion-event correlation.
 
 Host clients can request the same inspection bundle with `session.inspect`,
 which returns trace summary, consistency report, and timeline phases in one
@@ -275,6 +293,13 @@ Task lifecycle events are `task.created`, `task.started`, `task.output`,
 `task.completed`, `task.failed`, and `task.cancelled`. Durable task backends
 should implement `TaskStore` in `@sparkwright/agent-runtime` and keep the parent
 run id in task metadata.
+
+When a foreground shell is promoted to a task, the host adopts the already
+running process instead of restarting it. Stdout/stderr remain durable in
+`TaskStore`; trace output is mirrored as `task.output` under the task span; the
+terminal task event carries `ProcessOutputSummary` with optional log artifact
+ids. This path intentionally does not emit `extension.process.*` lifecycle
+events.
 
 ## Store And Sink Responsibilities
 

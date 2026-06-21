@@ -1,6 +1,6 @@
 /**
  * Symbolic keybindings. Maps a "binding name" (semantic action, e.g.
- * `palette.open`) to one or more key chords. The App-level hotkey loop asks
+ * `help.open`) to one or more key chords. The App-level hotkey loop asks
  * `matches(name, key, input)` instead of hard-coding chord literals, so users
  * can rebind via `keybindings` in the Sparkwright config.json.
  *
@@ -16,12 +16,10 @@
  */
 
 export type BindingName =
-  | "palette.open"
   | "help.open"
   | "cancel.run"
   | "quit.app"
   | "events.open"
-  | "quick.switch"
   | "todo.toggle"
   | "history.search";
 
@@ -53,12 +51,10 @@ const SPECIAL_KEYS = new Set([
 ]);
 
 export const DEFAULTS: Bindings = {
-  "palette.open": [],
   "help.open": [parseChord("?")!],
   "cancel.run": [parseChord("esc")!],
   "quit.app": [parseChord("ctrl+c")!],
   "events.open": [parseChord("ctrl+o")!],
-  "quick.switch": [],
   // Expand/collapse the todo band's completed items. ctrl+t = "todo".
   "todo.toggle": [parseChord("ctrl+t")!],
   // history.search is handled inside InputBox (ctrl+r is bash-standard);

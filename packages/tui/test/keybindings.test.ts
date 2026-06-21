@@ -78,21 +78,22 @@ describe("ctrlCPressCount", () => {
 });
 
 describe("mergeBindings", () => {
-  it("leaves palette and quick switch unbound by default", () => {
-    expect(DEFAULTS["palette.open"]).toEqual([]);
-    expect(DEFAULTS["quick.switch"]).toEqual([]);
+  it("keeps core bindings available by default", () => {
+    expect(DEFAULTS["help.open"]).toEqual([parseChord("?")]);
+    expect(DEFAULTS["events.open"]).toEqual([parseChord("ctrl+o")]);
+    expect(DEFAULTS["cancel.run"]).toEqual([parseChord("esc")]);
   });
 
   it("returns defaults when user is undefined", () => {
     const { bindings, errors } = mergeBindings(undefined);
     expect(errors).toEqual([]);
-    expect(bindings["palette.open"]).toEqual(DEFAULTS["palette.open"]);
+    expect(bindings["help.open"]).toEqual(DEFAULTS["help.open"]);
   });
   it("overrides single binding", () => {
-    const { bindings, errors } = mergeBindings({ "palette.open": "ctrl+p" });
+    const { bindings, errors } = mergeBindings({ "help.open": "ctrl+p" });
     expect(errors).toEqual([]);
-    expect(bindings["palette.open"]).toEqual([parseChord("ctrl+p")]);
-    expect(bindings["help.open"]).toEqual(DEFAULTS["help.open"]);
+    expect(bindings["help.open"]).toEqual([parseChord("ctrl+p")]);
+    expect(bindings["events.open"]).toEqual(DEFAULTS["events.open"]);
   });
   it("clears binding when value is null/empty", () => {
     const a = mergeBindings({ "help.open": null });
@@ -104,17 +105,17 @@ describe("mergeBindings", () => {
   });
   it("accepts array of chords", () => {
     const { bindings } = mergeBindings({
-      "palette.open": ["ctrl+k", "ctrl+p"],
+      "help.open": ["ctrl+k", "ctrl+p"],
     });
-    expect(bindings["palette.open"]).toHaveLength(2);
+    expect(bindings["help.open"]).toHaveLength(2);
   });
   it("reports unknown binding name", () => {
     const { errors } = mergeBindings({ "nope.open": "k" });
     expect(errors[0].name).toBe("nope.open");
   });
   it("reports unparseable chord", () => {
-    const { errors } = mergeBindings({ "palette.open": "ctrl+wibble" });
-    expect(errors[0].name).toBe("palette.open");
+    const { errors } = mergeBindings({ "help.open": "ctrl+wibble" });
+    expect(errors[0].name).toBe("help.open");
   });
 });
 

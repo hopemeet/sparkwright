@@ -96,6 +96,26 @@ describe("UsageTracker", () => {
     });
   });
 
+  it("explains unavailable cost when the provider returns no usage", () => {
+    const tracker = createUsageTracker({ runId: createRunId() });
+
+    tracker.recordModelUsage({
+      adapterId: "provider:no-usage",
+      usage: undefined,
+    });
+
+    const snap = tracker.snapshot();
+    expect(snap.modelCalls).toBe(1);
+    expect(snap.tokens.total).toBe(0);
+    expect(snap.costStatus).toBe("unavailable");
+    expect(snap.costUnavailableReasons).toEqual({ usage_not_reported: 1 });
+    expect(snap.byModel["provider:no-usage"]).toMatchObject({
+      calls: 1,
+      costStatus: "unavailable",
+      costUnavailableReasons: { usage_not_reported: 1 },
+    });
+  });
+
   it("emits usage.updated events through the supplied emitter", () => {
     const emitter = new EventLog(createRunId());
     const seen: string[] = [];

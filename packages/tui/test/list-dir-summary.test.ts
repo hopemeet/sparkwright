@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyToolResult,
   isListDirResult,
   isFileReadResult,
   summarizeListDir,
-} from "../src/components/event-stream.js";
+} from "../src/lib/tool-result-summary.js";
 
 /**
  * Regression: a `list_dir` tool result was dumped as truncated raw JSON in the
@@ -28,6 +29,7 @@ const sample = {
 describe("isListDirResult", () => {
   it("recognises a list_dir envelope", () => {
     expect(isListDirResult(sample)).toBe(true);
+    expect(classifyToolResult(sample)).toBe("list_dir");
   });
 
   it("does not mistake a read_file envelope for list_dir", () => {

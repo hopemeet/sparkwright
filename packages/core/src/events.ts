@@ -119,12 +119,17 @@ export type EventType =
   | "workspace.write.denied"
   | "workspace.write.completed"
   | "workspace.write.skipped"
+  | "workspace.write.untracked_access_granted"
   | "usage.updated"
   | "hook.failed"
   | "workflow_hook.started"
   | "workflow_hook.completed"
   | "workflow_hook.blocked"
   | "workflow_hook.failed"
+  | "extension.process.started"
+  | "extension.process.progress"
+  | "extension.process.completed"
+  | "extension.process.failed"
   | "interaction.requested"
   | "interaction.resolved"
   // Prompt-cache integrity. Emitted in dev/debug trace levels when a context
@@ -159,6 +164,69 @@ export type EventType =
   | "user_hook.progress"
   | "user_hook.completed"
   | "user_hook.failed";
+
+/**
+ * Shared process output summary for host-controlled external invocations.
+ * Full output may be materialized separately through `artifact.created`;
+ * traces should keep only bounded previews inline.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface ProcessOutputSummary {
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  /** @reserved Public process-output byte count consumed by trace viewers. */
+  stdoutBytes: number;
+  /** @reserved Public process-output byte count consumed by trace viewers. */
+  stderrBytes: number;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  artifactIds?: string[];
+}
+
+/**
+ * Path-free sandbox summary safe for trace payloads.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface SandboxSummary {
+  sandboxed: boolean;
+  mode?: string;
+  runtime?: string;
+  networkMode?: string;
+  available?: boolean;
+  /** @reserved Public sandbox fallback reason consumed by diagnostics UIs. */
+  fallbackReason?: string;
+  /** @reserved Public sandbox enforcement flag consumed by diagnostics UIs. */
+  enforced?: boolean;
+}
+
+/**
+ * Common invocation identity shared by extension.process.*, task.*, user hook,
+ * and sub-agent process summaries.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface ProcessInvocationBase {
+  invocationId: string;
+  name: string;
+  kind:
+    | "workflow_hook"
+    | "skill_script"
+    | "user_hook"
+    | "external_agent"
+    | "task"
+    | "custom";
+  runtime: "shell" | "python" | "node" | "tsx" | "custom";
+  /** @reserved Public process command preview consumed by trace viewers. */
+  commandPreview?: string;
+  /** @reserved Public process argument preview consumed by trace viewers. */
+  argsPreview?: string[];
+  cwd?: string;
+}
 
 export interface SparkwrightEvent<TPayload = unknown> {
   id: EventId;

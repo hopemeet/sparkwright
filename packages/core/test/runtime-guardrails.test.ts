@@ -213,6 +213,50 @@ describe("createObservationOneLineStage", () => {
     expect(result.items[0]!.content).toContain("shell");
     expect(result.items[0]!.content).toContain("collapsed");
   });
+
+  it("preserves spawn_agent partial child facts in collapsed summaries", async () => {
+    const stage = createObservationOneLineStage({
+      keepRecent: 0,
+      minCharsToCollapse: 10,
+    });
+    const items = [
+      toolResultWithMeta("x".repeat(300), {
+        toolName: "spawn_agent",
+        status: "completed",
+        role: "trace auditor",
+        childRunId: "run_child_partial",
+        finality: "partial",
+        stepLimitReached: true,
+        truncated: true,
+      }),
+      toolResultWithMeta("y".repeat(300), {
+        toolName: "spawn_agent",
+        status: "completed",
+        role: "roomy child",
+        childRunId: "run_child_complete",
+        finality: "complete",
+        stepLimitReached: false,
+        truncated: false,
+      }),
+    ];
+
+    const result = await stage.apply({
+      items,
+      hints: { reasons: [] },
+      totalChars: 0,
+      reactive: false,
+    });
+
+    expect(result.items[0]!.content).toContain("role=trace_auditor");
+    expect(result.items[0]!.content).toContain("child=run_child_partial");
+    expect(result.items[0]!.content).toContain("finality=partial");
+    expect(result.items[0]!.content).toContain(
+      "partial=true(stepLimit+truncated)",
+    );
+    expect(result.items[1]!.content).toContain("role=roomy_child");
+    expect(result.items[1]!.content).toContain("finality=complete");
+    expect(result.items[1]!.content).not.toContain("partial=true");
+  });
 });
 
 describe("estimateContextChars", () => {

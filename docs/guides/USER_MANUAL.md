@@ -54,7 +54,7 @@ Read-only trace smoke test:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal \
+  --trace-level standard \
   --model deterministic
 ```
 
@@ -275,6 +275,7 @@ Use trace commands to inspect what happened:
 npm exec sparkwright -- trace summary examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --format text
 npm exec sparkwright -- trace events examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --type tool.failed --limit 20 --jsonl
 npm exec sparkwright -- trace timeline examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --format text
+npm exec sparkwright -- trace report examples/repo-pilot/.sparkwright/sessions/<session-id>/trace.jsonl --format text
 ```
 
 Use session commands for integrity checks and continuation:
@@ -285,9 +286,19 @@ npm exec sparkwright -- session repair <session-id> --workspace examples/repo-pi
 npm exec sparkwright -- session resume <session-id> "continue the investigation" --workspace examples/repo-pilot
 ```
 
+Normal resume uses the saved `checkpoint.json` for the prior run. When a
+checkpoint is missing, `--from-trace` is a best-effort recovery path: it
+reconstructs counters from `run.json` and `trace.jsonl`, but cannot restore the
+full in-memory context, pending summaries, or in-flight tool/model work. Because
+the reconstruction is partial, it requires explicit `--force`:
+
+```bash
+npm exec sparkwright -- run resume <run-id> --workspace examples/repo-pilot \
+  --session <session-id> --from-trace --force
+```
+
 Trace levels are:
 
-- `minimal`: lifecycle and terminal facts.
 - `standard`: useful debugging detail for normal runs.
 - `debug`: deeper event payloads for development.
 

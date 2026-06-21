@@ -1,3 +1,5 @@
+import { isInternalTranscriptEventType } from "@sparkwright/protocol";
+
 /**
  * Local opaque type for events delivered over the host protocol.
  *
@@ -22,4 +24,8 @@ export interface RunEvent {
   payload?: unknown;
   /** Event metadata; shape is event-type-specific and may be absent. */
   metadata?: Record<string, unknown>;
+}
+
+export function isInternalTranscriptEvent(type: string): boolean {
+  return isInternalTranscriptEventType(type);
 }

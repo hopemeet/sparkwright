@@ -65,7 +65,6 @@ Trace is not debug output after the fact. It is the foundation for audit, approv
 
 The core should be capable of preserving full normalized model and tool information, while storage layers choose how much to persist. Trace levels let applications trade off debuggability, cost, and data exposure:
 
-- `minimal`: execution skeleton only
 - `standard`: normalized summaries
 - `debug`: full normalized payloads
 

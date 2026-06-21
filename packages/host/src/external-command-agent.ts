@@ -1,15 +1,15 @@
-import { spawn } from "node:child_process";
 import {
   createSpanId,
   defineTool,
-  type ShellStreamingResult,
+  type EventEmitter,
+  type ProcessOutputSummary,
+  type SandboxSummary,
   type RunHandle,
+  type RunId,
   type ToolDefinition,
 } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import {
-  ShellSandboxExecutor,
-  createPlatformShellSandboxRuntime,
   resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
   type ShellSandboxConfig,
@@ -18,6 +18,7 @@ import {
 import {
   DelegateExecutionError,
   assertReadWriteWorkspaceAccessAllowed,
+  assertSubagentDepthAllowed,
   assertWorkspaceAccess,
   describeDelegateCapability,
   errorCode,
@@ -26,6 +27,13 @@ import {
   workspaceAccessField,
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
+import {
+  type ProgressChunk,
+  TracedProcessRunner,
+} from "./traced-process-runner.js";
+
+const EXTERNAL_COMMAND_PROGRESS_HEAD_LIMIT = 5;
+const EXTERNAL_COMMAND_PROGRESS_TAIL_LIMIT = 5;
 
 export interface ExternalCommandAgentConfig {
   command: string;
@@ -50,6 +58,8 @@ export interface CreateExternalCommandDelegateToolInput {
   workspaceRoot: string;
   requiresApproval?: boolean;
   forbidNesting?: boolean;
+  maxDepth?: number;
+  entrypoint?: "external_command" | "delegates_run";
   allowReadWriteWorkspaceAccess?: boolean;
   sandbox?: ShellSandboxConfig | ResolvedShellSandboxConfig;
   sandboxRuntime?: ShellSandboxRuntime;
@@ -75,8 +85,18 @@ export interface ExternalCommandDelegateToolResult {
   stderrTruncated: boolean;
   /** @reserved Backward-compatible aggregate truncation flag. */
   outputTruncated: boolean;
+  /** @reserved Public delegate process output summary consumed by trace and diagnostics UIs. */
+  output: ProcessOutputSummary;
   /** @reserved Public delegate sandbox status consumed by trace and diagnostics UIs. */
   sandbox?: ExternalCommandSandboxSummary;
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressCount: number;
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressDropped: number;
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressHead: ProgressChunk[];
+  /** @reserved Public delegate progress summary consumed by trace and diagnostics UIs. */
+  progressTail: ProgressChunk[];
 }
 
 export interface ExternalCommandSandboxSummary {
@@ -140,6 +160,7 @@ export function createExternalCommandDelegateTool(
     args: config.args,
     timeoutMs: config.timeoutMs,
     workspaceAccess,
+    allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
     outputLimits: {
       stdoutBytes: config.maxStdoutBytes ?? config.maxOutputBytes,
       stderrBytes: config.maxStderrBytes ?? config.maxOutputBytes,
@@ -188,6 +209,11 @@ export function createExternalCommandDelegateTool(
           `External command delegate tool "${input.toolName}" refused to nest: parent run is itself a sub-agent.`,
         );
       }
+      const subagentDepth = assertSubagentDepthAllowed({
+        parent,
+        maxDepth: input.maxDepth,
+        toolName: input.toolName,
+      });
 
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
@@ -199,10 +225,16 @@ export function createExternalCommandDelegateTool(
         goal: parsed.goal,
       };
       const meta = {
+        agentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        delegateTool: input.toolName,
+        childRunId,
+        parentRunId: parent.record.id,
+        entrypoint: input.entrypoint ?? "external_command",
         protocol: "external_command",
         workspaceAccess,
+        subagentDepth,
       };
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);
@@ -212,6 +244,21 @@ export function createExternalCommandDelegateTool(
           toolName: input.toolName,
           allowed: input.allowReadWriteWorkspaceAccess === true,
         });
+        if (workspaceAccess === "read_write") {
+          parent.events.emit(
+            "workspace.write.untracked_access_granted",
+            {
+              childRunId,
+              parentRunId: parent.record.id,
+              toolName: input.toolName,
+              agentProfileId: input.profile.id,
+              protocol: "external_command",
+              marker: "untracked-write-capable",
+              access: "granted",
+            },
+            meta,
+          );
+        }
         const result = await runExternalCommand({
           config,
           workspaceRoot: input.workspaceRoot,
@@ -222,6 +269,8 @@ export function createExternalCommandDelegateTool(
           sandboxRuntime: input.sandboxRuntime,
           skillRoots: input.skillRoots,
           configPaths: input.configPaths,
+          emitter: parent.events,
+          runId: parent.record.id,
         });
         const successExitCodes = config.successExitCodes ?? [0];
         if (
@@ -257,7 +306,12 @@ export function createExternalCommandDelegateTool(
               stdoutTruncated: result.stdoutTruncated,
               stderrTruncated: result.stderrTruncated,
               outputTruncated: result.outputTruncated,
+              output: result.output,
               sandbox: result.sandbox,
+              progressCount: result.progressCount,
+              progressDropped: result.progressDropped,
+              progressHead: result.progressHead,
+              progressTail: result.progressTail,
             },
           },
           meta,
@@ -297,6 +351,8 @@ async function runExternalCommand(input: {
   sandboxRuntime?: ShellSandboxRuntime;
   skillRoots?: readonly string[];
   configPaths?: readonly string[];
+  emitter: EventEmitter;
+  runId: RunId;
 }): Promise<
   Pick<
     ExternalCommandDelegateToolResult,
@@ -307,7 +363,12 @@ async function runExternalCommand(input: {
     | "stdoutTruncated"
     | "stderrTruncated"
     | "outputTruncated"
+    | "output"
     | "sandbox"
+    | "progressCount"
+    | "progressDropped"
+    | "progressHead"
+    | "progressTail"
   >
 > {
   const inputMode = input.config.input ?? "argument";
@@ -343,12 +404,11 @@ async function runExternalCommand(input: {
   });
 
   try {
-    const output = createOutputCollector({
-      stdoutLimit:
-        input.config.maxStdoutBytes ?? input.config.maxOutputBytes ?? 64_000,
-      stderrLimit:
-        input.config.maxStderrBytes ?? input.config.maxOutputBytes ?? 64_000,
-    });
+    const stdoutLimit =
+      input.config.maxStdoutBytes ?? input.config.maxOutputBytes ?? 64_000;
+    const stderrLimit =
+      input.config.maxStderrBytes ?? input.config.maxOutputBytes ?? 64_000;
+    const previewBytes = Math.max(stdoutLimit, stderrLimit);
     const sandboxConfig =
       input.sandbox && "forcedDenyWrite" in input.sandbox
         ? input.sandbox
@@ -369,243 +429,131 @@ async function runExternalCommand(input: {
       inputMode === "stdin"
         ? renderStdin(input.goal, input.metadata)
         : undefined;
-    let fallbackSandbox: ExternalCommandSandboxSummary | undefined =
-      effectiveSandboxConfig.mode === "off"
-        ? {
-            sandboxed: false,
-            mode: effectiveSandboxConfig.mode,
-            networkMode: effectiveSandboxConfig.network.mode,
-            available: false,
-            enforced: false,
-          }
-        : undefined;
-    if (effectiveSandboxConfig.mode !== "off") {
-      const sandboxed = await runExternalCommandSandboxed({
-        command: input.config.command,
-        args,
-        cwd: executionWorkspace.cwd,
-        env: buildCommandEnv(input.config),
-        stdin,
-        timeoutMs: input.config.timeoutMs,
-        output,
-        config: effectiveSandboxConfig,
-        runtime: input.sandboxRuntime ?? createPlatformShellSandboxRuntime(),
-      });
-      if (sandboxed.status === "completed") return sandboxed.result;
-      fallbackSandbox = sandboxed.sandbox;
-    }
-
-    const child = spawn(input.config.command, args, {
+    const runner = new TracedProcessRunner();
+    const progress = createExternalCommandProgressCollector();
+    const result = await runner.run({
+      emitter: input.emitter,
+      runId: input.runId,
+      name: input.toolName,
+      kind: "external_agent",
+      runtime: "custom",
+      command: input.config.command,
+      args,
       cwd: executionWorkspace.cwd,
       env: buildCommandEnv(input.config),
-      stdio: ["pipe", "pipe", "pipe"],
+      stdin,
+      timeoutMs: input.config.timeoutMs,
+      sandbox: effectiveSandboxConfig,
+      sandboxRuntime: input.sandboxRuntime,
+      emitLifecycle: false,
+      onProgress: (chunk) => {
+        progress.record(chunk);
+      },
+      outputLimits: {
+        previewBytes,
+        artifactBytes: input.config.maxOutputBytes ?? previewBytes,
+        maxStdoutBytes: stdoutLimit,
+        maxStderrBytes: stderrLimit,
+      },
     });
-    const timeout = createTimeout(input.config.timeoutMs);
 
-    return await new Promise((resolvePromise, reject) => {
-      let settled = false;
-      const settle = (fn: () => void): void => {
-        if (settled) return;
-        settled = true;
-        timeout.dispose();
-        fn();
-      };
-
-      child.once("error", (error: NodeJS.ErrnoException) => {
-        const code =
-          error.code === "ENOENT"
-            ? "DELEGATE_COMMAND_NOT_FOUND"
-            : "DELEGATE_COMMAND_START_FAILED";
-        settle(() =>
-          reject(
-            new DelegateExecutionError(
-              code,
-              `External command "${input.config.command}" failed to start: ${error.message}`,
-              { command: input.config.command, causeCode: error.code },
-            ),
-          ),
-        );
-      });
-      child.stdout?.on("data", (chunk) => output.appendStdout(chunk));
-      child.stderr?.on("data", (chunk) => output.appendStderr(chunk));
-      timeout.signal.addEventListener(
-        "abort",
-        () => {
-          child.kill();
-          settle(() =>
-            reject(
-              new DelegateExecutionError(
-                "DELEGATE_TIMEOUT",
-                "External command delegate timed out.",
-                { timeoutMs: input.config.timeoutMs },
-              ),
-            ),
-          );
-        },
-        { once: true },
+    const sandbox = externalSandboxSummary(result.sandbox);
+    if (
+      result.error?.code === "PROCESS_COMMAND_NOT_FOUND" ||
+      result.error?.code === "PROCESS_START_FAILED"
+    ) {
+      throw new DelegateExecutionError(
+        result.error.code === "PROCESS_COMMAND_NOT_FOUND"
+          ? "DELEGATE_COMMAND_NOT_FOUND"
+          : "DELEGATE_COMMAND_START_FAILED",
+        `External command "${input.config.command}" failed to start: ${result.error.message}`,
+        { command: input.config.command, sandbox },
       );
-      child.once("exit", (exitCode, signal) => {
-        const collected = output.result();
-        settle(() =>
-          resolvePromise({
-            exitCode,
-            signal,
-            stdout: collected.stdout,
-            stderr: collected.stderr,
-            stdoutTruncated: collected.stdoutTruncated,
-            stderrTruncated: collected.stderrTruncated,
-            outputTruncated:
-              collected.stdoutTruncated || collected.stderrTruncated,
-            sandbox: fallbackSandbox,
-          }),
-        );
-      });
+    }
+    if (result.timedOut) {
+      throw new DelegateExecutionError(
+        "DELEGATE_TIMEOUT",
+        "External command delegate timed out.",
+        { timeoutMs: input.config.timeoutMs, sandbox },
+      );
+    }
+    if (
+      result.exitCode === null &&
+      sandbox?.enforced === true &&
+      typeof sandbox.fallbackReason === "string"
+    ) {
+      throw new DelegateExecutionError(
+        "DELEGATE_EXECUTION_FAILED",
+        sandbox.fallbackReason,
+        { sandbox },
+      );
+    }
 
-      if (inputMode === "stdin") {
-        child.stdin?.end(stdin, "utf8");
-      } else {
-        child.stdin?.end();
-      }
-    });
+    return {
+      exitCode: result.exitCode,
+      signal: result.signal as NodeJS.Signals | null,
+      stdout: truncateBytes(result.output.stdoutPreview ?? "", stdoutLimit),
+      stderr: truncateBytes(result.output.stderrPreview ?? "", stderrLimit),
+      stdoutTruncated:
+        result.output.stdoutTruncated ||
+        result.output.stdoutBytes > stdoutLimit,
+      stderrTruncated:
+        result.output.stderrTruncated ||
+        result.output.stderrBytes > stderrLimit,
+      outputTruncated:
+        result.output.stdoutTruncated || result.output.stderrTruncated,
+      output: result.output,
+      sandbox,
+      ...progress.summary({
+        progressCount: result.progressCount,
+        progressDropped: result.progressDropped,
+      }),
+    };
   } finally {
     await executionWorkspace.cleanup();
   }
 }
 
-async function runExternalCommandSandboxed(input: {
-  command: string;
-  args: readonly string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  stdin?: string;
-  timeoutMs?: number;
-  output: ReturnType<typeof createOutputCollector>;
-  config: ResolvedShellSandboxConfig;
-  runtime: ShellSandboxRuntime;
-}): Promise<
-  | {
-      status: "completed";
-      result: Pick<
-        ExternalCommandDelegateToolResult,
-        | "exitCode"
-        | "signal"
-        | "stdout"
-        | "stderr"
-        | "stdoutTruncated"
-        | "stderrTruncated"
-        | "outputTruncated"
-        | "sandbox"
-      >;
-    }
-  | {
-      status: "fallback";
-      sandbox: ExternalCommandSandboxSummary;
-    }
-> {
-  const sandbox = new ShellSandboxExecutor(input.runtime);
-  const started = await sandbox.execute(
-    {
-      command: shellCommand([input.command, ...input.args]),
-      cwd: input.cwd,
-      env: input.env,
-      stdin: input.stdin,
-      timeoutMs: input.timeoutMs,
-      metadata: {
-        sandboxMode: input.config.mode,
-        sandboxNetworkMode: input.config.network.mode,
-        sandboxAvailable: true,
-        sandboxEnforced: input.config.failIfUnavailable,
-      },
+function createExternalCommandProgressCollector(): {
+  record(chunk: ProgressChunk): void;
+  summary(input: {
+    progressCount: number;
+    progressDropped: number;
+  }): Pick<
+    ExternalCommandDelegateToolResult,
+    "progressCount" | "progressDropped" | "progressHead" | "progressTail"
+  >;
+} {
+  const progressHead: ProgressChunk[] = [];
+  const progressTail: ProgressChunk[] = [];
+  return {
+    record(chunk) {
+      const sample = cloneProgressChunk(chunk);
+      if (progressHead.length < EXTERNAL_COMMAND_PROGRESS_HEAD_LIMIT) {
+        progressHead.push(sample);
+        return;
+      }
+      progressTail.push(sample);
+      if (progressTail.length > EXTERNAL_COMMAND_PROGRESS_TAIL_LIMIT) {
+        progressTail.shift();
+      }
     },
-    input.config,
-  );
-  if (started.status === "unavailable") {
-    if (input.config.failIfUnavailable) {
-      throw new DelegateExecutionError(
-        "DELEGATE_EXECUTION_FAILED",
-        started.reason,
-        {
-          sandbox: {
-            sandboxed: false,
-            mode: input.config.mode,
-            runtime: started.runtimeId,
-            networkMode: input.config.network.mode,
-            unavailable: started.reason,
-            available: false,
-            fallbackReason: started.reason,
-            enforced: true,
-          },
-        },
-      );
-    }
-    return {
-      status: "fallback",
-      sandbox: {
-        sandboxed: false,
-        mode: input.config.mode,
-        runtime: started.runtimeId,
-        networkMode: input.config.network.mode,
-        unavailable: started.reason,
-        available: false,
-        fallbackReason: started.reason,
-        enforced: false,
-      },
-    };
-  }
-
-  const final = await collectSandboxedOutput(started.result, input.output);
-  if (final.timedOut) {
-    throw new DelegateExecutionError(
-      "DELEGATE_TIMEOUT",
-      "External command delegate timed out.",
-      { timeoutMs: input.timeoutMs, sandbox: final.sandbox },
-    );
-  }
-  return { status: "completed", result: final };
+    summary(input) {
+      return {
+        progressCount: input.progressCount,
+        progressDropped: input.progressDropped,
+        progressHead: progressHead.map(cloneProgressChunk),
+        progressTail: progressTail.map(cloneProgressChunk),
+      };
+    },
+  };
 }
 
-async function collectSandboxedOutput(
-  streaming: ShellStreamingResult,
-  output: ReturnType<typeof createOutputCollector>,
-): Promise<
-  Pick<
-    ExternalCommandDelegateToolResult,
-    | "exitCode"
-    | "signal"
-    | "stdout"
-    | "stderr"
-    | "stdoutTruncated"
-    | "stderrTruncated"
-    | "outputTruncated"
-    | "sandbox"
-  > & { timedOut: boolean }
-> {
-  const stdoutDrain = (async () => {
-    for await (const chunk of streaming.handle.stdout()) {
-      output.appendStdout(chunk);
-    }
-  })();
-  const stderrDrain = (async () => {
-    for await (const chunk of streaming.handle.stderr()) {
-      output.appendStderr(chunk);
-    }
-  })();
-  const final = await streaming.completed;
-  await Promise.allSettled([stdoutDrain, stderrDrain]);
-  const collected = output.result();
+function cloneProgressChunk(chunk: ProgressChunk): ProgressChunk {
   return {
-    exitCode: final.exitCode,
-    signal: null,
-    stdout: collected.stdout || final.stdout,
-    stderr: collected.stderr || final.stderr,
-    stdoutTruncated: collected.stdoutTruncated,
-    stderrTruncated: collected.stderrTruncated,
-    outputTruncated: collected.stdoutTruncated || collected.stderrTruncated,
-    timedOut:
-      typeof final.metadata?.timedOut === "boolean"
-        ? final.metadata.timedOut
-        : false,
-    sandbox: sandboxSummary(final.metadata),
+    ...(chunk.message !== undefined ? { message: chunk.message } : {}),
+    ...(chunk.channel !== undefined ? { channel: chunk.channel } : {}),
+    ...(chunk.data !== undefined ? { data: { ...chunk.data } } : {}),
   };
 }
 
@@ -636,41 +584,14 @@ function absoluteArgPaths(values: readonly string[]): string[] {
   return values.filter((value) => value.startsWith("/"));
 }
 
-function shellCommand(argv: readonly string[]): string {
-  return argv.map(shellQuote).join(" ");
-}
-
-function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(value)) return value;
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-function sandboxSummary(
-  metadata: Record<string, unknown> | undefined,
+function externalSandboxSummary(
+  summary: SandboxSummary | undefined,
 ): ExternalCommandSandboxSummary | undefined {
-  if (!metadata || typeof metadata.sandboxed !== "boolean") return undefined;
+  if (!summary) return undefined;
   return {
-    sandboxed: metadata.sandboxed,
-    ...(typeof metadata.sandboxMode === "string"
-      ? { mode: metadata.sandboxMode }
-      : {}),
-    ...(typeof metadata.sandboxRuntime === "string"
-      ? { runtime: metadata.sandboxRuntime }
-      : {}),
-    ...(typeof metadata.sandboxNetworkMode === "string"
-      ? { networkMode: metadata.sandboxNetworkMode }
-      : {}),
-    ...(typeof metadata.sandboxUnavailable === "string"
-      ? { unavailable: metadata.sandboxUnavailable }
-      : {}),
-    ...(typeof metadata.sandboxAvailable === "boolean"
-      ? { available: metadata.sandboxAvailable }
-      : {}),
-    ...(typeof metadata.sandboxFallbackReason === "string"
-      ? { fallbackReason: metadata.sandboxFallbackReason }
-      : {}),
-    ...(typeof metadata.sandboxEnforced === "boolean"
-      ? { enforced: metadata.sandboxEnforced }
+    ...summary,
+    ...(summary.available === false && summary.fallbackReason
+      ? { unavailable: summary.fallbackReason }
       : {}),
   };
 }
@@ -791,70 +712,10 @@ function exitStatus(
   return `exit code ${exitCode ?? "unknown"}`;
 }
 
-function createOutputCollector(input: {
-  stdoutLimit: number;
-  stderrLimit: number;
-}): {
-  appendStdout(chunk: Buffer | string): void;
-  appendStderr(chunk: Buffer | string): void;
-  result(): {
-    stdout: string;
-    stderr: string;
-    stdoutTruncated: boolean;
-    stderrTruncated: boolean;
-  };
-} {
-  let stdout = "";
-  let stderr = "";
-  let stdoutTruncated = false;
-  let stderrTruncated = false;
-  const append = (
-    current: string,
-    chunk: Buffer | string,
-    limit: number,
-    markTruncated: () => void,
-  ): string => {
-    if (current.length >= limit) {
-      markTruncated();
-      return current;
-    }
-    const next = current + chunk.toString();
-    if (next.length <= limit) return next;
-    markTruncated();
-    return next.slice(0, limit);
-  };
-  return {
-    appendStdout(chunk) {
-      stdout = append(stdout, chunk, input.stdoutLimit, () => {
-        stdoutTruncated = true;
-      });
-    },
-    appendStderr(chunk) {
-      stderr = append(stderr, chunk, input.stderrLimit, () => {
-        stderrTruncated = true;
-      });
-    },
-    result() {
-      return { stdout, stderr, stdoutTruncated, stderrTruncated };
-    },
-  };
-}
-
-function createTimeout(timeoutMs: number | undefined): {
-  signal: AbortSignal;
-  dispose(): void;
-} {
-  const controller = new AbortController();
-  if (!timeoutMs || timeoutMs <= 0) {
-    return { signal: controller.signal, dispose() {} };
-  }
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return {
-    signal: controller.signal,
-    dispose() {
-      clearTimeout(timer);
-    },
-  };
+function truncateBytes(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.length <= maxBytes) return value;
+  return bytes.subarray(0, Math.max(0, maxBytes)).toString("utf8");
 }
 
 function recordField(

@@ -175,16 +175,17 @@ Begin a new agent run.
 
 **Payload**
 
-| Field            | Type                                     | Required | Notes                                                                      |
-| ---------------- | ---------------------------------------- | -------- | -------------------------------------------------------------------------- |
-| `goal`           | string                                   | yes      | User goal text.                                                            |
-| `sessionId`      | string                                   | no       | Existing session to write into; host creates a new one if omitted.         |
-| `targetPath`     | string                                   | no       | Workspace-relative target path the run should focus on when applicable.    |
-| `shouldWrite`    | boolean                                  | no       | Whether this run is allowed to request workspace writes.                   |
-| `model`          | string                                   | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
-| `permissionMode` | string                                   | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
-| `traceLevel`     | `"minimal"` \| `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                    |
-| `metadata`       | object                                   | no       | Free-form, propagated to runRecord.                                        |
+| Field            | Type                      | Required | Notes                                                                                                                                                                                                                     |
+| ---------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `goal`           | string                    | yes      | User goal text.                                                                                                                                                                                                           |
+| `input.parts`    | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`. |
+| `sessionId`      | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                        |
+| `targetPath`     | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                   |
+| `shouldWrite`    | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                  |
+| `model`          | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                |
+| `permissionMode` | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                   |
+| `traceLevel`     | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                   |
+| `metadata`       | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                       |
 
 **Response result**
 
@@ -202,11 +203,12 @@ IM gateways and other remote clients for mid-run steering/follow-up.
 
 **Payload**
 
-| Field      | Type   | Required | Notes                                            |
-| ---------- | ------ | -------- | ------------------------------------------------ |
-| `runId`    | string | yes      | Active run to receive the message.               |
-| `content`  | string | yes      | User message to enqueue into the run loop.       |
-| `metadata` | object | no       | Free-form source/routing metadata for the trace. |
+| Field         | Type   | Required | Notes                                                                                                 |
+| ------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------- |
+| `runId`       | string | yes      | Active run to receive the message.                                                                    |
+| `content`     | string | yes      | User message to enqueue into the run loop.                                                            |
+| `input.parts` | array  | no       | Additional content parts for the same injected user message; shape matches `run.start` `input.parts`. |
+| `metadata`    | object | no       | Free-form source/routing metadata for the trace.                                                      |
 
 **Response result:** empty object. The core run emits normal
 `run.command.enqueued` / `run.command.applied` events through
@@ -238,7 +240,7 @@ prefer checking the host capability list before using it.
 | `force`          | boolean | no       | Allow resuming checkpoints that are terminal or normally refused.          |
 | `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
 | `permissionMode` | string  | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
-| `traceLevel`     | string  | no       | `minimal`, `standard`, or `debug`; defaults to `standard`.                 |
+| `traceLevel`     | string  | no       | `standard` or `debug`; defaults to `standard`.                             |
 | `metadata`       | object  | no       | Free-form metadata propagated to the resumed run record and trace context. |
 
 **Response result**
@@ -280,11 +282,12 @@ Resolve an `approval.requested` event.
 
 **Payload**
 
-| Field        | Type                       | Required | Notes                      |
-| ------------ | -------------------------- | -------- | -------------------------- |
-| `approvalId` | string                     | yes      | From `approval.requested`. |
-| `decision`   | `"approved"` \| `"denied"` | yes      |                            |
-| `message`    | string                     | no       | Surfaced in the run trace. |
+| Field          | Type                       | Required | Notes                                                                 |
+| -------------- | -------------------------- | -------- | --------------------------------------------------------------------- |
+| `approvalId`   | string                     | yes      | From `approval.requested`.                                            |
+| `decision`     | `"approved"` \| `"denied"` | yes      |                                                                       |
+| `message`      | string                     | no       | Surfaced in the run trace.                                            |
+| `autoApproved` | boolean                    | no       | Marks policy/flag-driven approvals without requiring message parsing. |
 
 **Response result:** empty object.
 
@@ -345,10 +348,11 @@ may seed prior context from the compact artifact plus later un-compacted turns.
 
 **Payload**
 
-| Field       | Type   | Required | Notes                                  |
-| ----------- | ------ | -------- | -------------------------------------- |
-| `sessionId` | string | yes      | Session id.                            |
-| `reason`    | string | no       | Optional caller label for diagnostics. |
+| Field       | Type    | Required | Notes                                                                                                                                                                      |
+| ----------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionId` | string  | yes      | Session id.                                                                                                                                                                |
+| `reason`    | string  | no       | Optional caller label for diagnostics.                                                                                                                                     |
+| `llm`       | boolean | no       | Explicitly requests the Tier 3 summarizer path. Provider/scripted model refs use model-backed summarization; deterministic refs use the preview path and return a warning. |
 
 **Response result**
 
@@ -359,7 +363,44 @@ may seed prior context from the compact artifact plus later un-compacted turns.
   "throughRunId": "run_123",
   "originalCharCount": 12000,
   "summaryCharCount": 2400,
+  "freedChars": 9600,
+  "measurement": {
+    "sourceRunCount": 3,
+    "savingsRatio": 0.8,
+    "freedByTier": {
+      "dedup": 0,
+      "extract": 1200,
+      "evict": 0,
+      "summarize": 8400
+    },
+    "regime": "density_bound",
+    "signalCount": 8
+  },
   "artifactPath": "/workspace/.sparkwright/sessions/session_abc/compact.json"
+}
+```
+
+`skippedReason` and `warnings` are omitted when there is nothing to report.
+Successful compaction writes a `session-compact.v2` artifact whose top-level
+fields include `sourceRunIds`, `throughRunId`, `originalCharCount`,
+`summaryCharCount`, and `freedChars`; stage diagnostics live under `metadata`.
+Model-backed Tier 3 summaries also record `metadata.summaryFingerprint`
+(`modelId`, prompt/oracle versions, input hash, source run ids, through run, and
+effective budget) plus `metadata.measurement`.
+When compaction is unnecessary or best-effort compaction cannot safely persist
+an artifact, the response remains `ok: true`, `artifactPath` is `null`,
+`freedChars` is `0`, and `skippedReason` explains why.
+
+```json
+{
+  "sessionId": "session_abc",
+  "compactedRunCount": 0,
+  "throughRunId": null,
+  "originalCharCount": 900,
+  "summaryCharCount": 900,
+  "freedChars": 0,
+  "skippedReason": "no_savings",
+  "artifactPath": null
 }
 ```
 
@@ -390,7 +431,15 @@ scanning files or interpreting local config.
         "sourcePath": ".sparkwright/skills/reviewer/SKILL.md"
       }
     ],
-    "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }]
+    "loaded": [{ "name": "reviewer", "selectionReason": "Matched goal." }],
+    "inlineShell": {
+      "enabled": true,
+      "timeoutMs": 10000,
+      "maxOutputChars": 4000,
+      "sandboxMode": "enforce",
+      "writePolicy": "no-write",
+      "failClosed": true
+    }
   },
   "mcp": { "statuses": [] },
   "agents": {
@@ -402,6 +451,12 @@ scanning files or interpreting local config.
         "protocol": "external_command",
         "risk": "risky",
         "requiresApproval": true,
+        "approvalRequiredUnderCurrentRun": true,
+        "approvalReasons": [
+          "tool.risk:risky",
+          "delegate.requiresApproval:true"
+        ],
+        "approvalRunOptions": { "shouldWrite": false },
         "forbidNesting": true,
         "sideEffects": ["external"],
         "workspaceAccess": "none",
@@ -409,6 +464,22 @@ scanning files or interpreting local config.
         "processSpawn": true,
         "command": "agent-cli",
         "args": ["run", "{{goal}}"]
+      },
+      {
+        "toolName": "delegate_writer",
+        "profileId": "writer",
+        "protocol": "in_process",
+        "risk": "risky",
+        "requiresApproval": false,
+        "approvalRequiredUnderCurrentRun": true,
+        "approvalReasons": ["tool.risk:risky", "gated_by_run_write"],
+        "approvalRunOptions": { "shouldWrite": false },
+        "forbidNesting": true,
+        "sideEffects": ["model", "workspace"],
+        "workspaceAccess": "read_write",
+        "shellAccess": false,
+        "processSpawn": false,
+        "gatedByRunWrite": true
       }
     ]
   }
@@ -418,6 +489,14 @@ scanning files or interpreting local config.
 `workspaceAccess: "none"` means the external delegate is not handed the project
 cwd or `{{workspaceRoot}}`. Use `"read_write"` only for explicitly trusted
 delegates that should inspect or mutate the workspace directly.
+For `in_process` delegates, `workspaceAccess` reports the profile-selected
+potential capability; `gatedByRunWrite: true` means the current run still needs
+workspace writes enabled (for example CLI `--write`) before the delegate can use
+workspace write or shell tools.
+`requiresApproval` is a legacy delegate-config echo. For audit/diagnostics, use
+`approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
+those fields describe the runtime gate under the inspected run options rather
+than promising an unconditional approval boolean.
 
 ---
 

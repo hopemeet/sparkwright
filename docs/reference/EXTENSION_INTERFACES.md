@@ -375,7 +375,11 @@ const run = createRun({
 
 Core does not need a `skills` option until the selection and loading behavior proves stable.
 
-Skill scripts should be exposed as governed tools before execution. They should not run as an incidental side effect of reading `SKILL.md`.
+Skill scripts should be exposed as governed tools before execution. Inline
+shell snippets inside `SKILL.md` are a narrower preprocessing feature: they
+remain disabled by default, and hosts that enable them must inject an
+`inlineShellRunner` through the skills `preprocess` option so execution can stay
+inside host sandboxing and `extension.process.*` tracing.
 
 Skill indexes and selected Skill bodies should normally be `session` or `turn`
 context, or a dedicated `skill_index` prompt section. A Skill package should
@@ -442,6 +446,7 @@ interface AgentProfile {
   mode?: "primary" | "child" | "all"; // carried for orchestration; not applied by agent-runtime
   model?: unknown; // carried for orchestration; not applied by agent-runtime
   prompt?: string; // compiled into the run prompt builder when spawning from this profile
+  use?: string[]; // broad tool selectors intersected through parent/child profiles
   allowedTools?: string[];
   deniedTools?: string[];
   policy?: CapabilityRule[];
@@ -582,6 +587,19 @@ event: `workflow_hook.completed`, `workflow_hook.blocked`, or
 continues, matching `RunHook`; set `onError: "block"` for governance hooks
 that should fail closed.
 
+Configured command actions additionally run through the host
+`TracedProcessRunner`. The hook lifecycle remains `workflow_hook.*`, while the
+external process itself emits `extension.process.started` and a terminal
+`extension.process.completed` / `extension.process.failed` with bounded output
+summary and optional log artifacts. Progress reported through the runner inbox
+is host-ingested: scripts do not write arbitrary Sparkwright events.
+
+The same runner also has an observation path for shell commands that were
+already started in the foreground and then promoted to a task. In that case the
+runner does not emit `extension.process.*`; it attaches stdout/stderr and the
+terminal `ProcessOutputSummary` to `task.output` plus the terminal `task.*`
+event under the task span.
+
 ## Interaction Channel
 
 `InteractionChannel` is the unified _outbound_ channel from the runtime to a
@@ -680,7 +698,7 @@ Embedder responsibilities:
   `evaluateShellSafety` floor as model-invoked shell; `deny`/unknown commands are
   blocked, never executed.
 - Decide how `prompt` / `model` / `subtask` map onto its run-start path. Explicit
-  `config.json` declarations shadow same-named files (config wins).
+  config-file declarations shadow same-named files (config wins).
 
 ## Sub-agents
 
@@ -782,6 +800,13 @@ What the helpers do for you, end-to-end:
 | Trace nesting      | Child events stay in child's `EventLog`; parent sees a summarized tool result |
 | Cancellation       | `createRun({ abortSignal: parent.abortSignal })`                              |
 | Recursion guard    | `createAgentTool({ forbidNesting: true })`                                    |
+
+External command delegates keep this same parent-facing shape: the parent sees
+`subagent.requested`, `subagent.started`, and a terminal `subagent.completed` /
+`subagent.failed`. The host process execution path reuses `TracedProcessRunner`
+for sandbox fallback, timeout, bounded stdout/stderr, and log artifacts, but it
+does not emit a second `extension.process.*` lifecycle by default; the terminal
+subagent result carries the shared `ProcessOutputSummary`.
 
 Distilled to the minimum portable shape, with all provider-specific message
 plumbing left out (callers compose their own model + tools).

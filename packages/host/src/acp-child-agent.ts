@@ -8,6 +8,7 @@ import type { AgentProfile } from "@sparkwright/agent-runtime";
 import { ExternalAcpWorker } from "@sparkwright/acp-client-adapter";
 import {
   assertReadWriteWorkspaceAccessAllowed,
+  assertSubagentDepthAllowed,
   DelegateExecutionError,
   describeDelegateCapability,
   errorCode,
@@ -35,6 +36,8 @@ export interface CreateAcpDelegateToolInput {
   workspaceRoot: string;
   requiresApproval?: boolean;
   forbidNesting?: boolean;
+  maxDepth?: number;
+  entrypoint?: "acp" | "delegates_run";
   allowReadWriteWorkspaceAccess?: boolean;
 }
 
@@ -96,6 +99,7 @@ export function createAcpDelegateTool(
     args: config.args,
     timeoutMs: config.timeoutMs,
     workspaceAccess,
+    allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
   });
 
   return defineTool({
@@ -141,6 +145,11 @@ export function createAcpDelegateTool(
           `ACP delegate tool "${input.toolName}" refused to nest: parent run is itself a sub-agent.`,
         );
       }
+      const subagentDepth = assertSubagentDepthAllowed({
+        parent,
+        maxDepth: input.maxDepth,
+        toolName: input.toolName,
+      });
       const parsed = parseDelegateArgs(args);
       const spanId = createSpanId();
       const childRunId = `acp_${sanitizeSegment(input.profile.id)}_${Date.now().toString(36)}`;
@@ -151,10 +160,16 @@ export function createAcpDelegateTool(
         goal: parsed.goal,
       };
       const meta = {
+        agentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
+        delegateTool: input.toolName,
+        childRunId,
+        parentRunId: parent.record.id,
+        entrypoint: input.entrypoint ?? "acp",
         protocol: "acp",
         workspaceAccess,
+        subagentDepth,
       };
       parent.events.emit("subagent.requested", base, meta);
       parent.events.emit("subagent.started", base, meta);

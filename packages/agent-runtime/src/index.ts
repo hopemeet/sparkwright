@@ -13,6 +13,7 @@
 // docs/EXTENSION_INTERFACES.md "Sub-agents".
 
 import type {
+  ApprovalResolver,
   ContextItem,
   CreateRunOptions,
   EventEmitter,
@@ -77,6 +78,11 @@ export interface AgentProfile {
    * `compileAgentProfileRunOptions`).
    */
   prompt?: string;
+  /**
+   * Host-owned high-level tool selectors. Agent-runtime carries and narrows
+   * them for profile inheritance; embedders expand them to concrete tools.
+   */
+  use?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
   policy?: CapabilityRule[];
@@ -153,6 +159,10 @@ export function deriveChildAgentProfile(
     options.parentAgent?.allowedTools,
     options.childAgent.allowedTools,
   );
+  const use = intersectAgentProfileUse(
+    options.parentAgent?.use,
+    options.childAgent.use,
+  );
   const deniedTools = uniqueSorted([
     ...(options.parentAgent?.deniedTools ?? []),
     ...(options.childAgent.deniedTools ?? []),
@@ -161,6 +171,7 @@ export function deriveChildAgentProfile(
   const derived: DerivedChildAgentProfile = {
     effectiveProfile: {
       ...options.childAgent,
+      use,
       allowedTools,
       deniedTools,
       policy: effectivePolicy,
@@ -384,12 +395,34 @@ function stringMetadata(
   return typeof value === "string" ? value : undefined;
 }
 
+function numberMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function nextSubagentDepth(
+  metadata: Record<string, unknown> | undefined,
+): number {
+  const current = numberMetadata(metadata, "subagentDepth");
+  if (current !== undefined && current >= 0) return Math.floor(current) + 1;
+  return typeof metadata?.parentRunId === "string" ? 2 : 1;
+}
+
 function removeUndefinedMetadata(
   metadata: Record<string, unknown>,
 ): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== undefined),
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function tagRules(
@@ -417,6 +450,39 @@ function intersectOptionalLists(
   if (parent === undefined) return child ? uniqueSorted(child) : undefined;
   if (child === undefined) return uniqueSorted(parent);
   return uniqueSorted(child.filter((item) => matchesAny(item, parent)));
+}
+
+function intersectAgentProfileUse(
+  parent: string[] | undefined,
+  child: string[] | undefined,
+): string[] | undefined {
+  if (parent === undefined) return child ? uniqueSorted(child) : undefined;
+  if (child === undefined) return uniqueSorted(parent);
+  const out: string[] = [];
+  for (const parentSelector of parent) {
+    for (const childSelector of child) {
+      for (const selector of intersectOneUseSelector(
+        parentSelector,
+        childSelector,
+      )) {
+        out.push(selector);
+      }
+    }
+  }
+  return uniqueSorted(out);
+}
+
+function intersectOneUseSelector(left: string, right: string): string[] {
+  if (left === right) return [left];
+  if (left === "mcp" && isMcpServerUseSelector(right)) return [right];
+  if (right === "mcp" && isMcpServerUseSelector(left)) return [left];
+  return [];
+}
+
+function isMcpServerUseSelector(selector: string): boolean {
+  return (
+    selector.startsWith("mcp:") && selector.slice("mcp:".length).length > 0
+  );
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -535,6 +601,11 @@ export interface SpawnSubAgentInput {
    */
   interactionChannel?: InteractionChannel | null;
   /**
+   * Approval resolver for child tool gates. Use this when a child should share
+   * the parent run's approval path without inheriting free-form interaction.
+   */
+  approvalResolver?: ApprovalResolver;
+  /**
    * Parent's UsageTracker. When supplied, the child's tool/model usage is
    * forwarded into this tracker so the parent's `usage()` snapshot reflects
    * the total cost of the run including children. Default: no rollup.
@@ -567,6 +638,34 @@ export interface SpawnedSubAgent {
   detachUsageRollup(): void;
 }
 
+export type SubAgentEntrypoint =
+  | "run"
+  | "spawn_agent"
+  | "delegate"
+  | "delegates_run"
+  | "acp"
+  | "external_command";
+
+export type SubAgentTerminalState =
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "blocked"
+  | "step_limit"
+  | "truncated";
+
+interface MultiAgentFacts {
+  parentRunId: string;
+  childRunId: string;
+  spanId: string;
+  agentId?: string;
+  agentProfileId?: string;
+  agentName?: string;
+  delegateTool?: string;
+  subagentDepth: number;
+  entrypoint: SubAgentEntrypoint;
+}
+
 /**
  * Spawn a child run under `parent`. Does NOT call `child.start()` — the
  * caller controls when the child executes (most embedders call `start()`
@@ -582,11 +681,15 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   const spanId = createSpanId();
   const childAgentId =
     stringOrUndefined(input.metadata?.agentId) ?? input.childAgentProfile?.id;
+  const subagentDepth =
+    numberMetadata(input.metadata, "subagentDepth") ??
+    nextSubagentDepth(parent.record.metadata);
   const childRunMetadata = removeUndefinedMetadata({
     ...(input.metadata ?? {}),
     parentRunId: parent.record.id,
     parentSpanId: parent.record.metadata?.spanId as string | undefined,
     spanId,
+    subagentDepth,
     agentId: childAgentId,
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
@@ -624,6 +727,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     promptBuilder: childPromptBuilder,
     interactionChannel:
       input.interactionChannel === null ? undefined : input.interactionChannel,
+    approvalResolver: input.approvalResolver,
     hooks: input.hooks,
     maxSteps: input.maxSteps,
     runBudget: input.runBudget,
@@ -651,41 +755,72 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     spanId,
     goal: input.goal,
   };
-  // Carry the child's identity on EVERY phase. The terminal events bridge from
-  // the child's own EventLog, which has no knowledge of the parent-supplied
-  // profile, so without this each later emit would lose `agentName` and a UI
-  // would fall back to the opaque `childRunId` — making one sub-agent read as a
-  // different actor on `started`/`completed` than it did on `requested`.
-  const subagentMeta = {
+  const facts: MultiAgentFacts = removeUndefinedMetadata({
+    parentRunId: parent.record.id,
+    childRunId: child.record.id,
+    spanId,
+    agentId: childAgentId,
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
-  };
-  parent.events.emit("subagent.requested", subagentBase, subagentMeta);
+    delegateTool: stringMetadata(input.metadata, "delegateTool"),
+    subagentDepth,
+    entrypoint: subagentEntrypointFromMetadata(input.metadata),
+  }) as unknown as MultiAgentFacts;
+  parent.events.emit(
+    "subagent.requested",
+    subagentBase,
+    multiAgentMetadata(facts),
+  );
 
+  // Roll up the child's own workspace writes onto the parent-visible terminal
+  // event. The child run records each `apply_patch`/`edit_anchored_text` as a
+  // `workspace.write.completed` on its OWN trace; the parent run-end summary is
+  // parent-scoped and never sees those. Counting the child's real write events
+  // here (rather than re-detecting changes with a parent-side filesystem
+  // snapshot) keeps a single source of truth, attributes writes to the actor
+  // that made them, and avoids representing one change as two event families.
+  let childWorkspaceWrites = 0;
   const unsubscribeBridge = child.events.subscribe((event) => {
+    if (event.type === "workspace.write.completed") {
+      childWorkspaceWrites += 1;
+      return;
+    }
     if (event.type === "run.started") {
-      parent.events.emit("subagent.started", subagentBase, subagentMeta);
+      parent.events.emit(
+        "subagent.started",
+        subagentBase,
+        multiAgentMetadata(facts),
+      );
     } else if (event.type === "run.completed") {
+      const terminal = subagentTerminalProjection("run.completed", event);
       parent.events.emit(
         "subagent.completed",
         {
           ...subagentBase,
-          stopReason: (event.payload as { stopReason?: string } | undefined)
-            ?.stopReason,
+          stopReason: childStopReason(event.payload),
+          ...terminal,
+          ...(childWorkspaceWrites > 0
+            ? { workspaceWrites: childWorkspaceWrites }
+            : {}),
         },
-        subagentMeta,
+        multiAgentMetadata(facts),
       );
       detach();
       unsubscribeBridge();
     } else if (event.type === "run.failed" || event.type === "run.cancelled") {
+      const terminal = subagentTerminalProjection(event.type, event);
       parent.events.emit(
         "subagent.failed",
         {
           ...subagentBase,
           reason: event.type === "run.cancelled" ? "cancelled" : "failed",
           error: (event.payload as { error?: unknown } | undefined)?.error,
+          ...terminal,
+          ...(childWorkspaceWrites > 0
+            ? { workspaceWrites: childWorkspaceWrites }
+            : {}),
         },
-        subagentMeta,
+        multiAgentMetadata(facts),
       );
       detach();
       unsubscribeBridge();
@@ -699,6 +834,79 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     spanId,
     detachUsageRollup: () => detach(),
   };
+}
+
+function childStopReason(payload: unknown): string | undefined {
+  if (!isRecord(payload)) return undefined;
+  const reason = payload.reason;
+  if (typeof reason === "string") return reason;
+  const stopReason = payload.stopReason;
+  return typeof stopReason === "string" ? stopReason : undefined;
+}
+
+function multiAgentMetadata(facts: MultiAgentFacts): Record<string, unknown> {
+  return removeUndefinedMetadata({
+    agentId: facts.agentId,
+    agentProfileId: facts.agentProfileId,
+    agentName: facts.agentName,
+    delegateTool: facts.delegateTool,
+    subagentDepth: facts.subagentDepth,
+    entrypoint: facts.entrypoint,
+    childRunId: facts.childRunId,
+    parentRunId: facts.parentRunId,
+  });
+}
+
+function subagentEntrypointFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): SubAgentEntrypoint {
+  const entrypoint = metadata?.entrypoint;
+  return isSubAgentEntrypoint(entrypoint) ? entrypoint : "run";
+}
+
+function isSubAgentEntrypoint(value: unknown): value is SubAgentEntrypoint {
+  return (
+    value === "run" ||
+    value === "spawn_agent" ||
+    value === "delegate" ||
+    value === "delegates_run" ||
+    value === "acp" ||
+    value === "external_command"
+  );
+}
+
+function subagentTerminalProjection(
+  eventType: "run.completed" | "run.failed" | "run.cancelled",
+  event: { payload?: unknown },
+): {
+  terminalState: SubAgentTerminalState;
+  stepLimitReached?: boolean;
+  truncated?: boolean;
+} {
+  const payload = isRecord(event.payload) ? event.payload : {};
+  const metadata = isRecord(payload.metadata) ? payload.metadata : undefined;
+  const stepLimitReached =
+    payload.stepLimitReached === true || metadata?.stepLimitReached === true;
+  const truncated = payload.truncated === true || metadata?.truncated === true;
+  if (truncated) {
+    return { terminalState: "truncated", stepLimitReached, truncated: true };
+  }
+  if (stepLimitReached) {
+    return { terminalState: "step_limit", stepLimitReached: true };
+  }
+  if (eventType === "run.cancelled") return { terminalState: "cancelled" };
+  if (eventType === "run.failed") {
+    const stopReason =
+      typeof payload.reason === "string"
+        ? payload.reason
+        : typeof payload.stopReason === "string"
+          ? payload.stopReason
+          : undefined;
+    return {
+      terminalState: stopReason === "blocking_limit" ? "blocked" : "failed",
+    };
+  }
+  return { terminalState: "completed" };
 }
 
 /**
@@ -923,6 +1131,7 @@ export function createAgentTool(
       if (result.signal !== "completed") {
         throw new AgentToolRunError(name, output, result);
       }
+      const stepLimitReached = runResultStepLimitReached(result);
       const structured = isAgentToolResult(output)
         ? output
         : defaultSummarize({
@@ -931,6 +1140,9 @@ export function createAgentTool(
             result,
             usage,
           });
+      if (stepLimitReached) {
+        return withStepLimitReachedNote(output, structured);
+      }
       const results = successfulResultsByParent.get(parent.record.id) ?? [];
       results.push({ goal: parsed.goal, result: structured });
       successfulResultsByParent.set(parent.record.id, results.slice(-8));
@@ -973,9 +1185,7 @@ export * from "./concurrency/index.js";
 export * from "./todo/index.js";
 
 function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
-  const stepLimitReached =
-    (input.result.metadata as { stepLimitReached?: unknown } | undefined)
-      ?.stepLimitReached === true;
+  const stepLimitReached = runResultStepLimitReached(input.result);
   return {
     childRunId: input.childRunId,
     spanId: input.spanId,
@@ -988,6 +1198,32 @@ function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
     modelCalls: input.usage.modelCalls,
     ...(stepLimitReached ? { stepLimitReached: true } : {}),
   };
+}
+
+function runResultStepLimitReached(result: RunResult): boolean {
+  return (
+    (result.metadata as { stepLimitReached?: unknown } | undefined)
+      ?.stepLimitReached === true
+  );
+}
+
+function withStepLimitReachedNote(
+  output: unknown,
+  structured: AgentToolResult,
+): unknown {
+  const note =
+    "Child run answered on its last allowed step; treat the result as possibly truncated and not definitively complete.";
+  if (typeof output === "object" && output !== null && !Array.isArray(output)) {
+    return {
+      ...output,
+      stepLimitReached: true,
+      note:
+        typeof (output as { note?: unknown }).note === "string"
+          ? `${(output as { note: string }).note} ${note}`
+          : note,
+    };
+  }
+  return { ...structured, stepLimitReached: true, note };
 }
 
 class AgentToolRunError extends Error {

@@ -21,18 +21,20 @@ export interface ImGatewayConfig {
   telegram?: TelegramGatewayConfig;
 }
 
-export function defaultConfigPath(): string {
-  return join(homedir(), ".sparkwright", "im-gateway.json");
+export function defaultConfigPath(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return join(configBase(env), "sparkwright", "im-gateway.json");
 }
 
-export function defaultDataDir(): string {
-  return join(homedir(), ".sparkwright", "im-gateway");
+export function defaultDataDir(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return join(stateBase(env), "sparkwright", "im-gateway");
 }
 
-export async function loadConfig(
-  path = defaultConfigPath(),
-): Promise<ImGatewayConfig> {
-  const raw = await readFile(path, "utf8");
+export async function loadConfig(path?: string): Promise<ImGatewayConfig> {
+  const raw = await readFile(resolveConfigPathForRead(path), "utf8");
   return JSON.parse(raw) as ImGatewayConfig;
 }
 
@@ -42,4 +44,23 @@ export async function writeConfig(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(config, null, 2), "utf8");
+}
+
+export function resolveConfigPathForRead(
+  path?: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return path ?? defaultConfigPath(env);
+}
+
+function configBase(env: Record<string, string | undefined>): string {
+  return env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.length > 0
+    ? env.XDG_CONFIG_HOME
+    : join(homedir(), ".config");
+}
+
+function stateBase(env: Record<string, string | undefined>): string {
+  return env.XDG_STATE_HOME && env.XDG_STATE_HOME.length > 0
+    ? env.XDG_STATE_HOME
+    : join(homedir(), ".local", "state");
 }

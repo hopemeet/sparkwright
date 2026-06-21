@@ -357,6 +357,9 @@ describe("run outcome evidence", () => {
         lastCommand:
           'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
         lastExitCode: 127,
+        lastFailureCommand:
+          'cd /tmp/ws && python -m unittest tests/test_config.py 2>&1; echo "EXIT:$?"',
+        lastFailureExitCode: 127,
       },
     });
 
@@ -367,6 +370,53 @@ describe("run outcome evidence", () => {
         cleanLog.emit("run.completed", { reason: "final_answer" }),
       ]),
     ).toBeUndefined();
+  });
+
+  it("snapshots recovered verification failures without legacy unresolved fields", () => {
+    const log = new EventLog(createRunId());
+    const command = "npm test";
+    const events = [
+      log.emit("run.created", { goal: "Fix and verify" }),
+      log.emit("tool.requested", {
+        id: "call_fail",
+        toolName: "shell",
+        arguments: { command },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_fail",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("tool.requested", {
+        id: "call_pass",
+        toolName: "shell",
+        arguments: { command },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_pass",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+    ];
+
+    const analyzed = analyzeCommandOutcomes(events);
+    expect(analyzed.unresolvedVerificationFailures).toEqual([]);
+    expect(commandOutcomeSnapshot(events)).toMatchObject({
+      total: 1,
+      verification: {
+        total: 1,
+        unresolved: 0,
+        lastFailureCommand: command,
+        lastFailureExitCode: 1,
+        lastFailureTimedOut: false,
+        lastSuccessfulVerificationCommand: command,
+      },
+    });
+    expect(commandOutcomeSnapshot(events)?.verification.lastCommand).toBe(
+      undefined,
+    );
   });
 
   it("snapshots same-target tool recovery for persistence", () => {
@@ -405,10 +455,10 @@ describe("run outcome evidence", () => {
     });
   });
 
-  it("classifies a minimal-trace tool failure (flat errorCode) like the full shape", () => {
+  it("classifies a legacy compact tool failure (flat errorCode) like the full shape", () => {
     const log = new EventLog(createRunId());
-    // minimalPayload (trace.ts) flattens the code to `errorCode`; the analyzer
-    // must read it so classification stays trace-level invariant.
+    // Older compact traces flattened the code to `errorCode`; the analyzer must
+    // read it so classification stays trace-shape invariant.
     const events = [
       log.emit("run.created", { goal: "Improve the README" }),
       log.emit("tool.failed", {

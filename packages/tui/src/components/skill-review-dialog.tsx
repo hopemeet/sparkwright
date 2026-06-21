@@ -5,6 +5,8 @@ import type {
   TuiSkillReviewDetail,
   TuiSkillReviewItem,
 } from "../lib/skill-evolution.js";
+import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
+import { DialogFrame } from "./dialog-frame.js";
 
 type ReviewTab = "proposal" | "patch" | "metadata";
 
@@ -13,6 +15,7 @@ const TABS: ReviewTab[] = ["proposal", "patch", "metadata"];
 export function SkillReviewDialog(props: {
   review: TuiSkillReviewDetail | null;
   loading: boolean;
+  workspaceRoot?: string;
   onApply: (proposalId: string) => void;
   onReject: (proposalId: string) => void;
   onCancel: () => void;
@@ -79,12 +82,7 @@ export function SkillReviewDialog(props: {
   });
 
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.accent}
-      paddingX={1}
-    >
+    <DialogFrame borderColor={theme.accent}>
       <Text color={theme.accent} bold>
         skill review
         <Text color={theme.muted}>
@@ -133,12 +131,16 @@ export function SkillReviewDialog(props: {
                 </Text>
               ) : null}
               <TabBar active={tab} />
-              <DetailLines proposal={selected} tab={tab} />
+              <DetailLines
+                proposal={selected}
+                tab={tab}
+                workspaceRoot={props.workspaceRoot}
+              />
             </Box>
           ) : null}
         </>
       ) : null}
-    </Box>
+    </DialogFrame>
   );
 }
 
@@ -178,9 +180,10 @@ function TabBar(props: { active: ReviewTab }): React.ReactElement {
 function DetailLines(props: {
   proposal: TuiSkillReviewItem;
   tab: ReviewTab;
+  workspaceRoot?: string;
 }): React.ReactElement {
   const theme = useTheme();
-  const text = detailText(props.proposal, props.tab);
+  const text = detailText(props.proposal, props.tab, props.workspaceRoot);
   const lines = text.split("\n").slice(0, 18);
   return (
     <Box flexDirection="column">
@@ -196,7 +199,11 @@ function DetailLines(props: {
   );
 }
 
-function detailText(proposal: TuiSkillReviewItem, tab: ReviewTab): string {
+function detailText(
+  proposal: TuiSkillReviewItem,
+  tab: ReviewTab,
+  workspaceRoot?: string,
+): string {
   switch (tab) {
     case "patch":
       return proposal.patchDiff || "(empty patch)";
@@ -207,11 +214,11 @@ function detailText(proposal: TuiSkillReviewItem, tab: ReviewTab): string {
           state: proposal.state,
           kind: proposal.kind,
           skillName: proposal.skillName,
-          targetPath: proposal.targetPath,
+          targetPath: displayProposalPath(proposal.targetPath, workspaceRoot),
           basePackageHash: proposal.basePackageHash,
           afterPackageHash: proposal.afterPackageHash,
           sourceLayer: proposal.sourceLayer,
-          sourcePath: proposal.sourcePath,
+          sourcePath: displayProposalPath(proposal.sourcePath, workspaceRoot),
           createdAt: proposal.createdAt,
           updatedAt: proposal.updatedAt,
           closedAt: proposal.closedAt,
@@ -225,6 +232,15 @@ function detailText(proposal: TuiSkillReviewItem, tab: ReviewTab): string {
     default:
       return proposal.proposalMarkdown || "(empty proposal)";
   }
+}
+
+function displayProposalPath(
+  path: string | undefined,
+  workspaceRoot: string | undefined,
+): string | undefined {
+  return path
+    ? formatWorkspaceDisplayPath(path, { workspaceRoot, maxCols: 96 })
+    : undefined;
 }
 
 function stateColor(state: string): string {

@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import React from "react";
 import { render } from "ink";
 import {
+  ForkDialog,
   extractTurns,
   optionWindow,
-  TimelineDialog,
-} from "../src/components/timeline-dialog.js";
+} from "../src/components/fork-dialog.js";
 import type { RunEvent } from "../src/lib/event-type.js";
 
 function ev(type: string, sequence: number, payload?: unknown): RunEvent {
@@ -55,7 +55,7 @@ describe("extractTurns", () => {
   });
 });
 
-describe("TimelineDialog windowing", () => {
+describe("ForkDialog windowing", () => {
   it("centers the visible option window around the cursor", () => {
     const items = Array.from({ length: 20 }, (_, index) => index);
     expect(optionWindow(items, 10, 5)).toEqual({
@@ -71,7 +71,7 @@ describe("TimelineDialog windowing", () => {
     ]).flat();
 
     const text = await renderToText(
-      React.createElement(TimelineDialog, {
+      React.createElement(ForkDialog, {
         events,
         onCancel: () => {},
         onFork: () => {},

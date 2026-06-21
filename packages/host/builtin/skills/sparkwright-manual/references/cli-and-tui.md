@@ -52,7 +52,7 @@ Read-only smoke test:
 npm exec sparkwright -- run "inspect this repo" \
   --workspace examples/repo-pilot \
   --target README.md \
-  --trace-level minimal
+  --trace-level standard
 ```
 
 Provider-backed run:
@@ -82,7 +82,7 @@ SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read_file","argumen
 - `--yes`: approve CLI approval prompts non-interactively.
 - `--permission-mode mode`: one of `plan`, `default`, `accept_edits`,
   `dont_ask`, `bypass_permissions`.
-- `--trace-level level`: one of `minimal`, `standard`, `debug`.
+- `--trace-level level`: one of `standard`, `debug`.
 - `--session-id id`: attach a run to a known session id.
 - `--model provider/model`: select a configured provider/model.
 - `--model scripted`: run a host-backed scripted model from
@@ -139,16 +139,18 @@ Use `--apply` only when intentionally applying a session repair.
 ## Tool, Skill, And Agent Commands
 
 ```bash
-npm exec sparkwright -- tools list --format text
+npm exec sparkwright -- capabilities inspect --workspace . --format text
+npm exec sparkwright -- tools allow read_file
 npm exec sparkwright -- tools disable shell
 npm exec sparkwright -- tools defer read_anchored_text
 ```
 
-`tools disable`/`tools defer` take concrete tool names (no wildcards).
+`tools allow`/`tools disable`/`tools defer` take concrete tool names (no
+wildcards). Edit `tools.use` directly for broad selector scoping.
 
 Add `--workspace <path>` to inspect or update project tool defaults in
-`<workspace>/.sparkwright/config.json`; without it, tools commands operate on
-the user config.
+`<workspace>/.sparkwright/config.{json,yaml,yml}`; without it, tools commands
+operate on the user config.
 
 ```bash
 npm exec sparkwright -- skills list --workspace .

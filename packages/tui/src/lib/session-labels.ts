@@ -27,7 +27,7 @@ export interface SessionLabels {
   getOne(sessionId: string): string | undefined;
   /** Set or clear a label. Empty string clears. Persists immediately. */
   set(sessionId: string, label: string): Promise<void>;
-  /** Reload from disk (used on /reload). */
+  /** Reload from disk after an external label change. */
   refresh(): Promise<void>;
 }
 

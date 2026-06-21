@@ -10,17 +10,19 @@
  *
  * Resolution order (later overrides earlier): user file, project file, then an
  * explicit $SPARKWRIGHT_CONFIG path. The `providers` map merges by key across
- * files, top-level tool config merges with disabled as a tightening union and
- * defer as a later-layer replacement, capabilities merge by sub-capability, and
- * the security boundaries — shell.sandbox, permissionMode, and
+ * files, top-level tool config merges with allowed as a tightening
+ * intersection, disabled as a tightening union, and defer as a later-layer
+ * replacement, capabilities merge by sub-capability, and the security
+ * boundaries — shell.sandbox, permissionMode, and
  * confidentialPaths — merge conservatively so later (lower-trust) layers cannot
  * weaken an earlier layer's policy.
  * Callers layer CLI flags / env on top.
  */
 
-import { readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type {
   RunBudget,
   WorkflowHookMatcher,
@@ -28,17 +30,160 @@ import type {
 } from "@sparkwright/core";
 import {
   PERMISSION_MODES,
-  isPermissionMode,
   type PermissionMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
+import {
+  formatToolUseSelectorList,
+  intersectToolUseSelectors,
+  isToolUseSelector,
+} from "./tool-selectors.js";
+import {
+  booleanSchema,
+  integerArray,
+  nonEmptyString,
+  nonNegativeInteger,
+  numberSchema,
+  positiveInteger,
+  positiveNumber,
+  stringArray,
+  stringSchema,
+  stringRecordSchema,
+  APPROVAL_BOOLEAN_CONFIG_KEYS,
+  APPROVALS_CONFIG_KEYS,
+  AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS,
+  AGENT_PROFILE_CONFIG_KEYS,
+  AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS,
+  AGENT_PROFILE_MODES,
+  AGENT_PROFILE_OPTIONAL_STRING_CONFIG_KEYS,
+  AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS,
+  AGENTS_CONFIG_KEYS,
+  CAPABILITIES_CONFIG_KEYS,
+  CONFIG_GROUP_CONFIG_KEYS,
+  CONFIG_GROUP_FIELD_MAP,
+  confidentialPathsSchema,
+  DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS,
+  DELEGATE_TOOL_CONFIG_KEYS,
+  DELEGATE_TOOL_OPTIONAL_STRING_CONFIG_KEYS,
+  DELEGATE_ENV_MODES,
+  DELEGATE_WORKSPACE_ACCESS_MODES,
+  EXTERNAL_COMMAND_INPUT_MODES,
+  HOOKS_CONFIG_KEYS,
+  MCP_CONFIG_KEYS,
+  MCP_DEFAULT_POLICY_CONFIG_KEYS,
+  MCP_DEFAULT_POLICY_RISKS,
+  MCP_STARTUP_MODES,
+  MCP_TOOL_SCHEMA_LOAD_MODES,
+  modelSchema,
+  MODEL_COST_CONFIG_KEYS,
+  PROVIDER_CONFIG_KEYS,
+  PROVIDER_MODEL_CONFIG_KEYS,
+  RUN_BUDGET_CONFIG_KEYS,
+  RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS,
+  TASK_BUDGET_CONFIG_KEYS,
+  TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS,
+  TASK_CONFIG_KEYS,
+  TASK_UNKNOWN_COST_POLICIES,
+  SHELL_CONFIG_KEYS,
+  SHELL_SANDBOX_MODES,
+  SHELL_SANDBOX_CONFIG_KEYS,
+  SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS,
+  SHELL_SANDBOX_FILESYSTEM_PATH_CONFIG_KEYS,
+  SHELL_SANDBOX_NETWORK_MODES,
+  SHELL_SANDBOX_NETWORK_CONFIG_KEYS,
+  SKILLS_CONFIG_KEYS,
+  SKILL_EVOLUTION_CONFIG_KEYS,
+  SKILL_EVOLUTION_MODES,
+  SKILL_INLINE_SHELL_CONFIG_KEYS,
+  TOOLS_CONFIG_KEYS,
+  TRACE_LEVEL_CONFIG_VALUES,
+  VERIFICATION_AFTER_WRITES_CONFIG_KEYS,
+  VERIFICATION_COMMAND_CONFIG_KEYS,
+  VERIFICATION_CONFIG_KEYS,
+  VERIFICATION_KINDS,
+  VERIFICATION_MODES,
+  VERIFICATION_STOP_GATE_CONFIG_KEYS,
+  WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE,
+  WORKFLOW_HOOK_ACTION_TYPES,
+  WORKFLOW_HOOK_CONFIG_KEYS,
+  WORKFLOW_HOOK_CONTEXT_TYPES,
+  WORKFLOW_HOOK_FREQUENCIES,
+  WORKFLOW_HOOK_MATCHER_CONFIG_KEYS,
+  WORKFLOW_HOOK_NAMES,
+  WORKFLOW_HOOK_ON_ERROR_MODES,
+  WORKFLOW_HOOK_OUTPUT_INJECTION_MODES,
+  WORKFLOW_HOOK_STDIN_MODES,
+  WRITE_GUARDRAILS_CONFIG_KEYS,
+  maxStepsSchema,
+  PERMISSION_MODE_CONFIG_VALUES,
+  workspaceSchema,
+} from "./config-zod-schema.js";
+import type {
+  ApprovalDefaults,
+  CapabilityDelegateToolConfig,
+  CapabilityHookActionConfig,
+  CapabilityHooksConfig,
+  CapabilityMcpStartup,
+  CapabilityMcpToolSchemaLoad,
+  CapabilitySkillEvolutionConfig,
+  CapabilitySkillInlineShellConfig,
+  CapabilitySkillsConfig,
+  CapabilityToolsConfig,
+  CapabilityVerificationCommandConfig,
+  CapabilityVerificationConfig,
+  CapabilityVerificationKind,
+  CapabilityVerificationAfterWritesConfig,
+  CapabilityVerificationStopGateConfig,
+  CapabilityWorkflowHookConfig,
+  ModelCost,
+  ProviderConfig,
+  ProviderModelConfig,
+  ShellConfig,
+  TaskBudgetConfig,
+  TaskConfig,
+  WriteGuardrailsConfig,
+} from "./config-zod-schema.js";
+export type {
+  ApprovalDefaults,
+  CapabilityDelegateToolConfig,
+  CapabilityHookActionConfig,
+  CapabilityHooksConfig,
+  CapabilityMcpStartup,
+  CapabilityMcpToolSchemaLoad,
+  CapabilitySkillEvolutionConfig,
+  CapabilitySkillEvolutionMode,
+  CapabilitySkillInlineShellConfig,
+  CapabilitySkillsConfig,
+  CapabilityToolsConfig,
+  CapabilityVerificationCommandConfig,
+  CapabilityVerificationConfig,
+  CapabilityVerificationKind,
+  CapabilityVerificationMode,
+  CapabilityVerificationAfterWritesConfig,
+  CapabilityVerificationStopGateConfig,
+  CapabilityWorkflowHookConfig,
+  CapabilityWorkflowHookFrequency,
+  ModelCost,
+  ProviderConfig,
+  ProviderModelConfig,
+  ShellConfig,
+  TaskBudgetConfig,
+  TaskConfig,
+  WriteGuardrailsConfig,
+} from "./config-zod-schema.js";
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
 export const CONFIG_USER_REL = ".config/sparkwright/config.json";
 export const CONFIG_ENV_VAR = "SPARKWRIGHT_CONFIG";
-const CONFIG_USER_SUBPATH = "sparkwright/config.json";
+export const CONFIG_FILE_BASENAMES = [
+  "config.json",
+  "config.yaml",
+  "config.yml",
+] as const;
+const CONFIG_USER_DIR_SUBPATH = "sparkwright";
+const CONFIG_USER_JSON_SUBPATH = "sparkwright/config.json";
 
 /** Reserved provider key for the built-in offline demo model. */
 export const DETERMINISTIC_PROVIDER = "deterministic";
@@ -69,26 +214,6 @@ export const SUPPORTED_PROVIDER_NPMS: Record<
   },
 };
 
-export interface ModelCost {
-  input?: number;
-  output?: number;
-  cacheRead?: number;
-  cacheWrite?: number;
-}
-
-export interface ProviderModelConfig {
-  cost?: ModelCost;
-  providerOptions?: Record<string, Record<string, unknown>>;
-}
-
-export interface ProviderConfig {
-  npm?: string;
-  baseURL?: string;
-  apiKey?: string;
-  providerOptions?: Record<string, Record<string, unknown>>;
-  models?: Record<string, ProviderModelConfig>;
-}
-
 export interface SharedConfig {
   /** Active model in "provider/model" form (or the reserved "deterministic"). */
   model?: string;
@@ -113,6 +238,8 @@ export interface SharedConfig {
   shell?: ShellConfig;
   /** Preferred top-level tool exposure/loading config. */
   tools?: CapabilityToolsConfig;
+  /** Shared routing and budget defaults for model-backed auxiliary tasks. */
+  tasks?: Record<string, TaskConfig>;
   capabilities?: CapabilityConfig;
   /**
    * Resource budget for the interactive main run. `maxModelCalls` is the
@@ -128,28 +255,6 @@ export interface SharedConfig {
   approvals?: ApprovalDefaults;
 }
 
-export interface WriteGuardrailsConfig {
-  /** Maximum distinct files a run may write. */
-  maxFiles?: number;
-  /** Maximum changed diff lines per write. */
-  maxDiffLines?: number;
-  /** Whether in-place edits may remove lines. */
-  allowDeletions?: boolean;
-}
-
-export interface ApprovalDefaults {
-  /** Auto-approve commands the safety classifier rates safe. */
-  shellSafe?: boolean;
-  /** Auto-approve workspace edits. */
-  edits?: boolean;
-  /** Auto-approve everything the policy allows (use with care). */
-  all?: boolean;
-}
-
-export interface ShellConfig {
-  sandbox?: ShellSandboxConfig;
-}
-
 export interface CapabilityConfig {
   hooks?: CapabilityHooksConfig;
   verification?: CapabilityVerificationConfig;
@@ -158,120 +263,11 @@ export interface CapabilityConfig {
   agents?: CapabilityAgentsConfig;
 }
 
-export interface CapabilityToolsConfig {
-  /** Concrete tool names removed from the prepared run tool set. */
-  disabled?: string[];
-  /** Concrete tool names prepared as deferred schemas when supported. */
-  defer?: string[];
-}
-
-export type CapabilityHookActionConfig =
-  | {
-      type: "block";
-      reason: string;
-    }
-  | {
-      type: "context";
-      content: string;
-      contextType?: "system" | "user" | "summary";
-    }
-  | {
-      type: "command";
-      command: string;
-      args?: string[];
-      cwd?: string;
-      timeoutMs?: number;
-      blockOnFailure?: boolean;
-      injectOutput?: "always" | "onFailure" | "never";
-      maxOutputBytes?: number;
-      stdin?: "none" | "json";
-    };
-
-export type CapabilityWorkflowHookFrequency = "always" | "oncePerTurn";
-
-export interface CapabilityWorkflowHookConfig {
-  name: string;
-  description?: string;
-  hook: WorkflowHookName;
-  enabled?: boolean;
-  frequency?: CapabilityWorkflowHookFrequency;
-  matcher?: WorkflowHookMatcher;
-  onError?: "continue" | "block";
-  action: CapabilityHookActionConfig;
-}
-
-export interface CapabilityHooksConfig {
-  workflow?: CapabilityWorkflowHookConfig[];
-}
-
-export type CapabilityVerificationMode = "off" | "suggest" | "require";
-
-export type CapabilityVerificationKind =
-  | "lint"
-  | "typecheck"
-  | "test"
-  | "check"
-  | "custom";
-
-export interface CapabilityVerificationCommandConfig {
-  id: string;
-  kind?: CapabilityVerificationKind;
-  command: string;
-  args?: string[];
-  cwd?: string;
-  timeoutMs?: number;
-  maxOutputBytes?: number;
-}
-
-export interface CapabilityVerificationAfterWritesConfig {
-  profile?: string;
-  frequency?: CapabilityWorkflowHookFrequency;
-  injectOutput?: "always" | "onFailure" | "never";
-}
-
-export interface CapabilityVerificationStopGateConfig {
-  enabled?: boolean;
-  requireCleanAfterLastWrite?: boolean;
-}
-
-export interface CapabilityVerificationConfig {
-  mode?: CapabilityVerificationMode;
-  defaultProfile?: string;
-  profiles?: Record<string, CapabilityVerificationCommandConfig[]>;
-  afterWrites?: CapabilityVerificationAfterWritesConfig;
-  stopGate?: CapabilityVerificationStopGateConfig;
-}
-
 export interface CapabilityAgentsConfig {
   profiles?: AgentProfile[];
   delegateTools?: CapabilityDelegateToolConfig[];
-}
-
-export interface CapabilityDelegateToolConfig {
-  profileId: string;
-  toolName?: string;
-  description?: string;
-  requiresApproval?: boolean;
-  forbidNesting?: boolean;
-  maxSteps?: number;
-}
-
-export interface CapabilitySkillsConfig {
-  /** Skill root directories. Relative paths resolve from the config file. */
-  roots?: string[];
-  includeLoaderTool?: boolean;
-  loadSelectedSkills?: boolean;
-  maxSelectedSkills?: number;
-  resourceFileLimit?: number;
-  allowedSkills?: string[];
-  deniedSkills?: string[];
-  evolution?: CapabilitySkillEvolutionConfig;
-}
-
-export type CapabilitySkillEvolutionMode = "off" | "notice" | "draft" | "apply";
-
-export interface CapabilitySkillEvolutionConfig {
-  mode?: CapabilitySkillEvolutionMode;
+  /** Maximum allowed sub-agent depth. 0 disables spawning; absent keeps legacy defaults. */
+  maxDepth?: number;
 }
 
 export type CapabilityMcpServerConfig =
@@ -295,9 +291,6 @@ export type CapabilityMcpServerConfig =
       enabled?: boolean;
       toolSchemaLoad?: CapabilityMcpToolSchemaLoad;
     };
-
-export type CapabilityMcpToolSchemaLoad = "eager" | "defer";
-export type CapabilityMcpStartup = "lazy" | "prepare" | "eager";
 
 export interface CapabilityMcpConfig {
   servers?: CapabilityMcpServerConfig[];
@@ -329,6 +322,7 @@ export interface SharedConfigSourceMap {
   traceLevel?: string;
   approvals?: string;
   providers?: Record<string, string>;
+  tasks?: string;
 }
 
 export interface SharedConfigError {
@@ -410,7 +404,7 @@ export function userConfigPath(
   // hermetic tests); fall back to ~/.config otherwise.
   const xdg = env.XDG_CONFIG_HOME;
   const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config");
-  return join(base, CONFIG_USER_SUBPATH);
+  return join(base, CONFIG_USER_JSON_SUBPATH);
 }
 
 export function projectConfigPath(cwd: string): string {
@@ -421,21 +415,76 @@ export function configResolutionOrder(
   cwd: string,
   env: Record<string, string | undefined> = process.env,
 ): { path: string; label: string }[] {
-  const order = [
-    { path: userConfigPath(env), label: "user" },
-    { path: projectConfigPath(cwd), label: "project" },
+  const order = configLayerResolutionOrder(cwd, env).flatMap((layer) =>
+    layer.candidates.map((path) => ({ path, label: layer.label })),
+  );
+  return order;
+}
+
+interface ConfigLayerResolution {
+  label: string;
+  candidates: string[];
+}
+
+function configLayerResolutionOrder(
+  cwd: string,
+  env: Record<string, string | undefined> = process.env,
+): ConfigLayerResolution[] {
+  const order: ConfigLayerResolution[] = [
+    { label: "user", candidates: userConfigCandidatePaths(env) },
+    { label: "project", candidates: projectConfigCandidatePaths(cwd) },
   ];
   const explicit = env[CONFIG_ENV_VAR];
   if (explicit) {
     order.push({
-      path: isAbsolute(explicit) ? explicit : resolve(cwd, explicit),
+      candidates: [isAbsolute(explicit) ? explicit : resolve(cwd, explicit)],
       label: "env",
     });
   }
   return order;
 }
 
-async function readJson(
+export function userConfigCandidatePaths(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const xdg = env.XDG_CONFIG_HOME;
+  const base = xdg && xdg.length > 0 ? xdg : join(homedir(), ".config");
+  return CONFIG_FILE_BASENAMES.map((name) =>
+    join(base, CONFIG_USER_DIR_SUBPATH, name),
+  );
+}
+
+export function projectConfigCandidatePaths(cwd: string): string[] {
+  const dir = join(cwd, ".sparkwright");
+  return CONFIG_FILE_BASENAMES.map((name) => join(dir, name));
+}
+
+export type ConfigFileFormat = "json" | "yaml";
+
+export interface ConfigFileObject {
+  exists: boolean;
+  value: Record<string, unknown>;
+  format: ConfigFileFormat;
+}
+
+export function configFileFormatForPath(path: string): ConfigFileFormat {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".yaml") || lower.endsWith(".yml") ? "yaml" : "json";
+}
+
+export function serializeConfigFileObject(
+  path: string,
+  value: Record<string, unknown>,
+): string {
+  const format = configFileFormatForPath(path);
+  const serialized =
+    format === "yaml"
+      ? stringifyYaml(value, { lineWidth: 0 })
+      : JSON.stringify(value, null, 2);
+  return serialized.endsWith("\n") ? serialized : `${serialized}\n`;
+}
+
+async function readConfigFile(
   path: string,
 ): Promise<
   | { kind: "ok"; value: unknown }
@@ -453,18 +502,125 @@ async function readJson(
       message: `read failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  const format = configFileFormatForPath(path);
   try {
-    return { kind: "ok", value: JSON.parse(raw) };
+    return {
+      kind: "ok",
+      value: format === "yaml" ? parseYaml(raw) : JSON.parse(raw),
+    };
   } catch (err) {
     return {
       kind: "error",
-      message: `invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      message: `invalid ${format.toUpperCase()}: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }
 
+export async function readConfigFileObject(
+  path: string,
+): Promise<ConfigFileObject> {
+  const result = await readConfigFile(path);
+  if (result.kind === "missing") {
+    return {
+      exists: false,
+      value: {},
+      format: configFileFormatForPath(path),
+    };
+  }
+  if (result.kind === "error") {
+    throw new Error(result.message);
+  }
+  if (!isRecord(result.value)) {
+    throw new Error(`${path} must contain a config object.`);
+  }
+  return {
+    exists: true,
+    value: result.value,
+    format: configFileFormatForPath(path),
+  };
+}
+
+export async function writeConfigFileObject(
+  path: string,
+  value: Record<string, unknown>,
+  options: { privateFile?: boolean } = {},
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, serializeConfigFileObject(path, value), {
+    ...(options.privateFile !== false ? { mode: 0o600 } : {}),
+  });
+  if (options.privateFile !== false) {
+    await chmod(path, 0o600);
+  }
+}
+
+export async function resolveConfigWriteTarget(
+  defaultJsonPath: string,
+): Promise<{ path: string; exists: boolean }> {
+  const candidates = configSiblingCandidatePaths(defaultJsonPath);
+  const existing = await existingConfigCandidatePaths(candidates);
+  if (existing.length > 1) {
+    throw new Error(
+      `Multiple config files found next to ${defaultJsonPath}: ${existing.join(", ")}. Keep one before writing config.`,
+    );
+  }
+  return {
+    path: existing[0] ?? defaultJsonPath,
+    exists: existing.length === 1,
+  };
+}
+
+function configSiblingCandidatePaths(defaultJsonPath: string): string[] {
+  const dir = dirname(defaultJsonPath);
+  return CONFIG_FILE_BASENAMES.map((name) => join(dir, name));
+}
+
+async function existingConfigCandidatePaths(
+  paths: readonly string[],
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const path of paths) {
+    try {
+      const info = await stat(path);
+      if (info.isFile()) out.push(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        out.push(path);
+      }
+    }
+  }
+  return out;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringOption<T extends string>(
+  value: unknown,
+  options: readonly T[],
+): value is T {
+  return (
+    typeof value === "string" && (options as readonly string[]).includes(value)
+  );
+}
+
+interface ConfigValueSchema<T> {
+  safeParse(raw: unknown): { success: true; data: T } | { success: false };
+}
+
+function validateZodValue<T>(
+  schema: ConfigValueSchema<T>,
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+  message: string,
+): T | undefined {
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  errors.push({ file: filePath, field, message });
+  return undefined;
 }
 
 function validateStringArray(
@@ -473,15 +629,14 @@ function validateStringArray(
   filePath: string,
   errors: SharedConfigError[],
 ): string[] | undefined {
-  if (Array.isArray(raw) && raw.every((entry) => typeof entry === "string")) {
-    return raw;
-  }
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    stringArray,
+    raw,
     field,
-    message: "must be an array of strings",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be an array of strings",
+  );
 }
 
 function validateOptionalBoolean(
@@ -490,9 +645,14 @@ function validateOptionalBoolean(
   filePath: string,
   errors: SharedConfigError[],
 ): boolean | undefined {
-  if (typeof raw === "boolean") return raw;
-  errors.push({ file: filePath, field, message: "must be a boolean" });
-  return undefined;
+  return validateZodValue(
+    booleanSchema,
+    raw,
+    field,
+    filePath,
+    errors,
+    "must be a boolean",
+  );
 }
 
 function validateOptionalNonNegativeInteger(
@@ -501,13 +661,14 @@ function validateOptionalNonNegativeInteger(
   filePath: string,
   errors: SharedConfigError[],
 ): number | undefined {
-  if (Number.isInteger(raw) && (raw as number) >= 0) return raw as number;
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    nonNegativeInteger,
+    raw,
     field,
-    message: "must be a non-negative integer",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be a non-negative integer",
+  );
 }
 
 function validateOptionalPositiveInteger(
@@ -516,13 +677,14 @@ function validateOptionalPositiveInteger(
   filePath: string,
   errors: SharedConfigError[],
 ): number | undefined {
-  if (Number.isInteger(raw) && (raw as number) >= 1) return raw as number;
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    positiveInteger,
+    raw,
     field,
-    message: "must be a positive integer",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be a positive integer",
+  );
 }
 
 function validateOptionalPositiveNumber(
@@ -531,13 +693,14 @@ function validateOptionalPositiveNumber(
   filePath: string,
   errors: SharedConfigError[],
 ): number | undefined {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    positiveNumber,
+    raw,
     field,
-    message: "must be a positive number",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be a positive number",
+  );
 }
 
 function validateCapabilitySkills(
@@ -554,16 +717,7 @@ function validateCapabilitySkills(
     return undefined;
   }
   const out: CapabilitySkillsConfig = {};
-  const allowed = new Set([
-    "roots",
-    "includeLoaderTool",
-    "loadSelectedSkills",
-    "maxSelectedSkills",
-    "resourceFileLimit",
-    "allowedSkills",
-    "deniedSkills",
-    "evolution",
-  ]);
+  const allowed = new Set<string>(SKILLS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -637,15 +791,16 @@ function validateCapabilitySkills(
     );
     if (evolution) out.evolution = evolution;
   }
+  if (raw.inlineShell !== undefined) {
+    const inlineShell = validateCapabilitySkillInlineShell(
+      raw.inlineShell,
+      filePath,
+      errors,
+    );
+    if (inlineShell) out.inlineShell = inlineShell;
+  }
   return out;
 }
-
-const VALID_SKILL_EVOLUTION_MODES: CapabilitySkillEvolutionMode[] = [
-  "off",
-  "notice",
-  "draft",
-  "apply",
-];
 
 function validateCapabilitySkillEvolution(
   raw: unknown,
@@ -661,7 +816,7 @@ function validateCapabilitySkillEvolution(
     return undefined;
   }
   const out: CapabilitySkillEvolutionConfig = {};
-  const allowed = new Set(["mode"]);
+  const allowed = new Set<string>(SKILL_EVOLUTION_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -672,18 +827,66 @@ function validateCapabilitySkillEvolution(
     }
   }
   if (raw.mode !== undefined) {
-    if (
-      typeof raw.mode === "string" &&
-      (VALID_SKILL_EVOLUTION_MODES as string[]).includes(raw.mode)
-    ) {
-      out.mode = raw.mode as CapabilitySkillEvolutionMode;
+    if (isStringOption(raw.mode, SKILL_EVOLUTION_MODES)) {
+      out.mode = raw.mode;
     } else {
       errors.push({
         file: filePath,
         field: "capabilities.skills.evolution.mode",
-        message: `must be one of ${VALID_SKILL_EVOLUTION_MODES.join(" | ")}`,
+        message: `must be one of ${SKILL_EVOLUTION_MODES.join(" | ")}`,
       });
     }
+  }
+  return out;
+}
+
+function validateCapabilitySkillInlineShell(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilitySkillInlineShellConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.skills.inlineShell",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  const out: CapabilitySkillInlineShellConfig = {};
+  const allowed = new Set<string>(SKILL_INLINE_SHELL_CONFIG_KEYS);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `capabilities.skills.inlineShell.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      "capabilities.skills.inlineShell.enabled",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.timeoutMs !== undefined) {
+    out.timeoutMs = validateOptionalPositiveInteger(
+      raw.timeoutMs,
+      "capabilities.skills.inlineShell.timeoutMs",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.maxOutputChars !== undefined) {
+    out.maxOutputChars = validateOptionalPositiveInteger(
+      raw.maxOutputChars,
+      "capabilities.skills.inlineShell.maxOutputChars",
+      filePath,
+      errors,
+    );
   }
   return out;
 }
@@ -703,7 +906,7 @@ function validateToolsConfig(
     return undefined;
   }
   const out: CapabilityToolsConfig = {};
-  const allowed = new Set(["disabled", "defer"]);
+  const allowed = new Set<string>(TOOLS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -712,6 +915,22 @@ function validateToolsConfig(
         message: `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
+  }
+  if (raw.use !== undefined) {
+    out.use = validateToolUseSelectorArray(
+      raw.use,
+      `${field}.use`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.allowed !== undefined) {
+    out.allowed = validateToolNameArray(
+      raw.allowed,
+      `${field}.allowed`,
+      filePath,
+      errors,
+    );
   }
   if (raw.disabled !== undefined) {
     out.disabled = validateToolNameArray(
@@ -752,16 +971,25 @@ function validateToolNameArray(
   return values;
 }
 
-const WORKFLOW_HOOK_NAMES: WorkflowHookName[] = [
-  "SessionStart",
-  "UserPromptSubmit",
-  "ModelOutput",
-  "PreToolUse",
-  "PostToolUse",
-  "Stop",
-  "SessionEnd",
-  "RuntimeSignal",
-];
+function validateToolUseSelectorArray(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): string[] | undefined {
+  const values = validateStringArray(raw, field, filePath, errors);
+  if (!values) return undefined;
+  const invalid = values.find((value) => !isToolUseSelector(value));
+  if (invalid !== undefined) {
+    errors.push({
+      file: filePath,
+      field,
+      message: `unknown tool selector "${invalid}" (allowed: ${formatToolUseSelectorList()})`,
+    });
+    return undefined;
+  }
+  return values;
+}
 
 function validateCapabilityHooks(
   raw: unknown,
@@ -777,7 +1005,7 @@ function validateCapabilityHooks(
     return undefined;
   }
   const out: CapabilityHooksConfig = {};
-  const allowed = new Set(["workflow"]);
+  const allowed = new Set<string>(HOOKS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -814,16 +1042,7 @@ function validateWorkflowHookConfig(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "name",
-    "description",
-    "hook",
-    "enabled",
-    "frequency",
-    "matcher",
-    "onError",
-    "action",
-  ]);
+  const allowed = new Set<string>(WORKFLOW_HOOK_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -841,10 +1060,7 @@ function validateWorkflowHookConfig(
     });
     return undefined;
   }
-  if (
-    typeof raw.hook !== "string" ||
-    !(WORKFLOW_HOOK_NAMES as string[]).includes(raw.hook)
-  ) {
+  if (!isStringOption(raw.hook, WORKFLOW_HOOK_NAMES)) {
     errors.push({
       file: filePath,
       field: `${field}.hook`,
@@ -884,7 +1100,7 @@ function validateWorkflowHookConfig(
     );
   }
   if (raw.onError !== undefined) {
-    if (raw.onError === "continue" || raw.onError === "block") {
+    if (isStringOption(raw.onError, WORKFLOW_HOOK_ON_ERROR_MODES)) {
       out.onError = raw.onError;
     } else {
       errors.push({
@@ -895,7 +1111,7 @@ function validateWorkflowHookConfig(
     }
   }
   if (raw.frequency !== undefined) {
-    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+    if (isStringOption(raw.frequency, WORKFLOW_HOOK_FREQUENCIES)) {
       out.frequency = raw.frequency;
     } else {
       errors.push({
@@ -929,7 +1145,7 @@ function validateWorkflowHookAction(
     return undefined;
   }
   const type = raw.type;
-  if (type !== "block" && type !== "context" && type !== "command") {
+  if (!isStringOption(type, WORKFLOW_HOOK_ACTION_TYPES)) {
     errors.push({
       file: filePath,
       field: `${field}.type`,
@@ -937,6 +1153,13 @@ function validateWorkflowHookAction(
     });
     return undefined;
   }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE[type]),
+  );
   if (type === "block") {
     if (typeof raw.reason !== "string" || raw.reason.length === 0) {
       errors.push({
@@ -958,12 +1181,13 @@ function validateWorkflowHookAction(
       return undefined;
     }
     const contextType = raw.contextType;
-    if (
-      contextType !== undefined &&
-      contextType !== "system" &&
-      contextType !== "user" &&
-      contextType !== "summary"
-    ) {
+    const parsedContextType =
+      contextType === undefined
+        ? undefined
+        : isStringOption(contextType, WORKFLOW_HOOK_CONTEXT_TYPES)
+          ? contextType
+          : undefined;
+    if (contextType !== undefined && parsedContextType === undefined) {
       errors.push({
         file: filePath,
         field: `${field}.contextType`,
@@ -974,7 +1198,7 @@ function validateWorkflowHookAction(
     return {
       type,
       content: raw.content,
-      ...(contextType ? { contextType } : {}),
+      ...(parsedContextType ? { contextType: parsedContextType } : {}),
     };
   }
   if (typeof raw.command !== "string" || raw.command.length === 0) {
@@ -1029,9 +1253,7 @@ function validateWorkflowHookAction(
         }
       : {}),
     ...(raw.injectOutput !== undefined
-      ? raw.injectOutput === "always" ||
-        raw.injectOutput === "onFailure" ||
-        raw.injectOutput === "never"
+      ? isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
         ? { injectOutput: raw.injectOutput }
         : (errors.push({
             file: filePath,
@@ -1041,7 +1263,7 @@ function validateWorkflowHookAction(
           {})
       : {}),
     ...(raw.stdin !== undefined
-      ? raw.stdin === "none" || raw.stdin === "json"
+      ? isStringOption(raw.stdin, WORKFLOW_HOOK_STDIN_MODES)
         ? { stdin: raw.stdin }
         : (errors.push({
             file: filePath,
@@ -1073,14 +1295,7 @@ function validateWorkflowHookMatcher(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "toolName",
-    "eventType",
-    "signal",
-    "status",
-    "pathGlob",
-    "excludePathGlob",
-  ]);
+  const allowed = new Set<string>(WORKFLOW_HOOK_MATCHER_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1124,13 +1339,7 @@ function validateCapabilityVerification(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "mode",
-    "defaultProfile",
-    "profiles",
-    "afterWrites",
-    "stopGate",
-  ]);
+  const allowed = new Set<string>(VERIFICATION_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1143,11 +1352,7 @@ function validateCapabilityVerification(
 
   const out: CapabilityVerificationConfig = {};
   if (raw.mode !== undefined) {
-    if (
-      raw.mode === "off" ||
-      raw.mode === "suggest" ||
-      raw.mode === "require"
-    ) {
+    if (isStringOption(raw.mode, VERIFICATION_MODES)) {
       out.mode = raw.mode;
     } else {
       errors.push({
@@ -1255,15 +1460,7 @@ function validateVerificationCommand(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set([
-    "id",
-    "kind",
-    "command",
-    "args",
-    "cwd",
-    "timeoutMs",
-    "maxOutputBytes",
-  ]);
+  const allowed = new Set<string>(VERIFICATION_COMMAND_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1345,7 +1542,7 @@ function validateVerificationAfterWrites(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set(["profile", "frequency", "injectOutput"]);
+  const allowed = new Set<string>(VERIFICATION_AFTER_WRITES_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1368,7 +1565,7 @@ function validateVerificationAfterWrites(
     }
   }
   if (raw.frequency !== undefined) {
-    if (raw.frequency === "always" || raw.frequency === "oncePerTurn") {
+    if (isStringOption(raw.frequency, WORKFLOW_HOOK_FREQUENCIES)) {
       out.frequency = raw.frequency;
     } else {
       errors.push({
@@ -1380,9 +1577,7 @@ function validateVerificationAfterWrites(
   }
   if (raw.injectOutput !== undefined) {
     if (
-      raw.injectOutput === "always" ||
-      raw.injectOutput === "onFailure" ||
-      raw.injectOutput === "never"
+      isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
     ) {
       out.injectOutput = raw.injectOutput;
     } else {
@@ -1406,7 +1601,7 @@ function validateVerificationStopGate(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
-  const allowed = new Set(["enabled", "requireCleanAfterLastWrite"]);
+  const allowed = new Set<string>(VERIFICATION_STOP_GATE_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1461,13 +1656,7 @@ function validateVerificationProfileReferences(
 function isVerificationKind(
   value: unknown,
 ): value is CapabilityVerificationKind {
-  return (
-    value === "lint" ||
-    value === "typecheck" ||
-    value === "test" ||
-    value === "check" ||
-    value === "custom"
-  );
+  return isStringOption(value, VERIFICATION_KINDS);
 }
 
 function validateCapabilities(
@@ -1484,13 +1673,19 @@ function validateCapabilities(
     return undefined;
   }
   const out: CapabilityConfig = {};
-  const allowed = new Set(["hooks", "verification", "skills", "mcp", "agents"]);
+  const allowed = new Set<string>(CAPABILITIES_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
+      const removedToolsMessage =
+        key === "tools"
+          ? "legacy capabilities.tools has been removed; use top-level tools.use/tools.allowed/tools.disabled/tools.defer instead"
+          : undefined;
       errors.push({
         file: filePath,
         field: `capabilities.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+        message:
+          removedToolsMessage ??
+          `unknown field (allowed: ${[...allowed].join(", ")})`,
       });
     }
   }
@@ -1535,7 +1730,7 @@ function validateWriteGuardrails(
     return undefined;
   }
   const out: WriteGuardrailsConfig = {};
-  const allowed = new Set(["maxFiles", "maxDiffLines", "allowDeletions"]);
+  const allowed = new Set<string>(WRITE_GUARDRAILS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1583,13 +1778,7 @@ function validateRunBudget(
     return undefined;
   }
   const out: RunBudget = {};
-  const integerKeys = [
-    "maxDurationMs",
-    "maxModelCalls",
-    "maxToolCalls",
-    "maxTokens",
-  ] as const;
-  const allowed = new Set<string>([...integerKeys, "maxCostUsd"]);
+  const allowed = new Set<string>(RUN_BUDGET_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1599,7 +1788,7 @@ function validateRunBudget(
       });
     }
   }
-  for (const key of integerKeys) {
+  for (const key of RUN_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateOptionalPositiveInteger(
         raw[key],
@@ -1620,6 +1809,123 @@ function validateRunBudget(
   return out;
 }
 
+function validateTasksConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): Record<string, TaskConfig> | undefined {
+  const tasks: Record<string, TaskConfig> = {};
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "tasks",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  for (const [name, value] of Object.entries(raw)) {
+    const field = `tasks.${name}`;
+    if (!isRecord(value)) {
+      errors.push({ file: filePath, field, message: "must be an object" });
+      continue;
+    }
+    const allowed = new Set<string>(TASK_CONFIG_KEYS);
+    for (const key of Object.keys(value)) {
+      if (!allowed.has(key)) {
+        errors.push({
+          file: filePath,
+          field: `${field}.${key}`,
+          message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+        });
+      }
+    }
+    const task: TaskConfig = {};
+    if (value.enabled !== undefined) {
+      task.enabled = validateOptionalBoolean(
+        value.enabled,
+        `${field}.enabled`,
+        filePath,
+        errors,
+      );
+    }
+    if (value.model !== undefined) {
+      const model = validateZodValue(
+        modelSchema,
+        value.model,
+        `${field}.model`,
+        filePath,
+        errors,
+        "must be a non-empty model reference",
+      );
+      if (model !== undefined) task.model = model;
+    }
+    if (value.budget !== undefined) {
+      const budget = validateTaskBudget(
+        value.budget,
+        `${field}.budget`,
+        filePath,
+        errors,
+      );
+      if (budget) task.budget = budget;
+    }
+    tasks[name] = task;
+  }
+  return tasks;
+}
+
+function validateTaskBudget(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): TaskBudgetConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const out: TaskBudgetConfig = {};
+  const allowed = new Set<string>(TASK_BUDGET_CONFIG_KEYS);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  for (const key of TASK_BUDGET_POSITIVE_INTEGER_CONFIG_KEYS) {
+    if (raw[key] !== undefined) {
+      out[key] = validateOptionalPositiveInteger(
+        raw[key],
+        `${field}.${key}`,
+        filePath,
+        errors,
+      );
+    }
+  }
+  if (raw.maxCostUsd !== undefined) {
+    out.maxCostUsd = validateOptionalPositiveNumber(
+      raw.maxCostUsd,
+      `${field}.maxCostUsd`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.unknownCostPolicy !== undefined) {
+    if (isStringOption(raw.unknownCostPolicy, TASK_UNKNOWN_COST_POLICIES)) {
+      out.unknownCostPolicy = raw.unknownCostPolicy;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.unknownCostPolicy`,
+        message: "must be skip or token_cap_only",
+      });
+    }
+  }
+  return out;
+}
+
 function validateApprovals(
   raw: unknown,
   filePath: string,
@@ -1634,7 +1940,7 @@ function validateApprovals(
     return undefined;
   }
   const out: ApprovalDefaults = {};
-  const allowed = new Set(["shellSafe", "edits", "all"]);
+  const allowed = new Set<string>(APPROVALS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1644,7 +1950,7 @@ function validateApprovals(
       });
     }
   }
-  for (const key of ["shellSafe", "edits", "all"] as const) {
+  for (const key of APPROVAL_BOOLEAN_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateOptionalBoolean(
         raw[key],
@@ -1654,10 +1960,19 @@ function validateApprovals(
       );
     }
   }
+  if (raw.cronMode !== undefined) {
+    if (isStringOption(raw.cronMode, PERMISSION_MODE_CONFIG_VALUES)) {
+      out.cronMode = raw.cronMode;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "approvals.cronMode",
+        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
+      });
+    }
+  }
   return out;
 }
-
-const VALID_TRACE_LEVELS: TraceLevel[] = ["minimal", "standard", "debug"];
 
 function validateShellConfig(
   raw: unknown,
@@ -1673,7 +1988,7 @@ function validateShellConfig(
     return undefined;
   }
   const out: ShellConfig = {};
-  const allowed = new Set(["sandbox"]);
+  const allowed = new Set<string>(SHELL_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1704,12 +2019,7 @@ function validateShellSandboxConfig(
     return undefined;
   }
   const out: ShellSandboxConfig = {};
-  const allowed = new Set([
-    "mode",
-    "failIfUnavailable",
-    "filesystem",
-    "network",
-  ]);
+  const allowed = new Set<string>(SHELL_SANDBOX_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1720,7 +2030,7 @@ function validateShellSandboxConfig(
     }
   }
   if (raw.mode !== undefined) {
-    if (raw.mode === "off" || raw.mode === "warn" || raw.mode === "enforce") {
+    if (isStringOption(raw.mode, SHELL_SANDBOX_MODES)) {
       out.mode = raw.mode;
     } else {
       errors.push({
@@ -1767,13 +2077,7 @@ function validateShellSandboxFilesystem(
     return undefined;
   }
   const out: NonNullable<ShellSandboxConfig["filesystem"]> = {};
-  const allowed = new Set([
-    "allowRead",
-    "allowWrite",
-    "denyRead",
-    "denyWrite",
-    "tmp",
-  ]);
+  const allowed = new Set<string>(SHELL_SANDBOX_FILESYSTEM_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1783,12 +2087,7 @@ function validateShellSandboxFilesystem(
       });
     }
   }
-  for (const key of [
-    "allowRead",
-    "allowWrite",
-    "denyRead",
-    "denyWrite",
-  ] as const) {
+  for (const key of SHELL_SANDBOX_FILESYSTEM_PATH_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateStringArray(
         raw[key],
@@ -1823,7 +2122,7 @@ function validateShellSandboxNetwork(
     return undefined;
   }
   const out: NonNullable<ShellSandboxConfig["network"]> = {};
-  const allowed = new Set(["mode"]);
+  const allowed = new Set<string>(SHELL_SANDBOX_NETWORK_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -1834,7 +2133,7 @@ function validateShellSandboxNetwork(
     }
   }
   if (raw.mode !== undefined) {
-    if (raw.mode === "allow" || raw.mode === "deny") {
+    if (isStringOption(raw.mode, SHELL_SANDBOX_NETWORK_MODES)) {
       out.mode = raw.mode;
     } else {
       errors.push({
@@ -1853,18 +2152,14 @@ function validateStringRecord(
   filePath: string,
   errors: SharedConfigError[],
 ): Record<string, string> | undefined {
-  if (
-    isRecord(raw) &&
-    Object.values(raw).every((entry) => typeof entry === "string")
-  ) {
-    return raw as Record<string, string>;
-  }
-  errors.push({
-    file: filePath,
+  return validateZodValue(
+    stringRecordSchema,
+    raw,
     field,
-    message: "must be an object with string values",
-  });
-  return undefined;
+    filePath,
+    errors,
+    "must be an object with string values",
+  );
 }
 
 function mergeShellConfig(
@@ -1965,6 +2260,23 @@ function mergeUniqueStrings(
   return out;
 }
 
+function intersectUniqueStrings(
+  previous: readonly string[] | undefined,
+  next: readonly string[] | undefined,
+): string[] | undefined {
+  if (previous === undefined) return next ? [...next] : undefined;
+  if (next === undefined) return [...previous];
+  const nextSet = new Set(next);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of previous) {
+    if (!nextSet.has(entry) || seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+  }
+  return out;
+}
+
 function mergeToolConfig(
   previous: CapabilityToolsConfig | undefined,
   next: CapabilityToolsConfig | undefined,
@@ -1972,6 +2284,11 @@ function mergeToolConfig(
   if (!previous) return next ? { ...next } : undefined;
   if (!next) return { ...previous };
   return pruneToolConfig({
+    // Tool selectors are a tightening boundary, so layers intersect by the
+    // concrete tool sets they imply (`mcp` ∩ `mcp:demo` = `mcp:demo`).
+    use: intersectToolUseSelectors(previous.use, next.use),
+    // Allowed tools are a tightening boundary, so layers intersect.
+    allowed: intersectUniqueStrings(previous.allowed, next.allowed),
     // Disabled tools are a tightening boundary, so layers union.
     disabled: mergeUniqueStrings(previous.disabled, next.disabled),
     // Defer is a loading preference, not a safety boundary. A later explicit
@@ -1987,6 +2304,8 @@ function mergeToolConfig(
 
 function pruneToolConfig(config: CapabilityToolsConfig): CapabilityToolsConfig {
   return {
+    ...(config.use !== undefined ? { use: config.use } : {}),
+    ...(config.allowed !== undefined ? { allowed: config.allowed } : {}),
     ...(config.disabled && config.disabled.length > 0
       ? { disabled: config.disabled }
       : {}),
@@ -2132,7 +2451,9 @@ function validateMcpToolSchemaLoad(
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityMcpToolSchemaLoad | undefined {
-  if (raw === "eager" || raw === "defer") return raw;
+  if (isStringOption(raw, MCP_TOOL_SCHEMA_LOAD_MODES)) {
+    return raw;
+  }
   errors.push({
     file: filePath,
     field,
@@ -2147,7 +2468,9 @@ function validateMcpStartup(
   filePath: string,
   errors: SharedConfigError[],
 ): CapabilityMcpStartup | undefined {
-  if (raw === "lazy" || raw === "prepare" || raw === "eager") return raw;
+  if (isStringOption(raw, MCP_STARTUP_MODES)) {
+    return raw;
+  }
   errors.push({
     file: filePath,
     field,
@@ -2170,14 +2493,7 @@ function validateCapabilityMcp(
     return undefined;
   }
   const out: CapabilityMcpConfig = {};
-  const allowed = new Set([
-    "servers",
-    "defaultTimeoutMs",
-    "namePrefix",
-    "startup",
-    "toolSchemaLoad",
-    "defaultPolicy",
-  ]);
+  const allowed = new Set<string>(MCP_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2236,10 +2552,16 @@ function validateCapabilityMcp(
   if (raw.defaultPolicy !== undefined) {
     if (isRecord(raw.defaultPolicy)) {
       const policy: NonNullable<CapabilityMcpConfig["defaultPolicy"]> = {};
+      validateKnownKeys(
+        raw.defaultPolicy,
+        "capabilities.mcp.defaultPolicy",
+        filePath,
+        errors,
+        new Set<string>(MCP_DEFAULT_POLICY_CONFIG_KEYS),
+      );
       const risk = raw.defaultPolicy.risk;
       if (risk !== undefined) {
-        if (risk === "safe" || risk === "risky" || risk === "denied")
-          policy.risk = risk;
+        if (isStringOption(risk, MCP_DEFAULT_POLICY_RISKS)) policy.risk = risk;
         else
           errors.push({
             file: filePath,
@@ -2286,31 +2608,15 @@ function validateAgentProfile(
     });
     return undefined;
   }
-  const allowed = new Set([
-    "id",
-    "name",
-    "description",
-    "mode",
-    "model",
-    "prompt",
-    "allowedTools",
-    "deniedTools",
-    "policy",
-    "maxSteps",
-    "runBudget",
-    "metadata",
-  ]);
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) {
-      errors.push({
-        file: filePath,
-        field: `${field}.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
-      });
-    }
-  }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(AGENT_PROFILE_CONFIG_KEYS),
+  );
   const profile: AgentProfile = { id: raw.id };
-  for (const key of ["name", "description", "prompt"] as const) {
+  for (const key of AGENT_PROFILE_OPTIONAL_STRING_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] === "string") profile[key] = raw[key];
       else
@@ -2322,8 +2628,7 @@ function validateAgentProfile(
     }
   }
   if (raw.mode !== undefined) {
-    if (raw.mode === "primary" || raw.mode === "child" || raw.mode === "all")
-      profile.mode = raw.mode;
+    if (isStringOption(raw.mode, AGENT_PROFILE_MODES)) profile.mode = raw.mode;
     else
       errors.push({
         file: filePath,
@@ -2332,7 +2637,15 @@ function validateAgentProfile(
       });
   }
   if (raw.model !== undefined) profile.model = raw.model;
-  for (const key of ["allowedTools", "deniedTools"] as const) {
+  if (raw.use !== undefined) {
+    profile.use = validateToolUseSelectorArray(
+      raw.use,
+      `${field}.use`,
+      filePath,
+      errors,
+    );
+  }
+  for (const key of AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       profile[key] = validateStringArray(
         raw[key],
@@ -2436,16 +2749,7 @@ function validateAcpMetadata(
     field,
     filePath,
     errors,
-    new Set([
-      "transport",
-      "command",
-      "args",
-      "cwd",
-      "env",
-      "envMode",
-      "workspaceAccess",
-      "timeoutMs",
-    ]),
+    new Set<string>(AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS),
   );
   if (acp.transport !== "stdio") {
     errors.push({
@@ -2460,8 +2764,7 @@ function validateAcpMetadata(
   validateOptionalStringRecord(acp.env, `${field}.env`, filePath, errors);
   if (
     acp.envMode !== undefined &&
-    acp.envMode !== "inherit" &&
-    acp.envMode !== "explicit"
+    !isStringOption(acp.envMode, DELEGATE_ENV_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2489,20 +2792,7 @@ function validateExternalCommandMetadata(
     field,
     filePath,
     errors,
-    new Set([
-      "command",
-      "args",
-      "cwd",
-      "env",
-      "envMode",
-      "workspaceAccess",
-      "timeoutMs",
-      "input",
-      "maxOutputBytes",
-      "maxStdoutBytes",
-      "maxStderrBytes",
-      "successExitCodes",
-    ]),
+    new Set<string>(AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS),
   );
   validateRequiredString(command.command, `${field}.command`, filePath, errors);
   validateOptionalStringArray(command.args, `${field}.args`, filePath, errors);
@@ -2540,8 +2830,7 @@ function validateExternalCommandMetadata(
   );
   if (
     command.envMode !== undefined &&
-    command.envMode !== "inherit" &&
-    command.envMode !== "explicit"
+    !isStringOption(command.envMode, DELEGATE_ENV_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2551,9 +2840,7 @@ function validateExternalCommandMetadata(
   }
   if (
     command.input !== undefined &&
-    command.input !== "argument" &&
-    command.input !== "stdin" &&
-    command.input !== "none"
+    !isStringOption(command.input, EXTERNAL_COMMAND_INPUT_MODES)
   ) {
     errors.push({
       file: filePath,
@@ -2575,7 +2862,10 @@ function validateOptionalWorkspaceAccess(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (value !== undefined && value !== "none" && value !== "read_write") {
+  if (
+    value !== undefined &&
+    !isStringOption(value, DELEGATE_WORKSPACE_ACCESS_MODES)
+  ) {
     errors.push({
       file: filePath,
       field,
@@ -2608,7 +2898,7 @@ function validateRequiredString(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (typeof value !== "string" || value.length === 0) {
+  if (!nonEmptyString.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2623,7 +2913,7 @@ function validateOptionalString(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (value !== undefined && typeof value !== "string") {
+  if (value !== undefined && !stringSchema.safeParse(value).success) {
     errors.push({ file: filePath, field, message: "must be a string" });
   }
 }
@@ -2634,7 +2924,7 @@ function validateOptionalNumber(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (value !== undefined && typeof value !== "number") {
+  if (value !== undefined && !numberSchema.safeParse(value).success) {
     errors.push({ file: filePath, field, message: "must be a number" });
   }
 }
@@ -2645,10 +2935,7 @@ function validateOptionalStringArray(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
-  ) {
+  if (value !== undefined && !stringArray.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2663,13 +2950,7 @@ function validateOptionalIntegerArray(
   filePath: string,
   errors: SharedConfigError[],
 ): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) ||
-      !value.every(
-        (item) => typeof item === "number" && Number.isInteger(item),
-      ))
-  ) {
+  if (value !== undefined && !integerArray.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2685,10 +2966,7 @@ function validateOptionalStringRecord(
   errors: SharedConfigError[],
 ): void {
   if (value === undefined) return;
-  if (
-    !isRecord(value) ||
-    !Object.values(value).every((item) => typeof item === "string")
-  ) {
+  if (!stringRecordSchema.safeParse(value).success) {
     errors.push({
       file: filePath,
       field,
@@ -2711,7 +2989,7 @@ function validateCapabilityAgents(
     return undefined;
   }
   const out: CapabilityAgentsConfig = {};
-  const allowed = new Set(["profiles", "delegateTools"]);
+  const allowed = new Set<string>(AGENTS_CONFIG_KEYS);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) {
       errors.push({
@@ -2747,6 +3025,14 @@ function validateCapabilityAgents(
       });
     }
   }
+  if (raw.maxDepth !== undefined) {
+    out.maxDepth = validateOptionalNonNegativeInteger(
+      raw.maxDepth,
+      "capabilities.agents.maxDepth",
+      filePath,
+      errors,
+    );
+  }
   return out;
 }
 
@@ -2761,6 +3047,13 @@ function validateDelegateTool(
     errors.push({ file: filePath, field, message: "must be an object" });
     return undefined;
   }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(DELEGATE_TOOL_CONFIG_KEYS),
+  );
   if (typeof raw.profileId !== "string" || raw.profileId.length === 0) {
     errors.push({
       file: filePath,
@@ -2770,7 +3063,7 @@ function validateDelegateTool(
     return undefined;
   }
   const out: CapabilityDelegateToolConfig = { profileId: raw.profileId };
-  for (const key of ["toolName", "description"] as const) {
+  for (const key of DELEGATE_TOOL_OPTIONAL_STRING_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       if (typeof raw[key] === "string" && raw[key].length > 0) {
         out[key] = raw[key];
@@ -2783,7 +3076,7 @@ function validateDelegateTool(
       }
     }
   }
-  for (const key of ["requiresApproval", "forbidNesting"] as const) {
+  for (const key of DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
       out[key] = validateOptionalBoolean(
         raw[key],
@@ -2820,6 +3113,13 @@ function validateProvider(
     return undefined;
   }
   const provider: ProviderConfig = {};
+  validateKnownKeys(
+    raw,
+    `providers.${key}`,
+    filePath,
+    errors,
+    new Set<string>(PROVIDER_CONFIG_KEYS),
+  );
   if (raw.npm !== undefined) {
     if (typeof raw.npm === "string" && raw.npm.length > 0)
       provider.npm = raw.npm;
@@ -2863,31 +3163,42 @@ function validateProvider(
     if (isRecord(raw.models)) {
       const models: Record<string, ProviderModelConfig> = {};
       for (const [modelId, entry] of Object.entries(raw.models)) {
+        const modelField = `providers.${key}.models.${modelId}`;
         if (!isRecord(entry)) {
           errors.push({
             file: filePath,
-            field: `providers.${key}.models.${modelId}`,
+            field: modelField,
             message: "must be an object",
           });
           continue;
         }
         const modelConfig: ProviderModelConfig = {};
+        validateKnownKeys(
+          entry,
+          modelField,
+          filePath,
+          errors,
+          new Set<string>(PROVIDER_MODEL_CONFIG_KEYS),
+        );
         if (entry.cost !== undefined) {
           if (isRecord(entry.cost)) {
             const cost: ModelCost = {};
-            for (const field of [
-              "input",
-              "output",
-              "cacheRead",
-              "cacheWrite",
-            ] as const) {
+            const costField = `${modelField}.cost`;
+            validateKnownKeys(
+              entry.cost,
+              costField,
+              filePath,
+              errors,
+              new Set<string>(MODEL_COST_CONFIG_KEYS),
+            );
+            for (const field of MODEL_COST_CONFIG_KEYS) {
               const v = entry.cost[field];
               if (v === undefined) continue;
               if (typeof v === "number") cost[field] = v;
               else
                 errors.push({
                   file: filePath,
-                  field: `providers.${key}.models.${modelId}.cost.${field}`,
+                  field: `${costField}.${field}`,
                   message: "must be a number",
                 });
             }
@@ -2950,30 +3261,6 @@ function validateProviderOptions(
 }
 
 /**
- * Map each grouped key to the flat internal field it normalizes to. The grouped
- * form (`identity`/`policy`/`run`/`ui`) is the preferred on-disk surface; the
- * loader flattens it into the historical flat `SharedConfig` so consumers are
- * untouched and the old flat keys keep working as aliases. `policy.sandbox`
- * remaps structurally to `shell.sandbox` and is handled specially below;
- * `capabilities` is already its own group and passes through unchanged.
- */
-const CONFIG_GROUP_FIELD_MAP: Record<string, Record<string, string>> = {
-  identity: { model: "model", providers: "providers" },
-  policy: {
-    permissionMode: "permissionMode",
-    confidentialPaths: "confidentialPaths",
-    write: "write",
-  },
-  run: {
-    budget: "runBudget",
-    maxSteps: "maxSteps",
-    traceLevel: "traceLevel",
-    approvals: "approvals",
-  },
-  ui: { theme: "theme", mouse: "mouse", keybindings: "keybindings" },
-};
-
-/**
  * Flatten the grouped config form into the flat shape the field validators
  * expect. Both the grouped key and an old flat alias may appear; the grouped
  * value wins and the conflict is reported. Unknown keys inside a known group are
@@ -3001,7 +3288,9 @@ export function normalizeGroupedConfig(
     flat[flatKey] = value;
   };
 
-  for (const [group, fieldMap] of Object.entries(CONFIG_GROUP_FIELD_MAP)) {
+  for (const [group, fieldMap] of Object.entries(
+    CONFIG_GROUP_FIELD_MAP,
+  ) as Array<[keyof typeof CONFIG_GROUP_FIELD_MAP, Record<string, string>]>) {
     const groupValue = raw[group];
     if (groupValue === undefined) continue;
     delete flat[group];
@@ -3013,10 +3302,7 @@ export function normalizeGroupedConfig(
       });
       continue;
     }
-    const knownSub = new Set([
-      ...Object.keys(fieldMap),
-      ...(group === "policy" ? ["sandbox"] : []),
-    ]);
+    const knownSub = new Set<string>(CONFIG_GROUP_CONFIG_KEYS[group]);
     for (const subKey of Object.keys(groupValue)) {
       if (!knownSub.has(subKey)) {
         errors.push({
@@ -3026,11 +3312,12 @@ export function normalizeGroupedConfig(
         });
         continue;
       }
+      const flatKey = fieldMap[subKey]!;
       if (group === "policy" && subKey === "sandbox") {
         assign("shell", { sandbox: groupValue.sandbox }, "policy.sandbox");
         continue;
       }
-      assign(fieldMap[subKey], groupValue[subKey], `${group}.${subKey}`);
+      assign(flatKey, groupValue[subKey], `${group}.${subKey}`);
     }
   }
   return flat;
@@ -3058,22 +3345,24 @@ function validateShared(
     errors.push({
       file: filePath,
       field: "(root)",
-      message: "must be a JSON object",
+      message: "must be an object",
     });
     return { config, sources, errors };
   }
   const obj = normalizeGroupedConfig(raw, filePath, errors);
 
   if (obj.model !== undefined) {
-    if (typeof obj.model === "string" && obj.model.length > 0) {
-      config.model = obj.model;
+    const model = validateZodValue(
+      modelSchema,
+      obj.model,
+      "model",
+      filePath,
+      errors,
+      "must be a non-empty string",
+    );
+    if (model !== undefined) {
+      config.model = model;
       sources.model = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "model",
-        message: "must be a non-empty string",
-      });
     }
   }
   if (obj.providers !== undefined) {
@@ -3099,12 +3388,12 @@ function validateShared(
       errors.push({
         file: filePath,
         field: "providers",
-        message: "must be a JSON object",
+        message: "must be an object",
       });
     }
   }
   if (obj.permissionMode !== undefined) {
-    if (isPermissionMode(obj.permissionMode)) {
+    if (isStringOption(obj.permissionMode, PERMISSION_MODE_CONFIG_VALUES)) {
       config.permissionMode = obj.permissionMode;
       sources.permissionMode = origin;
     } else {
@@ -3116,32 +3405,31 @@ function validateShared(
     }
   }
   if (obj.workspace !== undefined) {
-    if (typeof obj.workspace === "string" && obj.workspace.length > 0) {
-      config.workspace = obj.workspace;
+    const workspace = validateZodValue(
+      workspaceSchema,
+      obj.workspace,
+      "workspace",
+      filePath,
+      errors,
+      "must be a non-empty string",
+    );
+    if (workspace !== undefined) {
+      config.workspace = workspace;
       sources.workspace = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "workspace",
-        message: "must be a non-empty string",
-      });
     }
   }
   if (obj.confidentialPaths !== undefined) {
-    if (
-      Array.isArray(obj.confidentialPaths) &&
-      obj.confidentialPaths.every(
-        (entry) => typeof entry === "string" && entry.length > 0,
-      )
-    ) {
-      config.confidentialPaths = obj.confidentialPaths as string[];
+    const confidentialPaths = validateZodValue(
+      confidentialPathsSchema,
+      obj.confidentialPaths,
+      "confidentialPaths",
+      filePath,
+      errors,
+      "must be an array of non-empty strings",
+    );
+    if (confidentialPaths !== undefined) {
+      config.confidentialPaths = confidentialPaths;
       sources.confidentialPaths = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "confidentialPaths",
-        message: "must be an array of non-empty strings",
-      });
     }
   }
   if (obj.write !== undefined) {
@@ -3164,11 +3452,13 @@ function validateShared(
     }
   }
   if (obj.maxSteps !== undefined) {
-    const maxSteps = validateOptionalPositiveInteger(
+    const maxSteps = validateZodValue(
+      maxStepsSchema,
       obj.maxSteps,
       "maxSteps",
       filePath,
       errors,
+      "must be a positive integer",
     );
     if (maxSteps !== undefined) {
       config.maxSteps = maxSteps;
@@ -3176,14 +3466,14 @@ function validateShared(
     }
   }
   if (obj.traceLevel !== undefined) {
-    if ((VALID_TRACE_LEVELS as string[]).includes(obj.traceLevel as string)) {
-      config.traceLevel = obj.traceLevel as TraceLevel;
+    if (isStringOption(obj.traceLevel, TRACE_LEVEL_CONFIG_VALUES)) {
+      config.traceLevel = obj.traceLevel;
       sources.traceLevel = origin;
     } else {
       errors.push({
         file: filePath,
         field: "traceLevel",
-        message: `must be one of ${VALID_TRACE_LEVELS.join(" | ")}`,
+        message: "must be one of standard | debug",
       });
     }
   }
@@ -3208,6 +3498,13 @@ function validateShared(
       sources.tools = origin;
     }
   }
+  if (obj.tasks !== undefined) {
+    const tasks = validateTasksConfig(obj.tasks, filePath, errors);
+    if (tasks) {
+      config.tasks = tasks;
+      sources.tasks = origin;
+    }
+  }
   if (obj.capabilities !== undefined) {
     const capabilities = validateCapabilities(
       obj.capabilities,
@@ -3226,24 +3523,45 @@ export async function loadHostConfig(
   cwd: string,
   env: Record<string, string | undefined> = process.env,
 ): Promise<LoadedSharedConfig> {
-  const order = configResolutionOrder(cwd, env);
+  const order = configLayerResolutionOrder(cwd, env);
   const merged: SharedConfig = {};
   const sources: SharedConfigSourceMap = {};
   const attempted: LoadedSharedConfig["attempted"] = [];
   const errors: SharedConfigError[] = [];
 
-  for (const { path, label } of order) {
-    const r = await readJson(path);
+  for (const { candidates, label } of order) {
+    const existing = await existingConfigCandidatePaths(candidates);
+    if (existing.length === 0) {
+      for (const path of candidates) attempted.push({ path, loaded: false });
+      continue;
+    }
+
+    const path = existing[0]!;
+    if (existing.length > 1) {
+      errors.push({
+        file: path,
+        field: "(root)",
+        message: `multiple config files found for ${label} layer: ${existing.join(", ")}; loading ${path}`,
+      });
+    }
+
+    const r = await readConfigFile(path);
     if (r.kind === "missing") {
-      attempted.push({ path, loaded: false });
+      for (const candidate of candidates) {
+        attempted.push({ path: candidate, loaded: false });
+      }
       continue;
     }
     if (r.kind === "error") {
-      attempted.push({ path, loaded: false });
+      for (const candidate of candidates) {
+        attempted.push({ path: candidate, loaded: false });
+      }
       errors.push({ file: path, field: "(root)", message: r.message });
       continue;
     }
-    attempted.push({ path, loaded: true });
+    for (const candidate of candidates) {
+      attempted.push({ path: candidate, loaded: candidate === path });
+    }
     const v = validateShared(r.value, `${label}:${path}`, path);
     errors.push(...v.errors);
     if (v.config.workspace !== undefined) {

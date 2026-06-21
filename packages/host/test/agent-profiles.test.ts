@@ -34,6 +34,7 @@ describe("parseAgentProfileFile", () => {
         "description: routes issues",
         "mode: child",
         "model: openai/m",
+        "use: [workspace.read]",
         "allowedTools: [read_file, glob]",
         "maxSteps: 5",
         "---",
@@ -42,6 +43,7 @@ describe("parseAgentProfileFile", () => {
     );
     expect(profile.id).toBe("triage");
     expect(profile.name).toBe("Triage");
+    expect(profile.use).toEqual(["workspace.read"]);
     expect(profile.allowedTools).toEqual(["read_file", "glob"]);
     expect(profile.maxSteps).toBe(5);
     expect(profile.mode).toBe("child");

@@ -139,9 +139,17 @@ Initial event types:
 - `tool.started`
 - `tool.completed`
 - `tool.failed`
+- `task.started`
+- `task.output`
+- `task.completed`
+- `task.failed`
+- `task.cancelled`
 - `approval.requested`
 - `approval.resolved`
 - `artifact.created`
+- `extension.process.started`
+- `extension.process.completed`
+- `extension.process.failed`
 - `workspace.read`
 - `workspace.write.requested`
 - `workspace.write.completed`

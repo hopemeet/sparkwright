@@ -48,6 +48,22 @@ export type CompactionTrigger =
   | "auto" // model-driven full-history summary
   | "reactive"; // recover from over-budget error
 
+export type CompactionTier = "dedup" | "extract" | "evict" | "summarize";
+
+export interface CompactionWarning {
+  code: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CompactionResult {
+  items: ContextItem[];
+  freedChars: number;
+  skippedReason?: string;
+  warnings?: CompactionWarning[];
+  metadata?: Record<string, unknown>;
+}
+
 /**
  * A single compaction stage. `shouldRun` is consulted before each iteration;
  * `apply` returns the rewritten context plus optional metadata. Stages should
@@ -60,11 +76,12 @@ export type CompactionTrigger =
  */
 export interface CompactionStage {
   readonly name: string;
+  readonly tier: CompactionTier;
   readonly trigger: CompactionTrigger;
   shouldRun(input: CompactionStageInput): boolean | Promise<boolean>;
   apply(
     input: CompactionStageInput,
-  ): Promise<CompactionStageResult> | CompactionStageResult;
+  ): Promise<CompactionResult> | CompactionResult;
 }
 
 export interface CompactionStageInput {
@@ -76,16 +93,18 @@ export interface CompactionStageInput {
    */
   totalChars: number;
   /**
+   * Savings accumulated by stages that have already run in this pipeline pass.
+   * Later stages can use this to decide whether the current regime is still
+   * density-bound, without reclassifying earlier stage work.
+   */
+  previousFreedChars?: number;
+  /** Savings accumulated by already-applied stages, grouped by stage tier. */
+  previousFreedByTier?: Readonly<Record<CompactionTier, number>>;
+  /**
    * Stage may be invoked reactively in response to a previous overflow
    * error. When `reactive: true`, stages may be more aggressive.
    */
   reactive: boolean;
-}
-
-export interface CompactionStageResult {
-  items: ContextItem[];
-  freedChars: number;
-  metadata?: Record<string, unknown>;
 }
 
 export interface CompactionPipelineOptions {
@@ -107,10 +126,23 @@ export interface CompactionPipelineInput {
 export interface CompactionPipelineResult {
   items: ContextItem[];
   freedChars: number;
+  skippedReason?: string;
+  warnings?: CompactionWarning[];
+  /** @reserved Public compaction metric consumed by diagnostics and tuning UIs. */
+  freedByTier: Record<CompactionTier, number>;
   appliedStages: Array<{
     name: string;
+    tier: CompactionTier;
     trigger: CompactionTrigger;
     freedChars: number;
+    warnings?: CompactionWarning[];
+    metadata?: Record<string, unknown>;
+  }>;
+  skippedStages: Array<{
+    name: string;
+    tier: CompactionTier;
+    trigger: CompactionTrigger;
+    reason: string;
     metadata?: Record<string, unknown>;
   }>;
 }
@@ -134,7 +166,15 @@ export function createCompactionPipeline(options: CompactionPipelineOptions): {
     ): Promise<CompactionPipelineResult> {
       let items = input.items;
       const applied: CompactionPipelineResult["appliedStages"] = [];
+      const skipped: CompactionPipelineResult["skippedStages"] = [];
+      const warnings: CompactionWarning[] = [];
       const reactive = Boolean(input.reactive);
+      const freedByTier: Record<CompactionTier, number> = {
+        dedup: 0,
+        extract: 0,
+        evict: 0,
+        summarize: 0,
+      };
 
       for (const stage of stages) {
         const totalChars = items.reduce(
@@ -145,6 +185,11 @@ export function createCompactionPipeline(options: CompactionPipelineOptions): {
           items,
           hints: input.hints,
           totalChars,
+          previousFreedChars: applied.reduce(
+            (sum, entry) => sum + entry.freedChars,
+            0,
+          ),
+          previousFreedByTier: { ...freedByTier },
           reactive,
         };
 
@@ -154,6 +199,7 @@ export function createCompactionPipeline(options: CompactionPipelineOptions): {
         } catch (cause) {
           input.events?.emit("context.compaction.failed", {
             stage: stage.name,
+            tier: stage.tier,
             trigger: stage.trigger,
             phase: "should_run",
             error: cause instanceof Error ? cause.message : String(cause),
@@ -164,6 +210,7 @@ export function createCompactionPipeline(options: CompactionPipelineOptions): {
 
         input.events?.emit("context.compaction.started", {
           stage: stage.name,
+          tier: stage.tier,
           trigger: stage.trigger,
           reactive,
           totalChars,
@@ -171,22 +218,50 @@ export function createCompactionPipeline(options: CompactionPipelineOptions): {
 
         try {
           const result = await stage.apply(stageInput);
+          const stageWarnings = result.warnings ?? [];
+          if (stageWarnings.length > 0) warnings.push(...stageWarnings);
+          if (result.freedChars <= 0) {
+            const reason = result.skippedReason ?? "no_savings";
+            skipped.push({
+              name: stage.name,
+              tier: stage.tier,
+              trigger: stage.trigger,
+              reason,
+              metadata: result.metadata,
+            });
+            input.events?.emit("context.compaction.completed", {
+              stage: stage.name,
+              tier: stage.tier,
+              trigger: stage.trigger,
+              freedChars: 0,
+              skippedReason: reason,
+              warnings: stageWarnings,
+              metadata: result.metadata,
+            });
+            continue;
+          }
           items = result.items;
+          freedByTier[stage.tier] += result.freedChars;
           applied.push({
             name: stage.name,
+            tier: stage.tier,
             trigger: stage.trigger,
             freedChars: result.freedChars,
+            warnings: stageWarnings.length > 0 ? stageWarnings : undefined,
             metadata: result.metadata,
           });
           input.events?.emit("context.compaction.completed", {
             stage: stage.name,
+            tier: stage.tier,
             trigger: stage.trigger,
             freedChars: result.freedChars,
+            warnings: stageWarnings,
             metadata: result.metadata,
           });
         } catch (cause) {
           input.events?.emit("context.compaction.failed", {
             stage: stage.name,
+            tier: stage.tier,
             trigger: stage.trigger,
             phase: "apply",
             error: cause instanceof Error ? cause.message : String(cause),
@@ -199,7 +274,15 @@ export function createCompactionPipeline(options: CompactionPipelineOptions): {
         (sum, entry) => sum + entry.freedChars,
         0,
       );
-      return { items, freedChars, appliedStages: applied };
+      return {
+        items,
+        freedChars,
+        ...(freedChars <= 0 ? { skippedReason: "no_savings" } : {}),
+        warnings: warnings.length > 0 ? warnings : undefined,
+        freedByTier,
+        appliedStages: applied,
+        skippedStages: skipped,
+      };
     },
   };
 }
@@ -221,6 +304,7 @@ export function compactionStageFromCompactor(
 ): CompactionStage {
   return {
     name,
+    tier: "summarize",
     trigger,
     shouldRun(input) {
       if (options.onlyWhenChars === undefined) return true;
@@ -322,6 +406,7 @@ export function gateStageByUsage(
 ): CompactionStage {
   return {
     name: stage.name,
+    tier: stage.tier,
     trigger: stage.trigger,
     async shouldRun(input) {
       if (!input.reactive && !usageMeetsGate(input.hints.usage, thresholds)) {
@@ -454,6 +539,7 @@ export function createToolResultBudgetStage(options: {
   const limit = options.maxCharsPerItem;
   return {
     name: options.name ?? "tool_result_budget",
+    tier: "evict",
     trigger: "tool_result_budget",
     shouldRun(input) {
       return input.items.some(
@@ -519,6 +605,7 @@ export function createClearToolUsesStage(
 
   return {
     name: options.name ?? "clear_tool_uses",
+    tier: "evict",
     trigger: "clear_tool_uses",
     shouldRun(input) {
       if (!input.reactive && input.totalChars < triggerChars) return false;
@@ -646,6 +733,7 @@ export function createSnipStage(options: {
 }): CompactionStage {
   return {
     name: options.name ?? "snip",
+    tier: "evict",
     trigger: "snip",
     shouldRun(input) {
       return (

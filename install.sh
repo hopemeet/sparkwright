@@ -20,17 +20,11 @@ npm install
 echo "Building Sparkwright..."
 npm run build
 
-echo "Linking the sparkwright command..."
-npm link --workspace @sparkwright/cli
+echo "Installing Sparkwright into ${SPARKWRIGHT_INSTALL_ROOT:-$HOME/.sparkwright}..."
+node scripts/install-from-source.mjs
 
-if command -v sparkwright >/dev/null 2>&1; then
-  echo
-  echo "Sparkwright is installed for local use:"
-  echo "  sparkwright tui"
-  echo "  sparkwright run \"inspect this repo\" --workspace . --model deterministic"
-else
-  echo
-  echo "Sparkwright was linked, but the sparkwright command is not on PATH." >&2
-  echo "Check your npm global bin directory and shell PATH." >&2
-  exit 1
-fi
+echo
+echo "Sparkwright is installed for local use:"
+echo "  sparkwright doctor paths --workspace ."
+echo "  sparkwright tui"
+echo "  sparkwright run \"inspect this repo\" --workspace . --model deterministic"

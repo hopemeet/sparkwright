@@ -150,6 +150,16 @@ describe("openSpan", () => {
     expect(log.all()).toHaveLength(2);
     expect(log.all()[1]!.type).toBe("task.completed");
   });
+
+  it("treats cancelled as a lifecycle suffix for span names", () => {
+    const log = new EventLog(createRunId());
+    const span = openSpan(log, { startType: "task.started" });
+    span.close("task.cancelled");
+    expect(log.all()[1]).toMatchObject({
+      type: "task.cancelled",
+      metadata: { spanName: "task" },
+    });
+  });
 });
 
 describe("runWithSpan", () => {

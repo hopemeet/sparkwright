@@ -29,7 +29,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/chmod-bin.mjs dist/bin.js",
+    "build": "tsc -p tsconfig.json && node ../../scripts/chmod-bin.mjs dist/bin.js && node ../../scripts/stamp-workspace-build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },

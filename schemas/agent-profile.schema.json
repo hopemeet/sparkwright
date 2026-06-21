@@ -22,6 +22,34 @@
       "type": "string",
       "description": "Application/domain-specific system prompt compiled into the run's prompt builder when spawning runs from this profile."
     },
+    "use": {
+      "type": "array",
+      "description": "High-level tool selectors for this profile. Parent/child profiles intersect these selectors, and embedders expand them to concrete tool names.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "workspace.read",
+              "workspace.write",
+              "shell",
+              "planning",
+              "skills",
+              "agents",
+              "tasks",
+              "cron",
+              "mcp"
+            ]
+          },
+          {
+            "type": "string",
+            "pattern": "^mcp:.+$",
+            "description": "Select tools from one configured MCP server, e.g. mcp:demo."
+          }
+        ]
+      },
+      "uniqueItems": true
+    },
     "allowedTools": {
       "type": "array",
       "items": { "type": "string" }

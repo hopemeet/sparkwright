@@ -1,14 +1,5 @@
 import { randomBytes } from "node:crypto";
-import {
-  chmod,
-  cp,
-  mkdir,
-  open,
-  readFile,
-  rename,
-  stat,
-  unlink,
-} from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type {
   CreateJobInput,
@@ -27,7 +18,6 @@ const STORE_FILE = "jobs.json";
 
 export interface CronStoreOptions {
   rootDir: string;
-  legacyRootDir?: string;
 }
 
 export class AmbiguousJobReferenceError extends Error {
@@ -40,17 +30,11 @@ export class AmbiguousJobReferenceError extends Error {
 export class CronStore {
   readonly rootDir: string;
   readonly jobsPath: string;
-  readonly legacyRootDir?: string;
-  readonly legacyJobsPath?: string;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(options: CronStoreOptions) {
     this.rootDir = resolve(options.rootDir);
     this.jobsPath = join(this.rootDir, STORE_FILE);
-    if (options.legacyRootDir) {
-      this.legacyRootDir = resolve(options.legacyRootDir);
-      this.legacyJobsPath = join(this.legacyRootDir, STORE_FILE);
-    }
   }
 
   async listJobs(): Promise<CronJob[]> {
@@ -238,15 +222,6 @@ export class CronStore {
       return parseStoreData(JSON.parse(raw));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        await this.migrateLegacyStoreIfPresent();
-        try {
-          const raw = await readFile(this.jobsPath, "utf8");
-          return parseStoreData(JSON.parse(raw));
-        } catch (retryError) {
-          if ((retryError as NodeJS.ErrnoException).code !== "ENOENT") {
-            throw retryError;
-          }
-        }
         return emptyStore();
       }
       if (error instanceof SyntaxError) {
@@ -256,22 +231,6 @@ export class CronStore {
         throw new Error(`cron store JSON is invalid; moved it to ${backup}`);
       }
       throw error;
-    }
-  }
-
-  private async migrateLegacyStoreIfPresent(): Promise<void> {
-    if (!this.legacyRootDir || !this.legacyJobsPath) return;
-    if (this.legacyRootDir === this.rootDir) return;
-    if (!(await fileExists(this.legacyJobsPath))) return;
-    if (await fileExists(this.jobsPath)) return;
-
-    await mkdir(this.rootDir, { recursive: true });
-    await movePath(this.legacyJobsPath, this.jobsPath);
-
-    const legacyOutput = join(this.legacyRootDir, "output");
-    const output = join(this.rootDir, "output");
-    if ((await pathExists(legacyOutput)) && !(await pathExists(output))) {
-      await movePath(legacyOutput, output);
     }
   }
 
@@ -416,33 +375,6 @@ async function chmodIfPossible(path: string, mode: number): Promise<void> {
     await chmod(path, mode);
   } catch {
     // Best effort: not all filesystems honor POSIX permissions.
-  }
-}
-
-async function movePath(from: string, to: string): Promise<void> {
-  try {
-    await rename(from, to);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
-    await cp(from, to, { recursive: true });
-  }
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    const info = await stat(path);
-    return info.isFile();
-  } catch {
-    return false;
-  }
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SESSION_COMPACT_SCHEMA_VERSION } from "@sparkwright/core";
 import { EventStore } from "../src/state/event-store.js";
 import { RunController } from "../src/state/run-controller.js";
 
@@ -95,7 +96,14 @@ describe("TUI ↔ host via sdk-node", () => {
       store,
     });
 
-    await controller.start("compact smoke");
+    await controller.start(
+      [
+        "compact smoke for packages/tui/src/app.tsx.",
+        "Must preserve skippedReason warnings and do not hide compaction failures.",
+        "Wrote packages/tui/src/state/run-controller.ts after validation.",
+        "Repeat realistic session context ".repeat(120),
+      ].join("\n"),
+    );
     await waitForDone(store);
     const result = await controller.compactSession();
 
@@ -103,6 +111,8 @@ describe("TUI ↔ host via sdk-node", () => {
       compactedRunCount: 1,
       throughRunId: expect.any(String),
     });
+    expect(result?.freedChars).toBeGreaterThan(0);
+    expect(result?.skippedReason).toBeUndefined();
     const events = store.getSnapshot().events;
     expect(events[events.length - 1]).toMatchObject({
       type: "tui.notice",
@@ -121,8 +131,9 @@ describe("TUI ↔ host via sdk-node", () => {
       ),
     ) as Record<string, unknown>;
     expect(artifact).toMatchObject({
-      schemaVersion: "session-compact.v1",
+      schemaVersion: SESSION_COMPACT_SCHEMA_VERSION,
       compactedRunCount: 1,
+      freedChars: result?.freedChars,
     });
     controller.shutdown();
   }, 30_000);
@@ -446,6 +457,71 @@ describe("TUI ↔ host via sdk-node", () => {
     expect(runJson.metadata?.shouldWrite).toBe(true);
 
     controller.shutdown();
+  }, 30_000);
+
+  it("auto-resolves approval prompts when approval defaults allow them", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        message: "patch readme",
+        toolCalls: [
+          {
+            toolName: "apply_patch",
+            arguments: {
+              path: "README.md",
+              patch:
+                "--- README.md\n+++ README.md\n@@\n-# Demo\n+# Demo patched\n",
+              reason: "test auto approval",
+            },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "scripted",
+      shouldWrite: true,
+      approveEdits: true,
+      store,
+    });
+
+    try {
+      await controller.start("patch the readme");
+      await waitForDone(store);
+
+      const snap = store.getSnapshot();
+      expect(snap.pendingApproval).toBeNull();
+      const approvalResolved = snap.events.find(
+        (event) => event.type === "approval.resolved",
+      );
+      expect(approvalResolved?.payload).toMatchObject({
+        decision: "approved",
+      });
+      expect(
+        snap.events.some(
+          (event) =>
+            event.type === "tool.completed" &&
+            typeof event.payload === "object" &&
+            event.payload !== null &&
+            "toolName" in event.payload &&
+            event.payload.toolName === "apply_patch",
+        ),
+      ).toBe(true);
+      await expect(
+        readFile(join(workspace, "README.md"), "utf8"),
+      ).resolves.toBe("# Demo patched\n");
+    } finally {
+      controller.shutdown();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
   }, 30_000);
 });
 

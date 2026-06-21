@@ -374,16 +374,23 @@ export interface CommandOutcomeSnapshot {
   verification: {
     total: number;
     unresolved: number;
+    /** Legacy field: last unresolved verification failure, if any. */
     lastCommand?: string;
     lastExitCode?: number | null;
     lastTimedOut?: boolean;
+    /** Last verification failure observed, even if a later success recovered it. */
+    lastFailureCommand?: string;
+    lastFailureExitCode?: number | null;
+    lastFailureTimedOut?: boolean;
+    /** Last successful verification command observed after/among failures. */
+    lastSuccessfulVerificationCommand?: string;
   };
 }
 
 /**
  * A persistable snapshot of command outcomes, computed once at run time over the
  * full event stream. Trace summaries prefer this over recomputing from a
- * persisted (and possibly lossy / minimal) trace, where `tool.completed` output
+ * persisted (and possibly lossy) trace, where `tool.completed` output
  * is stripped and command failures can no longer be derived. Returns `undefined`
  * when no command failed, so clean runs carry nothing extra.
  */
@@ -392,16 +399,39 @@ export function commandOutcomeSnapshot(
 ): CommandOutcomeSnapshot | undefined {
   const outcomes = analyzeCommandOutcomes(events);
   if (outcomes.failures.length === 0) return undefined;
-  const last = outcomes.verificationFailures.at(-1);
+  const lastFailure = outcomes.verificationFailures.at(-1);
+  const lastUnresolved = outcomes.unresolvedVerificationFailures.at(-1);
+  const lastVerificationSuccess = outcomes.successes
+    .filter((success) => success.verificationRelevant)
+    .at(-1);
   return {
     total: outcomes.failures.length,
     byExitCode: outcomes.byExitCode,
     verification: {
       total: outcomes.verificationFailures.length,
       unresolved: outcomes.unresolvedVerificationFailures.length,
-      ...(last?.command ? { lastCommand: last.command } : {}),
-      ...(last
-        ? { lastExitCode: last.exitCode, lastTimedOut: last.timedOut }
+      ...(lastUnresolved?.command
+        ? { lastCommand: lastUnresolved.command }
+        : {}),
+      ...(lastUnresolved
+        ? {
+            lastExitCode: lastUnresolved.exitCode,
+            lastTimedOut: lastUnresolved.timedOut,
+          }
+        : {}),
+      ...(lastFailure?.command
+        ? { lastFailureCommand: lastFailure.command }
+        : {}),
+      ...(lastFailure
+        ? {
+            lastFailureExitCode: lastFailure.exitCode,
+            lastFailureTimedOut: lastFailure.timedOut,
+          }
+        : {}),
+      ...(lastVerificationSuccess?.command
+        ? {
+            lastSuccessfulVerificationCommand: lastVerificationSuccess.command,
+          }
         : {}),
     },
   };
@@ -415,7 +445,7 @@ export interface ToolOutcomeSnapshot {
 /**
  * A persistable snapshot of classified tool failures (unresolved vs recovered),
  * computed once at run time over the full event stream. Trace summaries prefer
- * this over recomputing from a persisted (possibly minimal) trace, where
+ * this over recomputing from a persisted (possibly lossy) trace, where
  * `tool.requested` arguments are stripped and same-target recovery can no
  * longer be detected. Returns `undefined` when no tool failed.
  */
@@ -562,10 +592,10 @@ function completedRunOutcomeKind(input: {
 }
 
 /**
- * Read a tool.failed code regardless of trace level. Full traces carry the
- * nested `error.code`; minimal traces flatten it to `errorCode`
- * (see `minimalPayload` in trace.ts). Reading both keeps failure
- * classification — and therefore the run verdict — trace-level invariant.
+ * Read a tool.failed code regardless of trace shape. Standard/debug traces
+ * carry the nested `error.code`; legacy compact traces may flatten it to
+ * `errorCode`. Reading both keeps failure classification — and therefore the
+ * run verdict — trace-level invariant.
  */
 function toolFailureCodeFromPayload(
   payload: Record<string, unknown>,

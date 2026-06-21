@@ -21,13 +21,52 @@ export type {
   RunConfiguredDelegateResult,
 } from "./delegate-runner.js";
 export {
+  DEFAULT_DEFERRED_TOOLS,
   applyToolConfig,
   createGlobPathsTool,
   createGrepTextTool,
   createListDirTool,
 } from "./tools.js";
+export {
+  catalogEntryOrigin,
+  catalogToolDefinitions,
+  createCliDiagnosticToolCatalog,
+  createConfiguredDelegateChildToolCatalog,
+  createMainHostToolCatalog,
+  createReadOnlyChildToolCatalog,
+  resolveConfiguredToolAllowlist,
+} from "./tool-catalog.js";
+export type {
+  HostToolCatalogEntry,
+  HostToolCatalogSource,
+} from "./tool-catalog.js";
+export {
+  DISCOVERY_TOOL_NAME,
+  TOOL_USE_SELECTORS,
+  WORKSPACE_READ_TOOL_NAMES,
+  WORKSPACE_WRITE_TOOL_NAMES,
+  assertCodingToolsCoveredByWorkspaceSelectors,
+  formatToolUseSelectorList,
+  intersectToolUseSelectors,
+  isToolUseSelector,
+  resolveSelectorAllowlist,
+  shouldAppendDiscoveryTool,
+} from "./tool-selectors.js";
+export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
+export {
+  TracedProcessRunner,
+  inferProcessRuntime,
+} from "./traced-process-runner.js";
+export type {
+  ProgressChunk,
+  ProgressContext,
+  TracedProcessInput,
+  TracedProcessResult,
+} from "./traced-process-runner.js";
+export { createSkillInlineShellRunner } from "./skill-inline-shell.js";
+export type { CreateSkillInlineShellRunnerOptions } from "./skill-inline-shell.js";
 export { createVerificationWorkflowHooks } from "./verification.js";
 export type { CreateVerificationWorkflowHooksOptions } from "./verification.js";
 export {
@@ -70,6 +109,11 @@ export type {
   SkillDoctorSeverity,
   SkillDoctorStatus,
 } from "./skill-doctor.js";
+export type { WorkspaceDisplayPathOptions } from "@sparkwright/core";
+export {
+  formatWorkspaceDisplayPath,
+  middleEllipsisPath,
+} from "@sparkwright/core";
 export {
   applySkillProposal,
   createSkillCreateProposal,
@@ -128,13 +172,20 @@ export {
   loadHostConfig,
   normalizeGroupedConfig,
   configResolutionOrder,
+  projectConfigCandidatePaths,
+  readConfigFileObject,
+  resolveConfigWriteTarget,
+  serializeConfigFileObject,
+  userConfigCandidatePaths,
   userConfigPath,
+  writeConfigFileObject,
   projectConfigPath,
   resolveModelSelection,
   parseModelRef,
   costToPricing,
   DETERMINISTIC_PROVIDER,
   DEFAULT_PROVIDER_NPM,
+  CONFIG_FILE_BASENAMES,
   CONFIG_PROJECT_REL,
   CONFIG_USER_REL,
   CONFIG_ENV_VAR,
@@ -173,6 +224,11 @@ export type {
   HostStdioSpawnInput,
   ResolvedHostStdioSpawn,
 } from "./client-spawn.js";
+export { resolveHostClientApprovalByPolicy } from "./client-approval.js";
+export type {
+  HostClientApprovalPolicyInput,
+  HostClientApprovalRequestInput,
+} from "./client-approval.js";
 export {
   createHostClientRunMetadata,
   createHostResumeRunRequest,
@@ -190,6 +246,7 @@ export type {
   SharedConfigSourceMap,
   SharedConfigError,
   LoadedSharedConfig,
+  ApprovalDefaults,
   CapabilityConfig,
   CapabilitySkillEvolutionConfig,
   CapabilitySkillEvolutionMode,

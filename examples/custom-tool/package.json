@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/register-tool.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/stamp-workspace-build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run typecheck"
   },

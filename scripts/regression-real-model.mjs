@@ -816,7 +816,6 @@ function candidateConfigFiles() {
     join(workspace, ".sparkwright", "config.json"),
     join(xdg, "sparkwright", "config.json"),
     join(homedir(), ".config", "sparkwright", "config.json"),
-    join(homedir(), ".sparkwright", "config.json"),
   ];
 }
 

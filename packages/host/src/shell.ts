@@ -1,15 +1,6 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { TaskManager } from "@sparkwright/agent-runtime";
+import { createBufferedEmitter, openSpan } from "@sparkwright/core";
 import {
   createShellTool,
   evaluateShellSafety,
@@ -26,8 +17,10 @@ import {
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
 import type {
+  EventEmitter,
   ExecutionEnvironment,
   LiveShellHandle,
+  ProcessOutputSummary,
   RunId,
   ShellExecutionRequest,
   ShellExecutionResult,
@@ -35,24 +28,19 @@ import type {
   ToolDefinition,
 } from "@sparkwright/core";
 import type { ShellToolInput, ShellToolOutput } from "@sparkwright/shell-tool";
+import { TracedProcessRunner } from "./traced-process-runner.js";
+import {
+  diffWorkspaceSnapshots,
+  isManagedCapabilityPath,
+  rollbackWorkspaceSnapshot,
+  snapshotWorkspace,
+  type WorkspaceMutationChange,
+  type WorkspaceRollbackResult,
+  type WorkspaceSnapshot,
+} from "./workspace-snapshot.js";
 
 const PROMOTED_SHELL_KIND = "shell.promoted";
 const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
-const SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES = 2 * 1024 * 1024;
-const SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES = 25 * 1024 * 1024;
-const AUDIT_EXCLUDED_DIRS = new Set([
-  ".git",
-  "node_modules",
-  "__pycache__",
-  ".pytest_cache",
-]);
-const AUDIT_EXCLUDED_PATHS = new Set([".sparkwright/sessions"]);
-const MANAGED_CAPABILITY_PREFIXES = [
-  ".sparkwright/skills/",
-  ".sparkwright/agents/",
-  ".sparkwright/command/",
-  ".sparkwright/cron/",
-];
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -300,6 +288,7 @@ export interface HostShellToolOptions {
   explicitConfigPath?: string;
   skillRoots?: readonly string[];
   extraForcedDenyWrite?: readonly string[];
+  getRunEvents?: () => EventEmitter | undefined;
 }
 
 /**
@@ -349,7 +338,7 @@ export function createHostShellTool(
     description:
       `${descriptor.description} Do not use shell to create or update ` +
       "managed capability files under .sparkwright/skills, .sparkwright/agents, " +
-      ".sparkwright/command, or .sparkwright/cron; use the dedicated " +
+      "or .sparkwright/command; use the dedicated " +
       "SparkWright capability tools or CLI subcommands instead.",
     async execute(args, ctx) {
       const readOnlyFastPath = isReadOnlyShellFastPath(args);
@@ -367,6 +356,7 @@ export function createHostShellTool(
               parentRunId: ctx.run.id,
               workspaceRoot,
               before,
+              getRunEvents: options.getRunEvents,
             })
           : createUnavailablePromotionHandler(),
       });
@@ -444,8 +434,16 @@ function createTaskPromotionHandler(input: {
   parentRunId: RunId;
   workspaceRoot: string;
   before?: WorkspaceSnapshot;
+  getRunEvents?: () => EventEmitter | undefined;
 }): ShellPromotionHandler {
-  return ({ handle, completed, request, partialStdout, partialStderr }) => {
+  return ({
+    handle,
+    completed,
+    request,
+    partialStdout,
+    partialStderr,
+    startedAt,
+  }) => {
     const rawCommand =
       typeof request.metadata?.rawCommand === "string"
         ? request.metadata.rawCommand
@@ -460,53 +458,111 @@ function createTaskPromotionHandler(input: {
         timeoutMs: request.timeoutMs,
       },
       runner: async (ctrl) => {
-        if (partialStdout) {
-          ctrl.emitOutput({ channel: "stdout", data: partialStdout });
-        }
-        if (partialStderr) {
-          ctrl.emitOutput({ channel: "stderr", data: partialStderr });
-        }
-
-        const stdoutDrain = (async () => {
-          for await (const chunk of handle.stdout()) {
-            ctrl.emitOutput({ channel: "stdout", data: chunk });
-          }
-        })();
-        const stderrDrain = (async () => {
-          for await (const chunk of handle.stderr()) {
-            ctrl.emitOutput({ channel: "stderr", data: chunk });
-          }
-        })();
-        ctrl.signal.addEventListener(
-          "abort",
-          () => handle.abort("task cancelled"),
-          { once: true },
-        );
-
-        const final = await completed;
-        await Promise.allSettled([stdoutDrain, stderrDrain]);
-        if (input.before) {
-          const after = await snapshotWorkspace(input.workspaceRoot);
-          const changes = diffWorkspaceSnapshots(input.before, after);
-          if (changes.length > 0) {
-            const rollback = await rollbackWorkspaceSnapshot(
-              input.workspaceRoot,
-              input.before,
-              after,
-            );
-            throw new UntrackedWorkspaceMutationError(changes, rollback);
-          }
-        }
-
-        if (final.status !== "completed" || final.exitCode !== 0) {
-          throw new ShellTaskExitError(final);
-        }
-
-        return {
+        const emitter = input.getRunEvents?.() ?? createBufferedEmitter();
+        const taskPayload = {
+          taskId: ctrl.taskId,
+          kind: PROMOTED_SHELL_KIND,
+          title: `shell: ${rawCommand}`,
           command: rawCommand,
-          exitCode: final.exitCode,
-          completedAt: final.completedAt,
+          cwd: request.cwd,
+          timeoutMs: request.timeoutMs,
         };
+        const taskSpan = openSpan(emitter, {
+          startType: "task.started",
+          payload: taskPayload,
+        });
+        const runner = new TracedProcessRunner();
+        let observed:
+          | Awaited<ReturnType<TracedProcessRunner["observeStreaming"]>>
+          | undefined;
+        try {
+          observed = await runner.observeStreaming({
+            emitter,
+            runId: input.parentRunId,
+            name: rawCommand,
+            kind: "task",
+            runtime: "shell",
+            command: "bash",
+            args: ["-c", rawCommand],
+            cwd: request.cwd,
+            streaming: { handle, completed },
+            startedAt,
+            initialStdout: partialStdout,
+            initialStderr: partialStderr,
+            spanFrame: taskSpan.frame,
+            abortSignal: ctrl.signal,
+            onOutput: (chunk) => {
+              ctrl.emitOutput(chunk);
+            },
+            onProgress: (chunk, context) => {
+              if (!chunk.message || chunk.channel === "event") return;
+              context.emit("task.output", {
+                taskId: ctrl.taskId,
+                channel: chunk.channel,
+                data: chunk.message,
+              });
+            },
+          });
+
+          if (ctrl.signal.aborted) {
+            const result = promotedShellTaskResult(
+              rawCommand,
+              observed.exitCode,
+              observed.output,
+            );
+            taskSpan.close("task.cancelled", {
+              ...taskPayload,
+              result,
+              output: observed.output,
+            });
+            return result;
+          }
+
+          if (input.before) {
+            const after = await snapshotWorkspace(input.workspaceRoot);
+            const changes = diffWorkspaceSnapshots(input.before, after);
+            if (changes.length > 0) {
+              const rollback = await rollbackWorkspaceSnapshot(
+                input.workspaceRoot,
+                input.before,
+                after,
+              );
+              throw new UntrackedWorkspaceMutationError(changes, rollback);
+            }
+          }
+
+          if (observed.error || observed.exitCode !== 0) {
+            throw new ShellTaskExitError(shellResultFromObserved(observed));
+          }
+
+          const result = promotedShellTaskResult(
+            rawCommand,
+            observed.exitCode,
+            observed.output,
+          );
+          taskSpan.close("task.completed", {
+            ...taskPayload,
+            result,
+            output: observed.output,
+            progressCount: observed.progressCount,
+            progressDropped: observed.progressDropped,
+          });
+          return result;
+        } catch (cause) {
+          taskSpan.close("task.failed", {
+            ...taskPayload,
+            errorCode: errorCodeFromCause(cause),
+            error: cause instanceof Error ? cause.message : String(cause),
+            ...(observed
+              ? {
+                  output: observed.output,
+                  progressCount: observed.progressCount,
+                  progressDropped: observed.progressDropped,
+                }
+              : {}),
+          });
+          throw cause;
+        }
       },
     });
 
@@ -529,23 +585,60 @@ class ShellTaskExitError extends Error {
   }
 }
 
-interface WorkspaceSnapshotEntry {
-  hash: string;
-  content?: Buffer;
+interface PromotedShellTaskResult {
+  command: string;
+  exitCode: number | null;
+  completedAt: string;
+  output: ProcessOutputSummary;
 }
 
-type WorkspaceSnapshot = Map<string, WorkspaceSnapshotEntry>;
-
-interface WorkspaceMutationChange {
-  path: string;
-  kind: "created" | "modified" | "deleted";
+function promotedShellTaskResult(
+  command: string,
+  exitCode: number | null,
+  output: ProcessOutputSummary,
+): PromotedShellTaskResult {
+  return {
+    command,
+    exitCode,
+    completedAt: new Date().toISOString(),
+    output,
+  };
 }
 
-interface WorkspaceRollbackResult {
-  restored: string[];
-  removed: string[];
-  failed: Array<{ path: string; error: string }>;
-  incomplete: string[];
+function shellResultFromObserved(
+  observed: Awaited<ReturnType<TracedProcessRunner["observeStreaming"]>>,
+): ShellExecutionResult {
+  const completedAt = new Date().toISOString();
+  return {
+    status: observed.exitCode === 0 && !observed.error ? "completed" : "failed",
+    exitCode: observed.exitCode,
+    stdout: observed.output.stdoutPreview ?? "",
+    stderr: observed.output.stderrPreview ?? observed.error?.message ?? "",
+    startedAt: new Date(Date.now() - observed.durationMs).toISOString(),
+    completedAt,
+    metadata: {
+      timedOut: observed.timedOut,
+      ...(observed.sandbox
+        ? {
+            sandboxed: observed.sandbox.sandboxed,
+            sandboxMode: observed.sandbox.mode,
+            sandboxRuntime: observed.sandbox.runtime,
+            sandboxNetworkMode: observed.sandbox.networkMode,
+            sandboxAvailable: observed.sandbox.available,
+            sandboxFallbackReason: observed.sandbox.fallbackReason,
+            sandboxEnforced: observed.sandbox.enforced,
+          }
+        : {}),
+    },
+  };
+}
+
+function errorCodeFromCause(cause: unknown): string {
+  if (cause && typeof cause === "object") {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return "TASK_RUNNER_FAILED";
 }
 
 class UntrackedWorkspaceMutationError extends Error {
@@ -569,125 +662,4 @@ class UntrackedWorkspaceMutationError extends Error {
     this.name = "UntrackedWorkspaceMutationError";
     this.metadata = { changes, rollback };
   }
-}
-
-async function snapshotWorkspace(root: string): Promise<WorkspaceSnapshot> {
-  const snapshot: WorkspaceSnapshot = new Map();
-  let capturedBytes = 0;
-
-  async function visit(relativeDir: string): Promise<void> {
-    const absoluteDir = relativeDir ? join(root, relativeDir) : root;
-    const entries = await readdir(absoluteDir, { withFileTypes: true }).catch(
-      () => [],
-    );
-
-    for (const entry of entries) {
-      const relativePath = relativeDir
-        ? `${relativeDir}/${entry.name}`
-        : entry.name;
-      if (entry.isDirectory()) {
-        if (shouldSkipAuditDirectory(relativePath, entry.name)) continue;
-        await visit(relativePath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-
-      const absolutePath = join(root, relativePath);
-      const stat = await lstat(absolutePath).catch(() => undefined);
-      if (!stat?.isFile()) continue;
-      const content = await readFile(absolutePath).catch(() => undefined);
-      if (content === undefined) continue;
-
-      const canCapture =
-        content.byteLength <= SNAPSHOT_FILE_CAPTURE_LIMIT_BYTES &&
-        capturedBytes + content.byteLength <=
-          SNAPSHOT_TOTAL_CAPTURE_LIMIT_BYTES;
-      if (canCapture) capturedBytes += content.byteLength;
-      snapshot.set(relativePath, {
-        hash: hashBuffer(content),
-        ...(canCapture ? { content } : {}),
-      });
-    }
-  }
-
-  await visit("");
-  return snapshot;
-}
-
-function shouldSkipAuditDirectory(relativePath: string, name: string): boolean {
-  return (
-    AUDIT_EXCLUDED_DIRS.has(name) || AUDIT_EXCLUDED_PATHS.has(relativePath)
-  );
-}
-
-function isManagedCapabilityPath(path: string): boolean {
-  return MANAGED_CAPABILITY_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-function diffWorkspaceSnapshots(
-  before: WorkspaceSnapshot,
-  after: WorkspaceSnapshot,
-): WorkspaceMutationChange[] {
-  const changes: WorkspaceMutationChange[] = [];
-  const paths = new Set([...before.keys(), ...after.keys()]);
-  for (const path of [...paths].sort()) {
-    const prior = before.get(path);
-    const next = after.get(path);
-    if (!prior && next) changes.push({ path, kind: "created" });
-    else if (prior && !next) changes.push({ path, kind: "deleted" });
-    else if (prior && next && prior.hash !== next.hash) {
-      changes.push({ path, kind: "modified" });
-    }
-  }
-  return changes;
-}
-
-async function rollbackWorkspaceSnapshot(
-  root: string,
-  before: WorkspaceSnapshot,
-  after: WorkspaceSnapshot,
-): Promise<WorkspaceRollbackResult> {
-  const restored: string[] = [];
-  const removed: string[] = [];
-  const failed: WorkspaceRollbackResult["failed"] = [];
-  const incomplete: string[] = [];
-  const paths = new Set([...before.keys(), ...after.keys()]);
-
-  for (const path of [...paths].sort()) {
-    const prior = before.get(path);
-    const next = after.get(path);
-    if (!prior && next) {
-      try {
-        await rm(join(root, path), { force: true });
-        removed.push(path);
-      } catch (error) {
-        failed.push({ path, error: formatError(error) });
-      }
-      continue;
-    }
-    if (!prior) continue;
-    if (next && next.hash === prior.hash) continue;
-    if (!prior.content) {
-      incomplete.push(path);
-      continue;
-    }
-    try {
-      const absolutePath = join(root, path);
-      await mkdir(dirname(absolutePath), { recursive: true });
-      await writeFile(absolutePath, prior.content);
-      restored.push(path);
-    } catch (error) {
-      failed.push({ path, error: formatError(error) });
-    }
-  }
-
-  return { restored, removed, failed, incomplete };
-}
-
-function hashBuffer(buffer: Buffer): string {
-  return createHash("sha256").update(buffer).digest("hex");
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

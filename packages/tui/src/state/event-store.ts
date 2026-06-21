@@ -158,6 +158,7 @@ export class EventStore {
    */
   private usageByRun = new Map<string, RunUsage>();
   private lastUsageRunId: string | null = null;
+  private pendingTodoProposals = new Map<string, TodoPanelItem[]>();
   // Synthetic, TUI-local events (e.g. the injected user goal) use descending
   // negative sequences so they never collide with host sequences (which start
   // at 1) and sort ahead of them when appended just before a run begins.
@@ -305,31 +306,42 @@ export class EventStore {
       }
     }
 
-    // todo ledger projection: todo_write replaces the whole ledger, so the
-    // request's items array is the authoritative current ledger. Read from the
-    // request (full args), not the completion (whose output may be summarized).
+    // todo ledger projection: todo_write replaces the whole ledger, but a
+    // request is only a proposal. The committed ledger changes only after the
+    // tool completes without an explicit saved:false result. Keep the full
+    // request items around because completion output may be summarized.
     if (event.type === "tool.requested") {
       const payload = rec(event.payload);
       if (payload.toolName === "todo_write") {
+        const callId = todoToolCallId(payload);
         const args = rec(payload.arguments ?? payload.input ?? payload.args);
-        if (Array.isArray(args.items)) {
-          todoItems = args.items.map((raw): TodoPanelItem => {
-            const it = rec(raw);
-            const title =
-              (typeof it.title === "string" && it.title.trim()) ||
-              (typeof it.content === "string" && it.content.trim()) ||
-              "(untitled)";
-            return {
-              title,
-              status: typeof it.status === "string" ? it.status : "pending",
-              depth:
-                typeof it.depth === "number" && it.depth > 0
-                  ? Math.floor(it.depth)
-                  : 0,
-            };
-          });
+        const proposed = parseTodoPanelItems(args.items);
+        if (callId && proposed) {
+          this.pendingTodoProposals.set(callId, proposed);
         }
       }
+    } else if (event.type === "tool.completed") {
+      const payload = rec(event.payload);
+      const callId = todoToolCallId(payload);
+      const proposed = callId
+        ? this.pendingTodoProposals.get(callId)
+        : undefined;
+      if (callId) this.pendingTodoProposals.delete(callId);
+      if (proposed) {
+        const output = rec(payload.output ?? payload.result);
+        if (output.saved !== false) {
+          todoItems = proposed;
+        }
+      } else {
+        const output = rec(payload.output ?? payload.result);
+        if (output.saved !== false) {
+          const completedItems = parseTodoPanelItems(output.todos);
+          if (completedItems) todoItems = completedItems;
+        }
+      }
+    } else if (event.type === "tool.failed") {
+      const callId = todoToolCallId(rec(event.payload));
+      if (callId) this.pendingTodoProposals.delete(callId);
     }
 
     if (event.type === "usage.updated") {
@@ -392,6 +404,7 @@ export class EventStore {
 
   /** Clear visible events but keep sessionId. Used by /clear. */
   clearEvents(): void {
+    this.pendingTodoProposals.clear();
     this.state = {
       ...this.state,
       events: [],
@@ -412,6 +425,7 @@ export class EventStore {
   reset(): void {
     this.usageByRun.clear();
     this.lastUsageRunId = null;
+    this.pendingTodoProposals.clear();
     this.state = {
       status: "idle",
       events: [],
@@ -484,6 +498,35 @@ function rec(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function todoToolCallId(payload: Record<string, unknown>): string | null {
+  const id = payload.id ?? payload.toolCallId ?? payload.callId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+function parseTodoPanelItems(rawItems: unknown): TodoPanelItem[] | null {
+  let items: unknown[] | null = null;
+  if (Array.isArray(rawItems)) {
+    items = rawItems;
+  } else {
+    const preview = rec(rawItems).preview;
+    if (Array.isArray(preview)) items = preview;
+  }
+  if (!items) return null;
+  return items.map((raw): TodoPanelItem => {
+    const it = rec(raw);
+    const title =
+      (typeof it.title === "string" && it.title.trim()) ||
+      (typeof it.content === "string" && it.content.trim()) ||
+      "(untitled)";
+    return {
+      title,
+      status: typeof it.status === "string" ? it.status : "pending",
+      depth:
+        typeof it.depth === "number" && it.depth > 0 ? Math.floor(it.depth) : 0,
+    };
+  });
 }
 
 /** First finite number among the candidates (0 counts), else undefined. */

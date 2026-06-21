@@ -1,7 +1,6 @@
 import { defineTool } from "@sparkwright/core";
 import type { CronAction, CreateJobInput, UpdateJobPatch } from "./model.js";
 import { CronStore } from "./store.js";
-import { legacyConfigCronRoot } from "./paths.js";
 
 export interface CreateCronToolOptions {
   rootDir: string;
@@ -10,7 +9,6 @@ export interface CreateCronToolOptions {
 export function createCronTool(options: CreateCronToolOptions) {
   const store = new CronStore({
     rootDir: options.rootDir,
-    legacyRootDir: legacyConfigCronRoot(),
   });
   return defineTool({
     name: "cron",

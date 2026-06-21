@@ -19,6 +19,10 @@ import {
   type ToolDefinition,
 } from "@sparkwright/core";
 import { defaultTokenize } from "./matcher.js";
+import {
+  preprocessSkillContentAsync,
+  type PreprocessSkillOptions,
+} from "./preprocess.js";
 
 const SKILL_FILE_NAME = "SKILL.md";
 const DEFAULT_MAX_SELECTED_SKILLS = 1;
@@ -124,7 +128,14 @@ export interface PrepareSkillsForRunOptions {
    * enables this from an opt-in env flag.
    */
   includeDevSkills?: boolean;
+  /**
+   * Optional preprocessing controls. `skillDir` is always supplied by the
+   * loader from the concrete `SKILL.md` path.
+   */
+  preprocess?: SkillPreprocessOptions;
 }
+
+export type SkillPreprocessOptions = Omit<PreprocessSkillOptions, "skillDir">;
 
 export type SkillRootLayer = "builtin" | "user" | "project" | "legacy";
 
@@ -146,13 +157,17 @@ export async function prepareSkillsForRun(
   };
   const skills = excludeDevSkills(
     filterSkillsForAgent(
-      await loadSkillsForRun(options.skillRoots, (source, message) => {
-        options.emitter?.emit(
-          "skill.failed",
-          { source, message },
-          { ...baseMeta, phase: "load" },
-        );
-      }),
+      await loadSkillsForRun(
+        options.skillRoots,
+        (source, message) => {
+          options.emitter?.emit(
+            "skill.failed",
+            { source, message },
+            { ...baseMeta, phase: "load" },
+          );
+        },
+        options.preprocess,
+      ),
       options.agent,
     ),
     options.includeDevSkills ?? false,
@@ -240,6 +255,7 @@ export async function prepareSkillsForRun(
 async function loadSkillsForRun(
   skillRoots: SkillRootInput[],
   onError?: (source: string, message: string) => void,
+  preprocess?: SkillPreprocessOptions,
 ): Promise<SkillDefinition[]> {
   const loadedByRoot = await Promise.all(
     skillRoots.map(async (input, rootIndex) => {
@@ -257,7 +273,10 @@ async function loadSkillsForRun(
       const loaded = await Promise.all(
         skillFiles.map(async (path) => {
           try {
-            return await loadSkill(path, { layer: root.layer });
+            return await loadSkill(path, {
+              layer: root.layer,
+              preprocess,
+            });
           } catch (error) {
             onError?.(path, errorMessage(error));
             return undefined;
@@ -291,18 +310,32 @@ function errorMessage(error: unknown): string {
 
 export async function loadSkills(
   skillRoots: SkillRootInput[],
+  options: { preprocess?: SkillPreprocessOptions } = {},
 ): Promise<SkillDefinition[]> {
-  return loadSkillsForRun(skillRoots, (_source, message) => {
-    throw new Error(message);
-  });
+  return loadSkillsForRun(
+    skillRoots,
+    (_source, message) => {
+      throw new Error(message);
+    },
+    options.preprocess,
+  );
 }
 
 export async function loadSkill(
   path: string,
-  options: { layer?: SkillRootLayer } = {},
+  options: { layer?: SkillRootLayer; preprocess?: SkillPreprocessOptions } = {},
 ): Promise<SkillDefinition> {
   const sourcePath = resolve(path);
-  const content = await readFile(sourcePath, "utf8");
+  const rawContent = await readFile(sourcePath, "utf8");
+  const rawSkillName = inferSkillName(rawContent);
+  const content = options.preprocess
+    ? await preprocessSkillContentAsync(rawContent, {
+        ...options.preprocess,
+        skillDir: dirname(sourcePath),
+        skillName: rawSkillName,
+        sourcePath,
+      })
+    : rawContent;
   const skill = parseSkill(content, sourcePath);
   if (!options.layer) return skill;
   skill.metadata = {
@@ -311,6 +344,17 @@ export async function loadSkill(
     ...(options.layer === "builtin" ? { trust: "builtin" } : {}),
   };
   return skill;
+}
+
+function inferSkillName(content: string): string | undefined {
+  try {
+    const parsed = parseSkillMarkdown(content);
+    return typeof parsed.frontmatter.name === "string"
+      ? parsed.frontmatter.name
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeSkillRoot(input: SkillRootInput): SkillRoot {
@@ -576,8 +620,10 @@ export function createSkillLoaderTool(
         };
       }
 
-      if (args.resource !== undefined) {
-        return await readSkillResource(skill, args.resource);
+      const resource =
+        typeof args.resource === "string" ? args.resource.trim() : undefined;
+      if (resource) {
+        return await readSkillResource(skill, resource);
       }
 
       if (loadedNames.has(skill.name)) {
@@ -643,8 +689,7 @@ export function createSkillIndexContext(
           name: skill.name,
           description: skill.description,
           version: skill.version,
-          sourcePath: skill.sourcePath,
-          contentHash: skill.contentHash,
+          relevance: skill.relevance,
         })),
       },
       null,
@@ -668,7 +713,6 @@ export function createLoadedSkillContext(
     type: "system",
     source: {
       kind: "skill",
-      path: skill.sourcePath,
     },
     content: [
       `Skill: ${skill.name}`,
@@ -1098,9 +1142,14 @@ export {
   type SkillTrustLevel,
 } from "./guard.js";
 export {
+  preprocessSkillContentAsync,
   preprocessSkillContent,
   substituteTemplateVars,
+  extractInlineShellCommands,
+  expandInlineShellAsync,
   expandInlineShell,
+  type InlineShellCommandInput,
+  type InlineShellRunner,
   type PreprocessSkillOptions,
 } from "./preprocess.js";
 export {
