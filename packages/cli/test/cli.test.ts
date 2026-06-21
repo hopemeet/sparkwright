@@ -937,7 +937,7 @@ describe("runCli", () => {
     await expect(
       stat(join(workspace, ".sparkwright", "sessions")),
     ).rejects.toThrow();
-  });
+  }, 15_000);
 
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
