@@ -64,7 +64,7 @@ function assertDoctorPaths() {
   assertEqual(paths.install.root, installRoot, "install root mismatch");
   assertEqual(paths.install.version, "smoke", "install version mismatch");
   assertEqual(
-    paths.install.currentTarget,
+    normalizePathValue(paths.install.currentTarget),
     "versions/smoke",
     "install current target mismatch",
   );
@@ -194,4 +194,8 @@ function assertEqual(actual, expected, message = "values differ") {
 
 function platformCommand(basePath) {
   return process.platform === "win32" ? `${basePath}.cmd` : basePath;
+}
+
+function normalizePathValue(value) {
+  return value.split("\\").join("/");
 }
