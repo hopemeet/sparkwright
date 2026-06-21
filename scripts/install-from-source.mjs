@@ -28,6 +28,7 @@ const versionDir = join(versionsRoot, version);
 const packDir = join(cacheRoot, "packs", version);
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const installedBin = join(installRoot, "bin", "sparkwright");
+const installedCommand = platformCommand(installedBin);
 let tmpVersionDir;
 
 try {
@@ -76,7 +77,7 @@ try {
   writeRootBin();
   switchCurrent(version);
 
-  run(installedBin, ["doctor", "paths", "--workspace", repoRoot], repoRoot);
+  run(installedCommand, ["doctor", "paths", "--workspace", repoRoot], repoRoot);
 
   printResult();
 } catch (error) {
@@ -113,6 +114,10 @@ function writeVersionBin(path) {
     "utf8",
   );
   chmodSync(path, 0o755);
+  writeCmdShim(
+    path,
+    "%SCRIPT_DIR%..\\app\\node_modules\\@sparkwright\\cli\\dist\\index.js",
+  );
 }
 
 function writeRootBin() {
@@ -130,6 +135,20 @@ function writeRootBin() {
     "utf8",
   );
   chmodSync(installedBin, 0o755);
+  if (process.platform === "win32") {
+    writeFileSync(
+      `${installedBin}.cmd`,
+      [
+        "@echo off",
+        "setlocal",
+        'set "INSTALL_ROOT=%~dp0.."',
+        'call "%INSTALL_ROOT%\\current\\bin\\sparkwright.cmd" %*',
+        "exit /b %ERRORLEVEL%",
+        "",
+      ].join("\r\n"),
+      "utf8",
+    );
+  }
 }
 
 function switchCurrent(targetVersion) {
@@ -152,6 +171,20 @@ function switchCurrent(targetVersion) {
       "utf8",
     );
     chmodSync(currentWrapper, 0o755);
+    if (process.platform === "win32") {
+      writeFileSync(
+        `${currentWrapper}.cmd`,
+        [
+          "@echo off",
+          "setlocal",
+          'set "INSTALL_ROOT=%~dp0..\\.."',
+          `call "%INSTALL_ROOT%\\versions\\${targetVersion}\\bin\\sparkwright.cmd" %*`,
+          "exit /b %ERRORLEVEL%",
+          "",
+        ].join("\r\n"),
+        "utf8",
+      );
+    }
   }
 }
 
@@ -166,7 +199,7 @@ function printResult() {
   console.log("Sparkwright installed:");
   console.log(`  version: ${version}`);
   console.log(`  install root: ${installRoot}`);
-  console.log(`  command: ${installedBin}`);
+  console.log(`  command: ${installedCommand}`);
   if (!pathEntries.includes(installBin)) {
     console.log("");
     console.log(
@@ -174,6 +207,26 @@ function printResult() {
     );
     console.log(`  export PATH="${installBin}:$PATH"`);
   }
+}
+
+function platformCommand(basePath) {
+  return process.platform === "win32" ? `${basePath}.cmd` : basePath;
+}
+
+function writeCmdShim(basePath, cliPathExpression) {
+  if (process.platform !== "win32") return;
+  writeFileSync(
+    `${basePath}.cmd`,
+    [
+      "@echo off",
+      "setlocal",
+      'set "SCRIPT_DIR=%~dp0"',
+      `node "${cliPathExpression}" %*`,
+      "exit /b %ERRORLEVEL%",
+      "",
+    ].join("\r\n"),
+    "utf8",
+  );
 }
 
 function defaultVersion() {

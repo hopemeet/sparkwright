@@ -3817,7 +3817,7 @@ function buildDoctorPathsReport(
   const installRoot =
     (executable ? inferInstallRoot(executable) : undefined) ??
     join(homedir(), ".sparkwright");
-  const installBin = join(installRoot, "bin", "sparkwright");
+  const installBin = installEntrypoint(installRoot);
   const installSource = executable ? inferInstallSource(executable) : undefined;
   const installVersion =
     installSource === "sparkwright"
@@ -3957,6 +3957,14 @@ function formatDoctorPathsReport(report: DoctorPathsReport): string {
 
 function formatLayerPath(entry: LayerPathEntry): string {
   return `  - ${entry.layer}: ${entry.path}${entry.readOnly ? " (read-only)" : ""}`;
+}
+
+function installEntrypoint(installRoot: string): string {
+  return join(
+    installRoot,
+    "bin",
+    process.platform === "win32" ? "sparkwright.cmd" : "sparkwright",
+  );
 }
 
 function inferInstallSource(executable: string): string {

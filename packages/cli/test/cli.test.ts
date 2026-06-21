@@ -184,8 +184,12 @@ describe("runCli", () => {
     expect(report.install.entrypoints.cli).toContain(
       join(".sparkwright", "bin", "sparkwright"),
     );
-    expect(report.install.entrypoints.tui).toContain("sparkwright tui");
-    expect(report.install.entrypoints.acp).toContain("sparkwright acp");
+    expect(report.install.entrypoints.tui).toBe(
+      `${report.install.entrypoints.cli} tui`,
+    );
+    expect(report.install.entrypoints.acp).toBe(
+      `${report.install.entrypoints.cli} acp`,
+    );
     expect(report.config.user).toContain(join("sparkwright", "config.yaml"));
     expect(report.config.project).toBe(
       join(workspace, ".sparkwright", "config.yaml"),

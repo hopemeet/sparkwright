@@ -18,7 +18,7 @@ const homeDir = join(tempRoot, "home");
 const installRoot = join(tempRoot, "install");
 const xdgConfigHome = join(tempRoot, "xdg-config");
 const xdgStateHome = join(tempRoot, "xdg-state");
-const installedBin = join(installRoot, "bin", "sparkwright");
+const installedBin = platformCommand(join(installRoot, "bin", "sparkwright"));
 const smokeEnv = {
   HOME: homeDir,
   SPARKWRIGHT_INSTALL_ROOT: installRoot,
@@ -190,4 +190,8 @@ function assertEqual(actual, expected, message = "values differ") {
   if (actual !== expected) {
     throw new Error(`${message}: expected ${expected}, got ${actual}`);
   }
+}
+
+function platformCommand(basePath) {
+  return process.platform === "win32" ? `${basePath}.cmd` : basePath;
 }
