@@ -1042,9 +1042,17 @@ export interface CreateAgentToolOptions {
   /**
    * If true, the tool's policy advertises `requiresApproval`, forcing the
    * parent's approval gate before each sub-agent spawn. Default: false
-   * (spawning is gated by the regular `risk: "risky"` policy path only).
+   * (spawning itself is `risk: "safe"`; child actions enforce their own policy).
+   *
+   * @deprecated Prefer `policy` when the caller already derived the effective
+   * tool policy from a capability descriptor.
    */
   requiresApproval?: boolean;
+  /**
+   * Effective tool policy for the spawn action. When omitted, the spawn action
+   * remains safe and only `requiresApproval` can force approval on spawn.
+   */
+  policy?: ToolDefinition["policy"];
 }
 
 const DEFAULT_AGENT_TOOL_NAME = "delegate";
@@ -1087,7 +1095,7 @@ export function createAgentTool(
     // decomposition action — the child run enforces its own policy on
     // anything the sub-agent does. Set `requiresApproval: true` to force
     // approval-on-spawn for embedders that need it.
-    policy: {
+    policy: options.policy ?? {
       risk: "safe",
       requiresApproval: options.requiresApproval === true,
     },

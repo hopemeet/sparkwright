@@ -1259,7 +1259,7 @@ describe("host protocol", () => {
                 profileId: "reviewer",
                 profileName: "Reviewer",
                 protocol: "in_process",
-                risk: "risky",
+                risk: "safe",
                 requiresApproval: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],

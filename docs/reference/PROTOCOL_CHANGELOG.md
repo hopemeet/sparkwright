@@ -29,6 +29,13 @@ Conventions:
   requires the parent run to enable workspace writes. Migration: none; clients
   should treat the field as optional.
 
+- `host-message.schema.json`: additive — `CapabilityDelegateToolSummary.risk`
+  may now report `"safe"` or `"denied"` in addition to `"risky"`. In-process
+  delegate spawn is safe by default; child-run tool policy continues to govern
+  writes, shell, and other risky actions. Migration: clients should stop
+  assuming every delegate descriptor is risky and should use
+  `approvalRequiredUnderCurrentRun` for the effective approval gate.
+
 - `host-message.schema.json`: additive — `CapabilitySnapshot.skills` may include
   `inlineShell`, a path-free summary of the effective Skill inline-shell policy
   (`enabled`, timeout/output caps, sandbox mode, write policy, and fail-closed

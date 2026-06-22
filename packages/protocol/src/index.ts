@@ -523,7 +523,7 @@ export interface CapabilityDelegateToolSummary {
   /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
   protocol: "acp" | "external_command" | "in_process";
-  risk: "risky";
+  risk: "safe" | "risky" | "denied";
   /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
   requiresApproval: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */

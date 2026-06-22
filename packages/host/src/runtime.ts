@@ -152,9 +152,11 @@ import {
   assertSubagentDepthAllowed,
   describeDelegateCapability,
   describeInProcessDelegateCapability,
+  deriveDelegatePolicyProfile,
   delegateToolName,
   type DelegateWorkspaceAccess,
   type DelegateCapabilityDescriptor,
+  type DelegatePolicyProfile,
 } from "./delegate-capability.js";
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
@@ -3399,12 +3401,19 @@ export function createConfiguredDelegateTools(input: {
       input.childTools,
       profile,
     );
+    const capabilityFacts = inProcessDelegateCapabilityFacts({
+      delegate,
+      profile,
+      delegateChildTools: input.childTools,
+      allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+    });
     const agentTool = createAgentTool(input.getParent, {
       name: toolName,
       description:
         delegate.description ??
         `Delegate a bounded task to ${profile.name ?? profile.id}.`,
       requiresApproval: delegate.requiresApproval,
+      policy: capabilityFacts.policyProfile.policy,
       forbidNesting: delegate.forbidNesting ?? true,
       buildSpawnInput: (args, parent) => {
         const subagentDepth = assertSubagentDepthAllowed({
@@ -3511,54 +3520,76 @@ function describeConfiguredDelegateTools(input: {
         }),
       ];
     }
-    const workspaceAccess = inProcessDelegateWorkspaceAccess({
+    const capabilityFacts = inProcessDelegateCapabilityFacts({
+      delegate,
       profile,
-      delegateChildToolCatalog: input.delegateChildToolCatalog,
+      delegateChildTools: input.delegateChildToolCatalog.map(
+        (entry) => entry.definition,
+      ),
+      allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
     });
-    const shellAccess = inProcessDelegateHasTool(
-      profile,
-      input.delegateChildToolCatalog,
-      "shell",
-    );
     return [
       describeInProcessDelegateCapability({
         delegate,
         profile,
-        workspaceAccess,
-        shellAccess,
-        gatedByRunWrite:
-          !input.allowReadWriteWorkspaceAccess &&
-          (workspaceAccess === "read_write" || shellAccess),
+        ...capabilityFacts,
         allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
       }),
     ];
   });
 }
 
+function inProcessDelegateCapabilityFacts(input: {
+  delegate: CapabilityDelegateToolConfig;
+  profile: AgentProfile;
+  delegateChildTools: readonly Pick<ToolDefinition, "name">[];
+  allowReadWriteWorkspaceAccess: boolean;
+}): {
+  workspaceAccess: DelegateWorkspaceAccess;
+  shellAccess: boolean;
+  gatedByRunWrite: boolean;
+  policyProfile: DelegatePolicyProfile;
+} {
+  const workspaceAccess = inProcessDelegateWorkspaceAccess({
+    profile: input.profile,
+    delegateChildTools: input.delegateChildTools,
+  });
+  const shellAccess = inProcessDelegateHasTool(
+    input.profile,
+    input.delegateChildTools,
+    "shell",
+  );
+  return {
+    workspaceAccess,
+    shellAccess,
+    gatedByRunWrite:
+      !input.allowReadWriteWorkspaceAccess &&
+      (workspaceAccess === "read_write" || shellAccess),
+    policyProfile: deriveDelegatePolicyProfile({
+      risk: "safe",
+      configuredRequiresApproval: input.delegate.requiresApproval,
+      defaultRequiresApproval: false,
+      runWriteEnabled: input.allowReadWriteWorkspaceAccess,
+    }),
+  };
+}
+
 function inProcessDelegateWorkspaceAccess(input: {
   profile: AgentProfile;
-  delegateChildToolCatalog: readonly HostToolCatalogEntry[];
+  delegateChildTools: readonly Pick<ToolDefinition, "name">[];
 }): DelegateWorkspaceAccess {
   const hasWriteTool = WORKSPACE_WRITE_TOOL_NAMES.some((toolName) =>
-    inProcessDelegateHasTool(
-      input.profile,
-      input.delegateChildToolCatalog,
-      toolName,
-    ),
+    inProcessDelegateHasTool(input.profile, input.delegateChildTools, toolName),
   );
   return hasWriteTool ? "read_write" : "none";
 }
 
 function inProcessDelegateHasTool(
   profile: AgentProfile,
-  delegateChildToolCatalog: readonly HostToolCatalogEntry[],
+  delegateChildTools: readonly Pick<ToolDefinition, "name">[],
   toolName: string,
 ): boolean {
-  if (
-    !delegateChildToolCatalog.some(
-      (entry) => entry.definition.name === toolName,
-    )
-  ) {
+  if (!delegateChildTools.some((tool) => tool.name === toolName)) {
     return false;
   }
   if (profile.allowedTools === undefined) return true;

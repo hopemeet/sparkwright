@@ -43,6 +43,7 @@ import {
   resolveConfiguredToolAllowlist,
 } from "../src/tool-catalog.js";
 import { createHostShellTool } from "../src/shell.js";
+import { deriveDelegatePolicyProfile } from "../src/delegate-capability.js";
 import {
   assertCodingToolsCoveredByWorkspaceSelectors,
   resolveSelectorAllowlist,
@@ -50,6 +51,22 @@ import {
 import { createConfiguredDelegateTools } from "../src/runtime.js";
 
 describe("host tools", () => {
+  it("derives explicit in-process spawn approval without marking spawn risky", () => {
+    const profile = deriveDelegatePolicyProfile({
+      risk: "safe",
+      configuredRequiresApproval: true,
+      defaultRequiresApproval: false,
+      runWriteEnabled: false,
+    });
+
+    expect(profile.policy).toEqual({ risk: "safe", requiresApproval: true });
+    expect(profile.approvalRequiredUnderCurrentRun).toBe(true);
+    expect(profile.approvalReasons).toEqual([
+      "tool.requiresApproval:true",
+      "delegate.requiresApproval:true",
+    ]);
+  });
+
   it("rejects read_file glob paths with tool guidance", async () => {
     const ctx = await createWorkspace({
       "packages/tui/package.json": "{}\n",
@@ -657,6 +674,8 @@ describe("host tools", () => {
       allowReadWriteWorkspaceAccess: false,
       childRunStoreFactory: () => undefined as never,
     });
+
+    expect(delegate?.policy).toEqual({ risk: "safe", requiresApproval: false });
 
     await delegate!.execute({ goal: "Inspect README.md." }, {
       run: parent.record,

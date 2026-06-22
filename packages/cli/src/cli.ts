@@ -2334,7 +2334,7 @@ function buildCapabilityToolInventory(input: {
     (tool) => ({
       name: tool.toolName,
       source: "delegate" as const,
-      risk: "risky" as const,
+      risk: tool.risk,
       origin: `${tool.protocol}:${tool.profileId}`,
     }),
   );
@@ -2396,7 +2396,7 @@ function runtimeToolToInspectEntry(input: {
     return {
       name: input.tool.name,
       source: "delegate",
-      risk: "risky",
+      risk: delegate.risk,
       origin: `${delegate.protocol}:${delegate.profileId}`,
       ...(input.tool.deferred === true ? { deferred: true } : {}),
     };

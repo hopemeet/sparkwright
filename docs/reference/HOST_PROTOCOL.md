@@ -495,6 +495,7 @@ scanning files or interpreting local config.
         "approvalRequiredUnderCurrentRun": true,
         "approvalReasons": [
           "tool.risk:risky",
+          "tool.requiresApproval:true",
           "delegate.requiresApproval:true"
         ],
         "approvalRunOptions": { "shouldWrite": false },
@@ -510,10 +511,10 @@ scanning files or interpreting local config.
         "toolName": "delegate_writer",
         "profileId": "writer",
         "protocol": "in_process",
-        "risk": "risky",
+        "risk": "safe",
         "requiresApproval": false,
-        "approvalRequiredUnderCurrentRun": true,
-        "approvalReasons": ["tool.risk:risky", "gated_by_run_write"],
+        "approvalRequiredUnderCurrentRun": false,
+        "approvalReasons": [],
         "approvalRunOptions": { "shouldWrite": false },
         "forbidNesting": true,
         "sideEffects": ["model", "workspace"],
@@ -533,7 +534,9 @@ delegates that should inspect or mutate the workspace directly.
 For `in_process` delegates, `workspaceAccess` reports the profile-selected
 potential capability; `gatedByRunWrite: true` means the current run still needs
 workspace writes enabled (for example CLI `--write`) before the delegate can use
-workspace write or shell tools.
+workspace write or shell tools. In-process delegate spawn is `risk: "safe"` by
+default because the child run enforces its own tool policies; set
+`requiresApproval: true` on the delegate only when spawn itself needs approval.
 `requiresApproval` is a legacy delegate-config echo. For audit/diagnostics, use
 `approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
 those fields describe the runtime gate under the inspected run options rather

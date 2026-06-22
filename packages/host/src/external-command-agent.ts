@@ -21,6 +21,7 @@ import {
   assertSubagentDepthAllowed,
   assertWorkspaceAccess,
   describeDelegateCapability,
+  deriveDelegatePolicyProfile,
   errorCode,
   resolveDelegateProcessWorkspace,
   usesWorkspaceRootTemplate,
@@ -147,6 +148,12 @@ export function createExternalCommandDelegateTool(
     );
   }
   const workspaceAccess = config.workspaceAccess ?? "none";
+  const policyProfile = deriveDelegatePolicyProfile({
+    risk: "risky",
+    configuredRequiresApproval: input.requiresApproval,
+    defaultRequiresApproval: true,
+    runWriteEnabled: input.allowReadWriteWorkspaceAccess,
+  });
   const descriptor = describeDelegateCapability({
     delegate: {
       profileId: input.profile.id,
@@ -161,6 +168,7 @@ export function createExternalCommandDelegateTool(
     timeoutMs: config.timeoutMs,
     workspaceAccess,
     allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+    policyProfile,
     outputLimits: {
       stdoutBytes: config.maxStdoutBytes ?? config.maxOutputBytes,
       stderrBytes: config.maxStderrBytes ?? config.maxOutputBytes,
@@ -181,10 +189,7 @@ export function createExternalCommandDelegateTool(
       required: ["goal"],
       additionalProperties: false,
     },
-    policy: {
-      risk: "risky",
-      requiresApproval: input.requiresApproval ?? true,
-    },
+    policy: policyProfile.policy,
     governance: {
       sideEffects: ["external"],
       idempotency: "non_idempotent",

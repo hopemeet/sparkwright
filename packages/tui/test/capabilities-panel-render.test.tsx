@@ -167,7 +167,7 @@ describe("CapabilitiesPanel rendering", () => {
             {
               name: "delegate_writer",
               origin: "in_process:writer",
-              risk: "risky",
+              risk: "safe",
             },
           ],
           skills: { indexed: [], loaded: [] },
@@ -180,7 +180,7 @@ describe("CapabilitiesPanel rendering", () => {
                 profileId: "writer",
                 profileName: "Writer",
                 protocol: "in_process",
-                risk: "risky",
+                risk: "safe",
                 requiresApproval: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],
