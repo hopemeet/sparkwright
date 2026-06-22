@@ -158,10 +158,10 @@ describe("session compact artifacts", () => {
       [
         {
           runId,
-          goal: "Map-Driven Dev review for docs/_internal/project-map/designs/compaction-redesign.md.",
+          goal: "Reference doc review for docs/reference/CONTEXT_PLANE.md.",
           message: [
             "Must preserve session-specific extractors and do not reuse runtime tool_result compaction.",
-            "Wrote docs/_internal/project-map/designs/compaction-redesign.md and packages/core/src/session-compaction.ts.",
+            "Wrote docs/reference/CONTEXT_PLANE.md and packages/core/src/session-compaction.ts.",
             "Verification passed after deterministic extraction.",
             "Repeated analysis ".repeat(180),
           ].join("\n"),
@@ -174,9 +174,7 @@ describe("session compact artifacts", () => {
     expect(result.compactedRunCount).toBe(1);
     expect(result.freedChars).toBeGreaterThan(0);
     expect(result.summaryCharCount).toBeLessThan(result.originalCharCount);
-    expect(result.content).toContain(
-      "docs/_internal/project-map/designs/compaction-redesign.md",
-    );
+    expect(result.content).toContain("docs/reference/CONTEXT_PLANE.md");
     expect(result.content).toContain("Must preserve");
     expect(result.content).toContain("workspace_write");
     expect(result.appliedStages).toContainEqual(
@@ -234,12 +232,12 @@ describe("session compact artifacts", () => {
       {
         runId: createRunId(),
         goal: [
-          "Map-Driven Dev: refactor docs/_internal/project-map/designs/compaction-redesign.md.",
-          "Must verify source before trusting the design doc.",
+          "Reference-driven refactor for docs/reference/CONTEXT_PLANE.md.",
+          "Must verify source before trusting the reference doc.",
           "需要保留真实模型 mini、多轮、多 agent、多 skill 的验收要求。",
         ].join("\n"),
         message: [
-          "Read docs/_internal/project-map/README.md and packages/core/src/pipeline.ts.",
+          "Read docs/reference/CONTEXT_PLANE.md and packages/core/src/pipeline.ts.",
           "Created packages/core/src/session-compaction.ts and modified packages/host/src/runtime.ts.",
           "Verification passed: npm --workspace @sparkwright/core test.",
           "Detailed review notes ".repeat(160),
@@ -276,7 +274,7 @@ describe("session compact artifacts", () => {
     });
 
     expect(result.skippedReason).toBeUndefined();
-    expect(result.content).toContain("docs/_internal/project-map/README.md");
+    expect(result.content).toContain("docs/reference/CONTEXT_PLANE.md");
     expect(result.content).toContain("packages/core/src/session-compaction.ts");
     expect(result.content).toContain("packages/tui/src/app.tsx");
     expect(result.content).toContain("Must verify source");
