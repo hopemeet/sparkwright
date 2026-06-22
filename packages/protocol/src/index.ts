@@ -118,6 +118,25 @@ export type ProtocolErrorCode =
   | "session_not_found"
   | "internal_error";
 
+const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
+  "protocol_version_mismatch",
+  "unknown_kind",
+  "invalid_payload",
+  "run_not_found",
+  "approval_not_found",
+  "session_not_found",
+  "internal_error",
+];
+
+export function isProtocolErrorCode(
+  value: unknown,
+): value is ProtocolErrorCode {
+  return (
+    typeof value === "string" &&
+    (PROTOCOL_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
 export interface ProtocolError {
   code: ProtocolErrorCode;
   message: string;
@@ -710,6 +729,9 @@ export interface RunCompletedEventPayload {
 
 export interface RunFailedEventPayload {
   runId: string;
+  /** Canonical terminal failure. Prefer this over the legacy `error` projection. */
+  failure: RunFailureEnvelope;
+  /** @deprecated Use `failure`; kept for older protocol clients. */
   error: ProtocolError;
 }
 
@@ -734,4 +756,98 @@ export function isResponse(msg: HostMessage): msg is HostResponse {
 }
 export function isEvent(msg: HostMessage): msg is HostEvent {
   return msg.envelope === "event";
+}
+
+export function protocolErrorToRunFailure(
+  error: ProtocolError,
+): RunFailureEnvelope {
+  return {
+    code: error.code,
+    message: error.message,
+    ...(error.details ? { metadata: error.details } : {}),
+  };
+}
+
+export function getRunFailure(
+  payload: unknown,
+): RunFailureEnvelope | undefined {
+  const record = isRecord(payload) ? payload : undefined;
+  if (!record) return undefined;
+
+  const failure = runFailureEnvelope(record.failure);
+  if (failure) return failure;
+
+  const error = protocolError(record.error);
+  if (error) return protocolErrorToRunFailure(error);
+
+  const state = stringValue(record.state);
+  if (state !== "failed" && state !== "cancelled") return undefined;
+
+  const message =
+    stringValue(record.message) ??
+    stringValue(record.reason) ??
+    stringValue(record.stopReason);
+  if (!message) return undefined;
+
+  return {
+    code:
+      stringValue(record.code) ??
+      stringValue(record.reason) ??
+      stringValue(record.stopReason) ??
+      state,
+    message,
+  };
+}
+
+export function runFailureMessage(
+  payload: unknown,
+  fallback = "run failed",
+): string {
+  const failure = getRunFailure(payload);
+  if (failure?.message) return failure.message;
+  const record = isRecord(payload) ? payload : undefined;
+  return (
+    stringValue(record?.message) ??
+    stringValue(record?.reason) ??
+    stringValue(record?.stopReason) ??
+    fallback
+  );
+}
+
+function protocolError(value: unknown): ProtocolError | undefined {
+  const record = isRecord(value) ? value : undefined;
+  const code = stringValue(record?.code);
+  const message = stringValue(record?.message);
+  if (!code || !message || !isProtocolErrorCode(code)) return undefined;
+  return {
+    code,
+    message,
+    ...(isRecord(record?.details) ? { details: record.details } : {}),
+  };
+}
+
+function runFailureEnvelope(value: unknown): RunFailureEnvelope | undefined {
+  const record = isRecord(value) ? value : undefined;
+  const code = stringValue(record?.code);
+  const message = stringValue(record?.message);
+  if (!code || !message) return undefined;
+  return {
+    ...(stringValue(record?.category)
+      ? { category: stringValue(record?.category) }
+      : {}),
+    code,
+    message,
+    ...(typeof record?.retryable === "boolean"
+      ? { retryable: record.retryable }
+      : {}),
+    ...(isRecord(record?.metadata) ? { metadata: record.metadata } : {}),
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

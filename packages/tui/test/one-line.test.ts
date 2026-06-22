@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { oneLine } from "../src/components/event-stream.js";
 
 describe("oneLine", () => {
-  // Regression: `run.failed` has no `error` field, so the renderer passed
-  // undefined here; JSON.stringify(undefined) is undefined and the old code
-  // then called .replace on it, crashing the whole TUI.
+  // Regression: old terminal failure payloads could leave the renderer holding
+  // undefined; JSON.stringify(undefined) is undefined and the old code then
+  // called .replace on it, crashing the whole TUI.
   it("returns empty string for undefined/null without throwing", () => {
     expect(oneLine(undefined, 80)).toBe("");
     expect(oneLine(null, 80)).toBe("");

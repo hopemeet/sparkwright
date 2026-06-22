@@ -411,6 +411,58 @@ describe("host protocol", () => {
     }
   });
 
+  it("emits canonical failure on host runtime run.failed", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-runtime-failure-"),
+    );
+    try {
+      let resolveFailed!: (message: HostMessage) => void;
+      const failed = new Promise<HostMessage>((resolve) => {
+        resolveFailed = resolve;
+      });
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: (message) => {
+          if (message.envelope !== "event") return;
+          if (message.kind === "run.failed") {
+            resolveFailed(message);
+            return;
+          }
+          if (message.kind === "run.event") {
+            throw new Error("event sink failed");
+          }
+        },
+      });
+
+      const started = await runtime.startRun({ goal: "exercise sink failure" });
+      expect(started).toMatchObject({
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "event sink failed",
+        },
+      });
+      await expect(failed).resolves.toMatchObject({
+        envelope: "event",
+        kind: "run.failed",
+        payload: {
+          failure: {
+            category: "runtime",
+            code: "internal_error",
+            message: "event sink failed",
+          },
+          error: {
+            code: "internal_error",
+            message: "event sink failed",
+          },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("accepts the run.resume payload shape and reports missing runs from runtime lookup", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

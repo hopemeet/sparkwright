@@ -20,7 +20,11 @@ import {
   type ResumeSessionRequest,
   type ResumeSessionResponse,
 } from "@agentclientprotocol/sdk";
-import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
+import {
+  runFailureMessage,
+  type PermissionMode,
+  type TraceLevel,
+} from "@sparkwright/protocol";
 import { HostRuntime } from "@sparkwright/host";
 import type { McpServerConfig } from "@sparkwright/mcp-adapter";
 import { contentBlocksToText } from "./content.js";
@@ -80,7 +84,7 @@ export class SparkwrightAcpAgent implements Agent {
           });
         } else if (event.kind === "run.failed") {
           void routed.finally(() => {
-            this.failTurn(session, new Error(event.payload.error.message));
+            this.failTurn(session, new Error(runFailureMessage(event.payload)));
           });
         }
       },

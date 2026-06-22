@@ -106,6 +106,7 @@ import {
   type TraceLevel,
   type HostEvent,
   type ProtocolError,
+  type RunFailureEnvelope,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type RunInputPart,
@@ -1333,6 +1334,12 @@ export class HostRuntime {
       })
       .catch((err: unknown) => {
         if (!firstRunStarted) rejectFirstRunId(err);
+        const message = err instanceof Error ? err.message : String(err);
+        const failure: RunFailureEnvelope = {
+          category: "runtime",
+          code: "internal_error",
+          message,
+        };
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
@@ -1340,9 +1347,10 @@ export class HostRuntime {
           timestamp: nowIso(),
           payload: {
             runId: lastRunId,
+            failure,
             error: {
               code: "internal_error",
-              message: err instanceof Error ? err.message : String(err),
+              message,
             },
           },
         });

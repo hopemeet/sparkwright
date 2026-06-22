@@ -2368,6 +2368,86 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("summarizes raw model failure causes before emitting terminal results", async () => {
+    const responseBody = `${"x".repeat(2200)} tail`;
+    const run = createRun({
+      goal: "provider request failure",
+      model: {
+        async complete() {
+          throw Object.assign(new Error("bad request"), {
+            code: "invalid_api_key",
+            status: 400,
+            statusCode: 400,
+            requestBodyValues: {
+              input: [{ role: "user", content: "secret prompt" }],
+              tools: [{ name: "read_file", inputSchema: { type: "object" } }],
+            },
+            responseHeaders: {
+              "x-request-id": "req_sanitized",
+              "set-cookie": "session=should-not-persist",
+              authorization: "Bearer should-not-persist",
+            },
+            responseBody,
+            data: {
+              error: {
+                code: "invalid_api_key",
+                message: "bad request",
+              },
+            },
+          });
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "run.failed");
+    const payload = failed?.payload as
+      | {
+          failure?: { metadata?: Record<string, unknown> };
+          metadata?: Record<string, unknown>;
+        }
+      | undefined;
+    const serializedFailureEvent = JSON.stringify(failed);
+    const topCause = payload?.metadata?.cause as
+      | Record<string, unknown>
+      | undefined;
+    const failureCause = payload?.failure?.metadata?.cause as
+      | Record<string, unknown>
+      | undefined;
+    const resultCause = result.metadata?.cause as
+      | Record<string, unknown>
+      | undefined;
+
+    expect(topCause).toMatchObject({
+      name: "Error",
+      message: "bad request",
+      code: "invalid_api_key",
+      status: 400,
+      statusCode: 400,
+      requestId: "req_sanitized",
+    });
+    expect(topCause?.responseBodyPreview).toEqual(`${"x".repeat(2000)}...`);
+    expect(failureCause).toEqual(topCause);
+    expect(resultCause).toEqual(topCause);
+    for (const cause of [topCause!, failureCause!, resultCause!]) {
+      expect(cause).not.toHaveProperty("requestBodyValues");
+      expect(cause).not.toHaveProperty("input");
+      expect(cause).not.toHaveProperty("tools");
+      expect(cause).not.toHaveProperty("responseHeaders");
+      expect(cause).not.toHaveProperty("data");
+    }
+    expect(serializedFailureEvent).not.toContain("set-cookie");
+    expect(serializedFailureEvent).not.toContain("session=should-not-persist");
+    expect(serializedFailureEvent).not.toContain("requestBodyValues");
+    expect(serializedFailureEvent).not.toContain("secret prompt");
+    expect(payload?.metadata?.modelError).toMatchObject({
+      message: "bad request",
+      status: 400,
+    });
+  });
+
   it("retries retryable model completion failures", async () => {
     let modelCalls = 0;
 

@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { Connection } from "@sparkwright/host";
 import { serveConnection } from "@sparkwright/host";
 import type { HostMessage } from "@sparkwright/protocol";
-import { Client, type ClientTransport } from "@sparkwright/sdk-core";
+import {
+  Client,
+  runFailureMessage,
+  type ClientTransport,
+} from "@sparkwright/sdk-core";
 
 /**
  * Build an in-process pair: a host-side Connection and a client-side
@@ -74,7 +78,7 @@ describe("sdk-node round-trip against host", () => {
         resolve({ state: m.payload.state, stopReason: m.payload.stopReason }),
       );
       client.on("run.failed", (m) =>
-        reject(new Error(`failed: ${m.payload.error.message}`)),
+        reject(new Error(`failed: ${runFailureMessage(m.payload)}`)),
       );
     });
 

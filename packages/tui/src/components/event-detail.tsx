@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
+import { runFailureMessage } from "@sparkwright/protocol";
 import type { RunEvent } from "../lib/event-type.js";
 import { formatEvent, type FormattedEvent } from "../lib/format-event.js";
 import { collapseText, prettyJson } from "../lib/collapse.js";
@@ -47,12 +48,14 @@ export function eventMatchesFilter(
   filter: EventDetailFilter,
 ): boolean {
   const type = event.type;
+  const failedRunCompleted = isFailedRunCompletedEvent(event);
   switch (filter) {
     case "all":
       return true;
     case "errors":
       return (
         type === "run.failed" ||
+        failedRunCompleted ||
         type.endsWith(".failed") ||
         type.endsWith(".denied") ||
         type.endsWith(".rejected") ||
@@ -127,7 +130,10 @@ export function summarizeRunInspectorFacts(
       }
     }
     if (event.type === "model.completed") facts.modelCalls += 1;
+    const failedRunCompleted =
+      event.type === "run.completed" && str(payload.state) === "failed";
     if (
+      failedRunCompleted ||
       event.type.endsWith(".failed") ||
       event.type.endsWith(".denied") ||
       event.type.endsWith(".rejected") ||
@@ -135,6 +141,9 @@ export function summarizeRunInspectorFacts(
     ) {
       facts.errorCount += 1;
       facts.lastError =
+        (event.type === "run.failed" || failedRunCompleted
+          ? runFailureMessage(payload)
+          : "") ||
         str(rec(payload.error).message) ||
         str(payload.message) ||
         str(payload.reason) ||
@@ -190,6 +199,12 @@ function rec(value: unknown): Record<string, unknown> {
 
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function isFailedRunCompletedEvent(event: RunEvent): boolean {
+  return (
+    event.type === "run.completed" && str(rec(event.payload).state) === "failed"
+  );
 }
 
 function safeSearchJson(value: unknown): string {

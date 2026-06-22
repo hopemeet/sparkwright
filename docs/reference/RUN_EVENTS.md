@@ -146,6 +146,10 @@ Stable consumption rules:
   returned result before marking the run cancelled.
 - Use `run.failed.payload.failure` and `stopReason` when available for error
   categorization.
+- Treat failure `metadata.cause` as a bounded diagnostic summary when present.
+  Raw provider request bodies, prompt input, and tool schemas must not be
+  persisted on terminal failure events; structured provider classification lives
+  in `metadata.modelError` when available.
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
 

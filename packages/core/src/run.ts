@@ -165,6 +165,7 @@ const DEFAULT_MODEL_RETRY_MAX_DELAY_MS = 30_000;
 const DEFAULT_MODEL_RETRY_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
+const FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS = 2_000;
 export interface CreateRunOptions {
   goal: string;
   /**
@@ -3961,15 +3962,17 @@ export class SparkwrightRun implements RunHandle {
     if (isTerminalState(this.record.state) && this.result) {
       return this.result;
     }
+    const safeMetadata = sanitizeFailureMetadata(metadata);
+    const failureMetadata = { ...safeMetadata };
     const failure = {
       category: failureCategoryFor(reason, code),
       code,
       message,
       retryable:
-        typeof metadata.retryable === "boolean"
-          ? metadata.retryable
+        typeof safeMetadata.retryable === "boolean"
+          ? safeMetadata.retryable
           : undefined,
-      metadata: omitUndefined(metadata),
+      metadata: failureMetadata,
     };
     this.setState("failed", reason);
     this.events.emit("run.failed", {
@@ -3977,7 +3980,7 @@ export class SparkwrightRun implements RunHandle {
       code,
       message,
       failure,
-      metadata,
+      metadata: { ...safeMetadata },
     });
     this.kickWorkflowHookPhase("SessionEnd", {
       state: "failed",
@@ -3989,7 +3992,7 @@ export class SparkwrightRun implements RunHandle {
       state: "failed",
       stopReason: reason,
       failure,
-      metadata: omitUndefined(metadata),
+      metadata: { ...safeMetadata },
     };
     return this.result;
   }
@@ -4343,6 +4346,113 @@ function failureCategoryFor(
   if (reason.startsWith("validation_") || code.startsWith("VALIDATION_"))
     return "validation";
   return "runtime";
+}
+
+function sanitizeFailureMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = omitUndefined(metadata);
+  if ("cause" in out) {
+    const cause = summarizeFailureCause(out.cause);
+    if (cause === undefined) delete out.cause;
+    else out.cause = cause;
+  }
+  return out;
+}
+
+function summarizeFailureCause(cause: unknown): unknown {
+  if (cause === undefined) return undefined;
+  if (typeof cause === "string") return truncateFailureString(cause);
+  if (
+    cause === null ||
+    typeof cause === "number" ||
+    typeof cause === "boolean"
+  ) {
+    return cause;
+  }
+
+  const record = isRecord(cause) ? cause : undefined;
+  const out: Record<string, unknown> = {};
+  const name =
+    cause instanceof Error ? cause.name : stringFromRecord(record, "name");
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : stringFromRecord(record, "message");
+  const code = stringFromRecord(record, "code");
+  const status = numberFromRecord(record, "status");
+  const statusCode = numberFromRecord(record, "statusCode");
+  const requestId =
+    stringFromRecord(record, "requestId") ??
+    stringFromRecord(record, "requestID") ??
+    stringFromHeaders(record?.responseHeaders, "x-request-id") ??
+    stringFromHeaders(record?.headers, "x-request-id");
+  const responseBody = responseBodyFromRecord(record);
+
+  if (name !== undefined) out.name = name;
+  if (message !== undefined) out.message = truncateFailureString(message);
+  if (code !== undefined) out.code = code;
+  if (status !== undefined) out.status = status;
+  if (statusCode !== undefined) out.statusCode = statusCode;
+  if (requestId !== undefined) out.requestId = requestId;
+  if (responseBody !== undefined) {
+    out.responseBodyPreview = truncateFailureString(responseBody);
+  }
+
+  if (Object.keys(out).length > 0) return out;
+  return { type: typeof cause };
+}
+
+function responseBodyFromRecord(
+  record: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!record) return undefined;
+  const direct = stringFromRecord(record, "responseBody");
+  if (direct !== undefined) return direct;
+  const response = record.response;
+  return isRecord(response)
+    ? (stringFromRecord(response, "body") ?? stringFromRecord(response, "text"))
+    : undefined;
+}
+
+function stringFromRecord(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function numberFromRecord(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function stringFromHeaders(headers: unknown, key: string): string | undefined {
+  if (!headers) return undefined;
+  if (typeof (headers as { get?: unknown }).get === "function") {
+    const value = (headers as { get(name: string): unknown }).get(key);
+    return typeof value === "string" ? value : undefined;
+  }
+  if (!isRecord(headers)) return undefined;
+  const target = key.toLowerCase();
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === target && typeof value === "string") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function truncateFailureString(value: string): string {
+  return value.length > FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS
+    ? `${value.slice(0, FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS)}...`
+    : value;
 }
 
 function promptMetadataString(

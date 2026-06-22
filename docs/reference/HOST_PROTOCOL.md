@@ -605,6 +605,7 @@ with `run.failed` instead.
 | `runId`       | string |                                                               |
 | `state`       | string | Final RunState.                                               |
 | `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.              |
+| `message`     | string | Optional final answer text for successful final-answer runs.  |
 | `outcome`     | object | Optional structured non-clean completion summary.             |
 | `failure`     | object | Optional structured cause for `failed` or `cancelled` states. |
 | `todoHandoff` | object | Optional unfinished-todo handoff reason and message.          |
@@ -619,10 +620,15 @@ unknown metadata as diagnostic context.
 Terminal event for a host/runtime protocol error before a core run can finish
 normally.
 
-| Field   | Type          |
-| ------- | ------------- |
-| `runId` | string        |
-| `error` | ProtocolError |
+| Field     | Type          | Notes                                                                 |
+| --------- | ------------- | --------------------------------------------------------------------- |
+| `runId`   | string        |                                                                       |
+| `failure` | object        | Canonical `{ category, code, message, retryable, metadata }` failure. |
+| `error`   | ProtocolError | Deprecated compatibility projection of `failure`.                     |
+
+Clients should prefer `failure` for both `run.completed{state:"failed"}` and
+`run.failed`. The compatibility `error` field remains present on `run.failed`
+for older protocol clients.
 
 ---
 

@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Static, Text, useStdout } from "ink";
+import { runFailureMessage } from "@sparkwright/protocol";
 import { isInternalTranscriptEvent, type RunEvent } from "../lib/event-type.js";
 import { formatEvent } from "../lib/format-event.js";
 import { parseUnifiedDiff } from "../lib/diff.js";
@@ -767,12 +768,7 @@ function EventCard(props: {
       const state = str(p.state);
       const reason = str(p.reason) || str(p.stopReason);
       if (state === "failed") {
-        const err =
-          str(p.message) ||
-          str(rec(p.failure).message) ||
-          str(rec(p.error).message) ||
-          reason ||
-          "run failed";
+        const err = runFailureMessage(p, reason || "run failed");
         return (
           <Box flexDirection="column" paddingX={1} marginTop={1}>
             <Text color={theme.error}>── run failed: {err}</Text>
@@ -801,16 +797,7 @@ function EventCard(props: {
     }
 
     case "run.failed": {
-      // The payload exposes the failure as `message` (with `failure.message` /
-      // `reason` as fallbacks); there is no top-level `error` field, so reading
-      // `p.error` yielded undefined and crashed oneLine. Pull from the shapes
-      // that actually exist and never hand oneLine an undefined.
-      const err =
-        str(p.message) ||
-        str(rec(p.failure).message) ||
-        str(rec(p.error).message) ||
-        str(p.reason) ||
-        "run failed";
+      const err = runFailureMessage(p);
       return (
         <Box paddingX={1} marginTop={1}>
           <Text color={theme.error}>── run failed: {err}</Text>

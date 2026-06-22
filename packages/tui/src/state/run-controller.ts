@@ -17,6 +17,7 @@ import type {
   SessionCompactionMeasurement,
   TraceLevel,
 } from "@sparkwright/protocol";
+import { runFailureMessage } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
@@ -675,19 +676,21 @@ export class RunController {
         this.store.setStatus("done");
       } else {
         const terminalState = msg.payload.state;
-        this.store.setStatus(
+        if (
           terminalState === "failed" ||
-            terminalState === "cancelled" ||
-            msg.payload.stopReason === "manual_cancelled"
-            ? "error"
-            : "done",
-        );
+          terminalState === "cancelled" ||
+          msg.payload.stopReason === "manual_cancelled"
+        ) {
+          this.store.setError(runFailureMessage(msg.payload));
+        } else {
+          this.store.setStatus("done");
+        }
       }
     });
 
     client.on("run.failed", (msg) => {
       this.activeRunId = null;
-      this.store.setError(msg.payload.error.message);
+      this.store.setError(runFailureMessage(msg.payload));
     });
 
     client.on("disconnect", (reason) => {

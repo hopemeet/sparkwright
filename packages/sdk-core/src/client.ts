@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  getRunFailure,
   isEvent,
   isResponse,
   type EventKind,
@@ -268,10 +269,7 @@ export class Client extends TypedEmitter<ClientEventMap> {
           terminalEvent.kind === "run.completed"
             ? terminalEvent.payload.outcome
             : undefined,
-        failure:
-          terminalEvent.kind === "run.completed"
-            ? terminalEvent.payload.failure
-            : terminalEvent.payload.error,
+        failure: getRunFailure(terminalEvent.payload),
         toolFailures,
         artifacts,
         writes,

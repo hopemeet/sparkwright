@@ -805,6 +805,7 @@
         "runId": { "type": "string", "minLength": 1 },
         "state": { "type": "string" },
         "stopReason": { "type": "string" },
+        "message": { "type": "string" },
         "outcome": { "type": "object" },
         "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
         "todoHandoff": {
@@ -821,9 +822,10 @@
     },
     "RunFailedEventPayload": {
       "type": "object",
-      "required": ["runId", "error"],
+      "required": ["runId", "failure", "error"],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
+        "failure": { "$ref": "#/$defs/RunFailureEnvelope" },
         "error": { "$ref": "#/$defs/ProtocolError" }
       },
       "additionalProperties": false

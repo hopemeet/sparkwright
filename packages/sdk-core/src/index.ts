@@ -6,9 +6,13 @@ export { TypedEmitter } from "./emitter.js";
 // Re-export protocol types so consumers only need one import.
 export {
   PROTOCOL_VERSION,
+  getRunFailure,
   isEvent,
+  isProtocolErrorCode,
   isRequest,
   isResponse,
+  protocolErrorToRunFailure,
+  runFailureMessage,
 } from "@sparkwright/protocol";
 export type {
   ApprovalRequestedEventPayload,
