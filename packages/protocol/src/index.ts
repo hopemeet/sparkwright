@@ -292,6 +292,64 @@ export interface SessionListRequestPayload {
 
 export interface SessionInspectRequestPayload {
   sessionId: string;
+  /**
+   * Include a session-compaction audit view derived from compact.json and
+   * session-local compaction events. The compacted summary body is not
+   * returned.
+   */
+  compaction?: boolean;
+}
+
+export interface SessionCompactionInspectArtifact {
+  path: string;
+  schemaVersion: string;
+  createdAt: string;
+  throughRunId: string;
+  compactedRunCount: number;
+  sourceRunIds: string[];
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  measurement?: SessionCompactionMeasurement;
+  mode?: string;
+  reason?: string;
+  warningCodes?: string[];
+  summaryFingerprint?: Record<string, unknown>;
+}
+
+export interface SessionCompactionInspectEvent {
+  sequence: number;
+  timestamp: string;
+  type: "session.compaction.completed" | "session.compaction.skipped";
+  compactedRunCount: number;
+  throughRunId: string | null;
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  measurement?: SessionCompactionMeasurement;
+  artifactPath: string | null;
+  skippedReason?: string;
+  warningCodes?: string[];
+  reason?: string;
+  source?: string;
+}
+
+export interface SessionCompactionInspectReport {
+  status:
+    | "not_compacted"
+    | "compacted"
+    | "skipped"
+    | "artifact_only"
+    | "event_only"
+    | "stale_artifact";
+  artifact: SessionCompactionInspectArtifact | null;
+  events: SessionCompactionInspectEvent[];
+  latestEvent: SessionCompactionInspectEvent | null;
+  consistency: {
+    ok: boolean;
+    artifactMatchesLatestCompletedEvent: boolean | null;
+    findings: string[];
+  };
 }
 
 export interface SessionForkRequestPayload {
@@ -384,6 +442,7 @@ export interface ResponseResults {
     summary: Record<string, unknown>;
     consistency: Record<string, unknown>;
     timeline: Record<string, unknown>;
+    compaction?: SessionCompactionInspectReport;
   };
   "session.fork": {
     forkedSessionId: string;

@@ -189,13 +189,16 @@ async function handleRequest(
       return false;
     }
     case "session.inspect": {
-      const r = await runtime.inspectSession(req.payload.sessionId);
+      const r = await runtime.inspectSession(req.payload.sessionId, {
+        compaction: req.payload.compaction === true,
+      });
       if (r.ok) {
         respondOk(conn, req.id, {
           sessionId: r.sessionId,
           summary: r.summary,
           consistency: r.consistency,
           timeline: r.timeline,
+          ...(r.compaction ? { compaction: r.compaction } : {}),
         });
       } else {
         respondError(conn, req.id, r.error);
@@ -378,8 +381,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "session.inspect":
       return (
-        requireOnly(req.payload, ["sessionId"]) ??
-        requireString(req.payload, "sessionId")
+        requireOnly(req.payload, ["sessionId", "compaction"]) ??
+        requireString(req.payload, "sessionId") ??
+        optionalBoolean(req.payload, "compaction")
       );
     case "session.fork":
       return (

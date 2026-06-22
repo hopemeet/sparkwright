@@ -2156,6 +2156,36 @@ describe("host protocol", () => {
           timeline: { phases: expect.any(Array) },
         },
       });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "inspect_compaction",
+        kind: "session.inspect",
+        timestamp: TIMESTAMP,
+        payload: { sessionId, compaction: true },
+      });
+      const inspectCompactionResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "inspect_compaction",
+      );
+
+      expect(inspectCompactionResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          sessionId,
+          compaction: {
+            status: "not_compacted",
+            artifact: null,
+            events: [],
+            latestEvent: null,
+            consistency: {
+              ok: true,
+              artifactMatchesLatestCompletedEvent: null,
+              findings: [],
+            },
+          },
+        },
+      });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -2317,6 +2347,43 @@ describe("host protocol", () => {
           }),
         ]),
       );
+
+      const inspectRuntime = new HostRuntime({
+        workspaceRoot: workspace,
+        sessionRootDir,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const inspected =
+        await inspectRuntime.inspectSessionCompaction(sessionId);
+      expect(inspected).toMatchObject({
+        ok: true,
+        sessionId,
+        compaction: {
+          status: "compacted",
+          artifact: {
+            path: join(sessionRootDir, sessionId, "compact.json"),
+            throughRunId: runId,
+            compactedRunCount: 1,
+            freedChars: compactResp.result.freedChars,
+            warningCodes: expect.arrayContaining([
+              "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+            ]),
+          },
+          latestEvent: {
+            type: "session.compaction.completed",
+            throughRunId: runId,
+            artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+          },
+          consistency: {
+            ok: true,
+            artifactMatchesLatestCompletedEvent: true,
+          },
+        },
+      });
+      expect(JSON.stringify(inspected)).not.toContain(
+        "Session deterministic-summary preview.",
+      );
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -2370,7 +2437,6 @@ describe("host protocol", () => {
       await rm(workspace, { recursive: true, force: true });
     }
   });
-
 
   it("uses a model-backed session summarizer when llm is requested with a real model ref", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));

@@ -28,6 +28,7 @@ import {
   compactSessionTurns,
   sessionCompactArtifactToContextItem,
   sessionTurnToContextItems,
+  SESSION_COMPACT_FILENAME,
   SESSION_COMPACT_SCHEMA_VERSION,
   validateSessionTraceConsistency,
   writeSessionCompactArtifact,
@@ -43,8 +44,10 @@ import {
   type RunRecord,
   type RunResult,
   type ContextUsageHint,
+  type SessionCompactArtifact,
   type SessionCompactionMeasurement,
   type SessionCompactionOptions,
+  type SessionEvent,
   type SparkwrightEvent,
   type SessionTraceFacts,
   type ToolDefinition,
@@ -106,6 +109,9 @@ import {
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type RunInputPart,
+  type SessionCompactionInspectArtifact,
+  type SessionCompactionInspectEvent,
+  type SessionCompactionInspectReport,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
   type CapabilitySkillInlineShellSummary,
@@ -575,6 +581,10 @@ const DELEGATED_AGENT_CONTRACT = [
   "- If you are blocked by ambiguity, required approval, or missing capability, return a concise final message with status: needs_clarification, needs_approval, or blocked; include the question or requested action, a reasonable default when one exists, and any safe alternative.",
   "- For clear delegated goals, complete the task and return the result to the parent.",
 ].join("\n");
+
+type SessionInspectOptions = {
+  compaction?: boolean;
+};
 
 type SessionCompactSuccessResult = {
   ok: true;
@@ -2322,13 +2332,17 @@ export class HostRuntime {
       .slice(0, limit);
   }
 
-  async inspectSession(sessionId: string): Promise<
+  async inspectSession(
+    sessionId: string,
+    options: SessionInspectOptions = {},
+  ): Promise<
     | {
         ok: true;
         sessionId: string;
         summary: Record<string, unknown>;
         consistency: Record<string, unknown>;
         timeline: Record<string, unknown>;
+        compaction?: SessionCompactionInspectReport;
       }
     | { ok: false; error: ProtocolError }
   > {
@@ -2345,11 +2359,10 @@ export class HostRuntime {
       };
     }
 
-    const sessionDir = join(
+    const sessionRootDir =
       this.opts.sessionRootDir ??
-        defaultSessionRootDir(this.opts.workspaceRoot),
-      safeSessionId,
-    );
+      defaultSessionRootDir(this.opts.workspaceRoot);
+    const sessionDir = join(sessionRootDir, safeSessionId);
     try {
       const st = await stat(sessionDir);
       if (!st.isDirectory()) {
@@ -2373,10 +2386,16 @@ export class HostRuntime {
 
     try {
       const tracePath = join(sessionDir, "trace.jsonl");
-      const [summary, consistency, timeline] = await Promise.all([
+      const [summary, consistency, timeline, compaction] = await Promise.all([
         summarizeTraceFile(tracePath),
         validateSessionTraceConsistency({ sessionDir }),
         buildTraceTimelineFile(tracePath),
+        options.compaction
+          ? this.buildSessionCompactionInspectReport(
+              sessionRootDir,
+              safeSessionId,
+            )
+          : Promise.resolve(undefined),
       ]);
       return {
         ok: true,
@@ -2384,6 +2403,7 @@ export class HostRuntime {
         summary: summary as unknown as Record<string, unknown>,
         consistency: consistency as unknown as Record<string, unknown>,
         timeline: timeline as unknown as Record<string, unknown>,
+        ...(compaction ? { compaction } : {}),
       };
     } catch (error) {
       return {
@@ -2394,6 +2414,133 @@ export class HostRuntime {
         },
       };
     }
+  }
+
+  async inspectSessionCompaction(sessionId: string): Promise<
+    | {
+        ok: true;
+        sessionId: string;
+        compaction: SessionCompactionInspectReport;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    let safeSessionId: ReturnType<typeof asSessionId>;
+    try {
+      safeSessionId = asSessionId(sessionId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    const sessionRootDir =
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
+    const sessionDir = join(sessionRootDir, safeSessionId);
+    try {
+      const st = await stat(sessionDir);
+      if (!st.isDirectory()) {
+        return {
+          ok: false,
+          error: {
+            code: "session_not_found",
+            message: `session not found: ${sessionId}`,
+          },
+        };
+      }
+    } catch {
+      return {
+        ok: false,
+        error: {
+          code: "session_not_found",
+          message: `session not found: ${sessionId}`,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      sessionId: safeSessionId,
+      compaction: await this.buildSessionCompactionInspectReport(
+        sessionRootDir,
+        safeSessionId,
+      ),
+    };
+  }
+
+  private async buildSessionCompactionInspectReport(
+    sessionRootDir: string,
+    sessionId: string,
+  ): Promise<SessionCompactionInspectReport> {
+    const store = new FileSessionStore({ rootDir: sessionRootDir });
+    const artifactPath = join(
+      sessionRootDir,
+      sessionId,
+      SESSION_COMPACT_FILENAME,
+    );
+    const [artifact, events] = await Promise.all([
+      loadSessionCompactArtifact({ sessionRootDir, sessionId }),
+      loadSessionCompactionEvents(store, sessionId),
+    ]);
+    const artifactSummary = artifact
+      ? sessionCompactionArtifactInspectSummary(artifact, artifactPath)
+      : null;
+    const latestEvent = events.at(-1) ?? null;
+    const latestCompleted =
+      [...events]
+        .reverse()
+        .find((event) => event.type === "session.compaction.completed") ?? null;
+    const findings: string[] = [];
+    const artifactMatchesLatestCompletedEvent =
+      artifactSummary && latestCompleted
+        ? sessionCompactionArtifactMatchesEvent(
+            artifactSummary,
+            latestCompleted,
+          )
+        : null;
+
+    if (
+      artifactSummary &&
+      latestCompleted &&
+      !artifactMatchesLatestCompletedEvent
+    ) {
+      findings.push(
+        "compact.json does not match the latest completed session compaction event",
+      );
+    }
+    if (artifactSummary && latestEvent?.type === "session.compaction.skipped") {
+      findings.push(
+        "latest compaction attempt was skipped; compact.json is from an earlier completed attempt",
+      );
+    }
+    if (!artifactSummary && latestCompleted) {
+      findings.push(
+        "latest completed session compaction event references an artifact that is missing or invalid",
+      );
+    }
+
+    return {
+      status: sessionCompactionInspectStatus({
+        artifact: artifactSummary,
+        latestEvent,
+        latestCompleted,
+        artifactMatchesLatestCompletedEvent,
+      }),
+      artifact: artifactSummary,
+      events,
+      latestEvent,
+      consistency: {
+        ok:
+          artifactMatchesLatestCompletedEvent !== false &&
+          !(latestCompleted && !artifactSummary),
+        artifactMatchesLatestCompletedEvent,
+        findings,
+      },
+    };
   }
 
   async compactSession(
@@ -3857,6 +4004,149 @@ function mergeCompactionWarnings(
   return warnings.length > 0 ? warnings : undefined;
 }
 
+async function loadSessionCompactionEvents(
+  store: FileSessionStore,
+  sessionId: string,
+): Promise<SessionCompactionInspectEvent[]> {
+  const events: SessionCompactionInspectEvent[] = [];
+  for await (const event of store.loadEvents(sessionId)) {
+    const projected = sessionCompactionInspectEvent(event);
+    if (projected) events.push(projected);
+  }
+  return events;
+}
+
+function sessionCompactionInspectEvent(
+  event: SessionEvent,
+): SessionCompactionInspectEvent | null {
+  if (
+    event.type !== "session.compaction.completed" &&
+    event.type !== "session.compaction.skipped"
+  ) {
+    return null;
+  }
+  const payload = isPlainRecord(event.payload) ? event.payload : {};
+  return {
+    sequence: event.sequence,
+    timestamp: event.timestamp,
+    type: event.type,
+    compactedRunCount: recordNumber(payload, "compactedRunCount") ?? 0,
+    throughRunId: recordNullableString(payload, "throughRunId"),
+    originalCharCount: recordNumber(payload, "originalCharCount") ?? 0,
+    summaryCharCount: recordNumber(payload, "summaryCharCount") ?? 0,
+    freedChars: recordNumber(payload, "freedChars") ?? 0,
+    ...(sessionCompactionMeasurementFromUnknown(payload.measurement)
+      ? {
+          measurement: sessionCompactionMeasurementFromUnknown(
+            payload.measurement,
+          ),
+        }
+      : {}),
+    artifactPath: recordNullableString(payload, "artifactPath"),
+    ...(recordString(payload, "skippedReason")
+      ? { skippedReason: recordString(payload, "skippedReason") }
+      : {}),
+    ...(recordStringArray(payload, "warningCodes")
+      ? { warningCodes: recordStringArray(payload, "warningCodes") }
+      : {}),
+    ...(recordString(event.metadata, "reason")
+      ? { reason: recordString(event.metadata, "reason") }
+      : {}),
+    ...(recordString(event.metadata, "source")
+      ? { source: recordString(event.metadata, "source") }
+      : {}),
+  };
+}
+
+function sessionCompactionArtifactInspectSummary(
+  artifact: SessionCompactArtifact,
+  path: string,
+): SessionCompactionInspectArtifact {
+  const metadata = artifact.metadata ?? {};
+  return {
+    path,
+    schemaVersion: artifact.schemaVersion,
+    createdAt: artifact.createdAt,
+    throughRunId: artifact.throughRunId,
+    compactedRunCount: artifact.compactedRunCount,
+    sourceRunIds: [...artifact.sourceRunIds],
+    originalCharCount: artifact.originalCharCount,
+    summaryCharCount: artifact.summaryCharCount,
+    freedChars: artifact.freedChars,
+    ...(sessionCompactionMeasurementFromUnknown(metadata.measurement)
+      ? {
+          measurement: sessionCompactionMeasurementFromUnknown(
+            metadata.measurement,
+          ),
+        }
+      : {}),
+    ...(recordString(metadata, "mode")
+      ? { mode: recordString(metadata, "mode") }
+      : {}),
+    ...(recordString(metadata, "reason")
+      ? { reason: recordString(metadata, "reason") }
+      : {}),
+    ...(sessionCompactionWarningCodes(metadata)
+      ? { warningCodes: sessionCompactionWarningCodes(metadata) }
+      : {}),
+    ...(isPlainRecord(metadata.summaryFingerprint)
+      ? { summaryFingerprint: { ...metadata.summaryFingerprint } }
+      : {}),
+  };
+}
+
+function sessionCompactionArtifactMatchesEvent(
+  artifact: SessionCompactionInspectArtifact,
+  event: SessionCompactionInspectEvent,
+): boolean {
+  return (
+    event.type === "session.compaction.completed" &&
+    artifact.path === event.artifactPath &&
+    artifact.throughRunId === event.throughRunId &&
+    artifact.compactedRunCount === event.compactedRunCount &&
+    artifact.originalCharCount === event.originalCharCount &&
+    artifact.summaryCharCount === event.summaryCharCount &&
+    artifact.freedChars === event.freedChars
+  );
+}
+
+function sessionCompactionInspectStatus(input: {
+  artifact: SessionCompactionInspectArtifact | null;
+  latestEvent: SessionCompactionInspectEvent | null;
+  latestCompleted: SessionCompactionInspectEvent | null;
+  artifactMatchesLatestCompletedEvent: boolean | null;
+}): SessionCompactionInspectReport["status"] {
+  if (!input.artifact && !input.latestEvent) return "not_compacted";
+  if (input.latestEvent?.type === "session.compaction.skipped") {
+    return "skipped";
+  }
+  if (input.artifact && input.latestCompleted) {
+    return input.artifactMatchesLatestCompletedEvent === false
+      ? "stale_artifact"
+      : "compacted";
+  }
+  if (input.artifact) return "artifact_only";
+  return "event_only";
+}
+
+function sessionCompactionWarningCodes(
+  metadata: Record<string, unknown>,
+): string[] | undefined {
+  const warnings = metadata.warnings;
+  if (!Array.isArray(warnings)) return undefined;
+  const codes = warnings
+    .map((warning) => recordString(warning, "code"))
+    .filter((code): code is string => Boolean(code));
+  return codes.length > 0 ? codes : undefined;
+}
+
+function sessionCompactionMeasurementFromUnknown(
+  value: unknown,
+): SessionCompactionMeasurement | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  return value as unknown as SessionCompactionMeasurement;
+}
+
 function sessionSummarizerUsageHint(
   resolved: ResolvedModelConfig,
 ): ContextUsageHint {
@@ -3935,6 +4225,26 @@ function recordString(value: unknown, key: string): string | undefined {
   return isPlainRecord(value) && typeof value[key] === "string"
     ? (value[key] as string)
     : undefined;
+}
+
+function recordNumber(value: unknown, key: string): number | undefined {
+  return isPlainRecord(value) && typeof value[key] === "number"
+    ? (value[key] as number)
+    : undefined;
+}
+
+function recordNullableString(value: unknown, key: string): string | null {
+  if (!isPlainRecord(value)) return null;
+  const candidate = value[key];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function recordStringArray(value: unknown, key: string): string[] | undefined {
+  if (!isPlainRecord(value) || !Array.isArray(value[key])) return undefined;
+  const strings = value[key].filter((item): item is string => {
+    return typeof item === "string";
+  });
+  return strings.length > 0 ? strings : undefined;
 }
 
 function findNestedString(value: unknown, key: string): string | undefined {

@@ -4758,6 +4758,89 @@ describe("runCli", () => {
       "Session deterministic-summary preview.",
     );
     expect(String(artifact.content)).toContain("packages/cli/src/cli.ts");
+
+    const inspectOutput = createOutputCapture();
+    const inspect = await runCli(
+      [
+        "session",
+        "inspect",
+        sessionId,
+        "--compaction",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: inspectOutput.stdout, stderr: inspectOutput.stderr },
+      },
+    );
+
+    expect(inspect.exitCode).toBe(0);
+    const inspected = JSON.parse(inspectOutput.stdoutText()) as Record<
+      string,
+      unknown
+    >;
+    expect(inspected).toMatchObject({
+      ok: true,
+      sessionId,
+      compaction: {
+        status: "compacted",
+        artifact: {
+          path: join(sessionRootDir, sessionId, "compact.json"),
+          throughRunId: runId,
+          compactedRunCount: 1,
+          freedChars: payload.freedChars,
+          warningCodes: expect.arrayContaining([
+            "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+          ]),
+        },
+        latestEvent: {
+          type: "session.compaction.completed",
+          throughRunId: runId,
+          artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+        },
+        consistency: {
+          ok: true,
+          artifactMatchesLatestCompletedEvent: true,
+        },
+      },
+    });
+    expect(inspectOutput.stdoutText()).not.toContain(
+      "Session deterministic-summary preview.",
+    );
+
+    const inspectTextOutput = createOutputCapture();
+    const inspectText = await runCli(
+      [
+        "session",
+        "inspect",
+        sessionId,
+        "--compaction",
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: {
+          stdout: inspectTextOutput.stdout,
+          stderr: inspectTextOutput.stderr,
+        },
+      },
+    );
+
+    expect(inspectText.exitCode).toBe(0);
+    expect(inspectTextOutput.stdoutText()).toContain("status: compacted");
+    expect(inspectTextOutput.stdoutText()).toContain(
+      `artifact: ${join(sessionRootDir, sessionId, "compact.json")}`,
+    );
+    expect(inspectTextOutput.stdoutText()).toContain(
+      "warnings: SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+    );
+    expect(inspectTextOutput.stdoutText()).not.toContain(
+      "Session deterministic-summary preview.",
+    );
   });
 
   it("repairs derived session metadata on request", async () => {

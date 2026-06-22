@@ -57,6 +57,7 @@ import {
   type PermissionMode,
   type RunInputPayload,
   type RunInputPart,
+  type SessionCompactionInspectReport,
   type TraceLevel,
 } from "@sparkwright/protocol";
 import {
@@ -193,6 +194,7 @@ interface ParsedArgs {
   verbose: boolean;
   resolveMcp: boolean;
   llm: boolean;
+  compaction: boolean;
   delegateGoal?: string;
 }
 
@@ -780,6 +782,7 @@ function parseArgs(
   let verbose = false;
   let resolveMcp = false;
   let llm = false;
+  let compaction = false;
   let delegateGoal: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -962,6 +965,13 @@ function parseArgs(
 
     if (arg === "--llm") {
       llm = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--compaction") {
+      compaction = true;
       args.splice(index, 1);
       index -= 1;
       continue;
@@ -1155,6 +1165,7 @@ function parseArgs(
   if (
     command === "session" &&
     subcommand !== "summary" &&
+    subcommand !== "inspect" &&
     subcommand !== "check" &&
     subcommand !== "repair" &&
     subcommand !== "compact" &&
@@ -1163,7 +1174,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]",
+        "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm] [--compaction]",
     };
   }
 
@@ -1339,6 +1350,7 @@ function parseArgs(
       verbose,
       resolveMcp,
       llm,
+      compaction,
       delegateGoal,
     },
   };
@@ -5342,7 +5354,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]";
   }
   if (command === "session") {
-    return "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]";
+    return "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm] [--compaction]";
   }
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
@@ -5447,7 +5459,7 @@ async function handleSessionCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]",
+      "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm] [--compaction]",
     );
     return { exitCode: 1 };
   }
@@ -5509,6 +5521,45 @@ async function handleSessionCommand(
       io.stdout,
       parsed.format === "text"
         ? formatSessionCompactResult(result)
+        : JSON.stringify(result, null, 2),
+    );
+    return { exitCode: 0, sessionId };
+  }
+
+  if (parsed.subcommand === "inspect") {
+    const runtime = new HostRuntime({
+      workspaceRoot: parsed.workspaceRoot,
+      sessionRootDir: parsed.sessionRootDir,
+      defaultModel: parsed.modelName,
+      emit: () => {},
+    });
+    if (parsed.compaction) {
+      const result = await runtime.inspectSessionCompaction(sessionId);
+      if (!result.ok) {
+        writeLine(io.stderr, `${result.error.code}: ${result.error.message}`);
+        return { exitCode: 1, sessionId };
+      }
+      writeLine(
+        io.stdout,
+        parsed.format === "text"
+          ? formatSessionCompactionInspectReport(
+              result.sessionId,
+              result.compaction,
+            )
+          : JSON.stringify(result, null, 2),
+      );
+      return { exitCode: 0, sessionId };
+    }
+
+    const result = await runtime.inspectSession(sessionId);
+    if (!result.ok) {
+      writeLine(io.stderr, `${result.error.code}: ${result.error.message}`);
+      return { exitCode: 1, sessionId };
+    }
+    writeLine(
+      io.stdout,
+      parsed.format === "text"
+        ? formatSessionInspectResult(result)
         : JSON.stringify(result, null, 2),
     );
     return { exitCode: 0, sessionId };
@@ -5983,6 +6034,112 @@ type SessionCompactCliResult = Extract<
   { ok: true }
 >;
 
+type SessionInspectCliResult = Extract<
+  Awaited<ReturnType<HostRuntime["inspectSession"]>>,
+  { ok: true }
+>;
+
+function formatSessionInspectResult(result: SessionInspectCliResult): string {
+  const summary = result.summary;
+  const consistency = result.consistency;
+  const timeline = result.timeline;
+  return [
+    `session: ${result.sessionId}`,
+    `events: ${numberField(summary, "eventCount") ?? 0}`,
+    `runs: ${arrayLength(summary, "runIds") ?? 0}`,
+    `consistency: ${booleanField(consistency, "ok") === false ? "failed" : "ok"}`,
+    `findings: ${arrayLength(consistency, "findings") ?? 0}`,
+    `phases: ${arrayLength(timeline, "phases") ?? 0}`,
+  ].join("\n");
+}
+
+function formatSessionCompactionInspectReport(
+  sessionId: string,
+  report: SessionCompactionInspectReport,
+): string {
+  const lines = [
+    `session: ${sessionId}`,
+    `status: ${report.status}`,
+    `artifact: ${report.artifact?.path ?? "(none)"}`,
+    `events: ${report.events.length}`,
+    `latestEvent: ${report.latestEvent?.type ?? "(none)"}`,
+    `consistency: ${report.consistency.ok ? "ok" : "failed"}`,
+  ];
+  if (report.artifact) {
+    lines.push(
+      `throughRunId: ${report.artifact.throughRunId}`,
+      `compactedRunCount: ${report.artifact.compactedRunCount}`,
+      `sourceRunIds: ${report.artifact.sourceRunIds.join(", ") || "(none)"}`,
+      `originalCharCount: ${report.artifact.originalCharCount}`,
+      `summaryCharCount: ${report.artifact.summaryCharCount}`,
+      `freedChars: ${report.artifact.freedChars}`,
+    );
+    if (report.artifact.measurement) {
+      lines.push(
+        `regime: ${report.artifact.measurement.regime}`,
+        `savingsRatio: ${report.artifact.measurement.savingsRatio.toFixed(4)}`,
+      );
+    }
+    if (report.artifact.mode) lines.push(`mode: ${report.artifact.mode}`);
+    if (report.artifact.reason) {
+      lines.push(`reason: ${report.artifact.reason}`);
+    }
+    if (report.artifact.warningCodes?.length) {
+      lines.push(`warnings: ${report.artifact.warningCodes.join(", ")}`);
+    }
+    if (report.artifact.summaryFingerprint) {
+      const modelId = stringField(
+        report.artifact.summaryFingerprint,
+        "modelId",
+      );
+      const inputHash = stringField(
+        report.artifact.summaryFingerprint,
+        "inputHash",
+      );
+      lines.push(
+        `fingerprint: model=${modelId ?? "(unknown)"}, inputHash=${inputHash ?? "(unknown)"}`,
+      );
+    }
+  }
+  for (const event of report.events.slice(-5)) {
+    lines.push(
+      `event ${event.sequence}: ${event.type} freedChars=${event.freedChars} artifact=${event.artifactPath ?? "(none)"}${event.skippedReason ? ` skippedReason=${event.skippedReason}` : ""}`,
+    );
+  }
+  for (const finding of report.consistency.findings) {
+    lines.push(`finding: ${finding}`);
+  }
+  return lines.join("\n");
+}
+
+function numberField(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  return typeof value[key] === "number" ? value[key] : undefined;
+}
+
+function booleanField(
+  value: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  return typeof value[key] === "boolean" ? value[key] : undefined;
+}
+
+function stringField(
+  value: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  return typeof value[key] === "string" ? value[key] : undefined;
+}
+
+function arrayLength(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  return Array.isArray(value[key]) ? value[key].length : undefined;
+}
+
 function formatSessionCompactResult(result: SessionCompactCliResult): string {
   const lines = [
     `status: ${result.skippedReason ? `skipped (${result.skippedReason})` : "compacted"}`,
@@ -6315,7 +6472,7 @@ function usage(): string {
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
     "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
-    "       sparkwright session <summary|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
+    "       sparkwright session <summary|inspect|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply] [--compaction]",
     '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");

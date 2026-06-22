@@ -489,7 +489,11 @@
       "type": "object",
       "required": ["sessionId"],
       "properties": {
-        "sessionId": { "type": "string", "minLength": 1 }
+        "sessionId": { "type": "string", "minLength": 1 },
+        "compaction": {
+          "type": "boolean",
+          "description": "Include a compact.json/session compaction event audit view without compacted summary content."
+        }
       },
       "additionalProperties": false
     },
