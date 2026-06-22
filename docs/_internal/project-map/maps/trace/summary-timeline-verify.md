@@ -12,6 +12,7 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 
 - `packages/core/src/trace.ts`
 - `packages/core/src/trace-diagnostics.ts`
+- `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-codec.ts`
 - `packages/cli/src/cli.ts`
 - `packages/host/src/runtime.ts`
@@ -90,8 +91,9 @@ trace.jsonl
 - Trace diagnostics operate over persisted raw `trace.jsonl`; valid trace
   levels are `standard` and `debug`.
 - `trace-diagnostics.ts` owns summary/timeline/report/verify and their pure
-  helpers. `trace.ts` re-exports those names as the phase-1 facade and keeps
-  session trace consistency/repair helpers at the facade seam.
+  helpers. `trace-session-consistency.ts` owns session trace
+  consistency/repair while reusing diagnostics parse/summary helpers. `trace.ts`
+  re-exports those names as the stable facade.
 - CLI live run output may suppress high-volume debug events through protocol
   `isLiveDebugNoiseEventType()` for readability; the CLI aggregates suppressed
   live events into `live.debug.suppressed` lines unless `--verbose` is set. This
@@ -125,13 +127,14 @@ trace.jsonl
 - Date: 2026-06-21
 - Read: `packages/core/src/trace.ts`,
   `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/trace-session-consistency.ts`,
   `packages/core/src/trace-codec.ts`, `packages/core/src/trace-store.ts`,
   `packages/core/src/index.ts`, `packages/core/src/internal.ts`,
   `packages/core/test/trace.test.ts`, `packages/cli/test/cli.test.ts`,
   `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
   `docs/_internal/project-map/maps/trace/raw-trace.md`,
   `docs/_internal/project-map/maps/session/session-store.md`.
-- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-session-consistency.ts packages/core/src/trace-store.ts`;
   `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
   `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

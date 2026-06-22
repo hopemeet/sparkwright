@@ -1,5 +1,5 @@
 // AI maintenance note: trace/session storage endpoint. This module may import
-// trace-codec, but must not import trace-diagnostics during the phase-1 split.
+// trace-codec, but must not import diagnostics or session-consistency modules.
 
 import { createHash } from "node:crypto";
 import {

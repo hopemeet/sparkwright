@@ -14,6 +14,7 @@ See [../trace/raw-trace.md](../trace/raw-trace.md) for raw event evidence.
 - `packages/core/src/trace.ts`
 - `packages/core/src/trace-store.ts`
 - `packages/core/src/trace-diagnostics.ts`
+- `packages/core/src/trace-session-consistency.ts`
 - `packages/host/src/runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
 
@@ -47,9 +48,10 @@ Manual compact
   3 summarization is requested, provider/scripted refs can write model-backed
   summaries with `summaryFingerprint`; deterministic refs record preview output
   plus a warning.
-- `validateSessionTraceConsistency` remains in the `trace.ts` facade seam; it
+- `trace-session-consistency.ts` owns `validateSessionTraceConsistency` and
   checks agreement between session files, trace metadata, run files, and
-  safety-relevant failures while reusing diagnostics parse/summary helpers.
+  safety-relevant failures while reusing diagnostics parse/summary helpers;
+  `trace.ts` re-exports it through the stable facade.
 - `repairSessionTraceConsistency` only repairs derived session metadata; it does not invent missing run/result files.
 
 ## Consumers
@@ -79,13 +81,14 @@ Manual compact
 - Read: `packages/core/src/session.ts`, `packages/core/src/trace.ts`,
   `packages/core/src/trace-store.ts`,
   `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/trace-session-consistency.ts`,
   `packages/core/src/trace-codec.ts`, `packages/core/src/index.ts`,
   `packages/core/src/internal.ts`, `packages/core/test/trace.test.ts`,
   `packages/cli/test/cli.test.ts`,
   `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
   `docs/_internal/project-map/maps/trace/raw-trace.md`,
   `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`.
-- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-session-consistency.ts packages/core/src/trace-store.ts`;
   `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
   `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

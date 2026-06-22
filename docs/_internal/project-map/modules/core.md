@@ -19,6 +19,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/trace.ts`
 - `packages/core/src/trace-codec.ts`
 - `packages/core/src/trace-diagnostics.ts`
+- `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-store.ts`
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
@@ -59,10 +60,12 @@ Does not own:
 - `traceId`, `spanId`, and `parentSpanId` are correlation fields only.
 - `trace.ts` is the stable named facade used by `index.ts` and `internal.ts`;
   storage lives in `trace-store.ts`, diagnostics live in
-  `trace-diagnostics.ts`, and codec/filter/redaction primitives live in the
-  leaf `trace-codec.ts`.
-- `trace-store.ts` may import `trace-codec.ts` but not diagnostics; moved trace
-  endpoint modules must not import the `trace.ts` facade.
+  `trace-diagnostics.ts`, session consistency/repair lives in
+  `trace-session-consistency.ts`, and codec/filter/redaction primitives live in
+  the leaf `trace-codec.ts`.
+- `trace-store.ts` may import `trace-codec.ts` but not diagnostics or session
+  consistency; moved trace endpoint modules must not import the `trace.ts`
+  facade.
 - `ProcessInvocationBase`, `ProcessOutputSummary`, and `SandboxSummary` are
   shared process-observation shapes; host runners own execution and core owns
   the event vocabulary plus trace persistence behavior.
@@ -153,14 +156,16 @@ Does not own:
 - Status: Verified
 - Date: 2026-06-21
 - Read: `packages/core/src/trace.ts`, `packages/core/src/trace-codec.ts`,
-  `packages/core/src/trace-diagnostics.ts`, `packages/core/src/trace-store.ts`,
-  `packages/core/src/index.ts`, `packages/core/src/internal.ts`,
+  `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/trace-session-consistency.ts`,
+  `packages/core/src/trace-store.ts`, `packages/core/src/index.ts`,
+  `packages/core/src/internal.ts`,
   `packages/core/test/trace.test.ts`, `packages/cli/test/cli.test.ts`,
   `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
   `docs/_internal/project-map/maps/trace/raw-trace.md`,
   `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`,
   `docs/_internal/project-map/maps/session/session-store.md`.
-- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-store.ts`;
+- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-session-consistency.ts packages/core/src/trace-store.ts`;
   `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
   `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.
