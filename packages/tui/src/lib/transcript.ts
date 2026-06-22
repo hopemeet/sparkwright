@@ -19,6 +19,7 @@ import { isInternalTranscriptEvent, type RunEvent } from "./event-type.js";
 import { runFailureMessage } from "@sparkwright/protocol";
 import {
   formatToolRequestPreview,
+  oneLine,
   summarizeToolResultForDisplay,
 } from "./tool-display.js";
 
@@ -132,7 +133,10 @@ export function renderTranscript(
         out.push(`### Tool: \`${name}\``);
         if (args !== undefined) {
           out.push("");
-          const preview = formatToolRequestPreview(name, args, 140);
+          const preview =
+            typeof p.preview === "string" && p.preview.trim()
+              ? oneLine(p.preview, 140)
+              : formatToolRequestPreview(name, args, 140);
           if (preview) {
             out.push(`_Args:_ ${preview}`);
           } else {

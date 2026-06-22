@@ -3670,6 +3670,20 @@ export function createDynamicSpawnAgentTool(input: {
       sideEffects: ["read"],
       idempotency: "conditional",
     },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const role = previewString(r.role);
+      const goal = previewString(r.goal);
+      const allowedTools = Array.isArray(r.allowedTools)
+        ? r.allowedTools.filter(
+            (tool): tool is string => typeof tool === "string",
+          )
+        : [];
+      const toolHint =
+        allowedTools.length > 0 ? ` · ${allowedTools.join(", ")}` : "";
+      if (role && goal) return `${role}: ${goal}${toolHint}`;
+      return role || goal || undefined;
+    },
     isReplaySafe: false,
     async execute(args: unknown): Promise<unknown> {
       const parent = input.getParent();
@@ -3918,6 +3932,16 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     maxSteps: Math.min(maxSteps, 16),
     metadata,
   };
+}
+
+function previewRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function previewString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function stringField(record: Record<string, unknown>, field: string): string {

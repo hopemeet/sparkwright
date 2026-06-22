@@ -102,6 +102,7 @@ import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
   createToolCall,
   executeTool,
+  formatToolRequestPreview,
   ToolRegistry,
   validateToolArguments,
   type ToolDefinition,
@@ -2300,7 +2301,7 @@ export class SparkwrightRun implements RunHandle {
       );
       const span = openSpan(this.events, {
         startType: "tool.requested",
-        payload: call,
+        payload: this.toolRequestedPayload(call, requestedCall),
       });
       const blocked: ToolResult = {
         toolCallId: call.id,
@@ -2459,7 +2460,7 @@ export class SparkwrightRun implements RunHandle {
     // nest under the call — which itself nests under the enclosing batch span.
     const span = openSpan(this.events, {
       startType: "tool.requested",
-      payload: call,
+      payload: this.toolRequestedPayload(call, requestedCall),
     });
 
     if (executionDiagnostic?.duplicateKind === "in_flight_duplicate") {
@@ -2503,6 +2504,20 @@ export class SparkwrightRun implements RunHandle {
     return runWithSpan(span.frame, () =>
       this.runToolCallInSpan(call, requestedCall, state, batchResults, span),
     );
+  }
+
+  private toolRequestedPayload(
+    call: ReturnType<typeof createToolCall>,
+    requestedCall: RequestedToolCall,
+  ): ReturnType<typeof createToolCall> & { preview?: string } {
+    const requestPreview = formatToolRequestPreview(
+      this.tools.get(requestedCall.toolName),
+      requestedCall.arguments,
+    );
+    return {
+      ...call,
+      ...(requestPreview ? { preview: requestPreview } : {}),
+    };
   }
 
   /**

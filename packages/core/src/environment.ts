@@ -377,6 +377,11 @@ export function createShellExecutionTool(
       idempotency: "non_idempotent",
       audit: { level: "metadata" },
     },
+    previewArgs(request) {
+      return request && typeof request.command === "string"
+        ? `$ ${request.command}`
+        : undefined;
+    },
     execute(request) {
       return environment.executeShell(request);
     },

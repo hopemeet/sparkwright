@@ -202,6 +202,52 @@ describe("SparkwrightRun", () => {
     expect(events.at(-1)?.type).toBe("run.completed");
   });
 
+  it("records tool-owned request previews on tool.requested events", async () => {
+    let modelCalls = 0;
+    const previewed = defineTool({
+      name: "previewed",
+      description: "Preview arguments.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+      },
+      policy: { risk: "safe" },
+      previewArgs(args) {
+        return `open ${(args as { path?: string }).path ?? "?"}`;
+      },
+      execute() {
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "preview request",
+      tools: [previewed],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  { toolName: "previewed", arguments: { path: "README.md" } },
+                ],
+              }
+            : { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    const requested = run.events
+      .all()
+      .find((event) => event.type === "tool.requested");
+    expect(requested?.payload).toMatchObject({
+      toolName: "previewed",
+      preview: "open README.md",
+    });
+  });
+
   it("omits deferred tools from provider requests until tool_search loads them", async () => {
     let modelCalls = 0;
     const deferredEcho = defineTool({

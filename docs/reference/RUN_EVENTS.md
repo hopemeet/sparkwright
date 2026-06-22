@@ -88,6 +88,16 @@ normalized model result.
 If chunks arrive after reconnect, deduplicate by event `id` and rebuild the
 buffer from ordered events.
 
+## Tool Requests
+
+`tool.requested` opens the replayable audit record for a model-selected tool
+call. The payload carries the call id, tool name, raw arguments, and may include
+`preview`, a bounded one-line display string produced by the tool definition's
+`previewArgs()` formatter. UI clients should prefer `preview` for compact
+rendering and fall back to their legacy argument formatter when it is absent;
+policy, approval, validation, and execution must continue to use the structured
+arguments.
+
 ## Tool Progress
 
 `tool.progress` is an instant event for long-running tools. It does not change

@@ -98,6 +98,15 @@ export interface ToolResultPresentation {
   artifactPolicy?: "when_large" | "on_failure" | "never";
 }
 
+export interface ToolRequestPreviewOptions {
+  maxChars: number;
+}
+
+export type ToolRequestPreviewFormatter<TArgs = unknown> = (
+  args: TArgs,
+  options: ToolRequestPreviewOptions,
+) => string | undefined;
+
 export interface ToolProgressUpdate {
   /** @reserved Public progress payload field consumed by streaming UIs. */
   label?: string;
@@ -196,6 +205,16 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    */
   resultSize?: ToolResultSizePolicy;
   resultPresentation?: ToolResultPresentation;
+  /**
+   * Tool-owned one-line request summary for live UIs and trace projections.
+   * The run loop calls this before execution and stores the bounded text on
+   * `tool.requested.payload.preview`, so renderers do not need a growing
+   * switch statement for every tool name.
+   */
+  previewArgs?(
+    args: TArgs,
+    options: ToolRequestPreviewOptions,
+  ): string | undefined;
   /**
    * When true, a tool loader may hide this tool from the initial provider
    * request and expose it through a discovery/search surface.
@@ -438,6 +457,42 @@ function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
     policy: tool.policy,
     governance: tool.governance,
   };
+}
+
+export function formatToolRequestPreview(
+  tool: ToolDefinition | undefined,
+  args: unknown,
+  maxChars = 160,
+): string | undefined {
+  if (!tool?.previewArgs || maxChars < 8) return undefined;
+  try {
+    return boundToolRequestPreview(
+      tool.previewArgs(args, { maxChars }),
+      maxChars,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function boundToolRequestPreview(
+  value: string | undefined,
+  maxChars: number,
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const preview = stripAnsi(value)
+    .replace(/\\u001b\[[0-9;?]*[a-zA-Z]/g, "")
+    .replace(/\\[nrt]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!preview) return undefined;
+  return preview.length > maxChars
+    ? `${preview.slice(0, Math.max(0, maxChars - 1))}…`
+    : preview;
+}
+
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, "");
 }
 
 export function getToolInterruptBehavior(

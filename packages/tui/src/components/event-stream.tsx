@@ -499,7 +499,10 @@ function EventCard(props: {
         0,
         cols - childPad - marker.length - visibleName.length - 4,
       );
-      const preview = formatToolRequestPreview(name, args, previewBudget);
+      const eventPreview = str(p.preview);
+      const preview = eventPreview
+        ? oneLine(eventPreview, previewBudget)
+        : formatToolRequestPreview(name, args, previewBudget);
       return (
         <Box
           paddingLeft={childPad}

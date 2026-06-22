@@ -312,6 +312,9 @@ export function createShellTool(
       ],
       artifactPolicy: "when_large",
     },
+    previewArgs(args) {
+      return previewShellInput(args);
+    },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
       const input = normalizeShellInput(args);
@@ -351,6 +354,16 @@ export function createShellTool(
       });
     },
   });
+}
+
+function previewShellInput(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    return undefined;
+  }
+  const command = (args as Record<string, unknown>).command;
+  return typeof command === "string" && command.length > 0
+    ? `$ ${command}`
+    : undefined;
 }
 
 function shellPolicyForArgs(

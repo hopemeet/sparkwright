@@ -256,6 +256,23 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"patterns"');
   });
 
+  it("uses tool-owned request previews from events", async () => {
+    const events = [
+      ev("tool.requested", 1, {
+        toolName: "spawn_agent",
+        preview: "reviewer: inspect auth flow",
+        arguments: {
+          role: "reviewer",
+          goal: "inspect auth flow",
+          prompt: "Read the implementation and report risks.",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events), 90);
+    expect(text).toContain("⚙ spawn_agent  reviewer: inspect auth flow");
+    expect(text).not.toContain('"prompt"');
+  });
+
   it("renders capability mutations with action and compact path", async () => {
     const events = [
       ev("capability.mutation.completed", 1, {

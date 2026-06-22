@@ -104,6 +104,32 @@ describe("renderTranscript", () => {
     expect(md).not.toContain("_Result of `?`:_");
   });
 
+  it("uses tool-owned request previews in exported transcripts", () => {
+    const events: RunEvent[] = [
+      {
+        type: "tool.requested",
+        sequence: 1,
+        payload: {
+          id: "call_1",
+          toolName: "spawn_agent",
+          preview: "reviewer: inspect auth flow",
+          arguments: {
+            role: "reviewer",
+            goal: "inspect auth flow",
+            prompt: "Read the implementation and report risks.",
+          },
+        },
+      },
+    ];
+    const md = renderTranscript(
+      { sessionId: "s", workspaceRoot: "/x" },
+      events,
+    );
+
+    expect(md).toContain("_Args:_ reviewer: inspect auth flow");
+    expect(md).not.toContain('"prompt"');
+  });
+
   it("summarizes structured tool results without raw JSON envelopes", () => {
     const events: RunEvent[] = [
       {
