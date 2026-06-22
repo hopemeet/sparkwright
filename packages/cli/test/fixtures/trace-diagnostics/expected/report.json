@@ -32,12 +32,12 @@
     },
     {
       "severity": "medium",
-      "code": "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
-      "title": "External process had untracked workspace write capability",
+      "code": "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
+      "title": "A process had untracked workspace write capability",
       "evidence": [
         "delegate_external · agent writer · child cmd_writer · access granted"
       ],
-      "recommendation": "Audit the external command output and workspace diff separately; the trace records access granted, not per-file writes."
+      "recommendation": "Audit the process output and workspace diff separately; the trace records that write-capable access was granted, not per-file writes."
     }
   ]
 }

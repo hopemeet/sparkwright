@@ -260,11 +260,13 @@ Current event types:
   (e.g. the desired content was already present) and emitted no write
   proposal. Payload: `{ path: string, reason?: string }`. Useful so callers
   can distinguish "no write attempted" from "write attempted and applied".
-- `workspace.write.untracked_access_granted`: an external command delegate was
-  granted direct read/write workspace access outside the managed
+- `workspace.write.untracked_access_granted`: a host-controlled process
+  boundary, such as a read/write external command delegate or promoted shell
+  task, was granted workspace write capability outside the managed
   `workspace.write.*` APIs. This marker records access granted /
   untracked-write-capable only; it does not claim any file was written and is
-  not counted as a managed workspace write.
+  not counted as a managed workspace write. Boundary-specific payload fields
+  can include `protocol`, `childRunId`, `taskId`, and shell sandbox status.
 - `usage.updated`: a per-run usage aggregator emitted a fresh snapshot
   (tokens, cost, wall time, per-tool, per-model). Payload: `UsageSnapshot`.
 - `hook.failed`: a `RunHook.*` callback threw. Payload:

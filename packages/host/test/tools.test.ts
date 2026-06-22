@@ -15,6 +15,7 @@ import {
   type RuntimeContext,
 } from "@sparkwright/core";
 import {
+  FileTaskStore,
   InMemoryTaskStore,
   TaskManager,
   type TaskId,
@@ -1327,9 +1328,12 @@ describe("host tools", () => {
     });
   });
 
-  it("rolls back workspace mutations made by promoted shell tasks", async () => {
+  it("keeps promoted shell task writes and records a durable terminal task instead of rolling back", async () => {
     const ctx = await createWorkspace({});
-    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const tasksRoot = join(ctx.workspaceRoot, ".sparkwright", "tasks");
+    const manager = new TaskManager({
+      store: new FileTaskStore({ rootDir: tasksRoot }),
+    });
     const events = new EventLog(ctx.run.id);
     const tool = createHostShellTool(ctx.workspaceRoot, {
       taskManager: manager,
@@ -1341,7 +1345,7 @@ describe("host tools", () => {
     const result = await tool.execute(
       {
         command:
-          "node -e \"setTimeout(() => require('fs').writeFileSync('leak.txt', 'x'), 80)\"",
+          "node -e \"setTimeout(() => { require('fs').writeFileSync('leak.txt', 'x'); console.log('promoted done'); }, 80)\"",
       },
       ctx,
     );
@@ -1350,21 +1354,46 @@ describe("host tools", () => {
     const handle = manager.handle(result.taskId as TaskId);
     expect(handle).toBeDefined();
     const record = await handle!.wait();
-    expect(record.status).toBe("failed");
-    expect(record.error?.code).toBe("UNTRACKED_WORKSPACE_MUTATION");
-    expect(events.all()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "task.failed",
-          payload: expect.objectContaining({
-            errorCode: "UNTRACKED_WORKSPACE_MUTATION",
-          }),
-        }),
-      ]),
+
+    // Promotion turns the shell into a background task that runs concurrently
+    // with the rest of the session, so the foreground snapshot can no longer be
+    // diffed/rolled back without clobbering concurrent work. (a) The task
+    // reaches a real terminal state — not a rollback-induced failure...
+    expect(record.status).toBe("completed");
+    expect(record.completedAt).toBeDefined();
+    expect(events.all().some((event) => event.type === "task.failed")).toBe(
+      false,
     );
+
+    // ...(b) the write the promoted shell made survives instead of being rolled
+    // back...
     await expect(
-      readFile(join(ctx.workspaceRoot, "leak.txt")),
-    ).rejects.toThrow();
+      readFile(join(ctx.workspaceRoot, "leak.txt"), "utf8"),
+    ).resolves.toBe("x");
+
+    // ...(c) the untracked-write-capable boundary is disclosed via the shared
+    // marker (with the promoted_shell protocol + sandbox status) rather than
+    // audited away...
+    const marker = events
+      .all()
+      .find(
+        (event) => event.type === "workspace.write.untracked_access_granted",
+      );
+    expect(marker?.payload).toEqual(
+      expect.objectContaining({
+        protocol: "promoted_shell",
+        marker: "untracked-write-capable",
+        taskId: result.taskId,
+        sandboxMode: "off",
+      }),
+    );
+
+    // ...(d) and the terminal status is durable: a fresh FileTaskStore reader
+    // (as the `tasks get` CLI uses) must not see the task stuck at "running".
+    const reread = new FileTaskStore({ rootDir: tasksRoot, createRoot: false });
+    const persisted = reread.get(result.taskId as TaskId);
+    expect(persisted?.status).toBe("completed");
+    expect(persisted?.completedAt).toBeDefined();
   });
 
   it("does not use the read-only shell fast path for redirects", async () => {

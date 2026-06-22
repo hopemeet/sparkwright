@@ -1426,9 +1426,45 @@ describe("trace", () => {
         }),
         expect.objectContaining({
           severity: "medium",
-          code: "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
+          code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
           evidence: expect.arrayContaining([
             expect.stringContaining("delegate_external"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps sandboxed untracked write-capable boundaries at medium severity", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "promote shell" }),
+      log.emit("workspace.write.untracked_access_granted", {
+        taskId: "task_writer",
+        parentRunId: "run_parent",
+        toolName: "shell",
+        protocol: "promoted_shell",
+        marker: "untracked-write-capable",
+        access: "granted",
+        sandboxMode: "enforce",
+        filesystemIsolation: "bind-allowlist",
+        sandboxAvailable: true,
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("protocol promoted_shell"),
+            expect.stringContaining("fs bind-allowlist"),
           ]),
         }),
       ]),
@@ -1819,6 +1855,79 @@ describe("trace", () => {
     expect(summary.toolFailures.recovered.total).toBe(1);
     expect(report.findings.map((finding) => finding.code)).not.toContain(
       "TRACE_ERRORS",
+    );
+  });
+
+  it("surfaces unclassified failed terminal events in trace reports", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "background task" }),
+      log.emit("task.failed", {
+        taskId: "task_1",
+        errorCode: "TASK_EXIT_NONZERO",
+        message: "background task exited 1",
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "TRACE_ERRORS",
+          evidence: expect.arrayContaining([
+            "1 reportable failure event(s)",
+            "TASK_EXIT_NONZERO:1",
+            expect.stringContaining("task.failed · TASK_EXIT_NONZERO"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps foreground untracked workspace mutation guards as expected denials", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "foreground shell guard" }),
+      log.emit("tool.requested", {
+        id: "call_shell",
+        toolName: "shell",
+        arguments: { command: "echo x > leak.txt" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_shell",
+        toolName: "shell",
+        status: "failed",
+        error: {
+          code: "UNTRACKED_WORKSPACE_MUTATION",
+          message: "changed workspace files",
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(summary.expectedDenialCodes).toMatchObject({
+      UNTRACKED_WORKSPACE_MUTATION: 1,
+    });
+    expect(summary.toolFailures.unresolved.total).toBe(0);
+    expect(summary.safety.shell.untrackedWorkspaceMutations).toBe(1);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_ERRORS",
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
     );
   });
 

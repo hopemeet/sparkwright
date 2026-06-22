@@ -215,11 +215,11 @@ interface TraceReportFacts {
   trajectory: ReturnType<typeof evaluateTrajectory>;
   uniqueWritePaths: string[];
   verificationLag?: { modelCallsAfterLastWrite: number; command: string };
-  reportableTraceErrors: { total: number; byCode: Record<string, number> };
+  reportableFailures: ReportableFailureLedger;
   incompleteSubagents: Array<{ label: string }>;
   inFlightDuplicateStorms: Array<{ label: string; count: number }>;
   repeatedApprovalDenials: Array<{ label: string; count: number }>;
-  untrackedWriteAccess: Array<{ label: string }>;
+  untrackedWriteAccess: UntrackedWriteAccessMarker[];
   largestDuplicateRead: number;
   workspaceWrites: number;
   approvalsRequested: number;
@@ -228,6 +228,17 @@ interface TraceReportFacts {
 interface TraceReportContext {
   events: readonly SparkwrightEvent[];
   facts: TraceReportFacts;
+}
+
+interface ReportableFailure {
+  type: string;
+  code: string;
+  label: string;
+}
+
+interface ReportableFailureLedger {
+  failures: ReportableFailure[];
+  byCode: Record<string, number>;
 }
 
 type TraceReportAnalyzer = (
@@ -269,7 +280,7 @@ function collectTraceReportFacts(
   const trajectory = evaluateTrajectory([...events]);
   const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
   const verificationLag = collectVerificationLagAfterLastWrite(events);
-  const reportableTraceErrors = collectReportableTraceErrors(events);
+  const reportableFailures = collectReportableFailures(events);
   const incompleteSubagents = collectIncompleteSubagentTerminals(events);
   const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
   const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
@@ -291,7 +302,7 @@ function collectTraceReportFacts(
     trajectory,
     uniqueWritePaths,
     verificationLag,
-    reportableTraceErrors,
+    reportableFailures,
     incompleteSubagents,
     inFlightDuplicateStorms,
     repeatedApprovalDenials,
@@ -305,7 +316,7 @@ function collectTraceReportFacts(
 function analyzeTraceFailures({
   facts,
 }: TraceReportContext): TraceReportFinding[] {
-  const { summary, reportableTraceErrors } = facts;
+  const { summary, reportableFailures } = facts;
   const findings: TraceReportFinding[] = [];
   if (summary.toolFailures.unresolved.total > 0) {
     findings.push({
@@ -321,14 +332,15 @@ function analyzeTraceFailures({
     });
   }
 
-  if (reportableTraceErrors.total > 0) {
+  if (reportableFailures.failures.length > 0) {
     findings.push({
       severity: "high",
       code: "TRACE_ERRORS",
       title: "Trace contains runtime error events",
       evidence: [
-        `${reportableTraceErrors.total} reportable error event(s)`,
-        formatCountRecord(reportableTraceErrors.byCode),
+        `${reportableFailures.failures.length} reportable failure event(s)`,
+        formatCountRecord(reportableFailures.byCode),
+        ...reportableFailures.failures.slice(0, 5).map((item) => item.label),
       ].filter(Boolean),
       recommendation:
         "Use trace events filtered by error type/code to find the failing layer.",
@@ -450,12 +462,16 @@ function analyzeMultiAgentAuditability({
 
   if (untrackedWriteAccess.length > 0) {
     findings.push({
+      // The marker means the process can write workspace files outside the
+      // managed workspace.write.* API. Filesystem isolation may bound where the
+      // process can write, but it does not provide per-file attribution or deny
+      // ordinary workspace writes, so the report keeps this at medium.
       severity: "medium",
-      code: "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
-      title: "External process had untracked workspace write capability",
+      code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
+      title: "A process had untracked workspace write capability",
       evidence: untrackedWriteAccess.slice(0, 5).map((item) => item.label),
       recommendation:
-        "Audit the external command output and workspace diff separately; the trace records access granted, not per-file writes.",
+        "Audit the process output and workspace diff separately; the trace records that write-capable access was granted, not per-file writes.",
     });
   }
 
@@ -1395,17 +1411,16 @@ function collectToolFailure(
     (summary.toolFailures.byCode[code] ?? 0) + 1;
 }
 
-function collectReportableTraceErrors(events: readonly SparkwrightEvent[]): {
-  total: number;
-  byCode: Record<string, number>;
-} {
+function collectReportableFailures(
+  events: readonly SparkwrightEvent[],
+): ReportableFailureLedger {
   const toolFailureCallIds = new Set(
     analyzeToolOutcomes(events)
       .failures.map((failure) => failure.toolCallId)
       .filter((id): id is string => Boolean(id)),
   );
+  const failures: ReportableFailure[] = [];
   const byCode: Record<string, number> = {};
-  let total = 0;
 
   for (const event of events) {
     if (isExpectedDenialEvent(event)) continue;
@@ -1413,12 +1428,34 @@ function collectReportableTraceErrors(events: readonly SparkwrightEvent[]): {
     if (event.type === "tool.failed") continue;
     if (isToolFailureCompanionEvent(event, toolFailureCallIds)) continue;
 
-    total += 1;
     const code = traceErrorCode(event) ?? event.type;
+    failures.push({
+      type: event.type,
+      code,
+      label: reportableFailureLabel(event, code),
+    });
     byCode[code] = (byCode[code] ?? 0) + 1;
   }
 
-  return { total, byCode };
+  return { failures, byCode };
+}
+
+function reportableFailureLabel(event: SparkwrightEvent, code: string): string {
+  const payload = isRecord(event.payload) ? event.payload : undefined;
+  const error = isRecord(payload?.error) ? payload.error : undefined;
+  const failure = isRecord(payload?.failure) ? payload.failure : undefined;
+  const message = stringValue(
+    payload?.message,
+    error?.message,
+    failure?.message,
+  );
+  const pieces = [
+    event.type,
+    code,
+    message ? truncateDiagnostic(message, 120) : undefined,
+    `run ${event.runId}`,
+  ].filter((value): value is string => typeof value === "string");
+  return truncateDiagnostic(pieces.join(" · "), 220);
 }
 
 function isToolFailureCompanionEvent(
@@ -2035,10 +2072,14 @@ function collectRepeatedApprovalDenials(
   );
 }
 
+interface UntrackedWriteAccessMarker {
+  label: string;
+}
+
 function collectUntrackedWriteAccessMarkers(
   events: readonly SparkwrightEvent[],
-): Array<{ label: string }> {
-  const out: Array<{ label: string }> = [];
+): UntrackedWriteAccessMarker[] {
+  const out: UntrackedWriteAccessMarker[] = [];
 
   for (const event of events) {
     if (
@@ -2052,6 +2093,7 @@ function collectUntrackedWriteAccessMarkers(
       event.metadata.delegateTool,
       "external process",
     )!;
+    const protocol = stringValue(event.payload.protocol);
     const agent = stringValue(
       event.payload.agentProfileId,
       event.metadata.agentProfileId,
@@ -2061,13 +2103,29 @@ function collectUntrackedWriteAccessMarkers(
       event.payload.childRunId,
       event.metadata.childRunId,
     );
+    const taskId = stringValue(event.payload.taskId);
+    const isolation = stringValue(event.payload.filesystemIsolation);
+    const mode = stringValue(event.payload.sandboxMode);
+    const sandboxAvailable =
+      typeof event.payload.sandboxAvailable === "boolean"
+        ? event.payload.sandboxAvailable
+        : undefined;
     const pieces = [
       toolName,
+      protocol ? `protocol ${protocol}` : undefined,
       agent ? `agent ${agent}` : undefined,
       childRunId ? `child ${childRunId}` : undefined,
+      taskId ? `task ${taskId}` : undefined,
+      mode ? `sandbox ${mode}` : undefined,
+      isolation ? `fs ${isolation}` : undefined,
+      sandboxAvailable !== undefined
+        ? `sandbox ${sandboxAvailable ? "available" : "unavailable"}`
+        : undefined,
       "access granted",
     ].filter((value): value is string => typeof value === "string");
-    out.push({ label: truncateDiagnostic(pieces.join(" · "), 220) });
+    out.push({
+      label: truncateDiagnostic(pieces.join(" · "), 220),
+    });
   }
 
   return out;

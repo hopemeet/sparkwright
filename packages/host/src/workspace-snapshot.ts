@@ -17,7 +17,20 @@ const AUDIT_EXCLUDED_DIRS = new Set([
   "__pycache__",
   ".pytest_cache",
 ]);
-const AUDIT_EXCLUDED_PATHS = new Set([".sparkwright/sessions"]);
+// SparkWright's own control-plane runtime state lives under .sparkwright/ but is
+// written by the framework (session traces, the task store, TUI history/stash),
+// not by the shell command under audit. Excluding it keeps the mutation audit
+// from flagging framework writes as untracked shell mutations. Managed
+// capability packages under .sparkwright/{skills,agents,command} are
+// deliberately NOT excluded — the foreground audit still guards them.
+const AUDIT_EXCLUDED_PATHS = new Set([
+  ".sparkwright/sessions",
+  ".sparkwright/tasks",
+]);
+const AUDIT_EXCLUDED_FILES = new Set([
+  ".sparkwright/tui-history.jsonl",
+  ".sparkwright/tui-stash.json",
+]);
 const MANAGED_CAPABILITY_PREFIXES = [
   ".sparkwright/skills/",
   ".sparkwright/agents/",
@@ -69,6 +82,7 @@ export async function snapshotWorkspace(
         continue;
       }
       if (!entry.isFile()) continue;
+      if (AUDIT_EXCLUDED_FILES.has(relativePath)) continue;
 
       const absolutePath = join(root, relativePath);
       const stat = await lstat(absolutePath).catch(() => undefined);
