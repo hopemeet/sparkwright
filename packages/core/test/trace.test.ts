@@ -2597,6 +2597,38 @@ describe("trace", () => {
     ).not.toContain("model.stream.chunk");
   });
 
+  it("orders timeline phases by aggregate projection before file order", () => {
+    const traceId = createTraceId();
+    const timestamp = "2026-02-02T00:00:00.000Z";
+    const firstLog = new EventLog(createRunId());
+    const secondLog = new EventLog(createRunId());
+    const later = firstLog.emit(
+      "workspace.read",
+      { path: "later.md" },
+      { agentId: "main" },
+    );
+    const earlier = secondLog.emit(
+      "workspace.read",
+      { path: "earlier.md" },
+      { agentId: "main" },
+    );
+    for (const event of [later, earlier]) {
+      event.traceId = traceId;
+      event.timestamp = timestamp;
+    }
+    later.monotonicUs = 200;
+    earlier.monotonicUs = 100;
+
+    const timeline = buildTraceTimelineJsonl(
+      [later, earlier].map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases.map((phase) => phase.label)).toEqual([
+      "workspace earlier.md",
+      "workspace later.md",
+    ]);
+  });
+
   it("uses semantic phase keys before spans in trace timelines", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -3988,6 +4020,35 @@ describe("trace", () => {
 
     expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);
+  });
+
+  it("flags aggregate projection timestamp backsteps across runs", () => {
+    const parent = new EventLog(createRunId());
+    const child = new EventLog(createRunId());
+    const parentStart = parent.emit("run.created", { goal: "parent" });
+    const parentDone = parent.emit("run.completed", {
+      reason: "final_answer",
+    });
+    const childStart = child.emit("run.created", { goal: "child" });
+    const childDone = child.emit("run.completed", { reason: "final_answer" });
+    parentStart.timestamp = "2026-02-02T00:00:00.000Z";
+    parentDone.timestamp = "2026-02-02T00:00:01.000Z";
+    childStart.timestamp = "2026-02-02T00:00:02.000Z";
+    childDone.timestamp = "2026-02-02T00:00:03.000Z";
+
+    const report = verifyTraceJsonl(
+      [parentStart, childStart, childDone, parentDone]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
+
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((finding) => finding.code)).toContain(
+      "TRACE_PROJECTION_ORDER_INVALID",
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_SEQUENCE_INVALID",
+    );
   });
 
   it("checks monotonic ordering per agent within a shared-trace multi-agent run", () => {

@@ -831,6 +831,8 @@ export function verifyTraceJsonl(
   const artifactIds = new Set<string>();
   const previousMonotonicUsByTrace = new Map<string, number>();
 
+  collectTraceProjectionOrderFindings(events, findings);
+
   for (const [index, event] of events.entries()) {
     const line = index + 1;
     if (!event || typeof event !== "object") {
@@ -1005,9 +1007,7 @@ export function buildTraceTimelineJsonl(
 }
 
 export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
-  const sorted = [...events].sort(
-    (a, b) => a.timestamp.localeCompare(b.timestamp) || a.sequence - b.sequence,
-  );
+  const sorted = projectTraceEvents(events).map((entry) => entry.event);
   const runIds = new Set<string>();
   const sessionIds = new Set<string>();
   const agentIds = new Set<string>();
@@ -1338,6 +1338,109 @@ export function observedSequenceEnd(event: SparkwrightEvent): number {
     return event.sequence + event.payload.chunkCount - 1;
   }
   return event.sequence;
+}
+
+interface TraceProjectionEntry {
+  event: SparkwrightEvent;
+  index: number;
+}
+
+function projectTraceEvents(
+  events: readonly SparkwrightEvent[],
+): TraceProjectionEntry[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort(compareTraceProjectionEntries);
+}
+
+function compareTraceProjectionEntries(
+  a: TraceProjectionEntry,
+  b: TraceProjectionEntry,
+): number {
+  return compareTraceProjectionTime(a.event, b.event) || a.index - b.index;
+}
+
+function compareTraceProjectionTime(
+  a: SparkwrightEvent,
+  b: SparkwrightEvent,
+): number {
+  if (typeof a.timestamp !== "string" || typeof b.timestamp !== "string") {
+    return 0;
+  }
+  const timestamp = compareTraceTimestamps(a.timestamp, b.timestamp);
+  if (timestamp !== 0) return timestamp;
+
+  // `monotonicUs` has one origin per process, not globally. Without a process
+  // id, the narrow safe comparison is the same trace/agent scope. Cross-agent
+  // events with the same millisecond timestamp keep append order.
+  if (traceMonotonicScope(a) === traceMonotonicScope(b)) {
+    const aMonotonic = finiteNumber(a.monotonicUs);
+    const bMonotonic = finiteNumber(b.monotonicUs);
+    if (aMonotonic !== undefined && bMonotonic !== undefined) {
+      return aMonotonic - bMonotonic;
+    }
+  }
+
+  return 0;
+}
+
+function compareTraceTimestamps(a: string, b: string): number {
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (Number.isFinite(aMs) && Number.isFinite(bMs) && aMs !== bMs) {
+    return aMs - bMs;
+  }
+  return a.localeCompare(b);
+}
+
+function traceMonotonicScope(event: SparkwrightEvent): string {
+  const traceScope =
+    typeof event.traceId === "string" && event.traceId.length > 0
+      ? event.traceId
+      : typeof event.runId === "string"
+        ? event.runId
+        : "";
+  return `${traceScope}::${stringMetadata(event.metadata, "agentId") ?? ""}`;
+}
+
+function collectTraceProjectionOrderFindings(
+  events: readonly SparkwrightEvent[],
+  findings: TraceVerificationFinding[],
+): void {
+  let previous: { event: SparkwrightEvent; line: number } | undefined;
+  for (const [index, event] of events.entries()) {
+    const line = index + 1;
+    if (!isTraceProjectionComparableEvent(event)) continue;
+    if (previous && compareTraceProjectionTime(previous.event, event) > 0) {
+      findings.push({
+        severity: "error",
+        code: "TRACE_PROJECTION_ORDER_INVALID",
+        message:
+          "Trace events move backward in aggregate timeline projection order.",
+        metadata: {
+          line,
+          previousLine: previous.line,
+          previousRunId: previous.event.runId,
+          runId: event.runId,
+          previousTimestamp: previous.event.timestamp,
+          timestamp: event.timestamp,
+          previousMonotonicUs: previous.event.monotonicUs,
+          monotonicUs: event.monotonicUs,
+        },
+      });
+    }
+    previous = { event, line };
+  }
+}
+
+function isTraceProjectionComparableEvent(
+  event: unknown,
+): event is SparkwrightEvent {
+  return (
+    isRecord(event) &&
+    typeof event.runId === "string" &&
+    typeof event.timestamp === "string"
+  );
 }
 
 function isTerminalRunEvent(event: SparkwrightEvent): boolean {
@@ -2553,6 +2656,12 @@ function numberValue(...values: unknown[]): number {
     if (typeof value === "number" && Number.isFinite(value)) return value;
   }
   return 0;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function positiveNumber(value: unknown): boolean {
