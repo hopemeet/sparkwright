@@ -29,6 +29,33 @@ describe("SparkwrightRun", () => {
     );
   });
 
+  function createRunHealthReadFileTool() {
+    return defineTool({
+      name: "read_file",
+      description: "Read a file.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      policy: { risk: "safe" },
+      async execute(args, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        const path = (args as { path: string }).path;
+        const content = await ctx.workspace.readText(path);
+        const lineCount = content.split("\n").length;
+        return {
+          path,
+          content,
+          startLine: 1,
+          endLine: lineCount,
+          totalLines: lineCount,
+          hasMore: false,
+        };
+      },
+    });
+  }
+
   it("classifies custom tool argument error codes as model argument errors", () => {
     expect(classifyToolFailure("TASK_ARGUMENTS_INVALID")).toBe(
       "model_arg_error",
@@ -1003,6 +1030,147 @@ describe("SparkwrightRun", () => {
               ?.reason === "repeated_idempotent_noop",
         ),
     ).toBe(true);
+  });
+
+  it("feeds back unchanged read_file repeats after an intervening tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "README.md"), "# Demo\nsame text\n", "utf8");
+    let modelCalls = 0;
+    let healthContextSeen = false;
+
+    const readFileTool = createRunHealthReadFileTool();
+    const note = defineTool({
+      name: "note",
+      description: "Intervening harmless tool.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      execute() {
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "avoid rereading unchanged files",
+      workspace: new LocalWorkspace(root),
+      tools: [readFileTool, note],
+      maxSteps: 6,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return { toolCalls: [{ toolName: "note", arguments: {} }] };
+          }
+          if (modelCalls === 3) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+
+          healthContextSeen = input.context.some(
+            (item) =>
+              item.source?.uri === "run.health" &&
+              item.content.includes("same unchanged content") &&
+              item.content.includes("README.md"),
+          );
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(healthContextSeen).toBe(true);
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "workspace.read")
+        .map((event) => (event.payload as { path?: string }).path),
+    ).toEqual(["README.md", "README.md"]);
+  });
+
+  it("does not feed back unchanged reads after the file is written", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "README.md"), "# Demo\nsame text\n", "utf8");
+    let modelCalls = 0;
+    const healthMessages: string[] = [];
+
+    const readFileTool = createRunHealthReadFileTool();
+    const rewriteReadme = defineTool({
+      name: "rewrite_readme",
+      description: "Rewrite README.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      async execute(_, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        await ctx.workspace.writeText("README.md", "# Demo\nchanged text\n", {
+          reason: "test update",
+        });
+        return { path: "README.md", changed: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "re-read after write",
+      workspace: new LocalWorkspace(root),
+      tools: [readFileTool, rewriteReadme],
+      policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+      maxSteps: 6,
+      model: {
+        async complete(input) {
+          healthMessages.push(
+            ...input.context
+              .filter((item) => item.source?.uri === "run.health")
+              .map((item) => item.content),
+          );
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [{ toolName: "rewrite_readme", arguments: {} }],
+            };
+          }
+          if (modelCalls === 3) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(healthMessages).toEqual([]);
+    await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
+      "# Demo\nchanged text\n",
+    );
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "workspace.write.completed"),
+    ).toHaveLength(1);
   });
 
   it("uses deep equality for repeated tool call arguments", async () => {

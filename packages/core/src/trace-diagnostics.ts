@@ -5,6 +5,11 @@ import { readFile } from "node:fs/promises";
 import type { SparkwrightEvent } from "./events.js";
 import { evaluateTrajectory } from "./eval.js";
 import {
+  analyzeLowNetProgress,
+  collectRepeatedToolRequests,
+  type RepeatedToolRequest,
+} from "./run-health.js";
+import {
   analyzeToolOutcomes,
   commandOutcomeSnapshot,
   isPolicyOrApprovalFailure,
@@ -210,7 +215,7 @@ interface TraceReportFacts {
   workspaceReadRatio: number;
   topDuplicateReads: Record<string, number>;
   topTools: Record<string, number>;
-  repeatedToolRequests: Array<{ label: string; count: number }>;
+  repeatedToolRequests: RepeatedToolRequest[];
   repeatedCommandFailures: Array<{ label: string; count: number }>;
   trajectory: ReturnType<typeof evaluateTrajectory>;
   uniqueWritePaths: string[];
@@ -562,7 +567,7 @@ function analyzeEfficiency({
     });
   }
 
-  const efficiencyFinding = buildLowNetProgressFinding({
+  const lowNetProgress = analyzeLowNetProgress({
     modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
     toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
     budgetCheckCount: trajectory.metrics.budgetCheckCount,
@@ -572,7 +577,16 @@ function analyzeEfficiency({
     repeatedToolRequests,
     verificationLag,
   });
-  if (efficiencyFinding) findings.push(efficiencyFinding);
+  if (lowNetProgress) {
+    findings.push({
+      severity: "medium",
+      code: "LOW_NET_PROGRESS",
+      title: "Run spent many cycles for little file progress",
+      evidence: lowNetProgress.evidence,
+      recommendation:
+        "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
+    });
+  }
 
   return findings;
 }
@@ -1734,77 +1748,6 @@ function traceReportHeadline(
   return `${top.title}${findings.length > 1 ? ` (+${findings.length - 1} more)` : ""}.`;
 }
 
-function buildLowNetProgressFinding(input: {
-  modelCalls: number;
-  toolCalls: number;
-  budgetCheckCount: number;
-  workspaceWrites: number;
-  uniqueWritePaths: number;
-  topDuplicateReads: Record<string, number>;
-  repeatedToolRequests: Array<{ label: string; count: number }>;
-  verificationLag?: { modelCallsAfterLastWrite: number; command: string };
-}): TraceReportFinding | undefined {
-  const lowMutationWork =
-    input.modelCalls >= 8 &&
-    input.toolCalls >= 6 &&
-    input.uniqueWritePaths <= 2;
-  const noMutationWork =
-    input.modelCalls >= 6 &&
-    input.toolCalls >= 10 &&
-    input.workspaceWrites === 0;
-  const repeatedRead = Object.values(input.topDuplicateReads).some(
-    (count) => count >= 3,
-  );
-  const delayedVerification =
-    (input.verificationLag?.modelCallsAfterLastWrite ?? 0) >= 2;
-
-  // Every trigger requires a meaningful number of model calls: the finding's
-  // headline is "many cycles for little file progress", so a short run that
-  // merely verified a couple of turns after its last write must not match.
-  if (
-    !lowMutationWork &&
-    !noMutationWork &&
-    !(input.modelCalls >= 6 && repeatedRead) &&
-    !(input.modelCalls >= 6 && delayedVerification)
-  ) {
-    return undefined;
-  }
-
-  const duplicateReads = firstEntries(input.topDuplicateReads, 3);
-  const evidence = [
-    `${input.modelCalls} model call(s)`,
-    `${input.toolCalls} tool call(s)`,
-    `${input.uniqueWritePaths} unique written file(s)`,
-    input.workspaceWrites !== input.uniqueWritePaths
-      ? `${input.workspaceWrites} completed write event(s)`
-      : undefined,
-    input.budgetCheckCount > 0
-      ? `${input.budgetCheckCount} budget check event(s)`
-      : undefined,
-    Object.keys(duplicateReads).length > 0
-      ? `duplicate reads: ${formatCountRecord(duplicateReads)}`
-      : undefined,
-    input.repeatedToolRequests.length > 0
-      ? `repeated tool requests: ${input.repeatedToolRequests
-          .slice(0, 3)
-          .map((item) => `${item.count}x ${item.label}`)
-          .join("; ")}`
-      : undefined,
-    input.verificationLag && delayedVerification
-      ? `verification ran ${input.verificationLag.modelCallsAfterLastWrite} model call(s) after the last write: ${input.verificationLag.command}`
-      : undefined,
-  ].filter((value): value is string => typeof value === "string");
-
-  return {
-    severity: "medium",
-    code: "LOW_NET_PROGRESS",
-    title: "Run spent many cycles for little file progress",
-    evidence,
-    recommendation:
-      "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
-  };
-}
-
 function collectUniqueCompletedWritePaths(
   events: readonly SparkwrightEvent[],
 ): string[] {
@@ -1884,28 +1827,6 @@ function isLikelyVerificationCommand(command: string): boolean {
     /(?:^|[\s/])(gradlew|tox)\b/.test(normalized) ||
     /\brails\s+test\b/.test(normalized)
   );
-}
-
-function collectRepeatedToolRequests(
-  events: readonly SparkwrightEvent[],
-): Array<{ label: string; count: number }> {
-  const counts = new Map<string, { label: string; count: number }>();
-
-  for (const event of events) {
-    if (event.type !== "tool.requested" || !isRecord(event.payload)) continue;
-    const toolName = stringValue(event.payload.toolName);
-    if (!toolName) continue;
-    const args = stableDiagnosticJson(event.payload.arguments ?? {});
-    const key = `${toolName}:${args}`;
-    const label = truncateDiagnostic(`${toolName} ${args}`, 180);
-    const existing = counts.get(key);
-    if (existing) existing.count += 1;
-    else counts.set(key, { label, count: 1 });
-  }
-
-  return [...counts.values()]
-    .filter((item) => item.count >= 3)
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 function collectRepeatedCommandFailures(
@@ -2155,26 +2076,6 @@ function formatCountRecord(counts: Record<string, number>): string {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([key, count]) => `${key}:${count}`)
     .join(", ");
-}
-
-function stableDiagnosticJson(value: unknown): string {
-  try {
-    return JSON.stringify(stableDiagnosticValue(value));
-  } catch {
-    return String(value);
-  }
-}
-
-function stableDiagnosticValue(value: unknown): unknown {
-  if (Array.isArray(value))
-    return value.slice(0, 20).map(stableDiagnosticValue);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .slice(0, 20)
-      .map((key) => [key, stableDiagnosticValue(value[key])]),
-  );
 }
 
 function truncateDiagnostic(value: string, maxLength: number): string {

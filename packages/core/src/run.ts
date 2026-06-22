@@ -157,6 +157,7 @@ import {
   validateModelOutput,
   validateRunBudget,
 } from "./run-validation.js";
+import { RunHealthAnalyzer, type RunHealthFeedback } from "./run-health.js";
 
 const DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT = 3;
 const DEFAULT_MODEL_RETRY_MAX_ATTEMPTS = 3;
@@ -524,6 +525,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly promptBuilder: PromptBuilder<PromptMessage[]>;
   private readonly validationHooks: ValidationHook[];
   private readonly workflowHooks: WorkflowHook[];
+  private readonly runHealth = new RunHealthAnalyzer();
   private readonly compactionPipeline?: ReturnType<
     typeof createCompactionPipeline
   >;
@@ -602,6 +604,7 @@ export class SparkwrightRun implements RunHandle {
     this.events = new EventLog(this.record.id, {
       sequence: checkpoint?.eventSequence,
     });
+    this.events.subscribe((event) => this.runHealth.observeEvent(event));
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
     // InteractionChannel.approve, when supplied, takes precedence as the
@@ -3112,6 +3115,11 @@ export class SparkwrightRun implements RunHandle {
     if (postToolHooks.context.length > 0) {
       state.context.push(...postToolHooks.context);
     }
+    for (const feedback of this.runHealth.consumeFeedback()) {
+      state.context.push(
+        this.formatRunHealthFeedbackContext(feedback, state.step),
+      );
+    }
   }
 
   private validateToolCall(
@@ -3297,6 +3305,37 @@ export class SparkwrightRun implements RunHandle {
         step,
         validationContinuation: true,
         hookName: validationFailure.hookName,
+      },
+    };
+  }
+
+  private formatRunHealthFeedbackContext(
+    feedback: RunHealthFeedback,
+    step: number,
+  ): ContextItem {
+    return {
+      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
+      type: "summary",
+      source: {
+        kind: "runtime",
+        uri: "run.health",
+      },
+      content: feedback.message,
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        runHealth: true,
+        code: feedback.code,
+        toolName: feedback.toolName,
+        path: feedback.path,
+        count: feedback.count,
+        step,
+        ...(feedback.currentToolCallId
+          ? { toolCallId: feedback.currentToolCallId }
+          : {}),
+        ...(feedback.previousToolCallId
+          ? { previousToolCallId: feedback.previousToolCallId }
+          : {}),
       },
     };
   }
