@@ -130,6 +130,25 @@ export interface CompactionWarning {
   metadata?: Record<string, unknown>;
 }
 
+export interface SessionCompactionSummarizerMeasurement {
+  applied: boolean;
+  skippedReason?: string;
+  mode?: string;
+  modelId?: string;
+  promptVersion?: string;
+  /** @reserved Public oracle version consumed by artifact and diagnostics readers. */
+  oracleVersion?: string;
+  /** @reserved Public summary input fingerprint consumed by artifact reuse diagnostics. */
+  inputHash?: string;
+  /** @reserved Public reproducibility flag consumed by compact artifact readers. */
+  nonDeterministic?: boolean;
+  durationMs?: number;
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
 export interface SessionCompactionMeasurement {
   sourceRunCount: number;
   originalCharCount: number;
@@ -139,7 +158,7 @@ export interface SessionCompactionMeasurement {
   freedByTier: Record<string, number>;
   regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
   signalCount: number;
-  summarizer?: Record<string, unknown>;
+  summarizer?: SessionCompactionSummarizerMeasurement;
 }
 
 export interface RunFailureEnvelope {

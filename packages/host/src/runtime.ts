@@ -576,6 +576,24 @@ const DELEGATED_AGENT_CONTRACT = [
   "- For clear delegated goals, complete the task and return the result to the parent.",
 ].join("\n");
 
+type SessionCompactSuccessResult = {
+  ok: true;
+  sessionId: string;
+  compactedRunCount: number;
+  throughRunId: string | null;
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  measurement: SessionCompactionMeasurement;
+  skippedReason?: string;
+  warnings?: CompactionWarning[];
+  artifactPath: string | null;
+};
+
+type SessionCompactResult =
+  | SessionCompactSuccessResult
+  | { ok: false; error: ProtocolError };
+
 /**
  * Per-connection runtime. Maps protocol verbs onto core.createRun(),
  * threading events back out through `emit` as host events.
@@ -2384,22 +2402,7 @@ export class HostRuntime {
     options: {
       llm?: boolean;
     } = {},
-  ): Promise<
-    | {
-        ok: true;
-        sessionId: string;
-        compactedRunCount: number;
-        throughRunId: string | null;
-        originalCharCount: number;
-        summaryCharCount: number;
-        freedChars: number;
-        measurement: SessionCompactionMeasurement;
-        skippedReason?: string;
-        warnings?: CompactionWarning[];
-        artifactPath: string | null;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
+  ): Promise<SessionCompactResult> {
     let safeSessionId: string;
     try {
       safeSessionId = asSessionId(sessionId);
@@ -2464,7 +2467,7 @@ export class HostRuntime {
         (sum, turn) => sum + turn.goal.length + turn.message.length,
         0,
       );
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: 0,
@@ -2479,7 +2482,7 @@ export class HostRuntime {
         artifactPath: null,
         skippedReason: "compaction_failed",
         warnings,
-      };
+      });
     }
 
     const warnings = mergeCompactionWarnings(
@@ -2488,7 +2491,7 @@ export class HostRuntime {
     );
 
     if (compacted.skippedReason !== undefined) {
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: compacted.compactedRunCount,
@@ -2500,7 +2503,7 @@ export class HostRuntime {
         artifactPath: null,
         skippedReason: compacted.skippedReason,
         warnings,
-      };
+      });
     }
 
     const throughRunId = compacted.throughRunId;
@@ -2525,7 +2528,7 @@ export class HostRuntime {
           }),
         },
       });
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: compacted.compactedRunCount,
@@ -2536,9 +2539,9 @@ export class HostRuntime {
         measurement: compacted.measurement,
         artifactPath,
         warnings,
-      };
+      });
     } catch (error) {
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: 0,
@@ -2562,6 +2565,52 @@ export class HostRuntime {
             message: error instanceof Error ? error.message : String(error),
           },
         ],
+      });
+    }
+  }
+
+  private async recordSessionCompactionEvent(
+    sessionRootDir: string,
+    reason: string | undefined,
+    result: SessionCompactSuccessResult,
+  ): Promise<SessionCompactSuccessResult> {
+    const eventType = result.skippedReason
+      ? "session.compaction.skipped"
+      : "session.compaction.completed";
+    const store = new FileSessionStore({ rootDir: sessionRootDir });
+    try {
+      await store.appendEvent(result.sessionId, {
+        type: eventType,
+        payload: {
+          compactedRunCount: result.compactedRunCount,
+          throughRunId: result.throughRunId,
+          originalCharCount: result.originalCharCount,
+          summaryCharCount: result.summaryCharCount,
+          freedChars: result.freedChars,
+          measurement: result.measurement,
+          artifactPath: result.artifactPath,
+          ...(result.skippedReason
+            ? { skippedReason: result.skippedReason }
+            : {}),
+          ...(result.warnings
+            ? { warningCodes: result.warnings.map((warning) => warning.code) }
+            : {}),
+        },
+        metadata: {
+          source: "host",
+          ...(reason ? { reason } : {}),
+        },
+      });
+      return result;
+    } catch (error) {
+      return {
+        ...result,
+        warnings: mergeCompactionWarnings(result.warnings, [
+          {
+            code: "SESSION_COMPACTION_EVENT_WRITE_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ]),
       };
     }
   }

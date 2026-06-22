@@ -8,6 +8,7 @@ import {
   type ContextItem,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
+  type SessionEvent,
   type RunId,
   type SparkwrightEvent,
 } from "@sparkwright/core";
@@ -2292,10 +2293,84 @@ describe("host protocol", () => {
           tier: "summarize",
         }),
       );
+      const sessionEvents: SessionEvent[] = [];
+      for await (const event of store.loadEvents(sessionId)) {
+        sessionEvents.push(event);
+      }
+      expect(sessionEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "session.compaction.completed",
+            payload: expect.objectContaining({
+              compactedRunCount: 1,
+              throughRunId: runId,
+              freedChars: compactResp.result.freedChars,
+              artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+              warningCodes: expect.arrayContaining([
+                "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+              ]),
+            }),
+            metadata: expect.objectContaining({
+              source: "host",
+              reason: "test",
+            }),
+          }),
+        ]),
+      );
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
   });
+
+  it("records skipped session compaction as a durable session event", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+      const sessionId = "session_compact_empty_protocol";
+      const store = new FileSessionStore({ rootDir: sessionRootDir });
+      await store.create({ id: sessionId });
+
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        sessionRootDir,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const result = await runtime.compactSession(sessionId, "empty audit");
+
+      expect(result).toMatchObject({
+        ok: true,
+        sessionId,
+        skippedReason: "no_completed_turns",
+        artifactPath: null,
+      });
+      const sessionEvents: SessionEvent[] = [];
+      for await (const event of store.loadEvents(sessionId)) {
+        sessionEvents.push(event);
+      }
+      expect(sessionEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "session.compaction.skipped",
+            payload: expect.objectContaining({
+              compactedRunCount: 0,
+              throughRunId: null,
+              freedChars: 0,
+              artifactPath: null,
+              skippedReason: "no_completed_turns",
+            }),
+            metadata: expect.objectContaining({
+              source: "host",
+              reason: "empty audit",
+            }),
+          }),
+        ]),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
 
   it("uses a model-backed session summarizer when llm is requested with a real model ref", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));

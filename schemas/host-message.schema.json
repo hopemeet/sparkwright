@@ -511,7 +511,8 @@
           "type": "string",
           "minLength": 1,
           "description": "Optional caller label recorded in compaction diagnostics."
-        }
+        },
+        "llm": { "type": "boolean" }
       },
       "additionalProperties": false
     },
