@@ -1,8 +1,8 @@
 {
   "verdict": "passed_with_issues",
-  "headline": "The same files were read repeatedly.",
+  "headline": "The same files were read repeatedly (+1 more).",
   "summary": {
-    "eventCount": 25,
+    "eventCount": 26,
     "runCount": 1,
     "sessionCount": 1,
     "modelCalls": 1,
@@ -29,6 +29,15 @@
         "top duplicate reads: README.md:10"
       ],
       "recommendation": "Surface prior reads to the model or return cached-read hints for duplicate targets."
+    },
+    {
+      "severity": "medium",
+      "code": "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
+      "title": "External process had untracked workspace write capability",
+      "evidence": [
+        "delegate_external · agent writer · child cmd_writer · access granted"
+      ],
+      "recommendation": "Audit the external command output and workspace diff separately; the trace records access granted, not per-file writes."
     }
   ]
 }

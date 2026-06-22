@@ -1,8 +1,8 @@
-events: 25
+events: 26
 runs: 1
-durationMs: 24000
-phases: 18
-[1-25] completed run run (24000ms)
+durationMs: 25000
+phases: 19
+[1-26] completed run run (25000ms)
 [3-3] instant context context.assembled (0ms)
 [4-4] instant model model step 1 (0ms)
 [5-6] completed model model step 1 (1000ms)
@@ -20,3 +20,4 @@ phases: 18
 [20-23] completed workspace workspace README.md (3000ms)
 [21-22] completed approval approval Write README.md (1000ms)
 [24-24] instant artifact artifact.created (0ms)
+[25-25] instant workspace workspace workspace.write.untracked_access_granted (0ms)

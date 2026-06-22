@@ -1305,6 +1305,42 @@ describe("trace", () => {
     });
   });
 
+  it("sorts trace report findings by severity and code", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "sort findings" }),
+      log.emit("model.completed", {
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }),
+    ];
+
+    for (let i = 0; i < 85; i += 1) {
+      events.push(
+        log.emit("tool.requested", {
+          id: `read_${i}`,
+          toolName: "read_file",
+          arguments: { path: "README.md" },
+        }),
+      );
+    }
+    for (let i = 0; i < 10; i += 1) {
+      events.push(log.emit("workspace.read", { path: "README.md" }));
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings.map((finding) => finding.code)).toEqual([
+      "DUPLICATE_WORKSPACE_READS",
+      "EXCESSIVE_TOOL_CALLS",
+      "REPEATED_TOOL_REQUESTS",
+      "COST_UNAVAILABLE",
+    ]);
+  });
+
   it("reports multi-agent auditability findings from structured trace facts", () => {
     const log = new EventLog(createRunId());
     const events: SparkwrightEvent[] = [

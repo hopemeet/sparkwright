@@ -173,8 +173,87 @@ export function buildTraceReportJsonl(jsonl: string): TraceReport {
 }
 
 export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
+  const facts = collectTraceReportFacts(events);
+  const findings = sortTraceReportFindings(
+    TRACE_REPORT_ANALYZERS.flatMap((analyzer) => analyzer({ events, facts })),
+  );
+  const verdict = traceReportVerdict(findings);
+  const { summary } = facts;
+
+  return {
+    verdict,
+    headline: traceReportHeadline(verdict, findings),
+    summary: {
+      eventCount: summary.eventCount,
+      runCount: summary.runIds.length,
+      sessionCount: summary.sessionIds.length,
+      modelCalls: facts.modelCalls,
+      toolCalls: facts.toolCalls,
+      totalTokens: summary.usage.totalTokens,
+      costStatus: summary.usage.costStatus,
+      workspaceWrites: facts.workspaceWrites,
+      approvalsRequested: facts.approvalsRequested,
+      unresolvedToolFailures: summary.toolFailures.unresolved.total,
+      recoveredToolFailures: summary.toolFailures.recovered.total,
+    },
+    topTools: facts.topTools,
+    topDuplicateReads: facts.topDuplicateReads,
+    findings,
+  };
+}
+
+interface TraceReportFacts {
+  summary: TraceSummary;
+  modelCalls: number;
+  toolCalls: number;
+  workspaceReadTotal: number;
+  workspaceReadRatio: number;
+  topDuplicateReads: Record<string, number>;
+  topTools: Record<string, number>;
+  repeatedToolRequests: Array<{ label: string; count: number }>;
+  repeatedCommandFailures: Array<{ label: string; count: number }>;
+  trajectory: ReturnType<typeof evaluateTrajectory>;
+  uniqueWritePaths: string[];
+  verificationLag?: { modelCallsAfterLastWrite: number; command: string };
+  reportableTraceErrors: { total: number; byCode: Record<string, number> };
+  incompleteSubagents: Array<{ label: string }>;
+  inFlightDuplicateStorms: Array<{ label: string; count: number }>;
+  repeatedApprovalDenials: Array<{ label: string; count: number }>;
+  untrackedWriteAccess: Array<{ label: string }>;
+  largestDuplicateRead: number;
+  workspaceWrites: number;
+  approvalsRequested: number;
+}
+
+interface TraceReportContext {
+  events: readonly SparkwrightEvent[];
+  facts: TraceReportFacts;
+}
+
+type TraceReportAnalyzer = (
+  context: TraceReportContext,
+) => TraceReportFinding[];
+
+const TRACE_REPORT_ANALYZERS: TraceReportAnalyzer[] = [
+  analyzeTraceFailures,
+  analyzeCommandFailures,
+  analyzeMultiAgentAuditability,
+  analyzeEfficiency,
+  analyzeToolRecovery,
+  analyzeCostReporting,
+];
+
+const TRACE_REPORT_SEVERITY_RANK: Record<TraceReportFindingSeverity, number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+  info: 0,
+};
+
+function collectTraceReportFacts(
+  events: readonly SparkwrightEvent[],
+): TraceReportFacts {
   const summary = summarizeTraceJsonl(events.map(serializeEventJsonl).join(""));
-  const findings: TraceReportFinding[] = [];
   const modelCalls = summary.byType["model.completed"] ?? 0;
   const toolCalls = sumRecord(summary.toolCalls);
   const workspaceReadTotal = summary.workspaceReads.total;
@@ -187,7 +266,7 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
   const topTools = firstEntries(summary.toolCalls, 8);
   const repeatedToolRequests = collectRepeatedToolRequests(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
-  const trajectory = evaluateTrajectory(events);
+  const trajectory = evaluateTrajectory([...events]);
   const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
   const verificationLag = collectVerificationLagAfterLastWrite(events);
   const reportableTraceErrors = collectReportableTraceErrors(events);
@@ -195,7 +274,39 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
   const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
   const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
   const untrackedWriteAccess = collectUntrackedWriteAccessMarkers(events);
+  const largestDuplicateRead = Object.values(topDuplicateReads)[0] ?? 0;
+  const workspaceWrites = summary.safety.workspaceWrites.completed;
+  const approvalsRequested = summary.safety.approvals.requested;
 
+  return {
+    summary,
+    modelCalls,
+    toolCalls,
+    workspaceReadTotal,
+    workspaceReadRatio,
+    topDuplicateReads,
+    topTools,
+    repeatedToolRequests,
+    repeatedCommandFailures,
+    trajectory,
+    uniqueWritePaths,
+    verificationLag,
+    reportableTraceErrors,
+    incompleteSubagents,
+    inFlightDuplicateStorms,
+    repeatedApprovalDenials,
+    untrackedWriteAccess,
+    largestDuplicateRead,
+    workspaceWrites,
+    approvalsRequested,
+  };
+}
+
+function analyzeTraceFailures({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary, reportableTraceErrors } = facts;
+  const findings: TraceReportFinding[] = [];
   if (summary.toolFailures.unresolved.total > 0) {
     findings.push({
       severity: "high",
@@ -223,6 +334,15 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
         "Use trace events filtered by error type/code to find the failing layer.",
     });
   }
+
+  return findings;
+}
+
+function analyzeCommandFailures({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary, repeatedCommandFailures } = facts;
+  const findings: TraceReportFinding[] = [];
 
   if (summary.commandFailures.verification.unresolved > 0) {
     findings.push({
@@ -263,6 +383,33 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
         "Inspect the failed shell command output before treating the run as clean.",
     });
   }
+
+  if (repeatedCommandFailures.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "REPEATED_COMMAND_FAILURES",
+      title: "Same shell commands failed repeatedly",
+      evidence: repeatedCommandFailures
+        .slice(0, 5)
+        .map((item) => `${item.count}x ${item.label}`),
+      recommendation:
+        "Stop retrying unchanged failing commands; inspect the first failure and change the plan or inputs.",
+    });
+  }
+
+  return findings;
+}
+
+function analyzeMultiAgentAuditability({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const {
+    incompleteSubagents,
+    inFlightDuplicateStorms,
+    repeatedApprovalDenials,
+    untrackedWriteAccess,
+  } = facts;
+  const findings: TraceReportFinding[] = [];
 
   if (incompleteSubagents.length > 0) {
     findings.push({
@@ -312,6 +459,28 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
+  return findings;
+}
+
+function analyzeEfficiency({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const {
+    modelCalls,
+    toolCalls,
+    workspaceReadTotal,
+    workspaceReadRatio,
+    topDuplicateReads,
+    topTools,
+    repeatedToolRequests,
+    trajectory,
+    uniqueWritePaths,
+    verificationLag,
+    largestDuplicateRead,
+    workspaceWrites,
+  } = facts;
+  const findings: TraceReportFinding[] = [];
+
   if (toolCalls >= 80) {
     findings.push({
       severity: "medium",
@@ -351,8 +520,7 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  const largestDuplicate = Object.values(topDuplicateReads)[0] ?? 0;
-  if (largestDuplicate >= 10) {
+  if (largestDuplicateRead >= 10) {
     findings.push({
       severity: "medium",
       code: "DUPLICATE_WORKSPACE_READS",
@@ -378,30 +546,26 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (repeatedCommandFailures.length > 0) {
-    findings.push({
-      severity: "medium",
-      code: "REPEATED_COMMAND_FAILURES",
-      title: "Same shell commands failed repeatedly",
-      evidence: repeatedCommandFailures
-        .slice(0, 5)
-        .map((item) => `${item.count}x ${item.label}`),
-      recommendation:
-        "Stop retrying unchanged failing commands; inspect the first failure and change the plan or inputs.",
-    });
-  }
-
   const efficiencyFinding = buildLowNetProgressFinding({
     modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
     toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
     budgetCheckCount: trajectory.metrics.budgetCheckCount,
-    workspaceWrites: summary.safety.workspaceWrites.completed,
+    workspaceWrites,
     uniqueWritePaths: uniqueWritePaths.length,
     topDuplicateReads,
     repeatedToolRequests,
     verificationLag,
   });
   if (efficiencyFinding) findings.push(efficiencyFinding);
+
+  return findings;
+}
+
+function analyzeToolRecovery({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary } = facts;
+  const findings: TraceReportFinding[] = [];
 
   if (summary.toolFailures.recovered.total > 0) {
     findings.push({
@@ -417,25 +581,35 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (summary.usage.totalTokens > 0 && !summary.usage.costStatus) {
-    findings.push({
-      severity: "low",
-      code: "COST_UNAVAILABLE",
-      title: "Token usage was recorded without cost status",
-      evidence: [
-        `${summary.usage.totalTokens} token(s)`,
-        "cost status missing",
-      ],
-      recommendation:
-        "Populate usage.costStatus/costUnavailableReason so cost reporting distinguishes zero from unknown.",
-    });
-  }
+  return findings;
+}
 
-  const workspaceWrites = summary.safety.workspaceWrites.completed;
-  const approvalsRequested = summary.safety.approvals.requested;
-  const verdict: TraceReportVerdict = findings.some(
-    (finding) => finding.severity === "high",
-  )
+function analyzeCostReporting({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary } = facts;
+  if (summary.usage.totalTokens > 0 && !summary.usage.costStatus) {
+    return [
+      {
+        severity: "low",
+        code: "COST_UNAVAILABLE",
+        title: "Token usage was recorded without cost status",
+        evidence: [
+          `${summary.usage.totalTokens} token(s)`,
+          "cost status missing",
+        ],
+        recommendation:
+          "Populate usage.costStatus/costUnavailableReason so cost reporting distinguishes zero from unknown.",
+      },
+    ];
+  }
+  return [];
+}
+
+function traceReportVerdict(
+  findings: readonly TraceReportFinding[],
+): TraceReportVerdict {
+  return findings.some((finding) => finding.severity === "high")
     ? "failed"
     : findings.some(
           (finding) =>
@@ -443,27 +617,21 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
         )
       ? "passed_with_issues"
       : "ok";
+}
 
-  return {
-    verdict,
-    headline: traceReportHeadline(verdict, findings),
-    summary: {
-      eventCount: summary.eventCount,
-      runCount: summary.runIds.length,
-      sessionCount: summary.sessionIds.length,
-      modelCalls,
-      toolCalls,
-      totalTokens: summary.usage.totalTokens,
-      costStatus: summary.usage.costStatus,
-      workspaceWrites,
-      approvalsRequested,
-      unresolvedToolFailures: summary.toolFailures.unresolved.total,
-      recoveredToolFailures: summary.toolFailures.recovered.total,
-    },
-    topTools,
-    topDuplicateReads,
-    findings,
-  };
+function sortTraceReportFindings(
+  findings: readonly TraceReportFinding[],
+): TraceReportFinding[] {
+  return findings
+    .map((finding, index) => ({ finding, index }))
+    .sort(
+      (a, b) =>
+        TRACE_REPORT_SEVERITY_RANK[b.finding.severity] -
+          TRACE_REPORT_SEVERITY_RANK[a.finding.severity] ||
+        a.finding.code.localeCompare(b.finding.code) ||
+        a.index - b.index,
+    )
+    .map(({ finding }) => finding);
 }
 
 export interface TraceEventFilter {

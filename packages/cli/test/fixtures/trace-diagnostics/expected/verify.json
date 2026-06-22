@@ -1,7 +1,7 @@
 {
   "ok": true,
   "path": "test/fixtures/trace-diagnostics/trace.jsonl",
-  "eventCount": 25,
+  "eventCount": 26,
   "runIds": [
     "run_fixture"
   ],
