@@ -5987,6 +5987,7 @@ function formatCostReasons(
 }
 
 function formatTraceTimeline(timeline: TraceTimeline): string {
+  const showRunIds = timeline.runIds.length > 1;
   const lines = [
     `events: ${timeline.eventCount}`,
     `runs: ${timeline.runIds.length}`,
@@ -5996,14 +5997,19 @@ function formatTraceTimeline(timeline: TraceTimeline): string {
   for (const phase of timeline.phases.slice(0, 80)) {
     const duration =
       phase.durationMs === undefined ? "pending" : `${phase.durationMs}ms`;
+    const runPrefix = showRunIds ? `${shortTraceRunId(phase.runId)} ` : "";
     lines.push(
-      `[${phase.startSequence}${phase.endSequence ? `-${phase.endSequence}` : ""}] ${phase.status} ${phase.category} ${phase.label} (${duration})`,
+      `${runPrefix}[${phase.startSequence}${phase.endSequence ? `-${phase.endSequence}` : ""}] ${phase.status} ${phase.category} ${phase.label} (${duration})`,
     );
   }
   if (timeline.phases.length > 80) {
     lines.push(`... ${timeline.phases.length - 80} more phase(s)`);
   }
   return lines.join("\n");
+}
+
+function shortTraceRunId(runId: string): string {
+  return runId.length > 14 ? `${runId.slice(0, 8)}..${runId.slice(-4)}` : runId;
 }
 
 function formatConsistencyReport(

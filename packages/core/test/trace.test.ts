@@ -2673,6 +2673,69 @@ describe("trace", () => {
     );
   });
 
+  it("reconciles open phases when a run has a terminal failure", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}),
+      log.emit("model.requested", { step: 1 }),
+      log.emit("model.stream.failed", { step: 1, error: "auth failed" }),
+      log.emit("model.turn.completed", { step: 1 }),
+      log.emit("run.failed", {
+        reason: "model_auth_failed",
+        code: "MODEL_COMPLETION_FAILED",
+        message: "auth failed",
+      }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+    const modelPhase = timeline.phases.find(
+      (phase) => phase.category === "model" && phase.label === "model step 1",
+    );
+
+    expect(modelPhase).toMatchObject({
+      status: "failed",
+      startSequence: 3,
+      endSequence: 6,
+      eventTypes: ["model.requested", "run.failed"],
+    });
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["model.requested"]),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps open phases pending when a trace has no run terminal event", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}),
+      log.emit("model.requested", { step: 1 }),
+      log.emit("model.stream.failed", { step: 1, error: "auth failed" }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+    const modelPhase = timeline.phases.find(
+      (phase) => phase.category === "model" && phase.label === "model step 1",
+    );
+
+    expect(modelPhase).toMatchObject({
+      status: "pending",
+      startSequence: 3,
+      eventTypes: ["model.requested"],
+    });
+  });
+
   it("pairs subagent lifecycle events by child run id before spans in trace timelines", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);

@@ -998,10 +998,12 @@ export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
   const sessionIds = new Set<string>();
   const agentIds = new Set<string>();
   const open = new Map<string, TraceTimelinePhase>();
+  const terminalByRun = new Map<string, SparkwrightEvent>();
   const phases: TraceTimelinePhase[] = [];
 
   for (const event of sorted) {
     runIds.add(event.runId);
+    if (isRunTerminalEvent(event)) terminalByRun.set(event.runId, event);
     const sessionId = stringMetadata(event.metadata, "sessionId");
     const agentId = stringMetadata(event.metadata, "agentId");
     if (sessionId) sessionIds.add(sessionId);
@@ -1040,6 +1042,8 @@ export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
     phases.push(phase);
     if (key && phase.status === "pending") open.set(key, phase);
   }
+
+  reconcileOpenPhasesWithRunTerminals(open, terminalByRun);
 
   const startedAt = sorted.at(0)?.timestamp;
   const endedAt = sorted.at(-1)?.timestamp;
@@ -2191,6 +2195,21 @@ function latestOpenModelPhaseKey(
   return [...open.keys()].reverse().find((key) => key.startsWith(prefix));
 }
 
+function reconcileOpenPhasesWithRunTerminals(
+  open: Map<string, TraceTimelinePhase>,
+  terminalByRun: Map<string, SparkwrightEvent>,
+): void {
+  for (const [key, phase] of [...open.entries()]) {
+    const terminal = terminalByRun.get(phase.runId);
+    if (!terminal) continue;
+    if (terminal.sequence < phase.startSequence) continue;
+    const status = terminalTimelineStatus(terminal);
+    if (!status) continue;
+    completeTimelinePhase(phase, terminal, status);
+    open.delete(key);
+  }
+}
+
 function collectErrorCode(
   summary: TraceSummary,
   event: SparkwrightEvent,
@@ -2449,6 +2468,14 @@ function terminalTimelineStatus(
   if (event.type.endsWith(".denied")) return "denied";
   if (event.type.endsWith(".cancelled")) return "cancelled";
   return undefined;
+}
+
+function isRunTerminalEvent(event: SparkwrightEvent): boolean {
+  return (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled"
+  );
 }
 
 function timelineCategory(

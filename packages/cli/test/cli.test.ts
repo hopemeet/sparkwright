@@ -4319,6 +4319,70 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain("workspace reads:");
   });
 
+  it("prints short run ids in text timelines for multi-run traces", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "multi-run.trace.jsonl");
+    const lines = [
+      {
+        id: "evt_alpha_1",
+        runId: "run_alpha_long_1234567890",
+        type: "run.created",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: { goal: "alpha" },
+      },
+      {
+        id: "evt_alpha_2",
+        runId: "run_alpha_long_1234567890",
+        type: "run.completed",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        sequence: 2,
+        payload: { reason: "final_answer" },
+      },
+      {
+        id: "evt_beta_1",
+        runId: "run_beta_long_1234567890",
+        type: "run.created",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        sequence: 1,
+        payload: { goal: "beta" },
+      },
+      {
+        id: "evt_beta_2",
+        runId: "run_beta_long_1234567890",
+        type: "run.failed",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        sequence: 2,
+        payload: {
+          reason: "model_auth_failed",
+          code: "MODEL_COMPLETION_FAILED",
+          message: "auth failed",
+        },
+      },
+    ];
+    await writeFile(
+      tracePath,
+      `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["trace", "timeline", tracePath, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "run_alph..7890 [1-2] completed run run",
+    );
+    expect(output.stdoutText()).toContain(
+      "run_beta..7890 [1-2] failed run run",
+    );
+  });
+
   it("prints unavailable cost reasons in text trace summaries", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const tracePath = join(workspace, "cost-unavailable.trace.jsonl");
