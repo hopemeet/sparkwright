@@ -10,9 +10,11 @@ import {
 } from "@sparkwright/host";
 import type {
   CapabilitySnapshot,
+  CompactionWarning,
   PermissionMode,
   RunInputPayload,
   RunInputPart,
+  SessionCompactionMeasurement,
   TraceLevel,
 } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
@@ -383,23 +385,9 @@ export class RunController {
     originalCharCount: number;
     summaryCharCount: number;
     freedChars: number;
-    measurement: {
-      sourceRunCount: number;
-      originalCharCount: number;
-      summaryCharCount: number;
-      freedChars: number;
-      savingsRatio: number;
-      freedByTier: Record<string, number>;
-      regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
-      signalCount: number;
-      summarizer?: Record<string, unknown>;
-    };
+    measurement: SessionCompactionMeasurement;
     skippedReason?: string;
-    warnings?: Array<{
-      code: string;
-      message: string;
-      metadata?: Record<string, unknown>;
-    }>;
+    warnings?: CompactionWarning[];
     artifactPath: string | null;
   } | null> {
     try {
@@ -423,7 +411,10 @@ export class RunController {
   async inspectSession(sessionId: string): Promise<SessionDiagnostics | null> {
     try {
       const client = await this.ensureClient();
-      const result = await client.inspectSession({ sessionId });
+      const result = await client.inspectSession({
+        sessionId,
+        compaction: true,
+      });
       return result as SessionDiagnostics;
     } catch (err) {
       this.store.setError(formatError(err));

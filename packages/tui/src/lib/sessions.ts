@@ -4,6 +4,8 @@
  * the TUI's session dialog renders.
  */
 
+import type { SessionCompactionInspectReport } from "@sparkwright/protocol";
+
 export interface SessionSummary {
   id: string;
   mtimeMs: number;
@@ -39,4 +41,5 @@ export interface SessionDiagnostics {
       endSequence?: number;
     }>;
   };
+  compaction?: SessionCompactionInspectReport;
 }

@@ -58,6 +58,7 @@ Use sessions to inspect or continue prior work:
 ```bash
 npm exec sparkwright -- session summary <session-id> --workspace .
 npm exec sparkwright -- session check <session-id> --workspace . --format text
+npm exec sparkwright -- session inspect <session-id> --workspace . --compaction --format text
 npm exec sparkwright -- session repair <session-id> --workspace . --dry-run
 npm exec sparkwright -- session resume <session-id> "continue" --workspace .
 ```

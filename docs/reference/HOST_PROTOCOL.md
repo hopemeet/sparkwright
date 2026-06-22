@@ -325,9 +325,10 @@ the session directory; clients should treat it as read-only observability data.
 
 **Payload**
 
-| Field       | Type   | Required | Notes       |
-| ----------- | ------ | -------- | ----------- |
-| `sessionId` | string | yes      | Session id. |
+| Field        | Type    | Required | Notes                                                                                            |
+| ------------ | ------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId`  | string  | yes      | Session id.                                                                                      |
+| `compaction` | boolean | no       | Include a compact-artifact/session-event audit view. The compacted summary body is not returned. |
 
 **Response result**
 
@@ -336,9 +337,42 @@ the session directory; clients should treat it as read-only observability data.
   "sessionId": "session_abc",
   "summary": { "eventCount": 12 },
   "consistency": { "ok": true, "findings": [] },
-  "timeline": { "phases": [] }
+  "timeline": { "phases": [] },
+  "compaction": {
+    "status": "compacted",
+    "artifact": {
+      "path": "/workspace/.sparkwright/sessions/session_abc/compact.json",
+      "createdAt": "2026-06-22T00:00:00.000Z",
+      "throughRunId": "run_123",
+      "compactedRunCount": 3,
+      "sourceRunIds": ["run_001", "run_002", "run_123"],
+      "originalCharCount": 12000,
+      "summaryCharCount": 2400,
+      "freedChars": 9600,
+      "warningCodes": ["SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW"]
+    },
+    "latestEvent": {
+      "sequence": 7,
+      "type": "session.compaction.completed",
+      "throughRunId": "run_123",
+      "artifactPath": "/workspace/.sparkwright/sessions/session_abc/compact.json",
+      "freedChars": 9600
+    },
+    "events": [],
+    "consistency": {
+      "ok": true,
+      "artifactMatchesLatestCompletedEvent": true,
+      "findings": []
+    }
+  }
 }
 ```
+
+`compaction` is omitted unless requested. Its `status` is one of
+`not_compacted`, `compacted`, `skipped`, `artifact_only`, `event_only`, or
+`stale_artifact`. The report is derived from `compact.json` and
+`events.jsonl`; it may include measurement, warning codes, reason metadata, and
+summary fingerprint metadata, but never includes `compact.json.content`.
 
 ### `session.compact`
 
@@ -387,6 +421,13 @@ fields include `sourceRunIds`, `throughRunId`, `originalCharCount`,
 Model-backed Tier 3 summaries also record `metadata.summaryFingerprint`
 (`modelId`, prompt/oracle versions, input hash, source run ids, through run, and
 effective budget) plus `metadata.measurement`.
+On the normal path, every successful `session.compact` request appends a
+session-local event to `events.jsonl`: `session.compaction.completed` when an
+artifact was written, or `session.compaction.skipped` when no artifact was
+written. The event payload records counts, `freedChars`, `measurement`,
+`artifactPath`, optional `skippedReason`, and warning codes; it does not contain
+compacted summary content. If this audit event cannot be written, the compact
+response still reflects the compaction result and includes a warning.
 When compaction is unnecessary or best-effort compaction cannot safely persist
 an artifact, the response remains `ok: true`, `artifactPath` is `null`,
 `freedChars` is `0`, and `skippedReason` explains why.

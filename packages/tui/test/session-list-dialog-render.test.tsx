@@ -5,7 +5,10 @@ import {
   SessionListDialog,
   sessionWindow,
 } from "../src/components/session-list-dialog.js";
-import type { SessionSummary } from "../src/lib/sessions.js";
+import type {
+  SessionDiagnostics,
+  SessionSummary,
+} from "../src/lib/sessions.js";
 
 async function renderToText(element: React.ReactElement): Promise<string> {
   const writes: string[] = [];
@@ -74,6 +77,86 @@ describe("SessionListDialog rendering", () => {
     expect(text).toContain("› 1 ");
     expect(text).toContain("Alpha");
     expect(text).toContain("second task");
+  });
+
+  it("renders compaction diagnostics when inspection includes them", async () => {
+    const diagnostics: SessionDiagnostics = {
+      sessionId: "session_a",
+      summary: {
+        eventCount: 12,
+        runIds: ["run_a"],
+        agentIds: ["main"],
+        errorCount: 0,
+        artifactCount: 1,
+        usage: { totalTokens: 42 },
+      },
+      consistency: { ok: true, findings: [] },
+      timeline: { durationMs: 25, phases: [] },
+      compaction: {
+        status: "compacted",
+        artifact: {
+          path: "/workspace/.sparkwright/sessions/session_a/compact.json",
+          schemaVersion: "session-compact.v2",
+          createdAt: "2026-06-22T00:00:00.000Z",
+          throughRunId: "run_a",
+          compactedRunCount: 1,
+          sourceRunIds: ["run_a"],
+          originalCharCount: 1000,
+          summaryCharCount: 250,
+          freedChars: 750,
+          measurement: {
+            sourceRunCount: 1,
+            originalCharCount: 1000,
+            summaryCharCount: 250,
+            freedChars: 750,
+            savingsRatio: 0.75,
+            freedByTier: { summarize: 750 },
+            regime: "density_bound",
+            signalCount: 2,
+          },
+          warningCodes: ["SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW"],
+        },
+        events: [],
+        latestEvent: {
+          sequence: 3,
+          timestamp: "2026-06-22T00:00:01.000Z",
+          type: "session.compaction.completed",
+          compactedRunCount: 1,
+          throughRunId: "run_a",
+          originalCharCount: 1000,
+          summaryCharCount: 250,
+          freedChars: 750,
+          artifactPath:
+            "/workspace/.sparkwright/sessions/session_a/compact.json",
+          warningCodes: ["SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW"],
+        },
+        consistency: {
+          ok: true,
+          artifactMatchesLatestCompletedEvent: true,
+          findings: [],
+        },
+      },
+    };
+
+    const text = await renderToText(
+      <SessionListDialog
+        sessions={[session("session_a", "first task", 2000)]}
+        labels={{}}
+        diagnostics={diagnostics}
+        loadingDiagnosticsFor={null}
+        onCancel={() => {}}
+        onInspect={() => {}}
+        onPick={() => {}}
+        onRename={() => {}}
+      />,
+    );
+
+    expect(text).toContain("compaction compacted consistency ok");
+    expect(text).toContain("compact 1 run(s), freed 750 chars");
+    expect(text).toContain("regime density_bound savings 75%");
+    expect(text).toContain("latest completed #3");
+    expect(text).toContain("warnings SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW");
+    expect(text).not.toContain("Session deterministic-summary preview.");
   });
 
   it("keeps the selected session visible when navigating beyond the first page", () => {

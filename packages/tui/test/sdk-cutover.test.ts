@@ -135,6 +135,28 @@ describe("TUI ↔ host via sdk-node", () => {
       compactedRunCount: 1,
       freedChars: result?.freedChars,
     });
+    const diagnostics = await controller.inspectSession(
+      controller.getSessionId(),
+    );
+    expect(diagnostics?.compaction).toMatchObject({
+      status: "compacted",
+      artifact: {
+        throughRunId: result?.throughRunId,
+        compactedRunCount: 1,
+        freedChars: result?.freedChars,
+      },
+      latestEvent: {
+        type: "session.compaction.completed",
+        throughRunId: result?.throughRunId,
+      },
+      consistency: {
+        ok: true,
+        artifactMatchesLatestCompletedEvent: true,
+      },
+    });
+    expect(JSON.stringify(diagnostics?.compaction)).not.toContain(
+      "Session deterministic-summary preview.",
+    );
     controller.shutdown();
   }, 30_000);
 
