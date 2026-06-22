@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The Sparkwright CLI golden path is a protocol smoke test: it exercises run lifecycle, context assembly, tool execution, workspace mutation, approval, artifact creation, and JSONL trace emission end-to-end. The golden path runs in three places where stability matters most:
+The SparkWright CLI golden path is a protocol smoke test: it exercises run lifecycle, context assembly, tool execution, workspace mutation, approval, artifact creation, and JSONL trace emission end-to-end. The golden path runs in three places where stability matters most:
 
 1. **Tests** — unit and integration suites that must produce deterministic event sequences.
 2. **Demos** — `npm exec sparkwright -- run ...` invocations a new contributor runs in the first ten minutes.

@@ -1,7 +1,7 @@
 # Run Events
 
 This document gives frontend and backend embedders a stable way to consume
-Sparkwright run events without depending on every payload detail. The canonical
+SparkWright run events without depending on every payload detail. The canonical
 protocol surface remains [PROTOCOL.md](./PROTOCOL.md); this guide explains how
 to project that stream into timelines, status UI, approval flows, and durable
 stores.

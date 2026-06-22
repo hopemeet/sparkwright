@@ -21,8 +21,9 @@ and [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evoluti
 - `packages/host/src/skill-report.ts`
 - `packages/host/src/skill-evolution.ts`
 - `packages/host/src/skill-roots.ts`
-- `docs/_internal/CAPABILITY_LAYERING.md`
-- `docs/_internal/skill-evolution-design.md`
+- `docs/reference/SKILLS.md`
+- `docs/_internal/project-map/maps/capabilities/skills.md`
+- `docs/_internal/project-map/maps/capabilities/skill-evolution.md`
 
 ## Owns / Does Not Own
 

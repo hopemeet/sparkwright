@@ -2,9 +2,9 @@
 // file is an ergonomic alternative to a `capabilities.agents.profiles[]` entry in
 // config.json — nicer for long role prompts. Discovery + mapping live here at the
 // host edge; the canonical AgentProfile shape lives in @sparkwright/agent-runtime.
-// Explicit config.json entries win over same-id markdown files (see
-// docs/PROJECT_CONFIG_SURFACE.md, Decision 1). Advanced fields (policy, runBudget)
-// stay in config.json; markdown frontmatter covers the common case.
+// Explicit config.json entries win over same-id markdown files. Advanced fields
+// (policy, runBudget) stay in config.json; markdown frontmatter covers the
+// common case. See docs/guides/AGENTS.md and docs/reference/EXTENSION_INTERFACES.md.
 
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";

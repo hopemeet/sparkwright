@@ -2,7 +2,7 @@
 
 ## Purpose
 
-MCP capability connects external MCP servers to Sparkwright as tools, resources,
+MCP capability connects external MCP servers to SparkWright as tools, resources,
 prompts, and diagnostic status.
 
 See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
@@ -21,7 +21,7 @@ See [../../modules/mcp-adapter.md](../../modules/mcp-adapter.md).
 host config MCP servers
   -> prepareMcpToolsForRun()
   -> mcp.server.prepared events/status
-  -> wrapped Sparkwright tools/resources/prompts
+  -> wrapped SparkWright tools/resources/prompts
   -> normal run tool execution
 ```
 

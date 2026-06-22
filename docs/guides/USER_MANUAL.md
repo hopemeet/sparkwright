@@ -1,11 +1,11 @@
 # User Manual
 
-This manual is the short path through Sparkwright as a usable runtime. It links
+This manual is the short path through SparkWright as a usable runtime. It links
 to deeper design notes when you need implementation details.
 
 ## What You Are Running
 
-Sparkwright is an agent harness runtime. A run combines:
+SparkWright is an agent harness runtime. A run combines:
 
 - a user goal
 - bounded context
@@ -15,7 +15,7 @@ Sparkwright is an agent harness runtime. A run combines:
 - workspace mutation primitives
 - artifacts and JSONL trace
 
-The model proposes actions. Sparkwright owns the execution boundary.
+The model proposes actions. SparkWright owns the execution boundary.
 
 ## First Run
 
@@ -94,7 +94,7 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
   --trace-level standard
 ```
 
-Provider adapters sit at the edge. The run still uses Sparkwright tools,
+Provider adapters sit at the edge. The run still uses SparkWright tools,
 policy, approvals, artifacts, and trace.
 
 ## Interactive TUI
@@ -110,7 +110,7 @@ files directly after editing source, rebuild first with `npm run build`.
 
 ## ACP Agent Server
 
-Use ACP when an editor or local ACP client wants to launch Sparkwright as a
+Use ACP when an editor or local ACP client wants to launch SparkWright as a
 coding agent subprocess:
 
 ```bash
@@ -118,8 +118,8 @@ sparkwright acp --workspace /path/to/project
 ```
 
 The ACP server communicates over stdio. It maps ACP sessions and permission
-requests onto the normal Sparkwright host runtime, so policy, approval,
-workspace mutation, artifacts, and trace remain governed by Sparkwright.
+requests onto the normal SparkWright host runtime, so policy, approval,
+workspace mutation, artifacts, and trace remain governed by SparkWright.
 ACP `session/new` may include `mcpServers`; SparkWright merges those
 session-scoped MCP servers with configured MCP servers for that session.
 Configured MCP servers default to lazy startup, so ordinary runs do not connect

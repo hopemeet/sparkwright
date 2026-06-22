@@ -1,13 +1,13 @@
-# Sparkwright Host Protocol
+# SparkWright Host Protocol
 
-This is a reference contract. If you are new to Sparkwright, start with
+This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
 **Version:** 1.3
 **Schema:** [`schemas/host-message.schema.json`](../../schemas/host-message.schema.json)
 **Changelog:** [`HOST_PROTOCOL_CHANGELOG.md`](./HOST_PROTOCOL_CHANGELOG.md)
 
-This document specifies the wire protocol spoken between a **Sparkwright
+This document specifies the wire protocol spoken between a **SparkWright
 host** (a process that owns the agent runtime) and any **client** (the
 built-in TUI, the future browser SDK, an editor plugin, a third-party
 TUI, etc).

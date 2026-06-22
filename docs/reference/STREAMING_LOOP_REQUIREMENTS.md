@@ -104,4 +104,4 @@ Streaming support should not require:
 - a GUI trace viewer
 - broad provider routing
 
-Those may arrive later, but the first streaming loop should preserve Sparkwright's small kernel shape.
+Those may arrive later, but the first streaming loop should preserve SparkWright's small kernel shape.

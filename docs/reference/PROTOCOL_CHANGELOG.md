@@ -1,4 +1,4 @@
-# Sparkwright Protocol Changelog
+# SparkWright Protocol Changelog
 
 Tracks breaking and non-breaking changes to the JSON Schema contract under `schemas/`.
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`@sparkwright/mcp-adapter` connects configured MCP servers to Sparkwright tools,
+`@sparkwright/mcp-adapter` connects configured MCP servers to SparkWright tools,
 resources, prompts, status metadata, and trace-visible preparation events.
 
 See also [../maps/capabilities/mcp.md](../maps/capabilities/mcp.md) and [../maps/safety/shell.md](../maps/safety/shell.md).
@@ -37,7 +37,7 @@ Does not own:
 - Stdio MCP servers can be launched under the configured shell sandbox.
 - Stdio MCP servers without explicit `cwd` are launched from a neutral
   temporary cwd and clean it up when the transport closes.
-- Wrapped MCP tools must remain normal Sparkwright tools for policy, trace, and result handling.
+- Wrapped MCP tools must remain normal SparkWright tools for policy, trace, and result handling.
 
 ## Consumers
 

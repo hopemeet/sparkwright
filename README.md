@@ -1,60 +1,34 @@
 # SparkWright
 
-SparkWright is a local-first agent runtime for turning goals into governed,
-inspectable tool-using runs.
+The execution boundary your agent needs before it can touch a real repo.
 
-It provides the execution layer around a model: bounded context, typed tools,
-policy, approvals, workspace writes, artifacts, sessions, and JSONL trace.
+SparkWright turns model output into governed, inspectable runs: typed tools,
+policy checks, approval-gated workspace diffs, resumable sessions, and JSONL
+trace.
 
-## What It Is
+The deterministic smoke path uses no API key:
 
-SparkWright is an agent execution boundary, not a chatbot framework or a coding
-IDE clone. The model provides generation and reasoning; SparkWright owns the
-controlled execution path around it — what the model can see, which tools it can
-call, which actions need approval, what gets written, and what is recorded.
+```bash
+sparkwright run "inspect this repo" --workspace . --model deterministic
+```
 
-It deliberately separates a runtime kernel, a host boundary, and product
-surfaces, so the same governed execution model backs a CLI, TUI, IDE/ACP
-integration, bot, or backend service.
+Use SparkWright when an agent needs to do real work in a workspace without
+becoming an untraceable prompt loop.
 
 ## Why It Exists
 
-Most agent products eventually need more than a prompt loop. They need a runtime
-boundary where:
+Agent products eventually need more than a model loop. They need a boundary
+where:
 
-- a goal becomes a structured, resumable run
-- the model sees bounded, assembled context instead of an open prompt
-- tools are registered, schema-validated, and policy-tagged
-- risky actions pass through policy and explicit approval
-- workspace edits produce durable artifacts (diffs, files, reports)
-- every meaningful step is emitted as structured events and JSONL trace
+- goals become structured, resumable runs
+- tools are typed, schema-validated, and policy-tagged
+- risky actions go through policy and explicit approval
+- workspace edits become reviewable diffs and artifacts
+- every meaningful step lands in JSONL trace
 
 SparkWright makes that boundary reusable instead of re-implemented per product.
 
-## Where It Fits
-
-Use it for:
-
-- coding and repository-automation agents
-- agent-backed CLIs and TUIs
-- IDE/editor or ACP client integrations
-- internal workflow agents, bots, and IM gateways
-- backend services that need governed agent execution
-
-It is not a hosted agent SaaS, generic chatbot framework, GUI workbench, RAG
-platform, or production sandbox by itself.
-
-## Current Status
-
-SparkWright is **pre-v0**. It is a runnable local agent runtime and host — not a
-production sandbox or a finished end-user product.
-
-- Runnable local CLI / TUI / host path today.
-- Deterministic smoke runs need no API key.
-- Provider-backed runs are opt-in through config or CLI flags.
-- Not a production sandbox; not a hosted service.
-
-## Install From Source
+## Quick Start
 
 SparkWright currently runs from source. The npm package is not published yet, so
 `npm install -g @sparkwright/cli` is not available.
@@ -68,18 +42,7 @@ cd SparkWright
 bash ./install.sh
 ```
 
-The script installs an independent copy under `~/.sparkwright`. Add
-`~/.sparkwright/bin` to your `PATH` if the script reports it is not already
-present.
-
-SparkWright keeps program files (`~/.sparkwright`) separate from user config
-(`~/.config/sparkwright`), user state (`~/.local/state/sparkwright`), and project
-data (`<workspace>/.sparkwright`). For the full layout and provider setup, see
-[Configuration](./docs/guides/CONFIGURATION.md).
-
-## Quick Start
-
-Run a deterministic local smoke test, no API key required:
+Then run the deterministic smoke path:
 
 ```bash
 sparkwright run "inspect this repo" --workspace . --model deterministic
@@ -98,29 +61,53 @@ sparkwright doctor paths --workspace . --format text
 sparkwright tui --workspace .
 ```
 
+The script installs an independent copy under `~/.sparkwright`. Add
+`~/.sparkwright/bin` to your `PATH` if the script reports it is not already
+present.
+
+SparkWright keeps program files (`~/.sparkwright`) separate from user config
+(`~/.config/sparkwright`), user state (`~/.local/state/sparkwright`), and project
+data (`<workspace>/.sparkwright`). For the full layout and provider setup, see
+[Configuration](./docs/guides/CONFIGURATION.md).
+
 For provider-backed runs, run `sparkwright init` and follow
 [Configuration](./docs/guides/CONFIGURATION.md).
 
-## Architecture At A Glance
+## Where It Fits
+
+Use it for:
+
+- coding and repository-automation agents
+- agent-backed CLIs and TUIs
+- IDE/editor or ACP client integrations
+- internal workflow agents, bots, and IM gateways
+- backend services that need governed agent execution
+
+It is not a hosted agent SaaS, generic chatbot framework, GUI workbench, RAG
+platform, or production sandbox by itself.
+
+## Current Status
+
+SparkWright is **pre-v0**. It is a runnable local agent runtime and host, not a
+production sandbox or a finished end-user product.
+
+- Runnable local CLI / TUI / host path today.
+- Deterministic smoke runs need no API key.
+- Provider-backed runs are opt-in through config or CLI flags.
+- Not a production sandbox; not a hosted service.
+
+## How A Run Works
 
 ```txt
-Product surfaces
-CLI / TUI / ACP / SDK clients
-        |
-        v
-Host boundary
-config / providers / skills / MCP / tools / sessions
-        |
-        v
-Runtime kernel
-run lifecycle / context / policy / approval / workspace / trace
+Goal -> Surface -> Host -> Runtime kernel -> Evidence
 ```
 
-- **Product surfaces** are interchangeable shells over one host; they do not own
-  execution semantics.
-- **Host boundary** composes providers, capabilities, configuration, sessions,
-  and transports around the kernel.
-- **Runtime kernel** defines the governed execution semantics for a run.
+| Layer          | Responsibility                                                                                                                               |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Surface        | CLI, TUI, ACP, or SDK collects intent and renders progress.                                                                                  |
+| Host           | Loads config, picks providers, assembles skills, MCP, agents, and sessions.                                                                  |
+| Runtime kernel | Runs the governed loop: assembles context, calls the model, dispatches typed tools, enforces policy and approvals, applies workspace writes. |
+| Evidence       | Persists JSONL trace, artifacts, diffs, diagnostics, and resume state.                                                                       |
 
 ## Core Capabilities
 

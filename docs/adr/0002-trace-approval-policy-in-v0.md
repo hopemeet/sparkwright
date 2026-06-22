@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-Many agent frameworks start by making tool execution easy, then add control and audit later. Sparkwright's differentiator is controlled execution, not just orchestration.
+Many agent frameworks start by making tool execution easy, then add control and audit later. SparkWright's differentiator is controlled execution, not just orchestration.
 
 ## Decision
 

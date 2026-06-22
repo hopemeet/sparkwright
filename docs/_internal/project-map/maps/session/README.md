@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Session maps explain how Sparkwright groups runs, stores session-level facts,
+Session maps explain how SparkWright groups runs, stores session-level facts,
 replays prior runs, resumes work, and exposes inspection/repair workflows.
 
 ## Main Files

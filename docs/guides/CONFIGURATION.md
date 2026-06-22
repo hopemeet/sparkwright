@@ -1,6 +1,6 @@
 # Configuration
 
-Sparkwright configuration is user-editable JSON or YAML shared by the CLI,
+SparkWright configuration is user-editable JSON or YAML shared by the CLI,
 TUI, and host runtime. The schema is
 [schemas/config.schema.json](../../schemas/config.schema.json).
 
@@ -77,7 +77,7 @@ files remain the precise-control layer.
 
 ## Scaffold
 
-Installing Sparkwright does not write config files. The first interactive CLI
+Installing SparkWright does not write config files. The first interactive CLI
 or TUI run scaffolds the user config if no config exists yet, then stops and
 asks you to set a provider key or environment variable before rerunning. You
 can also create files explicitly:
@@ -286,9 +286,9 @@ Modes:
 
 Linux uses `bubblewrap` (`bwrap`) for bind-based filesystem isolation. macOS
 uses `sandbox-exec` for deny-list and network controls in this first adapter;
-it protects forced deny paths such as Sparkwright config state but is not yet a
+it protects forced deny paths such as SparkWright config state but is not yet a
 complete allow-list filesystem sandbox. Other platforms are unsupported in
-enforce mode. The host always appends forced deny-write paths for Sparkwright
+enforce mode. The host always appends forced deny-write paths for SparkWright
 config and capability state so project config cannot remove those protections.
 `sparkwright capabilities inspect` reports this distinction as
 `fs=bind-allowlist` on Linux and `fs=deny-list-guard` on macOS. Treat the macOS
@@ -407,7 +407,7 @@ also be enforced before the final answer.
 
 Use `capabilities.verification` when the project wants checked-in quality gates
 without hand-writing workflow hooks. Verification commands run through the
-project toolchain exactly as configured; Sparkwright does not install missing
+project toolchain exactly as configured; SparkWright does not install missing
 linters, typecheckers, or package dependencies.
 
 ```json
@@ -942,7 +942,7 @@ state, and workspace state paths without starting a run.
 
 ## Install And Upgrade Safety
 
-Sparkwright treats config and project capabilities as user-owned assets:
+SparkWright treats config and project capabilities as user-owned assets:
 
 - Package installation does not create or modify config files.
 - First interactive use may scaffold the user config once, using the same
@@ -989,7 +989,5 @@ Recommended rules:
 - Agent-generated config diffs should be stored as artifacts.
 
 This keeps configuration changes inspectable and recoverable instead of turning
-settings into invisible prompt state.
-
-The historical design notes for this surface are archived in
-[Project Config Surface](../archive/PROJECT_CONFIG_SURFACE.md).
+settings into invisible prompt state. The implementation contract is maintained
+in this guide and [Extension Interfaces](../reference/EXTENSION_INTERFACES.md).

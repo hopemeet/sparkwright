@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Workspace mutation is the highest-trust operation in the Sparkwright harness. Coding and repo-automation agents need an edit primitive that is ergonomic for an LLM, safe to apply, and explainable in trace. Two common alternatives exist in other harnesses:
+Workspace mutation is the highest-trust operation in the SparkWright harness. Coding and repo-automation agents need an edit primitive that is ergonomic for an LLM, safe to apply, and explainable in trace. Two common alternatives exist in other harnesses:
 
 1. **Whole-file write**: the model produces the entire new file. This is easy to express but fragile — silent dropped sections, whitespace drift, and large prompt payloads are common failure modes.
 2. **Line-number edits**: the model says "replace line 42 with X." Line numbers go stale the moment any other edit lands, and concurrent reads inside the same run make the model reason about a moving target.
