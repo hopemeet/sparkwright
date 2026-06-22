@@ -6,7 +6,7 @@ Proposed
 
 ## Context
 
-Sparkwright needs to be easy to adopt by developers building CLIs, backends, IDE extensions, local tools, and workflow integrations. It also needs strong schema ergonomics and a low-friction open source contribution path.
+SparkWright needs to be easy to adopt by developers building CLIs, backends, IDE extensions, local tools, and workflow integrations. It also needs strong schema ergonomics and a low-friction open source contribution path.
 
 ## Decision
 

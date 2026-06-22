@@ -1,15 +1,15 @@
 # Context Plane
 
-This is a reference contract. If you are new to Sparkwright, start with
+This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [Capability Design Guide](../guides/CAPABILITY_DESIGN_GUIDE.md).
 
-The Context Plane is the replaceable part of Sparkwright that decides what the model sees and how that material is packaged.
+The Context Plane is the replaceable part of SparkWright that decides what the model sees and how that material is packaged.
 
 It should be decoupled from the run loop, provider adapters, memory stores, and tool execution. Context technology changes quickly; the core should define protocols and lifecycle hooks, not hard-code one strategy.
 
 ## Design Goal
 
-Sparkwright core should own:
+SparkWright core should own:
 
 - context item protocol
 - context lifecycle points
@@ -188,7 +188,7 @@ particular:
   or a specific follow-up tool. Otherwise the model may repeatedly call the
   same tool trying to obtain content the formatter already discarded.
 
-This is the Sparkwright version of RTK-style output governance: reduce noise,
+This is the SparkWright version of RTK-style output governance: reduce noise,
 but keep failures, paths, diagnostics, and recovery handles actionable. The
 formatter should optimize for answerability before token savings.
 
@@ -502,7 +502,7 @@ That influence should flow through model metadata, not provider-specific conditi
 
 Memory is a ContextSource, not the Context Plane itself.
 
-Sparkwright should support memory later without making memory mandatory:
+SparkWright should support memory later without making memory mandatory:
 
 - no memory for v0
 - file memory or run summaries for v1

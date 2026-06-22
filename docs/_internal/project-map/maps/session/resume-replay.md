@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Resume and replay let Sparkwright continue or seed future work from persisted
+Resume and replay let SparkWright continue or seed future work from persisted
 state without pretending all live process state is durable.
 
 See [session-store.md](session-store.md) and [../runtime/context-compaction.md](../runtime/context-compaction.md).

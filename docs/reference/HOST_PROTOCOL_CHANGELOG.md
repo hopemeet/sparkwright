@@ -1,6 +1,6 @@
 # Host Protocol Changelog
 
-Wire-protocol changes between Sparkwright host and clients. Per
+Wire-protocol changes between SparkWright host and clients. Per
 [`HOST_PROTOCOL.md`](./HOST_PROTOCOL.md): additions only within a
 major; breaking changes bump the major.
 

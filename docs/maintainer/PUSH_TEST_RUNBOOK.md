@@ -1,6 +1,6 @@
 # Push Test Runbook
 
-This runbook captures the pre-push manual test pass for Sparkwright. Use it
+This runbook captures the pre-push manual test pass for SparkWright. Use it
 when a change touches more than one package, protocol surfaces, runtime
 behavior, host/SDK transport, gateway code, or examples.
 
@@ -75,7 +75,7 @@ Use a temporary workspace so the repository is not modified:
 ```bash
 rm -rf /tmp/sparkwright-write-smoke
 mkdir -p /tmp/sparkwright-write-smoke
-printf '# Repo Pilot\n\nA tiny workspace for Sparkwright smoke tests.\n' \
+printf '# Repo Pilot\n\nA tiny workspace for SparkWright smoke tests.\n' \
   > /tmp/sparkwright-write-smoke/README.md
 
 npm exec sparkwright -- run "inspect this repo and suggest a README improvement" \
@@ -94,7 +94,7 @@ Expected result:
 - The session contains `artifacts/<artifact-id>.diff` and
   `artifacts/<artifact-id>.json`.
 - `/tmp/sparkwright-write-smoke/README.md` contains
-  `## Sparkwright CLI Golden Path`.
+  `## SparkWright CLI Golden Path`.
 
 ### Non-Interactive Write Denial
 

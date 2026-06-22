@@ -4,7 +4,7 @@
 // front-end-agnostic descriptors, and interpolates their bodies. It never
 // executes a run and never runs shell itself — shell interpolation is delegated
 // to a caller-supplied gated runner so the existing safety/approval gate stays
-// the single execution path. See docs/PROJECT_CONFIG_SURFACE.md.
+// the single execution path. See docs/reference/EXTENSION_INTERFACES.md.
 
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";

@@ -1,6 +1,6 @@
 # Custom Tool Example
 
-This example shows the smallest useful shape for adding a tool to a Sparkwright run. Tools stay plain: a descriptor, an input schema, a policy risk level, and an async handler.
+This example shows the smallest useful shape for adding a tool to a SparkWright run. Tools stay plain: a descriptor, an input schema, a policy risk level, and an async handler.
 
 The same pattern is available as a runnable TypeScript file in `examples/custom-tool/register-tool.ts`.
 
@@ -84,4 +84,4 @@ npm run build
 node examples/custom-tool/dist/register-tool.js
 ```
 
-In a real application, the model adapter can be deterministic, provider-backed, or test-only. Sparkwright owns the tool registry, schema validation, policy checks, workspace boundary, approval events, and traceable run lifecycle.
+In a real application, the model adapter can be deterministic, provider-backed, or test-only. SparkWright owns the tool registry, schema validation, policy checks, workspace boundary, approval events, and traceable run lifecycle.

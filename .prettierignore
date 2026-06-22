@@ -5,3 +5,4 @@ node_modules/
 .claude/
 **/dist/
 **/.sparkwright/
+packages/cli/test/fixtures/trace-diagnostics/expected/*.json

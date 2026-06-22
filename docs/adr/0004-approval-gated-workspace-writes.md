@@ -8,7 +8,7 @@ Accepted
 
 A coding/repo-automation agent's most consequential action is writing to the workspace. A bad write can corrupt source, leak secrets, or quietly change configuration. Other harnesses commonly let the model write directly through a `write_file` tool, treating the model's intent as authority and relying on post-hoc review (git diff, CI) to catch mistakes.
 
-Sparkwright's positioning rejects that trade. The kernel's stated principle is **"the model proposes, the harness disposes"** — the model can request a change, but the harness owns whether and how it happens. Reviewing damage after the fact is not the same as preventing it before the fact, and post-hoc review does not compose with non-git side effects (deletes, renames, binary writes, configuration files outside source control).
+SparkWright's positioning rejects that trade. The kernel's stated principle is **"the model proposes, the harness disposes"** — the model can request a change, but the harness owns whether and how it happens. Reviewing damage after the fact is not the same as preventing it before the fact, and post-hoc review does not compose with non-git side effects (deletes, renames, binary writes, configuration files outside source control).
 
 ## Decision
 
@@ -42,4 +42,4 @@ Negative:
 
 ## Follow-Up
 
-The reference implementation lives in `packages/core/src/workspace.ts` (`ControlledWorkspace`). Approval channel adapters are described in `docs/reference/EXTENSION_INTERFACES.md` (Approval Extensions). The broader principle is documented in `docs/archive/HARNESS_PRINCIPLES.md` ("Workspace Writes Are Proposals Before Mutations"). The approval primitive will be extended to support external policy engines and async approval queues in later revisions.
+The reference implementation lives in `packages/core/src/workspace.ts` (`ControlledWorkspace`). Approval channel adapters are described in `docs/reference/EXTENSION_INTERFACES.md` (Approval Extensions), and the trace contract is described in `docs/reference/PROTOCOL.md`. The approval primitive will be extended to support external policy engines and async approval queues in later revisions.

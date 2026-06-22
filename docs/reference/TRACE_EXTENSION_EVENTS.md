@@ -74,7 +74,7 @@ Terminal events add:
 }
 ```
 
-External scripts do not write Sparkwright events directly. A host runner may
+External scripts do not write SparkWright events directly. A host runner may
 inject:
 
 ```txt

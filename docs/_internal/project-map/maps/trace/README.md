@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Trace maps explain Sparkwright's evidence and diagnostic layers.
+Trace maps explain SparkWright's evidence and diagnostic layers.
 
 Start here when changing event emission, trace filtering, trace file layout,
 trace CLI commands, session diagnostics, or TUI export.

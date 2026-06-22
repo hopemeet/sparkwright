@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-This directory captures key design decisions for the Sparkwright kernel. Each ADR records **why** a decision was made, not just what was decided. ADRs are append-only: superseded decisions remain in the history with a status change.
+This directory captures key design decisions for the SparkWright kernel. Each ADR records **why** a decision was made, not just what was decided. ADRs are append-only: superseded decisions remain in the history with a status change.
 
 Read these before proposing structural changes. If a change conflicts with an existing ADR, supersede it explicitly with a new ADR rather than silently diverging.
 

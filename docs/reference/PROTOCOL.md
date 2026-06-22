@@ -1,11 +1,11 @@
 # Protocol Draft
 
-This is a reference contract. If you are new to Sparkwright, start with
+This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-This document describes Sparkwright Protocol v0.2. Schema files use `$id` `https://sparkwright.dev/schemas/v0/...` and tag `x-sparkwrightProtocolVersion: '0.2'`. See [PROTOCOL_CHANGELOG.md](./PROTOCOL_CHANGELOG.md) for evolution.
+This document describes SparkWright Protocol v0.2. Schema files use `$id` `https://sparkwright.dev/schemas/v0/...` and tag `x-sparkwrightProtocolVersion: '0.2'`. See [PROTOCOL_CHANGELOG.md](./PROTOCOL_CHANGELOG.md) for evolution.
 
-This document defines the first portable shapes for Sparkwright runtime data. The TypeScript implementation may evolve, but these shapes should remain understandable outside TypeScript.
+This document defines the first portable shapes for SparkWright runtime data. The TypeScript implementation may evolve, but these shapes should remain understandable outside TypeScript.
 
 The protocol is intentionally JSON-friendly.
 
@@ -279,7 +279,7 @@ Current event types:
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write
-  arbitrary Sparkwright events; host runners may expose a JSONL progress inbox
+  arbitrary SparkWright events; host runners may expose a JSONL progress inbox
   and re-emit accepted progress with host-owned `event.sequence`, `timestamp`,
   `monotonicUs`, and span fields. Terminal payloads include a shared
   `ProcessOutputSummary` with bounded stdout/stderr previews, byte counts,
@@ -585,7 +585,7 @@ Retryable failures currently include explicit `retryable: true`, HTTP-like `408`
 
 Before re-issuing a retryable call the loop waits `delayMs` (also recorded on the event). The delay is computed from the `ModelRetryPolicy`: an exponential backoff of `initialDelayMs * backoffMultiplier^(attempt-1)` capped at `maxDelayMs`, with optional `jitter` (`"full"` by default — sampled uniformly in `[0, computed]`). When the provider supplies a cool-down (`error.retryAfterMs`, normalized from a numeric `retryAfter`/`retryAfterMs` field or an HTTP `Retry-After` header in seconds or HTTP-date form) and `respectRetryAfter` is enabled (default), the loop waits at least that long — never sooner than the provider asked, but still bounded by `maxDelayMs`. Set `initialDelayMs: 0` to restore the legacy immediate-retry behavior.
 
-Provider adapters should avoid hidden internal retries when possible. The AI SDK adapter defaults provider-level retries to `0` so Sparkwright can emit each `model.requested` and `model.retrying` event itself. Non-recoverable provider errors such as OpenAI-compatible `insufficient_quota`, `invalid_api_key`, and `model_not_found` are treated as non-retryable even when the HTTP status is `429`.
+Provider adapters should avoid hidden internal retries when possible. The AI SDK adapter defaults provider-level retries to `0` so SparkWright can emit each `model.requested` and `model.retrying` event itself. Non-recoverable provider errors such as OpenAI-compatible `insufficient_quota`, `invalid_api_key`, and `model_not_found` are treated as non-retryable even when the HTTP status is `429`.
 
 ### Validation Events
 
@@ -704,7 +704,7 @@ Long-running tools may call `RuntimeContext.reportToolProgress`, which emits
   "path": "README.md",
   "content": "# Updated\n",
   "diff": "--- a/README.md\n+++ b/README.md\n@@\n-# Old\n+# Updated\n",
-  "reason": "Append Sparkwright CLI Golden Path",
+  "reason": "Append SparkWright CLI Golden Path",
   "createdAt": "2026-05-16T10:00:02.000Z",
   "metadata": {}
 }
@@ -830,7 +830,7 @@ Tool descriptors may also include optional runtime hints:
   "toolCallId": "call_01h",
   "status": "completed",
   "output": {
-    "content": "# Sparkwright\n"
+    "content": "# SparkWright\n"
   },
   "artifacts": []
 }
@@ -939,7 +939,7 @@ Initial artifact types:
     "kind": "workspace",
     "path": "README.md"
   },
-  "content": "# Sparkwright\n",
+  "content": "# SparkWright\n",
   "parts": [
     {
       "type": "image",

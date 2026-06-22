@@ -5,7 +5,7 @@ MCP server, agent profile rule, or background task.
 
 ## Core Rule
 
-Every external capability should enter Sparkwright as one of the existing
+Every external capability should enter SparkWright as one of the existing
 runtime primitives:
 
 - `ContextItem`
@@ -70,7 +70,7 @@ schema validation -> policy -> approval -> execute -> validate -> trace
 ## MCP
 
 MCP servers are external capability sources. They should be discovered at the
-edge and normalized into Sparkwright tools or context resources.
+edge and normalized into SparkWright tools or context resources.
 
 Do not let MCP bypass the harness boundary. A safe MCP integration records:
 

@@ -1,6 +1,6 @@
 # Provider Edge
 
-Sparkwright core should stay provider-neutral. Real model providers live at the edge and adapt into the core `ModelAdapter` interface.
+SparkWright core should stay provider-neutral. Real model providers live at the edge and adapt into the core `ModelAdapter` interface.
 
 The first provider edge is `@sparkwright/provider-ai-sdk`, a thin bridge over
 the Vercel AI SDK. Provider/model selection for product shells lives in the
@@ -97,7 +97,7 @@ Currently allow-listed packages: `@ai-sdk/openai`, `@ai-sdk/anthropic`,
 - reuse mature provider ecosystems instead of rebuilding them
 - normalize provider responses into `ModelOutput`
 - expose tool schemas to models without letting provider SDKs execute tools
-- preserve Sparkwright as the owner of policy, approval, tool execution, trace, and workspace mutation
+- preserve SparkWright as the owner of policy, approval, tool execution, trace, and workspace mutation
 
 ## Current Packages
 
@@ -113,7 +113,7 @@ Responsibilities:
 - convert SparkWright `ToolDescriptor[]` into AI SDK tool definitions
 - call `generateText`
 - normalize generated text and tool calls into SparkWright `ModelOutput`
-- leave provider retries disabled by default so Sparkwright owns retry events and terminal failure metadata
+- leave provider retries disabled by default so SparkWright owns retry events and terminal failure metadata
 
 `@sparkwright/provider-registry` responsibilities:
 
@@ -214,7 +214,7 @@ Tool calls come back as:
 }
 ```
 
-The Sparkwright run loop then performs:
+The SparkWright run loop then performs:
 
 ```txt
 validate arguments -> check policy -> request approval if needed -> execute tool -> emit events -> append observation
@@ -226,7 +226,7 @@ This keeps controlled tool calling inside the harness.
 
 AI SDK already normalizes many provider differences and supports a wide range of hosted APIs, gateways, and OpenAI-compatible endpoints.
 
-Sparkwright should use this ecosystem early and only build deeper provider infrastructure when real usage demands it.
+SparkWright should use this ecosystem early and only build deeper provider infrastructure when real usage demands it.
 
 ## Later Provider Service
 

@@ -1,6 +1,6 @@
 # Skills
 
-Sparkwright supports a minimal Skill compatibility layer through the
+SparkWright supports a minimal Skill compatibility layer through the
 `@sparkwright/skills` extension package.
 
 The first implementation intentionally avoids changing the run API. Skills are prepared before a run and converted into existing core inputs:
@@ -415,4 +415,4 @@ Skill scripts and references should be introduced through governed extension pat
 
 Skills are context and capability hints, not authority.
 
-A Skill can influence model behavior, but it cannot grant permission by itself. Any side effect still goes through normal Sparkwright policy, approval, validation, tool execution, trace, and artifact handling.
+A Skill can influence model behavior, but it cannot grant permission by itself. Any side effect still goes through normal SparkWright policy, approval, validation, tool execution, trace, and artifact handling.

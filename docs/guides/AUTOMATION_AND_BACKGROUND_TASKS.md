@@ -1,6 +1,6 @@
 # Automation And Background Tasks
 
-Sparkwright distinguishes foreground tool calls, background tasks, and scheduled
+SparkWright distinguishes foreground tool calls, background tasks, and scheduled
 automation. Foreground calls and background tasks are runtime primitives.
 Scheduled jobs are implemented through `@sparkwright/cron` and host/CLI wiring,
 while the core run loop remains focused on governed runs.

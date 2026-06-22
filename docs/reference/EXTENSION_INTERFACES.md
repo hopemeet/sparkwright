@@ -1,11 +1,11 @@
 # Extension Interfaces
 
-This is a reference contract. If you are new to Sparkwright, start with
+This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [Capability Design Guide](../guides/CAPABILITY_DESIGN_GUIDE.md).
 
-This document explains how applications and extension authors should connect optional capabilities to Sparkwright core.
+This document explains how applications and extension authors should connect optional capabilities to SparkWright core.
 
-Sparkwright core is intentionally small. Extensions should make agents more capable without bypassing the runtime boundary that makes runs inspectable, controllable, and recoverable.
+SparkWright core is intentionally small. Extensions should make agents more capable without bypassing the runtime boundary that makes runs inspectable, controllable, and recoverable.
 
 ## Interface Principle
 
@@ -103,7 +103,7 @@ from local and compatible project-instruction files.
 
 The package keeps core cache-friendly by returning `session`-stability
 `ContextItem` values instead of editing resident prompt text. Discovery is
-priority-based: Sparkwright-owned files are searched upward to the git root,
+priority-based: SparkWright-owned files are searched upward to the git root,
 then compatible files are checked in the current directory. Hosts can pass
 `ignoreProjectInstructions: true` for tests, benchmarks, trajectory capture, or
 other reproducible runs.
@@ -397,7 +397,7 @@ discover MCP server
   -> list MCP tools and resources
   -> map tools to ToolDefinition
   -> map resources to ContextItem candidates
-  -> execute through Sparkwright tool path
+  -> execute through SparkWright tool path
 ```
 
 Core should not depend on MCP protocol details. An MCP adapter package can own connection lifecycle, protocol translation, and server-specific errors.
@@ -592,7 +592,7 @@ Configured command actions additionally run through the host
 external process itself emits `extension.process.started` and a terminal
 `extension.process.completed` / `extension.process.failed` with bounded output
 summary and optional log artifacts. Progress reported through the runner inbox
-is host-ingested: scripts do not write arbitrary Sparkwright events.
+is host-ingested: scripts do not write arbitrary SparkWright events.
 
 The same runner also has an observation path for shell commands that were
 already started in the foreground and then promoted to a task. In that case the
@@ -676,9 +676,8 @@ await commands.dispatch("/compact aggressive");
 
 `.sparkwright/command/*.md` files become commands without code via
 [`@sparkwright/project-commands`](../../packages/project-commands). A command that
-should begin a run does **not** start one itself; per
-[PROJECT_CONFIG_SURFACE.md](../archive/PROJECT_CONFIG_SURFACE.md) Decision 3 it yields a
-front-end-agnostic intent the embedder dispatches:
+should begin a run does **not** start one itself; it yields a
+front-end-agnostic intent that the embedder dispatches:
 
 ```ts
 interface StartRunIntent {

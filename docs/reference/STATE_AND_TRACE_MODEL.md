@@ -1,9 +1,9 @@
 # State And Trace Model
 
-This is a reference contract. If you are new to Sparkwright, start with
+This is a reference contract. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-Sparkwright treats state as a set of narrow, layered contracts rather than one
+SparkWright treats state as a set of narrow, layered contracts rather than one
 global application database. The runtime kernel owns the smallest possible
 execution state; embedders own product state, gateway routing, durable storage,
 and visualizations through replaceable stores and sinks.
@@ -20,13 +20,13 @@ Facts enter the append-only event stream first.
 Stores, indexes, dashboards, and replay tools derive from those facts.
 ```
 
-That keeps Sparkwright usable as a kernel inside CLIs, IDEs, gateways, CI jobs,
+That keeps SparkWright usable as a kernel inside CLIs, IDEs, gateways, CI jobs,
 servers, and workflow engines without forcing every embedder to adopt the same
 database or observability backend.
 
 ## Identity Boundaries
 
-Sparkwright uses several ids. They are intentionally not interchangeable.
+SparkWright uses several ids. They are intentionally not interchangeable.
 
 | Id                      | Scope                      | Owner                     | Purpose                                                                              |
 | ----------------------- | -------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
@@ -186,7 +186,7 @@ run's sequence numbering.
 
 ### 5. Gateway Routing State
 
-Gateways map external conversations to Sparkwright sessions.
+Gateways map external conversations to SparkWright sessions.
 
 Typical routing shape:
 
@@ -348,7 +348,7 @@ These are important, but they belong at the edge:
 - terminal shell process state
 - local sandbox filesystem snapshots
 
-Sparkwright should define protocols that let these systems attach cleanly.
+SparkWright should define protocols that let these systems attach cleanly.
 
 ## Implementation Guidance
 

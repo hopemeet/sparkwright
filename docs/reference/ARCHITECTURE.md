@@ -1,9 +1,9 @@
 # Architecture
 
-This is a reference overview. If you are new to Sparkwright, start with
+This is a reference overview. If you are new to SparkWright, start with
 [the documentation map](../README.md) or the [User Manual](../guides/USER_MANUAL.md).
 
-Sparkwright is organized around a small runtime kernel and a set of replaceable edge modules.
+SparkWright is organized around a small runtime kernel and a set of replaceable edge modules.
 
 ```txt
 User or System Goal
@@ -25,7 +25,7 @@ User or System Goal
 
 ## Architectural Posture
 
-Sparkwright should be implementation-driven but protocol-aware.
+SparkWright should be implementation-driven but protocol-aware.
 
 That means the first implementation can be TypeScript, but the core objects must be serializable and documented well enough to support future SDKs, server adapters, and alternate runtime implementations.
 
@@ -232,7 +232,7 @@ It owns:
 - detecting changed files
 - creating artifacts from modifications
 
-Workspace operations are where Sparkwright proves it is more than a toy agent loop.
+Workspace operations are where SparkWright proves it is more than a toy agent loop.
 
 ## Model Adapters
 

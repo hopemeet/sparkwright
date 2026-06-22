@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Trace is positioned as the **primary interface** of the Sparkwright runtime, not as debug output (see `docs/archive/HARNESS_PRINCIPLES.md`, "Trace Is The Primary Interface"). It must support:
+Trace is positioned as the **primary interface** of the SparkWright runtime, not as debug output. It must support:
 
 - audit of every meaningful runtime action,
 - approval review (the approver looks at the trace plus the diff artifact),

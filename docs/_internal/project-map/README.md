@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This directory is an internal maintenance map for Sparkwright. It is not user
+This directory is an internal maintenance map for SparkWright. It is not user
 documentation. Read it before changing cross-cutting runtime behavior, and
 update it after changing module boundaries, event contracts, storage layouts, or
 developer-facing diagnostics.
