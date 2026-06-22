@@ -831,8 +831,6 @@ export function verifyTraceJsonl(
   const artifactIds = new Set<string>();
   const previousMonotonicUsByTrace = new Map<string, number>();
 
-  collectTraceProjectionOrderFindings(events, findings);
-
   for (const [index, event] of events.entries()) {
     const line = index + 1;
     if (!event || typeof event !== "object") {
@@ -1401,46 +1399,6 @@ function traceMonotonicScope(event: SparkwrightEvent): string {
         ? event.runId
         : "";
   return `${traceScope}::${stringMetadata(event.metadata, "agentId") ?? ""}`;
-}
-
-function collectTraceProjectionOrderFindings(
-  events: readonly SparkwrightEvent[],
-  findings: TraceVerificationFinding[],
-): void {
-  let previous: { event: SparkwrightEvent; line: number } | undefined;
-  for (const [index, event] of events.entries()) {
-    const line = index + 1;
-    if (!isTraceProjectionComparableEvent(event)) continue;
-    if (previous && compareTraceProjectionTime(previous.event, event) > 0) {
-      findings.push({
-        severity: "error",
-        code: "TRACE_PROJECTION_ORDER_INVALID",
-        message:
-          "Trace events move backward in aggregate timeline projection order.",
-        metadata: {
-          line,
-          previousLine: previous.line,
-          previousRunId: previous.event.runId,
-          runId: event.runId,
-          previousTimestamp: previous.event.timestamp,
-          timestamp: event.timestamp,
-          previousMonotonicUs: previous.event.monotonicUs,
-          monotonicUs: event.monotonicUs,
-        },
-      });
-    }
-    previous = { event, line };
-  }
-}
-
-function isTraceProjectionComparableEvent(
-  event: unknown,
-): event is SparkwrightEvent {
-  return (
-    isRecord(event) &&
-    typeof event.runId === "string" &&
-    typeof event.timestamp === "string"
-  );
 }
 
 function isTerminalRunEvent(event: SparkwrightEvent): boolean {

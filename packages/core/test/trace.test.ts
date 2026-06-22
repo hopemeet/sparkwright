@@ -4022,7 +4022,7 @@ describe("trace", () => {
     expect(report.findings).toEqual([]);
   });
 
-  it("flags aggregate projection timestamp backsteps across runs", () => {
+  it("allows cross-run append order to differ from aggregate projection order", () => {
     const parent = new EventLog(createRunId());
     const child = new EventLog(createRunId());
     const parentStart = parent.emit("run.created", { goal: "parent" });
@@ -4042,8 +4042,8 @@ describe("trace", () => {
         .join(""),
     );
 
-    expect(report.ok).toBe(false);
-    expect(report.findings.map((finding) => finding.code)).toContain(
+    expect(report.ok).toBe(true);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
       "TRACE_PROJECTION_ORDER_INVALID",
     );
     expect(report.findings.map((finding) => finding.code)).not.toContain(
