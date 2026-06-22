@@ -1780,6 +1780,36 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("tool: append_file");
   });
 
+  it("shows missing model pricing in capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-5.4-mini",
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "model: openai/gpt-5.4-mini; pricing=unavailable:missing_pricing",
+    );
+  });
+
   it("resolves MCP tools during capability inspect only when requested", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });

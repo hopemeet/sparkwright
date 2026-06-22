@@ -85,6 +85,34 @@ describe("CapabilitiesPanel rendering", () => {
     }
   });
 
+  it("surfaces missing model pricing in the overview", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          ...snapshot(1),
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+            providerKey: "openai",
+            modelId: "gpt-5.4-mini",
+            adapterId: "openai:gpt-5.4-mini",
+            pricing: {
+              source: "unavailable",
+              costStatus: "unavailable",
+              costUnavailableReason: "missing_pricing",
+            },
+          },
+        }}
+        loading={false}
+        view="all"
+        onClose={() => {}}
+      />,
+      18,
+    );
+
+    expect(text).toContain("Model: openai/gpt-5.4-mini");
+    expect(text).toContain("pricing unavailable (missing_pricing)");
+  });
+
   it("explains managed skill mutation tools", async () => {
     const text = await renderToText(
       <CapabilitiesPanel

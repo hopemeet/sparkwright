@@ -464,6 +464,18 @@ scanning files or interpreting local config.
 
 ```json
 {
+  "model": {
+    "modelRef": "openai/gpt-5.4-mini",
+    "providerKey": "openai",
+    "modelId": "gpt-5.4-mini",
+    "adapterId": "openai:gpt-5.4-mini",
+    "pricing": {
+      "source": "unavailable",
+      "costStatus": "unavailable",
+      "costUnavailableReason": "missing_pricing",
+      "warning": "No pricing configured for model \"openai/gpt-5.4-mini\"; cost estimates will be unavailable. Add a provider model cost block to enable cost reporting."
+    }
+  },
   "tools": [{ "name": "read_file", "risk": "safe" }],
   "skills": {
     "indexed": [

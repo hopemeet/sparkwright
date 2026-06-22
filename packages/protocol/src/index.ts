@@ -491,6 +491,21 @@ export interface CapabilityToolSummary {
   deferred?: boolean;
 }
 
+export interface CapabilityModelPricingSummary {
+  source: "configured" | "builtin" | "unavailable" | "not_applicable";
+  costStatus: "estimated" | "unavailable" | "not_applicable";
+  costUnavailableReason?: "missing_pricing" | string;
+  warning?: string;
+}
+
+export interface CapabilityModelSummary {
+  modelRef: string;
+  providerKey: string;
+  modelId: string;
+  adapterId: string;
+  pricing: CapabilityModelPricingSummary;
+}
+
 export interface CapabilitySkillSummary {
   name: string;
   description?: string;
@@ -592,6 +607,7 @@ export interface CapabilityAutomationSummary {
 }
 
 export interface CapabilitySnapshot {
+  model?: CapabilityModelSummary;
   tools: CapabilityToolSummary[];
   skills: {
     indexed: CapabilitySkillSummary[];

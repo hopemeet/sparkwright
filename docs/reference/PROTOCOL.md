@@ -464,7 +464,13 @@ tokens, or request headers.
       "path": "/home/user/.config/sparkwright/config.json"
     },
     "authSource": "env:OPENAI_API_KEY",
-    "baseURLSource": "env:OPENAI_BASE_URL"
+    "baseURLSource": "env:OPENAI_BASE_URL",
+    "pricing": {
+      "source": "unavailable",
+      "costStatus": "unavailable",
+      "costUnavailableReason": "missing_pricing",
+      "warning": "No pricing configured for model \"openai/gpt-5.4-mini\"; cost estimates will be unavailable. Add a provider model cost block to enable cost reporting."
+    }
   }
 }
 ```
@@ -484,6 +490,10 @@ Field semantics:
   credential and must not contain secret material.
 - `baseURLSource`: source label for the provider base URL when one is set, for
   example `env:OPENAI_BASE_URL` or `config`.
+- `pricing`: cost-reporting status for the selected model. When
+  `costStatus:"unavailable"` and `costUnavailableReason:"missing_pricing"`,
+  token usage may still be reported but cost estimates are intentionally absent
+  until the provider model has built-in pricing or a config `cost` override.
 
 ### Run Completion Events
 

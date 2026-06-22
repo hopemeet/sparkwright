@@ -12,6 +12,11 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — `CapabilitySnapshot` may include a
+  `model` summary with pricing status. Hosts report `missing_pricing` before a
+  run when the selected model has no built-in or configured cost block.
+  Migration: none; clients should treat the field as optional and warning-only.
+
 - `host protocol`: additive — `session.compact` results now include
   `measurement` (savings ratio, tier savings, regime, signal count, and optional
   summarizer metrics). Migration: none; clients should treat the field as

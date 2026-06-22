@@ -115,6 +115,7 @@ import {
   type SessionCompactionInspectReport,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
+  type CapabilityModelSummary,
   type CapabilitySkillInlineShellSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
@@ -129,7 +130,11 @@ import {
   resolveSkillRootsForRuntime,
 } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
-import { createModel, type ResolvedModelConfig } from "./model-factory.js";
+import {
+  createModel,
+  inspectResolvedModelConfig,
+  type ResolvedModelConfig,
+} from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
   catalogEntryOrigin,
@@ -530,6 +535,16 @@ function summarizeCapabilitySnapshot(
     };
   }
   return {
+    ...(snapshot.model
+      ? {
+          model: {
+            modelRef: snapshot.model.modelRef,
+            providerKey: snapshot.model.providerKey,
+            modelId: snapshot.model.modelId,
+            pricing: snapshot.model.pricing,
+          },
+        }
+      : {}),
     tools: snapshot.tools.length,
     toolNames: snapshot.tools.map((tool) => tool.name),
     skills: {
@@ -981,6 +996,7 @@ export class HostRuntime {
       }),
     ];
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
+      model: modelCapabilitySummary(model.resolved),
       toolCatalog,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
       loadedSkills: preparedSkills?.loadedSkills ?? [],
@@ -2002,6 +2018,10 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const automation = await this.inspectAutomationSummary();
+    const model = await inspectResolvedModelConfig({
+      modelRef: this.opts.defaultModel,
+      workspaceRoot: this.opts.workspaceRoot,
+    });
     const resolvedProfiles = await resolveAgentProfiles(
       this.opts.workspaceRoot,
       agentConfig?.profiles,
@@ -2124,6 +2144,7 @@ export class HostRuntime {
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
       });
       return buildCapabilitySnapshot({
+        ...(model.ok ? { model: modelCapabilitySummary(model.resolved) } : {}),
         toolCatalog,
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
@@ -2898,6 +2919,7 @@ export class HostRuntime {
 }
 
 function buildCapabilitySnapshot(input: {
+  model?: CapabilityModelSummary;
   toolCatalog: HostToolCatalogEntry[];
   indexedSkills: SkillIndexEntry[];
   loadedSkills: LoadedSkill[];
@@ -2910,6 +2932,7 @@ function buildCapabilitySnapshot(input: {
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
+    ...(input.model ? { model: input.model } : {}),
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
       origin:
@@ -2982,6 +3005,29 @@ function buildCapabilitySnapshot(input: {
         }
       : {}),
     automation: input.automation,
+  };
+}
+
+function modelCapabilitySummary(
+  resolved: ResolvedModelConfig,
+): CapabilityModelSummary {
+  return {
+    modelRef: resolved.modelRef,
+    providerKey: resolved.providerKey,
+    modelId: resolved.modelId,
+    adapterId: resolved.adapterId,
+    pricing: resolved.pricing ?? {
+      source: resolved.pricingSource ?? "not_applicable",
+      costStatus:
+        resolved.pricingSource === "unavailable"
+          ? "unavailable"
+          : resolved.pricingSource === "not_applicable"
+            ? "not_applicable"
+            : "estimated",
+      ...(resolved.pricingSource === "unavailable"
+        ? { costUnavailableReason: "missing_pricing" }
+        : {}),
+    },
   };
 }
 

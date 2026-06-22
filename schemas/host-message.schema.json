@@ -535,6 +535,7 @@
       "type": "object",
       "required": ["tools", "skills", "mcp", "agents"],
       "properties": {
+        "model": { "$ref": "#/$defs/CapabilityModelSummary" },
         "tools": {
           "type": "array",
           "items": { "$ref": "#/$defs/CapabilityToolSummary" }
@@ -590,6 +591,41 @@
           },
           "additionalProperties": false
         }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityModelSummary": {
+      "type": "object",
+      "required": [
+        "modelRef",
+        "providerKey",
+        "modelId",
+        "adapterId",
+        "pricing"
+      ],
+      "properties": {
+        "modelRef": { "type": "string", "minLength": 1 },
+        "providerKey": { "type": "string", "minLength": 1 },
+        "modelId": { "type": "string", "minLength": 1 },
+        "adapterId": { "type": "string", "minLength": 1 },
+        "pricing": { "$ref": "#/$defs/CapabilityModelPricingSummary" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityModelPricingSummary": {
+      "type": "object",
+      "required": ["source", "costStatus"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["configured", "builtin", "unavailable", "not_applicable"]
+        },
+        "costStatus": {
+          "type": "string",
+          "enum": ["estimated", "unavailable", "not_applicable"]
+        },
+        "costUnavailableReason": { "type": "string" },
+        "warning": { "type": "string" }
       },
       "additionalProperties": false
     },

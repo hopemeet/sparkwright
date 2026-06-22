@@ -1305,6 +1305,55 @@ describe("host protocol", () => {
     }
   });
 
+  it("includes model pricing warnings in capability inspection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-model-pricing-"),
+    );
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/gpt-5.4-mini",
+          providers: {
+            openai: {},
+          },
+        }),
+        "utf8",
+      );
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        emit: () => {},
+      });
+
+      const inspected = await runtime.inspectCapabilities();
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        snapshot: {
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+            providerKey: "openai",
+            modelId: "gpt-5.4-mini",
+            adapterId: "openai:gpt-5.4-mini",
+            pricing: {
+              source: "unavailable",
+              costStatus: "unavailable",
+              costUnavailableReason: "missing_pricing",
+            },
+          },
+        },
+      });
+      if (inspected.ok) {
+        expect(inspected.snapshot.model?.pricing.warning).toContain(
+          "cost estimates will be unavailable",
+        );
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed approval decisions before runtime dispatch", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

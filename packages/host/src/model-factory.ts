@@ -7,6 +7,7 @@ import {
 } from "./config.js";
 import {
   buildConfiguredAdapter,
+  resolveConfiguredModelPricing,
   type ProviderRuntimeSources,
 } from "./model-builder.js";
 
@@ -43,6 +44,15 @@ export interface ResolvedModelConfig {
   baseURLSource?: string;
   /** Pricing provenance for cost-aware auxiliary task gates. */
   pricingSource?: "configured" | "builtin" | "unavailable" | "not_applicable";
+  /** @reserved Public diagnostics field consumed by run metadata and capability inspection. */
+  pricing?: ResolvedModelPricing;
+}
+
+export interface ResolvedModelPricing {
+  source: "configured" | "builtin" | "unavailable" | "not_applicable";
+  costStatus: "estimated" | "unavailable" | "not_applicable";
+  costUnavailableReason?: "missing_pricing";
+  warning?: string;
 }
 
 /**
@@ -89,6 +99,7 @@ export async function createModel(
         adapterId: SCRIPTED_PROVIDER,
         modelSource,
         pricingSource: "not_applicable",
+        pricing: notApplicablePricing(),
       },
     };
   }
@@ -118,6 +129,77 @@ export async function createModel(
         loaded.sources.providers?.[selection.providerKey],
       ),
       runtimeSources: built.sources,
+    }),
+  };
+}
+
+export async function inspectResolvedModelConfig(input: {
+  modelRef?: string;
+  workspaceRoot: string;
+  env?: Record<string, string | undefined>;
+}): Promise<
+  { ok: true; resolved: ResolvedModelConfig } | { ok: false; message: string }
+> {
+  const env = input.env ?? process.env;
+  const loaded = await loadHostConfig(input.workspaceRoot, env);
+  const ref = input.modelRef ?? loaded.config.model ?? DETERMINISTIC_PROVIDER;
+  const modelSource = input.modelRef
+    ? ({ layer: "request" } as const)
+    : (sourceRef(loaded.sources.model) ?? ({ layer: "default" } as const));
+
+  if (ref === DETERMINISTIC_PROVIDER) {
+    return {
+      ok: true,
+      resolved: deterministicResolvedModel(ref, modelSource),
+    };
+  }
+
+  if (ref === SCRIPTED_PROVIDER || ref.startsWith(`${SCRIPTED_PROVIDER}/`)) {
+    return {
+      ok: true,
+      resolved: {
+        modelRef: ref,
+        providerKey: SCRIPTED_PROVIDER,
+        modelId: ref.includes("/")
+          ? ref.slice(ref.indexOf("/") + 1)
+          : "default",
+        adapterId: SCRIPTED_PROVIDER,
+        modelSource,
+        pricingSource: "not_applicable",
+        pricing: notApplicablePricing(),
+      },
+    };
+  }
+
+  const selection = resolveModelSelection(loaded.config, ref);
+  if (selection.kind === "deterministic") {
+    return {
+      ok: true,
+      resolved: deterministicResolvedModel(ref, modelSource),
+    };
+  }
+  if (selection.kind === "error") {
+    return { ok: false, message: selection.message };
+  }
+
+  const pricing = resolveConfiguredModelPricing(selection);
+  return {
+    ok: true,
+    resolved: configuredResolvedModel({
+      modelRef: ref,
+      providerKey: selection.providerKey,
+      modelId: selection.modelId,
+      modelSource,
+      providerSource: sourceRef(
+        loaded.sources.providers?.[selection.providerKey],
+      ),
+      runtimeSources: {
+        pricing: pricing.source,
+        ...(pricing.costUnavailableReason
+          ? { costUnavailableReason: pricing.costUnavailableReason }
+          : {}),
+        ...(pricing.warning ? { pricingWarning: pricing.warning } : {}),
+      },
     }),
   };
 }
@@ -369,6 +451,7 @@ function deterministicResolvedModel(
     adapterId: DETERMINISTIC_PROVIDER,
     modelSource,
     pricingSource: "not_applicable",
+    pricing: notApplicablePricing(),
   };
 }
 
@@ -378,7 +461,11 @@ function configuredResolvedModel(input: {
   modelId: string;
   modelSource: ConfigSourceRef;
   providerSource?: ConfigSourceRef;
-  runtimeSources: ProviderRuntimeSources;
+  runtimeSources: Pick<
+    ProviderRuntimeSources,
+    "pricing" | "costUnavailableReason" | "pricingWarning"
+  > &
+    Partial<Pick<ProviderRuntimeSources, "apiKey" | "baseURL">>;
 }): ResolvedModelConfig {
   return {
     modelRef: input.modelRef,
@@ -387,11 +474,41 @@ function configuredResolvedModel(input: {
     adapterId: `${input.providerKey}:${input.modelId}`,
     modelSource: input.modelSource,
     ...(input.providerSource ? { providerSource: input.providerSource } : {}),
-    authSource: input.runtimeSources.apiKey,
+    ...(input.runtimeSources.apiKey
+      ? { authSource: input.runtimeSources.apiKey }
+      : {}),
     pricingSource: input.runtimeSources.pricing,
+    pricing: modelPricingStatus(input.runtimeSources),
     ...(input.runtimeSources.baseURL
       ? { baseURLSource: input.runtimeSources.baseURL }
       : {}),
+  };
+}
+
+function modelPricingStatus(
+  sources: Pick<
+    ProviderRuntimeSources,
+    "pricing" | "costUnavailableReason" | "pricingWarning"
+  >,
+): ResolvedModelPricing {
+  if (sources.pricing === "unavailable") {
+    return {
+      source: "unavailable",
+      costStatus: "unavailable",
+      costUnavailableReason: sources.costUnavailableReason ?? "missing_pricing",
+      ...(sources.pricingWarning ? { warning: sources.pricingWarning } : {}),
+    };
+  }
+  return {
+    source: sources.pricing,
+    costStatus: "estimated",
+  };
+}
+
+function notApplicablePricing(): ResolvedModelPricing {
+  return {
+    source: "not_applicable",
+    costStatus: "not_applicable",
   };
 }
 

@@ -1,4 +1,5 @@
-import type { ModelAdapter } from "@sparkwright/core";
+import type { ModelAdapter, ModelPricing } from "@sparkwright/core";
+import { OPENAI_MODEL_PRICING } from "@sparkwright/provider-ai-sdk";
 import {
   SUPPORTED_PROVIDER_NPMS,
   costToPricing,
@@ -19,6 +20,16 @@ export interface ProviderRuntimeSources {
   apiKey: string;
   baseURL?: string;
   pricing: "configured" | "builtin" | "unavailable";
+  costUnavailableReason?: "missing_pricing";
+  pricingWarning?: string;
+}
+
+export interface ProviderPricingResolution {
+  pricing?: ModelPricing;
+  source: ProviderRuntimeSources["pricing"];
+  costStatus: "estimated" | "unavailable";
+  costUnavailableReason?: "missing_pricing";
+  warning?: string;
 }
 
 /**
@@ -77,11 +88,10 @@ export async function buildConfiguredAdapter(
     };
   }
 
-  const [{ createOpenAiProvider, OPENAI_MODEL_PRICING }, { ProviderRegistry }] =
-    await Promise.all([
-      import("@sparkwright/provider-ai-sdk"),
-      import("@sparkwright/provider-registry"),
-    ]);
+  const [{ createOpenAiProvider }, { ProviderRegistry }] = await Promise.all([
+    import("@sparkwright/provider-ai-sdk"),
+    import("@sparkwright/provider-registry"),
+  ]);
 
   const client = (
     factory as (opts: {
@@ -95,10 +105,7 @@ export async function buildConfiguredAdapter(
     fetch: input.fetch,
   });
 
-  // Pricing precedence: explicit config `cost` > built-in OpenAI table > none.
-  const configuredPricing = costToPricing(selection.cost);
-  const builtinPricing = OPENAI_MODEL_PRICING[selection.modelId];
-  const pricing = configuredPricing ?? builtinPricing;
+  const pricingResolution = resolveConfiguredModelPricing(selection);
   const registry = new ProviderRegistry([
     createOpenAiProvider({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -108,7 +115,7 @@ export async function buildConfiguredAdapter(
         {
           id: selection.modelId,
           providerId: selection.providerKey,
-          pricing,
+          pricing: pricingResolution.pricing,
           metadata: selection.providerOptions
             ? { providerOptions: selection.providerOptions }
             : undefined,
@@ -124,17 +131,53 @@ export async function buildConfiguredAdapter(
     ),
     sources: {
       apiKey: envApiKey ? `env:${npmInfo.apiKeyEnv}` : "config",
-      pricing: configuredPricing
-        ? "configured"
-        : builtinPricing
-          ? "builtin"
-          : "unavailable",
+      pricing: pricingResolution.source,
+      ...(pricingResolution.costUnavailableReason
+        ? { costUnavailableReason: pricingResolution.costUnavailableReason }
+        : {}),
+      ...(pricingResolution.warning
+        ? { pricingWarning: pricingResolution.warning }
+        : {}),
       ...(baseURL
         ? {
             baseURL: baseUrlEnv ? `env:${npmInfo.baseUrlEnv}` : "config",
           }
         : {}),
     },
+  };
+}
+
+/**
+ * Pricing precedence: explicit config `cost` > built-in OpenAI table > none.
+ * This is intentionally shared by adapter construction and capability
+ * inspection so "cost unavailable" means the same thing before and after a run.
+ */
+export function resolveConfiguredModelPricing(
+  selection: ConfiguredSelection,
+): ProviderPricingResolution {
+  const configuredPricing = costToPricing(selection.cost);
+  if (configuredPricing) {
+    return {
+      pricing: configuredPricing,
+      source: "configured",
+      costStatus: "estimated",
+    };
+  }
+
+  const builtinPricing = OPENAI_MODEL_PRICING[selection.modelId];
+  if (builtinPricing) {
+    return {
+      pricing: builtinPricing,
+      source: "builtin",
+      costStatus: "estimated",
+    };
+  }
+
+  return {
+    source: "unavailable",
+    costStatus: "unavailable",
+    costUnavailableReason: "missing_pricing",
+    warning: `No pricing configured for model "${selection.providerKey}/${selection.modelId}"; cost estimates will be unavailable. Add a provider model cost block to enable cost reporting.`,
   };
 }
 

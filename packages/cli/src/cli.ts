@@ -2451,6 +2451,7 @@ function formatCapabilityInspectReport(
 ): string {
   const lines = [
     `workspace: ${report.workspace}`,
+    `model: ${formatCapabilityModelLine(report.runtime?.model)}`,
     `tools: use=${formatPatternList(report.tools.use, "(all)")}; allowed=${formatPatternList(report.tools.allowed, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
     `runtime tools: ${report.runtime?.tools.length ?? "unavailable"}`,
@@ -2532,6 +2533,18 @@ function formatCapabilityInspectReport(
     }
   }
   return lines.join("\n");
+}
+
+function formatCapabilityModelLine(
+  model: CapabilitySnapshot["model"] | undefined,
+): string {
+  if (!model) return "unavailable";
+  const pricing = model.pricing;
+  const suffix =
+    pricing.costStatus === "unavailable"
+      ? `; pricing=unavailable:${pricing.costUnavailableReason ?? "unknown"}`
+      : `; pricing=${pricing.source}`;
+  return `${model.modelRef}${suffix}`;
 }
 
 function formatAgentOrigin(agent: {

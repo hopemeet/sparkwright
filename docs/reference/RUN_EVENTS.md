@@ -67,6 +67,10 @@ Stable consumption rules:
   definition came from when the run is provider-backed.
 - Treat `resolvedModel.authSource` and `resolvedModel.baseURLSource` as source
   labels only. They must not contain API keys, tokens, or raw headers.
+- Use `resolvedModel.pricing.costStatus` to distinguish known-cost runs from
+  runs whose token usage is available but cost estimates are not. When
+  `costUnavailableReason` is `missing_pricing`, clients may show a warning
+  before the run finishes instead of waiting for trace diagnostics.
 - Keep the event optional. Older traces and some embedders may emit
   `run.started` with an empty payload.
 
