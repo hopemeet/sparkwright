@@ -1,0 +1,21 @@
+events: 25
+runs: 1
+sessions: session_fixture
+agents: main
+artifacts: 1
+errors: 0
+top errors: (none)
+expected denials: 0
+top expected denials: (none)
+tokens: 120
+cost: unavailable (missing_pricing:1)
+tool calls: 1 total (read_file:1)
+tool failures: 0 total
+unresolved tool failures: 0 total
+recovered tool failures: 0 total
+command failures: 0 total
+verification failures: 0 total, 0 unresolved
+approvals: 1 requested, 1 approved, 0 denied, 1 auto-approved
+safety: shell approvals 0, shell mutations 0, confidential reads denied 0, managed workspace writes 1 applied/0 denied/0 skipped, untracked write-capable external processes 0, capability mutations 0 completed
+workspace reads: 10 total, 1 unique, duplicates README.md:10
+top event types: workspace.read:10, run.created:1, run.started:1, context.assembled:1, prompt.built:1, model.requested:1, model.completed:1, tool.requested:1

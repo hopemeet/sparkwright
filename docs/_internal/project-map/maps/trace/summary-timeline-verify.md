@@ -15,6 +15,7 @@ See [raw-trace.md](raw-trace.md) for source data and [export-diagnostics.md](exp
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-codec.ts`
 - `packages/cli/src/cli.ts`
+- `packages/cli/test/fixtures/trace-diagnostics/*`
 - `packages/host/src/runtime.ts`
 - `docs/reference/STATE_AND_TRACE_MODEL.md`
 - `docs/reference/RUN_EVENTS.md`
@@ -99,6 +100,8 @@ trace.jsonl
   live events into `live.debug.suppressed` lines unless `--verbose` is set. This
   does not affect raw `trace.jsonl`, `trace events`, summary, timeline, report,
   or verify.
+- CLI fixture snapshots lock text and JSON output for `trace summary`,
+  `timeline`, `report`, and `verify` over a stable trace fixture.
 - `session.inspect` returns summary, consistency, and timeline together.
 
 ## Consumers
@@ -124,17 +127,9 @@ trace.jsonl
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-21
-- Read: `packages/core/src/trace.ts`,
-  `packages/core/src/trace-diagnostics.ts`,
-  `packages/core/src/trace-session-consistency.ts`,
-  `packages/core/src/trace-codec.ts`, `packages/core/src/trace-store.ts`,
-  `packages/core/src/index.ts`, `packages/core/src/internal.ts`,
-  `packages/core/test/trace.test.ts`, `packages/cli/test/cli.test.ts`,
-  `docs/_internal/project-map/designs/trace-diagnostics-refactor.md`,
-  `docs/_internal/project-map/maps/trace/raw-trace.md`,
-  `docs/_internal/project-map/maps/session/session-store.md`.
-- Tests: `npx prettier --check packages/core/src/trace.ts packages/core/src/trace-codec.ts packages/core/src/trace-diagnostics.ts packages/core/src/trace-session-consistency.ts packages/core/src/trace-store.ts`;
-  `npm run build`; `npm --workspace @sparkwright/streaming-runtime run build`;
-  `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
-  `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.
+- Date: 2026-06-22
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/cli/test/fixtures/trace-diagnostics/*`,
+  `docs/_internal/project-map/modules/cli.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.

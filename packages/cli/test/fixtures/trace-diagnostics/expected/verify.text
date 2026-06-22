@@ -1,0 +1,6 @@
+status: ok
+events: 25
+runs: 1
+sessions: session_fixture
+agents: main
+findings: 0

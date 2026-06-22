@@ -1,0 +1,366 @@
+{
+  "eventCount": 25,
+  "runIds": [
+    "run_fixture"
+  ],
+  "sessionIds": [
+    "session_fixture"
+  ],
+  "agentIds": [
+    "main"
+  ],
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "endedAt": "2026-01-01T00:00:24.000Z",
+  "durationMs": 24000,
+  "phases": [
+    {
+      "id": "run_fixture:run",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "run",
+      "label": "run",
+      "status": "completed",
+      "startedAt": "2026-01-01T00:00:00.000Z",
+      "startSequence": 1,
+      "eventTypes": [
+        "run.created",
+        "run.started",
+        "run.completed"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      },
+      "endedAt": "2026-01-01T00:00:24.000Z",
+      "endSequence": 25,
+      "durationMs": 24000
+    },
+    {
+      "id": "run_fixture:3",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "context",
+      "label": "context.assembled",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:02.000Z",
+      "endedAt": "2026-01-01T00:00:02.000Z",
+      "durationMs": 0,
+      "startSequence": 3,
+      "endSequence": 3,
+      "eventTypes": [
+        "context.assembled"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:4",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "model",
+      "label": "model step 1",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:03.000Z",
+      "endedAt": "2026-01-01T00:00:03.000Z",
+      "durationMs": 0,
+      "startSequence": 4,
+      "endSequence": 4,
+      "eventTypes": [
+        "prompt.built"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:model:1",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "model",
+      "label": "model step 1",
+      "status": "completed",
+      "startedAt": "2026-01-01T00:00:04.000Z",
+      "startSequence": 5,
+      "eventTypes": [
+        "model.requested",
+        "model.completed"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      },
+      "endedAt": "2026-01-01T00:00:05.000Z",
+      "endSequence": 6,
+      "durationMs": 1000
+    },
+    {
+      "id": "run_fixture:tool:call_read",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "tool",
+      "label": "tool read_file",
+      "status": "completed",
+      "startedAt": "2026-01-01T00:00:06.000Z",
+      "startSequence": 7,
+      "eventTypes": [
+        "tool.requested",
+        "tool.started",
+        "tool.completed"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      },
+      "endedAt": "2026-01-01T00:00:18.000Z",
+      "endSequence": 19,
+      "durationMs": 12000
+    },
+    {
+      "id": "run_fixture:9",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:08.000Z",
+      "endedAt": "2026-01-01T00:00:08.000Z",
+      "durationMs": 0,
+      "startSequence": 9,
+      "endSequence": 9,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:10",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:09.000Z",
+      "endedAt": "2026-01-01T00:00:09.000Z",
+      "durationMs": 0,
+      "startSequence": 10,
+      "endSequence": 10,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:11",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:10.000Z",
+      "endedAt": "2026-01-01T00:00:10.000Z",
+      "durationMs": 0,
+      "startSequence": 11,
+      "endSequence": 11,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:12",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:11.000Z",
+      "endedAt": "2026-01-01T00:00:11.000Z",
+      "durationMs": 0,
+      "startSequence": 12,
+      "endSequence": 12,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:13",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:12.000Z",
+      "endedAt": "2026-01-01T00:00:12.000Z",
+      "durationMs": 0,
+      "startSequence": 13,
+      "endSequence": 13,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:14",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:13.000Z",
+      "endedAt": "2026-01-01T00:00:13.000Z",
+      "durationMs": 0,
+      "startSequence": 14,
+      "endSequence": 14,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:15",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:14.000Z",
+      "endedAt": "2026-01-01T00:00:14.000Z",
+      "durationMs": 0,
+      "startSequence": 15,
+      "endSequence": 15,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:16",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:15.000Z",
+      "endedAt": "2026-01-01T00:00:15.000Z",
+      "durationMs": 0,
+      "startSequence": 16,
+      "endSequence": 16,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:17",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:16.000Z",
+      "endedAt": "2026-01-01T00:00:16.000Z",
+      "durationMs": 0,
+      "startSequence": 17,
+      "endSequence": 17,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:18",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:17.000Z",
+      "endedAt": "2026-01-01T00:00:17.000Z",
+      "durationMs": 0,
+      "startSequence": 18,
+      "endSequence": 18,
+      "eventTypes": [
+        "workspace.read"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:workspace.write:write_1",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace README.md",
+      "status": "completed",
+      "startedAt": "2026-01-01T00:00:19.000Z",
+      "startSequence": 20,
+      "eventTypes": [
+        "workspace.write.requested",
+        "workspace.write.completed"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      },
+      "endedAt": "2026-01-01T00:00:22.000Z",
+      "endSequence": 23,
+      "durationMs": 3000
+    },
+    {
+      "id": "run_fixture:approval:approval_1",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "approval",
+      "label": "approval Write README.md",
+      "status": "completed",
+      "startedAt": "2026-01-01T00:00:20.000Z",
+      "startSequence": 21,
+      "eventTypes": [
+        "approval.requested",
+        "approval.resolved"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      },
+      "endedAt": "2026-01-01T00:00:21.000Z",
+      "endSequence": 22,
+      "durationMs": 1000
+    },
+    {
+      "id": "run_fixture:24",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "artifact",
+      "label": "artifact.created",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:23.000Z",
+      "endedAt": "2026-01-01T00:00:23.000Z",
+      "durationMs": 0,
+      "startSequence": 24,
+      "endSequence": 24,
+      "eventTypes": [
+        "artifact.created"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    }
+  ]
+}

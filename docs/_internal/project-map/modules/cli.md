@@ -15,6 +15,7 @@ See also [../maps/trace/summary-timeline-verify.md](../maps/trace/summary-timeli
 - `packages/cli/src/runners/host-runner.ts`
 - `packages/cli/src/cli-approval.ts`
 - `packages/cli/test/cli.test.ts`
+- `packages/cli/test/fixtures/trace-diagnostics/*`
 - `scripts/copy-cli-schemas.mjs`
 
 ## Owns / Does Not Own
@@ -108,6 +109,9 @@ Does not own:
   while targeted `npm run build --workspace ...` still avoids false stale
   reports when TypeScript emits no changed output.
 - Text output is a human diagnostic surface; JSON output should remain machine-parseable.
+- Fixture snapshots under `packages/cli/test/fixtures/trace-diagnostics/`
+  lock byte-for-byte CLI text/JSON output for `trace summary`, `timeline`,
+  `report`, and `verify` over a stable trace.
 
 ## Consumers
 
@@ -136,7 +140,8 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-06-21
-- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`, `packages/host/src/runtime.ts`, `packages/protocol/src/index.ts`, `docs/reference/HOST_PROTOCOL.md`.
-- Tests: `npm --workspace @sparkwright/cli test -- cli.test.ts`;
-  `npm run release:check`.
+- Date: 2026-06-22
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/cli/test/fixtures/trace-diagnostics/*`,
+  `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts`.
