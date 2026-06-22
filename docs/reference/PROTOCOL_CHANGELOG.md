@@ -12,6 +12,10 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — `CapabilitySnapshot.shell` may include
+  `foregroundTimeoutMs` and `promotionAvailable` alongside sandbox status.
+  Migration: none; clients should treat the fields as optional diagnostics.
+
 - `host-message.schema.json`: additive — `CapabilitySnapshot` may include a
   `model` summary with pricing status. Hosts report `missing_pricing` before a
   run when the selected model has no built-in or configured cost block.

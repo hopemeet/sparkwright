@@ -622,6 +622,8 @@ export interface CapabilitySnapshot {
     delegateTools: CapabilityDelegateToolSummary[];
   };
   shell?: {
+    foregroundTimeoutMs?: number;
+    promotionAvailable?: boolean;
     sandbox: CapabilityShellSandboxSummary;
   };
   automation?: CapabilityAutomationSummary;

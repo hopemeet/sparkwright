@@ -19,6 +19,7 @@ export {
 } from "./safety.js";
 export {
   createShellTool,
+  MAX_FOREGROUND_TIMEOUT_MS,
   RECOMMENDED_FOREGROUND_TIMEOUT_MS,
   ShellSafetyError,
   type ShellPromotionHandler,

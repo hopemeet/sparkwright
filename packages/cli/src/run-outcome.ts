@@ -270,7 +270,7 @@ export function summarizeVerificationCommandFailures(
     : last
       ? `exitCode=${last.exitCode}`
       : "failed";
-  return `Run completed with failed verification (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
+  return `Run completed with verification failures; exiting 1 (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
 }
 
 export function summarizeVerificationProfileResults(

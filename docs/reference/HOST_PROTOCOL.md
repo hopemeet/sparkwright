@@ -536,6 +536,19 @@ scanning files or interpreting local config.
         "gatedByRunWrite": true
       }
     ]
+  },
+  "shell": {
+    "foregroundTimeoutMs": 300000,
+    "promotionAvailable": true,
+    "sandbox": {
+      "mode": "warn",
+      "failIfUnavailable": false,
+      "runtimeId": "platform",
+      "platform": "darwin",
+      "available": true,
+      "networkMode": "deny",
+      "filesystemIsolation": "deny-list-guard"
+    }
   }
 }
 ```

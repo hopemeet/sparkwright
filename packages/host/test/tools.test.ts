@@ -1,4 +1,10 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,6 +30,7 @@ import {
   createPlatformShellSandboxRuntime,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
+import type { ShellToolOutput } from "@sparkwright/shell-tool";
 import {
   createAgentInspectorTool,
   createAgentManagerTool,
@@ -623,6 +630,26 @@ describe("host tools", () => {
     expect(entries.map((entry) => entry.source)).toEqual(["shell"]);
   });
 
+  it("anchors configured delegate child shell cwd relative to the workspace", async () => {
+    const ctx = await createWorkspace({});
+    const entries = createConfiguredDelegateChildToolCatalog({
+      workspaceRoot: ctx.workspaceRoot,
+      shell: { sandbox: { mode: "off" } },
+      toolConfig: { use: ["shell"] },
+    });
+    const shell = entries.find(
+      (entry) => entry.definition.name === "shell",
+    )?.definition;
+
+    const result = (await shell!.execute(
+      { command: "pwd", cwd: "." },
+      ctx,
+    )) as ShellToolOutput;
+
+    expect(result.stdout.trim()).toBe(await realpath(ctx.workspaceRoot));
+    expect(result.promotionAvailable).toBe(false);
+  });
+
   it("runs configured delegates with the effective profile tool set", async () => {
     const ctx = await createWorkspace({ "README.md": "# Demo\n" });
     const childToolCatalog = createConfiguredDelegateChildToolCatalog({
@@ -682,6 +709,83 @@ describe("host tools", () => {
     } as never);
 
     expect(childToolNames).toEqual(["read_file"]);
+  });
+
+  it("lets configured delegates inherit the parent maxSteps when unset", async () => {
+    const ctx = await createWorkspace({ "README.md": "# Demo\n" });
+    let childCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childCalls += 1;
+        if (childCalls < 9) {
+          return {
+            toolCalls: [
+              { toolName: "noop", arguments: { iteration: childCalls } },
+            ],
+          };
+        }
+        return { message: "child finished on inherited budget" };
+      },
+    };
+    const noop = defineTool({
+      name: "noop",
+      description: "Advance one scripted child step.",
+      inputSchema: {
+        type: "object",
+        properties: { iteration: { type: "integer" } },
+      },
+      policy: { risk: "safe" },
+      async execute(args) {
+        return args;
+      },
+    });
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      workspace: new LocalWorkspace(ctx.workspaceRoot),
+      maxSteps: 9,
+    });
+    const [delegate] = createConfiguredDelegateTools({
+      getParent: () => parent,
+      delegates: [{ profileId: "worker", toolName: "delegate_worker" }],
+      derivedAgents: [
+        {
+          effectiveProfile: {
+            id: "worker",
+            name: "Worker",
+            mode: "child",
+            prompt: "Finish after several turns.",
+            allowedTools: ["noop"],
+          },
+          inheritedPolicy: [],
+          effectivePolicy: [],
+          parentAgentDenyCount: 0,
+          parentRunDenyCount: 0,
+          childDenyCount: 0,
+          effectiveToolCount: 1,
+        },
+      ],
+      model: childModel,
+      childTools: [noop],
+      workspaceRoot: ctx.workspaceRoot,
+      parentRunPolicy: createDefaultPolicy(),
+      allowReadWriteWorkspaceAccess: false,
+      childRunStoreFactory: () => undefined as never,
+    });
+
+    await expect(
+      delegate!.execute({ goal: "Finish after several turns." }, {
+        run: parent.record,
+      } as never),
+    ).resolves.toMatchObject({
+      signal: "completed",
+      stepLimitReached: true,
+    });
+    expect(childCalls).toBe(9);
   });
 
   it("builds CLI diagnostic tools from the shared coding catalog", () => {
@@ -1345,6 +1449,35 @@ describe("host tools", () => {
         }),
       }),
     });
+  });
+
+  it("kills a long-running shell at the foreground budget when task promotion is unavailable", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createHostShellTool(ctx.workspaceRoot, {
+      foregroundTimeoutMs: 20,
+      sandbox: { mode: "off" },
+    });
+
+    const result = await tool.execute(
+      {
+        command:
+          "node -e \"setTimeout(() => console.log('should not print'), 500)\"",
+      },
+      ctx,
+    );
+
+    expect(result.promoted).toBeUndefined();
+    expect(result.taskId).toBeUndefined();
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBeNull();
+    expect(result.foregroundTimeoutMs).toBe(20);
+    expect(result.promotionAvailable).toBe(false);
+    expect(result.stderr).toContain(
+      "foreground timeout reached; process killed because promotion unavailable",
+    );
+    expect(result.promotionUnavailableReason).toContain(
+      "promotion unavailable",
+    );
   });
 
   it("keeps promoted shell task writes and records a durable terminal task instead of rolling back", async () => {

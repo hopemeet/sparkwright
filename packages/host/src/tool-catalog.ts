@@ -91,6 +91,7 @@ export function createConfiguredDelegateChildToolCatalog(input: {
         ...createCoreCodingToolCatalog(input.workspaceRoot),
         catalogEntry(
           createHostShellTool(input.workspaceRoot, {
+            foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
             sandbox: input.shell?.sandbox,
             skillRoots: input.skillRoots,
             extraForcedDenyWrite: input.configPaths,
@@ -239,6 +240,7 @@ function createMainHostToolCatalogList(input: {
     catalogEntry(
       createHostShellTool(input.workspaceRoot, {
         taskManager: input.taskManager,
+        foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
         sandbox: input.shell?.sandbox,
         skillRoots: input.skillRoots.map((root) => root.root),
         extraForcedDenyWrite: input.configPaths,

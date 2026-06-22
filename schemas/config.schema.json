@@ -222,6 +222,12 @@
     "shell": {
       "type": "object",
       "properties": {
+        "foregroundTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000,
+          "description": "Foreground shell budget in milliseconds before promotion to a background task. Defaults to 300000 and is capped at 600000."
+        },
         "sandbox": {
           "type": "object",
           "properties": {

@@ -38,7 +38,7 @@ describe("CLI run outcome", () => {
       1,
     );
     expect(summarizeVerificationCommandFailures(summary)).toContain(
-      "failed verification",
+      "verification failures; exiting 1",
     );
     expect(summarizeVerificationCommandFailures(summary)).toContain(
       "python3 -m greettool.cli --name Ada",

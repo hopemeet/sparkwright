@@ -221,7 +221,7 @@ interface TraceReportFacts {
   uniqueWritePaths: string[];
   verificationLag?: { modelCallsAfterLastWrite: number; command: string };
   reportableFailures: ReportableFailureLedger;
-  incompleteSubagents: Array<{ label: string }>;
+  incompleteSubagents: IncompleteSubagentTerminal[];
   inFlightDuplicateStorms: Array<{ label: string; count: number }>;
   repeatedApprovalDenials: Array<{ label: string; count: number }>;
   untrackedWriteAccess: UntrackedWriteAccessMarker[];
@@ -428,14 +428,37 @@ function analyzeMultiAgentAuditability({
   } = facts;
   const findings: TraceReportFinding[] = [];
 
-  if (incompleteSubagents.length > 0) {
+  const unverifiedIncompleteSubagents = incompleteSubagents.filter(
+    (item) => item.verifiedAfterChildWrite === undefined,
+  );
+  const verifiedIncompleteSubagents = incompleteSubagents.filter(
+    (item) => item.verifiedAfterChildWrite !== undefined,
+  );
+
+  if (unverifiedIncompleteSubagents.length > 0) {
     findings.push({
       severity: "high",
       code: "SUBAGENT_INCOMPLETE",
       title: "Sub-agent results may be incomplete",
-      evidence: incompleteSubagents.slice(0, 5).map((item) => item.label),
+      evidence: unverifiedIncompleteSubagents
+        .slice(0, 5)
+        .map((item) => item.label),
       recommendation:
         "Inspect the child run trace before trusting the parent result; rerun with more child steps if the child was truncated or hit its step limit.",
+    });
+  }
+
+  if (verifiedIncompleteSubagents.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "SUBAGENT_INCOMPLETE",
+      title: "Sub-agent hit a limit but parent verified after child write",
+      evidence: verifiedIncompleteSubagents.slice(0, 5).map((item) => {
+        const evidence = item.verifiedAfterChildWrite!;
+        return `${item.label} · verifiedAfterChildWrite childWriteIndex=${evidence.childWriteIndex} subagentIndex=${evidence.subagentIndex} verificationIndex=${evidence.verificationIndex} command=${evidence.command}`;
+      }),
+      recommendation:
+        "Keep the raw child finality for audit, but treat the parent result as lower risk because a later verification covered the current workspace state.",
     });
   }
 
@@ -1934,12 +1957,24 @@ function collectRepeatedCommandFailures(
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
+interface IncompleteSubagentTerminal {
+  label: string;
+  verifiedAfterChildWrite?: VerifiedAfterChildWriteEvidence;
+}
+
+interface VerifiedAfterChildWriteEvidence {
+  childWriteIndex: number;
+  subagentIndex: number;
+  verificationIndex: number;
+  command: string;
+}
+
 function collectIncompleteSubagentTerminals(
   events: readonly SparkwrightEvent[],
-): Array<{ label: string }> {
-  const out: Array<{ label: string }> = [];
+): IncompleteSubagentTerminal[] {
+  const out: IncompleteSubagentTerminal[] = [];
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (
       event.type !== "subagent.completed" &&
       event.type !== "subagent.failed"
@@ -1982,7 +2017,117 @@ function collectIncompleteSubagentTerminals(
       childRunId ? `child ${childRunId}` : undefined,
       depth !== undefined ? `depth ${depth}` : undefined,
     ].filter((value): value is string => typeof value === "string");
-    out.push({ label: truncateDiagnostic(pieces.join(" · "), 220) });
+    const verifiedAfterChildWrite = collectVerifiedAfterChildWriteEvidence(
+      events,
+      event,
+      index,
+      childRunId,
+    );
+    out.push({
+      label: truncateDiagnostic(pieces.join(" · "), 220),
+      ...(verifiedAfterChildWrite ? { verifiedAfterChildWrite } : {}),
+    });
+  }
+
+  return out;
+}
+
+function collectVerifiedAfterChildWriteEvidence(
+  events: readonly SparkwrightEvent[],
+  subagentEvent: SparkwrightEvent,
+  subagentIndex: number,
+  childRunId: string | undefined,
+): VerifiedAfterChildWriteEvidence | undefined {
+  if (!isRecord(subagentEvent.payload)) return undefined;
+  const workspaceWrites = optionalNumberValue(
+    subagentEvent.payload.workspaceWrites,
+  );
+  if (workspaceWrites === undefined || workspaceWrites <= 0) return undefined;
+  if (!childRunId) return undefined;
+
+  let childWriteIndex: number | undefined;
+  let lastWorkspaceWriteIndex: number | undefined;
+  for (const [index, event] of events.entries()) {
+    if (event.type !== "workspace.write.completed") continue;
+    lastWorkspaceWriteIndex = index;
+    if (index < subagentIndex && eventMatchesChildRun(event, childRunId)) {
+      childWriteIndex = index;
+    }
+  }
+  if (childWriteIndex === undefined) return undefined;
+
+  const verification = collectSuccessfulVerificationEvents(events).find(
+    (item) =>
+      item.index > subagentIndex &&
+      item.index > childWriteIndex! &&
+      (lastWorkspaceWriteIndex === undefined ||
+        item.index > lastWorkspaceWriteIndex),
+  );
+  if (!verification) return undefined;
+
+  return {
+    childWriteIndex,
+    subagentIndex,
+    verificationIndex: verification.index,
+    command: verification.command,
+  };
+}
+
+function eventMatchesChildRun(
+  event: SparkwrightEvent,
+  childRunId: string,
+): boolean {
+  if (event.runId === childRunId) return true;
+  const payload = isRecord(event.payload) ? event.payload : undefined;
+  return (
+    stringValue(event.metadata.childRunId, payload?.childRunId) === childRunId
+  );
+}
+
+function collectSuccessfulVerificationEvents(
+  events: readonly SparkwrightEvent[],
+): Array<{ index: number; command: string }> {
+  const commandByCallId = new Map<string, string>();
+  const out: Array<{ index: number; command: string }> = [];
+
+  for (const [index, event] of events.entries()) {
+    if (!isRecord(event.payload)) continue;
+
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const args = recordValue(event.payload.arguments);
+      const command = stringValue(args?.command);
+      if (toolName === "shell" && callId && command) {
+        commandByCallId.set(callId, command);
+      }
+      continue;
+    }
+
+    if (event.type === "tool.completed") {
+      const toolName = stringValue(event.payload.toolName);
+      const callId = stringValue(event.payload.toolCallId, event.payload.id);
+      if (toolName !== "shell" || !callId) continue;
+      const command =
+        commandByCallId.get(callId) ??
+        stringValue(recordValue(event.payload.output)?.command);
+      if (!command || !isLikelyVerificationCommand(command)) continue;
+      const output = recordValue(event.payload.output);
+      if (output?.timedOut === true) continue;
+      if (optionalNumberValue(output?.exitCode) !== 0) continue;
+      out.push({ index, command });
+      continue;
+    }
+
+    if (event.type !== "workflow_hook.completed") continue;
+    const hookName = stringValue(event.payload.hookName);
+    if (!hookName?.startsWith("verification:")) continue;
+    const result = recordValue(event.payload.result);
+    const metadata = recordValue(result?.metadata);
+    const exitCode = optionalNumberValue(metadata?.exitCode);
+    const timedOut = metadata?.timedOut === true;
+    if (timedOut || exitCode !== 0) continue;
+    out.push({ index, command: hookName });
   }
 
   return out;

@@ -587,6 +587,8 @@
         "shell": {
           "type": "object",
           "properties": {
+            "foregroundTimeoutMs": { "type": "integer", "minimum": 1 },
+            "promotionAvailable": { "type": "boolean" },
             "sandbox": { "$ref": "#/$defs/CapabilityShellSandboxSummary" }
           },
           "additionalProperties": false

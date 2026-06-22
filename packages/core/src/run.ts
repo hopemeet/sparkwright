@@ -382,6 +382,8 @@ export interface RunHandle {
   readonly record: RunRecord;
   readonly events: EventLog;
   readonly tools: ToolRegistry;
+  /** Effective model-turn ceiling for this run. Child runs inherit it by default. */
+  readonly maxSteps: number;
   /**
    * Run-scoped abort signal. Fires when `cancel()` is called or when the
    * external `CreateRunOptions.abortSignal` aborts. Embedders can wire this
@@ -533,7 +535,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly prefetchers: ContextPrefetcher[];
   private readonly observationSummarizer?: ObservationSummarizer;
   private readonly runBudget?: RunBudget;
-  private readonly maxSteps: number;
+  readonly maxSteps: number;
   private readonly toolTimeoutMs?: number;
   private readonly maxToolConcurrency: number;
   private readonly doomLoopRepeatLimit: number;

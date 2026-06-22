@@ -443,7 +443,7 @@ describe("createShellTool", () => {
     ).rejects.toMatchObject({
       name: "ShellSafetyError",
       decision: "deny",
-      reason: "Shell cwd escapes allowed roots: /tmp",
+      reason: expect.stringContaining("Shell cwd escapes allowed roots"),
     });
 
     await expect(
@@ -451,19 +451,45 @@ describe("createShellTool", () => {
     ).rejects.toMatchObject({
       name: "ShellSafetyError",
       decision: "deny",
-      reason: "Shell argument path escapes allowed roots: /etc/passwd",
+      reason: expect.stringContaining(
+        "Shell argument path escapes allowed roots",
+      ),
     });
     await expect(
       tool.execute({ command: 'sh -c "cat /etc/passwd"' }, runtimeContext()),
     ).rejects.toMatchObject({
       name: "ShellSafetyError",
       decision: "deny",
-      reason: "Shell argument path escapes allowed roots: /etc/passwd",
+      reason: expect.stringContaining(
+        "Shell argument path escapes allowed roots",
+      ),
     });
 
     const result = await tool.execute({ command: "ls" }, runtimeContext());
     expect(result.stdout).toBe("ok\n");
     expect(calls[0]?.cwd).toBe("/workspace");
+
+    const dot = await tool.execute(
+      { command: "pwd", cwd: "." },
+      runtimeContext(),
+    );
+    expect(dot.stdout).toBe("ok\n");
+    expect(calls[1]?.cwd).toBe("/workspace");
+
+    const subdir = await tool.execute(
+      { command: "pwd", cwd: "packages/host" },
+      runtimeContext(),
+    );
+    expect(subdir.stdout).toBe("ok\n");
+    expect(calls[2]?.cwd).toBe("/workspace/packages/host");
+
+    await expect(
+      tool.execute({ command: "ls", cwd: "../outside" }, runtimeContext()),
+    ).rejects.toMatchObject({
+      name: "ShellSafetyError",
+      decision: "deny",
+      reason: expect.stringContaining('"given":"../outside"'),
+    });
   });
 
   it("does not flag a relative path with an inner slash as an escape", async () => {
@@ -560,7 +586,7 @@ function minimalOptions() {
 
 describe("foreground→background promotion", () => {
   it("exports a documented recommended timeout", () => {
-    expect(RECOMMENDED_FOREGROUND_TIMEOUT_MS).toBe(10 * 60 * 1000);
+    expect(RECOMMENDED_FOREGROUND_TIMEOUT_MS).toBe(5 * 60 * 1000);
   });
 
   it("returns normally when completion beats the foreground deadline", async () => {
@@ -584,6 +610,35 @@ describe("foreground→background promotion", () => {
     expect(result.promoted).toBeUndefined();
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("fast\n");
+    expect(result.foregroundTimeoutMs).toBe(1000);
+    expect(result.promotionAvailable).toBe(true);
+    expect(result.timeoutMsAliasUsed).toBe(false);
+  });
+
+  it("treats timeoutMs as an observable foregroundTimeoutMs alias", async () => {
+    const environment = streamingEnv({
+      stdoutChunks: ["fast\n"],
+      stderrChunks: [],
+      completeAfterMs: 5,
+      exitCode: 0,
+    });
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 1000,
+      onPromote: () => ({ taskId: "should-not-fire" }),
+    });
+
+    const result = await tool.execute(
+      { command: "ls", timeoutMs: 25 },
+      runtimeContext(),
+    );
+
+    expect(result.foregroundTimeoutMs).toBe(25);
+    expect(result.timeoutMsAliasUsed).toBe(true);
+    expect(result.timeoutAliasWarning).toContain(
+      "timeoutMs is interpreted as foregroundTimeoutMs",
+    );
+    expect(result.timedOut).toBe(false);
   });
 
   it("hands the live process to onPromote when the deadline fires first", async () => {
@@ -699,6 +754,7 @@ describe("foreground→background promotion", () => {
     const tool = createShellTool({
       environment,
       foregroundTimeoutMs: 10,
+      promotionAvailable: false,
       onPromote: () => {
         throw new Error("host queue full");
       },
@@ -707,6 +763,11 @@ describe("foreground→background promotion", () => {
     expect(result.promoted).toBeUndefined();
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).toBeNull();
+    expect(result.promotionAvailable).toBe(false);
+    expect(result.promotionUnavailableReason).toBe("host queue full");
+    expect(result.stderr).toContain(
+      "foreground timeout reached; process killed because promotion unavailable",
+    );
   });
 });
 

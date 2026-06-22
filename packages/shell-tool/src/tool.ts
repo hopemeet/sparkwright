@@ -27,16 +27,25 @@ import {
 } from "./safety.js";
 
 /**
- * Recommended ceiling for foreground shell execution before promotion to a
- * background task. Reflects the 10-minute convention common in agent-CLI
- * tooling. SparkWright deliberately ships **no default** — hosts must opt in via
- * {@link ShellToolOptions.foregroundTimeoutMs} — but this constant gives every
- * caller a documented anchor so they do not have to invent a number.
+ * Recommended foreground shell budget before promotion to a background task.
+ * Hosts use this as the default "front-of-chat" budget: when it fires, a host
+ * with a TaskManager promotes the live process; a host without promotion aborts
+ * and returns `timedOut: true`.
  *
  * @public
  * @stability experimental v0.1
  */
-export const RECOMMENDED_FOREGROUND_TIMEOUT_MS = 10 * 60 * 1000;
+export const RECOMMENDED_FOREGROUND_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Maximum accepted foreground shell budget. Keeping the hard cap separate from
+ * the recommended default lets tests inject tiny budgets while config/schema
+ * checks verify the production ceiling.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export const MAX_FOREGROUND_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * Payload passed to {@link ShellToolOptions.onPromote} when a foreground
@@ -103,14 +112,17 @@ export interface ShellToolOptions {
    */
   environment: ExecutionEnvironment;
   /**
-   * Wall-clock ceiling for foreground execution. When the deadline fires the
-   * live process is handed to {@link ShellToolOptions.onPromote} (NOT killed)
-   * and the tool returns `{ promoted: true, taskId, ... }`.
-   *
-   * **No default ship value.** Set this explicitly on every host — see
-   * {@link RECOMMENDED_FOREGROUND_TIMEOUT_MS} for the recommended anchor.
+   * Default wall-clock foreground budget. A call may override this with
+   * `foregroundTimeoutMs`; legacy `timeoutMs` is accepted as an observable alias
+   * for the same foreground budget and no longer controls process hard-kill.
    */
   foregroundTimeoutMs: number;
+  /**
+   * Whether the host can promote a foreground shell to a background task when
+   * the foreground budget expires. Defaults to true for embedders that provide
+   * a real `onPromote` handler.
+   */
+  promotionAvailable?: boolean;
   /**
    * Promotion callback invoked when {@link ShellToolOptions.foregroundTimeoutMs}
    * fires. The host adopts the live process (typically by registering it with
@@ -129,9 +141,7 @@ export interface ShellToolOptions {
   workspaceRoot?: string;
   /** Additional trusted filesystem roots for cwd and absolute path arguments. */
   allowedRoots?: readonly string[];
-  /**
-   * Default per-call timeout in milliseconds. Callers may override via input.
-   */
+  /** @deprecated Use `foregroundTimeoutMs`; hard kill timeout is not configured here. */
   defaultTimeoutMs?: number;
   /**
    * Override the registered tool name (defaults to `"shell"`).
@@ -151,6 +161,11 @@ export interface ShellToolOptions {
  */
 export interface ShellToolInput {
   command: string;
+  foregroundTimeoutMs?: number;
+  /**
+   * @deprecated Alias for `foregroundTimeoutMs`. It no longer controls process
+   * hard-kill timeout.
+   */
   timeoutMs?: number;
   cwd?: string;
 }
@@ -168,6 +183,19 @@ export interface ShellToolOutput {
   timedOut: boolean;
   decision: ShellSafetyDecision;
   reason: string;
+  /** Effective foreground budget used for this shell call. */
+  foregroundTimeoutMs: number;
+  /** True when a promotion handler was available for this shell call. */
+  promotionAvailable: boolean;
+  /** True when legacy `timeoutMs` supplied the foreground budget. */
+  timeoutMsAliasUsed: boolean;
+  /** Human-readable migration note when legacy `timeoutMs` was provided. */
+  timeoutAliasWarning?: string;
+  /**
+   * @reserved Public shell-output field consumed by trace/report UIs and the
+   * model-visible shell observation when foreground promotion is unavailable.
+   */
+  promotionUnavailableReason?: string;
   /** @reserved Public shell-output field consumed by artifact-aware UIs. */
   stdoutArtifactId?: string;
   /** @reserved Public shell-output field consumed by artifact-aware UIs. */
@@ -247,6 +275,7 @@ export function createShellTool(
       type: "object",
       properties: {
         command: { type: "string" },
+        foregroundTimeoutMs: { type: "integer" },
         timeoutMs: { type: "integer" },
         cwd: { type: "string" },
       },
@@ -262,6 +291,11 @@ export function createShellTool(
         timedOut: { type: "boolean" },
         decision: { type: "string" },
         reason: { type: "string" },
+        foregroundTimeoutMs: { type: "integer" },
+        promotionAvailable: { type: "boolean" },
+        timeoutMsAliasUsed: { type: "boolean" },
+        timeoutAliasWarning: { type: "string" },
+        promotionUnavailableReason: { type: "string" },
         stdoutArtifactId: { type: "string" },
         stderrArtifactId: { type: "string" },
         outputTruncated: { type: "boolean" },
@@ -290,10 +324,12 @@ export function createShellTool(
         "timedOut",
         "decision",
         "reason",
+        "foregroundTimeoutMs",
+        "promotionAvailable",
+        "timeoutMsAliasUsed",
       ],
       additionalProperties: false,
     },
-    timeoutMs: options.defaultTimeoutMs,
     policy: { risk: "risky", requiresApproval: true },
     governance: RISKY_SHELL_GOVERNANCE,
     policyForArgs(args) {
@@ -306,6 +342,11 @@ export function createShellTool(
         "exitCode",
         "timedOut",
         "stderr",
+        "foregroundTimeoutMs",
+        "promotionAvailable",
+        "timeoutMsAliasUsed",
+        "timeoutAliasWarning",
+        "promotionUnavailableReason",
         "stdoutArtifactId",
         "stderrArtifactId",
         "outputTruncated",
@@ -317,8 +358,8 @@ export function createShellTool(
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
-      const input = normalizeShellInput(args);
-      await assertShellPathScope(input, options);
+      const input = normalizeShellInput(args, options.foregroundTimeoutMs);
+      const scopedCwd = await assertShellPathScope(input, options);
       const verdict: ShellSafetyResult = evaluateShellSafety(
         input.command,
         options.safety,
@@ -332,12 +373,14 @@ export function createShellTool(
       const request: ShellExecutionRequest = {
         command: parsed.leadingProgram || input.command,
         args: parsed.argv.slice(1),
-        cwd: input.cwd ?? options.workspaceRoot,
-        timeoutMs: input.timeoutMs ?? options.defaultTimeoutMs,
+        cwd: scopedCwd ?? input.cwd ?? options.workspaceRoot,
         metadata: {
           rawCommand: input.command,
           safetyDecision: verdict.decision,
           safetyReason: verdict.reason,
+          foregroundTimeoutMs: input.foregroundTimeoutMs,
+          promotionAvailable: options.promotionAvailable ?? true,
+          timeoutMsAliasUsed: input.timeoutMsAliasUsed,
         },
       };
 
@@ -345,8 +388,11 @@ export function createShellTool(
         environment: options.environment,
         request,
         verdict,
-        foregroundTimeoutMs: options.foregroundTimeoutMs,
+        foregroundTimeoutMs: input.foregroundTimeoutMs,
         onPromote: options.onPromote,
+        promotionAvailable: options.promotionAvailable ?? true,
+        timeoutMsAliasUsed: input.timeoutMsAliasUsed,
+        timeoutAliasWarning: input.timeoutAliasWarning,
       });
       return materializeLargeShellOutput(output, {
         command: input.command,
@@ -491,7 +537,12 @@ function validateShellToolOptions(options: ShellToolOptions): void {
     options.foregroundTimeoutMs <= 0
   ) {
     throw new Error(
-      "@sparkwright/shell-tool: `foregroundTimeoutMs` is required and must be a positive number. Use RECOMMENDED_FOREGROUND_TIMEOUT_MS (10 min) as a starting point.",
+      "@sparkwright/shell-tool: `foregroundTimeoutMs` is required and must be a positive number. Use RECOMMENDED_FOREGROUND_TIMEOUT_MS (5 min) as a starting point.",
+    );
+  }
+  if (options.foregroundTimeoutMs > MAX_FOREGROUND_TIMEOUT_MS) {
+    throw new Error(
+      `@sparkwright/shell-tool: \`foregroundTimeoutMs\` must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
     );
   }
   if (typeof options.onPromote !== "function") {
@@ -507,6 +558,9 @@ interface PromotionRunContext {
   verdict: ShellSafetyResult;
   foregroundTimeoutMs: number;
   onPromote: ShellPromotionHandler;
+  promotionAvailable: boolean;
+  timeoutMsAliasUsed: boolean;
+  timeoutAliasWarning?: string;
 }
 
 async function runWithPromotion(
@@ -574,6 +628,12 @@ async function runWithPromotion(
       timedOut,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      foregroundTimeoutMs: ctx.foregroundTimeoutMs,
+      promotionAvailable: ctx.promotionAvailable,
+      timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
+      ...(ctx.timeoutAliasWarning
+        ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
+        : {}),
       sandbox: shellSandboxOutput(race.result.metadata),
     };
   }
@@ -605,25 +665,52 @@ async function runWithPromotion(
       timedOut: false,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      foregroundTimeoutMs: ctx.foregroundTimeoutMs,
+      promotionAvailable: ctx.promotionAvailable,
+      timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
+      ...(ctx.timeoutAliasWarning
+        ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
+        : {}),
       promoted: true,
       taskId: promotion.taskId,
       sandbox: shellSandboxOutput(handle.metadata),
     };
-  } catch {
+  } catch (cause) {
     // Promotion failed: fall back to abort + timedOut for safety.
-    handle.abort("shell-tool: promotion handler failed");
+    const promotionUnavailableReason =
+      cause instanceof Error ? cause.message : String(cause);
+    handle.abort(
+      `foreground timeout reached; process killed because promotion unavailable: ${promotionUnavailableReason}`,
+    );
     const final = await completed;
     await Promise.allSettled([collectStdout, collectStderr]);
+    const stderrWithReason = appendDiagnosticLine(
+      final.stderr || stderr,
+      `foreground timeout reached; process killed because promotion unavailable: ${promotionUnavailableReason}`,
+    );
     return {
       stdout: final.stdout || stdout,
-      stderr: final.stderr || stderr,
+      stderr: stderrWithReason,
       exitCode: final.exitCode,
       timedOut: true,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      foregroundTimeoutMs: ctx.foregroundTimeoutMs,
+      promotionAvailable: ctx.promotionAvailable,
+      timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
+      ...(ctx.timeoutAliasWarning
+        ? { timeoutAliasWarning: ctx.timeoutAliasWarning }
+        : {}),
+      promotionUnavailableReason,
       sandbox: shellSandboxOutput(final.metadata),
     };
   }
+}
+
+function appendDiagnosticLine(value: string, line: string): string {
+  if (value.includes(line)) return value;
+  if (value.length === 0) return `${line}\n`;
+  return `${value.replace(/\s+$/u, "")}\n${line}\n`;
 }
 
 function shellSandboxOutput(
@@ -678,33 +765,69 @@ export class ShellSafetyError extends Error {
 
 function normalizeShellInput(
   args: ShellToolInput,
+  defaultForegroundTimeoutMs = RECOMMENDED_FOREGROUND_TIMEOUT_MS,
 ): Required<Pick<ShellToolInput, "command">> &
-  Pick<ShellToolInput, "cwd" | "timeoutMs"> {
+  Pick<ShellToolInput, "cwd"> & {
+    foregroundTimeoutMs: number;
+    timeoutMsAliasUsed: boolean;
+    timeoutAliasWarning?: string;
+  } {
   assertRecord(args, "shell input");
   const command = readString(args, "command");
   const cwd =
     typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
   const timeoutMs = readOptionalPositiveInteger(args, "timeoutMs");
-  return { command, cwd, timeoutMs };
+  const explicitForegroundTimeoutMs = readOptionalPositiveInteger(
+    args,
+    "foregroundTimeoutMs",
+  );
+  const foregroundTimeoutMs =
+    explicitForegroundTimeoutMs ?? timeoutMs ?? defaultForegroundTimeoutMs;
+  if (foregroundTimeoutMs > MAX_FOREGROUND_TIMEOUT_MS) {
+    throw new Error(
+      `foregroundTimeoutMs must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
+    );
+  }
+  const timeoutMsAliasUsed =
+    explicitForegroundTimeoutMs === undefined && timeoutMs !== undefined;
+  return {
+    command,
+    cwd,
+    foregroundTimeoutMs,
+    timeoutMsAliasUsed,
+    ...(timeoutMs !== undefined
+      ? {
+          timeoutAliasWarning:
+            "timeoutMs is interpreted as foregroundTimeoutMs; hard kill timeout is no longer controlled here.",
+        }
+      : {}),
+  };
 }
 
 async function assertShellPathScope(
   input: Required<Pick<ShellToolInput, "command">> &
-    Pick<ShellToolInput, "cwd" | "timeoutMs">,
+    Pick<ShellToolInput, "cwd">,
   options: ShellToolOptions,
-): Promise<void> {
-  if (!options.workspaceRoot) return;
+): Promise<string | undefined> {
+  if (!options.workspaceRoot) return undefined;
 
+  const workspaceRoot = await resolveRealPath(options.workspaceRoot);
   const roots = await Promise.all(
-    [options.workspaceRoot, ...(options.allowedRoots ?? [])].map((root) =>
+    [workspaceRoot, ...(options.allowedRoots ?? [])].map((root) =>
       resolveRealPath(root),
     ),
   );
-  const cwd = await resolveRealPath(input.cwd ?? options.workspaceRoot);
+  const cwdGiven = input.cwd ?? options.workspaceRoot;
+  const cwd = await resolveInWorkspace(workspaceRoot, cwdGiven);
   if (!isInsideAnyRoot(roots, cwd)) {
     throw new ShellSafetyError({
       decision: "deny",
-      reason: `Shell cwd escapes allowed roots: ${input.cwd ?? options.workspaceRoot}`,
+      reason: `Shell cwd escapes allowed roots: ${JSON.stringify({
+        given: cwdGiven,
+        resolvedAgainst: workspaceRoot,
+        resolved: cwd,
+        roots,
+      })}`,
     });
   }
 
@@ -714,10 +837,25 @@ async function assertShellPathScope(
     if (escaped) {
       throw new ShellSafetyError({
         decision: "deny",
-        reason: `Shell argument path escapes allowed roots: ${escaped.original}`,
+        reason: `Shell argument path escapes allowed roots: ${JSON.stringify({
+          given: escaped.original,
+          resolvedAgainst: workspaceRoot,
+          resolved: escaped.resolved,
+          roots,
+        })}`,
       });
     }
   }
+  return cwd;
+}
+
+async function resolveInWorkspace(
+  workspaceRoot: string,
+  path: string,
+): Promise<string> {
+  return resolveRealPath(
+    isAbsolute(path) ? path : resolve(workspaceRoot, path),
+  );
 }
 
 async function resolveRealPath(path: string): Promise<string> {

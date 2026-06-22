@@ -40,7 +40,6 @@ import {
 } from "./workspace-snapshot.js";
 
 const PROMOTED_SHELL_KIND = "shell.promoted";
-const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -322,16 +321,11 @@ export function createHostShellTool(
   });
   const foregroundTimeoutMs =
     options.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS;
-  const defaultTimeoutMs =
-    options.defaultTimeoutMs ??
-    (options.taskManager
-      ? undefined
-      : FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS);
   const descriptor = createShellTool({
     environment,
     workspaceRoot,
-    defaultTimeoutMs,
     foregroundTimeoutMs,
+    promotionAvailable: Boolean(options.taskManager),
     onPromote: createUnavailablePromotionHandler(),
   });
 
@@ -350,8 +344,8 @@ export function createHostShellTool(
       const shell = createShellTool({
         environment,
         workspaceRoot,
-        defaultTimeoutMs,
         foregroundTimeoutMs,
+        promotionAvailable: Boolean(options.taskManager),
         onPromote: options.taskManager
           ? createTaskPromotionHandler({
               manager: options.taskManager,
@@ -401,7 +395,7 @@ function isReadOnlyShellFastPath(args: unknown): boolean {
 function createUnavailablePromotionHandler(): ShellPromotionHandler {
   return () => {
     throw new Error(
-      "host: background promotion is not supported; long-running shells time out.",
+      "foreground timeout reached; process killed because promotion unavailable",
     );
   };
 }

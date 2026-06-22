@@ -28,6 +28,7 @@ export interface LowNetProgressInput {
 
 export interface LowNetProgressAnalysis {
   evidence: string[];
+  /** @reserved Public run-health diagnostic detail consumed by reports/UIs. */
   duplicateReads: Record<string, number>;
 }
 

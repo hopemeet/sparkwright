@@ -492,7 +492,10 @@ function boundToolRequestPreview(
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, "");
+  return value.replace(
+    new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[a-zA-Z]`, "g"),
+    "",
+  );
 }
 
 export function getToolInterruptBehavior(

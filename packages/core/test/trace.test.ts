@@ -1435,6 +1435,125 @@ describe("trace", () => {
     );
   });
 
+  it("downgrades incomplete sub-agent severity only when parent verifies after child write", () => {
+    const parentRunId = createRunId();
+    const parentLog = new EventLog(parentRunId);
+    const childRunId = createRunId();
+    const childLog = new EventLog(childRunId);
+    const events: SparkwrightEvent[] = [
+      parentLog.emit("run.created", { goal: "delegate and verify" }),
+      childLog.emit("workspace.write.completed", {
+        path: "src/cart.ts",
+        bytes: 42,
+      }),
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId,
+          parentRunId,
+          terminalState: "step_limit",
+          stepLimitReached: true,
+          workspaceWrites: 1,
+        },
+        {
+          agentName: "writer",
+          childRunId,
+          parentRunId,
+          subagentDepth: 1,
+        },
+      ),
+      parentLog.emit("tool.requested", {
+        id: "verify",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      parentLog.emit("tool.completed", {
+        toolCallId: "verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      parentLog.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "SUBAGENT_INCOMPLETE",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("verifiedAfterChildWrite"),
+          ]),
+        }),
+      ]),
+    );
+    expect(
+      report.findings.some(
+        (finding) =>
+          finding.code === "SUBAGENT_INCOMPLETE" && finding.severity === "high",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps incomplete sub-agent severity high when verification predates the child write", () => {
+    const parentRunId = createRunId();
+    const parentLog = new EventLog(parentRunId);
+    const childRunId = createRunId();
+    const childLog = new EventLog(childRunId);
+    const events: SparkwrightEvent[] = [
+      parentLog.emit("run.created", { goal: "delegate and verify" }),
+      parentLog.emit("tool.requested", {
+        id: "verify",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      parentLog.emit("tool.completed", {
+        toolCallId: "verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      childLog.emit("workspace.write.completed", {
+        path: "src/cart.ts",
+        bytes: 42,
+      }),
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId,
+          parentRunId,
+          terminalState: "step_limit",
+          stepLimitReached: true,
+          workspaceWrites: 1,
+        },
+        {
+          agentName: "writer",
+          childRunId,
+          parentRunId,
+          subagentDepth: 1,
+        },
+      ),
+      parentLog.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "SUBAGENT_INCOMPLETE",
+        }),
+      ]),
+    );
+  });
+
   it("keeps sandboxed untracked write-capable boundaries at medium severity", () => {
     const log = new EventLog(createRunId());
     const jsonl = [

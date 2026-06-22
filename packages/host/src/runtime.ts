@@ -80,6 +80,7 @@ import {
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
+import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
@@ -1012,6 +1013,9 @@ export class HostRuntime {
       ],
       delegateTools: delegateDescriptors,
       shellSandbox,
+      shellForegroundTimeoutMs:
+        shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      shellPromotionAvailable: true,
     });
 
     const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
@@ -2174,6 +2178,9 @@ export class HostRuntime {
           allowReadWriteWorkspaceAccess: false,
         }),
         shellSandbox,
+        shellForegroundTimeoutMs:
+          shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+        shellPromotionAvailable: true,
         automation,
       });
     } finally {
@@ -2929,6 +2936,8 @@ function buildCapabilitySnapshot(input: {
   agentProfiles?: AgentProfile[];
   delegateTools?: DelegateCapabilityDescriptor[];
   shellSandbox?: ShellSandboxStatus;
+  shellForegroundTimeoutMs?: number;
+  shellPromotionAvailable?: boolean;
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
@@ -2992,6 +3001,10 @@ function buildCapabilitySnapshot(input: {
     ...(input.shellSandbox
       ? {
           shell: {
+            foregroundTimeoutMs:
+              input.shellForegroundTimeoutMs ??
+              RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+            promotionAvailable: input.shellPromotionAvailable ?? true,
             sandbox: {
               mode: input.shellSandbox.mode,
               failIfUnavailable: input.shellSandbox.failIfUnavailable,
@@ -3699,9 +3712,8 @@ export function createDynamicSpawnAgentTool(input: {
         maxSteps: {
           type: "integer",
           minimum: 1,
-          maximum: 16,
           description:
-            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to 8 when omitted, capped at 16. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
+            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
         },
         metadata: {
           type: "object",
@@ -3787,12 +3799,13 @@ export function createDynamicSpawnAgentTool(input: {
         "",
       );
       const agentId = `dynamic_${roleSegment || "agent"}`;
+      const childMaxSteps = parsed.maxSteps ?? parent.maxSteps;
       const profile: AgentProfile = {
         id: agentId,
         name: parsed.role,
         mode: "child",
         allowedTools: childTools.map((tool) => tool.name),
-        maxSteps: parsed.maxSteps,
+        maxSteps: childMaxSteps,
         prompt: withDelegatedAgentPrompt(parsed.prompt),
         metadata: {
           dynamic: true,
@@ -3808,7 +3821,7 @@ export function createDynamicSpawnAgentTool(input: {
           input.parentRunPolicy,
           createAgentProfilePolicy(profile),
         ]),
-        maxSteps: parsed.maxSteps,
+        maxSteps: childMaxSteps,
         interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
@@ -3888,7 +3901,7 @@ export function createDynamicSpawnAgentTool(input: {
             mode: "child",
             prompt: parsed.prompt,
             allowedTools: childTools.map((tool) => tool.name),
-            maxSteps: parsed.maxSteps,
+            maxSteps: childMaxSteps,
             delegateToolName: `delegate_${sanitizeToolSegment(parsed.role)}`,
           },
         },
@@ -3942,7 +3955,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   role: string;
   prompt: string;
   allowedTools?: string[];
-  maxSteps: number;
+  maxSteps?: number;
   metadata?: Record<string, unknown>;
 } {
   if (!args || typeof args !== "object") {
@@ -3963,10 +3976,12 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   if (allowedTools && new Set(allowedTools).size !== allowedTools.length) {
     throw new Error("spawn_agent allowedTools must not contain duplicates.");
   }
-  const maxSteps =
-    record.maxSteps === undefined ? 8 : integerField(record, "maxSteps");
-  if (maxSteps < 1) {
-    throw new Error("spawn_agent maxSteps must be at least 1.");
+  let maxSteps: number | undefined;
+  if (record.maxSteps !== undefined) {
+    maxSteps = integerField(record, "maxSteps");
+    if (maxSteps < 1) {
+      throw new Error("spawn_agent maxSteps must be at least 1.");
+    }
   }
   const metadata =
     record.metadata === undefined ? undefined : objectField(record, "metadata");
@@ -3975,7 +3990,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     role,
     prompt,
     allowedTools,
-    maxSteps: Math.min(maxSteps, 16),
+    maxSteps,
     metadata,
   };
 }

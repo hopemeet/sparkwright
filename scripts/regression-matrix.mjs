@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -35,6 +42,10 @@ try {
   await skillLoadingCase();
   await mcpFailureCase();
   await sessionCheckCase(approved);
+  await delegateCwdCase();
+  await shellPromotionCase();
+  await delegateNoTaskManagerTimeoutCase();
+  await spawnFinalityCase();
   await tuiStartupCase();
   await acpStartupCase();
   await entrypointConsistencyCase();
@@ -73,8 +84,7 @@ async function readOnlyCase() {
     prompt,
     workspace,
     write: "no",
-    expectedTrace:
-      "run.completed, workspace.read, workspace.anchored_read; no workspace.write.*",
+    expectedTrace: "run.completed, workspace.read; no workspace.write.*",
     failureRule:
       "Fails if the run does not complete, if README changes, or if any workspace.write.* event appears.",
     harness: true,
@@ -82,7 +92,6 @@ async function readOnlyCase() {
       result.exitCode === 0 &&
       has(trace.events, "run.completed") &&
       has(trace.events, "workspace.read") &&
-      has(trace.events, "workspace.anchored_read") &&
       !hasPrefix(trace.events, "workspace.write.") &&
       (await readFile(join(workspace, "README.md"), "utf8")) === "# Demo\n",
   });
@@ -481,6 +490,343 @@ async function sessionCheckCase(approved) {
   });
 }
 
+async function delegateCwdCase() {
+  const workspace = await workspaceWithReadme("sparkwright-reg-delegate-cwd-");
+  const sessionId = "session_reg_delegate_cwd";
+  await writeProjectConfig(workspace, {
+    shell: { foregroundTimeoutMs: 1_000, sandbox: { mode: "off" } },
+    maxSteps: 20,
+    capabilities: {
+      agents: {
+        profiles: [
+          { id: "main", mode: "primary" },
+          {
+            id: "runner",
+            name: "Runner",
+            mode: "child",
+            prompt: "Run the requested shell command.",
+            use: ["shell"],
+            allowedTools: ["shell"],
+          },
+        ],
+        delegateTools: [{ profileId: "runner", toolName: "delegate_runner" }],
+      },
+    },
+  });
+  const prompt = "Delegate a cwd check.";
+  const result = await runCli(
+    [
+      "run",
+      prompt,
+      "--workspace",
+      workspace,
+      "--model",
+      "scripted",
+      "--trace-level",
+      "debug",
+      "--session-id",
+      sessionId,
+    ],
+    {
+      env: {
+        SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+          {
+            toolCalls: [
+              {
+                toolName: "delegate_runner",
+                arguments: { goal: "Print the child shell cwd." },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              { toolName: "shell", arguments: { command: "pwd", cwd: "." } },
+            ],
+          },
+          { message: "child cwd checked" },
+          { message: "parent observed delegate cwd" },
+        ]),
+      },
+    },
+  );
+  const trace = await traceFromOutput(result.stdout);
+  const childTrace = await readAgentTrace(workspace, sessionId, "runner");
+  const expectedCwd = await realpath(workspace);
+  record({
+    id: "DELEGATE_CWD",
+    name: "configured delegate shell cwd",
+    command: commandString(result.command),
+    prompt,
+    workspace,
+    write: "no",
+    expectedTrace:
+      "delegate_runner -> child shell pwd with cwd='.' resolves inside workspace; subagent.completed",
+    failureRule:
+      "Fails if configured delegate child shell false-denies cwd='.', resolves outside the workspace, or loses subagent finality.",
+    harness: true,
+    ok:
+      result.exitCode === 0 &&
+      eventWith(
+        trace.events,
+        "subagent.completed",
+        (event) => event.metadata?.delegateTool === "delegate_runner",
+      ) &&
+      !eventWith(
+        childTrace,
+        "tool.failed",
+        (event) => event.payload?.toolName === "shell",
+      ) &&
+      JSON.stringify(childTrace).includes(expectedCwd),
+  });
+}
+
+async function shellPromotionCase() {
+  const workspace = await workspaceWithReadme("sparkwright-reg-promote-");
+  await writeProjectConfig(workspace, {
+    shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
+    maxSteps: 20,
+  });
+  const prompt = "Promote a long shell command and inspect tasks.";
+  const result = await runCli(
+    [
+      "run",
+      prompt,
+      "--workspace",
+      workspace,
+      "--model",
+      "scripted",
+      "--trace-level",
+      "debug",
+      "--write",
+      "--yes",
+    ],
+    {
+      env: {
+        SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+          {
+            toolCalls: [
+              {
+                toolName: "shell",
+                arguments: {
+                  command:
+                    "node -e \"setTimeout(() => console.log('matrix promoted'), 80)\"",
+                },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              {
+                toolName: "task",
+                arguments: { action: "list", kind: "shell.promoted" },
+              },
+            ],
+          },
+          { message: "promotion checked" },
+        ]),
+      },
+    },
+  );
+  const trace = await traceFromOutput(result.stdout);
+  record({
+    id: "PROMOTE",
+    name: "shell foreground promotion",
+    command: commandString(result.command),
+    prompt,
+    workspace,
+    write: "yes, auto-approved shell",
+    expectedTrace:
+      "shell result has promoted=true/taskId; task(action=list, kind=shell.promoted) returns a parent task",
+    failureRule:
+      "Fails if the foreground timeout kills instead of promoting, or if promoted tasks are not visible to the main agent.",
+    harness: true,
+    ok:
+      result.exitCode === 0 &&
+      eventWith(
+        trace.events,
+        "tool.completed",
+        (event) =>
+          event.payload?.toolName === "shell" &&
+          event.payload?.output?.promoted === true &&
+          typeof event.payload?.output?.taskId === "string",
+      ) &&
+      eventWith(
+        trace.events,
+        "tool.completed",
+        (event) =>
+          event.payload?.toolName === "task" &&
+          Array.isArray(event.payload?.output?.tasks) &&
+          event.payload.output.tasks.length > 0,
+      ),
+  });
+}
+
+async function delegateNoTaskManagerTimeoutCase() {
+  const workspace = await workspaceWithReadme("sparkwright-reg-no-taskmgr-");
+  const sessionId = "session_reg_delegate_no_taskmgr";
+  await writeProjectConfig(workspace, {
+    shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
+    maxSteps: 20,
+    capabilities: {
+      agents: {
+        profiles: [
+          { id: "main", mode: "primary" },
+          {
+            id: "runner",
+            name: "Runner",
+            mode: "child",
+            prompt: "Run the requested shell command.",
+            use: ["shell"],
+            allowedTools: ["shell"],
+          },
+        ],
+        delegateTools: [{ profileId: "runner", toolName: "delegate_runner" }],
+      },
+    },
+  });
+  const prompt = "Delegate a no-task-manager shell timeout.";
+  const result = await runCli(
+    [
+      "run",
+      prompt,
+      "--workspace",
+      workspace,
+      "--model",
+      "scripted",
+      "--trace-level",
+      "debug",
+      "--session-id",
+      sessionId,
+      "--write",
+      "--yes",
+    ],
+    {
+      env: {
+        SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+          {
+            toolCalls: [
+              {
+                toolName: "delegate_runner",
+                arguments: { goal: "Run a long child shell command." },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              {
+                toolName: "shell",
+                arguments: {
+                  command:
+                    "node -e \"setTimeout(() => console.log('late'), 80)\"",
+                },
+              },
+            ],
+          },
+          { message: "child observed shell timeout" },
+          { message: "parent observed delegate timeout" },
+        ]),
+      },
+    },
+  );
+  const childTrace = await readAgentTrace(workspace, sessionId, "runner");
+  const childTraceText = JSON.stringify(childTrace);
+  record({
+    id: "NO_TASKMGR",
+    name: "delegate shell foreground kill without task manager",
+    command: commandString(result.command),
+    prompt,
+    workspace,
+    write: "yes, auto-approved shell",
+    expectedTrace:
+      "child shell output reports foregroundTimeoutMs, promotionAvailable=false, timedOut=true, and clear kill reason",
+    failureRule:
+      "Fails if no-taskManager shell silently promotes, hides alias/promotion metadata, or omits the kill reason.",
+    harness: true,
+    ok:
+      result.exitCode === 0 &&
+      childTraceText.includes('"promotionAvailable":false') &&
+      childTraceText.includes('"timedOut":true') &&
+      childTraceText.includes(
+        "foreground timeout reached; process killed because promotion unavailable",
+      ) &&
+      !childTraceText.includes('"promoted":true'),
+  });
+}
+
+async function spawnFinalityCase() {
+  const workspace = await workspaceWithReadme("sparkwright-reg-spawn-");
+  const prompt = "Spawn a read-only child and verify finality.";
+  await writeProjectConfig(workspace, { maxSteps: 20 });
+  const result = await runCli(
+    [
+      "run",
+      prompt,
+      "--workspace",
+      workspace,
+      "--model",
+      "scripted",
+      "--trace-level",
+      "debug",
+    ],
+    {
+      env: {
+        SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+          {
+            toolCalls: [
+              {
+                toolName: "spawn_agent",
+                arguments: {
+                  goal: "Read README.md.",
+                  role: "reader",
+                  prompt: "Read README.md and summarize it.",
+                  allowedTools: ["read_file"],
+                },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              { toolName: "read_file", arguments: { path: "README.md" } },
+            ],
+          },
+          { message: "child read README.md" },
+          { message: "parent observed complete child" },
+        ]),
+      },
+    },
+  );
+  const trace = await traceFromOutput(result.stdout);
+  const traceText = JSON.stringify(trace.events);
+  record({
+    id: "SPAWN_FINAL",
+    name: "dynamic spawn read-only finality",
+    command: commandString(result.command),
+    prompt,
+    workspace,
+    write: "no",
+    expectedTrace:
+      "spawn_agent output finality=complete, inherited maxSteps visible in promotionHint, child uses read_file only",
+    failureRule:
+      "Fails if dynamic spawn exposes shell/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
+    harness: true,
+    ok:
+      result.exitCode === 0 &&
+      eventWith(
+        trace.events,
+        "tool.completed",
+        (event) =>
+          event.payload?.toolName === "spawn_agent" &&
+          event.payload?.output?.finality === "complete" &&
+          event.payload?.output?.truncated === false &&
+          event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
+            20,
+      ) &&
+      !traceText.includes('"toolName":"shell"') &&
+      !traceText.includes('"toolName":"write_file"') &&
+      !traceText.includes('"toolName":"apply_patch"'),
+  });
+}
+
 async function tuiStartupCase() {
   const workspace = await workspaceWithReadme("sparkwright-reg-tui-");
   const result = await runCli(
@@ -868,10 +1214,33 @@ async function readFirstRunMetadata(workspace, sessionId) {
   return runJson.metadata;
 }
 
+async function readAgentTrace(workspace, sessionId, agentId) {
+  return await readTrace(
+    join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "agents",
+      agentId,
+      "trace.jsonl",
+    ),
+  );
+}
+
 async function workspaceWithReadme(prefix) {
   const workspace = await tempDir(prefix);
   await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
   return workspace;
+}
+
+async function writeProjectConfig(workspace, config) {
+  await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+  await writeFile(
+    join(workspace, ".sparkwright", "config.json"),
+    JSON.stringify(config),
+    "utf8",
+  );
 }
 
 async function prepareDirectCoreWorkspace(workspace) {

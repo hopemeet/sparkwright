@@ -34,6 +34,7 @@ import {
   type TraceLevel,
 } from "@sparkwright/protocol";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import { MAX_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import {
   formatToolUseSelectorList,
@@ -2001,6 +2002,25 @@ function validateShellConfig(
   if (raw.sandbox !== undefined) {
     const sandbox = validateShellSandboxConfig(raw.sandbox, filePath, errors);
     if (sandbox) out.sandbox = sandbox;
+  }
+  if (raw.foregroundTimeoutMs !== undefined) {
+    const foregroundTimeoutMs = validateOptionalPositiveInteger(
+      raw.foregroundTimeoutMs,
+      "shell.foregroundTimeoutMs",
+      filePath,
+      errors,
+    );
+    if (foregroundTimeoutMs !== undefined) {
+      if (foregroundTimeoutMs > MAX_FOREGROUND_TIMEOUT_MS) {
+        errors.push({
+          file: filePath,
+          field: "shell.foregroundTimeoutMs",
+          message: `must be <= ${MAX_FOREGROUND_TIMEOUT_MS}`,
+        });
+      } else {
+        out.foregroundTimeoutMs = foregroundTimeoutMs;
+      }
+    }
   }
   return out;
 }

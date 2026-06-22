@@ -133,6 +133,7 @@ import {
   describeShellSandboxStatus,
   resolveShellSandboxConfig,
 } from "@sparkwright/shell-sandbox";
+import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { createLiveEventFormatter, formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
@@ -1783,6 +1784,8 @@ interface CapabilityInspectReport {
     available: CapabilityToolInspectEntry[];
   };
   shell: {
+    foregroundTimeoutMs: number;
+    promotionAvailable: boolean;
     sandbox: {
       mode: string;
       failIfUnavailable: boolean;
@@ -2111,6 +2114,10 @@ async function loadCapabilityInspectReport(
       }),
     },
     shell: {
+      foregroundTimeoutMs:
+        loaded.config.shell?.foregroundTimeoutMs ??
+        RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      promotionAvailable: true,
       sandbox: {
         mode: shellSandbox.mode,
         failIfUnavailable: shellSandbox.failIfUnavailable,
@@ -2453,6 +2460,7 @@ function formatCapabilityInspectReport(
     `workspace: ${report.workspace}`,
     `model: ${formatCapabilityModelLine(report.runtime?.model)}`,
     `tools: use=${formatPatternList(report.tools.use, "(all)")}; allowed=${formatPatternList(report.tools.allowed, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `shell foreground: timeoutMs=${report.shell.foregroundTimeoutMs}; promotionAvailable=${String(report.shell.promotionAvailable)}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
     `runtime tools: ${report.runtime?.tools.length ?? "unavailable"}`,
     `diagnostic tools: ${report.tools.available.length}`,

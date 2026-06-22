@@ -175,10 +175,7 @@ export function deriveChildAgentProfile(
       allowedTools,
       deniedTools,
       policy: effectivePolicy,
-      maxSteps: minOptional(
-        options.parentAgent?.maxSteps,
-        options.childAgent.maxSteps,
-      ),
+      maxSteps: options.childAgent.maxSteps ?? options.parentAgent?.maxSteps,
       runBudget: minRunBudget(
         options.parentAgent?.runBudget,
         options.childAgent.runBudget,
@@ -729,7 +726,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       input.interactionChannel === null ? undefined : input.interactionChannel,
     approvalResolver: input.approvalResolver,
     hooks: input.hooks,
-    maxSteps: input.maxSteps,
+    maxSteps: input.maxSteps ?? parent.maxSteps,
     runBudget: input.runBudget,
     abortSignal: parent.abortSignal,
     metadata: childRunMetadata,

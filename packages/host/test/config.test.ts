@@ -557,6 +557,43 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("loads shell foreground timeout config and rejects values above the hard cap", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        shell: {
+          foregroundTimeoutMs: 300_000,
+          sandbox: { mode: "warn" },
+        },
+      });
+      let loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.shell).toMatchObject({
+        foregroundTimeoutMs: 300_000,
+        sandbox: { mode: "warn" },
+      });
+
+      await writeUserConfig(xdg, {
+        shell: {
+          foregroundTimeoutMs: 600_001,
+        },
+      });
+      loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(loaded.config.shell?.foregroundTimeoutMs).toBeUndefined();
+      expect(
+        loaded.errors.some(
+          (error) =>
+            error.field === "shell.foregroundTimeoutMs" &&
+            error.message.includes("600000"),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("merges shell sandbox config conservatively so project config cannot downgrade user policy", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

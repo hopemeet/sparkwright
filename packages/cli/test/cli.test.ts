@@ -1613,6 +1613,9 @@ describe("runCli", () => {
           disabled: ["shell"],
           defer: ["read_anchored_text"],
         },
+        shell: {
+          foregroundTimeoutMs: 123_000,
+        },
         capabilities: {
           skills: { roots: ["skills"] },
           agents: {
@@ -1646,6 +1649,9 @@ describe("runCli", () => {
       "tools: use=(all); allowed=read_file, read_anchored_text; disabled=shell; defer=read_anchored_text",
     );
     expect(textOutput.stdoutText()).toContain(
+      "shell foreground: timeoutMs=123000; promotionAvailable=true",
+    );
+    expect(textOutput.stdoutText()).toContain(
       "shell sandbox: mode=warn; effective=",
     );
     expect(textOutput.stdoutText()).toContain("network=deny");
@@ -1677,6 +1683,8 @@ describe("runCli", () => {
         available: Array<{ name: string; origin?: string }>;
       };
       shell: {
+        foregroundTimeoutMs: number;
+        promotionAvailable: boolean;
         sandbox: {
           mode: string;
           runtimeId: string;
@@ -1699,6 +1707,10 @@ describe("runCli", () => {
       cron: { stateRoot: string };
       command: { dirs: Array<{ layer: string; exists: boolean }> };
     };
+    expect(report.shell).toMatchObject({
+      foregroundTimeoutMs: 123_000,
+      promotionAvailable: true,
+    });
     expect(report.shell.sandbox).toMatchObject({
       mode: "warn",
       runtimeId: expect.any(String),
