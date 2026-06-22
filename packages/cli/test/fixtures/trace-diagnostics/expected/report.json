@@ -1,0 +1,34 @@
+{
+  "verdict": "passed_with_issues",
+  "headline": "The same files were read repeatedly.",
+  "summary": {
+    "eventCount": 25,
+    "runCount": 1,
+    "sessionCount": 1,
+    "modelCalls": 1,
+    "toolCalls": 1,
+    "totalTokens": 120,
+    "costStatus": "unavailable",
+    "workspaceWrites": 1,
+    "approvalsRequested": 1,
+    "unresolvedToolFailures": 0,
+    "recoveredToolFailures": 0
+  },
+  "topTools": {
+    "read_file": 1
+  },
+  "topDuplicateReads": {
+    "README.md": 10
+  },
+  "findings": [
+    {
+      "severity": "medium",
+      "code": "DUPLICATE_WORKSPACE_READS",
+      "title": "The same files were read repeatedly",
+      "evidence": [
+        "top duplicate reads: README.md:10"
+      ],
+      "recommendation": "Surface prior reads to the model or return cached-read hints for duplicate targets."
+    }
+  ]
+}

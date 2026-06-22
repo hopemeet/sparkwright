@@ -1,0 +1,22 @@
+events: 25
+runs: 1
+durationMs: 24000
+phases: 18
+[1-25] completed run run (24000ms)
+[3-3] instant context context.assembled (0ms)
+[4-4] instant model model step 1 (0ms)
+[5-6] completed model model step 1 (1000ms)
+[7-19] completed tool tool read_file (12000ms)
+[9-9] instant workspace workspace README.md (0ms)
+[10-10] instant workspace workspace README.md (0ms)
+[11-11] instant workspace workspace README.md (0ms)
+[12-12] instant workspace workspace README.md (0ms)
+[13-13] instant workspace workspace README.md (0ms)
+[14-14] instant workspace workspace README.md (0ms)
+[15-15] instant workspace workspace README.md (0ms)
+[16-16] instant workspace workspace README.md (0ms)
+[17-17] instant workspace workspace README.md (0ms)
+[18-18] instant workspace workspace README.md (0ms)
+[20-23] completed workspace workspace README.md (3000ms)
+[21-22] completed approval approval Write README.md (1000ms)
+[24-24] instant artifact artifact.created (0ms)

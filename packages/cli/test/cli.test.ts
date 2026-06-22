@@ -25,6 +25,23 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
 
+const TRACE_DIAGNOSTICS_FIXTURE_DIR = join(
+  "test",
+  "fixtures",
+  "trace-diagnostics",
+);
+const TRACE_DIAGNOSTICS_TRACE = join(
+  TRACE_DIAGNOSTICS_FIXTURE_DIR,
+  "trace.jsonl",
+);
+const TRACE_DIAGNOSTIC_SNAPSHOT_COMMANDS = [
+  "summary",
+  "timeline",
+  "report",
+  "verify",
+] as const;
+const TRACE_DIAGNOSTIC_SNAPSHOT_FORMATS = ["text", "json"] as const;
+
 describe("runCli", () => {
   let tempDirs: string[] = [];
   let prevXdg: string | undefined;
@@ -4409,6 +4426,32 @@ describe("runCli", () => {
       verdict: "passed_with_issues",
       summary: { toolCalls: 85 },
     });
+  });
+
+  it("snapshots trace diagnostic CLI output for a fixture trace", async () => {
+    for (const subcommand of TRACE_DIAGNOSTIC_SNAPSHOT_COMMANDS) {
+      for (const format of TRACE_DIAGNOSTIC_SNAPSHOT_FORMATS) {
+        const output = createOutputCapture();
+        const result = await runCli(
+          ["trace", subcommand, TRACE_DIAGNOSTICS_TRACE, "--format", format],
+          {
+            io: { stdout: output.stdout, stderr: output.stderr },
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(output.stderrText()).toBe("");
+        const expected = await readFile(
+          join(
+            TRACE_DIAGNOSTICS_FIXTURE_DIR,
+            "expected",
+            `${subcommand}.${format}`,
+          ),
+          "utf8",
+        );
+        expect(output.stdoutText()).toBe(expected);
+      }
+    }
   });
 
   it("counts failed MCP preparation in trace summaries", async () => {

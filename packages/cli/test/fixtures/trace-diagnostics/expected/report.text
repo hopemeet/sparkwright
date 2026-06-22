@@ -1,0 +1,12 @@
+verdict: passed_with_issues
+headline: The same files were read repeatedly.
+runs: 1, sessions: 1, events: 25
+model/tool: 1 model calls, 1 tool calls
+tokens: 120
+safety: 1 workspace writes, 1 approvals requested
+top tools: read_file:1
+top duplicate reads: README.md:10
+findings:
+- [medium] DUPLICATE_WORKSPACE_READS: The same files were read repeatedly
+  evidence: top duplicate reads: README.md:10
+  recommendation: Surface prior reads to the model or return cached-read hints for duplicate targets.

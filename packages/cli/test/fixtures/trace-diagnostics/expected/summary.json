@@ -1,0 +1,109 @@
+{
+  "eventCount": 25,
+  "runIds": [
+    "run_fixture"
+  ],
+  "sessionIds": [
+    "session_fixture"
+  ],
+  "agentIds": [
+    "main"
+  ],
+  "byType": {
+    "run.created": 1,
+    "run.started": 1,
+    "context.assembled": 1,
+    "prompt.built": 1,
+    "model.requested": 1,
+    "model.completed": 1,
+    "tool.requested": 1,
+    "tool.started": 1,
+    "workspace.read": 10,
+    "tool.completed": 1,
+    "workspace.write.requested": 1,
+    "approval.requested": 1,
+    "approval.resolved": 1,
+    "workspace.write.completed": 1,
+    "artifact.created": 1,
+    "run.completed": 1
+  },
+  "terminalStates": {
+    "completed": 1
+  },
+  "toolCalls": {
+    "read_file": 1
+  },
+  "toolFailures": {
+    "total": 0,
+    "byCode": {},
+    "unresolved": {
+      "total": 0,
+      "byCode": {}
+    },
+    "recovered": {
+      "total": 0,
+      "byCode": {}
+    }
+  },
+  "commandFailures": {
+    "total": 0,
+    "byExitCode": {},
+    "verification": {
+      "total": 0,
+      "unresolved": 0
+    }
+  },
+  "safety": {
+    "approvals": {
+      "requested": 1,
+      "resolved": 1,
+      "approved": 1,
+      "denied": 0,
+      "autoApproved": 1,
+      "shell": 0,
+      "workspaceWrite": 1
+    },
+    "workspaceWrites": {
+      "requested": 1,
+      "completed": 1,
+      "denied": 0,
+      "skipped": 0,
+      "untrackedWriteCapableProcesses": 0
+    },
+    "capabilityMutations": {
+      "completed": 0
+    },
+    "shell": {
+      "requested": 0,
+      "approvals": 0,
+      "commandFailures": 0,
+      "untrackedWorkspaceMutations": 0
+    },
+    "confidentialReadsDenied": 0
+  },
+  "workspaceReads": {
+    "total": 10,
+    "uniquePaths": 1,
+    "duplicatePaths": {
+      "README.md": 10
+    }
+  },
+  "artifactCount": 1,
+  "errorCount": 0,
+  "errorCodes": {},
+  "expectedDenialCount": 0,
+  "expectedDenialCodes": {},
+  "usage": {
+    "inputTokens": 100,
+    "outputTokens": 20,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0,
+    "reasoningTokens": 0,
+    "totalTokens": 120,
+    "estimatedCostUsd": 0,
+    "costStatus": "unavailable",
+    "costUnavailableReasons": {
+      "missing_pricing": 1
+    }
+  }
+}

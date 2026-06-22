@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "path": "test/fixtures/trace-diagnostics/trace.jsonl",
+  "eventCount": 25,
+  "runIds": [
+    "run_fixture"
+  ],
+  "sessionIds": [
+    "session_fixture"
+  ],
+  "agentIds": [
+    "main"
+  ],
+  "findings": []
+}
