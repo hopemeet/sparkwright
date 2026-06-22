@@ -1,6 +1,13 @@
-# Contributing To Sparkwright
+# Contributing To SparkWright
 
-Sparkwright is early. The best contributions are small, well-scoped changes that make the runtime clearer, safer, or easier to use.
+SparkWright is pre-v0. We are not actively soliciting broad feature pull
+requests yet.
+
+Small, well-scoped pull requests are welcome for bug fixes, documentation
+fixes, tests, and changes that clearly align with the current runtime
+direction. Larger features, protocol changes, safety behavior changes,
+trace/session changes, public API changes, or new default behavior should start
+with an issue or design discussion before implementation.
 
 ## Contribution Priorities
 
@@ -52,6 +59,27 @@ For release-sensitive changes, run the full gate:
 npm run check
 ```
 
+## Pull Request Evidence
+
+SparkWright changes should be evidence-led. Every behavior-changing pull
+request should explain:
+
+- the problem it solves, ideally with a linked issue;
+- how to reproduce the issue or validate the workflow;
+- observed behavior versus expected behavior;
+- tests run, or why tests were not run;
+- risk, especially public API, protocol, trace schema, safety policy, workspace
+  mutation, session/resume, or default-behavior impact.
+
+For runtime, CLI/TUI, tool execution, policy, approval, workspace mutation,
+trace, session/resume, provider, or protocol changes, include relevant trace
+evidence when possible. Good evidence includes a redacted trace summary,
+timeline, verify output, or focused trace excerpt, plus the command or workflow
+that produced it.
+
+Do not attach secrets, credentials, private prompts, or unredacted local traces.
+If trace evidence is not applicable, say why.
+
 ## Public Repo Hygiene
 
 Do not commit secrets, credentials, internal planning notes, local traces, editor settings, generated build output, or machine-specific files.
@@ -74,12 +102,16 @@ Significant changes should also be reflected in `CHANGELOG.md`.
 ## Agent Skill Maintenance
 
 SparkWright ships agent-facing operational guidance in
-`skills/sparkwright-manual`. When changing user-visible commands, TUI behavior,
-config fields, provider/model behavior, tools, Skills, MCP, agent profiles,
-delegate tools, permission/policy semantics, trace/session behavior, cron,
-background tasks, or contributor workflow, update that skill or its references
-in the same change.
+`packages/host/builtin/skills/sparkwright-manual`. When changing user-visible
+commands, TUI behavior, config fields, provider/model behavior, tools, Skills,
+MCP, agent profiles, delegate tools, permission/policy semantics, trace/session
+behavior, cron, background tasks, or contributor workflow, update that skill or
+its references in the same change.
 
 ## Scope Control
 
-Keep contributions small and well-scoped. Prefer a working, reviewable slice over a broad refactor. New abstractions should be justified by at least two concrete in-tree call sites.
+Keep contributions small and well-scoped. Prefer a working, reviewable slice
+over a broad refactor. Large pull requests, broad refactors, or
+direction-setting features may be asked to start with a design discussion or be
+split into smaller changes. New abstractions should be justified by at least two
+concrete in-tree call sites.
