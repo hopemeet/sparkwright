@@ -16,8 +16,10 @@
  */
 
 import { isInternalTranscriptEvent, type RunEvent } from "./event-type.js";
+import { runFailureMessage } from "@sparkwright/protocol";
 import {
   formatToolRequestPreview,
+  oneLine,
   summarizeToolResultForDisplay,
 } from "./tool-display.js";
 
@@ -131,7 +133,10 @@ export function renderTranscript(
         out.push(`### Tool: \`${name}\``);
         if (args !== undefined) {
           out.push("");
-          const preview = formatToolRequestPreview(name, args, 140);
+          const preview =
+            typeof p.preview === "string" && p.preview.trim()
+              ? oneLine(p.preview, 140)
+              : formatToolRequestPreview(name, args, 140);
           if (preview) {
             out.push(`_Args:_ ${preview}`);
           } else {
@@ -226,6 +231,13 @@ export function renderTranscript(
         break;
       }
       case "run.completed": {
+        if (p.state === "failed") {
+          out.push("---");
+          out.push("");
+          out.push(`_Run failed: **${runFailureMessage(p)}**_`);
+          out.push("");
+          break;
+        }
         const stopReason =
           typeof p.stopReason === "string"
             ? p.stopReason
@@ -241,12 +253,7 @@ export function renderTranscript(
         break;
       }
       case "run.failed": {
-        const err =
-          typeof p.error === "object" &&
-          p.error !== null &&
-          "message" in p.error
-            ? String((p.error as { message: unknown }).message)
-            : safeJson(p.error);
+        const err = runFailureMessage(p, safeJson(p.error));
         out.push("---");
         out.push("");
         out.push(`_Run failed: **${err}**_`);

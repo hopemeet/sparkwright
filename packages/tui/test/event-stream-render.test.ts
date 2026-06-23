@@ -256,6 +256,23 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"patterns"');
   });
 
+  it("uses tool-owned request previews from events", async () => {
+    const events = [
+      ev("tool.requested", 1, {
+        toolName: "spawn_agent",
+        preview: "reviewer: inspect auth flow",
+        arguments: {
+          role: "reviewer",
+          goal: "inspect auth flow",
+          prompt: "Read the implementation and report risks.",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events), 90);
+    expect(text).toContain("⚙ spawn_agent  reviewer: inspect auth flow");
+    expect(text).not.toContain('"prompt"');
+  });
+
   it("renders capability mutations with action and compact path", async () => {
     const events = [
       ev("capability.mutation.completed", 1, {
@@ -352,6 +369,41 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("approvals 1/1");
     expect(text).toContain("tools 1");
     expect(text).toContain("last command: npm test passed");
+  });
+
+  it("renders failed run completion messages from canonical failure payloads", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.completed", 1, {
+          state: "failed",
+          stopReason: "model_auth_failed",
+          failure: {
+            category: "model",
+            code: "MODEL_COMPLETION_FAILED",
+            message: "invalid API key",
+          },
+        }),
+      ]),
+    );
+
+    expect(text).toContain("run failed: invalid API key");
+    expect(text).not.toContain("MODEL_COMPLETION_FAILED");
+  });
+
+  it("renders run.failed messages from legacy error projections", async () => {
+    const text = await renderToText(
+      stream([
+        ev("run.failed", 1, {
+          runId: "run_1",
+          error: {
+            code: "internal_error",
+            message: "host failed",
+          },
+        }),
+      ]),
+    );
+
+    expect(text).toContain("run failed: host failed");
   });
 
   it("renders subagent lifecycle as a depth-aware tree", async () => {

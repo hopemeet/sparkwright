@@ -325,9 +325,10 @@ the session directory; clients should treat it as read-only observability data.
 
 **Payload**
 
-| Field       | Type   | Required | Notes       |
-| ----------- | ------ | -------- | ----------- |
-| `sessionId` | string | yes      | Session id. |
+| Field        | Type    | Required | Notes                                                                                            |
+| ------------ | ------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId`  | string  | yes      | Session id.                                                                                      |
+| `compaction` | boolean | no       | Include a compact-artifact/session-event audit view. The compacted summary body is not returned. |
 
 **Response result**
 
@@ -336,9 +337,42 @@ the session directory; clients should treat it as read-only observability data.
   "sessionId": "session_abc",
   "summary": { "eventCount": 12 },
   "consistency": { "ok": true, "findings": [] },
-  "timeline": { "phases": [] }
+  "timeline": { "phases": [] },
+  "compaction": {
+    "status": "compacted",
+    "artifact": {
+      "path": "/workspace/.sparkwright/sessions/session_abc/compact.json",
+      "createdAt": "2026-06-22T00:00:00.000Z",
+      "throughRunId": "run_123",
+      "compactedRunCount": 3,
+      "sourceRunIds": ["run_001", "run_002", "run_123"],
+      "originalCharCount": 12000,
+      "summaryCharCount": 2400,
+      "freedChars": 9600,
+      "warningCodes": ["SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW"]
+    },
+    "latestEvent": {
+      "sequence": 7,
+      "type": "session.compaction.completed",
+      "throughRunId": "run_123",
+      "artifactPath": "/workspace/.sparkwright/sessions/session_abc/compact.json",
+      "freedChars": 9600
+    },
+    "events": [],
+    "consistency": {
+      "ok": true,
+      "artifactMatchesLatestCompletedEvent": true,
+      "findings": []
+    }
+  }
 }
 ```
+
+`compaction` is omitted unless requested. Its `status` is one of
+`not_compacted`, `compacted`, `skipped`, `artifact_only`, `event_only`, or
+`stale_artifact`. The report is derived from `compact.json` and
+`events.jsonl`; it may include measurement, warning codes, reason metadata, and
+summary fingerprint metadata, but never includes `compact.json.content`.
 
 ### `session.compact`
 
@@ -387,6 +421,13 @@ fields include `sourceRunIds`, `throughRunId`, `originalCharCount`,
 Model-backed Tier 3 summaries also record `metadata.summaryFingerprint`
 (`modelId`, prompt/oracle versions, input hash, source run ids, through run, and
 effective budget) plus `metadata.measurement`.
+On the normal path, every successful `session.compact` request appends a
+session-local event to `events.jsonl`: `session.compaction.completed` when an
+artifact was written, or `session.compaction.skipped` when no artifact was
+written. The event payload records counts, `freedChars`, `measurement`,
+`artifactPath`, optional `skippedReason`, and warning codes; it does not contain
+compacted summary content. If this audit event cannot be written, the compact
+response still reflects the compaction result and includes a warning.
 When compaction is unnecessary or best-effort compaction cannot safely persist
 an artifact, the response remains `ok: true`, `artifactPath` is `null`,
 `freedChars` is `0`, and `skippedReason` explains why.
@@ -415,14 +456,27 @@ scanning files or interpreting local config.
 
 **Payload**
 
-| Field       | Type   | Required | Notes                             |
-| ----------- | ------ | -------- | --------------------------------- |
-| `sessionId` | string | no       | Reserved for future scoped views. |
+| Field       | Type   | Required | Notes                                                                                            |
+| ----------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId` | string | no       | Reserved for future scoped views.                                                                |
+| `model`     | string | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
 
 **Response result**
 
 ```json
 {
+  "model": {
+    "modelRef": "openai/gpt-5.4-mini",
+    "providerKey": "openai",
+    "modelId": "gpt-5.4-mini",
+    "adapterId": "openai:gpt-5.4-mini",
+    "pricing": {
+      "source": "unavailable",
+      "costStatus": "unavailable",
+      "costUnavailableReason": "missing_pricing",
+      "warning": "No pricing configured for model \"openai/gpt-5.4-mini\"; cost estimates will be unavailable. Add a provider model cost block to enable cost reporting."
+    }
+  },
   "tools": [{ "name": "read_file", "risk": "safe" }],
   "skills": {
     "indexed": [
@@ -454,6 +508,7 @@ scanning files or interpreting local config.
         "approvalRequiredUnderCurrentRun": true,
         "approvalReasons": [
           "tool.risk:risky",
+          "tool.requiresApproval:true",
           "delegate.requiresApproval:true"
         ],
         "approvalRunOptions": { "shouldWrite": false },
@@ -469,10 +524,10 @@ scanning files or interpreting local config.
         "toolName": "delegate_writer",
         "profileId": "writer",
         "protocol": "in_process",
-        "risk": "risky",
+        "risk": "safe",
         "requiresApproval": false,
-        "approvalRequiredUnderCurrentRun": true,
-        "approvalReasons": ["tool.risk:risky", "gated_by_run_write"],
+        "approvalRequiredUnderCurrentRun": false,
+        "approvalReasons": [],
         "approvalRunOptions": { "shouldWrite": false },
         "forbidNesting": true,
         "sideEffects": ["model", "workspace"],
@@ -482,6 +537,19 @@ scanning files or interpreting local config.
         "gatedByRunWrite": true
       }
     ]
+  },
+  "shell": {
+    "foregroundTimeoutMs": 300000,
+    "promotionAvailable": true,
+    "sandbox": {
+      "mode": "warn",
+      "failIfUnavailable": false,
+      "runtimeId": "platform",
+      "platform": "darwin",
+      "available": true,
+      "networkMode": "deny",
+      "filesystemIsolation": "deny-list-guard"
+    }
   }
 }
 ```
@@ -492,7 +560,9 @@ delegates that should inspect or mutate the workspace directly.
 For `in_process` delegates, `workspaceAccess` reports the profile-selected
 potential capability; `gatedByRunWrite: true` means the current run still needs
 workspace writes enabled (for example CLI `--write`) before the delegate can use
-workspace write or shell tools.
+workspace write or shell tools. In-process delegate spawn is `risk: "safe"` by
+default because the child run enforces its own tool policies; set
+`requiresApproval: true` on the delegate only when spawn itself needs approval.
 `requiresApproval` is a legacy delegate-config echo. For audit/diagnostics, use
 `approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
 those fields describe the runtime gate under the inspected run options rather
@@ -564,6 +634,7 @@ with `run.failed` instead.
 | `runId`       | string |                                                               |
 | `state`       | string | Final RunState.                                               |
 | `stopReason`  | string | Optional. `manual_cancelled` for user-cancelled.              |
+| `message`     | string | Optional final answer text for successful final-answer runs.  |
 | `outcome`     | object | Optional structured non-clean completion summary.             |
 | `failure`     | object | Optional structured cause for `failed` or `cancelled` states. |
 | `todoHandoff` | object | Optional unfinished-todo handoff reason and message.          |
@@ -578,10 +649,15 @@ unknown metadata as diagnostic context.
 Terminal event for a host/runtime protocol error before a core run can finish
 normally.
 
-| Field   | Type          |
-| ------- | ------------- |
-| `runId` | string        |
-| `error` | ProtocolError |
+| Field     | Type          | Notes                                                                 |
+| --------- | ------------- | --------------------------------------------------------------------- |
+| `runId`   | string        |                                                                       |
+| `failure` | object        | Canonical `{ category, code, message, retryable, metadata }` failure. |
+| `error`   | ProtocolError | Deprecated compatibility projection of `failure`.                     |
+
+Clients should prefer `failure` for both `run.completed{state:"failed"}` and
+`run.failed`. The compatibility `error` field remains present on `run.failed`
+for older protocol clients.
 
 ---
 

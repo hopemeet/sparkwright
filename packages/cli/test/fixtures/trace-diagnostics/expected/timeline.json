@@ -1,5 +1,5 @@
 {
-  "eventCount": 25,
+  "eventCount": 26,
   "runIds": [
     "run_fixture"
   ],
@@ -10,8 +10,8 @@
     "main"
   ],
   "startedAt": "2026-01-01T00:00:00.000Z",
-  "endedAt": "2026-01-01T00:00:24.000Z",
-  "durationMs": 24000,
+  "endedAt": "2026-01-01T00:00:25.000Z",
+  "durationMs": 25000,
   "phases": [
     {
       "id": "run_fixture:run",
@@ -30,9 +30,9 @@
       "metadata": {
         "sessionId": "session_fixture"
       },
-      "endedAt": "2026-01-01T00:00:24.000Z",
-      "endSequence": 25,
-      "durationMs": 24000
+      "endedAt": "2026-01-01T00:00:25.000Z",
+      "endSequence": 26,
+      "durationMs": 25000
     },
     {
       "id": "run_fixture:3",
@@ -357,6 +357,25 @@
       "endSequence": 24,
       "eventTypes": [
         "artifact.created"
+      ],
+      "metadata": {
+        "sessionId": "session_fixture"
+      }
+    },
+    {
+      "id": "run_fixture:25",
+      "runId": "run_fixture",
+      "agentId": "main",
+      "category": "workspace",
+      "label": "workspace workspace.write.untracked_access_granted",
+      "status": "instant",
+      "startedAt": "2026-01-01T00:00:24.000Z",
+      "endedAt": "2026-01-01T00:00:24.000Z",
+      "durationMs": 0,
+      "startSequence": 25,
+      "endSequence": 25,
+      "eventTypes": [
+        "workspace.write.untracked_access_granted"
       ],
       "metadata": {
         "sessionId": "session_fixture"

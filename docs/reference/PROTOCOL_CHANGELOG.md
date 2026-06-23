@@ -12,6 +12,15 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — `CapabilitySnapshot.shell` may include
+  `foregroundTimeoutMs` and `promotionAvailable` alongside sandbox status.
+  Migration: none; clients should treat the fields as optional diagnostics.
+
+- `host-message.schema.json`: additive — `CapabilitySnapshot` may include a
+  `model` summary with pricing status. Hosts report `missing_pricing` before a
+  run when the selected model has no built-in or configured cost block.
+  Migration: none; clients should treat the field as optional and warning-only.
+
 - `host protocol`: additive — `session.compact` results now include
   `measurement` (savings ratio, tier savings, regime, signal count, and optional
   summarizer metrics). Migration: none; clients should treat the field as
@@ -28,6 +37,13 @@ Conventions:
   advertises profile-selected workspace write or shell capability that still
   requires the parent run to enable workspace writes. Migration: none; clients
   should treat the field as optional.
+
+- `host-message.schema.json`: additive — `CapabilityDelegateToolSummary.risk`
+  may now report `"safe"` or `"denied"` in addition to `"risky"`. In-process
+  delegate spawn is safe by default; child-run tool policy continues to govern
+  writes, shell, and other risky actions. Migration: clients should stop
+  assuming every delegate descriptor is risky and should use
+  `approvalRequiredUnderCurrentRun` for the effective approval gate.
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.skills` may include
   `inlineShell`, a path-free summary of the effective Skill inline-shell policy

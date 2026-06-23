@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  getRunFailure,
   isEvent,
   isResponse,
   type EventKind,
@@ -13,6 +14,7 @@ import {
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type SessionCompactRequestPayload,
+  type SessionInspectRequestPayload,
   type CapabilityInspectRequestPayload,
 } from "@sparkwright/protocol";
 import { TypedEmitter } from "./emitter.js";
@@ -267,10 +269,7 @@ export class Client extends TypedEmitter<ClientEventMap> {
           terminalEvent.kind === "run.completed"
             ? terminalEvent.payload.outcome
             : undefined,
-        failure:
-          terminalEvent.kind === "run.completed"
-            ? terminalEvent.payload.failure
-            : terminalEvent.payload.error,
+        failure: getRunFailure(terminalEvent.payload),
         toolFailures,
         artifacts,
         writes,
@@ -335,12 +334,13 @@ export class Client extends TypedEmitter<ClientEventMap> {
     >;
   }
 
-  inspectSession(payload: {
-    sessionId: string;
-  }): Promise<ResponseResults["session.inspect"]> {
-    return this.request("session.inspect", payload) as Promise<
-      ResponseResults["session.inspect"]
-    >;
+  inspectSession(
+    payload: SessionInspectRequestPayload,
+  ): Promise<ResponseResults["session.inspect"]> {
+    return this.request(
+      "session.inspect",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["session.inspect"]>;
   }
 
   forkSession(payload: {

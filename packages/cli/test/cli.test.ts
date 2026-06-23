@@ -549,9 +549,10 @@ describe("runCli", () => {
           profileId: "reviewer",
           profileName: "Reviewer",
           protocol: "in_process",
+          risk: "safe",
           requiresApproval: false,
-          approvalRequiredUnderCurrentRun: true,
-          approvalReasons: expect.arrayContaining(["tool.risk:risky"]),
+          approvalRequiredUnderCurrentRun: false,
+          approvalReasons: [],
           approvalRunOptions: { shouldWrite: false },
           workspaceAccess: "none",
           shellAccess: false,
@@ -562,11 +563,9 @@ describe("runCli", () => {
           profileId: "writer",
           profileName: "Writer",
           protocol: "in_process",
-          approvalRequiredUnderCurrentRun: true,
-          approvalReasons: expect.arrayContaining([
-            "tool.risk:risky",
-            "gated_by_run_write",
-          ]),
+          risk: "safe",
+          approvalRequiredUnderCurrentRun: false,
+          approvalReasons: [],
           approvalRunOptions: { shouldWrite: false },
           workspaceAccess: "read_write",
           shellAccess: false,
@@ -1614,6 +1613,9 @@ describe("runCli", () => {
           disabled: ["shell"],
           defer: ["read_anchored_text"],
         },
+        shell: {
+          foregroundTimeoutMs: 123_000,
+        },
         capabilities: {
           skills: { roots: ["skills"] },
           agents: {
@@ -1647,6 +1649,9 @@ describe("runCli", () => {
       "tools: use=(all); allowed=read_file, read_anchored_text; disabled=shell; defer=read_anchored_text",
     );
     expect(textOutput.stdoutText()).toContain(
+      "shell foreground: timeoutMs=123000; promotionAvailable=true",
+    );
+    expect(textOutput.stdoutText()).toContain(
       "shell sandbox: mode=warn; effective=",
     );
     expect(textOutput.stdoutText()).toContain("network=deny");
@@ -1678,6 +1683,8 @@ describe("runCli", () => {
         available: Array<{ name: string; origin?: string }>;
       };
       shell: {
+        foregroundTimeoutMs: number;
+        promotionAvailable: boolean;
         sandbox: {
           mode: string;
           runtimeId: string;
@@ -1700,6 +1707,10 @@ describe("runCli", () => {
       cron: { stateRoot: string };
       command: { dirs: Array<{ layer: string; exists: boolean }> };
     };
+    expect(report.shell).toMatchObject({
+      foregroundTimeoutMs: 123_000,
+      promotionAvailable: true,
+    });
     expect(report.shell.sandbox).toMatchObject({
       mode: "warn",
       runtimeId: expect.any(String),
@@ -1779,6 +1790,75 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("tool: list_skills");
     // append_file was retired in favor of edit_anchored_text / apply_patch.
     expect(output.stdoutText()).not.toContain("tool: append_file");
+  });
+
+  it("shows missing model pricing in capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-5.4-mini",
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "model: openai/gpt-5.4-mini; pricing=unavailable:missing_pricing",
+    );
+  });
+
+  it("uses --model as the active model for capability inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-5.4-nano",
+        providers: {
+          openai: {
+            apiKey: "sk-test",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "capabilities",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--model",
+        "openai/gpt-5.4-mini",
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "model: openai/gpt-5.4-mini; pricing=unavailable:missing_pricing",
+    );
   });
 
   it("resolves MCP tools during capability inspect only when requested", async () => {
@@ -4319,6 +4399,70 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain("workspace reads:");
   });
 
+  it("prints short run ids in text timelines for multi-run traces", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const tracePath = join(workspace, "multi-run.trace.jsonl");
+    const lines = [
+      {
+        id: "evt_alpha_1",
+        runId: "run_alpha_long_1234567890",
+        type: "run.created",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        sequence: 1,
+        payload: { goal: "alpha" },
+      },
+      {
+        id: "evt_alpha_2",
+        runId: "run_alpha_long_1234567890",
+        type: "run.completed",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        sequence: 2,
+        payload: { reason: "final_answer" },
+      },
+      {
+        id: "evt_beta_1",
+        runId: "run_beta_long_1234567890",
+        type: "run.created",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        sequence: 1,
+        payload: { goal: "beta" },
+      },
+      {
+        id: "evt_beta_2",
+        runId: "run_beta_long_1234567890",
+        type: "run.failed",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        sequence: 2,
+        payload: {
+          reason: "model_auth_failed",
+          code: "MODEL_COMPLETION_FAILED",
+          message: "auth failed",
+        },
+      },
+    ];
+    await writeFile(
+      tracePath,
+      `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["trace", "timeline", tracePath, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "run_alph..7890 [1-2] completed run run",
+    );
+    expect(output.stdoutText()).toContain(
+      "run_beta..7890 [1-2] failed run run",
+    );
+  });
+
   it("prints unavailable cost reasons in text trace summaries", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const tracePath = join(workspace, "cost-unavailable.trace.jsonl");
@@ -4758,6 +4902,89 @@ describe("runCli", () => {
       "Session deterministic-summary preview.",
     );
     expect(String(artifact.content)).toContain("packages/cli/src/cli.ts");
+
+    const inspectOutput = createOutputCapture();
+    const inspect = await runCli(
+      [
+        "session",
+        "inspect",
+        sessionId,
+        "--compaction",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: inspectOutput.stdout, stderr: inspectOutput.stderr },
+      },
+    );
+
+    expect(inspect.exitCode).toBe(0);
+    const inspected = JSON.parse(inspectOutput.stdoutText()) as Record<
+      string,
+      unknown
+    >;
+    expect(inspected).toMatchObject({
+      ok: true,
+      sessionId,
+      compaction: {
+        status: "compacted",
+        artifact: {
+          path: join(sessionRootDir, sessionId, "compact.json"),
+          throughRunId: runId,
+          compactedRunCount: 1,
+          freedChars: payload.freedChars,
+          warningCodes: expect.arrayContaining([
+            "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+          ]),
+        },
+        latestEvent: {
+          type: "session.compaction.completed",
+          throughRunId: runId,
+          artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+        },
+        consistency: {
+          ok: true,
+          artifactMatchesLatestCompletedEvent: true,
+        },
+      },
+    });
+    expect(inspectOutput.stdoutText()).not.toContain(
+      "Session deterministic-summary preview.",
+    );
+
+    const inspectTextOutput = createOutputCapture();
+    const inspectText = await runCli(
+      [
+        "session",
+        "inspect",
+        sessionId,
+        "--compaction",
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: {
+          stdout: inspectTextOutput.stdout,
+          stderr: inspectTextOutput.stderr,
+        },
+      },
+    );
+
+    expect(inspectText.exitCode).toBe(0);
+    expect(inspectTextOutput.stdoutText()).toContain("status: compacted");
+    expect(inspectTextOutput.stdoutText()).toContain(
+      `artifact: ${join(sessionRootDir, sessionId, "compact.json")}`,
+    );
+    expect(inspectTextOutput.stdoutText()).toContain(
+      "warnings: SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+    );
+    expect(inspectTextOutput.stdoutText()).not.toContain(
+      "Session deterministic-summary preview.",
+    );
   });
 
   it("repairs derived session metadata on request", async () => {

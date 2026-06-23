@@ -67,6 +67,10 @@ Stable consumption rules:
   definition came from when the run is provider-backed.
 - Treat `resolvedModel.authSource` and `resolvedModel.baseURLSource` as source
   labels only. They must not contain API keys, tokens, or raw headers.
+- Use `resolvedModel.pricing.costStatus` to distinguish known-cost runs from
+  runs whose token usage is available but cost estimates are not. When
+  `costUnavailableReason` is `missing_pricing`, clients may show a warning
+  before the run finishes instead of waiting for trace diagnostics.
 - Keep the event optional. Older traces and some embedders may emit
   `run.started` with an empty payload.
 
@@ -87,6 +91,16 @@ normalized model result.
 
 If chunks arrive after reconnect, deduplicate by event `id` and rebuild the
 buffer from ordered events.
+
+## Tool Requests
+
+`tool.requested` opens the replayable audit record for a model-selected tool
+call. The payload carries the call id, tool name, raw arguments, and may include
+`preview`, a bounded one-line display string produced by the tool definition's
+`previewArgs()` formatter. UI clients should prefer `preview` for compact
+rendering and fall back to their legacy argument formatter when it is absent;
+policy, approval, validation, and execution must continue to use the structured
+arguments.
 
 ## Tool Progress
 
@@ -146,6 +160,10 @@ Stable consumption rules:
   returned result before marking the run cancelled.
 - Use `run.failed.payload.failure` and `stopReason` when available for error
   categorization.
+- Treat failure `metadata.cause` as a bounded diagnostic summary when present.
+  Raw provider request bodies, prompt input, and tool schemas must not be
+  persisted on terminal failure events; structured provider classification lives
+  in `metadata.modelError` when available.
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
 

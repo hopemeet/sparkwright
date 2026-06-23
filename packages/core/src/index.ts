@@ -94,6 +94,8 @@ export type {
   ToolAvailableProbe,
   ToolResultSizePolicy,
   ToolProgressUpdate,
+  ToolRequestPreviewFormatter,
+  ToolRequestPreviewOptions,
   ToolOrigin,
   ToolGovernance,
   ToolInputSchema,
@@ -106,6 +108,7 @@ export {
   isToolConcurrencySafe,
   validateToolArguments,
   validateToolOutput,
+  formatToolRequestPreview,
   createToolCall,
   ToolRegistry, // public: createRun({ tools }) accepts a ToolRegistry
 } from "./tools.js";

@@ -8,6 +8,7 @@ import {
   type ContextItem,
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
+  type SessionEvent,
   type RunId,
   type SparkwrightEvent,
 } from "@sparkwright/core";
@@ -406,6 +407,58 @@ describe("host protocol", () => {
         delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
       else process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
       pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("emits canonical failure on host runtime run.failed", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-runtime-failure-"),
+    );
+    try {
+      let resolveFailed!: (message: HostMessage) => void;
+      const failed = new Promise<HostMessage>((resolve) => {
+        resolveFailed = resolve;
+      });
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: (message) => {
+          if (message.envelope !== "event") return;
+          if (message.kind === "run.failed") {
+            resolveFailed(message);
+            return;
+          }
+          if (message.kind === "run.event") {
+            throw new Error("event sink failed");
+          }
+        },
+      });
+
+      const started = await runtime.startRun({ goal: "exercise sink failure" });
+      expect(started).toMatchObject({
+        ok: false,
+        error: {
+          code: "internal_error",
+          message: "event sink failed",
+        },
+      });
+      await expect(failed).resolves.toMatchObject({
+        envelope: "event",
+        kind: "run.failed",
+        payload: {
+          failure: {
+            category: "runtime",
+            code: "internal_error",
+            message: "event sink failed",
+          },
+          error: {
+            code: "internal_error",
+            message: "event sink failed",
+          },
+        },
+      });
+    } finally {
       await rm(workspace, { recursive: true, force: true });
     }
   });
@@ -1206,7 +1259,7 @@ describe("host protocol", () => {
                 profileId: "reviewer",
                 profileName: "Reviewer",
                 protocol: "in_process",
-                risk: "risky",
+                risk: "safe",
                 requiresApproval: false,
                 forbidNesting: true,
                 sideEffects: ["model", "workspace"],
@@ -1246,6 +1299,157 @@ describe("host protocol", () => {
         );
         expect(tools.some((tool) => tool.name === "shell")).toBe(false);
       }
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("includes model pricing warnings in capability inspection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-model-pricing-"),
+    );
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/gpt-5.4-mini",
+          providers: {
+            openai: {},
+          },
+        }),
+        "utf8",
+      );
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        emit: () => {},
+      });
+
+      const inspected = await runtime.inspectCapabilities();
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        snapshot: {
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+            providerKey: "openai",
+            modelId: "gpt-5.4-mini",
+            adapterId: "openai:gpt-5.4-mini",
+            pricing: {
+              source: "unavailable",
+              costStatus: "unavailable",
+              costUnavailableReason: "missing_pricing",
+            },
+          },
+        },
+      });
+      if (inspected.ok) {
+        expect(inspected.snapshot.model?.pricing.warning).toContain(
+          "cost estimates will be unavailable",
+        );
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the requested runtime model for capability inspection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-capability-model-"),
+    );
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {},
+          },
+        }),
+        "utf8",
+      );
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        emit: () => {},
+      });
+
+      const inspected = await runtime.inspectCapabilities({
+        modelRef: "openai/gpt-5.4-mini",
+      });
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        snapshot: {
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+            providerKey: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("passes capability inspect model through the host protocol", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-capability-protocol-model-"),
+    );
+    const pair = createConnectionPair();
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {},
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "cap",
+        kind: "capability.inspect",
+        timestamp: TIMESTAMP,
+        payload: {
+          model: "openai/gpt-5.4-mini",
+        },
+      });
+
+      const resp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "cap",
+      );
+      expect(resp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+          },
+        },
+      });
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });
@@ -2155,6 +2359,36 @@ describe("host protocol", () => {
           timeline: { phases: expect.any(Array) },
         },
       });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "inspect_compaction",
+        kind: "session.inspect",
+        timestamp: TIMESTAMP,
+        payload: { sessionId, compaction: true },
+      });
+      const inspectCompactionResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "inspect_compaction",
+      );
+
+      expect(inspectCompactionResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          sessionId,
+          compaction: {
+            status: "not_compacted",
+            artifact: null,
+            events: [],
+            latestEvent: null,
+            consistency: {
+              ok: true,
+              artifactMatchesLatestCompletedEvent: null,
+              findings: [],
+            },
+          },
+        },
+      });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -2291,6 +2525,116 @@ describe("host protocol", () => {
           name: "session_summarize",
           tier: "summarize",
         }),
+      );
+      const sessionEvents: SessionEvent[] = [];
+      for await (const event of store.loadEvents(sessionId)) {
+        sessionEvents.push(event);
+      }
+      expect(sessionEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "session.compaction.completed",
+            payload: expect.objectContaining({
+              compactedRunCount: 1,
+              throughRunId: runId,
+              freedChars: compactResp.result.freedChars,
+              artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+              warningCodes: expect.arrayContaining([
+                "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+              ]),
+            }),
+            metadata: expect.objectContaining({
+              source: "host",
+              reason: "test",
+            }),
+          }),
+        ]),
+      );
+
+      const inspectRuntime = new HostRuntime({
+        workspaceRoot: workspace,
+        sessionRootDir,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const inspected =
+        await inspectRuntime.inspectSessionCompaction(sessionId);
+      expect(inspected).toMatchObject({
+        ok: true,
+        sessionId,
+        compaction: {
+          status: "compacted",
+          artifact: {
+            path: join(sessionRootDir, sessionId, "compact.json"),
+            throughRunId: runId,
+            compactedRunCount: 1,
+            freedChars: compactResp.result.freedChars,
+            warningCodes: expect.arrayContaining([
+              "SESSION_SUMMARIZER_DETERMINISTIC_PREVIEW",
+            ]),
+          },
+          latestEvent: {
+            type: "session.compaction.completed",
+            throughRunId: runId,
+            artifactPath: join(sessionRootDir, sessionId, "compact.json"),
+          },
+          consistency: {
+            ok: true,
+            artifactMatchesLatestCompletedEvent: true,
+          },
+        },
+      });
+      expect(JSON.stringify(inspected)).not.toContain(
+        "Session deterministic-summary preview.",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("records skipped session compaction as a durable session event", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-"));
+    try {
+      const sessionRootDir = join(workspace, ".sparkwright", "sessions");
+      const sessionId = "session_compact_empty_protocol";
+      const store = new FileSessionStore({ rootDir: sessionRootDir });
+      await store.create({ id: sessionId });
+
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        sessionRootDir,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const result = await runtime.compactSession(sessionId, "empty audit");
+
+      expect(result).toMatchObject({
+        ok: true,
+        sessionId,
+        skippedReason: "no_completed_turns",
+        artifactPath: null,
+      });
+      const sessionEvents: SessionEvent[] = [];
+      for await (const event of store.loadEvents(sessionId)) {
+        sessionEvents.push(event);
+      }
+      expect(sessionEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "session.compaction.skipped",
+            payload: expect.objectContaining({
+              compactedRunCount: 0,
+              throughRunId: null,
+              freedChars: 0,
+              artifactPath: null,
+              skippedReason: "no_completed_turns",
+            }),
+            metadata: expect.objectContaining({
+              source: "host",
+              reason: "empty audit",
+            }),
+          }),
+        ]),
       );
     } finally {
       await rm(workspace, { recursive: true, force: true });

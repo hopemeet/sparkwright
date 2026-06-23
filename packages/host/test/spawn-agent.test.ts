@@ -434,11 +434,11 @@ describe("host spawn_agent wiring", () => {
     }
   });
 
-  // The parent allocates the child's step budget via `maxSteps`. It must be
-  // honored up to a ceiling (16) with a sane default (8) when omitted — a real
-  // trace showed a search child strangled by the former hard cap of 4. The
-  // clamped value is observable through the promotion hint's suggested profile.
-  it("clamps a parent-allocated maxSteps to 16 and defaults to 8", async () => {
+  // The parent allocates the child's step budget via `maxSteps`. Omitted child
+  // budgets inherit the parent run's effective ceiling; explicit child budgets
+  // are honored without a host-side cap. The effective value is observable
+  // through the promotion hint's suggested profile.
+  it("inherits parent maxSteps by default and honors explicit high budgets", async () => {
     const root = await mkdtemp(
       join(tmpdir(), "sparkwright-host-spawn-budget-"),
     );
@@ -466,7 +466,7 @@ describe("host spawn_agent wiring", () => {
               return { message: "parent done" };
             },
           },
-          maxSteps: 1,
+          maxSteps: 27,
           runStore: childRunStoreFactory("main"),
         });
 
@@ -511,8 +511,8 @@ describe("host spawn_agent wiring", () => {
         return output.promotionHint.suggestedProfile.maxSteps;
       };
 
-      expect(await allocate(100)).toBe(16);
-      expect(await allocate()).toBe(8);
+      expect(await allocate(100)).toBe(100);
+      expect(await allocate()).toBe(27);
     } finally {
       await rm(root, {
         recursive: true,

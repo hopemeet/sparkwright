@@ -9,7 +9,10 @@ npm install
 npm run release:check
 ```
 
-`release:check` runs typecheck, lint, format check, schema validation, build-backed tests, a deterministic read-only CLI smoke test, and a packed-tarball install smoke test in a temporary project.
+`release:check` runs typecheck, lint, format check, schema validation,
+build-backed tests, a deterministic read-only CLI smoke test, the deterministic
+regression matrix, and source/packed-tarball install smoke tests in temporary
+projects.
 
 For a broader pre-push manual pass across runtime, CLI, host/SDK, gateway,
 skills, MCP, provider registry, trace, and examples, use

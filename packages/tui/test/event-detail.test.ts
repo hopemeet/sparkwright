@@ -24,6 +24,9 @@ describe("event detail filters", () => {
 
   it("groups failures, denials, rejections, and timeouts as errors", () => {
     expect(matches("run.failed", "errors")).toBe(true);
+    expect(
+      eventMatchesFilter(event("run.completed", { state: "failed" }), "errors"),
+    ).toBe(true);
     expect(matches("tool.failed", "errors")).toBe(true);
     expect(matches("workspace.write.denied", "errors")).toBe(true);
     expect(matches("approval.rejected", "errors")).toBe(true);
@@ -146,5 +149,23 @@ describe("run inspector facts", () => {
     expect(facts.errorCount).toBe(2);
     expect(facts.lastError).toBe("stopped");
     expect(facts.runFailed).toBe(1);
+  });
+
+  it("records failed run.completed events with the canonical failure message", () => {
+    const facts = summarizeRunInspectorFacts([
+      event("run.completed", {
+        state: "failed",
+        stopReason: "model_auth_failed",
+        failure: {
+          category: "model",
+          code: "MODEL_COMPLETION_FAILED",
+          message: "invalid API key",
+        },
+      }),
+    ]);
+
+    expect(facts.errorCount).toBe(1);
+    expect(facts.lastError).toBe("invalid API key");
+    expect(facts.runCompleted).toBe(1);
   });
 });

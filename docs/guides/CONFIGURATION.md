@@ -255,6 +255,7 @@ stdio MCP servers:
 ```json
 {
   "shell": {
+    "foregroundTimeoutMs": 300000,
     "sandbox": {
       "mode": "warn",
       "filesystem": {
@@ -275,6 +276,13 @@ stdio MCP servers:
   }
 }
 ```
+
+`foregroundTimeoutMs` is the foreground shell budget in milliseconds. It
+defaults to `300000` (5 minutes) and is capped at `600000` (10 minutes). When
+the budget expires, a host with background task support promotes the live
+process; without task promotion, the process is killed and the shell result
+reports that promotion was unavailable. Legacy per-call `timeoutMs` is only an
+alias for this foreground budget; it is not a hard-kill timeout.
 
 Modes:
 
@@ -604,6 +612,8 @@ Put user arguments in prompt text instead.
 - `write`: workspace write guardrails (`maxFiles`, `maxDiffLines`,
   `allowDeletions`) that override the runtime defaults. Merges conservatively —
   the smaller `maxFiles`/`maxDiffLines` wins and `allowDeletions: false` wins.
+- `shell.foregroundTimeoutMs`: foreground shell budget before background
+  promotion or no-task-manager kill. Later layers override this scalar.
 - `shell.sandbox`: OS-level sandbox for the host shell executor. Merges
   conservatively so a later layer cannot weaken an earlier sandbox policy.
 - `runBudget`: resource budget for the interactive main run (`maxModelCalls`,

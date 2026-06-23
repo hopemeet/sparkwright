@@ -1,5 +1,5 @@
 status: ok
-events: 25
+events: 26
 runs: 1
 sessions: session_fixture
 agents: main

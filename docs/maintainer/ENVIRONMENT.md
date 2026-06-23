@@ -104,10 +104,12 @@ Recovery guidance:
 
 Design notes:
 
-- **No default ceiling.** SparkWright ships zero foreground timeout — pass
-  `foregroundTimeoutMs` explicitly on every host. The constant
-  `RECOMMENDED_FOREGROUND_TIMEOUT_MS` (10 min, a common convention in
-  the agent-CLI space) is exported as a documented anchor.
+- **One foreground budget.** SparkWright hosts use
+  `foregroundTimeoutMs` as the foreground shell budget. The exported
+  `RECOMMENDED_FOREGROUND_TIMEOUT_MS` is 300000 ms (5 min), and
+  `MAX_FOREGROUND_TIMEOUT_MS` caps accepted values at 600000 ms (10 min).
+  When the budget fires, a host with a task manager promotes the live process;
+  a host without promotion aborts and reports `timedOut: true`.
 - **Required options.** `environment` (with `executeShellStreaming`),
   `foregroundTimeoutMs`, and `onPromote` are all required by
   `createShellTool`. Missing any of them throws at construction with a

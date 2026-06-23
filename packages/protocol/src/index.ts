@@ -118,6 +118,25 @@ export type ProtocolErrorCode =
   | "session_not_found"
   | "internal_error";
 
+const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
+  "protocol_version_mismatch",
+  "unknown_kind",
+  "invalid_payload",
+  "run_not_found",
+  "approval_not_found",
+  "session_not_found",
+  "internal_error",
+];
+
+export function isProtocolErrorCode(
+  value: unknown,
+): value is ProtocolErrorCode {
+  return (
+    typeof value === "string" &&
+    (PROTOCOL_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
 export interface ProtocolError {
   code: ProtocolErrorCode;
   message: string;
@@ -130,6 +149,25 @@ export interface CompactionWarning {
   metadata?: Record<string, unknown>;
 }
 
+export interface SessionCompactionSummarizerMeasurement {
+  applied: boolean;
+  skippedReason?: string;
+  mode?: string;
+  modelId?: string;
+  promptVersion?: string;
+  /** @reserved Public oracle version consumed by artifact and diagnostics readers. */
+  oracleVersion?: string;
+  /** @reserved Public summary input fingerprint consumed by artifact reuse diagnostics. */
+  inputHash?: string;
+  /** @reserved Public reproducibility flag consumed by compact artifact readers. */
+  nonDeterministic?: boolean;
+  durationMs?: number;
+  costUsd?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
 export interface SessionCompactionMeasurement {
   sourceRunCount: number;
   originalCharCount: number;
@@ -139,7 +177,7 @@ export interface SessionCompactionMeasurement {
   freedByTier: Record<string, number>;
   regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
   signalCount: number;
-  summarizer?: Record<string, unknown>;
+  summarizer?: SessionCompactionSummarizerMeasurement;
 }
 
 export interface RunFailureEnvelope {
@@ -273,6 +311,64 @@ export interface SessionListRequestPayload {
 
 export interface SessionInspectRequestPayload {
   sessionId: string;
+  /**
+   * Include a session-compaction audit view derived from compact.json and
+   * session-local compaction events. The compacted summary body is not
+   * returned.
+   */
+  compaction?: boolean;
+}
+
+export interface SessionCompactionInspectArtifact {
+  path: string;
+  schemaVersion: string;
+  createdAt: string;
+  throughRunId: string;
+  compactedRunCount: number;
+  sourceRunIds: string[];
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  measurement?: SessionCompactionMeasurement;
+  mode?: string;
+  reason?: string;
+  warningCodes?: string[];
+  summaryFingerprint?: Record<string, unknown>;
+}
+
+export interface SessionCompactionInspectEvent {
+  sequence: number;
+  timestamp: string;
+  type: "session.compaction.completed" | "session.compaction.skipped";
+  compactedRunCount: number;
+  throughRunId: string | null;
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  measurement?: SessionCompactionMeasurement;
+  artifactPath: string | null;
+  skippedReason?: string;
+  warningCodes?: string[];
+  reason?: string;
+  source?: string;
+}
+
+export interface SessionCompactionInspectReport {
+  status:
+    | "not_compacted"
+    | "compacted"
+    | "skipped"
+    | "artifact_only"
+    | "event_only"
+    | "stale_artifact";
+  artifact: SessionCompactionInspectArtifact | null;
+  events: SessionCompactionInspectEvent[];
+  latestEvent: SessionCompactionInspectEvent | null;
+  consistency: {
+    ok: boolean;
+    artifactMatchesLatestCompletedEvent: boolean | null;
+    findings: string[];
+  };
 }
 
 export interface SessionForkRequestPayload {
@@ -308,6 +404,8 @@ export interface CapabilityInspectRequestPayload {
    * capability state known to this connection.
    */
   sessionId?: string;
+  /** Model reference in "provider/model" form, or the reserved "deterministic". */
+  model?: string;
 }
 
 export type HostRequest =
@@ -365,6 +463,7 @@ export interface ResponseResults {
     summary: Record<string, unknown>;
     consistency: Record<string, unknown>;
     timeline: Record<string, unknown>;
+    compaction?: SessionCompactionInspectReport;
   };
   "session.fork": {
     forkedSessionId: string;
@@ -392,6 +491,21 @@ export interface CapabilityToolSummary {
   risk?: string;
   /** True when the full tool schema is loaded through tool_search on demand. */
   deferred?: boolean;
+}
+
+export interface CapabilityModelPricingSummary {
+  source: "configured" | "builtin" | "unavailable" | "not_applicable";
+  costStatus: "estimated" | "unavailable" | "not_applicable";
+  costUnavailableReason?: "missing_pricing" | string;
+  warning?: string;
+}
+
+export interface CapabilityModelSummary {
+  modelRef: string;
+  providerKey: string;
+  modelId: string;
+  adapterId: string;
+  pricing: CapabilityModelPricingSummary;
 }
 
 export interface CapabilitySkillSummary {
@@ -426,7 +540,7 @@ export interface CapabilityDelegateToolSummary {
   /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
   protocol: "acp" | "external_command" | "in_process";
-  risk: "risky";
+  risk: "safe" | "risky" | "denied";
   /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
   requiresApproval: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
@@ -495,6 +609,7 @@ export interface CapabilityAutomationSummary {
 }
 
 export interface CapabilitySnapshot {
+  model?: CapabilityModelSummary;
   tools: CapabilityToolSummary[];
   skills: {
     indexed: CapabilitySkillSummary[];
@@ -509,6 +624,8 @@ export interface CapabilitySnapshot {
     delegateTools: CapabilityDelegateToolSummary[];
   };
   shell?: {
+    foregroundTimeoutMs?: number;
+    promotionAvailable?: boolean;
     sandbox: CapabilityShellSandboxSummary;
   };
   automation?: CapabilityAutomationSummary;
@@ -632,6 +749,9 @@ export interface RunCompletedEventPayload {
 
 export interface RunFailedEventPayload {
   runId: string;
+  /** Canonical terminal failure. Prefer this over the legacy `error` projection. */
+  failure: RunFailureEnvelope;
+  /** @deprecated Use `failure`; kept for older protocol clients. */
   error: ProtocolError;
 }
 
@@ -656,4 +776,98 @@ export function isResponse(msg: HostMessage): msg is HostResponse {
 }
 export function isEvent(msg: HostMessage): msg is HostEvent {
   return msg.envelope === "event";
+}
+
+export function protocolErrorToRunFailure(
+  error: ProtocolError,
+): RunFailureEnvelope {
+  return {
+    code: error.code,
+    message: error.message,
+    ...(error.details ? { metadata: error.details } : {}),
+  };
+}
+
+export function getRunFailure(
+  payload: unknown,
+): RunFailureEnvelope | undefined {
+  const record = isRecord(payload) ? payload : undefined;
+  if (!record) return undefined;
+
+  const failure = runFailureEnvelope(record.failure);
+  if (failure) return failure;
+
+  const error = protocolError(record.error);
+  if (error) return protocolErrorToRunFailure(error);
+
+  const state = stringValue(record.state);
+  if (state !== "failed" && state !== "cancelled") return undefined;
+
+  const message =
+    stringValue(record.message) ??
+    stringValue(record.reason) ??
+    stringValue(record.stopReason);
+  if (!message) return undefined;
+
+  return {
+    code:
+      stringValue(record.code) ??
+      stringValue(record.reason) ??
+      stringValue(record.stopReason) ??
+      state,
+    message,
+  };
+}
+
+export function runFailureMessage(
+  payload: unknown,
+  fallback = "run failed",
+): string {
+  const failure = getRunFailure(payload);
+  if (failure?.message) return failure.message;
+  const record = isRecord(payload) ? payload : undefined;
+  return (
+    stringValue(record?.message) ??
+    stringValue(record?.reason) ??
+    stringValue(record?.stopReason) ??
+    fallback
+  );
+}
+
+function protocolError(value: unknown): ProtocolError | undefined {
+  const record = isRecord(value) ? value : undefined;
+  const code = stringValue(record?.code);
+  const message = stringValue(record?.message);
+  if (!code || !message || !isProtocolErrorCode(code)) return undefined;
+  return {
+    code,
+    message,
+    ...(isRecord(record?.details) ? { details: record.details } : {}),
+  };
+}
+
+function runFailureEnvelope(value: unknown): RunFailureEnvelope | undefined {
+  const record = isRecord(value) ? value : undefined;
+  const code = stringValue(record?.code);
+  const message = stringValue(record?.message);
+  if (!code || !message) return undefined;
+  return {
+    ...(stringValue(record?.category)
+      ? { category: stringValue(record?.category) }
+      : {}),
+    code,
+    message,
+    ...(typeof record?.retryable === "boolean"
+      ? { retryable: record.retryable }
+      : {}),
+    ...(isRecord(record?.metadata) ? { metadata: record.metadata } : {}),
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

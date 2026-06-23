@@ -20,6 +20,9 @@ major; breaking changes bump the major.
   `freedChars`; unsupported v1 artifacts are ignored rather than migrated.
 - Add `metadata.summaryFingerprint` and `metadata.measurement` to compact
   artifacts when available.
+- Add canonical `failure` to `run.failed` while keeping deprecated `error` for
+  compatibility; clients should use the shared failure shape across terminal
+  failure events.
 
 ## 1.3 (2026-06-14)
 

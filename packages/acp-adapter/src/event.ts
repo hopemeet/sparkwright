@@ -7,7 +7,7 @@ import type {
   ToolCallUpdate,
   ToolKind,
 } from "@agentclientprotocol/sdk";
-import type { HostEvent } from "@sparkwright/protocol";
+import { runFailureMessage, type HostEvent } from "@sparkwright/protocol";
 import type { AcpSessionInfo } from "./session.js";
 
 type AcpConnection = Pick<
@@ -59,7 +59,7 @@ export function hostEventToSessionUpdates(
     case "run.failed":
       return [
         agentText(
-          `Run failed: ${event.payload.error.message}`,
+          `Run failed: ${runFailureMessage(event.payload)}`,
           event.payload.runId || "run_failed",
         ),
       ];

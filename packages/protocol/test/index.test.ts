@@ -3,11 +3,15 @@ import {
   PERMISSION_MODES,
   PROTOCOL_VERSION,
   TRACE_LEVELS,
+  getRunFailure,
   isEvent,
   isPermissionMode,
+  isProtocolErrorCode,
   isRequest,
   isResponse,
   isTraceLevel,
+  protocolErrorToRunFailure,
+  runFailureMessage,
   type HostMessage,
 } from "../src/index.js";
 
@@ -30,6 +34,11 @@ describe("@sparkwright/protocol", () => {
     expect(isTraceLevel("debug")).toBe(true);
     expect(isTraceLevel("minimal")).toBe(false);
     expect(isTraceLevel("verbose")).toBe(false);
+  });
+
+  it("exports stable protocol error guards", () => {
+    expect(isProtocolErrorCode("internal_error")).toBe(true);
+    expect(isProtocolErrorCode("model_error")).toBe(false);
   });
 
   it("narrows host message envelopes", () => {
@@ -66,5 +75,78 @@ describe("@sparkwright/protocol", () => {
     expect(messages.map(isRequest)).toEqual([true, false, false]);
     expect(messages.map(isResponse)).toEqual([false, true, false]);
     expect(messages.map(isEvent)).toEqual([false, false, true]);
+  });
+
+  it("extracts canonical terminal run failures", () => {
+    const payload = {
+      runId: "run_1",
+      state: "failed",
+      failure: {
+        category: "model",
+        code: "MODEL_COMPLETION_FAILED",
+        message: "provider rejected request",
+        retryable: false,
+        metadata: { status: 401 },
+      },
+      error: {
+        code: "internal_error",
+        message: "legacy projection",
+      },
+    };
+
+    expect(getRunFailure(payload)).toEqual(payload.failure);
+    expect(runFailureMessage(payload)).toBe("provider rejected request");
+  });
+
+  it("projects legacy protocol errors into run failures", () => {
+    const error = {
+      code: "internal_error" as const,
+      message: "host crashed",
+      details: { phase: "startup" },
+    };
+
+    expect(protocolErrorToRunFailure(error)).toEqual({
+      code: "internal_error",
+      message: "host crashed",
+      metadata: { phase: "startup" },
+    });
+    expect(getRunFailure({ runId: "run_1", error })).toEqual({
+      code: "internal_error",
+      message: "host crashed",
+      metadata: { phase: "startup" },
+    });
+  });
+
+  it("falls back to root run failure messages for legacy failed payloads", () => {
+    expect(
+      runFailureMessage({
+        runId: "run_1",
+        code: "MODEL_COMPLETION_FAILED",
+        message: "invalid API key",
+      }),
+    ).toBe("invalid API key");
+  });
+
+  it("synthesizes failed completed payloads without treating answers as failures", () => {
+    expect(
+      getRunFailure({
+        runId: "run_1",
+        state: "failed",
+        stopReason: "model_auth_failed",
+        message: "invalid API key",
+      }),
+    ).toEqual({
+      code: "model_auth_failed",
+      message: "invalid API key",
+    });
+
+    expect(
+      getRunFailure({
+        runId: "run_2",
+        state: "completed",
+        stopReason: "final_answer",
+        message: "done",
+      }),
+    ).toBeUndefined();
   });
 });

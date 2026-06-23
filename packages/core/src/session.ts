@@ -63,7 +63,9 @@ export type SessionEventType =
   | "session.created"
   | "session.run_appended"
   | "session.event_appended"
-  | "session.run.event_replayed";
+  | "session.run.event_replayed"
+  | "session.compaction.completed"
+  | "session.compaction.skipped";
 
 /**
  * Append-only event attached to a session rather than a single run.

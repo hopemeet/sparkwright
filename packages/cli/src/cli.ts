@@ -57,6 +57,7 @@ import {
   type PermissionMode,
   type RunInputPayload,
   type RunInputPart,
+  type SessionCompactionInspectReport,
   type TraceLevel,
 } from "@sparkwright/protocol";
 import {
@@ -132,6 +133,7 @@ import {
   describeShellSandboxStatus,
   resolveShellSandboxConfig,
 } from "@sparkwright/shell-sandbox";
+import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import { createCliApprovalResolver } from "./cli-approval.js";
 import { createLiveEventFormatter, formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
@@ -193,6 +195,7 @@ interface ParsedArgs {
   verbose: boolean;
   resolveMcp: boolean;
   llm: boolean;
+  compaction: boolean;
   delegateGoal?: string;
 }
 
@@ -780,6 +783,7 @@ function parseArgs(
   let verbose = false;
   let resolveMcp = false;
   let llm = false;
+  let compaction = false;
   let delegateGoal: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -962,6 +966,13 @@ function parseArgs(
 
     if (arg === "--llm") {
       llm = true;
+      args.splice(index, 1);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--compaction") {
+      compaction = true;
       args.splice(index, 1);
       index -= 1;
       continue;
@@ -1155,6 +1166,7 @@ function parseArgs(
   if (
     command === "session" &&
     subcommand !== "summary" &&
+    subcommand !== "inspect" &&
     subcommand !== "check" &&
     subcommand !== "repair" &&
     subcommand !== "compact" &&
@@ -1163,7 +1175,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]",
+        "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]",
     };
   }
 
@@ -1196,7 +1208,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+        "Usage: sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     };
   }
 
@@ -1204,7 +1216,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--format json|text]',
+        'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--format json|text]',
     };
   }
 
@@ -1339,6 +1351,7 @@ function parseArgs(
       verbose,
       resolveMcp,
       llm,
+      compaction,
       delegateGoal,
     },
   };
@@ -1771,6 +1784,8 @@ interface CapabilityInspectReport {
     available: CapabilityToolInspectEntry[];
   };
   shell: {
+    foregroundTimeoutMs: number;
+    promotionAvailable: boolean;
     sandbox: {
       mode: string;
       failIfUnavailable: boolean;
@@ -1864,6 +1879,7 @@ async function handleCapabilitiesCommand(
       env,
       {
         resolveMcp: parsed.resolveMcp,
+        modelName: parsed.modelName,
       },
     );
     writeLine(
@@ -1979,7 +1995,7 @@ function formatDelegateRunResult(
 async function loadCapabilityInspectReport(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
-  options: { resolveMcp?: boolean } = {},
+  options: { resolveMcp?: boolean; modelName?: string } = {},
 ): Promise<CapabilityInspectReport> {
   const loaded = await loadHostConfig(workspaceRoot, env);
   const capabilities = loaded.config.capabilities;
@@ -2080,7 +2096,9 @@ async function loadCapabilityInspectReport(
       return descriptor ? [descriptor] : [];
     },
   );
-  const runtime = await inspectRuntimeCapabilities(workspaceRoot);
+  const runtime = await inspectRuntimeCapabilities(workspaceRoot, {
+    modelName: options.modelName,
+  });
   const delegateDescriptors =
     runtime?.agents.delegateTools ?? externalDelegateDescriptors;
 
@@ -2099,6 +2117,10 @@ async function loadCapabilityInspectReport(
       }),
     },
     shell: {
+      foregroundTimeoutMs:
+        loaded.config.shell?.foregroundTimeoutMs ??
+        RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      promotionAvailable: true,
       sandbox: {
         mode: shellSandbox.mode,
         failIfUnavailable: shellSandbox.failIfUnavailable,
@@ -2137,9 +2159,11 @@ async function loadCapabilityInspectReport(
 
 async function inspectRuntimeCapabilities(
   workspaceRoot: string,
+  options: { modelName?: string } = {},
 ): Promise<CapabilitySnapshot | undefined> {
   const runtime = new HostRuntime({
     workspaceRoot,
+    defaultModel: options.modelName,
     emit: () => {},
   });
   const inspected = await runtime.inspectCapabilities();
@@ -2322,7 +2346,7 @@ function buildCapabilityToolInventory(input: {
     (tool) => ({
       name: tool.toolName,
       source: "delegate" as const,
-      risk: "risky" as const,
+      risk: tool.risk,
       origin: `${tool.protocol}:${tool.profileId}`,
     }),
   );
@@ -2384,7 +2408,7 @@ function runtimeToolToInspectEntry(input: {
     return {
       name: input.tool.name,
       source: "delegate",
-      risk: "risky",
+      risk: delegate.risk,
       origin: `${delegate.protocol}:${delegate.profileId}`,
       ...(input.tool.deferred === true ? { deferred: true } : {}),
     };
@@ -2439,7 +2463,9 @@ function formatCapabilityInspectReport(
 ): string {
   const lines = [
     `workspace: ${report.workspace}`,
+    `model: ${formatCapabilityModelLine(report.runtime?.model)}`,
     `tools: use=${formatPatternList(report.tools.use, "(all)")}; allowed=${formatPatternList(report.tools.allowed, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
+    `shell foreground: timeoutMs=${report.shell.foregroundTimeoutMs}; promotionAvailable=${String(report.shell.promotionAvailable)}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
     `runtime tools: ${report.runtime?.tools.length ?? "unavailable"}`,
     `diagnostic tools: ${report.tools.available.length}`,
@@ -2520,6 +2546,18 @@ function formatCapabilityInspectReport(
     }
   }
   return lines.join("\n");
+}
+
+function formatCapabilityModelLine(
+  model: CapabilitySnapshot["model"] | undefined,
+): string {
+  if (!model) return "unavailable";
+  const pricing = model.pricing;
+  const suffix =
+    pricing.costStatus === "unavailable"
+      ? `; pricing=unavailable:${pricing.costUnavailableReason ?? "unknown"}`
+      : `; pricing=${pricing.source}`;
+  return `${model.modelRef}${suffix}`;
 }
 
 function formatAgentOrigin(agent: {
@@ -5342,7 +5380,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]";
   }
   if (command === "session") {
-    return "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]";
+    return "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]";
   }
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
@@ -5447,7 +5485,7 @@ async function handleSessionCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session <summary|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm]",
+      "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]",
     );
     return { exitCode: 1 };
   }
@@ -5514,6 +5552,45 @@ async function handleSessionCommand(
     return { exitCode: 0, sessionId };
   }
 
+  if (parsed.subcommand === "inspect") {
+    const runtime = new HostRuntime({
+      workspaceRoot: parsed.workspaceRoot,
+      sessionRootDir: parsed.sessionRootDir,
+      defaultModel: parsed.modelName,
+      emit: () => {},
+    });
+    if (parsed.compaction) {
+      const result = await runtime.inspectSessionCompaction(sessionId);
+      if (!result.ok) {
+        writeLine(io.stderr, `${result.error.code}: ${result.error.message}`);
+        return { exitCode: 1, sessionId };
+      }
+      writeLine(
+        io.stdout,
+        parsed.format === "text"
+          ? formatSessionCompactionInspectReport(
+              result.sessionId,
+              result.compaction,
+            )
+          : JSON.stringify(result, null, 2),
+      );
+      return { exitCode: 0, sessionId };
+    }
+
+    const result = await runtime.inspectSession(sessionId);
+    if (!result.ok) {
+      writeLine(io.stderr, `${result.error.code}: ${result.error.message}`);
+      return { exitCode: 1, sessionId };
+    }
+    writeLine(
+      io.stdout,
+      parsed.format === "text"
+        ? formatSessionInspectResult(result)
+        : JSON.stringify(result, null, 2),
+    );
+    return { exitCode: 0, sessionId };
+  }
+
   const report = await validateSessionTraceConsistency({ sessionDir });
   writeLine(
     io.stdout,
@@ -5532,7 +5609,7 @@ async function handleSessionResumeCommand(
   if (!parsed.target || !parsed.goal) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session resume <session-id> <goal> [--workspace path] [--session-root path]",
+      "Usage: sparkwright session resume <session-id> <goal> [--workspace path] [--session-root path] [--model provider/model]",
     );
     return { exitCode: 1 };
   }
@@ -5857,7 +5934,7 @@ function formatTraceSummary(summary: TraceSummary): string {
     `command failures: ${summary.commandFailures?.total ?? 0} total${topCommandFailures ? ` (${topCommandFailures})` : ""}`,
     `verification failures: ${summary.commandFailures?.verification?.total ?? 0} total, ${summary.commandFailures?.verification?.unresolved ?? 0} unresolved${summary.commandFailures?.verification?.lastCommand ? `, last unresolved ${summary.commandFailures.verification.lastCommand}` : ""}${summary.commandFailures?.verification?.lastSuccessfulVerificationCommand ? `, last success ${summary.commandFailures.verification.lastSuccessfulVerificationCommand}` : ""}`,
     `approvals: ${summary.safety?.approvals?.requested ?? 0} requested, ${summary.safety?.approvals?.approved ?? 0} approved, ${summary.safety?.approvals?.denied ?? 0} denied, ${summary.safety?.approvals?.autoApproved ?? 0} auto-approved`,
-    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, managed workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped, untracked write-capable external processes ${summary.safety?.workspaceWrites?.untrackedWriteCapableProcesses ?? 0}, capability mutations ${summary.safety?.capabilityMutations?.completed ?? 0} completed`,
+    `safety: shell approvals ${summary.safety?.shell?.approvals ?? 0}, shell mutations ${summary.safety?.shell?.untrackedWorkspaceMutations ?? 0}, confidential reads denied ${summary.safety?.confidentialReadsDenied ?? 0}, managed workspace writes ${summary.safety?.workspaceWrites?.completed ?? 0} applied/${summary.safety?.workspaceWrites?.denied ?? 0} denied/${summary.safety?.workspaceWrites?.skipped ?? 0} skipped, untracked write-capable boundaries ${summary.safety?.workspaceWrites?.untrackedWriteCapableProcesses ?? 0}, capability mutations ${summary.safety?.capabilityMutations?.completed ?? 0} completed`,
     `workspace reads: ${summary.workspaceReads?.total ?? 0} total, ${summary.workspaceReads?.uniquePaths ?? 0} unique${duplicateReads ? `, duplicates ${duplicateReads}` : ""}`,
     `top event types: ${topTypes || "(none)"}`,
   ].join("\n");
@@ -5936,6 +6013,7 @@ function formatCostReasons(
 }
 
 function formatTraceTimeline(timeline: TraceTimeline): string {
+  const showRunIds = timeline.runIds.length > 1;
   const lines = [
     `events: ${timeline.eventCount}`,
     `runs: ${timeline.runIds.length}`,
@@ -5945,14 +6023,19 @@ function formatTraceTimeline(timeline: TraceTimeline): string {
   for (const phase of timeline.phases.slice(0, 80)) {
     const duration =
       phase.durationMs === undefined ? "pending" : `${phase.durationMs}ms`;
+    const runPrefix = showRunIds ? `${shortTraceRunId(phase.runId)} ` : "";
     lines.push(
-      `[${phase.startSequence}${phase.endSequence ? `-${phase.endSequence}` : ""}] ${phase.status} ${phase.category} ${phase.label} (${duration})`,
+      `${runPrefix}[${phase.startSequence}${phase.endSequence ? `-${phase.endSequence}` : ""}] ${phase.status} ${phase.category} ${phase.label} (${duration})`,
     );
   }
   if (timeline.phases.length > 80) {
     lines.push(`... ${timeline.phases.length - 80} more phase(s)`);
   }
   return lines.join("\n");
+}
+
+function shortTraceRunId(runId: string): string {
+  return runId.length > 14 ? `${runId.slice(0, 8)}..${runId.slice(-4)}` : runId;
 }
 
 function formatConsistencyReport(
@@ -5982,6 +6065,112 @@ type SessionCompactCliResult = Extract<
   Awaited<ReturnType<HostRuntime["compactSession"]>>,
   { ok: true }
 >;
+
+type SessionInspectCliResult = Extract<
+  Awaited<ReturnType<HostRuntime["inspectSession"]>>,
+  { ok: true }
+>;
+
+function formatSessionInspectResult(result: SessionInspectCliResult): string {
+  const summary = result.summary;
+  const consistency = result.consistency;
+  const timeline = result.timeline;
+  return [
+    `session: ${result.sessionId}`,
+    `events: ${numberField(summary, "eventCount") ?? 0}`,
+    `runs: ${arrayLength(summary, "runIds") ?? 0}`,
+    `consistency: ${booleanField(consistency, "ok") === false ? "failed" : "ok"}`,
+    `findings: ${arrayLength(consistency, "findings") ?? 0}`,
+    `phases: ${arrayLength(timeline, "phases") ?? 0}`,
+  ].join("\n");
+}
+
+function formatSessionCompactionInspectReport(
+  sessionId: string,
+  report: SessionCompactionInspectReport,
+): string {
+  const lines = [
+    `session: ${sessionId}`,
+    `status: ${report.status}`,
+    `artifact: ${report.artifact?.path ?? "(none)"}`,
+    `events: ${report.events.length}`,
+    `latestEvent: ${report.latestEvent?.type ?? "(none)"}`,
+    `consistency: ${report.consistency.ok ? "ok" : "failed"}`,
+  ];
+  if (report.artifact) {
+    lines.push(
+      `throughRunId: ${report.artifact.throughRunId}`,
+      `compactedRunCount: ${report.artifact.compactedRunCount}`,
+      `sourceRunIds: ${report.artifact.sourceRunIds.join(", ") || "(none)"}`,
+      `originalCharCount: ${report.artifact.originalCharCount}`,
+      `summaryCharCount: ${report.artifact.summaryCharCount}`,
+      `freedChars: ${report.artifact.freedChars}`,
+    );
+    if (report.artifact.measurement) {
+      lines.push(
+        `regime: ${report.artifact.measurement.regime}`,
+        `savingsRatio: ${report.artifact.measurement.savingsRatio.toFixed(4)}`,
+      );
+    }
+    if (report.artifact.mode) lines.push(`mode: ${report.artifact.mode}`);
+    if (report.artifact.reason) {
+      lines.push(`reason: ${report.artifact.reason}`);
+    }
+    if (report.artifact.warningCodes?.length) {
+      lines.push(`warnings: ${report.artifact.warningCodes.join(", ")}`);
+    }
+    if (report.artifact.summaryFingerprint) {
+      const modelId = stringField(
+        report.artifact.summaryFingerprint,
+        "modelId",
+      );
+      const inputHash = stringField(
+        report.artifact.summaryFingerprint,
+        "inputHash",
+      );
+      lines.push(
+        `fingerprint: model=${modelId ?? "(unknown)"}, inputHash=${inputHash ?? "(unknown)"}`,
+      );
+    }
+  }
+  for (const event of report.events.slice(-5)) {
+    lines.push(
+      `event ${event.sequence}: ${event.type} freedChars=${event.freedChars} artifact=${event.artifactPath ?? "(none)"}${event.skippedReason ? ` skippedReason=${event.skippedReason}` : ""}`,
+    );
+  }
+  for (const finding of report.consistency.findings) {
+    lines.push(`finding: ${finding}`);
+  }
+  return lines.join("\n");
+}
+
+function numberField(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  return typeof value[key] === "number" ? value[key] : undefined;
+}
+
+function booleanField(
+  value: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  return typeof value[key] === "boolean" ? value[key] : undefined;
+}
+
+function stringField(
+  value: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  return typeof value[key] === "string" ? value[key] : undefined;
+}
+
+function arrayLength(
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  return Array.isArray(value[key]) ? value[key].length : undefined;
+}
 
 function formatSessionCompactResult(result: SessionCompactCliResult): string {
   const lines = [
@@ -6294,12 +6483,12 @@ function usage(): string {
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
-    "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+    "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
@@ -6315,8 +6504,8 @@ function usage(): string {
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
     "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
-    "       sparkwright session <summary|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--verbose]',
+    "       sparkwright session <summary|inspect|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply] [--compaction]",
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--model provider/model] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");
 }
@@ -6338,11 +6527,14 @@ function tasksUsage(): string {
 }
 
 function capabilitiesUsage(): string {
-  return "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]";
+  return "Usage: sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]";
 }
 
 function delegatesUsage(): string {
-  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]';
+  return [
+    'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    "       Supports ACP and external-command delegate tools; internal profiles run through normal run-loop delegation.",
+  ].join("\n");
 }
 
 function skillsUsage(): string {

@@ -313,6 +313,9 @@ function SessionDiagnosticsPanel(props: {
         <Text dimColor>timeline </Text>
         {phases.length} phase(s), {diagnostics.timeline.durationMs ?? 0}ms
       </Text>
+      {diagnostics.compaction ? (
+        <CompactionDiagnosticsBlock compaction={diagnostics.compaction} />
+      ) : null}
       {findings.slice(0, 4).map((finding, index) => (
         <Text key={`${finding.code ?? "finding"}:${index}`} color="red">
           {finding.severity ?? "warning"} {finding.code ?? "finding"}:{" "}
@@ -330,4 +333,73 @@ function SessionDiagnosticsPanel(props: {
       ))}
     </Box>
   );
+}
+
+function CompactionDiagnosticsBlock(props: {
+  compaction: NonNullable<SessionDiagnostics["compaction"]>;
+}): React.ReactElement {
+  const { compaction } = props;
+  const artifact = compaction.artifact;
+  const latest = compaction.latestEvent;
+  const warningCodes =
+    artifact?.warningCodes ?? latest?.warningCodes ?? undefined;
+  const consistencyColor = compaction.consistency.ok ? "green" : "red";
+
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text color={consistencyColor}>
+        <Text dimColor>compaction </Text>
+        {compaction.status}
+        <Text dimColor> consistency </Text>
+        {compaction.consistency.ok ? "ok" : "failed"}
+      </Text>
+      {artifact ? (
+        <>
+          <Text>
+            <Text dimColor>compact </Text>
+            {artifact.compactedRunCount} run(s), freed {artifact.freedChars}{" "}
+            chars
+            <Text dimColor> through </Text>
+            {artifact.throughRunId}
+          </Text>
+          <Text>
+            <Text dimColor>artifact </Text>
+            {artifact.path}
+          </Text>
+          {artifact.measurement ? (
+            <Text>
+              <Text dimColor>regime </Text>
+              {artifact.measurement.regime}
+              <Text dimColor> savings </Text>
+              {formatPercent(artifact.measurement.savingsRatio)}
+            </Text>
+          ) : null}
+        </>
+      ) : (
+        <Text dimColor>artifact none</Text>
+      )}
+      {latest ? (
+        <Text>
+          <Text dimColor>latest </Text>
+          {latest.type.replace("session.compaction.", "")} #{latest.sequence}
+          {latest.skippedReason ? ` (${latest.skippedReason})` : ""}
+        </Text>
+      ) : null}
+      {warningCodes?.length ? (
+        <Text color="yellow">warnings {warningCodes.join(", ")}</Text>
+      ) : null}
+      {compaction.consistency.findings.slice(0, 3).map((finding, index) => (
+        <Text
+          key={`compaction-finding:${index}`}
+          color={compaction.consistency.ok ? "yellow" : "red"}
+        >
+          compaction finding: {finding}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }

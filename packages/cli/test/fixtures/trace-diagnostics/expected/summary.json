@@ -1,5 +1,5 @@
 {
-  "eventCount": 25,
+  "eventCount": 26,
   "runIds": [
     "run_fixture"
   ],
@@ -25,6 +25,7 @@
     "approval.resolved": 1,
     "workspace.write.completed": 1,
     "artifact.created": 1,
+    "workspace.write.untracked_access_granted": 1,
     "run.completed": 1
   },
   "terminalStates": {
@@ -68,7 +69,7 @@
       "completed": 1,
       "denied": 0,
       "skipped": 0,
-      "untrackedWriteCapableProcesses": 0
+      "untrackedWriteCapableProcesses": 1
     },
     "capabilityMutations": {
       "completed": 0

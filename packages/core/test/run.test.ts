@@ -29,6 +29,33 @@ describe("SparkwrightRun", () => {
     );
   });
 
+  function createRunHealthReadFileTool() {
+    return defineTool({
+      name: "read_file",
+      description: "Read a file.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      policy: { risk: "safe" },
+      async execute(args, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        const path = (args as { path: string }).path;
+        const content = await ctx.workspace.readText(path);
+        const lineCount = content.split("\n").length;
+        return {
+          path,
+          content,
+          startLine: 1,
+          endLine: lineCount,
+          totalLines: lineCount,
+          hasMore: false,
+        };
+      },
+    });
+  }
+
   it("classifies custom tool argument error codes as model argument errors", () => {
     expect(classifyToolFailure("TASK_ARGUMENTS_INVALID")).toBe(
       "model_arg_error",
@@ -173,6 +200,52 @@ describe("SparkwrightRun", () => {
       ],
     });
     expect(events.at(-1)?.type).toBe("run.completed");
+  });
+
+  it("records tool-owned request previews on tool.requested events", async () => {
+    let modelCalls = 0;
+    const previewed = defineTool({
+      name: "previewed",
+      description: "Preview arguments.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+      },
+      policy: { risk: "safe" },
+      previewArgs(args) {
+        return `open ${(args as { path?: string }).path ?? "?"}`;
+      },
+      execute() {
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "preview request",
+      tools: [previewed],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  { toolName: "previewed", arguments: { path: "README.md" } },
+                ],
+              }
+            : { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    const requested = run.events
+      .all()
+      .find((event) => event.type === "tool.requested");
+    expect(requested?.payload).toMatchObject({
+      toolName: "previewed",
+      preview: "open README.md",
+    });
   });
 
   it("omits deferred tools from provider requests until tool_search loads them", async () => {
@@ -1003,6 +1076,147 @@ describe("SparkwrightRun", () => {
               ?.reason === "repeated_idempotent_noop",
         ),
     ).toBe(true);
+  });
+
+  it("feeds back unchanged read_file repeats after an intervening tool", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "README.md"), "# Demo\nsame text\n", "utf8");
+    let modelCalls = 0;
+    let healthContextSeen = false;
+
+    const readFileTool = createRunHealthReadFileTool();
+    const note = defineTool({
+      name: "note",
+      description: "Intervening harmless tool.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      execute() {
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "avoid rereading unchanged files",
+      workspace: new LocalWorkspace(root),
+      tools: [readFileTool, note],
+      maxSteps: 6,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return { toolCalls: [{ toolName: "note", arguments: {} }] };
+          }
+          if (modelCalls === 3) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+
+          healthContextSeen = input.context.some(
+            (item) =>
+              item.source?.uri === "run.health" &&
+              item.content.includes("same unchanged content") &&
+              item.content.includes("README.md"),
+          );
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(healthContextSeen).toBe(true);
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "workspace.read")
+        .map((event) => (event.payload as { path?: string }).path),
+    ).toEqual(["README.md", "README.md"]);
+  });
+
+  it("does not feed back unchanged reads after the file is written", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "README.md"), "# Demo\nsame text\n", "utf8");
+    let modelCalls = 0;
+    const healthMessages: string[] = [];
+
+    const readFileTool = createRunHealthReadFileTool();
+    const rewriteReadme = defineTool({
+      name: "rewrite_readme",
+      description: "Rewrite README.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      async execute(_, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        await ctx.workspace.writeText("README.md", "# Demo\nchanged text\n", {
+          reason: "test update",
+        });
+        return { path: "README.md", changed: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "re-read after write",
+      workspace: new LocalWorkspace(root),
+      tools: [readFileTool, rewriteReadme],
+      policy: createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+      maxSteps: 6,
+      model: {
+        async complete(input) {
+          healthMessages.push(
+            ...input.context
+              .filter((item) => item.source?.uri === "run.health")
+              .map((item) => item.content),
+          );
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [{ toolName: "rewrite_readme", arguments: {} }],
+            };
+          }
+          if (modelCalls === 3) {
+            return {
+              toolCalls: [
+                { toolName: "read_file", arguments: { path: "README.md" } },
+              ],
+            };
+          }
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(healthMessages).toEqual([]);
+    await expect(readFile(join(root, "README.md"), "utf8")).resolves.toBe(
+      "# Demo\nchanged text\n",
+    );
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "workspace.write.completed"),
+    ).toHaveLength(1);
   });
 
   it("uses deep equality for repeated tool call arguments", async () => {
@@ -2365,6 +2579,86 @@ describe("SparkwrightRun", () => {
     expect(failed?.payload).toMatchObject({
       code: "MODEL_COMPLETION_FAILED",
       message: "provider unavailable",
+    });
+  });
+
+  it("summarizes raw model failure causes before emitting terminal results", async () => {
+    const responseBody = `${"x".repeat(2200)} tail`;
+    const run = createRun({
+      goal: "provider request failure",
+      model: {
+        async complete() {
+          throw Object.assign(new Error("bad request"), {
+            code: "invalid_api_key",
+            status: 400,
+            statusCode: 400,
+            requestBodyValues: {
+              input: [{ role: "user", content: "secret prompt" }],
+              tools: [{ name: "read_file", inputSchema: { type: "object" } }],
+            },
+            responseHeaders: {
+              "x-request-id": "req_sanitized",
+              "set-cookie": "session=should-not-persist",
+              authorization: "Bearer should-not-persist",
+            },
+            responseBody,
+            data: {
+              error: {
+                code: "invalid_api_key",
+                message: "bad request",
+              },
+            },
+          });
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "run.failed");
+    const payload = failed?.payload as
+      | {
+          failure?: { metadata?: Record<string, unknown> };
+          metadata?: Record<string, unknown>;
+        }
+      | undefined;
+    const serializedFailureEvent = JSON.stringify(failed);
+    const topCause = payload?.metadata?.cause as
+      | Record<string, unknown>
+      | undefined;
+    const failureCause = payload?.failure?.metadata?.cause as
+      | Record<string, unknown>
+      | undefined;
+    const resultCause = result.metadata?.cause as
+      | Record<string, unknown>
+      | undefined;
+
+    expect(topCause).toMatchObject({
+      name: "Error",
+      message: "bad request",
+      code: "invalid_api_key",
+      status: 400,
+      statusCode: 400,
+      requestId: "req_sanitized",
+    });
+    expect(topCause?.responseBodyPreview).toEqual(`${"x".repeat(2000)}...`);
+    expect(failureCause).toEqual(topCause);
+    expect(resultCause).toEqual(topCause);
+    for (const cause of [topCause!, failureCause!, resultCause!]) {
+      expect(cause).not.toHaveProperty("requestBodyValues");
+      expect(cause).not.toHaveProperty("input");
+      expect(cause).not.toHaveProperty("tools");
+      expect(cause).not.toHaveProperty("responseHeaders");
+      expect(cause).not.toHaveProperty("data");
+    }
+    expect(serializedFailureEvent).not.toContain("set-cookie");
+    expect(serializedFailureEvent).not.toContain("session=should-not-persist");
+    expect(serializedFailureEvent).not.toContain("requestBodyValues");
+    expect(serializedFailureEvent).not.toContain("secret prompt");
+    expect(payload?.metadata?.modelError).toMatchObject({
+      message: "bad request",
+      status: 400,
     });
   });
 

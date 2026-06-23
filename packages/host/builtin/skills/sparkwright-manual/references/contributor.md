@@ -2,6 +2,17 @@
 
 Use this reference for repository maintenance tasks.
 
+## Contribution Policy
+
+SparkWright is pre-v0 and is not actively soliciting broad feature pull
+requests yet. Small, well-scoped pull requests are appropriate for bug fixes,
+documentation fixes, tests, and changes that clearly align with the current
+runtime direction.
+
+Start larger features, protocol changes, safety behavior changes,
+trace/session changes, public API changes, or new default behavior with an
+issue or design discussion before implementation.
+
 ## Checks
 
 Expected setup:
@@ -26,6 +37,25 @@ Full gate:
 ```bash
 npm run check
 ```
+
+## Pull Request Evidence
+
+Every behavior-changing pull request should explain:
+
+- the problem it solves, ideally with a linked issue;
+- how to reproduce the issue or validate the workflow;
+- observed behavior versus expected behavior;
+- tests run, or why tests were not run;
+- risk, especially public API, protocol, trace schema, safety policy, workspace
+  mutation, session/resume, or default-behavior impact.
+
+For runtime, CLI/TUI, tool execution, policy, approval, workspace mutation,
+trace, session/resume, provider, or protocol changes, include relevant trace
+evidence when possible: a redacted trace summary, timeline, verify output, or
+focused trace excerpt, plus the command or workflow that produced it.
+
+Do not attach secrets, credentials, private prompts, or unredacted local traces.
+If trace evidence is not applicable, say why.
 
 ## Repository Shape
 

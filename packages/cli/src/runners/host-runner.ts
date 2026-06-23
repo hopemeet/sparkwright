@@ -5,6 +5,7 @@ import type {
   RunInputPayload,
   TraceLevel,
 } from "@sparkwright/protocol";
+import { getRunFailure, runFailureMessage } from "@sparkwright/protocol";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
   createHostClientRunMetadata,
@@ -209,6 +210,7 @@ async function runHostLifecycle(
         runState = msg.payload.state;
         stopReason = msg.payload.stopReason;
         if (runState !== "completed") {
+          const failure = getRunFailure(msg.payload);
           failedMessage =
             summarizeRunFailure(eventSummary, {
               state: runState,
@@ -217,9 +219,10 @@ async function runHostLifecycle(
             summarizeTerminalRunFailure({
               state: runState,
               stopReason,
-              failure: msg.payload.failure,
+              failure,
             }) ??
             failedMessage ??
+            (failure ? runFailureMessage(msg.payload) : undefined) ??
             `Run finished with state ${runState}${stopReason ? ` (${stopReason})` : ""}`;
           if (!terminalFailurePrinted) {
             writeLine(io.stderr, failedMessage);
@@ -232,9 +235,15 @@ async function runHostLifecycle(
       client.on("run.failed", (msg) => {
         for (const line of liveEvents.flush()) writeLine(io.stdout, line);
         runId = msg.payload.runId || runId;
-        failedMessage = msg.payload.error.message;
+        const failure = getRunFailure(msg.payload);
+        failedMessage =
+          summarizeTerminalRunFailure({
+            state: "failed",
+            stopReason: failure?.code ?? msg.payload.error.code,
+            failure,
+          }) ?? runFailureMessage(msg.payload);
         runState = "failed";
-        stopReason = msg.payload.error.code;
+        stopReason = failure?.code ?? msg.payload.error.code;
         writeLine(io.stderr, failedMessage);
         terminalFailurePrinted = true;
         resolveOnce();
@@ -397,6 +406,8 @@ async function runHostLifecycle(
         mcpWorkspaceCwdServers: eventSummary.mcpWorkspaceCwdServers,
         subagentWrites: eventSummary.subagentWriteCompleted,
         toolReportedChanges: eventSummary.toolReportedChanges,
+        untrackedWriteCapableProcesses:
+          eventSummary.untrackedWriteCapableProcesses,
       }),
     );
     const verificationProfileSummary =

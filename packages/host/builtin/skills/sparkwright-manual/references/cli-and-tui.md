@@ -130,6 +130,7 @@ Filters include `--type`, `--run-id`, `--contains`, `--limit`,
 ```bash
 npm exec sparkwright -- session summary <session-id> --workspace examples/repo-pilot
 npm exec sparkwright -- session check <session-id> --workspace examples/repo-pilot --format text
+npm exec sparkwright -- session inspect <session-id> --workspace examples/repo-pilot --compaction --format text
 npm exec sparkwright -- session repair <session-id> --workspace examples/repo-pilot --dry-run
 npm exec sparkwright -- session resume <session-id> "continue the investigation" --workspace examples/repo-pilot
 ```
@@ -177,3 +178,7 @@ npm run tui
 
 The TUI uses the host/client path and the same config model. The root script
 rebuilds first to avoid stale compiled output.
+
+Use `/sessions`, select a session, and press `i` to inspect diagnostics. When
+present, the inspect panel includes the compaction audit from
+`session.inspect` with `compaction: true`.

@@ -102,6 +102,12 @@ Default file layout:
   events.jsonl
 ```
 
+`events.jsonl` contains session-local facts such as session creation, run
+membership, replay projections, and host-level session operations. Manual
+session compaction appends `session.compaction.completed` when `compact.json`
+is written and `session.compaction.skipped` when no artifact is written; these
+events carry durable audit facts and references, not compacted summary content.
+
 ### 3. Event And Trace State
 
 Events are the evidence plane. They are append-only, timestamped,
@@ -265,6 +271,7 @@ sparkwright trace events <trace.jsonl> --type tool.failed --limit 20 --jsonl
 sparkwright trace timeline <trace.jsonl> --format text
 sparkwright trace report <trace.jsonl> --format text
 sparkwright session check <session-id> --workspace <repo> --format text
+sparkwright session inspect <session-id> --workspace <repo> --compaction --format text
 sparkwright session repair <session-id> --workspace <repo> --dry-run
 sparkwright session resume <session-id> "next goal" --workspace <repo>
 ```
@@ -278,11 +285,16 @@ reportable failures after tool-outcome recovery and companion-event correlation.
 
 Host clients can request the same inspection bundle with `session.inspect`,
 which returns trace summary, consistency report, and timeline phases in one
-response for TUI or dashboard use.
+response for TUI or dashboard use. With `compaction: true`, `session.inspect`
+also returns a compaction audit view derived from `compact.json` and
+session-local `session.compaction.*` events. The CLI exposes the same narrow
+view as `session inspect --compaction`; it shows artifact paths, counts,
+measurement/fingerprint metadata, skipped reasons, warning codes, and
+event/artifact consistency without printing the compacted summary body.
 
 The TUI `/sessions` dialog consumes this through the host protocol: press `i`
-on a selected session to inspect diagnostics, or Enter to switch/resume that
-session id.
+on a selected session to inspect diagnostics, including the compaction audit
+when available, or Enter to switch/resume that session id.
 
 ### 9. Task State
 
@@ -322,6 +334,7 @@ The following changes should be trace-visible:
 - run lifecycle transitions
 - model requests, completions, retries, and stream boundaries
 - context assembly and compaction
+- session compaction attempts
 - tool request/start/progress/completion/failure
 - approval request and resolution
 - policy-denied or approval-denied workspace writes

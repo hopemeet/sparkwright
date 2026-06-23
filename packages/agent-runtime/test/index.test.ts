@@ -177,7 +177,7 @@ describe("agent-runtime", () => {
       "workspace.read",
     ]);
     expect(derived.effectiveProfile.deniedTools).toEqual(["edit"]);
-    expect(derived.effectiveProfile.maxSteps).toBe(4);
+    expect(derived.effectiveProfile.maxSteps).toBe(12);
     expect(derived.effectiveProfile.runBudget).toMatchObject({
       maxToolCalls: 8,
     });
@@ -189,6 +189,15 @@ describe("agent-runtime", () => {
       "parent_agent",
       "child_agent",
     ]);
+  });
+
+  it("inherits parent maxSteps only when the child profile does not override", () => {
+    const derived = deriveChildAgentProfile({
+      parentAgent: { id: "main", maxSteps: 12 },
+      childAgent: { id: "worker" },
+    });
+
+    expect(derived.effectiveProfile.maxSteps).toBe(12);
   });
 
   it("never lets child allow rules override inherited deny rules", () => {
@@ -466,6 +475,31 @@ describe("spawnSubAgent", () => {
     expect(spawned.run.abortSignal.aborted).toBe(false);
     parent.cancel({ reason: "parent cancelled" });
     expect(spawned.run.abortSignal.aborted).toBe(true);
+  });
+
+  it("defaults child maxSteps to the parent run budget when omitted", () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 23,
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "child done" };
+      },
+    };
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+    });
+
+    expect(spawned.run.maxSteps).toBe(23);
   });
 
   it("rolls up child tool + model usage into the parent tracker", async () => {

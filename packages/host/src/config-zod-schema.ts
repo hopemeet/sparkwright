@@ -1,5 +1,6 @@
 import { PERMISSION_MODES, TRACE_LEVELS } from "@sparkwright/protocol";
 import type { WorkflowHookMatcher, WorkflowHookName } from "@sparkwright/core";
+import { MAX_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import { z } from "zod";
 import { TOOL_USE_SELECTORS } from "./tool-selectors.js";
@@ -245,6 +246,12 @@ export const SHELL_SANDBOX_CONFIG_KEYS = shellSandboxSchema.keyof().options;
 
 export const shellSchema = z
   .object({
+    foregroundTimeoutMs: positiveInteger
+      .max(MAX_FOREGROUND_TIMEOUT_MS)
+      .describe(
+        "Foreground shell budget in milliseconds before promotion to a background task. Defaults to 300000 and is capped at 600000.",
+      )
+      .optional(),
     sandbox: shellSandboxSchema.optional(),
   })
   .strict()

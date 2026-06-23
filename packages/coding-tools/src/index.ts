@@ -262,6 +262,9 @@ export function createReadTextTool(
     inputSchema: readTextInputSchema,
     policy: { risk: "safe" },
     governance: readGovernance(),
+    previewArgs(args) {
+      return previewPathWindow(args, "startLine", "endLine");
+    },
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
       const input = normalizeReadTextInput(args, options);
@@ -289,6 +292,9 @@ export function createReadAnchoredTextTool(
     inputSchema: readTextInputSchema,
     policy: { risk: "safe" },
     governance: readGovernance(),
+    previewArgs(args) {
+      return previewPathWindow(args, "startLine", "endLine");
+    },
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
       const input = normalizeReadTextInput(args, options);
@@ -351,6 +357,9 @@ export function createWriteFileTool(): ToolDefinition<
       idempotency: "conditional",
       dataSensitivity: "internal",
       origin: { kind: "local", name: "@sparkwright/coding-tools" },
+    },
+    previewArgs(args) {
+      return previewString(previewRecord(args).path);
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
@@ -433,6 +442,14 @@ export function createEditAnchoredTextTool(): ToolDefinition<
       dataSensitivity: "internal",
       origin: { kind: "local", name: "@sparkwright/coding-tools" },
     },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const path = previewString(r.path);
+      const editCount = Array.isArray(r.edits)
+        ? ` · ${r.edits.length} edits`
+        : "";
+      return path ? `${path}${editCount}` : undefined;
+    },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
@@ -477,6 +494,9 @@ export function createApplyPatchTool(): ToolDefinition<
       idempotency: "conditional",
       dataSensitivity: "internal",
       origin: { kind: "local", name: "@sparkwright/coding-tools" },
+    },
+    previewArgs(args) {
+      return previewString(previewRecord(args).path);
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
@@ -711,6 +731,12 @@ export function createListDirTool(
     },
     policy: { risk: "safe" },
     governance: readGovernance(),
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const path = previewString(r.path) || ".";
+      const recursive = r.recursive === true ? " recursive" : "";
+      return `${path}${recursive}`;
+    },
     async execute(args, ctx) {
       const root = await resolveWorkspaceRoot(ctx, options);
       const input = normalizeListDirInput(args, options, root);
@@ -759,6 +785,14 @@ export function createGrepTextTool(
     },
     policy: { risk: "safe" },
     governance: readGovernance(),
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const pattern = previewString(r.pattern);
+      const path = previewString(r.path) || previewString(r.include);
+      return [pattern, path ? `in ${path}` : undefined]
+        .filter((part): part is string => Boolean(part))
+        .join(" ");
+    },
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
       const root = await resolveWorkspaceRoot(ctx, options);
@@ -836,6 +870,11 @@ export function createGlobPathsTool(
       paginationFields: ["offset", "nextOffset"],
       artifactPolicy: "never",
     },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const patterns = previewStringArray(r.patterns);
+      return patterns.length > 0 ? patterns.slice(0, 3).join(", ") : undefined;
+    },
     async execute(args, ctx) {
       const root = await resolveWorkspaceRoot(ctx, options);
       const input = normalizeGlobPathsInput(args, options, root);
@@ -867,6 +906,48 @@ const readTextInputSchema = {
   required: ["path"],
   additionalProperties: false,
 };
+
+function previewPathWindow(
+  args: unknown,
+  startKey: string,
+  endKey: string,
+): string | undefined {
+  const r = previewRecord(args);
+  const path = previewString(r.path);
+  if (!path) return undefined;
+  const start = previewNumber(r[startKey]);
+  const end = previewNumber(r[endKey]);
+  const range =
+    start !== undefined && end !== undefined
+      ? `:${start}-${end}`
+      : start !== undefined
+        ? `:${start}`
+        : "";
+  return `${path}${range}`;
+}
+
+function previewRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function previewString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function previewNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function previewStringArray(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
 
 function readGovernance() {
   return {

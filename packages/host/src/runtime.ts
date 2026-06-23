@@ -28,6 +28,7 @@ import {
   compactSessionTurns,
   sessionCompactArtifactToContextItem,
   sessionTurnToContextItems,
+  SESSION_COMPACT_FILENAME,
   SESSION_COMPACT_SCHEMA_VERSION,
   validateSessionTraceConsistency,
   writeSessionCompactArtifact,
@@ -43,8 +44,10 @@ import {
   type RunRecord,
   type RunResult,
   type ContextUsageHint,
+  type SessionCompactArtifact,
   type SessionCompactionMeasurement,
   type SessionCompactionOptions,
+  type SessionEvent,
   type SparkwrightEvent,
   type SessionTraceFacts,
   type ToolDefinition,
@@ -77,6 +80,7 @@ import {
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
+import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import {
   createPlatformShellSandboxRuntime,
   describeShellSandboxStatus,
@@ -103,11 +107,16 @@ import {
   type TraceLevel,
   type HostEvent,
   type ProtocolError,
+  type RunFailureEnvelope,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
   type RunInputPart,
+  type SessionCompactionInspectArtifact,
+  type SessionCompactionInspectEvent,
+  type SessionCompactionInspectReport,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
+  type CapabilityModelSummary,
   type CapabilitySkillInlineShellSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
@@ -122,7 +131,11 @@ import {
   resolveSkillRootsForRuntime,
 } from "./skill-roots.js";
 import { nextMessageId, nowIso } from "./connection.js";
-import { createModel, type ResolvedModelConfig } from "./model-factory.js";
+import {
+  createModel,
+  inspectResolvedModelConfig,
+  type ResolvedModelConfig,
+} from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
   catalogEntryOrigin,
@@ -145,9 +158,11 @@ import {
   assertSubagentDepthAllowed,
   describeDelegateCapability,
   describeInProcessDelegateCapability,
+  deriveDelegatePolicyProfile,
   delegateToolName,
   type DelegateWorkspaceAccess,
   type DelegateCapabilityDescriptor,
+  type DelegatePolicyProfile,
 } from "./delegate-capability.js";
 import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
@@ -521,6 +536,16 @@ function summarizeCapabilitySnapshot(
     };
   }
   return {
+    ...(snapshot.model
+      ? {
+          model: {
+            modelRef: snapshot.model.modelRef,
+            providerKey: snapshot.model.providerKey,
+            modelId: snapshot.model.modelId,
+            pricing: snapshot.model.pricing,
+          },
+        }
+      : {}),
     tools: snapshot.tools.length,
     toolNames: snapshot.tools.map((tool) => tool.name),
     skills: {
@@ -576,6 +601,28 @@ const DELEGATED_AGENT_CONTRACT = [
   "- For clear delegated goals, complete the task and return the result to the parent.",
 ].join("\n");
 
+type SessionInspectOptions = {
+  compaction?: boolean;
+};
+
+type SessionCompactSuccessResult = {
+  ok: true;
+  sessionId: string;
+  compactedRunCount: number;
+  throughRunId: string | null;
+  originalCharCount: number;
+  summaryCharCount: number;
+  freedChars: number;
+  measurement: SessionCompactionMeasurement;
+  skippedReason?: string;
+  warnings?: CompactionWarning[];
+  artifactPath: string | null;
+};
+
+type SessionCompactResult =
+  | SessionCompactSuccessResult
+  | { ok: false; error: ProtocolError };
+
 /**
  * Per-connection runtime. Maps protocol verbs onto core.createRun(),
  * threading events back out through `emit` as host events.
@@ -625,12 +672,14 @@ export class HostRuntime {
     return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
   }
 
-  async inspectCapabilities(): Promise<
+  async inspectCapabilities(
+    input: { modelRef?: string } = {},
+  ): Promise<
     | { ok: true; snapshot: CapabilitySnapshot }
     | { ok: false; error: ProtocolError }
   > {
     try {
-      const configured = await this.inspectConfiguredCapabilities();
+      const configured = await this.inspectConfiguredCapabilities(input);
       return {
         ok: true,
         snapshot: mergeCapabilitySnapshots(
@@ -950,6 +999,7 @@ export class HostRuntime {
       }),
     ];
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
+      model: modelCapabilitySummary(model.resolved),
       toolCatalog,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
       loadedSkills: preparedSkills?.loadedSkills ?? [],
@@ -965,6 +1015,9 @@ export class HostRuntime {
       ],
       delegateTools: delegateDescriptors,
       shellSandbox,
+      shellForegroundTimeoutMs:
+        shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      shellPromotionAvailable: true,
     });
 
     const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
@@ -1305,6 +1358,12 @@ export class HostRuntime {
       })
       .catch((err: unknown) => {
         if (!firstRunStarted) rejectFirstRunId(err);
+        const message = err instanceof Error ? err.message : String(err);
+        const failure: RunFailureEnvelope = {
+          category: "runtime",
+          code: "internal_error",
+          message,
+        };
         this.opts.emit({
           envelope: "event",
           id: nextMessageId("evt"),
@@ -1312,9 +1371,10 @@ export class HostRuntime {
           timestamp: nowIso(),
           payload: {
             runId: lastRunId,
+            failure,
             error: {
               code: "internal_error",
-              message: err instanceof Error ? err.message : String(err),
+              message,
             },
           },
         });
@@ -1953,7 +2013,9 @@ export class HostRuntime {
     return byRun;
   }
 
-  private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
+  private async inspectConfiguredCapabilities(input: {
+    modelRef?: string;
+  }): Promise<CapabilitySnapshot> {
     const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
     const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
@@ -1964,6 +2026,10 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const automation = await this.inspectAutomationSummary();
+    const model = await inspectResolvedModelConfig({
+      modelRef: input.modelRef ?? this.opts.defaultModel,
+      workspaceRoot: this.opts.workspaceRoot,
+    });
     const resolvedProfiles = await resolveAgentProfiles(
       this.opts.workspaceRoot,
       agentConfig?.profiles,
@@ -2086,6 +2152,7 @@ export class HostRuntime {
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
       });
       return buildCapabilitySnapshot({
+        ...(model.ok ? { model: modelCapabilitySummary(model.resolved) } : {}),
         toolCatalog,
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
@@ -2115,6 +2182,9 @@ export class HostRuntime {
           allowReadWriteWorkspaceAccess: false,
         }),
         shellSandbox,
+        shellForegroundTimeoutMs:
+          shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+        shellPromotionAvailable: true,
         automation,
       });
     } finally {
@@ -2304,13 +2374,17 @@ export class HostRuntime {
       .slice(0, limit);
   }
 
-  async inspectSession(sessionId: string): Promise<
+  async inspectSession(
+    sessionId: string,
+    options: SessionInspectOptions = {},
+  ): Promise<
     | {
         ok: true;
         sessionId: string;
         summary: Record<string, unknown>;
         consistency: Record<string, unknown>;
         timeline: Record<string, unknown>;
+        compaction?: SessionCompactionInspectReport;
       }
     | { ok: false; error: ProtocolError }
   > {
@@ -2327,11 +2401,10 @@ export class HostRuntime {
       };
     }
 
-    const sessionDir = join(
+    const sessionRootDir =
       this.opts.sessionRootDir ??
-        defaultSessionRootDir(this.opts.workspaceRoot),
-      safeSessionId,
-    );
+      defaultSessionRootDir(this.opts.workspaceRoot);
+    const sessionDir = join(sessionRootDir, safeSessionId);
     try {
       const st = await stat(sessionDir);
       if (!st.isDirectory()) {
@@ -2355,10 +2428,16 @@ export class HostRuntime {
 
     try {
       const tracePath = join(sessionDir, "trace.jsonl");
-      const [summary, consistency, timeline] = await Promise.all([
+      const [summary, consistency, timeline, compaction] = await Promise.all([
         summarizeTraceFile(tracePath),
         validateSessionTraceConsistency({ sessionDir }),
         buildTraceTimelineFile(tracePath),
+        options.compaction
+          ? this.buildSessionCompactionInspectReport(
+              sessionRootDir,
+              safeSessionId,
+            )
+          : Promise.resolve(undefined),
       ]);
       return {
         ok: true,
@@ -2366,6 +2445,7 @@ export class HostRuntime {
         summary: summary as unknown as Record<string, unknown>,
         consistency: consistency as unknown as Record<string, unknown>,
         timeline: timeline as unknown as Record<string, unknown>,
+        ...(compaction ? { compaction } : {}),
       };
     } catch (error) {
       return {
@@ -2378,28 +2458,140 @@ export class HostRuntime {
     }
   }
 
+  async inspectSessionCompaction(sessionId: string): Promise<
+    | {
+        ok: true;
+        sessionId: string;
+        compaction: SessionCompactionInspectReport;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    let safeSessionId: ReturnType<typeof asSessionId>;
+    try {
+      safeSessionId = asSessionId(sessionId);
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
+
+    const sessionRootDir =
+      this.opts.sessionRootDir ??
+      defaultSessionRootDir(this.opts.workspaceRoot);
+    const sessionDir = join(sessionRootDir, safeSessionId);
+    try {
+      const st = await stat(sessionDir);
+      if (!st.isDirectory()) {
+        return {
+          ok: false,
+          error: {
+            code: "session_not_found",
+            message: `session not found: ${sessionId}`,
+          },
+        };
+      }
+    } catch {
+      return {
+        ok: false,
+        error: {
+          code: "session_not_found",
+          message: `session not found: ${sessionId}`,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      sessionId: safeSessionId,
+      compaction: await this.buildSessionCompactionInspectReport(
+        sessionRootDir,
+        safeSessionId,
+      ),
+    };
+  }
+
+  private async buildSessionCompactionInspectReport(
+    sessionRootDir: string,
+    sessionId: string,
+  ): Promise<SessionCompactionInspectReport> {
+    const store = new FileSessionStore({ rootDir: sessionRootDir });
+    const artifactPath = join(
+      sessionRootDir,
+      sessionId,
+      SESSION_COMPACT_FILENAME,
+    );
+    const [artifact, events] = await Promise.all([
+      loadSessionCompactArtifact({ sessionRootDir, sessionId }),
+      loadSessionCompactionEvents(store, sessionId),
+    ]);
+    const artifactSummary = artifact
+      ? sessionCompactionArtifactInspectSummary(artifact, artifactPath)
+      : null;
+    const latestEvent = events.at(-1) ?? null;
+    const latestCompleted =
+      [...events]
+        .reverse()
+        .find((event) => event.type === "session.compaction.completed") ?? null;
+    const findings: string[] = [];
+    const artifactMatchesLatestCompletedEvent =
+      artifactSummary && latestCompleted
+        ? sessionCompactionArtifactMatchesEvent(
+            artifactSummary,
+            latestCompleted,
+          )
+        : null;
+
+    if (
+      artifactSummary &&
+      latestCompleted &&
+      !artifactMatchesLatestCompletedEvent
+    ) {
+      findings.push(
+        "compact.json does not match the latest completed session compaction event",
+      );
+    }
+    if (artifactSummary && latestEvent?.type === "session.compaction.skipped") {
+      findings.push(
+        "latest compaction attempt was skipped; compact.json is from an earlier completed attempt",
+      );
+    }
+    if (!artifactSummary && latestCompleted) {
+      findings.push(
+        "latest completed session compaction event references an artifact that is missing or invalid",
+      );
+    }
+
+    return {
+      status: sessionCompactionInspectStatus({
+        artifact: artifactSummary,
+        latestEvent,
+        latestCompleted,
+        artifactMatchesLatestCompletedEvent,
+      }),
+      artifact: artifactSummary,
+      events,
+      latestEvent,
+      consistency: {
+        ok:
+          artifactMatchesLatestCompletedEvent !== false &&
+          !(latestCompleted && !artifactSummary),
+        artifactMatchesLatestCompletedEvent,
+        findings,
+      },
+    };
+  }
+
   async compactSession(
     sessionId: string,
     reason?: string,
     options: {
       llm?: boolean;
     } = {},
-  ): Promise<
-    | {
-        ok: true;
-        sessionId: string;
-        compactedRunCount: number;
-        throughRunId: string | null;
-        originalCharCount: number;
-        summaryCharCount: number;
-        freedChars: number;
-        measurement: SessionCompactionMeasurement;
-        skippedReason?: string;
-        warnings?: CompactionWarning[];
-        artifactPath: string | null;
-      }
-    | { ok: false; error: ProtocolError }
-  > {
+  ): Promise<SessionCompactResult> {
     let safeSessionId: string;
     try {
       safeSessionId = asSessionId(sessionId);
@@ -2464,7 +2656,7 @@ export class HostRuntime {
         (sum, turn) => sum + turn.goal.length + turn.message.length,
         0,
       );
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: 0,
@@ -2479,7 +2671,7 @@ export class HostRuntime {
         artifactPath: null,
         skippedReason: "compaction_failed",
         warnings,
-      };
+      });
     }
 
     const warnings = mergeCompactionWarnings(
@@ -2488,7 +2680,7 @@ export class HostRuntime {
     );
 
     if (compacted.skippedReason !== undefined) {
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: compacted.compactedRunCount,
@@ -2500,7 +2692,7 @@ export class HostRuntime {
         artifactPath: null,
         skippedReason: compacted.skippedReason,
         warnings,
-      };
+      });
     }
 
     const throughRunId = compacted.throughRunId;
@@ -2525,7 +2717,7 @@ export class HostRuntime {
           }),
         },
       });
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: compacted.compactedRunCount,
@@ -2536,9 +2728,9 @@ export class HostRuntime {
         measurement: compacted.measurement,
         artifactPath,
         warnings,
-      };
+      });
     } catch (error) {
-      return {
+      return await this.recordSessionCompactionEvent(sessionRootDir, reason, {
         ok: true,
         sessionId: safeSessionId,
         compactedRunCount: 0,
@@ -2562,6 +2754,52 @@ export class HostRuntime {
             message: error instanceof Error ? error.message : String(error),
           },
         ],
+      });
+    }
+  }
+
+  private async recordSessionCompactionEvent(
+    sessionRootDir: string,
+    reason: string | undefined,
+    result: SessionCompactSuccessResult,
+  ): Promise<SessionCompactSuccessResult> {
+    const eventType = result.skippedReason
+      ? "session.compaction.skipped"
+      : "session.compaction.completed";
+    const store = new FileSessionStore({ rootDir: sessionRootDir });
+    try {
+      await store.appendEvent(result.sessionId, {
+        type: eventType,
+        payload: {
+          compactedRunCount: result.compactedRunCount,
+          throughRunId: result.throughRunId,
+          originalCharCount: result.originalCharCount,
+          summaryCharCount: result.summaryCharCount,
+          freedChars: result.freedChars,
+          measurement: result.measurement,
+          artifactPath: result.artifactPath,
+          ...(result.skippedReason
+            ? { skippedReason: result.skippedReason }
+            : {}),
+          ...(result.warnings
+            ? { warningCodes: result.warnings.map((warning) => warning.code) }
+            : {}),
+        },
+        metadata: {
+          source: "host",
+          ...(reason ? { reason } : {}),
+        },
+      });
+      return result;
+    } catch (error) {
+      return {
+        ...result,
+        warnings: mergeCompactionWarnings(result.warnings, [
+          {
+            code: "SESSION_COMPACTION_EVENT_WRITE_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        ]),
       };
     }
   }
@@ -2692,6 +2930,7 @@ export class HostRuntime {
 }
 
 function buildCapabilitySnapshot(input: {
+  model?: CapabilityModelSummary;
   toolCatalog: HostToolCatalogEntry[];
   indexedSkills: SkillIndexEntry[];
   loadedSkills: LoadedSkill[];
@@ -2701,9 +2940,12 @@ function buildCapabilitySnapshot(input: {
   agentProfiles?: AgentProfile[];
   delegateTools?: DelegateCapabilityDescriptor[];
   shellSandbox?: ShellSandboxStatus;
+  shellForegroundTimeoutMs?: number;
+  shellPromotionAvailable?: boolean;
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
+    ...(input.model ? { model: input.model } : {}),
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
       origin:
@@ -2763,6 +3005,10 @@ function buildCapabilitySnapshot(input: {
     ...(input.shellSandbox
       ? {
           shell: {
+            foregroundTimeoutMs:
+              input.shellForegroundTimeoutMs ??
+              RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+            promotionAvailable: input.shellPromotionAvailable ?? true,
             sandbox: {
               mode: input.shellSandbox.mode,
               failIfUnavailable: input.shellSandbox.failIfUnavailable,
@@ -2776,6 +3022,29 @@ function buildCapabilitySnapshot(input: {
         }
       : {}),
     automation: input.automation,
+  };
+}
+
+function modelCapabilitySummary(
+  resolved: ResolvedModelConfig,
+): CapabilityModelSummary {
+  return {
+    modelRef: resolved.modelRef,
+    providerKey: resolved.providerKey,
+    modelId: resolved.modelId,
+    adapterId: resolved.adapterId,
+    pricing: resolved.pricing ?? {
+      source: resolved.pricingSource ?? "not_applicable",
+      costStatus:
+        resolved.pricingSource === "unavailable"
+          ? "unavailable"
+          : resolved.pricingSource === "not_applicable"
+            ? "not_applicable"
+            : "estimated",
+      ...(resolved.pricingSource === "unavailable"
+        ? { costUnavailableReason: "missing_pricing" }
+        : {}),
+    },
   };
 }
 
@@ -3195,12 +3464,19 @@ export function createConfiguredDelegateTools(input: {
       input.childTools,
       profile,
     );
+    const capabilityFacts = inProcessDelegateCapabilityFacts({
+      delegate,
+      profile,
+      delegateChildTools: input.childTools,
+      allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+    });
     const agentTool = createAgentTool(input.getParent, {
       name: toolName,
       description:
         delegate.description ??
         `Delegate a bounded task to ${profile.name ?? profile.id}.`,
       requiresApproval: delegate.requiresApproval,
+      policy: capabilityFacts.policyProfile.policy,
       forbidNesting: delegate.forbidNesting ?? true,
       buildSpawnInput: (args, parent) => {
         const subagentDepth = assertSubagentDepthAllowed({
@@ -3307,54 +3583,76 @@ function describeConfiguredDelegateTools(input: {
         }),
       ];
     }
-    const workspaceAccess = inProcessDelegateWorkspaceAccess({
+    const capabilityFacts = inProcessDelegateCapabilityFacts({
+      delegate,
       profile,
-      delegateChildToolCatalog: input.delegateChildToolCatalog,
+      delegateChildTools: input.delegateChildToolCatalog.map(
+        (entry) => entry.definition,
+      ),
+      allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
     });
-    const shellAccess = inProcessDelegateHasTool(
-      profile,
-      input.delegateChildToolCatalog,
-      "shell",
-    );
     return [
       describeInProcessDelegateCapability({
         delegate,
         profile,
-        workspaceAccess,
-        shellAccess,
-        gatedByRunWrite:
-          !input.allowReadWriteWorkspaceAccess &&
-          (workspaceAccess === "read_write" || shellAccess),
+        ...capabilityFacts,
         allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
       }),
     ];
   });
 }
 
+function inProcessDelegateCapabilityFacts(input: {
+  delegate: CapabilityDelegateToolConfig;
+  profile: AgentProfile;
+  delegateChildTools: readonly Pick<ToolDefinition, "name">[];
+  allowReadWriteWorkspaceAccess: boolean;
+}): {
+  workspaceAccess: DelegateWorkspaceAccess;
+  shellAccess: boolean;
+  gatedByRunWrite: boolean;
+  policyProfile: DelegatePolicyProfile;
+} {
+  const workspaceAccess = inProcessDelegateWorkspaceAccess({
+    profile: input.profile,
+    delegateChildTools: input.delegateChildTools,
+  });
+  const shellAccess = inProcessDelegateHasTool(
+    input.profile,
+    input.delegateChildTools,
+    "shell",
+  );
+  return {
+    workspaceAccess,
+    shellAccess,
+    gatedByRunWrite:
+      !input.allowReadWriteWorkspaceAccess &&
+      (workspaceAccess === "read_write" || shellAccess),
+    policyProfile: deriveDelegatePolicyProfile({
+      risk: "safe",
+      configuredRequiresApproval: input.delegate.requiresApproval,
+      defaultRequiresApproval: false,
+      runWriteEnabled: input.allowReadWriteWorkspaceAccess,
+    }),
+  };
+}
+
 function inProcessDelegateWorkspaceAccess(input: {
   profile: AgentProfile;
-  delegateChildToolCatalog: readonly HostToolCatalogEntry[];
+  delegateChildTools: readonly Pick<ToolDefinition, "name">[];
 }): DelegateWorkspaceAccess {
   const hasWriteTool = WORKSPACE_WRITE_TOOL_NAMES.some((toolName) =>
-    inProcessDelegateHasTool(
-      input.profile,
-      input.delegateChildToolCatalog,
-      toolName,
-    ),
+    inProcessDelegateHasTool(input.profile, input.delegateChildTools, toolName),
   );
   return hasWriteTool ? "read_write" : "none";
 }
 
 function inProcessDelegateHasTool(
   profile: AgentProfile,
-  delegateChildToolCatalog: readonly HostToolCatalogEntry[],
+  delegateChildTools: readonly Pick<ToolDefinition, "name">[],
   toolName: string,
 ): boolean {
-  if (
-    !delegateChildToolCatalog.some(
-      (entry) => entry.definition.name === toolName,
-    )
-  ) {
+  if (!delegateChildTools.some((tool) => tool.name === toolName)) {
     return false;
   }
   if (profile.allowedTools === undefined) return true;
@@ -3418,9 +3716,8 @@ export function createDynamicSpawnAgentTool(input: {
         maxSteps: {
           type: "integer",
           minimum: 1,
-          maximum: 16,
           description:
-            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to 8 when omitted, capped at 16. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
+            "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A multi-step search (glob, read, refine, conclude) typically needs 6+.",
         },
         metadata: {
           type: "object",
@@ -3434,6 +3731,20 @@ export function createDynamicSpawnAgentTool(input: {
       origin: { kind: "local", name: "sparkwright" },
       sideEffects: ["read"],
       idempotency: "conditional",
+    },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const role = previewString(r.role);
+      const goal = previewString(r.goal);
+      const allowedTools = Array.isArray(r.allowedTools)
+        ? r.allowedTools.filter(
+            (tool): tool is string => typeof tool === "string",
+          )
+        : [];
+      const toolHint =
+        allowedTools.length > 0 ? ` · ${allowedTools.join(", ")}` : "";
+      if (role && goal) return `${role}: ${goal}${toolHint}`;
+      return role || goal || undefined;
     },
     isReplaySafe: false,
     async execute(args: unknown): Promise<unknown> {
@@ -3492,12 +3803,13 @@ export function createDynamicSpawnAgentTool(input: {
         "",
       );
       const agentId = `dynamic_${roleSegment || "agent"}`;
+      const childMaxSteps = parsed.maxSteps ?? parent.maxSteps;
       const profile: AgentProfile = {
         id: agentId,
         name: parsed.role,
         mode: "child",
         allowedTools: childTools.map((tool) => tool.name),
-        maxSteps: parsed.maxSteps,
+        maxSteps: childMaxSteps,
         prompt: withDelegatedAgentPrompt(parsed.prompt),
         metadata: {
           dynamic: true,
@@ -3513,7 +3825,7 @@ export function createDynamicSpawnAgentTool(input: {
           input.parentRunPolicy,
           createAgentProfilePolicy(profile),
         ]),
-        maxSteps: parsed.maxSteps,
+        maxSteps: childMaxSteps,
         interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
@@ -3593,7 +3905,7 @@ export function createDynamicSpawnAgentTool(input: {
             mode: "child",
             prompt: parsed.prompt,
             allowedTools: childTools.map((tool) => tool.name),
-            maxSteps: parsed.maxSteps,
+            maxSteps: childMaxSteps,
             delegateToolName: `delegate_${sanitizeToolSegment(parsed.role)}`,
           },
         },
@@ -3647,7 +3959,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   role: string;
   prompt: string;
   allowedTools?: string[];
-  maxSteps: number;
+  maxSteps?: number;
   metadata?: Record<string, unknown>;
 } {
   if (!args || typeof args !== "object") {
@@ -3668,10 +3980,12 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   if (allowedTools && new Set(allowedTools).size !== allowedTools.length) {
     throw new Error("spawn_agent allowedTools must not contain duplicates.");
   }
-  const maxSteps =
-    record.maxSteps === undefined ? 8 : integerField(record, "maxSteps");
-  if (maxSteps < 1) {
-    throw new Error("spawn_agent maxSteps must be at least 1.");
+  let maxSteps: number | undefined;
+  if (record.maxSteps !== undefined) {
+    maxSteps = integerField(record, "maxSteps");
+    if (maxSteps < 1) {
+      throw new Error("spawn_agent maxSteps must be at least 1.");
+    }
   }
   const metadata =
     record.metadata === undefined ? undefined : objectField(record, "metadata");
@@ -3680,9 +3994,19 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     role,
     prompt,
     allowedTools,
-    maxSteps: Math.min(maxSteps, 16),
+    maxSteps,
     metadata,
   };
+}
+
+function previewRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function previewString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function stringField(record: Record<string, unknown>, field: string): string {
@@ -3808,6 +4132,149 @@ function mergeCompactionWarnings(
   return warnings.length > 0 ? warnings : undefined;
 }
 
+async function loadSessionCompactionEvents(
+  store: FileSessionStore,
+  sessionId: string,
+): Promise<SessionCompactionInspectEvent[]> {
+  const events: SessionCompactionInspectEvent[] = [];
+  for await (const event of store.loadEvents(sessionId)) {
+    const projected = sessionCompactionInspectEvent(event);
+    if (projected) events.push(projected);
+  }
+  return events;
+}
+
+function sessionCompactionInspectEvent(
+  event: SessionEvent,
+): SessionCompactionInspectEvent | null {
+  if (
+    event.type !== "session.compaction.completed" &&
+    event.type !== "session.compaction.skipped"
+  ) {
+    return null;
+  }
+  const payload = isPlainRecord(event.payload) ? event.payload : {};
+  return {
+    sequence: event.sequence,
+    timestamp: event.timestamp,
+    type: event.type,
+    compactedRunCount: recordNumber(payload, "compactedRunCount") ?? 0,
+    throughRunId: recordNullableString(payload, "throughRunId"),
+    originalCharCount: recordNumber(payload, "originalCharCount") ?? 0,
+    summaryCharCount: recordNumber(payload, "summaryCharCount") ?? 0,
+    freedChars: recordNumber(payload, "freedChars") ?? 0,
+    ...(sessionCompactionMeasurementFromUnknown(payload.measurement)
+      ? {
+          measurement: sessionCompactionMeasurementFromUnknown(
+            payload.measurement,
+          ),
+        }
+      : {}),
+    artifactPath: recordNullableString(payload, "artifactPath"),
+    ...(recordString(payload, "skippedReason")
+      ? { skippedReason: recordString(payload, "skippedReason") }
+      : {}),
+    ...(recordStringArray(payload, "warningCodes")
+      ? { warningCodes: recordStringArray(payload, "warningCodes") }
+      : {}),
+    ...(recordString(event.metadata, "reason")
+      ? { reason: recordString(event.metadata, "reason") }
+      : {}),
+    ...(recordString(event.metadata, "source")
+      ? { source: recordString(event.metadata, "source") }
+      : {}),
+  };
+}
+
+function sessionCompactionArtifactInspectSummary(
+  artifact: SessionCompactArtifact,
+  path: string,
+): SessionCompactionInspectArtifact {
+  const metadata = artifact.metadata ?? {};
+  return {
+    path,
+    schemaVersion: artifact.schemaVersion,
+    createdAt: artifact.createdAt,
+    throughRunId: artifact.throughRunId,
+    compactedRunCount: artifact.compactedRunCount,
+    sourceRunIds: [...artifact.sourceRunIds],
+    originalCharCount: artifact.originalCharCount,
+    summaryCharCount: artifact.summaryCharCount,
+    freedChars: artifact.freedChars,
+    ...(sessionCompactionMeasurementFromUnknown(metadata.measurement)
+      ? {
+          measurement: sessionCompactionMeasurementFromUnknown(
+            metadata.measurement,
+          ),
+        }
+      : {}),
+    ...(recordString(metadata, "mode")
+      ? { mode: recordString(metadata, "mode") }
+      : {}),
+    ...(recordString(metadata, "reason")
+      ? { reason: recordString(metadata, "reason") }
+      : {}),
+    ...(sessionCompactionWarningCodes(metadata)
+      ? { warningCodes: sessionCompactionWarningCodes(metadata) }
+      : {}),
+    ...(isPlainRecord(metadata.summaryFingerprint)
+      ? { summaryFingerprint: { ...metadata.summaryFingerprint } }
+      : {}),
+  };
+}
+
+function sessionCompactionArtifactMatchesEvent(
+  artifact: SessionCompactionInspectArtifact,
+  event: SessionCompactionInspectEvent,
+): boolean {
+  return (
+    event.type === "session.compaction.completed" &&
+    artifact.path === event.artifactPath &&
+    artifact.throughRunId === event.throughRunId &&
+    artifact.compactedRunCount === event.compactedRunCount &&
+    artifact.originalCharCount === event.originalCharCount &&
+    artifact.summaryCharCount === event.summaryCharCount &&
+    artifact.freedChars === event.freedChars
+  );
+}
+
+function sessionCompactionInspectStatus(input: {
+  artifact: SessionCompactionInspectArtifact | null;
+  latestEvent: SessionCompactionInspectEvent | null;
+  latestCompleted: SessionCompactionInspectEvent | null;
+  artifactMatchesLatestCompletedEvent: boolean | null;
+}): SessionCompactionInspectReport["status"] {
+  if (!input.artifact && !input.latestEvent) return "not_compacted";
+  if (input.latestEvent?.type === "session.compaction.skipped") {
+    return "skipped";
+  }
+  if (input.artifact && input.latestCompleted) {
+    return input.artifactMatchesLatestCompletedEvent === false
+      ? "stale_artifact"
+      : "compacted";
+  }
+  if (input.artifact) return "artifact_only";
+  return "event_only";
+}
+
+function sessionCompactionWarningCodes(
+  metadata: Record<string, unknown>,
+): string[] | undefined {
+  const warnings = metadata.warnings;
+  if (!Array.isArray(warnings)) return undefined;
+  const codes = warnings
+    .map((warning) => recordString(warning, "code"))
+    .filter((code): code is string => Boolean(code));
+  return codes.length > 0 ? codes : undefined;
+}
+
+function sessionCompactionMeasurementFromUnknown(
+  value: unknown,
+): SessionCompactionMeasurement | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  return value as unknown as SessionCompactionMeasurement;
+}
+
 function sessionSummarizerUsageHint(
   resolved: ResolvedModelConfig,
 ): ContextUsageHint {
@@ -3886,6 +4353,26 @@ function recordString(value: unknown, key: string): string | undefined {
   return isPlainRecord(value) && typeof value[key] === "string"
     ? (value[key] as string)
     : undefined;
+}
+
+function recordNumber(value: unknown, key: string): number | undefined {
+  return isPlainRecord(value) && typeof value[key] === "number"
+    ? (value[key] as number)
+    : undefined;
+}
+
+function recordNullableString(value: unknown, key: string): string | null {
+  if (!isPlainRecord(value)) return null;
+  const candidate = value[key];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function recordStringArray(value: unknown, key: string): string[] | undefined {
+  if (!isPlainRecord(value) || !Array.isArray(value[key])) return undefined;
+  const strings = value[key].filter((item): item is string => {
+    return typeof item === "string";
+  });
+  return strings.length > 0 ? strings : undefined;
 }
 
 function findNestedString(value: unknown, key: string): string | undefined {
@@ -4002,6 +4489,7 @@ function mergeCapabilitySnapshots(
 ): CapabilitySnapshot {
   if (!last) return configured;
   return {
+    model: configured.model ?? last.model,
     tools: mergeByName(configured.tools, last.tools),
     skills: {
       indexed: mergeByName(configured.skills.indexed, last.skills.indexed),

@@ -2,6 +2,7 @@ import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
+  createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostStartRunRequest,
   recordHostClientStartFailure,
@@ -10,11 +11,14 @@ import {
 } from "@sparkwright/host";
 import type {
   CapabilitySnapshot,
+  CompactionWarning,
   PermissionMode,
   RunInputPayload,
   RunInputPart,
+  SessionCompactionMeasurement,
   TraceLevel,
 } from "@sparkwright/protocol";
+import { runFailureMessage } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
 import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
@@ -383,23 +387,9 @@ export class RunController {
     originalCharCount: number;
     summaryCharCount: number;
     freedChars: number;
-    measurement: {
-      sourceRunCount: number;
-      originalCharCount: number;
-      summaryCharCount: number;
-      freedChars: number;
-      savingsRatio: number;
-      freedByTier: Record<string, number>;
-      regime: "no_savings" | "redundancy_bound" | "density_bound" | "mixed";
-      signalCount: number;
-      summarizer?: Record<string, unknown>;
-    };
+    measurement: SessionCompactionMeasurement;
     skippedReason?: string;
-    warnings?: Array<{
-      code: string;
-      message: string;
-      metadata?: Record<string, unknown>;
-    }>;
+    warnings?: CompactionWarning[];
     artifactPath: string | null;
   } | null> {
     try {
@@ -423,7 +413,10 @@ export class RunController {
   async inspectSession(sessionId: string): Promise<SessionDiagnostics | null> {
     try {
       const client = await this.ensureClient();
-      const result = await client.inspectSession({ sessionId });
+      const result = await client.inspectSession({
+        sessionId,
+        compaction: true,
+      });
       return result as SessionDiagnostics;
     } catch (err) {
       this.store.setError(formatError(err));
@@ -434,7 +427,13 @@ export class RunController {
   async inspectCapabilities(): Promise<CapabilitySnapshot | null> {
     try {
       const client = await this.ensureClient();
-      return await client.inspectCapabilities();
+      return await client.inspectCapabilities(
+        createHostCapabilityInspectRequest({
+          sessionId: this.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+        }),
+      );
     } catch (err) {
       this.store.setError(formatError(err));
       return null;
@@ -684,19 +683,21 @@ export class RunController {
         this.store.setStatus("done");
       } else {
         const terminalState = msg.payload.state;
-        this.store.setStatus(
+        if (
           terminalState === "failed" ||
-            terminalState === "cancelled" ||
-            msg.payload.stopReason === "manual_cancelled"
-            ? "error"
-            : "done",
-        );
+          terminalState === "cancelled" ||
+          msg.payload.stopReason === "manual_cancelled"
+        ) {
+          this.store.setError(runFailureMessage(msg.payload));
+        } else {
+          this.store.setStatus("done");
+        }
       }
     });
 
     client.on("run.failed", (msg) => {
       this.activeRunId = null;
-      this.store.setError(msg.payload.error.message);
+      this.store.setError(runFailureMessage(msg.payload));
     });
 
     client.on("disconnect", (reason) => {

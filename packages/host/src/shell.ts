@@ -11,6 +11,7 @@ import {
 import {
   ShellSandboxExecutor,
   createPlatformShellSandboxRuntime,
+  describeShellSandboxStatus,
   resolveShellSandboxConfig,
   type ResolvedShellSandboxConfig,
   type ShellSandboxConfig,
@@ -36,11 +37,9 @@ import {
   snapshotWorkspace,
   type WorkspaceMutationChange,
   type WorkspaceRollbackResult,
-  type WorkspaceSnapshot,
 } from "./workspace-snapshot.js";
 
 const PROMOTED_SHELL_KIND = "shell.promoted";
-const FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS = 60_000;
 
 class LiveOutputBuffer {
   private readonly chunks: string[] = [];
@@ -313,23 +312,20 @@ export function createHostShellTool(
           skillRoots: options.skillRoots,
           extraForcedDenyWrite: options.extraForcedDenyWrite,
         });
+  const sandboxRuntime =
+    options.sandboxRuntime ?? createPlatformShellSandboxRuntime();
   const environment = createHostShellEnvironment({
     workspaceRoot,
     sandboxConfig,
-    sandboxRuntime: options.sandboxRuntime,
+    sandboxRuntime,
   });
   const foregroundTimeoutMs =
     options.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS;
-  const defaultTimeoutMs =
-    options.defaultTimeoutMs ??
-    (options.taskManager
-      ? undefined
-      : FALLBACK_TIMEOUT_WITHOUT_TASK_MANAGER_MS);
   const descriptor = createShellTool({
     environment,
     workspaceRoot,
-    defaultTimeoutMs,
     foregroundTimeoutMs,
+    promotionAvailable: Boolean(options.taskManager),
     onPromote: createUnavailablePromotionHandler(),
   });
 
@@ -348,14 +344,14 @@ export function createHostShellTool(
       const shell = createShellTool({
         environment,
         workspaceRoot,
-        defaultTimeoutMs,
         foregroundTimeoutMs,
+        promotionAvailable: Boolean(options.taskManager),
         onPromote: options.taskManager
           ? createTaskPromotionHandler({
               manager: options.taskManager,
               parentRunId: ctx.run.id,
-              workspaceRoot,
-              before,
+              sandboxConfig,
+              sandboxRuntime,
               getRunEvents: options.getRunEvents,
             })
           : createUnavailablePromotionHandler(),
@@ -399,7 +395,7 @@ function isReadOnlyShellFastPath(args: unknown): boolean {
 function createUnavailablePromotionHandler(): ShellPromotionHandler {
   return () => {
     throw new Error(
-      "host: background promotion is not supported; long-running shells time out.",
+      "foreground timeout reached; process killed because promotion unavailable",
     );
   };
 }
@@ -429,11 +425,59 @@ function failedStreamingResult(
   return { handle, completed };
 }
 
+/**
+ * Emit the `untracked-write-capable` boundary marker for a promoted shell.
+ *
+ * Promotion turns a foreground shell into a background task that runs
+ * concurrently with the rest of the session, so the foreground snapshot/diff/
+ * rollback audit no longer composes (its `before` snapshot goes stale and a
+ * whole-tree diff would attribute — and roll back — concurrent writes by other
+ * tools). We therefore do not roll back promoted-task writes; instead we
+ * disclose the boundary, mirroring the external-command delegate's
+ * `workspace.write.untracked_access_granted` marker.
+ *
+ * The marker is emitted on every promotion: no sandbox mode prevents a shell
+ * from writing ordinary workspace files (workspaceRoot is always in allowWrite),
+ * so the untracked-write-capable boundary always exists. The sandbox status
+ * rides in the payload so trace diagnostics can grade severity by the effective
+ * filesystem isolation (bind-allowlist vs deny-list-guard) rather than guessing.
+ */
+async function emitPromotedShellUntrackedMarker(input: {
+  emitter: EventEmitter;
+  parentRunId: RunId;
+  taskId: string;
+  command: string;
+  sandboxConfig: ResolvedShellSandboxConfig;
+  sandboxRuntime: ShellSandboxRuntime;
+}): Promise<void> {
+  try {
+    const status = await describeShellSandboxStatus(
+      input.sandboxConfig,
+      input.sandboxRuntime,
+    );
+    input.emitter.emit("workspace.write.untracked_access_granted", {
+      taskId: input.taskId,
+      parentRunId: input.parentRunId,
+      toolName: "shell",
+      protocol: "promoted_shell",
+      marker: "untracked-write-capable",
+      access: "granted",
+      command: input.command,
+      sandboxMode: status.mode,
+      filesystemIsolation: status.filesystemIsolation,
+      sandboxAvailable: status.available,
+    });
+  } catch {
+    // Disclosure is best-effort: never fail the promoted task because the
+    // sandbox status probe threw.
+  }
+}
+
 function createTaskPromotionHandler(input: {
   manager: TaskManager;
   parentRunId: RunId;
-  workspaceRoot: string;
-  before?: WorkspaceSnapshot;
+  sandboxConfig: ResolvedShellSandboxConfig;
+  sandboxRuntime: ShellSandboxRuntime;
   getRunEvents?: () => EventEmitter | undefined;
 }): ShellPromotionHandler {
   return ({
@@ -470,6 +514,14 @@ function createTaskPromotionHandler(input: {
         const taskSpan = openSpan(emitter, {
           startType: "task.started",
           payload: taskPayload,
+        });
+        await emitPromotedShellUntrackedMarker({
+          emitter,
+          parentRunId: input.parentRunId,
+          taskId: String(ctrl.taskId),
+          command: rawCommand,
+          sandboxConfig: input.sandboxConfig,
+          sandboxRuntime: input.sandboxRuntime,
         });
         const runner = new TracedProcessRunner();
         let observed:
@@ -516,19 +568,6 @@ function createTaskPromotionHandler(input: {
               output: observed.output,
             });
             return result;
-          }
-
-          if (input.before) {
-            const after = await snapshotWorkspace(input.workspaceRoot);
-            const changes = diffWorkspaceSnapshots(input.before, after);
-            if (changes.length > 0) {
-              const rollback = await rollbackWorkspaceSnapshot(
-                input.workspaceRoot,
-                input.before,
-                after,
-              );
-              throw new UntrackedWorkspaceMutationError(changes, rollback);
-            }
           }
 
           if (observed.error || observed.exitCode !== 0) {

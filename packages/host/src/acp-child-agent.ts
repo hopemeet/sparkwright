@@ -11,6 +11,7 @@ import {
   assertSubagentDepthAllowed,
   DelegateExecutionError,
   describeDelegateCapability,
+  deriveDelegatePolicyProfile,
   errorCode,
   resolveDelegateProcessWorkspace,
   workspaceAccessField,
@@ -86,6 +87,12 @@ export function createAcpDelegateTool(
     );
   }
   const workspaceAccess = config.workspaceAccess ?? "none";
+  const policyProfile = deriveDelegatePolicyProfile({
+    risk: "risky",
+    configuredRequiresApproval: input.requiresApproval,
+    defaultRequiresApproval: true,
+    runWriteEnabled: input.allowReadWriteWorkspaceAccess,
+  });
   const descriptor = describeDelegateCapability({
     delegate: {
       profileId: input.profile.id,
@@ -100,6 +107,7 @@ export function createAcpDelegateTool(
     timeoutMs: config.timeoutMs,
     workspaceAccess,
     allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+    policyProfile,
   });
 
   return defineTool({
@@ -117,10 +125,7 @@ export function createAcpDelegateTool(
       required: ["goal"],
       additionalProperties: false,
     },
-    policy: {
-      risk: "risky",
-      requiresApproval: input.requiresApproval ?? true,
-    },
+    policy: policyProfile.policy,
     governance: {
       sideEffects: ["external"],
       idempotency: "non_idempotent",

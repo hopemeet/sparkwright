@@ -1,4 +1,5 @@
 import type { HostEvent } from "@sparkwright/sdk-node";
+import { runFailureMessage } from "@sparkwright/protocol";
 import type { ApprovalPrompt } from "./types.js";
 
 export function renderHostEvent(event: HostEvent): string | null {
@@ -9,7 +10,7 @@ export function renderHostEvent(event: HostEvent): string | null {
     return `Done: run ${event.payload.runId} ${event.payload.state}${reason}`;
   }
   if (event.kind === "run.failed") {
-    return `Run failed: ${event.payload.error.message}`;
+    return `Run failed: ${runFailureMessage(event.payload)}`;
   }
   if (event.kind !== "run.event") return null;
 

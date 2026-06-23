@@ -5,6 +5,11 @@ import { readFile } from "node:fs/promises";
 import type { SparkwrightEvent } from "./events.js";
 import { evaluateTrajectory } from "./eval.js";
 import {
+  analyzeLowNetProgress,
+  collectRepeatedToolRequests,
+  type RepeatedToolRequest,
+} from "./run-health.js";
+import {
   analyzeToolOutcomes,
   commandOutcomeSnapshot,
   isPolicyOrApprovalFailure,
@@ -173,8 +178,98 @@ export function buildTraceReportJsonl(jsonl: string): TraceReport {
 }
 
 export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
+  const facts = collectTraceReportFacts(events);
+  const findings = sortTraceReportFindings(
+    TRACE_REPORT_ANALYZERS.flatMap((analyzer) => analyzer({ events, facts })),
+  );
+  const verdict = traceReportVerdict(findings);
+  const { summary } = facts;
+
+  return {
+    verdict,
+    headline: traceReportHeadline(verdict, findings),
+    summary: {
+      eventCount: summary.eventCount,
+      runCount: summary.runIds.length,
+      sessionCount: summary.sessionIds.length,
+      modelCalls: facts.modelCalls,
+      toolCalls: facts.toolCalls,
+      totalTokens: summary.usage.totalTokens,
+      costStatus: summary.usage.costStatus,
+      workspaceWrites: facts.workspaceWrites,
+      approvalsRequested: facts.approvalsRequested,
+      unresolvedToolFailures: summary.toolFailures.unresolved.total,
+      recoveredToolFailures: summary.toolFailures.recovered.total,
+    },
+    topTools: facts.topTools,
+    topDuplicateReads: facts.topDuplicateReads,
+    findings,
+  };
+}
+
+interface TraceReportFacts {
+  summary: TraceSummary;
+  modelCalls: number;
+  toolCalls: number;
+  workspaceReadTotal: number;
+  workspaceReadRatio: number;
+  topDuplicateReads: Record<string, number>;
+  topTools: Record<string, number>;
+  repeatedToolRequests: RepeatedToolRequest[];
+  repeatedCommandFailures: Array<{ label: string; count: number }>;
+  trajectory: ReturnType<typeof evaluateTrajectory>;
+  uniqueWritePaths: string[];
+  verificationLag?: { modelCallsAfterLastWrite: number; command: string };
+  reportableFailures: ReportableFailureLedger;
+  incompleteSubagents: IncompleteSubagentTerminal[];
+  inFlightDuplicateStorms: Array<{ label: string; count: number }>;
+  repeatedApprovalDenials: Array<{ label: string; count: number }>;
+  untrackedWriteAccess: UntrackedWriteAccessMarker[];
+  largestDuplicateRead: number;
+  workspaceWrites: number;
+  approvalsRequested: number;
+}
+
+interface TraceReportContext {
+  events: readonly SparkwrightEvent[];
+  facts: TraceReportFacts;
+}
+
+interface ReportableFailure {
+  type: string;
+  code: string;
+  label: string;
+}
+
+interface ReportableFailureLedger {
+  failures: ReportableFailure[];
+  byCode: Record<string, number>;
+}
+
+type TraceReportAnalyzer = (
+  context: TraceReportContext,
+) => TraceReportFinding[];
+
+const TRACE_REPORT_ANALYZERS: TraceReportAnalyzer[] = [
+  analyzeTraceFailures,
+  analyzeCommandFailures,
+  analyzeMultiAgentAuditability,
+  analyzeEfficiency,
+  analyzeToolRecovery,
+  analyzeCostReporting,
+];
+
+const TRACE_REPORT_SEVERITY_RANK: Record<TraceReportFindingSeverity, number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+  info: 0,
+};
+
+function collectTraceReportFacts(
+  events: readonly SparkwrightEvent[],
+): TraceReportFacts {
   const summary = summarizeTraceJsonl(events.map(serializeEventJsonl).join(""));
-  const findings: TraceReportFinding[] = [];
   const modelCalls = summary.byType["model.completed"] ?? 0;
   const toolCalls = sumRecord(summary.toolCalls);
   const workspaceReadTotal = summary.workspaceReads.total;
@@ -187,15 +282,47 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
   const topTools = firstEntries(summary.toolCalls, 8);
   const repeatedToolRequests = collectRepeatedToolRequests(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
-  const trajectory = evaluateTrajectory(events);
+  const trajectory = evaluateTrajectory([...events]);
   const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
   const verificationLag = collectVerificationLagAfterLastWrite(events);
-  const reportableTraceErrors = collectReportableTraceErrors(events);
+  const reportableFailures = collectReportableFailures(events);
   const incompleteSubagents = collectIncompleteSubagentTerminals(events);
   const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
   const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
   const untrackedWriteAccess = collectUntrackedWriteAccessMarkers(events);
+  const largestDuplicateRead = Object.values(topDuplicateReads)[0] ?? 0;
+  const workspaceWrites = summary.safety.workspaceWrites.completed;
+  const approvalsRequested = summary.safety.approvals.requested;
 
+  return {
+    summary,
+    modelCalls,
+    toolCalls,
+    workspaceReadTotal,
+    workspaceReadRatio,
+    topDuplicateReads,
+    topTools,
+    repeatedToolRequests,
+    repeatedCommandFailures,
+    trajectory,
+    uniqueWritePaths,
+    verificationLag,
+    reportableFailures,
+    incompleteSubagents,
+    inFlightDuplicateStorms,
+    repeatedApprovalDenials,
+    untrackedWriteAccess,
+    largestDuplicateRead,
+    workspaceWrites,
+    approvalsRequested,
+  };
+}
+
+function analyzeTraceFailures({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary, reportableFailures } = facts;
+  const findings: TraceReportFinding[] = [];
   if (summary.toolFailures.unresolved.total > 0) {
     findings.push({
       severity: "high",
@@ -210,19 +337,29 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (reportableTraceErrors.total > 0) {
+  if (reportableFailures.failures.length > 0) {
     findings.push({
       severity: "high",
       code: "TRACE_ERRORS",
       title: "Trace contains runtime error events",
       evidence: [
-        `${reportableTraceErrors.total} reportable error event(s)`,
-        formatCountRecord(reportableTraceErrors.byCode),
+        `${reportableFailures.failures.length} reportable failure event(s)`,
+        formatCountRecord(reportableFailures.byCode),
+        ...reportableFailures.failures.slice(0, 5).map((item) => item.label),
       ].filter(Boolean),
       recommendation:
         "Use trace events filtered by error type/code to find the failing layer.",
     });
   }
+
+  return findings;
+}
+
+function analyzeCommandFailures({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary, repeatedCommandFailures } = facts;
+  const findings: TraceReportFinding[] = [];
 
   if (summary.commandFailures.verification.unresolved > 0) {
     findings.push({
@@ -264,14 +401,64 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (incompleteSubagents.length > 0) {
+  if (repeatedCommandFailures.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "REPEATED_COMMAND_FAILURES",
+      title: "Same shell commands failed repeatedly",
+      evidence: repeatedCommandFailures
+        .slice(0, 5)
+        .map((item) => `${item.count}x ${item.label}`),
+      recommendation:
+        "Stop retrying unchanged failing commands; inspect the first failure and change the plan or inputs.",
+    });
+  }
+
+  return findings;
+}
+
+function analyzeMultiAgentAuditability({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const {
+    incompleteSubagents,
+    inFlightDuplicateStorms,
+    repeatedApprovalDenials,
+    untrackedWriteAccess,
+  } = facts;
+  const findings: TraceReportFinding[] = [];
+
+  const unverifiedIncompleteSubagents = incompleteSubagents.filter(
+    (item) => item.verifiedAfterChildWrite === undefined,
+  );
+  const verifiedIncompleteSubagents = incompleteSubagents.filter(
+    (item) => item.verifiedAfterChildWrite !== undefined,
+  );
+
+  if (unverifiedIncompleteSubagents.length > 0) {
     findings.push({
       severity: "high",
       code: "SUBAGENT_INCOMPLETE",
       title: "Sub-agent results may be incomplete",
-      evidence: incompleteSubagents.slice(0, 5).map((item) => item.label),
+      evidence: unverifiedIncompleteSubagents
+        .slice(0, 5)
+        .map((item) => item.label),
       recommendation:
         "Inspect the child run trace before trusting the parent result; rerun with more child steps if the child was truncated or hit its step limit.",
+    });
+  }
+
+  if (verifiedIncompleteSubagents.length > 0) {
+    findings.push({
+      severity: "medium",
+      code: "SUBAGENT_INCOMPLETE",
+      title: "Sub-agent hit a limit but parent verified after child write",
+      evidence: verifiedIncompleteSubagents.slice(0, 5).map((item) => {
+        const evidence = item.verifiedAfterChildWrite!;
+        return `${item.label} · verifiedAfterChildWrite childWriteIndex=${evidence.childWriteIndex} subagentIndex=${evidence.subagentIndex} verificationIndex=${evidence.verificationIndex} command=${evidence.command}`;
+      }),
+      recommendation:
+        "Keep the raw child finality for audit, but treat the parent result as lower risk because a later verification covered the current workspace state.",
     });
   }
 
@@ -303,14 +490,40 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
 
   if (untrackedWriteAccess.length > 0) {
     findings.push({
+      // The marker means the process can write workspace files outside the
+      // managed workspace.write.* API. Filesystem isolation may bound where the
+      // process can write, but it does not provide per-file attribution or deny
+      // ordinary workspace writes, so the report keeps this at medium.
       severity: "medium",
-      code: "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
-      title: "External process had untracked workspace write capability",
+      code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
+      title: "A process had untracked workspace write capability",
       evidence: untrackedWriteAccess.slice(0, 5).map((item) => item.label),
       recommendation:
-        "Audit the external command output and workspace diff separately; the trace records access granted, not per-file writes.",
+        "Audit the process output and workspace diff separately; the trace records that write-capable access was granted, not per-file writes.",
     });
   }
+
+  return findings;
+}
+
+function analyzeEfficiency({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const {
+    modelCalls,
+    toolCalls,
+    workspaceReadTotal,
+    workspaceReadRatio,
+    topDuplicateReads,
+    topTools,
+    repeatedToolRequests,
+    trajectory,
+    uniqueWritePaths,
+    verificationLag,
+    largestDuplicateRead,
+    workspaceWrites,
+  } = facts;
+  const findings: TraceReportFinding[] = [];
 
   if (toolCalls >= 80) {
     findings.push({
@@ -351,8 +564,7 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  const largestDuplicate = Object.values(topDuplicateReads)[0] ?? 0;
-  if (largestDuplicate >= 10) {
+  if (largestDuplicateRead >= 10) {
     findings.push({
       severity: "medium",
       code: "DUPLICATE_WORKSPACE_READS",
@@ -378,30 +590,35 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (repeatedCommandFailures.length > 0) {
-    findings.push({
-      severity: "medium",
-      code: "REPEATED_COMMAND_FAILURES",
-      title: "Same shell commands failed repeatedly",
-      evidence: repeatedCommandFailures
-        .slice(0, 5)
-        .map((item) => `${item.count}x ${item.label}`),
-      recommendation:
-        "Stop retrying unchanged failing commands; inspect the first failure and change the plan or inputs.",
-    });
-  }
-
-  const efficiencyFinding = buildLowNetProgressFinding({
+  const lowNetProgress = analyzeLowNetProgress({
     modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
     toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
     budgetCheckCount: trajectory.metrics.budgetCheckCount,
-    workspaceWrites: summary.safety.workspaceWrites.completed,
+    workspaceWrites,
     uniqueWritePaths: uniqueWritePaths.length,
     topDuplicateReads,
     repeatedToolRequests,
     verificationLag,
   });
-  if (efficiencyFinding) findings.push(efficiencyFinding);
+  if (lowNetProgress) {
+    findings.push({
+      severity: "medium",
+      code: "LOW_NET_PROGRESS",
+      title: "Run spent many cycles for little file progress",
+      evidence: lowNetProgress.evidence,
+      recommendation:
+        "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
+    });
+  }
+
+  return findings;
+}
+
+function analyzeToolRecovery({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary } = facts;
+  const findings: TraceReportFinding[] = [];
 
   if (summary.toolFailures.recovered.total > 0) {
     findings.push({
@@ -417,25 +634,35 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
     });
   }
 
-  if (summary.usage.totalTokens > 0 && !summary.usage.costStatus) {
-    findings.push({
-      severity: "low",
-      code: "COST_UNAVAILABLE",
-      title: "Token usage was recorded without cost status",
-      evidence: [
-        `${summary.usage.totalTokens} token(s)`,
-        "cost status missing",
-      ],
-      recommendation:
-        "Populate usage.costStatus/costUnavailableReason so cost reporting distinguishes zero from unknown.",
-    });
-  }
+  return findings;
+}
 
-  const workspaceWrites = summary.safety.workspaceWrites.completed;
-  const approvalsRequested = summary.safety.approvals.requested;
-  const verdict: TraceReportVerdict = findings.some(
-    (finding) => finding.severity === "high",
-  )
+function analyzeCostReporting({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { summary } = facts;
+  if (summary.usage.totalTokens > 0 && !summary.usage.costStatus) {
+    return [
+      {
+        severity: "low",
+        code: "COST_UNAVAILABLE",
+        title: "Token usage was recorded without cost status",
+        evidence: [
+          `${summary.usage.totalTokens} token(s)`,
+          "cost status missing",
+        ],
+        recommendation:
+          "Populate usage.costStatus/costUnavailableReason so cost reporting distinguishes zero from unknown.",
+      },
+    ];
+  }
+  return [];
+}
+
+function traceReportVerdict(
+  findings: readonly TraceReportFinding[],
+): TraceReportVerdict {
+  return findings.some((finding) => finding.severity === "high")
     ? "failed"
     : findings.some(
           (finding) =>
@@ -443,27 +670,21 @@ export function buildTraceReport(events: SparkwrightEvent[]): TraceReport {
         )
       ? "passed_with_issues"
       : "ok";
+}
 
-  return {
-    verdict,
-    headline: traceReportHeadline(verdict, findings),
-    summary: {
-      eventCount: summary.eventCount,
-      runCount: summary.runIds.length,
-      sessionCount: summary.sessionIds.length,
-      modelCalls,
-      toolCalls,
-      totalTokens: summary.usage.totalTokens,
-      costStatus: summary.usage.costStatus,
-      workspaceWrites,
-      approvalsRequested,
-      unresolvedToolFailures: summary.toolFailures.unresolved.total,
-      recoveredToolFailures: summary.toolFailures.recovered.total,
-    },
-    topTools,
-    topDuplicateReads,
-    findings,
-  };
+function sortTraceReportFindings(
+  findings: readonly TraceReportFinding[],
+): TraceReportFinding[] {
+  return findings
+    .map((finding, index) => ({ finding, index }))
+    .sort(
+      (a, b) =>
+        TRACE_REPORT_SEVERITY_RANK[b.finding.severity] -
+          TRACE_REPORT_SEVERITY_RANK[a.finding.severity] ||
+        a.finding.code.localeCompare(b.finding.code) ||
+        a.index - b.index,
+    )
+    .map(({ finding }) => finding);
 }
 
 export interface TraceEventFilter {
@@ -807,17 +1028,17 @@ export function buildTraceTimelineJsonl(
 }
 
 export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
-  const sorted = [...events].sort(
-    (a, b) => a.timestamp.localeCompare(b.timestamp) || a.sequence - b.sequence,
-  );
+  const sorted = projectTraceEvents(events).map((entry) => entry.event);
   const runIds = new Set<string>();
   const sessionIds = new Set<string>();
   const agentIds = new Set<string>();
   const open = new Map<string, TraceTimelinePhase>();
+  const terminalByRun = new Map<string, SparkwrightEvent>();
   const phases: TraceTimelinePhase[] = [];
 
   for (const event of sorted) {
     runIds.add(event.runId);
+    if (isRunTerminalEvent(event)) terminalByRun.set(event.runId, event);
     const sessionId = stringMetadata(event.metadata, "sessionId");
     const agentId = stringMetadata(event.metadata, "agentId");
     if (sessionId) sessionIds.add(sessionId);
@@ -856,6 +1077,8 @@ export function buildTraceTimeline(events: SparkwrightEvent[]): TraceTimeline {
     phases.push(phase);
     if (key && phase.status === "pending") open.set(key, phase);
   }
+
+  reconcileOpenPhasesWithRunTerminals(open, terminalByRun);
 
   const startedAt = sorted.at(0)?.timestamp;
   const endedAt = sorted.at(-1)?.timestamp;
@@ -1138,6 +1361,69 @@ export function observedSequenceEnd(event: SparkwrightEvent): number {
   return event.sequence;
 }
 
+interface TraceProjectionEntry {
+  event: SparkwrightEvent;
+  index: number;
+}
+
+function projectTraceEvents(
+  events: readonly SparkwrightEvent[],
+): TraceProjectionEntry[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort(compareTraceProjectionEntries);
+}
+
+function compareTraceProjectionEntries(
+  a: TraceProjectionEntry,
+  b: TraceProjectionEntry,
+): number {
+  return compareTraceProjectionTime(a.event, b.event) || a.index - b.index;
+}
+
+function compareTraceProjectionTime(
+  a: SparkwrightEvent,
+  b: SparkwrightEvent,
+): number {
+  if (typeof a.timestamp !== "string" || typeof b.timestamp !== "string") {
+    return 0;
+  }
+  const timestamp = compareTraceTimestamps(a.timestamp, b.timestamp);
+  if (timestamp !== 0) return timestamp;
+
+  // `monotonicUs` has one origin per process, not globally. Without a process
+  // id, the narrow safe comparison is the same trace/agent scope. Cross-agent
+  // events with the same millisecond timestamp keep append order.
+  if (traceMonotonicScope(a) === traceMonotonicScope(b)) {
+    const aMonotonic = finiteNumber(a.monotonicUs);
+    const bMonotonic = finiteNumber(b.monotonicUs);
+    if (aMonotonic !== undefined && bMonotonic !== undefined) {
+      return aMonotonic - bMonotonic;
+    }
+  }
+
+  return 0;
+}
+
+function compareTraceTimestamps(a: string, b: string): number {
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (Number.isFinite(aMs) && Number.isFinite(bMs) && aMs !== bMs) {
+    return aMs - bMs;
+  }
+  return a.localeCompare(b);
+}
+
+function traceMonotonicScope(event: SparkwrightEvent): string {
+  const traceScope =
+    typeof event.traceId === "string" && event.traceId.length > 0
+      ? event.traceId
+      : typeof event.runId === "string"
+        ? event.runId
+        : "";
+  return `${traceScope}::${stringMetadata(event.metadata, "agentId") ?? ""}`;
+}
+
 function isTerminalRunEvent(event: SparkwrightEvent): boolean {
   return (
     event.type === "run.completed" ||
@@ -1227,17 +1513,16 @@ function collectToolFailure(
     (summary.toolFailures.byCode[code] ?? 0) + 1;
 }
 
-function collectReportableTraceErrors(events: readonly SparkwrightEvent[]): {
-  total: number;
-  byCode: Record<string, number>;
-} {
+function collectReportableFailures(
+  events: readonly SparkwrightEvent[],
+): ReportableFailureLedger {
   const toolFailureCallIds = new Set(
     analyzeToolOutcomes(events)
       .failures.map((failure) => failure.toolCallId)
       .filter((id): id is string => Boolean(id)),
   );
+  const failures: ReportableFailure[] = [];
   const byCode: Record<string, number> = {};
-  let total = 0;
 
   for (const event of events) {
     if (isExpectedDenialEvent(event)) continue;
@@ -1245,12 +1530,34 @@ function collectReportableTraceErrors(events: readonly SparkwrightEvent[]): {
     if (event.type === "tool.failed") continue;
     if (isToolFailureCompanionEvent(event, toolFailureCallIds)) continue;
 
-    total += 1;
     const code = traceErrorCode(event) ?? event.type;
+    failures.push({
+      type: event.type,
+      code,
+      label: reportableFailureLabel(event, code),
+    });
     byCode[code] = (byCode[code] ?? 0) + 1;
   }
 
-  return { total, byCode };
+  return { failures, byCode };
+}
+
+function reportableFailureLabel(event: SparkwrightEvent, code: string): string {
+  const payload = isRecord(event.payload) ? event.payload : undefined;
+  const error = isRecord(payload?.error) ? payload.error : undefined;
+  const failure = isRecord(payload?.failure) ? payload.failure : undefined;
+  const message = stringValue(
+    payload?.message,
+    error?.message,
+    failure?.message,
+  );
+  const pieces = [
+    event.type,
+    code,
+    message ? truncateDiagnostic(message, 120) : undefined,
+    `run ${event.runId}`,
+  ].filter((value): value is string => typeof value === "string");
+  return truncateDiagnostic(pieces.join(" · "), 220);
 }
 
 function isToolFailureCompanionEvent(
@@ -1525,77 +1832,6 @@ function traceReportHeadline(
   return `${top.title}${findings.length > 1 ? ` (+${findings.length - 1} more)` : ""}.`;
 }
 
-function buildLowNetProgressFinding(input: {
-  modelCalls: number;
-  toolCalls: number;
-  budgetCheckCount: number;
-  workspaceWrites: number;
-  uniqueWritePaths: number;
-  topDuplicateReads: Record<string, number>;
-  repeatedToolRequests: Array<{ label: string; count: number }>;
-  verificationLag?: { modelCallsAfterLastWrite: number; command: string };
-}): TraceReportFinding | undefined {
-  const lowMutationWork =
-    input.modelCalls >= 8 &&
-    input.toolCalls >= 6 &&
-    input.uniqueWritePaths <= 2;
-  const noMutationWork =
-    input.modelCalls >= 6 &&
-    input.toolCalls >= 10 &&
-    input.workspaceWrites === 0;
-  const repeatedRead = Object.values(input.topDuplicateReads).some(
-    (count) => count >= 3,
-  );
-  const delayedVerification =
-    (input.verificationLag?.modelCallsAfterLastWrite ?? 0) >= 2;
-
-  // Every trigger requires a meaningful number of model calls: the finding's
-  // headline is "many cycles for little file progress", so a short run that
-  // merely verified a couple of turns after its last write must not match.
-  if (
-    !lowMutationWork &&
-    !noMutationWork &&
-    !(input.modelCalls >= 6 && repeatedRead) &&
-    !(input.modelCalls >= 6 && delayedVerification)
-  ) {
-    return undefined;
-  }
-
-  const duplicateReads = firstEntries(input.topDuplicateReads, 3);
-  const evidence = [
-    `${input.modelCalls} model call(s)`,
-    `${input.toolCalls} tool call(s)`,
-    `${input.uniqueWritePaths} unique written file(s)`,
-    input.workspaceWrites !== input.uniqueWritePaths
-      ? `${input.workspaceWrites} completed write event(s)`
-      : undefined,
-    input.budgetCheckCount > 0
-      ? `${input.budgetCheckCount} budget check event(s)`
-      : undefined,
-    Object.keys(duplicateReads).length > 0
-      ? `duplicate reads: ${formatCountRecord(duplicateReads)}`
-      : undefined,
-    input.repeatedToolRequests.length > 0
-      ? `repeated tool requests: ${input.repeatedToolRequests
-          .slice(0, 3)
-          .map((item) => `${item.count}x ${item.label}`)
-          .join("; ")}`
-      : undefined,
-    input.verificationLag && delayedVerification
-      ? `verification ran ${input.verificationLag.modelCallsAfterLastWrite} model call(s) after the last write: ${input.verificationLag.command}`
-      : undefined,
-  ].filter((value): value is string => typeof value === "string");
-
-  return {
-    severity: "medium",
-    code: "LOW_NET_PROGRESS",
-    title: "Run spent many cycles for little file progress",
-    evidence,
-    recommendation:
-      "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
-  };
-}
-
 function collectUniqueCompletedWritePaths(
   events: readonly SparkwrightEvent[],
 ): string[] {
@@ -1677,28 +1913,6 @@ function isLikelyVerificationCommand(command: string): boolean {
   );
 }
 
-function collectRepeatedToolRequests(
-  events: readonly SparkwrightEvent[],
-): Array<{ label: string; count: number }> {
-  const counts = new Map<string, { label: string; count: number }>();
-
-  for (const event of events) {
-    if (event.type !== "tool.requested" || !isRecord(event.payload)) continue;
-    const toolName = stringValue(event.payload.toolName);
-    if (!toolName) continue;
-    const args = stableDiagnosticJson(event.payload.arguments ?? {});
-    const key = `${toolName}:${args}`;
-    const label = truncateDiagnostic(`${toolName} ${args}`, 180);
-    const existing = counts.get(key);
-    if (existing) existing.count += 1;
-    else counts.set(key, { label, count: 1 });
-  }
-
-  return [...counts.values()]
-    .filter((item) => item.count >= 3)
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-}
-
 function collectRepeatedCommandFailures(
   events: readonly SparkwrightEvent[],
 ): Array<{ label: string; count: number }> {
@@ -1743,12 +1957,24 @@ function collectRepeatedCommandFailures(
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
+interface IncompleteSubagentTerminal {
+  label: string;
+  verifiedAfterChildWrite?: VerifiedAfterChildWriteEvidence;
+}
+
+interface VerifiedAfterChildWriteEvidence {
+  childWriteIndex: number;
+  subagentIndex: number;
+  verificationIndex: number;
+  command: string;
+}
+
 function collectIncompleteSubagentTerminals(
   events: readonly SparkwrightEvent[],
-): Array<{ label: string }> {
-  const out: Array<{ label: string }> = [];
+): IncompleteSubagentTerminal[] {
+  const out: IncompleteSubagentTerminal[] = [];
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
     if (
       event.type !== "subagent.completed" &&
       event.type !== "subagent.failed"
@@ -1791,7 +2017,117 @@ function collectIncompleteSubagentTerminals(
       childRunId ? `child ${childRunId}` : undefined,
       depth !== undefined ? `depth ${depth}` : undefined,
     ].filter((value): value is string => typeof value === "string");
-    out.push({ label: truncateDiagnostic(pieces.join(" · "), 220) });
+    const verifiedAfterChildWrite = collectVerifiedAfterChildWriteEvidence(
+      events,
+      event,
+      index,
+      childRunId,
+    );
+    out.push({
+      label: truncateDiagnostic(pieces.join(" · "), 220),
+      ...(verifiedAfterChildWrite ? { verifiedAfterChildWrite } : {}),
+    });
+  }
+
+  return out;
+}
+
+function collectVerifiedAfterChildWriteEvidence(
+  events: readonly SparkwrightEvent[],
+  subagentEvent: SparkwrightEvent,
+  subagentIndex: number,
+  childRunId: string | undefined,
+): VerifiedAfterChildWriteEvidence | undefined {
+  if (!isRecord(subagentEvent.payload)) return undefined;
+  const workspaceWrites = optionalNumberValue(
+    subagentEvent.payload.workspaceWrites,
+  );
+  if (workspaceWrites === undefined || workspaceWrites <= 0) return undefined;
+  if (!childRunId) return undefined;
+
+  let childWriteIndex: number | undefined;
+  let lastWorkspaceWriteIndex: number | undefined;
+  for (const [index, event] of events.entries()) {
+    if (event.type !== "workspace.write.completed") continue;
+    lastWorkspaceWriteIndex = index;
+    if (index < subagentIndex && eventMatchesChildRun(event, childRunId)) {
+      childWriteIndex = index;
+    }
+  }
+  if (childWriteIndex === undefined) return undefined;
+
+  const verification = collectSuccessfulVerificationEvents(events).find(
+    (item) =>
+      item.index > subagentIndex &&
+      item.index > childWriteIndex! &&
+      (lastWorkspaceWriteIndex === undefined ||
+        item.index > lastWorkspaceWriteIndex),
+  );
+  if (!verification) return undefined;
+
+  return {
+    childWriteIndex,
+    subagentIndex,
+    verificationIndex: verification.index,
+    command: verification.command,
+  };
+}
+
+function eventMatchesChildRun(
+  event: SparkwrightEvent,
+  childRunId: string,
+): boolean {
+  if (event.runId === childRunId) return true;
+  const payload = isRecord(event.payload) ? event.payload : undefined;
+  return (
+    stringValue(event.metadata.childRunId, payload?.childRunId) === childRunId
+  );
+}
+
+function collectSuccessfulVerificationEvents(
+  events: readonly SparkwrightEvent[],
+): Array<{ index: number; command: string }> {
+  const commandByCallId = new Map<string, string>();
+  const out: Array<{ index: number; command: string }> = [];
+
+  for (const [index, event] of events.entries()) {
+    if (!isRecord(event.payload)) continue;
+
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const args = recordValue(event.payload.arguments);
+      const command = stringValue(args?.command);
+      if (toolName === "shell" && callId && command) {
+        commandByCallId.set(callId, command);
+      }
+      continue;
+    }
+
+    if (event.type === "tool.completed") {
+      const toolName = stringValue(event.payload.toolName);
+      const callId = stringValue(event.payload.toolCallId, event.payload.id);
+      if (toolName !== "shell" || !callId) continue;
+      const command =
+        commandByCallId.get(callId) ??
+        stringValue(recordValue(event.payload.output)?.command);
+      if (!command || !isLikelyVerificationCommand(command)) continue;
+      const output = recordValue(event.payload.output);
+      if (output?.timedOut === true) continue;
+      if (optionalNumberValue(output?.exitCode) !== 0) continue;
+      out.push({ index, command });
+      continue;
+    }
+
+    if (event.type !== "workflow_hook.completed") continue;
+    const hookName = stringValue(event.payload.hookName);
+    if (!hookName?.startsWith("verification:")) continue;
+    const result = recordValue(event.payload.result);
+    const metadata = recordValue(result?.metadata);
+    const exitCode = optionalNumberValue(metadata?.exitCode);
+    const timedOut = metadata?.timedOut === true;
+    if (timedOut || exitCode !== 0) continue;
+    out.push({ index, command: hookName });
   }
 
   return out;
@@ -1867,10 +2203,14 @@ function collectRepeatedApprovalDenials(
   );
 }
 
+interface UntrackedWriteAccessMarker {
+  label: string;
+}
+
 function collectUntrackedWriteAccessMarkers(
   events: readonly SparkwrightEvent[],
-): Array<{ label: string }> {
-  const out: Array<{ label: string }> = [];
+): UntrackedWriteAccessMarker[] {
+  const out: UntrackedWriteAccessMarker[] = [];
 
   for (const event of events) {
     if (
@@ -1884,6 +2224,7 @@ function collectUntrackedWriteAccessMarkers(
       event.metadata.delegateTool,
       "external process",
     )!;
+    const protocol = stringValue(event.payload.protocol);
     const agent = stringValue(
       event.payload.agentProfileId,
       event.metadata.agentProfileId,
@@ -1893,13 +2234,29 @@ function collectUntrackedWriteAccessMarkers(
       event.payload.childRunId,
       event.metadata.childRunId,
     );
+    const taskId = stringValue(event.payload.taskId);
+    const isolation = stringValue(event.payload.filesystemIsolation);
+    const mode = stringValue(event.payload.sandboxMode);
+    const sandboxAvailable =
+      typeof event.payload.sandboxAvailable === "boolean"
+        ? event.payload.sandboxAvailable
+        : undefined;
     const pieces = [
       toolName,
+      protocol ? `protocol ${protocol}` : undefined,
       agent ? `agent ${agent}` : undefined,
       childRunId ? `child ${childRunId}` : undefined,
+      taskId ? `task ${taskId}` : undefined,
+      mode ? `sandbox ${mode}` : undefined,
+      isolation ? `fs ${isolation}` : undefined,
+      sandboxAvailable !== undefined
+        ? `sandbox ${sandboxAvailable ? "available" : "unavailable"}`
+        : undefined,
       "access granted",
     ].filter((value): value is string => typeof value === "string");
-    out.push({ label: truncateDiagnostic(pieces.join(" · "), 220) });
+    out.push({
+      label: truncateDiagnostic(pieces.join(" · "), 220),
+    });
   }
 
   return out;
@@ -1927,26 +2284,6 @@ function formatCountRecord(counts: Record<string, number>): string {
     .join(", ");
 }
 
-function stableDiagnosticJson(value: unknown): string {
-  try {
-    return JSON.stringify(stableDiagnosticValue(value));
-  } catch {
-    return String(value);
-  }
-}
-
-function stableDiagnosticValue(value: unknown): unknown {
-  if (Array.isArray(value))
-    return value.slice(0, 20).map(stableDiagnosticValue);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .slice(0, 20)
-      .map((key) => [key, stableDiagnosticValue(value[key])]),
-  );
-}
-
 function truncateDiagnostic(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
@@ -1963,6 +2300,21 @@ function latestOpenModelPhaseKey(
 ): string | undefined {
   const prefix = `${runId}:model:`;
   return [...open.keys()].reverse().find((key) => key.startsWith(prefix));
+}
+
+function reconcileOpenPhasesWithRunTerminals(
+  open: Map<string, TraceTimelinePhase>,
+  terminalByRun: Map<string, SparkwrightEvent>,
+): void {
+  for (const [key, phase] of [...open.entries()]) {
+    const terminal = terminalByRun.get(phase.runId);
+    if (!terminal) continue;
+    if (terminal.sequence < phase.startSequence) continue;
+    const status = terminalTimelineStatus(terminal);
+    if (!status) continue;
+    completeTimelinePhase(phase, terminal, status);
+    open.delete(key);
+  }
 }
 
 function collectErrorCode(
@@ -2225,6 +2577,14 @@ function terminalTimelineStatus(
   return undefined;
 }
 
+function isRunTerminalEvent(event: SparkwrightEvent): boolean {
+  return (
+    event.type === "run.completed" ||
+    event.type === "run.failed" ||
+    event.type === "run.cancelled"
+  );
+}
+
 function timelineCategory(
   type: SparkwrightEvent["type"],
 ): TraceTimelinePhaseCategory {
@@ -2399,6 +2759,12 @@ function numberValue(...values: unknown[]): number {
     if (typeof value === "number" && Number.isFinite(value)) return value;
   }
   return 0;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function positiveNumber(value: unknown): boolean {

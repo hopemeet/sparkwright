@@ -19,6 +19,7 @@ export function CapabilitiesPanel(props: {
 
   const snapshot = props.snapshot;
   const tools = snapshot?.tools ?? [];
+  const model = snapshot?.model;
   const indexedSkills = snapshot?.skills.indexed ?? [];
   const loadedSkills = snapshot?.skills.loaded ?? [];
   const mcpServers = snapshot?.mcp.statuses ?? [];
@@ -30,6 +31,7 @@ export function CapabilitiesPanel(props: {
   const rows = snapshot
     ? capabilityRows({
         view: props.view,
+        model,
         tools,
         indexedSkills,
         loadedSkills,
@@ -44,6 +46,7 @@ export function CapabilitiesPanel(props: {
           error: theme.error,
           muted: theme.muted,
           success: theme.success,
+          warning: theme.warning,
         },
       })
     : [];
@@ -113,6 +116,7 @@ function footerText(scrollable: boolean, more: number): string {
 
 function capabilityRows(input: {
   view: CapabilityView;
+  model?: CapabilitySnapshot["model"];
   theme: CapabilityRowTheme;
   tools: CapabilitySnapshot["tools"];
   indexedSkills: CapabilitySnapshot["skills"]["indexed"];
@@ -155,6 +159,7 @@ interface CapabilityRowTheme {
   error: string;
   muted: string;
   success: string;
+  warning: string;
 }
 
 function capabilityPanelTitle(view: CapabilityView): string {
@@ -179,6 +184,7 @@ function addOverviewRows(
   rows: React.ReactElement[],
   props: {
     theme: CapabilityRowTheme;
+    model?: CapabilitySnapshot["model"];
     tools: CapabilitySnapshot["tools"];
     indexedSkills: CapabilitySnapshot["skills"]["indexed"];
     loadedSkills: CapabilitySnapshot["skills"]["loaded"];
@@ -201,6 +207,23 @@ function addOverviewRows(
       {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
       {props.mcpServers.length} MCP servers
     </Text>,
+    ...(props.model
+      ? [
+          <Text
+            key="overview-model"
+            color={
+              props.model.pricing.costStatus === "unavailable"
+                ? props.theme.warning
+                : props.theme.muted
+            }
+          >
+            Model: {props.model.modelRef}; pricing{" "}
+            {props.model.pricing.costStatus === "unavailable"
+              ? `unavailable (${props.model.pricing.costUnavailableReason ?? "unknown"})`
+              : props.model.pricing.source}
+          </Text>,
+        ]
+      : []),
     <Text key="overview-tool-map" color={props.theme.muted}>
       Tool map: {toolGroups.ready.length} ready, {toolGroups.deferred.length}{" "}
       via tool_search, {toolGroups.highRiskTotal} approval/high-risk.

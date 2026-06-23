@@ -90,6 +90,20 @@ export function createReadFileTool() {
       additionalProperties: false,
     },
     policy: { risk: "safe" },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const path = previewString(r.path);
+      if (!path) return undefined;
+      const offset =
+        typeof r.offset === "number" && Number.isFinite(r.offset)
+          ? `:${r.offset}`
+          : "";
+      const limit =
+        typeof r.limit === "number" && Number.isFinite(r.limit)
+          ? ` +${r.limit}`
+          : "";
+      return `${path}${offset}${limit}`;
+    },
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const { path: rawPath, offset, limit } = readFileToolInput(args);
@@ -276,6 +290,16 @@ function readOptionalPositiveNumber(
   return value;
 }
 
+function previewRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function previewString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -425,6 +449,14 @@ export function createSkillManagerTool(
       sideEffects: ["read", "write"],
       idempotency: "conditional",
     },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const action = previewString(r.action);
+      const name = previewString(r.name);
+      const force = r.force === true ? " · force" : "";
+      const preview = [action, name].filter(Boolean).join(" ");
+      return preview ? `${preview}${force}` : undefined;
+    },
     isReplaySafe: false,
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
@@ -551,6 +583,13 @@ export function createSkillUpdateTool(
       origin: { kind: "local", name: "sparkwright" },
       sideEffects: ["read", "write"],
       idempotency: "non_idempotent",
+    },
+    previewArgs(args) {
+      const r = previewRecord(args);
+      const action = previewString(r.action);
+      const name = previewString(r.name);
+      const preview = [action, name].filter(Boolean).join(" ");
+      return preview || undefined;
     },
     isReplaySafe: false,
     async execute(args: unknown, ctx) {

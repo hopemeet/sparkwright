@@ -369,4 +369,51 @@ describe("@sparkwright/sdk-core Client", () => {
       ],
     });
   });
+
+  it("collects canonical run.failed failures", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const collected = client.startRunAndCollect({
+      goal: "exercise terminal failure",
+    });
+    const request = transport.sent[0];
+
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: { runId: "run_1" },
+    });
+    transport.receive({
+      envelope: "event",
+      id: "evt_1",
+      kind: "run.failed",
+      timestamp: "2026-05-24T00:00:01.000Z",
+      payload: {
+        runId: "run_1",
+        failure: {
+          category: "runtime",
+          code: "internal_error",
+          message: "host failed",
+        },
+        error: {
+          code: "internal_error",
+          message: "host failed",
+        },
+      },
+    });
+
+    await expect(collected).resolves.toMatchObject({
+      failure: {
+        category: "runtime",
+        code: "internal_error",
+        message: "host failed",
+      },
+    });
+  });
 });

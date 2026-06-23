@@ -1305,6 +1305,42 @@ describe("trace", () => {
     });
   });
 
+  it("sorts trace report findings by severity and code", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "sort findings" }),
+      log.emit("model.completed", {
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      }),
+    ];
+
+    for (let i = 0; i < 85; i += 1) {
+      events.push(
+        log.emit("tool.requested", {
+          id: `read_${i}`,
+          toolName: "read_file",
+          arguments: { path: "README.md" },
+        }),
+      );
+    }
+    for (let i = 0; i < 10; i += 1) {
+      events.push(log.emit("workspace.read", { path: "README.md" }));
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings.map((finding) => finding.code)).toEqual([
+      "DUPLICATE_WORKSPACE_READS",
+      "EXCESSIVE_TOOL_CALLS",
+      "REPEATED_TOOL_REQUESTS",
+      "COST_UNAVAILABLE",
+    ]);
+  });
+
   it("reports multi-agent auditability findings from structured trace facts", () => {
     const log = new EventLog(createRunId());
     const events: SparkwrightEvent[] = [
@@ -1390,9 +1426,164 @@ describe("trace", () => {
         }),
         expect.objectContaining({
           severity: "medium",
-          code: "UNTRACKED_WRITE_CAPABLE_EXTERNAL_PROCESS",
+          code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
           evidence: expect.arrayContaining([
             expect.stringContaining("delegate_external"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("downgrades incomplete sub-agent severity only when parent verifies after child write", () => {
+    const parentRunId = createRunId();
+    const parentLog = new EventLog(parentRunId);
+    const childRunId = createRunId();
+    const childLog = new EventLog(childRunId);
+    const events: SparkwrightEvent[] = [
+      parentLog.emit("run.created", { goal: "delegate and verify" }),
+      childLog.emit("workspace.write.completed", {
+        path: "src/cart.ts",
+        bytes: 42,
+      }),
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId,
+          parentRunId,
+          terminalState: "step_limit",
+          stepLimitReached: true,
+          workspaceWrites: 1,
+        },
+        {
+          agentName: "writer",
+          childRunId,
+          parentRunId,
+          subagentDepth: 1,
+        },
+      ),
+      parentLog.emit("tool.requested", {
+        id: "verify",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      parentLog.emit("tool.completed", {
+        toolCallId: "verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      parentLog.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "SUBAGENT_INCOMPLETE",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("verifiedAfterChildWrite"),
+          ]),
+        }),
+      ]),
+    );
+    expect(
+      report.findings.some(
+        (finding) =>
+          finding.code === "SUBAGENT_INCOMPLETE" && finding.severity === "high",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps incomplete sub-agent severity high when verification predates the child write", () => {
+    const parentRunId = createRunId();
+    const parentLog = new EventLog(parentRunId);
+    const childRunId = createRunId();
+    const childLog = new EventLog(childRunId);
+    const events: SparkwrightEvent[] = [
+      parentLog.emit("run.created", { goal: "delegate and verify" }),
+      parentLog.emit("tool.requested", {
+        id: "verify",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      parentLog.emit("tool.completed", {
+        toolCallId: "verify",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      childLog.emit("workspace.write.completed", {
+        path: "src/cart.ts",
+        bytes: 42,
+      }),
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId,
+          parentRunId,
+          terminalState: "step_limit",
+          stepLimitReached: true,
+          workspaceWrites: 1,
+        },
+        {
+          agentName: "writer",
+          childRunId,
+          parentRunId,
+          subagentDepth: 1,
+        },
+      ),
+      parentLog.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "SUBAGENT_INCOMPLETE",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps sandboxed untracked write-capable boundaries at medium severity", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "promote shell" }),
+      log.emit("workspace.write.untracked_access_granted", {
+        taskId: "task_writer",
+        parentRunId: "run_parent",
+        toolName: "shell",
+        protocol: "promoted_shell",
+        marker: "untracked-write-capable",
+        access: "granted",
+        sandboxMode: "enforce",
+        filesystemIsolation: "bind-allowlist",
+        sandboxAvailable: true,
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "UNTRACKED_WRITE_CAPABLE_BOUNDARY",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("protocol promoted_shell"),
+            expect.stringContaining("fs bind-allowlist"),
           ]),
         }),
       ]),
@@ -1783,6 +1974,79 @@ describe("trace", () => {
     expect(summary.toolFailures.recovered.total).toBe(1);
     expect(report.findings.map((finding) => finding.code)).not.toContain(
       "TRACE_ERRORS",
+    );
+  });
+
+  it("surfaces unclassified failed terminal events in trace reports", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "background task" }),
+      log.emit("task.failed", {
+        taskId: "task_1",
+        errorCode: "TASK_EXIT_NONZERO",
+        message: "background task exited 1",
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "TRACE_ERRORS",
+          evidence: expect.arrayContaining([
+            "1 reportable failure event(s)",
+            "TASK_EXIT_NONZERO:1",
+            expect.stringContaining("task.failed · TASK_EXIT_NONZERO"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps foreground untracked workspace mutation guards as expected denials", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "foreground shell guard" }),
+      log.emit("tool.requested", {
+        id: "call_shell",
+        toolName: "shell",
+        arguments: { command: "echo x > leak.txt" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_shell",
+        toolName: "shell",
+        status: "failed",
+        error: {
+          code: "UNTRACKED_WORKSPACE_MUTATION",
+          message: "changed workspace files",
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(summary.expectedDenialCodes).toMatchObject({
+      UNTRACKED_WORKSPACE_MUTATION: 1,
+    });
+    expect(summary.toolFailures.unresolved.total).toBe(0);
+    expect(summary.safety.shell.untrackedWorkspaceMutations).toBe(1);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_ERRORS",
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
     );
   });
 
@@ -2452,6 +2716,38 @@ describe("trace", () => {
     ).not.toContain("model.stream.chunk");
   });
 
+  it("orders timeline phases by aggregate projection before file order", () => {
+    const traceId = createTraceId();
+    const timestamp = "2026-02-02T00:00:00.000Z";
+    const firstLog = new EventLog(createRunId());
+    const secondLog = new EventLog(createRunId());
+    const later = firstLog.emit(
+      "workspace.read",
+      { path: "later.md" },
+      { agentId: "main" },
+    );
+    const earlier = secondLog.emit(
+      "workspace.read",
+      { path: "earlier.md" },
+      { agentId: "main" },
+    );
+    for (const event of [later, earlier]) {
+      event.traceId = traceId;
+      event.timestamp = timestamp;
+    }
+    later.monotonicUs = 200;
+    earlier.monotonicUs = 100;
+
+    const timeline = buildTraceTimelineJsonl(
+      [later, earlier].map(serializeEventJsonl).join(""),
+    );
+
+    expect(timeline.phases.map((phase) => phase.label)).toEqual([
+      "workspace earlier.md",
+      "workspace later.md",
+    ]);
+  });
+
   it("uses semantic phase keys before spans in trace timelines", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -2526,6 +2822,69 @@ describe("trace", () => {
         }),
       ]),
     );
+  });
+
+  it("reconciles open phases when a run has a terminal failure", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}),
+      log.emit("model.requested", { step: 1 }),
+      log.emit("model.stream.failed", { step: 1, error: "auth failed" }),
+      log.emit("model.turn.completed", { step: 1 }),
+      log.emit("run.failed", {
+        reason: "model_auth_failed",
+        code: "MODEL_COMPLETION_FAILED",
+        message: "auth failed",
+      }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+    const modelPhase = timeline.phases.find(
+      (phase) => phase.category === "model" && phase.label === "model step 1",
+    );
+
+    expect(modelPhase).toMatchObject({
+      status: "failed",
+      startSequence: 3,
+      endSequence: 6,
+      eventTypes: ["model.requested", "run.failed"],
+    });
+    expect(timeline.phases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "pending",
+          eventTypes: expect.arrayContaining(["model.requested"]),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps open phases pending when a trace has no run terminal event", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events = [
+      log.emit("run.created", { goal: run.goal }),
+      log.emit("run.started", {}),
+      log.emit("model.requested", { step: 1 }),
+      log.emit("model.stream.failed", { step: 1, error: "auth failed" }),
+    ];
+
+    const timeline = buildTraceTimelineJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+    const modelPhase = timeline.phases.find(
+      (phase) => phase.category === "model" && phase.label === "model step 1",
+    );
+
+    expect(modelPhase).toMatchObject({
+      status: "pending",
+      startSequence: 3,
+      eventTypes: ["model.requested"],
+    });
   });
 
   it("pairs subagent lifecycle events by child run id before spans in trace timelines", () => {
@@ -3780,6 +4139,35 @@ describe("trace", () => {
 
     expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);
+  });
+
+  it("allows cross-run append order to differ from aggregate projection order", () => {
+    const parent = new EventLog(createRunId());
+    const child = new EventLog(createRunId());
+    const parentStart = parent.emit("run.created", { goal: "parent" });
+    const parentDone = parent.emit("run.completed", {
+      reason: "final_answer",
+    });
+    const childStart = child.emit("run.created", { goal: "child" });
+    const childDone = child.emit("run.completed", { reason: "final_answer" });
+    parentStart.timestamp = "2026-02-02T00:00:00.000Z";
+    parentDone.timestamp = "2026-02-02T00:00:01.000Z";
+    childStart.timestamp = "2026-02-02T00:00:02.000Z";
+    childDone.timestamp = "2026-02-02T00:00:03.000Z";
+
+    const report = verifyTraceJsonl(
+      [parentStart, childStart, childDone, parentDone]
+        .map(serializeEventJsonl)
+        .join(""),
+    );
+
+    expect(report.ok).toBe(true);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_PROJECTION_ORDER_INVALID",
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "TRACE_SEQUENCE_INVALID",
+    );
   });
 
   it("checks monotonic ordering per agent within a shared-trace multi-agent run", () => {

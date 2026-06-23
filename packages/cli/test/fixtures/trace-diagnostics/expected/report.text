@@ -1,6 +1,6 @@
 verdict: passed_with_issues
-headline: The same files were read repeatedly.
-runs: 1, sessions: 1, events: 25
+headline: The same files were read repeatedly (+1 more).
+runs: 1, sessions: 1, events: 26
 model/tool: 1 model calls, 1 tool calls
 tokens: 120
 safety: 1 workspace writes, 1 approvals requested
@@ -10,3 +10,6 @@ findings:
 - [medium] DUPLICATE_WORKSPACE_READS: The same files were read repeatedly
   evidence: top duplicate reads: README.md:10
   recommendation: Surface prior reads to the model or return cached-read hints for duplicate targets.
+- [medium] UNTRACKED_WRITE_CAPABLE_BOUNDARY: A process had untracked workspace write capability
+  evidence: delegate_external · agent writer · child cmd_writer · access granted
+  recommendation: Audit the process output and workspace diff separately; the trace records that write-capable access was granted, not per-file writes.

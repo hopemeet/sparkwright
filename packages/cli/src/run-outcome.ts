@@ -20,6 +20,7 @@ export interface CliRunEventSummary {
   mcpWorkspaceCwdServers: string[];
   subagentWriteCompleted: number;
   toolReportedChanges: number;
+  untrackedWriteCapableProcesses: number;
   runFailure?: CliRunFailureSummary;
 }
 
@@ -59,6 +60,7 @@ export function createCliRunEventSummary(): CliRunEventSummary {
     mcpWorkspaceCwdServers: [],
     subagentWriteCompleted: 0,
     toolReportedChanges: 0,
+    untrackedWriteCapableProcesses: 0,
   };
 }
 
@@ -86,6 +88,8 @@ export function updateCliRunEventSummary(
     summary.writeCompleted += 1;
   else if (event.type === "workspace.write.skipped") summary.writeSkipped += 1;
   else if (event.type === "workspace.write.denied") summary.writeDenied += 1;
+  else if (event.type === "workspace.write.untracked_access_granted")
+    summary.untrackedWriteCapableProcesses += 1;
   else if (event.type === "run.failed")
     summary.runFailure = runFailureSummary(event);
 }
@@ -184,20 +188,25 @@ export function summarizeWorkspaceMutations(input: {
   mcpWorkspaceCwdServers?: readonly string[];
   subagentWrites?: number;
   toolReportedChanges?: number;
+  untrackedWriteCapableProcesses?: number;
 }): string {
   const { shouldWrite, completed, skipped, denied } = input;
   const capabilityMutations = input.capabilityMutations ?? 0;
   const mcpWorkspaceCwdServers = input.mcpWorkspaceCwdServers ?? [];
   const subagentWrites = input.subagentWrites ?? 0;
   const toolReportedChanges = input.toolReportedChanges ?? 0;
+  const untrackedWriteCapableProcesses =
+    input.untrackedWriteCapableProcesses ?? 0;
   let summary: string;
   if (completed === 0 && skipped === 0 && denied === 0) {
     if (capabilityMutations > 0) {
-      summary = `Capability mutations: ${capabilityMutations} completed; no workspace write was applied.`;
+      summary = `Capability mutations: ${capabilityMutations} completed; no managed workspace write was applied.`;
     } else if (subagentWrites > 0) {
       summary = `Workspace changes applied by sub-agent(s): ${subagentWrites} write${subagentWrites === 1 ? "" : "s"}.`;
     } else if (toolReportedChanges > 0) {
-      summary = `Capability changes: ${toolReportedChanges} tool-reported; no workspace write was applied.`;
+      summary = `Capability changes: ${toolReportedChanges} tool-reported; no managed workspace write was applied.`;
+    } else if (untrackedWriteCapableProcesses > 0) {
+      summary = "No managed workspace writes were applied.";
     } else {
       summary = shouldWrite
         ? "No workspace changes were made (no workspace write was applied)."
@@ -211,7 +220,19 @@ export function summarizeWorkspaceMutations(input: {
     if (subagentWrites > 0) parts.push(`${subagentWrites} by sub-agent`);
     summary = `Workspace writes: ${parts.join(", ")}.`;
   }
+  summary = withUntrackedWriteCapabilityDisclosure(
+    summary,
+    untrackedWriteCapableProcesses,
+  );
   return withMcpWorkspaceCwdDisclosure(summary, mcpWorkspaceCwdServers);
+}
+
+function withUntrackedWriteCapabilityDisclosure(
+  summary: string,
+  count: number,
+): string {
+  if (count === 0) return summary;
+  return `${summary} Untracked write-capable boundaries: ${count} (not counted as managed workspace writes).`;
 }
 
 function mergeMcpWorkspaceCwdServers(
@@ -270,7 +291,7 @@ export function summarizeVerificationCommandFailures(
     : last
       ? `exitCode=${last.exitCode}`
       : "failed";
-  return `Run completed with failed verification (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
+  return `Run completed with verification failures; exiting 1 (${failures.length} unresolved command failure${failures.length === 1 ? "" : "s"}, ${status}).${command}`;
 }
 
 export function summarizeVerificationProfileResults(

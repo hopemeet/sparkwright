@@ -135,6 +135,28 @@ describe("TUI ↔ host via sdk-node", () => {
       compactedRunCount: 1,
       freedChars: result?.freedChars,
     });
+    const diagnostics = await controller.inspectSession(
+      controller.getSessionId(),
+    );
+    expect(diagnostics?.compaction).toMatchObject({
+      status: "compacted",
+      artifact: {
+        throughRunId: result?.throughRunId,
+        compactedRunCount: 1,
+        freedChars: result?.freedChars,
+      },
+      latestEvent: {
+        type: "session.compaction.completed",
+        throughRunId: result?.throughRunId,
+      },
+      consistency: {
+        ok: true,
+        artifactMatchesLatestCompletedEvent: true,
+      },
+    });
+    expect(JSON.stringify(diagnostics?.compaction)).not.toContain(
+      "Session deterministic-summary preview.",
+    );
     controller.shutdown();
   }, 30_000);
 
@@ -211,6 +233,33 @@ describe("TUI ↔ host via sdk-node", () => {
       },
     });
 
+    controller.shutdown();
+  }, 30_000);
+
+  it("inspects capabilities with the explicit model selection", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-5.4-nano",
+        providers: {
+          openai: {},
+        },
+      }),
+      "utf8",
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "openai/gpt-5.4-mini",
+      modelNameSource: "request",
+      store,
+    });
+
+    const snapshot = await controller.inspectCapabilities();
+
+    expect(snapshot?.model?.modelRef).toBe("openai/gpt-5.4-mini");
     controller.shutdown();
   }, 30_000);
 

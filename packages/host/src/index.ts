@@ -230,6 +230,7 @@ export type {
   HostClientApprovalRequestInput,
 } from "./client-approval.js";
 export {
+  createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,

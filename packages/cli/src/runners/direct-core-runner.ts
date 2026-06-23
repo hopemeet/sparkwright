@@ -281,6 +281,8 @@ export async function startDirectCoreRun(
         mcpWorkspaceCwdServers: eventSummary.mcpWorkspaceCwdServers,
         subagentWrites: eventSummary.subagentWriteCompleted,
         toolReportedChanges: eventSummary.toolReportedChanges,
+        untrackedWriteCapableProcesses:
+          eventSummary.untrackedWriteCapableProcesses,
       }),
     );
     const verificationProfileSummary =

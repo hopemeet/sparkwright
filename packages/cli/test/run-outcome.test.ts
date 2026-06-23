@@ -38,7 +38,7 @@ describe("CLI run outcome", () => {
       1,
     );
     expect(summarizeVerificationCommandFailures(summary)).toContain(
-      "failed verification",
+      "verification failures; exiting 1",
     );
     expect(summarizeVerificationCommandFailures(summary)).toContain(
       "python3 -m greettool.cli --name Ada",
@@ -95,7 +95,7 @@ describe("CLI run outcome", () => {
         toolReportedChanges: summary.toolReportedChanges,
       }),
     ).toBe(
-      "Capability changes: 1 tool-reported; no workspace write was applied.",
+      "Capability changes: 1 tool-reported; no managed workspace write was applied.",
     );
   });
 
@@ -129,7 +129,34 @@ describe("CLI run outcome", () => {
         toolReportedChanges: summary.toolReportedChanges,
       }),
     ).toBe(
-      "Capability mutations: 1 completed; no workspace write was applied.",
+      "Capability mutations: 1 completed; no managed workspace write was applied.",
+    );
+  });
+
+  it("summarizes untracked write-capable boundaries separately from managed writes", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    updateCliRunEventSummary(
+      summary,
+      log.emit("workspace.write.untracked_access_granted", {
+        toolName: "shell",
+        protocol: "promoted_shell",
+        marker: "untracked-write-capable",
+        access: "granted",
+      }),
+    );
+
+    expect(summary.untrackedWriteCapableProcesses).toBe(1);
+    expect(
+      summarizeWorkspaceMutations({
+        shouldWrite: true,
+        completed: summary.writeCompleted,
+        skipped: summary.writeSkipped,
+        denied: summary.writeDenied,
+        untrackedWriteCapableProcesses: summary.untrackedWriteCapableProcesses,
+      }),
+    ).toBe(
+      "No managed workspace writes were applied. Untracked write-capable boundaries: 1 (not counted as managed workspace writes).",
     );
   });
 

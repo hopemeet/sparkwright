@@ -108,6 +108,10 @@ npm run tui
 The root script rebuilds the workspace before launching. If you run compiled
 files directly after editing source, rebuild first with `npm run build`.
 
+In `/sessions`, select a session and press `i` to inspect diagnostics. When
+available, the inspect view includes the same compaction audit surfaced by
+`session inspect --compaction`, without printing compacted summary content.
+
 ## ACP Agent Server
 
 Use ACP when an editor or local ACP client wants to launch SparkWright as a
@@ -282,6 +286,7 @@ Use session commands for integrity checks and continuation:
 
 ```bash
 npm exec sparkwright -- session check <session-id> --workspace examples/repo-pilot --format text
+npm exec sparkwright -- session inspect <session-id> --workspace examples/repo-pilot --compaction --format text
 npm exec sparkwright -- session repair <session-id> --workspace examples/repo-pilot --dry-run
 npm exec sparkwright -- session resume <session-id> "continue the investigation" --workspace examples/repo-pilot
 ```
