@@ -236,6 +236,33 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
+  it("inspects capabilities with the explicit model selection", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        model: "openai/gpt-5.4-nano",
+        providers: {
+          openai: {},
+        },
+      }),
+      "utf8",
+    );
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "openai/gpt-5.4-mini",
+      modelNameSource: "request",
+      store,
+    });
+
+    const snapshot = await controller.inspectCapabilities();
+
+    expect(snapshot?.model?.modelRef).toBe("openai/gpt-5.4-mini");
+    controller.shutdown();
+  }, 30_000);
+
   it("passes a custom session root through to the spawned host", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     const sessionRoot = await mkdtemp(

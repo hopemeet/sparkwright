@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type {
+  CapabilityInspectRequestPayload,
   PermissionMode,
   RunInputPayload,
   RunResumeRequestPayload,
@@ -100,6 +101,17 @@ export function createHostResumeRunRequest(input: {
       : {}),
     shouldWrite: input.shouldWrite,
     metadata: input.metadata,
+  };
+}
+
+export function createHostCapabilityInspectRequest(input: {
+  sessionId?: string;
+  modelName?: string;
+  modelNameSource?: HostClientModelSource;
+}): CapabilityInspectRequestPayload {
+  return {
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    model: resolveHostRequestModel(input),
   };
 }
 

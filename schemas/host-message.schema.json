@@ -527,6 +527,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Reserved for future scoped inspection. Omit to inspect this connection's current host capability state."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Model reference in provider/model form, or the reserved deterministic model."
         }
       },
       "additionalProperties": false

@@ -1175,7 +1175,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm] [--compaction]",
+        "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]",
     };
   }
 
@@ -1208,7 +1208,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+        "Usage: sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     };
   }
 
@@ -1216,7 +1216,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--format json|text]',
+        'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--format json|text]',
     };
   }
 
@@ -1879,6 +1879,7 @@ async function handleCapabilitiesCommand(
       env,
       {
         resolveMcp: parsed.resolveMcp,
+        modelName: parsed.modelName,
       },
     );
     writeLine(
@@ -1994,7 +1995,7 @@ function formatDelegateRunResult(
 async function loadCapabilityInspectReport(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
-  options: { resolveMcp?: boolean } = {},
+  options: { resolveMcp?: boolean; modelName?: string } = {},
 ): Promise<CapabilityInspectReport> {
   const loaded = await loadHostConfig(workspaceRoot, env);
   const capabilities = loaded.config.capabilities;
@@ -2095,7 +2096,9 @@ async function loadCapabilityInspectReport(
       return descriptor ? [descriptor] : [];
     },
   );
-  const runtime = await inspectRuntimeCapabilities(workspaceRoot);
+  const runtime = await inspectRuntimeCapabilities(workspaceRoot, {
+    modelName: options.modelName,
+  });
   const delegateDescriptors =
     runtime?.agents.delegateTools ?? externalDelegateDescriptors;
 
@@ -2156,9 +2159,11 @@ async function loadCapabilityInspectReport(
 
 async function inspectRuntimeCapabilities(
   workspaceRoot: string,
+  options: { modelName?: string } = {},
 ): Promise<CapabilitySnapshot | undefined> {
   const runtime = new HostRuntime({
     workspaceRoot,
+    defaultModel: options.modelName,
     emit: () => {},
   });
   const inspected = await runtime.inspectCapabilities();
@@ -5375,7 +5380,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]";
   }
   if (command === "session") {
-    return "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm] [--compaction]";
+    return "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]";
   }
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
@@ -5480,7 +5485,7 @@ async function handleSessionCommand(
   if (!parsed.target) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--llm] [--compaction]",
+      "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]",
     );
     return { exitCode: 1 };
   }
@@ -5604,7 +5609,7 @@ async function handleSessionResumeCommand(
   if (!parsed.target || !parsed.goal) {
     writeLine(
       io.stderr,
-      "Usage: sparkwright session resume <session-id> <goal> [--workspace path] [--session-root path]",
+      "Usage: sparkwright session resume <session-id> <goal> [--workspace path] [--session-root path] [--model provider/model]",
     );
     return { exitCode: 1 };
   }
@@ -6478,12 +6483,12 @@ function usage(): string {
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
-    "       sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]",
+    "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    '       sparkwright delegates run <toolName> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
@@ -6500,7 +6505,7 @@ function usage(): string {
     "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
     "       sparkwright session <summary|inspect|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply] [--compaction]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--verbose]',
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--model provider/model] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");
 }
@@ -6522,11 +6527,14 @@ function tasksUsage(): string {
 }
 
 function capabilitiesUsage(): string {
-  return "Usage: sparkwright capabilities inspect [--workspace path] [--resolve-mcp] [--format json|text]";
+  return "Usage: sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]";
 }
 
 function delegatesUsage(): string {
-  return 'Usage: sparkwright delegates run <toolName> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]';
+  return [
+    'Usage: sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--goal text] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
+    "       Supports ACP and external-command delegate tools; internal profiles run through normal run-loop delegation.",
+  ].join("\n");
 }
 
 function skillsUsage(): string {

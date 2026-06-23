@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
@@ -106,6 +107,30 @@ describe("host client run request helpers", () => {
       targetPath: undefined,
       shouldWrite: false,
       metadata,
+    });
+  });
+
+  it("builds capability inspect payloads with the active request model", () => {
+    expect(
+      createHostCapabilityInspectRequest({
+        sessionId: "session_1",
+        modelName: "openai/configured",
+        modelNameSource: "config",
+      }),
+    ).toEqual({
+      sessionId: "session_1",
+      model: undefined,
+    });
+
+    expect(
+      createHostCapabilityInspectRequest({
+        sessionId: "session_1",
+        modelName: "openai/requested",
+        modelNameSource: "request",
+      }),
+    ).toEqual({
+      sessionId: "session_1",
+      model: "openai/requested",
     });
   });
 

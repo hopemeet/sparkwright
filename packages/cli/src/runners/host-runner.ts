@@ -406,6 +406,8 @@ async function runHostLifecycle(
         mcpWorkspaceCwdServers: eventSummary.mcpWorkspaceCwdServers,
         subagentWrites: eventSummary.subagentWriteCompleted,
         toolReportedChanges: eventSummary.toolReportedChanges,
+        untrackedWriteCapableProcesses:
+          eventSummary.untrackedWriteCapableProcesses,
       }),
     );
     const verificationProfileSummary =

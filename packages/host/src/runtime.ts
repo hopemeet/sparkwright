@@ -672,12 +672,14 @@ export class HostRuntime {
     return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
   }
 
-  async inspectCapabilities(): Promise<
+  async inspectCapabilities(
+    input: { modelRef?: string } = {},
+  ): Promise<
     | { ok: true; snapshot: CapabilitySnapshot }
     | { ok: false; error: ProtocolError }
   > {
     try {
-      const configured = await this.inspectConfiguredCapabilities();
+      const configured = await this.inspectConfiguredCapabilities(input);
       return {
         ok: true,
         snapshot: mergeCapabilitySnapshots(
@@ -2011,7 +2013,9 @@ export class HostRuntime {
     return byRun;
   }
 
-  private async inspectConfiguredCapabilities(): Promise<CapabilitySnapshot> {
+  private async inspectConfiguredCapabilities(input: {
+    modelRef?: string;
+  }): Promise<CapabilitySnapshot> {
     const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
     const baseToolConfig = loadedConfig.config.tools;
     const shellConfig = loadedConfig.config.shell;
@@ -2023,7 +2027,7 @@ export class HostRuntime {
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const automation = await this.inspectAutomationSummary();
     const model = await inspectResolvedModelConfig({
-      modelRef: this.opts.defaultModel,
+      modelRef: input.modelRef ?? this.opts.defaultModel,
       workspaceRoot: this.opts.workspaceRoot,
     });
     const resolvedProfiles = await resolveAgentProfiles(
@@ -4485,6 +4489,7 @@ function mergeCapabilitySnapshots(
 ): CapabilitySnapshot {
   if (!last) return configured;
   return {
+    model: configured.model ?? last.model,
     tools: mergeByName(configured.tools, last.tools),
     skills: {
       indexed: mergeByName(configured.skills.indexed, last.skills.indexed),

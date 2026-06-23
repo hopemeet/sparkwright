@@ -246,7 +246,9 @@ async function handleRequest(
       return false;
     }
     case "capability.inspect": {
-      const r = await runtime.inspectCapabilities();
+      const r = await runtime.inspectCapabilities({
+        modelRef: req.payload.model,
+      });
       if (r.ok)
         respondOk(
           conn,
@@ -404,8 +406,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "capability.inspect":
       return (
-        requireOnly(req.payload, ["sessionId"]) ??
-        optionalString(req.payload, "sessionId")
+        requireOnly(req.payload, ["sessionId", "model"]) ??
+        optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "model")
       );
   }
 }

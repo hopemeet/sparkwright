@@ -456,9 +456,10 @@ scanning files or interpreting local config.
 
 **Payload**
 
-| Field       | Type   | Required | Notes                             |
-| ----------- | ------ | -------- | --------------------------------- |
-| `sessionId` | string | no       | Reserved for future scoped views. |
+| Field       | Type   | Required | Notes                                                                                            |
+| ----------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId` | string | no       | Reserved for future scoped views.                                                                |
+| `model`     | string | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
 
 **Response result**
 

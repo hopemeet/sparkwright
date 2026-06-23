@@ -1354,6 +1354,108 @@ describe("host protocol", () => {
     }
   });
 
+  it("uses the requested runtime model for capability inspection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-capability-model-"),
+    );
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {},
+          },
+        }),
+        "utf8",
+      );
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        emit: () => {},
+      });
+
+      const inspected = await runtime.inspectCapabilities({
+        modelRef: "openai/gpt-5.4-mini",
+      });
+
+      expect(inspected).toMatchObject({
+        ok: true,
+        snapshot: {
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+            providerKey: "openai",
+            modelId: "gpt-5.4-mini",
+          },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("passes capability inspect model through the host protocol", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-capability-protocol-model-"),
+    );
+    const pair = createConnectionPair();
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          model: "openai/gpt-5.4-nano",
+          providers: {
+            openai: {},
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "cap",
+        kind: "capability.inspect",
+        timestamp: TIMESTAMP,
+        payload: {
+          model: "openai/gpt-5.4-mini",
+        },
+      });
+
+      const resp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "cap",
+      );
+      expect(resp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          model: {
+            modelRef: "openai/gpt-5.4-mini",
+          },
+        },
+      });
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed approval decisions before runtime dispatch", async () => {
     const pair = createConnectionPair();
     serveConnection(pair.hostSide, {

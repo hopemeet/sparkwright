@@ -2,6 +2,7 @@ import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
+  createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostStartRunRequest,
   recordHostClientStartFailure,
@@ -426,7 +427,13 @@ export class RunController {
   async inspectCapabilities(): Promise<CapabilitySnapshot | null> {
     try {
       const client = await this.ensureClient();
-      return await client.inspectCapabilities();
+      return await client.inspectCapabilities(
+        createHostCapabilityInspectRequest({
+          sessionId: this.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+        }),
+      );
     } catch (err) {
       this.store.setError(formatError(err));
       return null;

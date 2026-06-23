@@ -404,6 +404,8 @@ export interface CapabilityInspectRequestPayload {
    * capability state known to this connection.
    */
   sessionId?: string;
+  /** Model reference in "provider/model" form, or the reserved "deterministic". */
+  model?: string;
 }
 
 export type HostRequest =
