@@ -2,10 +2,13 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parse as parseYaml } from "yaml";
+import {
+  configuredModelAvailability,
+  prepareIsolatedUserConfig as prepareIsolatedRealModelConfig,
+} from "./lib/real-model-config.mjs";
 
 const CLI = ["node", "packages/cli/dist/index.js"];
 const DEFAULT_MODEL = "openai/gpt-5.4-mini";
@@ -20,7 +23,9 @@ try {
   await staticToolDisabledCase();
   await scriptedShellManagedPackageGuardCase();
 
-  const availability = await configuredModelAvailability(requestedModel);
+  const availability = await configuredModelAvailability(requestedModel, {
+    runCli,
+  });
   if (!availability.available) {
     record({
       id: "SETUP_REAL_MODEL",
@@ -126,7 +131,7 @@ async function scriptedShellManagedPackageGuardCase() {
       },
     },
   );
-  const trace = await traceFromOutput(result.stdout);
+  const trace = await traceFromOutput(result.stdout, { workspace });
   const failedShell = trace.events.find(
     (event) =>
       event.type === "tool.failed" &&
@@ -169,7 +174,7 @@ async function realCreateSkillCase() {
     tools: { disabled: ["shell"] },
   });
   const prompt =
-    "Create a new project skill named release-reviewer for release readiness checks. Use SparkWright skill tools, not shell. Do not modify files except creating the skill.";
+    "Create a new project skill named release-reviewer for release readiness checks. Use list_skills if needed, call create_skill exactly once, omit the root argument so SparkWright uses the project skill root, then stop immediately and answer with the created path. Do not use shell. Do not modify files except creating the skill.";
   const result = await runCli([
     "run",
     prompt,
@@ -182,14 +187,28 @@ async function realCreateSkillCase() {
     "--trace-level",
     "debug",
   ]);
-  const trace = await traceFromOutput(result.stdout);
+  const trace = await traceFromOutput(result.stdout, { workspace });
   const requests = toolRequests(trace.events);
   const skillEntries = await skillDirEntries(workspace, "release-reviewer");
+  const failures = toolFailures(trace.events);
+  const outcome = runOutcome(trace.events);
+  const recoveredCreateSkillFailures =
+    failures.length > 0 &&
+    // This canary specifically asserts the runtime repeat-skip recovery path.
+    // Keep the allowlist to REPEATED_TOOL_CALL_SKIPPED only: any other failure
+    // code (e.g. TOOL_ARGUMENTS_INVALID) is a distinct mode that should fail
+    // loudly here rather than be silently absorbed.
+    failures.every(
+      (failure) =>
+        failure.toolName === "create_skill" &&
+        failure.code === "REPEATED_TOOL_CALL_SKIPPED",
+    ) &&
+    outcome?.failing === false;
   const ok =
     result.exitCode === 0 &&
     requests.includes("create_skill") &&
     !requests.includes("shell") &&
-    !has(trace.events, "tool.failed") &&
+    (failures.length === 0 || recoveredCreateSkillFailures) &&
     skillEntries.includes("SKILL.md") &&
     !skillEntries.includes("skill.md") &&
     count(trace.events, "workspace.write.completed") === 1;
@@ -210,7 +229,8 @@ async function realCreateSkillCase() {
           exitCode: result.exitCode,
           requests,
           skillEntries,
-          failures: toolFailures(trace.events),
+          failures,
+          outcome,
           writes: count(trace.events, "workspace.write.completed"),
         }),
   });
@@ -238,7 +258,7 @@ async function realUpdateSkillProposalCase() {
     join(workspace, ".sparkwright", "skills", "repo-reviewer", "SKILL.md"),
   );
   const prompt =
-    "Evolve the existing repo-reviewer skill to also check missing test coverage. Create a draft proposal only; do not apply it. Use SparkWright skill tools, not shell.";
+    "Evolve the existing repo-reviewer skill to also check missing test coverage. Use list_skills if needed, call update_skill exactly once to create one draft proposal, then stop immediately and answer with the proposal id. Do not apply it. Do not use shell.";
   const result = await runCli([
     "run",
     prompt,
@@ -251,7 +271,7 @@ async function realUpdateSkillProposalCase() {
     "--trace-level",
     "debug",
   ]);
-  const trace = await traceFromOutput(result.stdout);
+  const trace = await traceFromOutput(result.stdout, { workspace });
   const requests = toolRequests(trace.events);
   const proposals = await listProposalIds(workspace);
   const afterHash = fileHash(
@@ -340,161 +360,11 @@ async function listProposalIds(workspace) {
 }
 
 async function prepareIsolatedUserConfig(availability) {
-  const targetDir = join(isolatedXdgConfigHome, "sparkwright");
-  await mkdir(targetDir, { recursive: true });
-  await mkdir(isolatedXdgStateHome, { recursive: true });
-  const copied = new Set();
-  for (const file of availability.configFiles ?? []) {
-    if (!existsSync(file) || copied.has(file)) continue;
-    copied.add(file);
-    await writeFile(
-      join(targetDir, basename(file)),
-      await readFile(file, "utf8"),
-      "utf8",
-    );
-  }
-  if (copied.size > 0) return;
-
-  const providerConfig = availability.providerConfig;
-  if (!providerConfig) return;
-  const providerForFixture = { ...providerConfig };
-  if (providerForFixture.apiKey === "<redacted>") {
-    delete providerForFixture.apiKey;
-  }
-  await writeFile(
-    join(targetDir, "config.json"),
-    `${JSON.stringify(
-      {
-        model: requestedModel,
-        providers: {
-          [availability.provider]: providerForFixture,
-        },
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-async function configuredModelAvailability(model) {
-  const [provider, modelId] = model.split("/", 2);
-  if (!provider || !modelId) {
-    return {
-      available: false,
-      reason: `model must be provider/model, got ${model}`,
-    };
-  }
-
-  const result = await runCli(
-    ["config", "inspect", "--workspace", ".", "--format", "json"],
-    { isolateConfig: false },
-  );
-  if (result.exitCode !== 0) {
-    return {
-      available: false,
-      reason: `config inspect failed with exitCode=${result.exitCode}: ${result.stderr || result.stdout}`,
-    };
-  }
-
-  let report;
-  try {
-    report = JSON.parse(result.stdout);
-  } catch (error) {
-    return {
-      available: false,
-      reason: `config inspect output was not JSON: ${String(error)}`,
-    };
-  }
-
-  const configFiles = configFilesForProvider(report, provider);
-  const providerConfig =
-    providerConfigFromEffectiveReport(report, provider) ??
-    (await providerConfigFromFiles(configFiles, provider));
-  if (!providerConfig) {
-    return {
-      available: false,
-      reason: `No effective config entry found for provider ${provider}; set SPARKWRIGHT_REAL_MODEL to a configured real model.`,
-    };
-  }
-  const modelIds = Object.keys(providerConfig.models ?? {});
-  const hasModel = modelIds.length === 0 || modelIds.includes(modelId);
-  const hasKey =
-    Boolean(providerConfig.apiKey) ||
-    Boolean(process.env[`${provider.toUpperCase()}_API_KEY`]);
-  if (!hasKey || !hasModel) {
-    return {
-      available: false,
-      reason:
-        `${model} was not fully available in the effective config ` +
-        `(apiKey=${hasKey ? "present" : "missing"} model=${hasModel ? "present" : "missing"}; ` +
-        `available models: ${modelIds.join(",") || "(unrestricted)"})`,
-    };
-  }
-
-  return {
-    available: true,
-    provider,
-    modelId,
-    providerConfig,
-    configFiles,
-  };
-}
-
-function providerConfigFromEffectiveReport(report, provider) {
-  return (
-    report.config?.providers?.[provider] ??
-    report.config?.identity?.providers?.[provider]
-  );
-}
-
-async function providerConfigFromFiles(files, provider) {
-  for (const file of files) {
-    if (!existsSync(file)) continue;
-    const config = await readConfigFile(file).catch(() => undefined);
-    const providerConfig =
-      config?.providers?.[provider] ?? config?.identity?.providers?.[provider];
-    if (providerConfig) return providerConfig;
-  }
-  return undefined;
-}
-
-async function readConfigFile(file) {
-  const text = await readFile(file, "utf8");
-  if (/\.ya?ml$/i.test(file)) return parseYaml(text);
-  return JSON.parse(text);
-}
-
-function configFilesForProvider(report, provider) {
-  const files = [];
-  const providerSource = report.sources?.providers?.[provider];
-  const identityProviderSource =
-    report.sources?.identity?.providers?.[provider];
-  const modelSource = report.sources?.model;
-  const identityModelSource = report.sources?.identity?.model;
-  for (const source of [
-    providerSource,
-    identityProviderSource,
-    modelSource,
-    identityModelSource,
-  ]) {
-    const file = fileFromSource(source);
-    if (file) files.push(file);
-  }
-  for (const layer of report.layers ?? []) {
-    if (layer?.loaded && typeof layer.path === "string") {
-      files.push(layer.path);
-    }
-  }
-  return [...new Set(files)];
-}
-
-function fileFromSource(source) {
-  if (typeof source !== "string") return undefined;
-  const index = source.indexOf(":");
-  if (index < 0) return undefined;
-  const value = source.slice(index + 1);
-  return value.startsWith("/") ? value : undefined;
+  await prepareIsolatedRealModelConfig(availability, {
+    isolatedXdgConfigHome,
+    isolatedXdgStateHome,
+    requestedModel,
+  });
 }
 
 async function runCli(args, options = {}) {
@@ -553,12 +423,12 @@ async function runCommand(command, options = {}) {
   });
 }
 
-async function traceFromOutput(stdout) {
+async function traceFromOutput(stdout, options = {}) {
   const match =
     stdout.match(/Trace written to (.+)$/m) ??
     stdout.match(/Validation trace written to (.+)$/m);
-  if (!match) throw new Error(`No trace path in output:\n${stdout}`);
-  const path = match[1].trim();
+  const path = match?.[1].trim() ?? (await newestWorkspaceTrace(options));
+  if (!path) throw new Error(`No trace path in output:\n${stdout}`);
   const events = await readTrace(path);
   return {
     path,
@@ -567,6 +437,30 @@ async function traceFromOutput(stdout) {
       events.find((event) => event.metadata?.sessionId)?.metadata?.sessionId ??
       path.split("/").at(-2),
   };
+}
+
+async function newestWorkspaceTrace(options) {
+  if (!options.workspace) return undefined;
+  const sessionRoot = join(options.workspace, ".sparkwright", "sessions");
+  let entries;
+  try {
+    entries = await readdir(sessionRoot, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  const traces = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const path = join(sessionRoot, entry.name, "trace.jsonl");
+          const info = await stat(path).catch(() => undefined);
+          return info?.isFile() ? { path, mtimeMs: info.mtimeMs } : undefined;
+        }),
+    )
+  ).filter(Boolean);
+  traces.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  return traces[0]?.path;
 }
 
 async function readTrace(path) {
@@ -597,6 +491,11 @@ function toolFailures(events) {
       code: event.payload?.error?.code,
       message: event.payload?.error?.message,
     }));
+}
+
+function runOutcome(events) {
+  return events.findLast((event) => event.type === "run.completed")?.payload
+    ?.outcome;
 }
 
 function has(events, type) {

@@ -1,6 +1,7 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { defineTool } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   CronStore,
@@ -113,6 +114,84 @@ describe("CronStore", () => {
     release();
     await held;
     expect(result.skippedBecauseLocked).toBe(true);
+  });
+
+  it("uses a fresh model adapter for each due tick job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-fresh-"));
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cron-ws-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const store = new CronStore({ rootDir: root });
+    const createdAt = new Date("2026-01-01T00:00:00.000Z");
+    await store.createJob(
+      {
+        prompt: "summarize readme a",
+        schedule: "every 1m",
+        workspace,
+      },
+      createdAt,
+    );
+    await store.createJob(
+      {
+        prompt: "summarize readme b",
+        schedule: "every 1m",
+        workspace,
+      },
+      createdAt,
+    );
+
+    let modelAdapters = 0;
+    let readFileCalls = 0;
+    const readFileTool = defineTool({
+      name: "read_file",
+      description: "Read a file.",
+      inputSchema: { type: "object" },
+      async execute() {
+        readFileCalls += 1;
+        return {
+          path: "README.md",
+          content: "# Demo\n",
+          startLine: 1,
+          endLine: 1,
+          totalLines: 1,
+          hasMore: false,
+        };
+      },
+    });
+
+    const result = await tickCron({
+      rootDir: root,
+      store,
+      tools: [readFileTool],
+      modelFactory() {
+        modelAdapters += 1;
+        let calls = 0;
+        return {
+          async complete() {
+            calls += 1;
+            if (calls === 1) {
+              return {
+                toolCalls: [
+                  {
+                    toolName: "read_file",
+                    arguments: { path: "README.md" },
+                  },
+                ],
+              };
+            }
+            return { message: "Read README.md" };
+          },
+        };
+      },
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      attempted: 2,
+      completed: 2,
+      skippedBecauseLocked: false,
+    });
+    expect(modelAdapters).toBe(2);
+    expect(readFileCalls).toBe(2);
   });
 
   it("locks manual runs per job and does not double-mark the job", async () => {

@@ -702,7 +702,7 @@ export async function executeTool(
     return {
       toolCallId: call.id,
       status: "failed",
-      error: normalizeExecutionError(cause),
+      error: normalizeToolError(cause),
       artifacts: [],
     };
   }
@@ -717,22 +717,26 @@ function isAbortError(cause: unknown): boolean {
   return false;
 }
 
-function normalizeExecutionError(cause: unknown): SparkwrightError {
+export function normalizeToolError(
+  cause: unknown,
+  fallback: { code: string; message: string } = {
+    code: "TOOL_EXECUTION_FAILED",
+    message: "Tool execution failed.",
+  },
+): SparkwrightError {
   if (isRecord(cause) && typeof cause.code === "string") {
     return {
       code: cause.code,
       message:
-        typeof cause.message === "string"
-          ? cause.message
-          : "Tool execution failed.",
+        typeof cause.message === "string" ? cause.message : fallback.message,
       cause,
       metadata: isRecord(cause.metadata) ? cause.metadata : undefined,
     };
   }
 
   return {
-    code: "TOOL_EXECUTION_FAILED",
-    message: cause instanceof Error ? cause.message : "Tool execution failed.",
+    code: fallback.code,
+    message: cause instanceof Error ? cause.message : fallback.message,
     cause,
   };
 }

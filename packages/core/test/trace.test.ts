@@ -1305,6 +1305,34 @@ describe("trace", () => {
     });
   });
 
+  it("reports traces that are missing a terminal run event", () => {
+    const runId = createRunId();
+    const log = new EventLog(runId);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "missing terminal" }),
+      log.emit("tool.requested", {
+        id: "call_1",
+        toolName: "shell",
+        arguments: { command: "pwd", timeoutMs: 0 },
+      }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.verdict).toBe("failed");
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          code: "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+          evidence: [`${runId}: terminalCount=0`],
+        }),
+      ]),
+    );
+  });
+
   it("sorts trace report findings by severity and code", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -1495,6 +1523,14 @@ describe("trace", () => {
       report.findings.some(
         (finding) =>
           finding.code === "SUBAGENT_INCOMPLETE" && finding.severity === "high",
+      ),
+    ).toBe(false);
+    // The child's `workspace.write.completed` carries the child runId but has no
+    // `run.created`/`run.*` terminal in this trace; it must not be mistaken for a
+    // run with a missing terminal.
+    expect(
+      report.findings.some(
+        (finding) => finding.code === "TRACE_TERMINAL_EVENT_COUNT_INVALID",
       ),
     ).toBe(false);
   });
