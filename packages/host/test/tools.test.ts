@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   writeFile,
 } from "node:fs/promises";
@@ -1072,6 +1073,43 @@ describe("host tools", () => {
         "utf8",
       ),
     ).resolves.toContain("Review changes.");
+  });
+
+  it("returns the existing run draft for repeated skill update proposals", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/skills/repo-review/SKILL.md": [
+        "---",
+        "name: repo-review",
+        "description: review repository changes",
+        "---",
+        "",
+        "Review changes.",
+        "",
+      ].join("\n"),
+    });
+    const tool = createSkillUpdateTool(ctx.workspaceRoot, undefined);
+    const input = {
+      action: "draft",
+      name: "repo-review",
+      description: "Add missing-test guidance",
+    };
+
+    const first = await tool.execute(input, ctx);
+    const second = await tool.execute(input, ctx);
+    const proposals = await readdir(
+      join(ctx.workspaceRoot, ".sparkwright", "skill-evolution", "proposals"),
+    );
+
+    expect(first).toMatchObject({
+      changed: true,
+      existing: false,
+    });
+    expect(second).toMatchObject({
+      changed: false,
+      existing: true,
+      proposalId: (first as { proposalId: string }).proposalId,
+    });
+    expect(proposals).toHaveLength(1);
   });
 
   it("creates project agent profiles and delegate tools", async () => {

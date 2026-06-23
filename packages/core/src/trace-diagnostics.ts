@@ -221,6 +221,7 @@ interface TraceReportFacts {
   uniqueWritePaths: string[];
   verificationLag?: { modelCallsAfterLastWrite: number; command: string };
   reportableFailures: ReportableFailureLedger;
+  terminalRunAnomalies: TerminalRunAnomaly[];
   incompleteSubagents: IncompleteSubagentTerminal[];
   inFlightDuplicateStorms: Array<{ label: string; count: number }>;
   repeatedApprovalDenials: Array<{ label: string; count: number }>;
@@ -246,11 +247,17 @@ interface ReportableFailureLedger {
   byCode: Record<string, number>;
 }
 
+interface TerminalRunAnomaly {
+  runId: string;
+  terminalCount: number;
+}
+
 type TraceReportAnalyzer = (
   context: TraceReportContext,
 ) => TraceReportFinding[];
 
 const TRACE_REPORT_ANALYZERS: TraceReportAnalyzer[] = [
+  analyzeTraceStructure,
   analyzeTraceFailures,
   analyzeCommandFailures,
   analyzeMultiAgentAuditability,
@@ -286,6 +293,7 @@ function collectTraceReportFacts(
   const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
   const verificationLag = collectVerificationLagAfterLastWrite(events);
   const reportableFailures = collectReportableFailures(events);
+  const terminalRunAnomalies = collectTerminalRunAnomalies(events);
   const incompleteSubagents = collectIncompleteSubagentTerminals(events);
   const inFlightDuplicateStorms = collectInFlightDuplicateStorms(events);
   const repeatedApprovalDenials = collectRepeatedApprovalDenials(events);
@@ -308,6 +316,7 @@ function collectTraceReportFacts(
     uniqueWritePaths,
     verificationLag,
     reportableFailures,
+    terminalRunAnomalies,
     incompleteSubagents,
     inFlightDuplicateStorms,
     repeatedApprovalDenials,
@@ -316,6 +325,25 @@ function collectTraceReportFacts(
     workspaceWrites,
     approvalsRequested,
   };
+}
+
+function analyzeTraceStructure({
+  facts,
+}: TraceReportContext): TraceReportFinding[] {
+  const { terminalRunAnomalies } = facts;
+  if (terminalRunAnomalies.length === 0) return [];
+  return [
+    {
+      severity: "high",
+      code: "TRACE_TERMINAL_EVENT_COUNT_INVALID",
+      title: "Trace is missing a valid run terminal",
+      evidence: terminalRunAnomalies
+        .slice(0, 5)
+        .map((item) => `${item.runId}: terminalCount=${item.terminalCount}`),
+      recommendation:
+        "Inspect the raw trace for an uncaught runtime error or truncated write before trusting derived reports.",
+    },
+  ];
 }
 
 function analyzeTraceFailures({
@@ -1955,6 +1983,46 @@ function collectRepeatedCommandFailures(
   return [...counts.values()]
     .filter((item) => item.count >= 2)
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function collectTerminalRunAnomalies(
+  events: readonly SparkwrightEvent[],
+): TerminalRunAnomaly[] {
+  // Only audit runs that actually began in this trace. Child/subagent steps are
+  // tagged with the child runId (e.g. a child `workspace.write.completed`) but
+  // their start/terminal live in the child's own trace and surface here as a
+  // `subagent.completed`, not a `run.*` terminal. Scoping to runIds that emitted
+  // `run.created` keeps the missing-terminal signal without flagging those.
+  const startedRunIds = new Set<string>();
+  const terminalCountByRun = new Map<string, number>();
+  const cancelledCountByRun = new Map<string, number>();
+
+  for (const event of events) {
+    if (typeof event.runId !== "string" || event.runId.length === 0) continue;
+    if (event.type === "run.created") startedRunIds.add(event.runId);
+    if (!isRunTerminalEvent(event)) continue;
+    terminalCountByRun.set(
+      event.runId,
+      (terminalCountByRun.get(event.runId) ?? 0) + 1,
+    );
+    if (event.type === "run.cancelled") {
+      cancelledCountByRun.set(
+        event.runId,
+        (cancelledCountByRun.get(event.runId) ?? 0) + 1,
+      );
+    }
+  }
+
+  return [...startedRunIds]
+    .map((runId) => {
+      const total = terminalCountByRun.get(runId) ?? 0;
+      const cancelled = cancelledCountByRun.get(runId) ?? 0;
+      const primary = total - cancelled;
+      const terminalCount = primary > 0 ? primary : cancelled;
+      return { runId, terminalCount };
+    })
+    .filter((item) => item.terminalCount !== 1)
+    .sort((a, b) => a.runId.localeCompare(b.runId));
 }
 
 interface IncompleteSubagentTerminal {

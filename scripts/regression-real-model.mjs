@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  configuredModelAvailability,
+  prepareIsolatedUserConfig,
+} from "./lib/real-model-config.mjs";
 
 const CLI = ["node", "packages/cli/dist/index.js"];
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
@@ -25,7 +23,9 @@ const isolatedXdgStateHome = join(tempRoot, "xdg-state");
 const cases = [];
 
 try {
-  const availability = configuredModelAvailability(requestedModel);
+  const availability = await configuredModelAvailability(requestedModel, {
+    runCli,
+  });
   if (!availability.available) {
     record({
       id: "SETUP",
@@ -37,7 +37,11 @@ try {
     process.exit(0);
   }
 
-  await prepareIsolatedUserConfig(availability);
+  await prepareIsolatedUserConfig(availability, {
+    isolatedXdgConfigHome,
+    isolatedXdgStateHome,
+    requestedModel,
+  });
   await createFixture();
   const beforeSnapshot = await snapshotWorkspace(workspace);
 
@@ -325,7 +329,7 @@ function unsupportedClaimIncludesCommand(outcome, expectedCommands) {
 
 async function writeDeniedCase(beforeSnapshot) {
   const prompt =
-    "You must test SparkWright's write guard. Call append_file exactly once to append heading `Real Write Denied` and body `This line must not be written.` to README.md. Do not use shell. After the tool result, briefly report whether the write was denied.";
+    "You must test SparkWright's write guard. Call write_file exactly once to replace README.md with exactly `# Real Write Denied\\n\\nThis line must not be written.\\n`. Do not use shell. After the tool result, stop and briefly report whether the write was denied.";
   const result = await runCli([
     "run",
     prompt,
@@ -342,7 +346,7 @@ async function writeDeniedCase(beforeSnapshot) {
   const failedWriteTool = trace.events.find(
     (event) =>
       event.type === "tool.failed" &&
-      event.payload?.toolName === "append_file" &&
+      event.payload?.toolName === "write_file" &&
       event.payload?.error?.code === "TOOL_DENIED",
   );
   const ok =
@@ -361,14 +365,14 @@ async function writeDeniedCase(beforeSnapshot) {
     trace: trace.path,
     session: trace.sessionId,
     evidence:
-      `appendFailed=${Boolean(failedWriteTool)}; ` +
+      `writeFailed=${Boolean(failedWriteTool)}; ` +
       `writesCompleted=${count(trace.events, "workspace.write.completed")}; ` +
       `approvals=${count(trace.events, "approval.requested")}`,
     reason: ok
       ? undefined
       : failureDetails({
           exitCode: result.exitCode,
-          appendFailed: Boolean(failedWriteTool),
+          writeFailed: Boolean(failedWriteTool),
           writesCompleted: count(trace.events, "workspace.write.completed"),
           approvals: count(trace.events, "approval.requested"),
           snapshotChanged: !snapshotsEqual(beforeSnapshot, afterSnapshot),
@@ -744,81 +748,6 @@ async function writeFixtureFile(relativePath, content) {
   await writeFile(path, content, "utf8");
 }
 
-function configuredModelAvailability(model) {
-  const [provider, modelId] = model.split("/", 2);
-  if (!provider || !modelId) {
-    return {
-      available: false,
-      reason: `model must be provider/model, got ${model}`,
-    };
-  }
-
-  const configFiles = candidateConfigFiles();
-  const mismatches = [];
-  for (const file of configFiles) {
-    if (!existsSync(file)) continue;
-    let config;
-    try {
-      config = JSON.parse(readFileSync(file, "utf8"));
-    } catch {
-      continue;
-    }
-    const providerConfig = config.providers?.[provider];
-    if (!providerConfig) continue;
-    const hasKey =
-      Boolean(providerConfig.apiKey) ||
-      Boolean(process.env[`${provider.toUpperCase()}_API_KEY`]);
-    const hasModel = Boolean(providerConfig.models?.[modelId]);
-    if (hasKey && hasModel) {
-      return { available: true, configFile: file, provider, modelId };
-    }
-    mismatches.push(
-      `${file}: apiKey=${hasKey ? "present" : "missing"} model=${hasModel ? "present" : "missing"}`,
-    );
-  }
-
-  return {
-    available: false,
-    reason:
-      mismatches.length > 0
-        ? `${model} was not fully available in matching provider configs (${mismatches.join("; ")}).`
-        : `No config entry found for ${model}; set SPARKWRIGHT_REAL_MODEL to a configured real model.`,
-  };
-}
-
-async function prepareIsolatedUserConfig(availability) {
-  if (!availability.configFile || !availability.provider) return;
-  const raw = JSON.parse(readFileSync(availability.configFile, "utf8"));
-  const providerConfig = raw.providers?.[availability.provider];
-  if (!providerConfig) return;
-  const targetDir = join(isolatedXdgConfigHome, "sparkwright");
-  await mkdir(targetDir, { recursive: true });
-  await mkdir(isolatedXdgStateHome, { recursive: true });
-  await writeFile(
-    join(targetDir, "config.json"),
-    `${JSON.stringify(
-      {
-        model: requestedModel,
-        providers: {
-          [availability.provider]: providerConfig,
-        },
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
-function candidateConfigFiles() {
-  const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
-  return [
-    join(workspace, ".sparkwright", "config.json"),
-    join(xdg, "sparkwright", "config.json"),
-    join(homedir(), ".config", "sparkwright", "config.json"),
-  ];
-}
-
 async function runCli(args, options = {}) {
   const command = [...CLI, ...args];
   const result = await runCommand(command, options);
@@ -828,13 +757,21 @@ async function runCli(args, options = {}) {
 async function runCommand(command, options = {}) {
   const [bin, ...args] = command;
   return await new Promise((resolve) => {
+    const env =
+      options.isolateConfig === false
+        ? {
+            ...process.env,
+            ...(options.env ?? {}),
+          }
+        : {
+            ...process.env,
+            XDG_CONFIG_HOME: isolatedXdgConfigHome,
+            XDG_STATE_HOME: isolatedXdgStateHome,
+            ...(options.env ?? {}),
+          };
     const child = spawn(bin, args, {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        XDG_CONFIG_HOME: isolatedXdgConfigHome,
-        XDG_STATE_HOME: isolatedXdgStateHome,
-      },
+      env,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";

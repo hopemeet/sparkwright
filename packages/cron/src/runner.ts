@@ -18,7 +18,8 @@ import { writeJobOutput } from "./output.js";
 
 export interface RunCronJobOptions {
   rootDir: string;
-  model: ModelAdapter;
+  model?: ModelAdapter;
+  modelFactory?: (job: CronJob) => ModelAdapter | Promise<ModelAdapter>;
   tools?: ToolDefinition[];
   approvalResolver?: ApprovalResolver;
   permissionMode?: PermissionMode;
@@ -56,6 +57,12 @@ export async function runCronJob(
     createDefaultPromptInspector({ name: "cron_prompt_inspector" }),
     { onWarn: "pass" },
   );
+  const model = options.modelFactory
+    ? await options.modelFactory(job)
+    : options.model;
+  if (!model) {
+    throw new Error("cron run requires a model adapter or modelFactory.");
+  }
 
   const run = createRun({
     goal,
@@ -66,7 +73,7 @@ export async function runCronJob(
     }),
     promptBuilder,
     tools: (options.tools ?? []).filter((tool) => tool.name !== "cron"),
-    model: options.model,
+    model,
     runStore: createSessionFileRunStoreFactory({
       sessionRootDir,
       sessionId: `cron-${job.id}`,

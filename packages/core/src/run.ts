@@ -103,6 +103,7 @@ import {
   createToolCall,
   executeTool,
   formatToolRequestPreview,
+  normalizeToolError,
   ToolRegistry,
   validateToolArguments,
   type ToolDefinition,
@@ -3185,7 +3186,30 @@ export class SparkwrightRun implements RunHandle {
 
     if (!tool) return undefined;
 
-    const argPolicy = tool.policyForArgs?.(args as never);
+    let argPolicy:
+      | ReturnType<NonNullable<typeof tool.policyForArgs>>
+      | undefined;
+    try {
+      argPolicy = tool.policyForArgs?.(args as never);
+    } catch (cause) {
+      const error = normalizeToolError(cause, {
+        code: "TOOL_ARGUMENTS_INVALID",
+        message: "Tool argument policy failed.",
+      });
+      return {
+        toolCallId,
+        status: "failed",
+        error: {
+          ...error,
+          metadata: {
+            ...(error.metadata ?? {}),
+            toolName,
+            phase: "policyForArgs",
+          },
+        },
+        artifacts: [],
+      };
+    }
     const effectivePolicy = argPolicy?.policy ?? tool.policy;
     const effectiveGovernance = argPolicy?.governance ?? tool.governance;
     const risk = effectivePolicy?.risk ?? "safe";

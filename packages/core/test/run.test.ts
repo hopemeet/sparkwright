@@ -63,6 +63,74 @@ describe("SparkwrightRun", () => {
     expect(classifyToolFailure("CRON_INPUT_INVALID")).toBe("model_arg_error");
   });
 
+  it("records policy argument normalization errors as tool failures", async () => {
+    let modelCalls = 0;
+    const tool = defineTool({
+      name: "policy_checked",
+      description: "Exercise policy argument normalization.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      policyForArgs() {
+        throw new Error("timeoutMs must be a positive integer.");
+      },
+      execute() {
+        throw new Error("should not execute");
+      },
+    });
+
+    const run = createRun({
+      goal: "handle invalid policy args",
+      tools: [tool],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "policy_checked",
+                  arguments: { timeoutMs: 0 },
+                },
+              ],
+            };
+          }
+          return { message: "observed invalid args" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const result = await run.start();
+    const events = run.events.all();
+
+    expect(result.state).toBe("completed");
+    expect(events.filter((event) => event.type === "tool.failed")).toHaveLength(
+      1,
+    );
+    expect(
+      events.find((event) => event.type === "tool.failed")?.payload,
+    ).toMatchObject({
+      toolName: "policy_checked",
+      status: "failed",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        message: "timeoutMs must be a positive integer.",
+        metadata: {
+          toolName: "policy_checked",
+          phase: "policyForArgs",
+        },
+      },
+    });
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "run.completed" ||
+          event.type === "run.failed" ||
+          event.type === "run.cancelled",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("loops model-tool-observation until a final answer", async () => {
     let modelCalls = 0;
     const events: SparkwrightEvent[] = [];

@@ -41,7 +41,9 @@ import {
 import {
   createSkillUpdateProposal,
   inspectProposedSkillContent,
+  listSkillProposals,
   type SkillProposalProvenance,
+  type SkillProposalSummary,
 } from "./skill-evolution.js";
 import { delegateToolName } from "./delegate-capability.js";
 import { projectSkillRoot } from "./skill-roots.js";
@@ -582,7 +584,7 @@ export function createSkillUpdateTool(
     governance: {
       origin: { kind: "local", name: "sparkwright" },
       sideEffects: ["read", "write"],
-      idempotency: "non_idempotent",
+      idempotency: "conditional",
     },
     previewArgs(args) {
       const r = previewRecord(args);
@@ -596,32 +598,36 @@ export function createSkillUpdateTool(
       const input = parseSkillUpdateArgs(args);
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
       const body = input.body;
+      const provenance = skillProposalProvenanceFromContext(
+        ctx,
+        input.description,
+      );
+      // One draft per skill per run, by design: a model that loops on
+      // update_skill (re-phrasing the description each time) must not spawn N
+      // proposals. We dedupe on runId+skillName intentionally — not on content —
+      // so a second call in the same run returns the first draft instead of
+      // proliferating. The result carries `existing: true` so the caller can see
+      // no new proposal was created.
+      const existing = await findExistingRunSkillDraft(
+        workspaceRoot,
+        input.name,
+        provenance.runId,
+      );
+      if (existing) {
+        return skillDraftToolOutput(existing, false);
+      }
       const proposalInput = {
         workspaceRoot,
         skillRoots: roots,
         name: input.name,
         description: input.description,
         ...(body ? { applyEdit: () => body } : {}),
-        provenance: skillProposalProvenanceFromContext(ctx, input.description),
+        provenance,
         mutationReporter: ctx,
       };
       const proposal = await createSkillUpdateProposal(proposalInput);
 
-      return {
-        action: "draft",
-        changed: true,
-        proposalId: proposal.id,
-        proposalPath: proposal.path,
-        state: proposal.state,
-        kind: proposal.kind,
-        skillName: proposal.skillName,
-        sourceLayer: proposal.sourceLayer,
-        sourcePath: proposal.sourcePath,
-        targetPath: proposal.targetPath,
-        basePackageHash: proposal.basePackageHash,
-        afterPackageHash: proposal.afterPackageHash,
-        summary: proposal.summary,
-      };
+      return skillDraftToolOutput(proposal, true);
     },
   });
 }
@@ -1018,6 +1024,46 @@ function skillProposalProvenanceFromContext(
     runId: ctx.run?.id,
     sessionId,
     rationale,
+  };
+}
+
+async function findExistingRunSkillDraft(
+  workspaceRoot: string,
+  skillName: string,
+  runId: string | undefined,
+): Promise<SkillProposalSummary | undefined> {
+  if (!runId) return undefined;
+  const proposals = await listSkillProposals(workspaceRoot);
+  return proposals.find(
+    (proposal) =>
+      proposal.kind === "update" &&
+      proposal.state === "draft" &&
+      proposal.skillName === skillName &&
+      proposal.provenance?.runId === runId,
+  );
+}
+
+function skillDraftToolOutput(
+  proposal: SkillProposalSummary,
+  changed: boolean,
+) {
+  return {
+    action: "draft",
+    changed,
+    proposalId: proposal.id,
+    proposalPath: proposal.path,
+    state: proposal.state,
+    kind: proposal.kind,
+    skillName: proposal.skillName,
+    sourceLayer: proposal.sourceLayer,
+    sourcePath: proposal.sourcePath,
+    targetPath: proposal.targetPath,
+    basePackageHash: proposal.basePackageHash,
+    afterPackageHash: proposal.afterPackageHash,
+    summary: changed
+      ? proposal.summary
+      : `${proposal.summary} Existing draft proposal returned; no new proposal was created.`,
+    existing: !changed,
   };
 }
 

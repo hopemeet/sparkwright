@@ -5065,14 +5065,15 @@ async function handleCronCommand(
       return { exitCode: result.ok ? 0 : 1 };
     }
 
-    const model = await createCliModel({
+    const cronTickModelInput = {
       modelRef: parsed.modelName,
       cwd: parsed.workspaceRoot,
       env,
       targetPath: parsed.targetPath,
       shouldWrite: parsed.shouldWrite,
       goal: "cron tick",
-    });
+    };
+    const model = await createCliModel(cronTickModelInput);
     if (!model.ok) {
       writeLine(io.stderr, model.message);
       return { exitCode: 1 };
@@ -5080,7 +5081,11 @@ async function handleCronCommand(
     const result = await tickCron({
       rootDir,
       store,
-      model: model.adapter,
+      modelFactory: async () => {
+        const fresh = await createCliModel(cronTickModelInput);
+        if (!fresh.ok) throw new Error(fresh.message);
+        return fresh.adapter;
+      },
       tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
       approvalResolver: createCliApprovalResolver({
         approveAll: parsed.approveAll,
