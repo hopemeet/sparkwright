@@ -72,7 +72,14 @@ export function formatEvent(event: RunEvent): FormattedEvent {
         .filter(Boolean)
         .join(" → ");
     } else if (t.startsWith("subagent.")) {
-      detail = str(p.agentName) || str(p.goal) || str(p.childRunId);
+      const meta = rec(event.metadata);
+      detail =
+        str(meta?.agentName) ||
+        str(p.agentName) ||
+        str(meta?.childAgentId) ||
+        str(meta?.agentProfileId) ||
+        str(p.goal) ||
+        str(p.childRunId);
     }
   }
 

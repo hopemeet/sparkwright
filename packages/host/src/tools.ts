@@ -713,10 +713,6 @@ export function createAgentManagerTool(workspaceRoot: string) {
           description:
             "Optional delegate tool name to expose this child/all profile to the main agent.",
         },
-        force: {
-          type: "boolean",
-          description: "Replace an existing profile with the same id.",
-        },
       },
       required: ["action"],
       additionalProperties: false,
@@ -816,27 +812,28 @@ export function createAgentManagerTool(workspaceRoot: string) {
         );
       }
 
+      if (existingIndex >= 0 && agentConfigShapesEqual(agents, nextAgents)) {
+        const path = await canonicalWorkspacePath(ctx, config.path);
+        ctx.reportWorkspaceWriteSkipped?.({
+          path,
+          reason: `Agent profile ${input.id} already matches requested config.`,
+        });
+        return {
+          action: "create",
+          id: input.id,
+          path,
+          changed: false,
+          status: "already_exists",
+          profile,
+          ...agentCallabilityFields(profile, agents),
+          agents,
+          errors,
+        };
+      }
+
       if (existingIndex >= 0 && !input.force) {
-        if (agentConfigShapesEqual(agents, nextAgents)) {
-          const path = await canonicalWorkspacePath(ctx, config.path);
-          ctx.reportWorkspaceWriteSkipped?.({
-            path,
-            reason: `Agent profile ${input.id} already matches requested config.`,
-          });
-          return {
-            action: "create",
-            id: input.id,
-            path,
-            changed: false,
-            status: "already_exists",
-            profile,
-            ...agentCallabilityFields(profile, agents),
-            agents,
-            errors,
-          };
-        }
         throw new Error(
-          `Agent profile already exists with different config: ${input.id}. Pass force=true to replace it.`,
+          `Agent profile already exists with different config: ${input.id}. Use an explicit update/replace flow or pass legacy force=true only when replacement is intentional.`,
         );
       }
 

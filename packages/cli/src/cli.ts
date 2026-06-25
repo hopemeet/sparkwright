@@ -5945,6 +5945,7 @@ function formatTraceSummary(summary: TraceSummary): string {
     `runs: ${summary.runIds.length}`,
     `sessions: ${summary.sessionIds.join(", ") || "(none)"}`,
     `agents: ${summary.agentIds.join(", ") || "(none)"}`,
+    `subagents: ${summary.subagentIds?.join(", ") || "(none)"}`,
     `artifacts: ${summary.artifactCount}`,
     `errors: ${summary.errorCount}`,
     `top errors: ${topErrors || "(none)"}`,

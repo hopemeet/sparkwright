@@ -5742,7 +5742,11 @@ describe("runCli", () => {
       traceEvents.find((event) => event.type === "subagent.completed"),
     ).toMatchObject({
       payload: { workspaceWrites: 1 },
-      metadata: { agentProfileId: "writer" },
+      metadata: {
+        agentId: "main",
+        childAgentId: "writer",
+        agentProfileId: "writer",
+      },
     });
   });
 
@@ -7001,6 +7005,10 @@ describe("runCli", () => {
       runId: string;
       tracePath: string;
       output: { exitCode: number; stdout: string };
+      events: Array<{
+        type: string;
+        metadata?: Record<string, unknown>;
+      }>;
     };
     expect(parsed).toMatchObject({
       ok: true,
@@ -7015,6 +7023,20 @@ describe("runCli", () => {
     const trace = await readFile(parsed.tracePath, "utf8");
     expect(trace).toContain('"type":"approval.requested"');
     expect(trace).toContain('"type":"subagent.completed"');
+    const stdoutSubagent = parsed.events.find(
+      (event) => event.type === "subagent.completed",
+    );
+    const traceSubagent = trace
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; metadata?: unknown })
+      .find((event) => event.type === "subagent.completed");
+    expect(stdoutSubagent?.metadata).toMatchObject({
+      agentId: "main",
+      childAgentId: "external_cli_fixture",
+      agentProfileId: "external_cli_fixture",
+    });
+    expect(traceSubagent?.metadata).toEqual(stdoutSubagent?.metadata);
   });
 
   it("enforces maxDepth for direct external command delegates", async () => {

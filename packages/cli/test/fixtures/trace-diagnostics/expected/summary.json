@@ -9,6 +9,7 @@
   "agentIds": [
     "main"
   ],
+  "subagentIds": [],
   "byType": {
     "run.created": 1,
     "run.started": 1,

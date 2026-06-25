@@ -1752,7 +1752,8 @@ describe("host protocol", () => {
       );
       expect(subagentCompleted?.payload).toMatchObject({ workspaceWrites: 1 });
       expect(subagentCompleted?.metadata).toMatchObject({
-        agentId: "writer",
+        agentId: "main",
+        childAgentId: "writer",
         agentProfileId: "writer",
         delegateTool: "delegate_writer",
         entrypoint: "delegate",
@@ -1836,7 +1837,8 @@ describe("host protocol", () => {
         (event) => event.type === "subagent.completed",
       );
       expect(completed?.metadata).toMatchObject({
-        agentId: "dynamic_reader",
+        agentId: "main",
+        childAgentId: "dynamic_reader",
         agentProfileId: "dynamic_reader",
         delegateTool: "spawn_agent",
         entrypoint: "spawn_agent",

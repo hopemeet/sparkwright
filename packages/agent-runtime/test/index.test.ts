@@ -1147,7 +1147,8 @@ describe("createAgentTool / mountAgentTool", () => {
       expect(event?.metadata, type).toMatchObject({
         childRunId: spawned.childRunId,
         parentRunId: parent.record.id,
-        agentId: "reviewer",
+        agentId: "main",
+        childAgentId: "reviewer",
         agentName: "Reviewer",
         agentProfileId: "reviewer",
         delegateTool: "delegate_reviewer",

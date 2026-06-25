@@ -164,8 +164,18 @@ export function createAcpDelegateTool(
         spanId,
         goal: parsed.goal,
       };
+      const parentAgentId =
+        typeof parent.record.metadata?.agentId === "string"
+          ? parent.record.metadata.agentId
+          : "main";
+      const parentSessionId =
+        typeof parent.record.metadata?.sessionId === "string"
+          ? parent.record.metadata.sessionId
+          : undefined;
       const meta = {
-        agentId: input.profile.id,
+        ...(parentSessionId ? { sessionId: parentSessionId } : {}),
+        agentId: parentAgentId,
+        childAgentId: input.profile.id,
         agentProfileId: input.profile.id,
         agentName: input.profile.name,
         delegateTool: input.toolName,

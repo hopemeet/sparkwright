@@ -28,6 +28,8 @@ export interface TraceSummary {
   sessionIds: string[];
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   agentIds: string[];
+  /** @reserved Public trace-summary field consumed by multi-agent diagnostics UIs. */
+  subagentIds: string[];
   /** @reserved Public trace-summary field consumed by analytics UIs. */
   byType: Record<string, number>;
   /** @reserved Public trace-summary field consumed by analytics UIs. */
@@ -1129,6 +1131,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   const runIds = new Set<string>();
   const sessionIds = new Set<string>();
   const agentIds = new Set<string>();
+  const subagentIds = new Set<string>();
   const byType: Record<string, number> = {};
   const terminalStates: Record<string, number> = {};
   const toolCalls: Record<string, number> = {};
@@ -1146,6 +1149,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
     runIds: [],
     sessionIds: [],
     agentIds: [],
+    subagentIds: [],
     byType,
     terminalStates,
     toolCalls,
@@ -1236,8 +1240,10 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
 
     const sessionId = stringMetadata(event.metadata, "sessionId");
     const agentId = stringMetadata(event.metadata, "agentId");
+    const subagentId = subagentIdentity(event);
     if (sessionId) sessionIds.add(sessionId);
     if (agentId) agentIds.add(agentId);
+    if (subagentId) subagentIds.add(subagentId);
     if (event.type === "artifact.created") summary.artifactCount += 1;
     if (isExpectedDenialEvent(event)) {
       summary.expectedDenialCount += 1;
@@ -1269,6 +1275,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
   summary.runIds = [...runIds].sort();
   summary.sessionIds = [...sessionIds].sort();
   summary.agentIds = [...agentIds].sort();
+  summary.subagentIds = [...subagentIds].sort();
   summary.workspaceReads.uniquePaths = Object.keys(workspaceReadPaths).length;
   summary.workspaceReads.duplicatePaths = Object.fromEntries(
     Object.entries(workspaceReadPaths)
@@ -2064,8 +2071,9 @@ function collectIncompleteSubagentTerminals(
 
     const name = stringValue(
       event.metadata.agentName,
-      event.metadata.agentId,
+      event.metadata.childAgentId,
       event.metadata.agentProfileId,
+      event.metadata.agentId,
       event.payload.childRunId,
       "subagent",
     )!;
@@ -2295,6 +2303,7 @@ function collectUntrackedWriteAccessMarkers(
     const protocol = stringValue(event.payload.protocol);
     const agent = stringValue(
       event.payload.agentProfileId,
+      event.metadata.childAgentId,
       event.metadata.agentProfileId,
       event.metadata.agentId,
     );
@@ -2849,4 +2858,22 @@ function stringMetadata(
 ): string | undefined {
   const value = metadata?.[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function subagentIdentity(event: SparkwrightEvent): string | undefined {
+  if (
+    event.type !== "subagent.requested" &&
+    event.type !== "subagent.started" &&
+    event.type !== "subagent.completed" &&
+    event.type !== "subagent.failed"
+  ) {
+    return undefined;
+  }
+  const fromMetadata =
+    stringMetadata(event.metadata, "childAgentId") ??
+    stringMetadata(event.metadata, "agentProfileId");
+  if (fromMetadata) return fromMetadata;
+  return isRecord(event.payload)
+    ? stringValue(event.payload.agentProfileId, event.payload.childRunId)
+    : undefined;
 }

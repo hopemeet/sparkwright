@@ -114,6 +114,11 @@ describe("external command delegate tool", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "subagent.completed",
+          metadata: expect.objectContaining({
+            agentId: "main",
+            childAgentId: "external_reviewer",
+            agentProfileId: "external_reviewer",
+          }),
           payload: expect.objectContaining({
             result: expect.objectContaining({
               protocol: "external_command",

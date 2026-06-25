@@ -736,8 +736,9 @@ function EventCard(props: {
       const name =
         str(meta.agentName) ||
         str(p.agentName) ||
-        str(meta.agentId) ||
+        str(meta.childAgentId) ||
         str(meta.agentProfileId) ||
+        str(meta.agentId) ||
         str(p.childRunId) ||
         "subagent";
       const childRunId = str(meta.childRunId) || str(p.childRunId);

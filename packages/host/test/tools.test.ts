@@ -1297,6 +1297,40 @@ describe("host tools", () => {
     });
   });
 
+  it("does not rewrite an equivalent agent profile even when legacy force is passed", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+
+    const input = {
+      action: "create",
+      id: "reviewer",
+      name: "Reviewer",
+      mode: "child",
+      prompt: "Review changes and report concrete risks.",
+      allowedTools: ["read_file"],
+      maxSteps: 2,
+      delegateToolName: "delegate_reviewer",
+    };
+    await tool.execute(input, ctx);
+    ctx.capabilityMutations.length = 0;
+    ctx.skippedWrites.length = 0;
+
+    const duplicate = await tool.execute({ ...input, force: true }, ctx);
+
+    expect(duplicate).toMatchObject({
+      action: "create",
+      id: "reviewer",
+      path: ".sparkwright/config.json",
+      changed: false,
+      status: "already_exists",
+    });
+    expect(ctx.capabilityMutations).toEqual([]);
+    expect(ctx.skippedWrites).toContainEqual({
+      path: ".sparkwright/config.json",
+      reason: "Agent profile reviewer already matches requested config.",
+    });
+  });
+
   it("reports capability mutation when removing project agent profiles", async () => {
     const ctx = await createWorkspace({});
     const tool = createAgentManagerTool(ctx.workspaceRoot);

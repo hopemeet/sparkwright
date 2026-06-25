@@ -606,8 +606,9 @@ export class EventStore {
           firstString(
             meta.agentName,
             payload.agentName,
-            meta.agentId,
+            meta.childAgentId,
             meta.agentProfileId,
+            meta.agentId,
             payload.childRunId,
           ) ?? "subagent";
         const queued = event.type === "subagent.requested";

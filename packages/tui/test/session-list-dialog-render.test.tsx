@@ -86,6 +86,7 @@ describe("SessionListDialog rendering", () => {
         eventCount: 12,
         runIds: ["run_a"],
         agentIds: ["main"],
+        subagentIds: [],
         errorCount: 0,
         artifactCount: 1,
         usage: { totalTokens: 42 },
