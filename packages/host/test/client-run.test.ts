@@ -33,7 +33,6 @@ describe("host client run request helpers", () => {
         workspaceRoot: "/repo",
         permissionMode: "default",
         shouldWrite: false,
-        allowWorkspaceWriteApproval: true,
         traceLevel: "debug",
         modelName: "deterministic",
       }),
@@ -43,7 +42,6 @@ describe("host client run request helpers", () => {
       workspaceRoot: "/repo",
       permissionMode: "default",
       shouldWrite: false,
-      allowWorkspaceWriteApproval: true,
       traceLevel: "debug",
       model: "deterministic",
     });
@@ -73,7 +71,6 @@ describe("host client run request helpers", () => {
         targetPath: "README.md",
         confidentialPaths: ["secret*"],
         shouldWrite: true,
-        allowWorkspaceWriteApproval: false,
         metadata,
       }),
     ).toEqual({
@@ -86,7 +83,6 @@ describe("host client run request helpers", () => {
       targetPath: "README.md",
       confidentialPaths: ["secret*"],
       shouldWrite: true,
-      allowWorkspaceWriteApproval: false,
       metadata,
     });
 
@@ -99,7 +95,6 @@ describe("host client run request helpers", () => {
         modelNameSource: "request",
         traceLevel: "standard",
         shouldWrite: false,
-        allowWorkspaceWriteApproval: true,
         metadata,
       }),
     ).toEqual({
@@ -111,7 +106,6 @@ describe("host client run request helpers", () => {
       traceLevel: "standard",
       targetPath: undefined,
       shouldWrite: false,
-      allowWorkspaceWriteApproval: true,
       metadata,
     });
   });

@@ -20,7 +20,6 @@ export interface HostClientRunMetadataInput {
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
   modelName?: string;
-  allowWorkspaceWriteApproval?: boolean;
 }
 
 export function resolveHostRequestModel(input: {
@@ -40,9 +39,6 @@ export function createHostClientRunMetadata(
     ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
     ...(input.targetPath ? { targetPath: input.targetPath } : {}),
     shouldWrite: input.shouldWrite,
-    ...(input.allowWorkspaceWriteApproval !== undefined
-      ? { allowWorkspaceWriteApproval: input.allowWorkspaceWriteApproval }
-      : {}),
     traceLevel: input.traceLevel,
     ...(input.modelName ? { model: input.modelName } : {}),
   };
@@ -58,7 +54,6 @@ export function createHostStartRunRequest(input: {
   targetPath?: string;
   confidentialPaths?: readonly string[];
   shouldWrite: boolean;
-  allowWorkspaceWriteApproval?: boolean;
   metadata: Record<string, unknown>;
   input?: RunInputPayload;
 }): RunStartRequestPayload {
@@ -74,9 +69,6 @@ export function createHostStartRunRequest(input: {
       ? { confidentialPaths: [...input.confidentialPaths] }
       : {}),
     shouldWrite: input.shouldWrite,
-    ...(input.allowWorkspaceWriteApproval !== undefined
-      ? { allowWorkspaceWriteApproval: input.allowWorkspaceWriteApproval }
-      : {}),
     metadata: input.metadata,
   };
 }
@@ -93,7 +85,6 @@ export function createHostResumeRunRequest(input: {
   targetPath?: string;
   confidentialPaths?: readonly string[];
   shouldWrite: boolean;
-  allowWorkspaceWriteApproval?: boolean;
   metadata: Record<string, unknown>;
 }): RunResumeRequestPayload {
   return {
@@ -109,9 +100,6 @@ export function createHostResumeRunRequest(input: {
       ? { confidentialPaths: [...input.confidentialPaths] }
       : {}),
     shouldWrite: input.shouldWrite,
-    ...(input.allowWorkspaceWriteApproval !== undefined
-      ? { allowWorkspaceWriteApproval: input.allowWorkspaceWriteApproval }
-      : {}),
     metadata: input.metadata,
   };
 }

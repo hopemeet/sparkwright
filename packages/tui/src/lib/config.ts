@@ -8,11 +8,15 @@ import {
   type ProviderConfig,
   type ApprovalDefaults,
 } from "@sparkwright/host";
-import type { PermissionMode } from "@sparkwright/protocol";
 import { mergeBindings, type Bindings } from "./keybindings.js";
+import {
+  isTuiPermissionMode,
+  tuiPermissionModeFromCorePermissionMode,
+  type TuiPermissionMode,
+} from "./permission.js";
 
 export interface TuiConfigFile {
-  permissionMode?: PermissionMode;
+  tuiPermissionMode?: TuiPermissionMode;
   /** Model reference "provider/model" (e.g. "openai/gpt-4o-mini"). */
   model?: string;
   /** Provider definitions, merged by key across config layers. */
@@ -43,7 +47,7 @@ export interface TuiConfigFile {
 
 /** Per-field origin of resolved values. Surfaced by `/config`. */
 export interface SourceMap {
-  permissionMode?: string;
+  tuiPermissionMode?: string;
   model?: string;
   workspace?: string;
   theme?: string;
@@ -68,6 +72,7 @@ export interface LoadedTuiConfig {
 }
 
 const KNOWN_KEYS = new Set([
+  "tuiPermissionMode",
   "permissionMode",
   "model",
   "providers",
@@ -90,6 +95,20 @@ const KNOWN_KEYS = new Set([
   "approvals",
 ]);
 const VALID_THEMES = ["dark", "light", "mono"];
+const TUI_PERMISSION_MODE_RANK: Record<TuiPermissionMode, number> = {
+  "read-only": 0,
+  ask: 1,
+  "accept-edits": 2,
+  bypass: 3,
+};
+
+function canApplyTuiPermissionMode(
+  previous: TuiPermissionMode | undefined,
+  next: TuiPermissionMode,
+): boolean {
+  if (previous === undefined) return true;
+  return TUI_PERMISSION_MODE_RANK[next] <= TUI_PERMISSION_MODE_RANK[previous];
+}
 
 /**
  * Validate only TUI-owned fields. Shared fields (model, providers,
@@ -197,6 +216,18 @@ function validateUiOverlay(
       });
     }
   }
+  if (obj.tuiPermissionMode !== undefined) {
+    if (isTuiPermissionMode(obj.tuiPermissionMode)) {
+      config.tuiPermissionMode = obj.tuiPermissionMode;
+      sources.tuiPermissionMode = origin;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "tuiPermissionMode",
+        message: "must be one of read-only | ask | accept-edits | bypass",
+      });
+    }
+  }
   return { config, sources, errors };
 }
 
@@ -211,7 +242,9 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   const shared = await loadHostConfig(cwd, process.env);
   const order = resolutionOrder(cwd);
   const merged: TuiConfigFile = {
-    permissionMode: shared.config.permissionMode,
+    tuiPermissionMode: tuiPermissionModeFromCorePermissionMode(
+      shared.config.permissionMode,
+    ),
     model: shared.config.model,
     providers: shared.config.providers,
     approvals: shared.config.approvals,
@@ -221,7 +254,7 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
       | undefined,
   };
   const sources: SourceMap = {
-    permissionMode: shared.sources.permissionMode,
+    tuiPermissionMode: shared.sources.permissionMode,
     model: shared.sources.model,
     workspace: shared.sources.workspace,
     approvals: shared.sources.approvals,
@@ -252,13 +285,25 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
     const label = labelByPath.get(path) ?? "config";
     const v = validateUiOverlay(value, `${label}:${path}`, path);
     errors.push(...v.errors);
+    const { tuiPermissionMode: tuiPermissionModeSource, ...overlaySources } =
+      v.sources;
     if (v.config.keybindings) {
       mergedBindings = { ...(mergedBindings ?? {}), ...v.config.keybindings };
     }
     if (v.config.theme !== undefined) merged.theme = v.config.theme;
     if (v.config.mouse !== undefined) merged.mouse = v.config.mouse;
     if (v.config.vim !== undefined) merged.vim = v.config.vim;
-    Object.assign(sources, v.sources);
+    if (
+      v.config.tuiPermissionMode !== undefined &&
+      canApplyTuiPermissionMode(
+        merged.tuiPermissionMode,
+        v.config.tuiPermissionMode,
+      )
+    ) {
+      merged.tuiPermissionMode = v.config.tuiPermissionMode;
+      sources.tuiPermissionMode = tuiPermissionModeSource;
+    }
+    Object.assign(sources, overlaySources);
   }
 
   // Resolve final bindings (defaults + user overrides). Bad chord strings

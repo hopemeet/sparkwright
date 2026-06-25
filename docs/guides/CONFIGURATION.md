@@ -630,16 +630,20 @@ Put user arguments in prompt text instead.
   `runBudget` and the safety backstop.
 - `traceLevel`: default trace verbosity (`standard`, `debug`) when an
   entrypoint does not pass one. CLI `--trace-level` overrides.
-- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`) plus
-  `cronMode` for unattended cron run/tick defaults. CLI flags
-  (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--permission-mode`) still
-  override.
+- `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`) for
+  CLI/host clients that opt into those scopes, plus `cronMode` for unattended
+  cron run/tick defaults. TUI approval behavior comes from `tuiPermissionMode`;
+  CLI flags (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--permission-mode`)
+  still override.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
   schema loading.
 - `capabilities.agents`: agent profiles and delegate tools.
-- `theme`, `mouse`, `keybindings`: TUI-only preferences.
+- `tuiPermissionMode`, `theme`, `mouse`, `keybindings`: TUI-only preferences.
+  `tuiPermissionMode` accepts `read-only`, `ask`, `accept-edits`, or `bypass`
+  and is projected by the TUI to the shared run `permissionMode` plus
+  `shouldWrite`.
 
 Child agents and delegate tools do not weaken the parent run. Spawned child
 agents inherit the parent run's permission mode, write guardrails, target path,
@@ -666,7 +670,7 @@ the layering intent obvious:
     "traceLevel": "standard",
     "approvals": { "shellSafe": true }
   },
-  "ui": { "theme": "dark" }
+  "ui": { "tuiPermissionMode": "ask", "theme": "dark" }
 }
 ```
 
@@ -674,7 +678,7 @@ the layering intent obvious:
 - `policy` → `permissionMode`, `confidentialPaths`, `write`, and `sandbox`
   (maps to `shell.sandbox`) — the conservatively-merged security boundaries.
 - `run` → `runBudget` (as `budget`), `maxSteps`, `traceLevel`, `approvals`.
-- `ui` → `theme`, `mouse`, `keybindings`.
+- `ui` → `tuiPermissionMode`, `theme`, `mouse`, `keybindings`.
 - `capabilities` is already its own group.
 
 The flat and grouped forms are equivalent; `sparkwright init` now emits the
@@ -905,6 +909,7 @@ metadata.
 
 ```json
 {
+  "tuiPermissionMode": "ask",
   "theme": "dark",
   "mouse": true,
   "keybindings": {
@@ -916,8 +921,12 @@ metadata.
 }
 ```
 
-`theme`, `mouse`, and `keybindings` are TUI-only. Provider, model, permission,
-and workspace settings apply to both CLI and TUI surfaces.
+`tuiPermissionMode`, `theme`, `mouse`, and `keybindings` are TUI-only.
+`tuiPermissionMode` is the interactive TUI permission selector
+(`read-only`, `ask`, `accept-edits`, `bypass`); lower-trust config layers can
+tighten it but cannot relax an earlier layer to a more permissive mode.
+Provider, model, core `permissionMode`, and workspace settings apply to both
+CLI and TUI surfaces.
 `palette.open` and `quick.switch` are unbound by default; use `/palette` and
 `/quick` (the quick mode of `/sessions`), or add bindings here if you want
 direct shortcuts.

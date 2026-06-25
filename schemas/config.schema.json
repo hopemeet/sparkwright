@@ -886,6 +886,11 @@
       "additionalProperties": false,
       "description": "Host-owned capability runtime settings."
     },
+    "tuiPermissionMode": {
+      "type": "string",
+      "enum": ["read-only", "ask", "accept-edits", "bypass"],
+      "description": "TUI permission mode, projected to core permission fields per run."
+    },
     "theme": {
       "type": "string",
       "enum": ["dark", "light", "mono"],
@@ -1209,6 +1214,11 @@
     "ui": {
       "type": "object",
       "properties": {
+        "tuiPermissionMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"],
+          "description": "TUI permission mode, projected to core permission fields per run."
+        },
         "theme": {
           "type": "string",
           "enum": ["dark", "light", "mono"],
@@ -1243,7 +1253,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings."
+      "description": "Preferred grouping for TUI-only preferences. Flattens to tuiPermissionMode/theme/mouse/keybindings."
     }
   },
   "additionalProperties": false

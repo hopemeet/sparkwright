@@ -21,7 +21,8 @@ export type BindingName =
   | "quit.app"
   | "events.open"
   | "todo.toggle"
-  | "history.search";
+  | "history.search"
+  | "cycle-permission-mode";
 
 export interface Chord {
   ctrl?: boolean;
@@ -60,6 +61,7 @@ export const DEFAULTS: Bindings = {
   // history.search is handled inside InputBox (ctrl+r is bash-standard);
   // exposed here so /help and /config can show + override it.
   "history.search": [parseChord("ctrl+r")!],
+  "cycle-permission-mode": [parseChord("shift+tab")!],
 };
 
 /**

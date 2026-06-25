@@ -462,7 +462,7 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
-  it("marks default interactive runs as approval-capable without pre-enabling writes", async () => {
+  it("marks default interactive runs as ask-mode write-enabled", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     const store = new EventStore();
@@ -489,8 +489,9 @@ describe("TUI ↔ host via sdk-node", () => {
     const runJson = JSON.parse(
       await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
     ) as { metadata?: Record<string, unknown> };
-    expect(runJson.metadata?.shouldWrite).toBe(false);
-    expect(runJson.metadata?.allowWorkspaceWriteApproval).toBe(true);
+    expect(runJson.metadata?.permissionMode).toBe("default");
+    expect(runJson.metadata?.shouldWrite).toBe(true);
+    expect(runJson.metadata).not.toHaveProperty("allowWorkspaceWriteApproval");
     expect(runJson.metadata?.source).toBe("tui");
     expect(runJson.metadata?.traceLevel).toBe("debug");
     expect(runJson.metadata?.workspaceRoot).toBe(workspace);
@@ -501,36 +502,51 @@ describe("TUI ↔ host via sdk-node", () => {
     controller.shutdown();
   }, 30_000);
 
-  it("marks explicit write-enabled TUI runs for host approvals", async () => {
+  it("marks read-only TUI runs as non-write", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      { message: "done" },
+    ]);
     const store = new EventStore();
     const controller = new RunController({
       workspaceRoot: workspace,
-      modelName: "deterministic",
-      shouldWrite: true,
+      modelName: "scripted",
+      tuiPermissionMode: "read-only",
       store,
     });
 
-    await controller.start("metadata smoke");
-    await waitForDone(store);
+    try {
+      await controller.start("metadata smoke");
+      await waitForDone(store);
 
-    const runsDir = join(
-      workspace,
-      ".sparkwright",
-      "sessions",
-      controller.getSessionId(),
-      "agents",
-      "main",
-      "runs",
-    );
-    const runIds = await readdir(runsDir);
-    const runJson = JSON.parse(
-      await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
-    ) as { metadata?: Record<string, unknown> };
-    expect(runJson.metadata?.shouldWrite).toBe(true);
-
-    controller.shutdown();
+      const runsDir = join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        controller.getSessionId(),
+        "agents",
+        "main",
+        "runs",
+      );
+      const runIds = await readdir(runsDir);
+      const runJson = JSON.parse(
+        await readFile(join(runsDir, runIds[0]!, "run.json"), "utf8"),
+      ) as { metadata?: Record<string, unknown> };
+      expect(runJson.metadata?.permissionMode).toBe("plan");
+      expect(runJson.metadata?.shouldWrite).toBe(false);
+      expect(runJson.metadata).not.toHaveProperty(
+        "allowWorkspaceWriteApproval",
+      );
+    } finally {
+      controller.shutdown();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
   }, 30_000);
 
   it("asks for approval before running write-capable shell in default TUI runs", async () => {
@@ -566,8 +582,7 @@ describe("TUI ↔ host via sdk-node", () => {
         toolName: "shell",
         toolArgs: { command: "sleep 0" },
         policy: {
-          reason:
-            "Tools with write side effects require approval for this run.",
+          reason: "Allowed by default policy.",
         },
       });
 
@@ -605,7 +620,107 @@ describe("TUI ↔ host via sdk-node", () => {
     }
   }, 30_000);
 
-  it("auto-resolves approval prompts when approval defaults allow them", async () => {
+  it("keeps approval auto-policy fixed for the active run", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        message: "run a short shell command",
+        toolCalls: [
+          {
+            toolName: "shell",
+            arguments: { command: "sleep 0" },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "scripted",
+      store,
+    });
+
+    try {
+      await controller.start("run sleep briefly");
+      controller.updateTuiPermissionMode("bypass");
+      await waitForApproval(store);
+
+      expect(store.getSnapshot().pendingApproval).toMatchObject({
+        action: "tool.execute",
+        toolName: "shell",
+      });
+
+      controller.resolveApproval("approved");
+      await waitForDone(store);
+    } finally {
+      controller.shutdown();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  }, 30_000);
+
+  it("auto-resolves approval prompts in bypass mode without standalone approval defaults", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        message: "run a short shell command",
+        toolCalls: [
+          {
+            toolName: "shell",
+            arguments: { command: "sleep 0" },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "scripted",
+      tuiPermissionMode: "bypass",
+      store,
+    });
+
+    try {
+      await controller.start("run sleep without prompts");
+      await waitForDone(store);
+
+      const snap = store.getSnapshot();
+      expect(snap.pendingApproval).toBeNull();
+      expect(
+        snap.events.some((event) => event.type === "approval.requested"),
+      ).toBe(true);
+      expect(
+        snap.events.some((event) => {
+          const payload = event.payload as
+            | { decision?: string; autoApproved?: boolean }
+            | undefined;
+          return (
+            event.type === "approval.resolved" &&
+            payload?.decision === "approved" &&
+            payload.autoApproved === true
+          );
+        }),
+      ).toBe(true);
+    } finally {
+      controller.shutdown();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  }, 30_000);
+
+  it("does not auto-resolve workspace write prompts in ask mode", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
     const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
@@ -630,13 +745,20 @@ describe("TUI ↔ host via sdk-node", () => {
     const controller = new RunController({
       workspaceRoot: workspace,
       modelName: "scripted",
-      shouldWrite: true,
-      approveEdits: true,
       store,
     });
 
     try {
       await controller.start("patch the readme");
+      await waitForApproval(store);
+
+      const pending = store.getSnapshot().pendingApproval;
+      expect(pending).toMatchObject({
+        action: "workspace.write",
+        path: "README.md",
+      });
+
+      controller.resolveApproval("approved");
       await waitForDone(store);
 
       const snap = store.getSnapshot();

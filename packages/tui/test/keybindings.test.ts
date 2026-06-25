@@ -62,6 +62,11 @@ describe("chordMatches", () => {
     expect(chordMatches(esc, { escape: true }, "")).toBe(true);
     expect(chordMatches(esc, { escape: false }, "")).toBe(false);
   });
+  it("matches shift+tab for permission cycling", () => {
+    const chord = parseChord("shift+tab")!;
+    expect(chordMatches(chord, { tab: true, shift: true }, "")).toBe(true);
+    expect(chordMatches(chord, { tab: true, shift: false }, "")).toBe(false);
+  });
   it("requires modifier parity", () => {
     const k = parseChord("k")!;
     expect(chordMatches(k, { ctrl: true }, "k")).toBe(false);
@@ -82,6 +87,9 @@ describe("mergeBindings", () => {
     expect(DEFAULTS["help.open"]).toEqual([parseChord("?")]);
     expect(DEFAULTS["events.open"]).toEqual([parseChord("ctrl+o")]);
     expect(DEFAULTS["cancel.run"]).toEqual([parseChord("esc")]);
+    expect(DEFAULTS["cycle-permission-mode"]).toEqual([
+      parseChord("shift+tab"),
+    ]);
   });
 
   it("returns defaults when user is undefined", () => {

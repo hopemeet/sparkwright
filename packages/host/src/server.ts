@@ -295,7 +295,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "targetPath",
           "confidentialPaths",
           "shouldWrite",
-          "allowWorkspaceWriteApproval",
           "model",
           "permissionMode",
           "traceLevel",
@@ -306,7 +305,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "shouldWrite") ??
-        optionalBoolean(req.payload, "allowWorkspaceWriteApproval") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "permissionMode", [
           "plan",
@@ -326,7 +324,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "targetPath",
           "confidentialPaths",
           "shouldWrite",
-          "allowWorkspaceWriteApproval",
           "fromTrace",
           "force",
           "model",
@@ -339,7 +336,6 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "shouldWrite") ??
-        optionalBoolean(req.payload, "allowWorkspaceWriteApproval") ??
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??
         optionalString(req.payload, "model") ??

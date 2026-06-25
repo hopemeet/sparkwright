@@ -85,16 +85,19 @@ import {
   type ValidationError,
 } from "./lib/config.js";
 import { formatWorkspaceDisplayPath } from "./lib/path-display.js";
+import {
+  nextTuiPermissionMode,
+  toCoreRunFields,
+  tuiPermissionModeFromCorePermissionMode,
+  type TuiPermissionMode,
+} from "./lib/permission.js";
 
 export interface CliOverrides {
   workspaceRoot?: string;
   sessionRootDir?: string;
+  tuiPermissionMode?: TuiPermissionMode;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
-  shouldWrite?: boolean;
-  approveAll?: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
   modelName?: string;
   sessionId?: string;
 }
@@ -107,12 +110,10 @@ export interface AppProps {
 interface Resolved {
   workspaceRoot: string;
   sessionRootDir: string;
+  tuiPermissionMode: TuiPermissionMode;
   permissionMode: PermissionMode;
   traceLevel: TraceLevel;
   shouldWrite: boolean;
-  approveAll: boolean;
-  approveEdits: boolean;
-  approveShellSafe: boolean;
   /** Model reference "provider/model", or the reserved "deterministic". */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -148,29 +149,35 @@ function resolveConfig(
       : undefined;
   if (cli.modelName) sources.model = "cli:--model";
 
-  const permissionMode: PermissionMode =
-    cli.permissionMode ?? loaded.config.permissionMode ?? "default";
-  if (cli.permissionMode) sources.permissionMode = "cli:--permission-mode";
-  else if (!loaded.config.permissionMode) sources.permissionMode = "default";
+  const legacyCliMode = tuiPermissionModeFromCorePermissionMode(
+    cli.permissionMode,
+  );
+  const tuiPermissionMode: TuiPermissionMode =
+    cli.tuiPermissionMode ??
+    legacyCliMode ??
+    loaded.config.tuiPermissionMode ??
+    "ask";
+  if (cli.tuiPermissionMode) {
+    sources.tuiPermissionMode = "cli:--permission-mode";
+  } else if (legacyCliMode) {
+    sources.tuiPermissionMode = "cli:--permission-mode";
+  } else if (!loaded.config.tuiPermissionMode) {
+    sources.tuiPermissionMode = "default";
+  }
+  const corePermission = toCoreRunFields(tuiPermissionMode);
+  const permissionMode = corePermission.permissionMode;
+  const shouldWrite = corePermission.shouldWrite;
   const traceLevel: TraceLevel = cli.traceLevel ?? "standard";
-  const shouldWrite = cli.shouldWrite === true;
-  const approveAll = cli.approveAll ?? loaded.config.approvals?.all ?? false;
-  const approveEdits =
-    cli.approveEdits ?? loaded.config.approvals?.edits ?? false;
-  const approveShellSafe =
-    cli.approveShellSafe ?? loaded.config.approvals?.shellSafe ?? false;
 
   if (!loaded.config.theme) sources.theme = "default";
 
   return {
     workspaceRoot,
     sessionRootDir,
+    tuiPermissionMode,
     permissionMode,
     traceLevel,
     shouldWrite,
-    approveAll,
-    approveEdits,
-    approveShellSafe,
     modelName,
     modelNameSource,
     providers: loaded.config.providers,
@@ -246,12 +253,8 @@ function AppReady(
       new RunController({
         workspaceRoot: resolved.workspaceRoot,
         sessionRootDir: resolved.sessionRootDir,
-        permissionMode: resolved.permissionMode,
+        tuiPermissionMode: resolved.tuiPermissionMode,
         traceLevel: resolved.traceLevel,
-        shouldWrite: resolved.shouldWrite,
-        approveAll: resolved.approveAll,
-        approveEdits: resolved.approveEdits,
-        approveShellSafe: resolved.approveShellSafe,
         modelName: resolved.modelName,
         modelNameSource: resolved.modelNameSource,
         initialSessionId: props.cliOverrides.sessionId,
@@ -324,6 +327,32 @@ function AppReady(
     modelName?: string;
   } | null>(null);
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
+  const [permissionModeOverride, setPermissionModeOverride] =
+    useState<TuiPermissionMode | null>(null);
+  const effTuiPermissionMode =
+    permissionModeOverride ?? resolved.tuiPermissionMode;
+  const effCorePermission = toCoreRunFields(effTuiPermissionMode);
+  const effectiveResolved = useMemo<Resolved>(() => {
+    const next: Resolved = {
+      ...resolved,
+      tuiPermissionMode: effTuiPermissionMode,
+      permissionMode: effCorePermission.permissionMode,
+      shouldWrite: effCorePermission.shouldWrite,
+    };
+    if (permissionModeOverride) {
+      next.sources = {
+        ...resolved.sources,
+        tuiPermissionMode: "runtime:shift+tab",
+      };
+    }
+    return next;
+  }, [
+    resolved,
+    effTuiPermissionMode,
+    effCorePermission.permissionMode,
+    effCorePermission.shouldWrite,
+    permissionModeOverride,
+  ]);
   const skillLearnGoalsRef = useRef<string[]>([]);
   const skillLearnNoticeCountRef = useRef(0);
   const quitArmedUntilRef = useRef(0);
@@ -553,22 +582,14 @@ function AppReady(
     if (!modelOverride && r.modelName !== resolved.modelName) {
       controller.updateModel(r.modelName, r.modelNameSource);
     }
-    if (r.permissionMode !== resolved.permissionMode) {
-      controller.updatePermissionMode(r.permissionMode);
+    if (
+      !permissionModeOverride &&
+      r.tuiPermissionMode !== resolved.tuiPermissionMode
+    ) {
+      controller.updateTuiPermissionMode(r.tuiPermissionMode);
     }
     if (r.traceLevel !== resolved.traceLevel) {
       controller.updateTraceLevel(r.traceLevel);
-    }
-    if (
-      r.approveAll !== resolved.approveAll ||
-      r.approveEdits !== resolved.approveEdits ||
-      r.approveShellSafe !== resolved.approveShellSafe
-    ) {
-      controller.updateApprovalDefaults({
-        approveAll: r.approveAll,
-        approveEdits: r.approveEdits,
-        approveShellSafe: r.approveShellSafe,
-      });
     }
     props.setResolved(r);
     // Re-discover file-authored commands so newly added .sparkwright/command/*.md
@@ -1385,6 +1406,13 @@ function AppReady(
       }
       if (
         !top &&
+        b["cycle-permission-mode"].some((c) => chordMatches(c, key, input))
+      ) {
+        cyclePermissionMode();
+        return;
+      }
+      if (
+        !top &&
         state.todoItems.length > 0 &&
         b["todo.toggle"].some((c) => chordMatches(c, key, input))
       ) {
@@ -1404,6 +1432,13 @@ function AppReady(
   }
 
   const modelLabel = effModel ?? "deterministic";
+
+  function cyclePermissionMode(): void {
+    const next = nextTuiPermissionMode(effTuiPermissionMode);
+    setPermissionModeOverride(next);
+    controller.updateTuiPermissionMode(next);
+    store.appendNotice(`permission -> ${next} (next run)`);
+  }
 
   function commitModelSelection(modelName: string): void {
     const nextModelName = modelName.trim() || "deterministic";
@@ -1443,7 +1478,7 @@ function AppReady(
           <LayerRenderer
             entry={topLayer}
             registry={registry}
-            resolved={resolved}
+            resolved={effectiveResolved}
             sessionList={sessionList}
             events={state.events}
             labels={labels}
@@ -1536,7 +1571,7 @@ function AppReady(
           <StatusBar
             state={state}
             modelLabel={modelLabel}
-            permissionMode={resolved.permissionMode}
+            permissionMode={effTuiPermissionMode}
             focused={focused}
           />
         ) : null}
@@ -1625,7 +1660,7 @@ function AppReady(
           <LayerRenderer
             entry={topLayer}
             registry={registry}
-            resolved={resolved}
+            resolved={effectiveResolved}
             sessionList={sessionList}
             events={state.events}
             labels={labels}
@@ -1750,6 +1785,7 @@ function AppReady(
 export function inputFooterLines(bindings: Bindings, width = 100): string[] {
   const items = ["enter run", "\\↵ newline", "/ commands", "@ files"];
   for (const [name, label] of [
+    ["cycle-permission-mode", "mode"],
     ["history.search", "search"],
     ["events.open", "inspector"],
     ["cancel.run", "cancel"],

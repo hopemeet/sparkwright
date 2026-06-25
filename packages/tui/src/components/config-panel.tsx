@@ -6,12 +6,14 @@ import { middleEllipsisPath } from "../lib/path-display.js";
 export interface ConfigPanelResolved {
   workspaceRoot: string;
   modelName?: string;
+  tuiPermissionMode: string;
   permissionMode: string;
+  shouldWrite?: boolean;
   providers?: Record<string, unknown>;
   sources: {
     workspace?: string;
     model?: string;
-    permissionMode?: string;
+    tuiPermissionMode?: string;
   };
   attempted: Array<{ path: string; loaded: boolean }>;
 }
@@ -47,9 +49,14 @@ export function ConfigPanel(props: {
         <Text dimColor> ({resolved.sources.model ?? "?"})</Text>
       </Text>
       <Text>
-        <Text dimColor>permissionMode: </Text>
+        <Text dimColor>tuiPermissionMode: </Text>
+        {resolved.tuiPermissionMode}
+        <Text dimColor> ({resolved.sources.tuiPermissionMode ?? "?"})</Text>
+      </Text>
+      <Text>
+        <Text dimColor>core permission: </Text>
         {resolved.permissionMode}
-        <Text dimColor> ({resolved.sources.permissionMode ?? "?"})</Text>
+        <Text dimColor> / shouldWrite={String(resolved.shouldWrite)}</Text>
       </Text>
       {resolved.providers && Object.keys(resolved.providers).length > 0 ? (
         <Text>

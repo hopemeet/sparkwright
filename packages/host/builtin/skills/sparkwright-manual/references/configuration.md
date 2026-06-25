@@ -289,6 +289,9 @@ must gate the final answer.
 - `permissionMode`: default run permission mode.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
+- `approvals`: default approval auto-grants for CLI/host clients that opt into
+  those scopes, plus `cronMode` for unattended cron defaults. TUI approval
+  behavior comes from `tuiPermissionMode`.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `tasks`: routing and budget defaults for model-backed auxiliary tasks such as
   session compaction. `tasks.<name>.budget.maxSourceChars` is the
@@ -300,7 +303,9 @@ must gate the final answer.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
   schema loading.
 - `capabilities.agents`: agent profiles and delegate tools.
-- `theme`, `mouse`, `keybindings`: TUI-only preferences.
+- `tuiPermissionMode`, `theme`, `mouse`, `keybindings`: TUI-only preferences.
+  `tuiPermissionMode` accepts `read-only`, `ask`, `accept-edits`, or `bypass`
+  and is projected by the TUI to core run permission fields.
 
 ## Permission Modes
 
