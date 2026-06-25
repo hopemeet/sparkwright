@@ -98,6 +98,9 @@ export class CronStore {
         job.nextRunAt = computeNextRun(parsed.schedule, now);
         if (job.state === "completed" || job.state === "error") {
           job.state = "scheduled";
+          job.enabled = true;
+          job.runningSince = null;
+          job.repeat.completed = 0;
         }
       }
       if (patch.skills !== undefined) {
@@ -133,6 +136,13 @@ export class CronStore {
       const job = resolveJobRef(data.jobs, ref);
       job.enabled = true;
       job.state = "scheduled";
+      job.runningSince = null;
+      if (
+        job.repeat.times !== null &&
+        job.repeat.completed >= job.repeat.times
+      ) {
+        job.repeat.completed = 0;
+      }
       job.nextRunAt = computeNextRun(job.schedule, now);
       job.updatedAt = now.toISOString();
       return job;
@@ -327,7 +337,7 @@ function createJobId(): string {
   return randomBytes(6).toString("hex");
 }
 
-function defaultJobName(prompt: string): string {
+export function defaultJobName(prompt: string): string {
   return (
     prompt
       .replace(/\s+/g, " ")

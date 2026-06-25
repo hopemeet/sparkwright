@@ -1,9 +1,10 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineTool } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
+  CronCommandService,
   CronStore,
   computeNextRun,
   createCronTool,
@@ -20,6 +21,10 @@ describe("cron schedule parsing", () => {
   it("parses delay, interval, cron, and ISO timestamp schedules", () => {
     const now = new Date("2026-01-01T00:00:00.000Z");
     expect(parseSchedule("30m", now).schedule).toEqual({
+      kind: "once",
+      runAt: "2026-01-01T00:30:00.000Z",
+    });
+    expect(parseSchedule("in 30m", now).schedule).toEqual({
       kind: "once",
       runAt: "2026-01-01T00:30:00.000Z",
     });
@@ -48,6 +53,187 @@ describe("cron schedule parsing", () => {
       tool.execute({ action: "create" }, {} as never),
     ).rejects.toMatchObject({
       code: "TOOL_ARGUMENTS_INVALID",
+    });
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          job: {
+            prompt: "read README",
+            schedule: { kind: "interval", minutes: 60 },
+          },
+        },
+        {} as never,
+      ),
+    ).rejects.toMatchObject({
+      code: "TOOL_ARGUMENTS_INVALID",
+      message: "cron.create.job.schedule must be a non-empty string.",
+    });
+  });
+
+  it("makes cron tool creation idempotent and reports capability mutations", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-tool-"));
+    const tool = createCronTool({ rootDir: root });
+    const capabilityMutations: unknown[] = [];
+    const ctx = {
+      reportCapabilityMutationCompleted(payload: unknown) {
+        capabilityMutations.push(payload);
+      },
+    } as never;
+    const input = {
+      action: "create",
+      job: {
+        name: "qa-cron",
+        prompt: "read README",
+        schedule: "every 1h",
+      },
+    };
+
+    const first = await tool.execute(input, ctx);
+    const second = await tool.execute(input, ctx);
+    const service = new CronCommandService({ rootDir: root });
+    const listed = await service.listJobs();
+
+    expect(first).toMatchObject({
+      action: "create",
+      changed: true,
+      status: "created",
+      job: { name: "qa-cron" },
+    });
+    expect(second).toMatchObject({
+      action: "create",
+      changed: false,
+      status: "already_exists",
+      job: { name: "qa-cron" },
+    });
+    expect(listed).toMatchObject({
+      action: "list",
+      jobs: [{ name: "qa-cron" }],
+    });
+    expect(capabilityMutations).toHaveLength(1);
+    expect(capabilityMutations[0]).toMatchObject({
+      action: "cron.create",
+      metadata: { kind: "cron", jobName: "qa-cron" },
+    });
+  });
+
+  it("makes unnamed cron tool creation idempotent by default job name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-tool-"));
+    const tool = createCronTool({ rootDir: root });
+    const capabilityMutations: unknown[] = [];
+    const ctx = {
+      reportCapabilityMutationCompleted(payload: unknown) {
+        capabilityMutations.push(payload);
+      },
+    } as never;
+    const input = {
+      action: "create",
+      job: {
+        prompt: "read README",
+        schedule: "every 1h",
+      },
+    };
+
+    const first = await tool.execute(input, ctx);
+    const second = await tool.execute(input, ctx);
+    const service = new CronCommandService({ rootDir: root });
+    const listed = await service.listJobs();
+
+    expect(first).toMatchObject({
+      action: "create",
+      changed: true,
+      status: "created",
+      job: { name: "read README" },
+    });
+    expect(second).toMatchObject({
+      action: "create",
+      changed: false,
+      status: "already_exists",
+      job: { name: "read README" },
+    });
+    expect(listed.jobs.map((job) => job.name)).toEqual(["read README"]);
+    expect(capabilityMutations).toHaveLength(1);
+  });
+
+  it("does not auto-suffix cron tool creates with conflicting configs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-tool-"));
+    const tool = createCronTool({ rootDir: root });
+    const first = {
+      action: "create",
+      job: {
+        name: "qa-cron",
+        prompt: "read README",
+        schedule: "every 1h",
+      },
+    };
+    await tool.execute(first, {} as never);
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          job: {
+            name: "qa-cron",
+            prompt: "read README differently",
+            schedule: "every 1h",
+          },
+        },
+        {} as never,
+      ),
+    ).rejects.toThrow("cron job already exists with different config");
+
+    const service = new CronCommandService({ rootDir: root });
+    const listed = await service.listJobs();
+    expect(listed.jobs.map((job) => job.name)).toEqual(["qa-cron"]);
+  });
+
+  it("marks mutating cron tool actions as approval-relevant", () => {
+    const tool = createCronTool({ rootDir: "/tmp/sparkwright-cron-policy" });
+
+    expect(tool.policyForArgs?.({ action: "list" })).toMatchObject({
+      policy: { risk: "safe" },
+      governance: { sideEffects: ["read"], idempotency: "idempotent" },
+    });
+    expect(
+      tool.policyForArgs?.({
+        action: "create",
+        job: { prompt: "x", schedule: "every 1h" },
+      }),
+    ).toMatchObject({
+      policy: { risk: "risky", requiresApproval: true },
+      governance: {
+        sideEffects: ["read", "external"],
+        idempotency: "conditional",
+      },
+    });
+    expect(tool.isReadOnly?.({ action: "status", ref: "qa" })).toBe(true);
+    expect(tool.isDestructive?.({ action: "remove", ref: "qa" })).toBe(true);
+  });
+
+  it("supports inspect as a cron tool alias for status", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-tool-"));
+    const tool = createCronTool({ rootDir: root });
+    const created = await tool.execute(
+      {
+        action: "create",
+        job: {
+          name: "qa-cron",
+          prompt: "read README",
+          schedule: "every 1h",
+        },
+      },
+      {} as never,
+    );
+
+    const inspected = await tool.execute(
+      { action: "inspect", ref: "qa-cron" },
+      {} as never,
+    );
+
+    expect(created).toMatchObject({ job: { name: "qa-cron" } });
+    expect(inspected).toMatchObject({
+      action: "status",
+      job: { name: "qa-cron" },
     });
   });
 
@@ -252,6 +438,154 @@ describe("CronStore", () => {
     expect(after.lastRunId).toMatch(/^run_/);
     expect(after.lastTracePath).toContain(`cron-${job.id}`);
     expect(after.lastOutputPath).toContain(after.lastRunId ?? "");
+  });
+
+  it("reactivates a completed repeat-limited job when its schedule changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-reactivate-"));
+    const store = new CronStore({ rootDir: root });
+    const job = await store.createJob(
+      {
+        prompt: "say hi",
+        schedule: "1m",
+        repeat: { times: 1 },
+      },
+      new Date("2026-01-01T00:00:00.000Z"),
+    );
+    await store.markJobRun(
+      job.id,
+      { ok: true, runId: "run_completed" },
+      new Date("2026-01-01T00:01:00.000Z"),
+    );
+
+    const updated = await store.updateJob(
+      job.id,
+      { schedule: "2026-01-01T00:02:00.000Z" },
+      new Date("2026-01-01T00:01:30.000Z"),
+    );
+
+    expect(updated).toMatchObject({
+      state: "scheduled",
+      enabled: true,
+      repeat: { times: 1, completed: 0 },
+      nextRunAt: "2026-01-01T00:02:00.000Z",
+    });
+    const result = await tickCron({
+      rootDir: root,
+      store,
+      model: {
+        async complete() {
+          return { message: "ok" };
+        },
+      },
+      now: new Date("2026-01-01T00:02:00.000Z"),
+    });
+    expect(result).toMatchObject({ attempted: 1, completed: 1 });
+    const after = await store.getJob(job.id);
+    expect(after.repeat.completed).toBe(1);
+    expect(after.state).toBe("completed");
+  });
+
+  it("marks completed cron runs with denied workspace writes as job errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-denied-"));
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cron-ws-"));
+    await writeFile(join(workspace, "README.md"), "before\n", "utf8");
+    const store = new CronStore({ rootDir: root });
+    const job = await store.createJob(
+      {
+        prompt: "write README",
+        schedule: "1m",
+        workspace,
+      },
+      new Date("2026-01-01T00:00:00.000Z"),
+    );
+    let modelCalls = 0;
+    const writeReadme = defineTool({
+      name: "write_readme",
+      description: "Write README.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      async execute(_, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        await ctx.workspace.writeText("README.md", "after\n");
+      },
+    });
+
+    const result = await runCronJobByRef(job.id, {
+      rootDir: root,
+      store,
+      tools: [writeReadme],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? { toolCalls: [{ toolName: "write_readme", arguments: {} }] }
+            : { message: "write was denied" };
+        },
+      },
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result.result.ok).toBe(false);
+    expect(result.result.message).toContain("approval/policy denial");
+    await expect(readFile(join(workspace, "README.md"), "utf8")).resolves.toBe(
+      "before\n",
+    );
+    const after = await store.getJob(job.id);
+    expect(after.state).toBe("error");
+    expect(after.lastStatus).toBe("error");
+    expect(after.lastError).toContain("approval/policy denial");
+    expect(after.lastRunId).toMatch(/^run_/);
+    expect(after.lastTracePath).toContain(`cron-${job.id}`);
+    expect(after.lastOutputPath).toBeNull();
+  });
+
+  it("marks completed cron runs with unresolved tool failures as job errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-tool-fail-"));
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cron-ws-"));
+    const store = new CronStore({ rootDir: root });
+    const job = await store.createJob(
+      {
+        prompt: "run failing tool",
+        schedule: "1m",
+        workspace,
+      },
+      new Date("2026-01-01T00:00:00.000Z"),
+    );
+    let modelCalls = 0;
+    const failTool = defineTool({
+      name: "fail_tool",
+      description: "Fail.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe" },
+      async execute() {
+        throw new Error("synthetic tool failure");
+      },
+    });
+
+    const result = await runCronJobByRef(job.id, {
+      rootDir: root,
+      store,
+      tools: [failTool],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? { toolCalls: [{ toolName: "fail_tool", arguments: {} }] }
+            : { message: "done" };
+        },
+      },
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result.result.ok).toBe(false);
+    expect(result.result.message).toContain("failing outcome");
+    const after = await store.getJob(job.id);
+    expect(after.state).toBe("error");
+    expect(after.lastStatus).toBe("error");
+    expect(after.lastError).toContain("failing outcome");
+    expect(after.lastRunId).toMatch(/^run_/);
+    expect(after.lastTracePath).toContain(`cron-${job.id}`);
+    expect(after.lastOutputPath).toBeNull();
   });
 
   it("stores failed run summaries and trace references", async () => {

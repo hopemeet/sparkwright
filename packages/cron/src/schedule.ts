@@ -39,7 +39,9 @@ export function parseSchedule(input: string, now = new Date()): ParsedSchedule {
   }
 
   const delay =
-    /^(\d+)\s*(m|min|mins|minute|minutes|h|hour|hours|d|day|days)$/i.exec(text);
+    /^(?:in\s+)?(\d+)\s*(m|min|mins|minute|minutes|h|hour|hours|d|day|days)$/i.exec(
+      text,
+    );
   if (delay) {
     const minutes = durationToMinutes(Number(delay[1]), delay[2]!);
     const runAt = new Date(now.getTime() + minutes * 60_000);

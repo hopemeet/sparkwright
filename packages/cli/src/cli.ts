@@ -66,6 +66,7 @@ import {
   LocalWorkspace,
 } from "@sparkwright/core/internal";
 import {
+  CronCommandService,
   CronStore,
   defaultCronRoot,
   runCronJobByRef,
@@ -4973,11 +4974,15 @@ async function handleCronCommand(
   const store = new CronStore({
     rootDir,
   });
+  const cronService = new CronCommandService({ rootDir, store });
 
   try {
     if (subcommand === "list") {
-      const jobs = await store.listJobs();
-      writeLine(io.stdout, JSON.stringify({ rootDir, jobs }, null, 2));
+      const result = await cronService.listJobs();
+      writeLine(
+        io.stdout,
+        JSON.stringify({ rootDir, jobs: result.jobs }, null, 2),
+      );
       return { exitCode: 0 };
     }
 
@@ -4987,7 +4992,10 @@ async function handleCronCommand(
         writeLine(io.stderr, jobInput.message);
         return { exitCode: 1 };
       }
-      const job = await store.createJob(jobInput.value);
+      const result = await cronService.createJob(jobInput.value, {
+        conflictPolicy: "unique",
+      });
+      const job = result.job;
       writeLine(io.stdout, JSON.stringify(job, null, 2));
       return { exitCode: 0 };
     }
@@ -5007,30 +5015,34 @@ async function handleCronCommand(
         writeLine(io.stderr, patch.message);
         return { exitCode: 1 };
       }
-      const job = await store.updateJob(ref, patch.value);
-      writeLine(io.stdout, JSON.stringify(job, null, 2));
+      const result = await cronService.updateJob(ref, patch.value);
+      writeLine(io.stdout, JSON.stringify(result.job, null, 2));
       return { exitCode: 0 };
     }
 
     if (subcommand === "pause") {
-      writeLine(io.stdout, JSON.stringify(await store.pauseJob(ref), null, 2));
+      const result = await cronService.pauseJob(ref);
+      writeLine(io.stdout, JSON.stringify(result.job, null, 2));
       return { exitCode: 0 };
     }
 
     if (subcommand === "resume") {
-      writeLine(io.stdout, JSON.stringify(await store.resumeJob(ref), null, 2));
+      const result = await cronService.resumeJob(ref);
+      writeLine(io.stdout, JSON.stringify(result.job, null, 2));
       return { exitCode: 0 };
     }
 
     if (subcommand === "remove") {
-      writeLine(io.stdout, JSON.stringify(await store.removeJob(ref), null, 2));
+      const result = await cronService.removeJob(ref);
+      writeLine(io.stdout, JSON.stringify(result.job, null, 2));
       return { exitCode: 0 };
     }
 
     if (subcommand === "status") {
+      const result = await cronService.statusJob(ref);
       writeLine(
         io.stdout,
-        JSON.stringify(formatCronStatus(await store.getJob(ref)), null, 2),
+        JSON.stringify(formatCronStatus(result.job), null, 2),
       );
       return { exitCode: 0 };
     }

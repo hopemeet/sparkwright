@@ -24,6 +24,18 @@ export {
   removeStoreFileForTests,
   resolveJobRef,
 } from "./store.js";
+export { CronCommandService } from "./service.js";
+export type {
+  CronCommandOptions,
+  CronCommandResult,
+  CronCommandServiceOptions,
+  CronCreateResult,
+  CronCreateConflictPolicy,
+  CronCreateOptions,
+  CronListResult,
+  CronMutationResult,
+  CronStatusResult,
+} from "./service.js";
 export { withFileLock } from "./lock.js";
 export { writeJobOutput } from "./output.js";
 export type { CronOutputRecord } from "./output.js";
