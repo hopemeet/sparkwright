@@ -60,7 +60,10 @@ describe("ApprovalPrompt rendering", () => {
         timeoutMs: 120000,
         cwd: "/tmp/sparkwright-tui-coding.fixture",
       },
-      policy: { risk: "risky" },
+      policy: {
+        risk: "risky",
+        reason: "Tools with write side effects require approval for this run.",
+      },
     };
     const text = await renderToText(
       <ApprovalPrompt pending={pending} onDecision={() => {}} />,
@@ -68,6 +71,9 @@ describe("ApprovalPrompt rendering", () => {
     expect(text).toContain("$ npm test");
     expect(text).toContain("cwd: /tmp/sparkwright-tui-coding.fixture");
     expect(text).toContain("timeout: 120000ms");
+    expect(text).toContain(
+      "reason: Tools with write side effects require approval for this run.",
+    );
     expect(text).not.toContain('{"command"');
   });
 });

@@ -99,11 +99,41 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain(
       "sparkwright cron list|status|run|tick",
     );
+    expect(output.stdoutText()).toContain("sparkwright --version|-v");
     expect(output.stdoutText()).toContain("sparkwright trace report");
     expect(output.stdoutText()).toContain('sparkwright run "your goal"');
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
+  });
+
+  it("prints the CLI package version without starting a run", async () => {
+    const packageJson = JSON.parse(
+      await readFile(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-version-"));
+    tempDirs.push(configDir);
+    const badConfig = join(configDir, "config.yaml");
+    await writeFile(badConfig, "model: [\n");
+
+    for (const flag of ["--version", "-v"]) {
+      const output = createOutputCapture();
+
+      const result = await runCli([flag], {
+        env: { ...process.env, SPARKWRIGHT_CONFIG: badConfig },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(output.stdoutText()).toBe(`${packageJson.version}\n`);
+      expect(output.stdoutText()).not.toContain("run.started");
+      expect(output.stdoutText()).not.toContain("Trace written to");
+      expect(output.stderrText()).toBe("");
+    }
   });
 
   it("prints command help without treating help as a goal", async () => {

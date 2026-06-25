@@ -330,6 +330,10 @@
           "type": "boolean",
           "description": "Whether this run is allowed to request workspace writes."
         },
+        "allowWorkspaceWriteApproval": {
+          "type": "boolean",
+          "description": "Whether this run may ask the client to approve a write-capable request when shouldWrite is false."
+        },
         "model": { "type": "string", "minLength": 1 },
         "permissionMode": {
           "type": "string",
@@ -380,6 +384,10 @@
         "shouldWrite": {
           "type": "boolean",
           "description": "Whether the resumed run is allowed to request workspace writes."
+        },
+        "allowWorkspaceWriteApproval": {
+          "type": "boolean",
+          "description": "Whether the resumed run may ask the client to approve a write-capable request when shouldWrite is false."
         },
         "fromTrace": {
           "type": "boolean",

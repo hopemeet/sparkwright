@@ -257,6 +257,11 @@ export interface RunStartRequestPayload {
   confidentialPaths?: string[];
   /** Whether this run is allowed to request workspace writes. */
   shouldWrite?: boolean;
+  /**
+   * Whether a run with shouldWrite=false may ask the client to approve a
+   * specific write-capable tool/write request instead of failing immediately.
+   */
+  allowWorkspaceWriteApproval?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
   permissionMode?: PermissionMode;
@@ -275,6 +280,11 @@ export interface RunResumeRequestPayload {
   confidentialPaths?: string[];
   /** Whether the resumed run is allowed to request workspace writes. */
   shouldWrite?: boolean;
+  /**
+   * Whether a resumed run with shouldWrite=false may ask the client to approve a
+   * specific write-capable tool/write request instead of failing immediately.
+   */
+  allowWorkspaceWriteApproval?: boolean;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
   fromTrace?: boolean;
   /** Allow resuming checkpoints that are terminal or otherwise normally refused. */

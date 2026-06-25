@@ -2360,6 +2360,82 @@ describe("SparkwrightRun", () => {
     expect(run.record.state).toBe("completed");
   });
 
+  it("can approve per-argument write-side-effect tools in read-only runs when approval escalation is enabled", async () => {
+    let executed = false;
+    let modelCalls = 0;
+    const tool = defineTool({
+      name: "mixed_shell",
+      description: "Mixed shell-like tool.",
+      inputSchema: {
+        type: "object",
+        properties: { mode: { type: "string" } },
+        required: ["mode"],
+      },
+      policy: { risk: "risky", requiresApproval: true },
+      governance: {
+        sideEffects: ["write", "external"],
+        origin: { kind: "local", name: "test" },
+      },
+      policyForArgs() {
+        return {
+          policy: { risk: "risky", requiresApproval: true },
+          governance: {
+            sideEffects: ["write", "external"],
+            origin: { kind: "local", name: "test" },
+          },
+        };
+      },
+      execute() {
+        executed = true;
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "approve risky per-arg shell",
+      tools: [tool],
+      policy: createWorkspaceMutationPolicy({
+        allowWorkspaceWrites: false,
+        allowWorkspaceWriteApproval: true,
+      }),
+      approvalResolver(request) {
+        expect(request.action).toBe("tool.execute");
+        expect(request.details).toMatchObject({
+          toolName: "mixed_shell",
+          policy: {
+            reason:
+              "Tools with write side effects require approval for this run.",
+            metadata: { writeGate: "run_write" },
+          },
+        });
+        return { approvalId: request.id, decision: "approved" };
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  { toolName: "mixed_shell", arguments: { mode: "write" } },
+                ],
+              }
+            : { message: "approved" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(executed).toBe(true);
+    expect(
+      run.events.all().some((event) => event.type === "approval.requested"),
+    ).toBe(true);
+    expect(
+      run.events.all().some((event) => event.type === "tool.completed"),
+    ).toBe(true);
+    expect(run.record.state).toBe("completed");
+  });
+
   it("can be cancelled before it starts", () => {
     const run = createRun({ goal: "cancel me" });
 

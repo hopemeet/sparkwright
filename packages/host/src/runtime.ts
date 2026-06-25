@@ -200,9 +200,19 @@ function payloadAllowsWorkspaceWrites(
   return true;
 }
 
+function payloadAllowsWorkspaceWriteApproval(
+  payload: RunStartRequestPayload | RunResumeRequestPayload,
+): boolean {
+  if (payload.allowWorkspaceWriteApproval !== undefined) {
+    return payload.allowWorkspaceWriteApproval;
+  }
+  return payload.metadata?.allowWorkspaceWriteApproval === true;
+}
+
 function createHostRunPolicy(input: {
   permissionMode: PermissionMode;
   shouldWrite: boolean;
+  allowWorkspaceWriteApproval?: boolean;
   targetPath?: string;
   confidentialPaths?: readonly string[];
   writeGuardrails?: WriteGuardrailsConfig;
@@ -216,6 +226,7 @@ function createHostRunPolicy(input: {
     createPermissionModePolicy({ mode: input.permissionMode }),
     createWorkspaceMutationPolicy({
       allowWorkspaceWrites: input.shouldWrite,
+      allowWorkspaceWriteApproval: input.allowWorkspaceWriteApproval,
       allowedPaths: input.targetPath ? [input.targetPath] : undefined,
       maxWriteFiles:
         input.writeGuardrails?.maxFiles ?? (input.targetPath ? 1 : 4),
@@ -752,6 +763,7 @@ export class HostRuntime {
     modelRef?: string;
     permissionMode: PermissionMode;
     shouldWrite: boolean;
+    allowWorkspaceWriteApproval?: boolean;
     sessionId: string;
     targetPath?: string;
     confidentialPaths?: readonly string[];
@@ -895,6 +907,7 @@ export class HostRuntime {
     const parentRunPolicy = createHostRunPolicy({
       permissionMode: input.permissionMode,
       shouldWrite: input.shouldWrite,
+      allowWorkspaceWriteApproval: input.allowWorkspaceWriteApproval,
       targetPath: input.targetPath,
       confidentialPaths: input.confidentialPaths,
       writeGuardrails,
@@ -1455,12 +1468,15 @@ export class HostRuntime {
       permissionMode,
       this.opts.defaultShouldWrite,
     );
+    const allowWorkspaceWriteApproval =
+      payloadAllowsWorkspaceWriteApproval(payload);
     const resumeSessionId = located.sessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
       modelRef,
       permissionMode,
       shouldWrite,
+      allowWorkspaceWriteApproval,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -1472,11 +1488,13 @@ export class HostRuntime {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
         shouldWrite,
+        ...(allowWorkspaceWriteApproval ? { allowWorkspaceWriteApproval } : {}),
       },
       runStoreMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
         shouldWrite,
+        ...(allowWorkspaceWriteApproval ? { allowWorkspaceWriteApproval } : {}),
         ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
       },
     });
@@ -1492,6 +1510,7 @@ export class HostRuntime {
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
+          allowWorkspaceWriteApproval,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
           writeGuardrails: env.writeGuardrails,
@@ -1548,6 +1567,7 @@ export class HostRuntime {
               policy: createHostRunPolicy({
                 permissionMode,
                 shouldWrite,
+                allowWorkspaceWriteApproval,
                 targetPath: payload.targetPath,
                 confidentialPaths: payload.confidentialPaths,
                 writeGuardrails: env.writeGuardrails,
@@ -1612,6 +1632,8 @@ export class HostRuntime {
       permissionMode,
       this.opts.defaultShouldWrite,
     );
+    const allowWorkspaceWriteApproval =
+      payloadAllowsWorkspaceWriteApproval(payload);
     let sessionId: string;
     try {
       sessionId = payload.sessionId
@@ -1631,6 +1653,7 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       shouldWrite,
+      allowWorkspaceWriteApproval,
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -1641,10 +1664,12 @@ export class HostRuntime {
       runMetadata: {
         ...(payload.metadata ?? {}),
         shouldWrite,
+        ...(allowWorkspaceWriteApproval ? { allowWorkspaceWriteApproval } : {}),
       },
       runStoreMetadata: {
         ...(payload.metadata ?? {}),
         shouldWrite,
+        ...(allowWorkspaceWriteApproval ? { allowWorkspaceWriteApproval } : {}),
       },
     });
     if (!prepared.ok) return prepared;
@@ -1690,6 +1715,7 @@ export class HostRuntime {
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
+          allowWorkspaceWriteApproval,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
           writeGuardrails: env.writeGuardrails,
