@@ -210,7 +210,9 @@ async function createCron(
   );
   return {
     kind: "cron",
-    message: `Created cron job ${result.job.name}`,
+    message: result.nameAdjusted
+      ? `Created cron job ${result.job.name} (${result.requestedName} already existed)`
+      : `Created cron job ${result.job.name}`,
     path: service.store.jobsPath,
   };
 }

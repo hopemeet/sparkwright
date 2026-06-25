@@ -682,7 +682,9 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     stringOrUndefined(input.metadata?.agentId) ?? input.childAgentProfile?.id;
   const parentAgentId =
     stringOrUndefined(parent.record.metadata?.agentId) ?? "main";
-  const sessionId = stringOrUndefined(parent.record.metadata?.sessionId);
+  const sessionId =
+    stringOrUndefined(parent.record.metadata?.sessionId) ??
+    stringOrUndefined(input.metadata?.sessionId);
   const subagentDepth =
     numberMetadata(input.metadata, "subagentDepth") ??
     nextSubagentDepth(parent.record.metadata);
@@ -690,6 +692,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     ...(input.metadata ?? {}),
     parentRunId: parent.record.id,
     parentSpanId: parent.record.metadata?.spanId as string | undefined,
+    sessionId,
     spanId,
     subagentDepth,
     agentId: childAgentId,

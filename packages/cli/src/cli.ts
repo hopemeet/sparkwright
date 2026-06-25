@@ -4996,6 +4996,12 @@ async function handleCronCommand(
         conflictPolicy: "unique",
       });
       const job = result.job;
+      if (result.nameAdjusted) {
+        writeLine(
+          io.stderr,
+          `Cron job "${result.requestedName}" already exists; created as "${job.name}".`,
+        );
+      }
       writeLine(io.stdout, JSON.stringify(job, null, 2));
       return { exitCode: 0 };
     }

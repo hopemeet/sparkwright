@@ -98,12 +98,16 @@ describe("cron schedule parsing", () => {
       action: "create",
       changed: true,
       status: "created",
+      requestedName: "qa-cron",
+      nameAdjusted: false,
       job: { name: "qa-cron" },
     });
     expect(second).toMatchObject({
       action: "create",
       changed: false,
       status: "already_exists",
+      requestedName: "qa-cron",
+      nameAdjusted: false,
       job: { name: "qa-cron" },
     });
     expect(listed).toMatchObject({
@@ -153,6 +157,60 @@ describe("cron schedule parsing", () => {
     });
     expect(listed.jobs.map((job) => job.name)).toEqual(["read README"]);
     expect(capabilityMutations).toHaveLength(1);
+  });
+
+  it("creates a fresh idempotent job for one-shot schedules", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-once-"));
+    const service = new CronCommandService({ rootDir: root });
+
+    const first = await service.createJob(
+      {
+        name: "read-later",
+        prompt: "read README",
+        schedule: "in 1h",
+      },
+      {
+        conflictPolicy: "idempotent",
+        now: new Date("2026-01-01T00:00:00.000Z"),
+      },
+    );
+    const second = await service.createJob(
+      {
+        name: "read-later",
+        prompt: "read README",
+        schedule: "in 1h",
+      },
+      {
+        conflictPolicy: "idempotent",
+        now: new Date("2026-01-01T00:10:00.000Z"),
+      },
+    );
+    const listed = await service.listJobs();
+
+    expect(first).toMatchObject({
+      changed: true,
+      status: "created",
+      requestedName: "read-later",
+      nameAdjusted: false,
+      job: {
+        name: "read-later",
+        schedule: { kind: "once", runAt: "2026-01-01T01:00:00.000Z" },
+      },
+    });
+    expect(second).toMatchObject({
+      changed: true,
+      status: "created",
+      requestedName: "read-later",
+      nameAdjusted: true,
+      job: {
+        name: "read-later 2",
+        schedule: { kind: "once", runAt: "2026-01-01T01:10:00.000Z" },
+      },
+    });
+    expect(listed.jobs.map((job) => job.name)).toEqual([
+      "read-later",
+      "read-later 2",
+    ]);
   });
 
   it("does not auto-suffix cron tool creates with conflicting configs", async () => {

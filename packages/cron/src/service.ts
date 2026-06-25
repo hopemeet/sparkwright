@@ -3,7 +3,12 @@ import type {
   CapabilityMutationEvent,
   RuntimeContext,
 } from "@sparkwright/core";
-import type { CreateJobInput, CronJob, UpdateJobPatch } from "./model.js";
+import type {
+  CreateJobInput,
+  CronJob,
+  Schedule,
+  UpdateJobPatch,
+} from "./model.js";
 import { parseSchedule } from "./schedule.js";
 import { CronStore, defaultJobName } from "./store.js";
 
@@ -27,6 +32,8 @@ export interface CronCreateResult {
   action: "create";
   changed: boolean;
   status: "created" | "already_exists";
+  requestedName: string;
+  nameAdjusted: boolean;
   job: CronJob;
 }
 
@@ -82,7 +89,10 @@ export class CronCommandService {
     const now = options.now ?? new Date();
     const conflictPolicy = options.conflictPolicy ?? "unique";
     const normalized = normalizeCreateInput(input, now);
-    if (conflictPolicy === "idempotent") {
+    if (
+      conflictPolicy === "idempotent" &&
+      normalized.schedule.kind !== "once"
+    ) {
       const existing = (await this.store.listJobs()).find(
         (job) => job.name.toLowerCase() === normalized.name.toLowerCase(),
       );
@@ -92,6 +102,8 @@ export class CronCommandService {
             action: "create",
             changed: false,
             status: "already_exists",
+            requestedName: normalized.name,
+            nameAdjusted: existing.name !== normalized.name,
             job: existing,
           };
         }
@@ -103,7 +115,14 @@ export class CronCommandService {
 
     const job = await this.store.createJob(input, now);
     this.reportMutation("cron.create", job, `Create cron job ${job.name}`);
-    return { action: "create", changed: true, status: "created", job };
+    return {
+      action: "create",
+      changed: true,
+      status: "created",
+      requestedName: normalized.name,
+      nameAdjusted: job.name !== normalized.name,
+      job,
+    };
   }
 
   async updateJob(
@@ -173,7 +192,7 @@ export class CronCommandService {
 interface NormalizedCreateInput {
   name: string;
   prompt: string;
-  scheduleDisplay: string;
+  schedule: Schedule;
   skills: string[];
   repeatTimes: number | null;
   workspace?: string;
@@ -188,7 +207,7 @@ function normalizeCreateInput(
   return {
     name: input.name?.trim() || defaultJobName(prompt),
     prompt,
-    scheduleDisplay: parsed.display,
+    schedule: parsed.schedule,
     skills: normalizeStringArray(input.skills),
     repeatTimes: normalizeRepeatTimes(input.repeat?.times),
     ...(input.workspace ? { workspace: resolve(input.workspace) } : {}),
@@ -199,13 +218,27 @@ function jobMatchesCreateInput(
   job: CronJob,
   input: NormalizedCreateInput,
 ): boolean {
+  if (job.schedule.kind === "once" || input.schedule.kind === "once") {
+    return false;
+  }
   return (
     job.prompt === input.prompt &&
-    job.scheduleDisplay === input.scheduleDisplay &&
+    schedulesEqual(job.schedule, input.schedule) &&
     arraysEqual(job.skills, input.skills) &&
     job.repeat.times === input.repeatTimes &&
     (job.workspace ?? undefined) === input.workspace
   );
+}
+
+function schedulesEqual(left: Schedule, right: Schedule): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "interval" && right.kind === "interval") {
+    return left.minutes === right.minutes;
+  }
+  if (left.kind === "cron" && right.kind === "cron") {
+    return left.expr === right.expr;
+  }
+  return false;
 }
 
 function normalizeStringArray(value: readonly string[] | undefined): string[] {
