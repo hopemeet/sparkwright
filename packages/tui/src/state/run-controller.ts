@@ -311,6 +311,9 @@ export class RunController {
           permissionMode: this.opts.permissionMode,
           traceLevel,
           shouldWrite: this.shouldWrite(),
+          allowWorkspaceWriteApproval: this.allowWorkspaceWriteApproval()
+            ? true
+            : undefined,
           metadata: this.runRequestMetadata({ traceLevel }),
         }),
       );
@@ -555,6 +558,9 @@ export class RunController {
         permissionMode: this.opts.permissionMode ?? "default",
         traceLevel,
         shouldWrite: this.shouldWrite(),
+        allowWorkspaceWriteApproval: this.allowWorkspaceWriteApproval()
+          ? true
+          : undefined,
         modelName: this.opts.modelName,
       }),
       ...inputMetadataRecord(this.pendingRunInput()),
@@ -573,6 +579,10 @@ export class RunController {
 
   private shouldWrite(): boolean {
     return this.opts.shouldWrite === true;
+  }
+
+  private allowWorkspaceWriteApproval(): boolean {
+    return !this.shouldWrite();
   }
 
   private hasTerminalRunEvent(): boolean {

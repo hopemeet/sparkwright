@@ -6,6 +6,9 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add optional `allowWorkspaceWriteApproval` to `run.start` and `run.resume`
+  payloads so interactive clients can request per-action write authorization
+  while keeping `shouldWrite: false`.
 - Add optional `traceLevel` to `run.start` and `run.resume` payloads.
 - Add optional `autoApproved` to `approval.resolve` so clients can mark
   policy/flag-driven approvals structurally.

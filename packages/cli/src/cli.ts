@@ -217,6 +217,11 @@ export async function runCli(
     return { exitCode: 0 };
   }
 
+  if (isVersionArg(argv[0])) {
+    writeLine(io.stdout, cliPackageVersion());
+    return { exitCode: 0 };
+  }
+
   if (argv[0] === "init") {
     return handleInitCommand(io, env, argv.slice(1), cwd);
   }
@@ -5047,6 +5052,7 @@ async function handleCronCommand(
         rootDir,
         store,
         model: model.adapter,
+        workspaceRoot: parsed.workspaceRoot,
         tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
         approvalResolver: createCliApprovalResolver({
           approveAll: parsed.approveAll,
@@ -5081,6 +5087,7 @@ async function handleCronCommand(
     const result = await tickCron({
       rootDir,
       store,
+      workspaceRoot: parsed.workspaceRoot,
       modelFactory: async () => {
         const fresh = await createCliModel(cronTickModelInput);
         if (!fresh.ok) throw new Error(fresh.message);
@@ -5116,7 +5123,6 @@ interface CronParsedArgs {
   skills?: string[];
   skillRoots?: string[];
   repeatTimes?: number | null;
-  deliver?: "local" | "origin";
   workspace?: string | null;
 }
 
@@ -5180,15 +5186,6 @@ function parseCronArgs(
         };
       }
       i += 1;
-    } else if (arg === "--deliver") {
-      if (next !== "local" && next !== "origin") {
-        return {
-          ok: false,
-          message: "Usage: --deliver must be local or origin",
-        };
-      }
-      out.deliver = next;
-      i += 1;
     } else if (arg === "--job-workspace") {
       if (!next)
         return { ok: false, message: "Usage: --job-workspace requires a path" };
@@ -5220,7 +5217,6 @@ function cronCreateInput(
       ...(args.repeatTimes !== undefined
         ? { repeat: { times: args.repeatTimes } }
         : {}),
-      ...(args.deliver ? { deliver: args.deliver } : {}),
       ...(typeof args.workspace === "string"
         ? { workspace: args.workspace }
         : {}),
@@ -5238,7 +5234,6 @@ function cronUpdatePatch(
   if (args.skills !== undefined) patch.skills = args.skills;
   if (args.repeatTimes !== undefined)
     patch.repeat = { times: args.repeatTimes };
-  if (args.deliver !== undefined) patch.deliver = args.deliver;
   if (args.workspace !== undefined) patch.workspace = args.workspace;
   if (Object.keys(patch).length === 0) {
     return {
@@ -5330,9 +5325,9 @@ function splitShellLike(input: string): string[] {
 
 function cronUsage(): string {
   return [
-    'Usage: sparkwright cron create --schedule "every 1h" --prompt "task" [--name name] [--skill name] [--repeat n|forever]',
+    'Usage: sparkwright cron create --schedule "every 1h" --prompt "task" [--name name] [--skill name] [--repeat n|forever] [--job-workspace path]',
     "       sparkwright cron list",
-    "       sparkwright cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text]",
+    "       sparkwright cron update <job-id-or-name> [--schedule text] [--prompt text] [--name text] [--job-workspace path|--clear-job-workspace]",
     "       sparkwright cron pause|resume|remove|status <job-id-or-name>",
     "       sparkwright cron run <job-id-or-name> [--model provider/model] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
     "       sparkwright cron tick [--model provider/model] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]",
@@ -5401,6 +5396,19 @@ function helpForArgs(argv: readonly string[]): string | undefined {
 
 function isHelpArg(value: string | undefined): boolean {
   return value === "--help" || value === "-h" || value === "help";
+}
+
+function isVersionArg(value: string | undefined): boolean {
+  return value === "--version" || value === "-v";
+}
+
+function cliPackageVersion(): string {
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { version?: unknown };
+  return typeof packageJson.version === "string"
+    ? packageJson.version
+    : "(unknown)";
 }
 
 async function handleTraceCommand(
@@ -6486,6 +6494,7 @@ function usage(): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
+    "       sparkwright --version|-v      # print CLI package version",
     "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
     "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",

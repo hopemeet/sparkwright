@@ -356,7 +356,11 @@ export function createWriteFileTool(): ToolDefinition<
       sideEffects: ["write"],
       idempotency: "conditional",
       dataSensitivity: "internal",
-      origin: { kind: "local", name: "@sparkwright/coding-tools" },
+      origin: {
+        kind: "local",
+        name: "@sparkwright/coding-tools",
+        metadata: { managedWorkspaceWrite: true },
+      },
     },
     previewArgs(args) {
       return previewString(previewRecord(args).path);
@@ -440,7 +444,11 @@ export function createEditAnchoredTextTool(): ToolDefinition<
       sideEffects: ["write"],
       idempotency: "conditional",
       dataSensitivity: "internal",
-      origin: { kind: "local", name: "@sparkwright/coding-tools" },
+      origin: {
+        kind: "local",
+        name: "@sparkwright/coding-tools",
+        metadata: { managedWorkspaceWrite: true },
+      },
     },
     previewArgs(args) {
       const r = previewRecord(args);
@@ -493,7 +501,11 @@ export function createApplyPatchTool(): ToolDefinition<
       sideEffects: ["write"],
       idempotency: "conditional",
       dataSensitivity: "internal",
-      origin: { kind: "local", name: "@sparkwright/coding-tools" },
+      origin: {
+        kind: "local",
+        name: "@sparkwright/coding-tools",
+        metadata: { managedWorkspaceWrite: true },
+      },
     },
     previewArgs(args) {
       return previewString(previewRecord(args).path);

@@ -24,6 +24,13 @@ export interface RunCronJobOptions {
   approvalResolver?: ApprovalResolver;
   permissionMode?: PermissionMode;
   skillRoots?: string[];
+  /**
+   * Fallback workspace for jobs that do not carry their own `job.workspace`.
+   * The CLI threads its `--workspace` here so a job without a stored workspace
+   * runs (and writes its session/trace) under the caller's workspace instead of
+   * the process cwd. A job-level workspace still wins.
+   */
+  workspaceRoot?: string;
   now?: Date;
 }
 
@@ -45,7 +52,7 @@ export async function runCronJob(
     skillRoots: options.skillRoots,
     now,
   });
-  const workspaceRoot = job.workspace ?? process.cwd();
+  const workspaceRoot = job.workspace ?? options.workspaceRoot ?? process.cwd();
   const sessionRootDir = join(workspaceRoot, ".sparkwright", "sessions");
   const promptBuilder = wrapPromptBuilderWithInspector(
     buildAgentPromptBuilder({

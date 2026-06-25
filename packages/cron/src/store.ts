@@ -70,7 +70,6 @@ export class CronStore {
         lastRunId: null,
         lastTracePath: null,
         lastOutputPath: null,
-        deliver: input.deliver ?? "local",
         ...(input.workspace ? { workspace: resolve(input.workspace) } : {}),
         createdAt,
         updatedAt: createdAt,
@@ -116,7 +115,6 @@ export class CronStore {
               : normalizeCompleted(patch.repeat.completed),
         };
       }
-      if (patch.deliver !== undefined) job.deliver = patch.deliver;
       if (patch.workspace !== undefined) {
         if (patch.workspace === null) delete job.workspace;
         else job.workspace = resolve(patch.workspace);

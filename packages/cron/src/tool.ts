@@ -38,13 +38,13 @@ export function createCronTool(options: CreateCronToolOptions) {
         job: {
           type: "object",
           description:
-            "Create payload: prompt, schedule, and optional name, skills, repeat, deliver, workspace.",
+            "Create payload: prompt, schedule, and optional name, skills, repeat, workspace.",
           additionalProperties: true,
         },
         patch: {
           type: "object",
           description:
-            "Update payload. Supports name, prompt, schedule, skills, repeat, deliver, workspace.",
+            "Update payload. Supports name, prompt, schedule, skills, repeat, workspace.",
           additionalProperties: true,
         },
       },

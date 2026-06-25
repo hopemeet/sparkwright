@@ -80,6 +80,40 @@ function stream(events: RunEvent[]): React.ReactElement {
 }
 
 describe("EventStream committed rendering", () => {
+  it("renders a model switch notice as committed scrollback", async () => {
+    const text = await renderToText(
+      stream([
+        ev("tui.notice", -1, {
+          text: "model -> openai/gpt-5.4-mini (next run)",
+        }),
+      ]),
+    );
+
+    expect(text).toContain("model -> openai/gpt-5.4-mini (next run)");
+    expect(text).not.toContain("[ -1] tui.notice");
+  });
+
+  it("renders transcript export paths as bare committed scrollback lines", async () => {
+    const path =
+      "/Applications/xgw/projects/AI-native/SparkWright/.sparkwright/exports/session-session_tui_mq4j14hz.md";
+    const text = await renderToText(
+      stream([
+        ev("tui.export.completed", -1, {
+          path,
+        }),
+      ]),
+    );
+    const lines = text
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+
+    expect(text).toContain("transcript exported");
+    expect(lines).toContain(path);
+    expect(text).not.toContain("│");
+    expect(text).not.toContain("[ -1] tui.export.completed");
+  });
+
   it("renders a list_dir result as a summary, not raw JSON", async () => {
     const events = [
       ev("tool.completed", 1, {

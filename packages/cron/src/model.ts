@@ -11,7 +11,6 @@ export type JobState =
   | "error";
 
 export type JobStatus = "ok" | "error";
-export type DeliveryTarget = "local" | "origin";
 
 export interface CronJob {
   id: string;
@@ -31,7 +30,6 @@ export interface CronJob {
   lastRunId?: string | null;
   lastTracePath?: string | null;
   lastOutputPath?: string | null;
-  deliver: DeliveryTarget;
   workspace?: string;
   createdAt: string;
   updatedAt: string;
@@ -48,7 +46,6 @@ export interface CreateJobInput {
   schedule: string;
   skills?: string[];
   repeat?: { times?: number | null };
-  deliver?: DeliveryTarget;
   workspace?: string;
 }
 
@@ -58,7 +55,6 @@ export interface UpdateJobPatch {
   schedule?: string;
   skills?: string[];
   repeat?: { times?: number | null; completed?: number };
-  deliver?: DeliveryTarget;
   workspace?: string | null;
 }
 

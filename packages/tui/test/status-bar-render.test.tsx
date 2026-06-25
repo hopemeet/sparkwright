@@ -62,7 +62,7 @@ function state(partial: Partial<StoreState>): StoreState {
     modifiedFiles: [],
     todoItems: [],
     usage: null,
-    activeTool: null,
+    activePhase: null,
     clearGeneration: 0,
     ...partial,
   };
@@ -83,5 +83,32 @@ describe("StatusBar", () => {
     expect(text).toContain("openai/gpt-5.4-mini");
     expect(text).toContain("default");
     expect(text).not.toContain("SparkWright");
+  });
+
+  it("shows the active phase in place of the generic running label", async () => {
+    const text = await renderToText(
+      <StatusBar
+        state={state({
+          status: "running",
+          runStartedAt: Date.now(),
+          activePhase: {
+            kind: "tool",
+            message: "running shell",
+            key: "tool:call_a",
+            priority: 40,
+            depth: 0,
+            startedSeq: 1,
+          },
+        })}
+        modelLabel="openai/gpt-5.4-mini"
+        permissionMode="default"
+        focused={true}
+      />,
+    );
+
+    // The specific phase carries the one spinner line — no bare "running" word
+    // on its own and no second spinner elsewhere.
+    expect(text).toContain("running shell");
+    expect(text).toContain("openai/gpt-5.4-mini");
   });
 });

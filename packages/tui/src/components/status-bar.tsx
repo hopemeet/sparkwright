@@ -20,10 +20,16 @@ export function StatusBar(props: {
   const { stdout } = useStdout();
   const elapsedMs = useElapsed(props.state);
   const compact = (stdout?.columns ?? 120) < 100;
+  // While running, show the specific live phase ("thinking" / "running shell" /
+  // "agent reviewer") in place of the generic "running" so the one spinner here
+  // carries the detail — no second spinner line elsewhere. Falls back to the
+  // raw status between phases and for non-running states.
   const statusLabel =
     props.state.status === "awaiting-approval"
       ? "approval"
-      : props.state.status;
+      : props.state.status === "running" && props.state.activePhase
+        ? props.state.activePhase.message
+        : props.state.status;
   const modelLabel = compact
     ? compactModelLabel(props.modelLabel)
     : props.modelLabel;

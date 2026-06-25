@@ -86,6 +86,46 @@ export interface UsageSummary {
   toolCalls?: number;
 }
 
+export type ActivePhaseKind =
+  | "model"
+  | "tool"
+  | "agent"
+  | "validation"
+  | "compaction";
+
+export interface ActivePhase {
+  kind: ActivePhaseKind;
+  /** Short live-frame label, e.g. "thinking" or "running shell". */
+  message: string;
+  key: string;
+  priority: number;
+  depth: number;
+  startedSeq: number;
+}
+
+/**
+ * Live-frame phase precedence — higher wins in {@link EventStore.deriveActivePhase}.
+ *
+ * `compaction` sits at the top: it's a blocking between-turns maintenance
+ * pause that may itself spawn a summarizing model call, and the user should see
+ * "compacting" rather than that inner "thinking". `agent` (a running subagent)
+ * outranks `tool` on purpose: a subagent is launched by a delegate tool whose
+ * `execute()` stays open for the child's entire run (streaming-runtime brackets
+ * `tool.requested` → `tool.completed` around the awaited execute). Without this,
+ * the delegate tool name would mask the agent the whole time it runs.
+ * `validation` (a parent output gate) sits just above a plain tool; a queued —
+ * not yet started — agent and quiet model-thinking sit low because something
+ * more concrete is usually in flight.
+ */
+const PHASE_PRIORITY = {
+  compaction: 55,
+  agentActive: 45,
+  tool: 40,
+  validation: 35,
+  agentQueued: 20,
+  model: 10,
+} as const;
+
 export interface StoreState {
   status: Status;
   events: RunEvent[];
@@ -115,11 +155,13 @@ export interface StoreState {
   /** Latest usage snapshot, if the host emitted any usage event. */
   usage: UsageSummary | null;
   /**
-   * Name of the tool currently in flight, or null. Set on tool.requested/
-   * started, cleared on completed/failed. Drives a live "running X…" hint in
-   * the live frame so the dead air before the first streamed token isn't blank.
+   * Current high-signal runtime phase. Derived from open model/tool/subagent/
+   * validation lifecycle events; drives the live hint when no stream text is
+   * being rendered.
+   *
+   * @reserved Public TUI store field consumed by App live-frame rendering.
    */
-  activeTool: string | null;
+  activePhase: ActivePhase | null;
   /**
    * Bumped by clearEvents()/reset(). The App keys <Static> off this and wipes
    * the terminal scrollback when it changes — Static can't un-print committed
@@ -146,7 +188,7 @@ export class EventStore {
     modifiedFiles: [],
     todoItems: [],
     usage: null,
-    activeTool: null,
+    activePhase: null,
     clearGeneration: 0,
   };
   private listeners = new Set<Listener>();
@@ -159,6 +201,12 @@ export class EventStore {
   private usageByRun = new Map<string, RunUsage>();
   private lastUsageRunId: string | null = null;
   private pendingTodoProposals = new Map<string, TodoPanelItem[]>();
+  private openPhases = new Map<string, ActivePhase>();
+  // Retry attempts seen for the current model turn, keyed by runId (all attempts
+  // in a turn share it). Lets the model phase read "retrying (attempt N)" rather
+  // than a plain "thinking" while a failed call is being re-issued. Cleared when
+  // the turn reaches a real terminal (model.completed) or the run ends.
+  private modelRetries = new Map<string, number>();
   // Synthetic, TUI-local events (e.g. the injected user goal) use descending
   // negative sequences so they never collide with host sequences (which start
   // at 1) and sort ahead of them when appended just before a run begins.
@@ -182,12 +230,29 @@ export class EventStore {
     ) {
       runEndedAt = Date.now();
     }
-    this.state = { ...this.state, status, runStartedAt, runEndedAt };
+    if (status !== "running" && status !== "awaiting-approval") {
+      this.openPhases.clear();
+      this.modelRetries.clear();
+    }
+    this.state = {
+      ...this.state,
+      status,
+      runStartedAt,
+      runEndedAt,
+      activePhase: this.deriveActivePhase(),
+    };
     this.schedule();
   }
 
   setError(message: string): void {
-    this.state = { ...this.state, status: "error", lastError: message };
+    this.openPhases.clear();
+    this.modelRetries.clear();
+    this.state = {
+      ...this.state,
+      status: "error",
+      lastError: message,
+      activePhase: null,
+    };
     this.schedule();
   }
 
@@ -261,24 +326,7 @@ export class EventStore {
     let modifiedFiles = this.state.modifiedFiles;
     let todoItems = this.state.todoItems;
     let usage = this.state.usage;
-    let activeTool = this.state.activeTool;
-
-    if (event.type === "tool.requested" || event.type === "tool.started") {
-      const name = (rec(event.payload).toolName ?? null) as string | null;
-      if (typeof name === "string") activeTool = name;
-    } else if (
-      // Batch mode (deterministic provider) emits tool.batch.completed rather
-      // than per-tool completions, and a new model turn / stream supersedes any
-      // in-flight tool — clear on all of these so the live hint can't stick.
-      event.type === "tool.completed" ||
-      event.type === "tool.failed" ||
-      event.type === "tool.batch.completed" ||
-      event.type === "model.requested" ||
-      event.type === "model.completed" ||
-      event.type === "model.stream.started"
-    ) {
-      activeTool = null;
-    }
+    this.updateActivePhases(event);
 
     if (event.type.startsWith("workspace.write")) {
       const payload = (event.payload ?? {}) as {
@@ -354,7 +402,7 @@ export class EventStore {
       modifiedFiles,
       todoItems,
       usage,
-      activeTool,
+      activePhase: this.deriveActivePhase(),
     };
     this.schedule();
   }
@@ -393,6 +441,22 @@ export class EventStore {
     this.schedule();
   }
 
+  /**
+   * Append a copy-safe transcript export confirmation. The toast remains the
+   * short-lived status cue; this event gives the saved path a permanent,
+   * border-free line in native scrollback.
+   */
+  appendTranscriptExport(path: string): void {
+    const event = {
+      type: "tui.export.completed",
+      sequence: this.syntheticSeq--,
+      id: `export_${Date.now().toString(36)}_${(-this.syntheticSeq).toString(36)}`,
+      payload: { path },
+    } as RunEvent;
+    this.state = { ...this.state, events: this.state.events.concat(event) };
+    this.schedule();
+  }
+
   setPendingApproval(pending: PendingApproval | null): void {
     this.state = {
       ...this.state,
@@ -405,6 +469,8 @@ export class EventStore {
   /** Clear visible events but keep sessionId. Used by /clear. */
   clearEvents(): void {
     this.pendingTodoProposals.clear();
+    this.openPhases.clear();
+    this.modelRetries.clear();
     this.state = {
       ...this.state,
       events: [],
@@ -415,7 +481,7 @@ export class EventStore {
       status: this.state.status === "running" ? "running" : "idle",
       modifiedFiles: [],
       todoItems: [],
-      activeTool: null,
+      activePhase: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
     this.schedule();
@@ -426,6 +492,8 @@ export class EventStore {
     this.usageByRun.clear();
     this.lastUsageRunId = null;
     this.pendingTodoProposals.clear();
+    this.openPhases.clear();
+    this.modelRetries.clear();
     this.state = {
       status: "idle",
       events: [],
@@ -440,10 +508,191 @@ export class EventStore {
       modifiedFiles: [],
       todoItems: [],
       usage: null,
-      activeTool: null,
+      activePhase: null,
       clearGeneration: this.state.clearGeneration + 1,
     };
     this.schedule();
+  }
+
+  private updateActivePhases(event: RunEvent): void {
+    switch (event.type) {
+      case "model.turn.started":
+      case "model.requested": {
+        const retries = this.modelRetries.get(modelRetryKey(event)) ?? 0;
+        this.openPhase({
+          kind: "model",
+          key: modelPhaseKey(event),
+          message:
+            retries > 0 ? `retrying (attempt ${retries + 1})` : "thinking",
+          priority: PHASE_PRIORITY.model,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "model.retrying": {
+        const retries = (this.modelRetries.get(modelRetryKey(event)) ?? 0) + 1;
+        this.modelRetries.set(modelRetryKey(event), retries);
+        // The preceding stream failure closed the model phase; reopen it now so
+        // the gap before the retry's model.requested still reads "retrying".
+        this.openPhase({
+          kind: "model",
+          key: modelPhaseKey(event),
+          message: `retrying (attempt ${retries + 1})`,
+          priority: PHASE_PRIORITY.model,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "model.turn.completed":
+      case "model.completed": {
+        // True terminal for the turn — drop the retry tally so the next turn
+        // starts back at a plain "thinking".
+        this.modelRetries.delete(modelRetryKey(event));
+        this.closePhase("model", modelPhaseKey(event));
+        return;
+      }
+      case "model.stream.failed":
+      case "model.stream.timeout": {
+        // Not terminal for the turn: a retry may follow, so keep the tally.
+        this.closePhase("model", modelPhaseKey(event));
+        return;
+      }
+      case "context.compaction.started": {
+        this.openPhase({
+          kind: "compaction",
+          key: requiredPhaseKey("compaction", compactionPhaseKey(event), event),
+          message: "compacting context",
+          priority: PHASE_PRIORITY.compaction,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "context.compaction.completed":
+      case "context.compaction.failed": {
+        this.closePhase("compaction", compactionPhaseKey(event));
+        return;
+      }
+      case "tool.requested":
+      case "tool.started": {
+        const payload = rec(event.payload);
+        const name = firstString(payload.toolName) ?? "tool";
+        this.openPhase({
+          kind: "tool",
+          key: requiredPhaseKey("tool", toolPhaseKey(event), event),
+          message: `running ${name}`,
+          priority: PHASE_PRIORITY.tool,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "tool.completed":
+      case "tool.failed": {
+        this.closePhase("tool", toolPhaseKey(event));
+        return;
+      }
+      case "tool.batch.completed": {
+        this.closeAllPhases("tool");
+        return;
+      }
+      case "subagent.requested":
+      case "subagent.started": {
+        const meta = rec(event.metadata);
+        const payload = rec(event.payload);
+        const name =
+          firstString(
+            meta.agentName,
+            payload.agentName,
+            meta.agentId,
+            meta.agentProfileId,
+            payload.childRunId,
+          ) ?? "subagent";
+        const queued = event.type === "subagent.requested";
+        this.openPhase({
+          kind: "agent",
+          key: requiredPhaseKey("agent", subagentPhaseKey(event), event),
+          message: queued ? `agent ${name} queued` : `agent ${name}`,
+          priority: queued
+            ? PHASE_PRIORITY.agentQueued
+            : PHASE_PRIORITY.agentActive,
+          depth: numberValue(meta.subagentDepth) ?? 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "subagent.completed":
+      case "subagent.failed": {
+        this.closePhase("agent", subagentPhaseKey(event));
+        return;
+      }
+      case "validation.started": {
+        this.openPhase({
+          kind: "validation",
+          key: requiredPhaseKey("validation", validationPhaseKey(event), event),
+          message: "validating",
+          priority: PHASE_PRIORITY.validation,
+          depth: 0,
+          startedSeq: eventSequence(event),
+        });
+        return;
+      }
+      case "validation.completed":
+      case "validation.failed": {
+        this.closePhase("validation", validationPhaseKey(event));
+        return;
+      }
+      case "run.completed":
+      case "run.failed":
+      case "run.cancelled": {
+        this.openPhases.clear();
+        this.modelRetries.clear();
+        return;
+      }
+    }
+  }
+
+  private openPhase(phase: ActivePhase): void {
+    this.openPhases.set(phase.key, phase);
+  }
+
+  private closePhase(kind: ActivePhaseKind, key: string | null): void {
+    if (key && this.openPhases.delete(key)) return;
+    this.closeLatestPhase(kind);
+  }
+
+  private closeAllPhases(kind: ActivePhaseKind): void {
+    for (const [key, phase] of this.openPhases) {
+      if (phase.kind === kind) this.openPhases.delete(key);
+    }
+  }
+
+  private closeLatestPhase(kind: ActivePhaseKind): void {
+    let latest: ActivePhase | null = null;
+    for (const phase of this.openPhases.values()) {
+      if (phase.kind !== kind) continue;
+      if (!latest || phase.startedSeq > latest.startedSeq) latest = phase;
+    }
+    if (latest) this.openPhases.delete(latest.key);
+  }
+
+  private deriveActivePhase(): ActivePhase | null {
+    let best: ActivePhase | null = null;
+    for (const phase of this.openPhases.values()) {
+      if (
+        !best ||
+        phase.priority > best.priority ||
+        (phase.priority === best.priority && phase.depth > best.depth) ||
+        (phase.priority === best.priority &&
+          phase.depth === best.depth &&
+          phase.startedSeq > best.startedSeq)
+      ) {
+        best = phase;
+      }
+    }
+    return best;
   }
 
   /**
@@ -498,6 +747,96 @@ function rec(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function eventSequence(event: RunEvent): number {
+  return typeof event.sequence === "number"
+    ? event.sequence
+    : Number.MAX_SAFE_INTEGER;
+}
+
+function eventField(event: RunEvent, key: string): unknown {
+  return rec(event)[key];
+}
+
+function eventString(event: RunEvent, key: string): string | null {
+  return firstString(eventField(event, key));
+}
+
+function requiredPhaseKey(
+  kind: ActivePhaseKind,
+  key: string | null,
+  event: RunEvent,
+): string {
+  return (
+    key ??
+    `${kind}:event:${eventString(event, "id") ?? String(eventSequence(event))}`
+  );
+}
+
+// Keyed by runId, not spanId: a run's model turns are sequential, and per-attempt
+// events (model.requested, model.retrying) carry distinct span ids — keying by
+// span would leave a turn-started/retry phase dangling when the next attempt's
+// terminal event closes a different key. One model phase per run is correct.
+function modelPhaseKey(event: RunEvent): string {
+  const runId =
+    eventString(event, "runId") ?? firstString(rec(event.payload).runId);
+  if (runId) return `model:${runId}`;
+  const spanId = eventString(event, "spanId");
+  return `model:${spanId ?? "_"}`;
+}
+
+// Retry tally is keyed by runId, not spanId: every attempt in a turn shares the
+// runId, but per-attempt model.requested events may carry distinct span ids.
+function modelRetryKey(event: RunEvent): string {
+  const runId =
+    eventString(event, "runId") ?? firstString(rec(event.payload).runId);
+  return runId ?? "_";
+}
+
+function compactionPhaseKey(event: RunEvent): string | null {
+  const spanId = eventString(event, "spanId");
+  if (spanId) return `compaction:${spanId}`;
+  const runId =
+    eventString(event, "runId") ?? firstString(rec(event.payload).runId);
+  return runId ? `compaction:${runId}` : null;
+}
+
+function toolPhaseKey(event: RunEvent): string | null {
+  const payload = rec(event.payload);
+  const id = firstString(payload.id, payload.toolCallId, payload.callId);
+  if (id) return `tool:${id}`;
+  const spanId = eventString(event, "spanId");
+  return spanId ? `tool:${spanId}` : null;
+}
+
+function subagentPhaseKey(event: RunEvent): string | null {
+  const payload = rec(event.payload);
+  const meta = rec(event.metadata);
+  const childRunId = firstString(meta.childRunId, payload.childRunId);
+  if (childRunId) return `agent:${childRunId}`;
+  const spanId =
+    eventString(event, "spanId") ?? firstString(meta.spanId, payload.spanId);
+  return spanId ? `agent:${spanId}` : null;
+}
+
+function validationPhaseKey(event: RunEvent): string | null {
+  const spanId = eventString(event, "spanId");
+  if (spanId) return `validation:${spanId}`;
+  const runId =
+    eventString(event, "runId") ?? firstString(rec(event.payload).runId);
+  return runId ? `validation:${runId}` : null;
 }
 
 function todoToolCallId(payload: Record<string, unknown>): string | null {

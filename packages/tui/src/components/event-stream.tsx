@@ -420,6 +420,19 @@ function EventCard(props: {
       );
     }
 
+    case "tui.export.completed": {
+      const path = str(p.path).trim();
+      if (!path) return null;
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          <Box paddingX={1}>
+            <Text color={theme.success}>transcript exported</Text>
+          </Box>
+          <Text>{path}</Text>
+        </Box>
+      );
+    }
+
     // The assistant's answer (and any mid-run commentary). `model.completed`
     // is emitted by every provider (deterministic and streaming) and its
     // payload spreads the model output, so the text is at `payload.message`.

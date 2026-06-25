@@ -84,6 +84,7 @@ function Header(props: {
 }): React.ReactElement {
   const { pending, theme } = props;
   const risk = pending.policy?.risk;
+  const reason = pending.reason ?? pending.policy?.reason;
   return (
     <Box flexDirection="column">
       <Box>
@@ -96,10 +97,10 @@ function Header(props: {
         ) : null}
       </Box>
       <Text>{pending.summary}</Text>
-      {pending.reason ? (
+      {reason ? (
         <Text>
           <Text dimColor>reason: </Text>
-          {pending.reason}
+          {reason}
         </Text>
       ) : null}
     </Box>

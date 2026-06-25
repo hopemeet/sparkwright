@@ -25,7 +25,6 @@ import type { InputBoxHandle } from "./components/input-box.js";
 import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
 import { TodoBand } from "./components/todo-band.js";
 import { StatusBar } from "./components/status-bar.js";
-import { Spinner } from "./components/spinner.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
@@ -1211,13 +1210,14 @@ function AppReady(
       run: () => {
         controller
           .exportTranscript()
-          .then((path) =>
+          .then((path) => {
+            store.appendTranscriptExport(path);
             toasts.push({
               variant: "success",
               title: "transcript exported",
               message: path,
-            }),
-          )
+            });
+          })
           .catch((err) =>
             toasts.push({
               variant: "error",
@@ -1405,6 +1405,17 @@ function AppReady(
 
   const modelLabel = effModel ?? "deterministic";
 
+  function commitModelSelection(modelName: string): void {
+    const nextModelName = modelName.trim() || "deterministic";
+    const changed = nextModelName !== modelLabel;
+    setModelOverride({ modelName: nextModelName });
+    controller.updateModel(nextModelName, "request");
+    // A committed switch leaves one permanent line in scrollback; no transient
+    // toast on top of it (an unchanged pick just closes the dialog silently).
+    if (changed) store.appendNotice(`model -> ${nextModelName} (next run)`);
+    layers.pop("model");
+  }
+
   const cols = resolveDialogColumns(stdout?.columns) ?? 100;
   // Only reserve the sidebar rail when the terminal is wide AND there's
   // something to show — an empty "modified files (none yet)" box pinned at the
@@ -1445,17 +1456,7 @@ function AppReady(
             loadingCapabilities={loadingCapabilities}
             skillReviewSnapshot={skillReviewSnapshot}
             loadingSkillReview={loadingSkillReview}
-            onCommitModel={(modelName) => {
-              const nextModelName = modelName.trim() || "deterministic";
-              setModelOverride({ modelName: nextModelName });
-              controller.updateModel(nextModelName, "request");
-              layers.pop("model");
-              toasts.push({
-                variant: "success",
-                title: "model",
-                message: `${nextModelName} (next run)`,
-              });
-            }}
+            onCommitModel={commitModelSelection}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
               layers.pop("fork");
@@ -1529,7 +1530,8 @@ function AppReady(
 
         {/* Live frame: pinned below the scrollback. The status line only shows
           while there's active work to watch — idle/done/error leave just the
-          input (run completion/failure already surfaces as a toast). */}
+          input (run completion/failure already surfaces as a toast, and a
+          /model switch leaves a scrollback line). */}
         {state.status === "running" || state.status === "awaiting-approval" ? (
           <StatusBar
             state={state}
@@ -1541,19 +1543,16 @@ function AppReady(
 
         <Box flexDirection="row">
           <Box flexDirection="column" flexGrow={1}>
+            {/* The streamed answer itself. The "what phase am I in" hint is not
+              a second spinner line here — it rides the StatusBar label above
+              (e.g. "thinking" / "running shell" / "agent reviewer") so there's
+              one spinner, not two competing ones. */}
             {state.streamingText || state.reasoningText ? (
               <StreamingMessage
                 text={state.streamingText}
                 reasoning={state.reasoningText}
                 maxLines={streamingMax}
               />
-            ) : state.status === "running" && state.activeTool ? (
-              <Box paddingX={1} marginTop={1}>
-                <Spinner color={theme.accent} />
-                <Text color={theme.muted}> running </Text>
-                <Text color={theme.accent}>{state.activeTool}</Text>
-                <Text color={theme.muted}>…</Text>
-              </Box>
             ) : null}
           </Box>
           {sidebarWidth > 0 ? (
@@ -1639,17 +1638,7 @@ function AppReady(
             loadingCapabilities={loadingCapabilities}
             skillReviewSnapshot={skillReviewSnapshot}
             loadingSkillReview={loadingSkillReview}
-            onCommitModel={(modelName) => {
-              const nextModelName = modelName.trim() || "deterministic";
-              setModelOverride({ modelName: nextModelName });
-              controller.updateModel(nextModelName, "request");
-              layers.pop("model");
-              toasts.push({
-                variant: "success",
-                title: "model",
-                message: `${nextModelName} (next run)`,
-              });
-            }}
+            onCommitModel={commitModelSelection}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
               layers.pop("fork");

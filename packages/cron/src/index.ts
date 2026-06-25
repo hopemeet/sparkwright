@@ -3,7 +3,6 @@ export type {
   CronAction,
   CronJob,
   CronStoreData,
-  DeliveryTarget,
   JobState,
   JobStatus,
   Schedule,

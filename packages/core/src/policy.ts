@@ -50,6 +50,12 @@ export interface ToolGovernancePolicyOptions {
 
 export interface WorkspaceMutationPolicyOptions {
   allowWorkspaceWrites: boolean;
+  /**
+   * When workspace writes are not enabled for the run, allow an interactive
+   * client to turn the write gate into an approval request instead of a hard
+   * denial. Non-interactive entrypoints should leave this false.
+   */
+  allowWorkspaceWriteApproval?: boolean;
   /** Optional workspace-relative file paths this run may mutate. */
   allowedPaths?: readonly string[];
   /** Maximum distinct file paths this run may write. Undefined means unlimited. */
@@ -379,6 +385,13 @@ export function createWorkspaceMutationPolicy(
       }
 
       if (input.action === "workspace.write") {
+        if (options.allowWorkspaceWriteApproval) {
+          return requireApproval(
+            input,
+            "Workspace writes require approval for this run.",
+            { writeGate: "run_write" },
+          );
+        }
         return denyDecision(
           input,
           "Workspace writes require an explicit write-enabled run.",
@@ -395,6 +408,25 @@ export function createWorkspaceMutationPolicy(
       const sideEffects = sideEffectsFromInput(input);
       if (!sideEffects.includes("write")) {
         return allowDecision(input, "Tool has no declared write side effect.");
+      }
+
+      if (
+        options.allowWorkspaceWriteApproval &&
+        isManagedWorkspaceWriteTool(input)
+      ) {
+        return allowDecision(
+          input,
+          "Managed workspace write tool will be gated by workspace write approval.",
+          { sideEffects, writeGate: "workspace_write" },
+        );
+      }
+
+      if (options.allowWorkspaceWriteApproval) {
+        return requireApproval(
+          input,
+          "Tools with write side effects require approval for this run.",
+          { sideEffects, writeGate: "run_write" },
+        );
       }
 
       return denyDecision(
@@ -476,6 +508,16 @@ function sideEffectsFromInput(input: PolicyInput): string[] {
   if (!Array.isArray(sideEffects)) return [];
   return sideEffects.filter(
     (sideEffect): sideEffect is string => typeof sideEffect === "string",
+  );
+}
+
+function isManagedWorkspaceWriteTool(input: PolicyInput): boolean {
+  const governance = governanceFromInput(input);
+  const origin = governance?.origin;
+  return (
+    isRecord(origin) &&
+    isRecord(origin.metadata) &&
+    origin.metadata.managedWorkspaceWrite === true
   );
 }
 
