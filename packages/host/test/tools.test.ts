@@ -1152,11 +1152,11 @@ describe("host tools", () => {
         reason: "Create Agent profile reviewer",
         fileCount: 1,
         files: [{ relativePath: ".sparkwright/config.json" }],
-        metadata: {
+        metadata: expect.objectContaining({
           kind: "agent",
           id: "reviewer",
           delegateToolName: "delegate_reviewer",
-        },
+        }),
       }),
     ]);
     expect(listed).toMatchObject({
@@ -1261,6 +1261,9 @@ describe("host tools", () => {
 
     await expect(
       readFile(join(ctx.workspaceRoot, ".sparkwright", "config.yaml"), "utf8"),
+    ).resolves.toContain("maxDepth: 1");
+    await expect(
+      readFile(join(ctx.workspaceRoot, ".sparkwright", "config.yaml"), "utf8"),
     ).resolves.toContain("use:");
     await expect(
       readFile(join(ctx.workspaceRoot, ".sparkwright", "config.json"), "utf8"),
@@ -1295,6 +1298,314 @@ describe("host tools", () => {
       path: ".sparkwright/config.json",
       reason: "Agent profile reviewer already matches requested config.",
     });
+  });
+
+  it("does not rewrite an equivalent agent profile even when legacy force is passed", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+
+    const input = {
+      action: "create",
+      id: "reviewer",
+      name: "Reviewer",
+      mode: "child",
+      prompt: "Review changes and report concrete risks.",
+      allowedTools: ["read_file"],
+      maxSteps: 2,
+      delegateToolName: "delegate_reviewer",
+    };
+    await tool.execute(input, ctx);
+    ctx.capabilityMutations.length = 0;
+    ctx.skippedWrites.length = 0;
+
+    const duplicate = await tool.execute({ ...input, force: true }, ctx);
+
+    expect(duplicate).toMatchObject({
+      action: "create",
+      id: "reviewer",
+      path: ".sparkwright/config.json",
+      changed: false,
+      status: "already_exists",
+    });
+    expect(ctx.capabilityMutations).toEqual([]);
+    expect(ctx.skippedWrites).toContainEqual({
+      path: ".sparkwright/config.json",
+      reason: "Agent profile reviewer already matches requested config.",
+    });
+  });
+
+  it("updates an existing agent profile through an explicit patch action", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+    const inspector = createAgentInspectorTool(ctx.workspaceRoot);
+
+    await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Reviewer",
+        prompt: "Review changes and report concrete risks.",
+        allowedTools: ["read_file"],
+        maxSteps: 2,
+        delegateToolName: "delegate_reviewer",
+      },
+      ctx,
+    );
+    ctx.capabilityMutations.length = 0;
+
+    const updated = await tool.execute(
+      {
+        action: "update",
+        id: "reviewer",
+        prompt: "Review README.md and report missing test risks.",
+        maxSteps: 5,
+      },
+      ctx,
+    );
+    const listed = await inspector.execute({ action: "list" }, ctx);
+
+    expect(updated).toMatchObject({
+      action: "update",
+      id: "reviewer",
+      changed: true,
+      callable: true,
+    });
+    expect(listed).toMatchObject({
+      agents: {
+        profiles: [
+          expect.objectContaining({
+            id: "reviewer",
+            name: "Reviewer",
+            prompt: "Review README.md and report missing test risks.",
+            maxSteps: 5,
+          }),
+        ],
+        delegateTools: [
+          expect.objectContaining({
+            profileId: "reviewer",
+            toolName: "delegate_reviewer",
+            maxSteps: 5,
+          }),
+        ],
+      },
+    });
+    expect(ctx.capabilityMutations).toEqual([
+      expect.objectContaining({
+        action: "update_agent_profile",
+        reason: "Update Agent profile reviewer",
+        metadata: expect.objectContaining({
+          kind: "agent",
+          id: "reviewer",
+          action: "update",
+        }),
+      }),
+    ]);
+  });
+
+  it("removes an existing delegate tool through an explicit update action", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+    const inspector = createAgentInspectorTool(ctx.workspaceRoot);
+
+    await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Reviewer",
+        prompt: "Review changes and report concrete risks.",
+        allowedTools: ["read_file"],
+        maxSteps: 2,
+        delegateToolName: "delegate_reviewer",
+      },
+      ctx,
+    );
+    ctx.capabilityMutations.length = 0;
+
+    const updated = await tool.execute(
+      {
+        action: "update",
+        id: "reviewer",
+        removeDelegateTool: true,
+      },
+      ctx,
+    );
+    const listed = await inspector.execute({ action: "list" }, ctx);
+
+    expect(updated).toMatchObject({
+      action: "update",
+      id: "reviewer",
+      changed: true,
+      callable: false,
+    });
+    expect(listed).toMatchObject({
+      agents: {
+        profiles: [
+          expect.objectContaining({
+            id: "reviewer",
+            name: "Reviewer",
+            prompt: "Review changes and report concrete risks.",
+            maxSteps: 2,
+          }),
+        ],
+        delegateTools: [],
+      },
+    });
+    expect(ctx.capabilityMutations).toEqual([
+      expect.objectContaining({
+        action: "update_agent_profile",
+        reason: "Update Agent profile reviewer",
+        metadata: expect.objectContaining({
+          kind: "agent",
+          id: "reviewer",
+          action: "update",
+        }),
+      }),
+    ]);
+  });
+
+  it("replaces an existing agent profile only with an explicit reason", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+    const inspector = createAgentInspectorTool(ctx.workspaceRoot);
+
+    await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Reviewer",
+        prompt: "Review changes and report concrete risks.",
+        allowedTools: ["read_file"],
+        maxSteps: 2,
+        delegateToolName: "delegate_reviewer",
+      },
+      ctx,
+    );
+    ctx.capabilityMutations.length = 0;
+
+    await expect(
+      tool.execute(
+        {
+          action: "replace",
+          id: "reviewer",
+          prompt: "Review release notes.",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/replace requires replaceReason/);
+
+    const replaced = await tool.execute(
+      {
+        action: "replace",
+        id: "reviewer",
+        name: "Release Reviewer",
+        prompt: "Review release notes.",
+        use: ["workspace.read"],
+        replaceReason:
+          "Change the stable role from code review to release review.",
+      },
+      ctx,
+    );
+    const listed = await inspector.execute({ action: "list" }, ctx);
+
+    expect(replaced).toMatchObject({
+      action: "replace",
+      id: "reviewer",
+      changed: true,
+      callable: false,
+    });
+    expect(listed).toMatchObject({
+      agents: {
+        profiles: [
+          {
+            id: "reviewer",
+            name: "Release Reviewer",
+            mode: "child",
+            prompt: "Review release notes.",
+            use: ["workspace.read"],
+          },
+        ],
+        delegateTools: [],
+      },
+    });
+    expect(ctx.capabilityMutations).toEqual([
+      expect.objectContaining({
+        action: "replace_agent_profile",
+        reason:
+          "Replace Agent profile reviewer: Change the stable role from code review to release review.",
+        metadata: expect.objectContaining({
+          kind: "agent",
+          id: "reviewer",
+          action: "replace",
+          replaceReason:
+            "Change the stable role from code review to release review.",
+        }),
+      }),
+    ]);
+  });
+
+  it("keeps legacy force replacement explicit in mutation metadata", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createAgentManagerTool(ctx.workspaceRoot);
+    const inspector = createAgentInspectorTool(ctx.workspaceRoot);
+
+    await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Reviewer",
+        prompt: "Review changes and report concrete risks.",
+        allowedTools: ["read_file"],
+        maxSteps: 2,
+        delegateToolName: "delegate_reviewer",
+      },
+      ctx,
+    );
+    ctx.capabilityMutations.length = 0;
+
+    const replaced = await tool.execute(
+      {
+        action: "create",
+        id: "reviewer",
+        name: "Legacy Replacement",
+        prompt: "Review release notes.",
+        use: ["workspace.read"],
+        force: true,
+      },
+      ctx,
+    );
+    const listed = await inspector.execute({ action: "list" }, ctx);
+
+    expect(replaced).toMatchObject({
+      action: "create",
+      id: "reviewer",
+      changed: true,
+      callable: false,
+    });
+    expect(listed).toMatchObject({
+      agents: {
+        profiles: [
+          {
+            id: "reviewer",
+            name: "Legacy Replacement",
+            mode: "child",
+            prompt: "Review release notes.",
+            use: ["workspace.read"],
+          },
+        ],
+        delegateTools: [],
+      },
+    });
+    expect(ctx.capabilityMutations).toEqual([
+      expect.objectContaining({
+        action: "replace_agent_profile",
+        reason: "Replace Agent profile reviewer: legacy force",
+        metadata: expect.objectContaining({
+          kind: "agent",
+          id: "reviewer",
+          action: "replace",
+        }),
+      }),
+    ]);
   });
 
   it("reports capability mutation when removing project agent profiles", async () => {
@@ -1335,7 +1646,7 @@ describe("host tools", () => {
     ]);
   });
 
-  it("rejects duplicate agent creation with different config unless forced", async () => {
+  it("rejects duplicate agent creation with different config unless explicitly updated or replaced", async () => {
     const ctx = await createWorkspace({});
     const tool = createAgentManagerTool(ctx.workspaceRoot);
 
@@ -1357,7 +1668,7 @@ describe("host tools", () => {
         },
         ctx,
       ),
-    ).rejects.toThrow(/Agent profile already exists with different config/);
+    ).rejects.toThrow(/action="update".*action="replace"/);
   });
 
   it("keeps inspector tools read-only and managers write-scoped", () => {
@@ -1394,7 +1705,7 @@ describe("host tools", () => {
           properties: { action: { enum: string[] } };
         }
       ).properties.action.enum,
-    ).toEqual(["create", "remove"]);
+    ).toEqual(["create", "update", "replace", "remove"]);
   });
 
   it("reports manager and inspector validation failures as tool argument errors", async () => {

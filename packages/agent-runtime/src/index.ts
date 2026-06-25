@@ -652,9 +652,11 @@ export type SubAgentTerminalState =
   | "truncated";
 
 interface MultiAgentFacts {
+  sessionId?: string;
   parentRunId: string;
   childRunId: string;
   spanId: string;
+  childAgentId?: string;
   agentId?: string;
   agentProfileId?: string;
   agentName?: string;
@@ -678,6 +680,11 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   const spanId = createSpanId();
   const childAgentId =
     stringOrUndefined(input.metadata?.agentId) ?? input.childAgentProfile?.id;
+  const parentAgentId =
+    stringOrUndefined(parent.record.metadata?.agentId) ?? "main";
+  const sessionId =
+    stringOrUndefined(parent.record.metadata?.sessionId) ??
+    stringOrUndefined(input.metadata?.sessionId);
   const subagentDepth =
     numberMetadata(input.metadata, "subagentDepth") ??
     nextSubagentDepth(parent.record.metadata);
@@ -685,6 +692,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     ...(input.metadata ?? {}),
     parentRunId: parent.record.id,
     parentSpanId: parent.record.metadata?.spanId as string | undefined,
+    sessionId,
     spanId,
     subagentDepth,
     agentId: childAgentId,
@@ -753,10 +761,12 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     goal: input.goal,
   };
   const facts: MultiAgentFacts = removeUndefinedMetadata({
+    sessionId,
     parentRunId: parent.record.id,
     childRunId: child.record.id,
     spanId,
-    agentId: childAgentId,
+    agentId: parentAgentId,
+    childAgentId,
     agentProfileId: input.childAgentProfile?.id,
     agentName: input.childAgentProfile?.name,
     delegateTool: stringMetadata(input.metadata, "delegateTool"),
@@ -843,7 +853,9 @@ function childStopReason(payload: unknown): string | undefined {
 
 function multiAgentMetadata(facts: MultiAgentFacts): Record<string, unknown> {
   return removeUndefinedMetadata({
+    sessionId: facts.sessionId,
     agentId: facts.agentId,
+    childAgentId: facts.childAgentId,
     agentProfileId: facts.agentProfileId,
     agentName: facts.agentName,
     delegateTool: facts.delegateTool,

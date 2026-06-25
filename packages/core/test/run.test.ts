@@ -2360,7 +2360,7 @@ describe("SparkwrightRun", () => {
     expect(run.record.state).toBe("completed");
   });
 
-  it("can approve per-argument write-side-effect tools in read-only runs when approval escalation is enabled", async () => {
+  it("denies per-argument write-side-effect tools in read-only runs before approval", async () => {
     let executed = false;
     let modelCalls = 0;
     const tool = defineTool({
@@ -2396,19 +2396,9 @@ describe("SparkwrightRun", () => {
       tools: [tool],
       policy: createWorkspaceMutationPolicy({
         allowWorkspaceWrites: false,
-        allowWorkspaceWriteApproval: true,
       }),
-      approvalResolver(request) {
-        expect(request.action).toBe("tool.execute");
-        expect(request.details).toMatchObject({
-          toolName: "mixed_shell",
-          policy: {
-            reason:
-              "Tools with write side effects require approval for this run.",
-            metadata: { writeGate: "run_write" },
-          },
-        });
-        return { approvalId: request.id, decision: "approved" };
+      approvalResolver() {
+        throw new Error("read-only write-side-effect tools must not ask");
       },
       model: {
         async complete() {
@@ -2426,13 +2416,23 @@ describe("SparkwrightRun", () => {
 
     await run.start();
 
-    expect(executed).toBe(true);
+    expect(executed).toBe(false);
     expect(
       run.events.all().some((event) => event.type === "approval.requested"),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       run.events.all().some((event) => event.type === "tool.completed"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      run.events.all().find((event) => event.type === "tool.failed")?.payload,
+    ).toMatchObject({
+      toolName: "mixed_shell",
+      error: {
+        code: "TOOL_DENIED",
+        message:
+          "Tools with write side effects require an explicit write-enabled run.",
+      },
+    });
     expect(run.record.state).toBe("completed");
   });
 

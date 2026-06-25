@@ -74,14 +74,14 @@ describe("StatusBar", () => {
       <StatusBar
         state={state({ status: "running", runStartedAt: Date.now() })}
         modelLabel="openai/gpt-5.4-mini"
-        permissionMode="default"
+        permissionMode="ask"
         focused={true}
       />,
     );
 
     expect(text).toContain("running");
     expect(text).toContain("openai/gpt-5.4-mini");
-    expect(text).toContain("default");
+    expect(text).toContain("ask");
     expect(text).not.toContain("SparkWright");
   });
 
@@ -101,7 +101,7 @@ describe("StatusBar", () => {
           },
         })}
         modelLabel="openai/gpt-5.4-mini"
-        permissionMode="default"
+        permissionMode="accept-edits"
         focused={true}
       />,
     );
@@ -110,5 +110,6 @@ describe("StatusBar", () => {
     // on its own and no second spinner elsewhere.
     expect(text).toContain("running shell");
     expect(text).toContain("openai/gpt-5.4-mini");
+    expect(text).toContain("accept-edits");
   });
 });

@@ -723,6 +723,11 @@ export const themeSchema = z
   .enum(["dark", "light", "mono"])
   .describe("Visual theme.");
 export const mouseSchema = z.boolean().describe("Enable mouse reporting.");
+export const tuiPermissionModeSchema = z
+  .enum(["read-only", "ask", "accept-edits", "bypass"])
+  .describe(
+    "TUI permission mode, projected to core permission fields per run.",
+  );
 export const keybindingsSchema = z
   .record(z.string(), z.union([z.string(), stringArray, z.null()]))
   .describe("Override default key chords for named TUI actions.");
@@ -766,13 +771,14 @@ export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
 
 export const uiGroupSchema = z
   .object({
+    tuiPermissionMode: tuiPermissionModeSchema.optional(),
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),
   })
   .strict()
   .describe(
-    "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
+    "Preferred grouping for TUI-only preferences. Flattens to tuiPermissionMode/theme/mouse/keybindings.",
   );
 export const UI_GROUP_CONFIG_KEYS = uiGroupSchema.keyof().options;
 
@@ -797,7 +803,12 @@ export const CONFIG_GROUP_FIELD_MAP = {
     traceLevel: "traceLevel",
     approvals: "approvals",
   },
-  ui: { theme: "theme", mouse: "mouse", keybindings: "keybindings" },
+  ui: {
+    tuiPermissionMode: "tuiPermissionMode",
+    theme: "theme",
+    mouse: "mouse",
+    keybindings: "keybindings",
+  },
 } as const;
 
 export const sparkwrightConfigZodSchema = z
@@ -822,6 +833,7 @@ export const sparkwrightConfigZodSchema = z
     tools: toolsSchema.optional(),
     tasks: tasksSchema.optional(),
     capabilities: capabilitiesSchema.optional(),
+    tuiPermissionMode: tuiPermissionModeSchema.optional(),
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),

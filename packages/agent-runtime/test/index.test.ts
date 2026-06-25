@@ -445,7 +445,7 @@ describe("agent-runtime", () => {
 });
 
 describe("spawnSubAgent", () => {
-  it("stamps parentRunId + spanId on child metadata and forwards abort", async () => {
+  it("stamps parent/session/span metadata on the child and forwards abort", async () => {
     const parent = createRun({
       goal: "parent",
       model: {
@@ -454,6 +454,9 @@ describe("spawnSubAgent", () => {
         },
       },
       maxSteps: 1,
+      metadata: {
+        sessionId: "session_parent",
+      },
     });
     const childModel: ModelAdapter = {
       async complete() {
@@ -468,6 +471,7 @@ describe("spawnSubAgent", () => {
     });
 
     expect(spawned.run.record.metadata?.parentRunId).toBe(parent.record.id);
+    expect(spawned.run.record.metadata?.sessionId).toBe("session_parent");
     expect(spawned.run.record.metadata?.spanId).toBe(spawned.spanId);
     expect(spawned.spanId).toMatch(/^spn_/);
     // Child's own abort signal must mirror the parent's: cancelling the
@@ -1147,7 +1151,8 @@ describe("createAgentTool / mountAgentTool", () => {
       expect(event?.metadata, type).toMatchObject({
         childRunId: spawned.childRunId,
         parentRunId: parent.record.id,
-        agentId: "reviewer",
+        agentId: "main",
+        childAgentId: "reviewer",
         agentName: "Reviewer",
         agentProfileId: "reviewer",
         delegateTool: "delegate_reviewer",

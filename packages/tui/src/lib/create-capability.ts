@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { CronStore, defaultCronRoot } from "@sparkwright/cron";
+import { CronCommandService, defaultCronRoot } from "@sparkwright/cron";
 import {
   projectConfigPath,
   readConfigFileObject,
@@ -192,21 +192,28 @@ async function createCron(
 ): Promise<CreateCapabilityResult> {
   const prompt = required(draft.prompt, "Prompt");
   const schedule = required(draft.schedule, "Schedule");
-  const store = new CronStore({
+  const service = new CronCommandService({
     rootDir: defaultCronRoot(),
   });
-  const job = await store.createJob({
-    prompt,
-    schedule,
-    ...(draft.name ? { name: draft.name } : {}),
-    ...(draft.skills && draft.skills.length > 0
-      ? { skills: draft.skills }
-      : {}),
-  });
+  const result = await service.createJob(
+    {
+      prompt,
+      schedule,
+      ...(draft.name ? { name: draft.name } : {}),
+      ...(draft.skills && draft.skills.length > 0
+        ? { skills: draft.skills }
+        : {}),
+    },
+    {
+      conflictPolicy: "unique",
+    },
+  );
   return {
     kind: "cron",
-    message: `Created cron job ${job.name}`,
-    path: store.jobsPath,
+    message: result.nameAdjusted
+      ? `Created cron job ${result.job.name} (${result.requestedName} already existed)`
+      : `Created cron job ${result.job.name}`,
+    path: service.store.jobsPath,
   };
 }
 

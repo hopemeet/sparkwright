@@ -269,58 +269,9 @@ describe("createWorkspaceMutationPolicy", () => {
     });
   });
 
-  it("can request approval for workspace writes when read-only approval is enabled", async () => {
+  it("denies managed workspace write tools when the run is read-only", async () => {
     const policy = createWorkspaceMutationPolicy({
       allowWorkspaceWrites: false,
-      allowWorkspaceWriteApproval: true,
-    });
-
-    const decision = await policy.decide({
-      action: "workspace.write",
-      metadata: { path: "README.md" },
-    });
-
-    expect(decision).toMatchObject({
-      decision: "requires_approval",
-      reason: "Workspace writes require approval for this run.",
-      metadata: {
-        path: "README.md",
-        writeGate: "run_write",
-      },
-    });
-  });
-
-  it("can request approval for write-side-effect tools when read-only approval is enabled", async () => {
-    const policy = createWorkspaceMutationPolicy({
-      allowWorkspaceWrites: false,
-      allowWorkspaceWriteApproval: true,
-    });
-
-    const decision = await policy.decide({
-      action: "tool.execute",
-      metadata: {
-        toolName: "shell",
-        governance: {
-          sideEffects: ["write", "external"],
-        },
-      },
-    });
-
-    expect(decision).toMatchObject({
-      decision: "requires_approval",
-      reason: "Tools with write side effects require approval for this run.",
-      metadata: {
-        toolName: "shell",
-        sideEffects: ["write", "external"],
-        writeGate: "run_write",
-      },
-    });
-  });
-
-  it("allows managed workspace write tools to reach workspace write approval", async () => {
-    const policy = createWorkspaceMutationPolicy({
-      allowWorkspaceWrites: false,
-      allowWorkspaceWriteApproval: true,
     });
 
     const decision = await policy.decide({
@@ -339,13 +290,12 @@ describe("createWorkspaceMutationPolicy", () => {
     });
 
     expect(decision).toMatchObject({
-      decision: "allow",
+      decision: "deny",
       reason:
-        "Managed workspace write tool will be gated by workspace write approval.",
+        "Tools with write side effects require an explicit write-enabled run.",
       metadata: {
         toolName: "apply_patch",
         sideEffects: ["write"],
-        writeGate: "workspace_write",
       },
     });
   });

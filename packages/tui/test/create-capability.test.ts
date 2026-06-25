@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { defaultCronRoot } from "@sparkwright/cron";
 import { createCapability } from "../src/lib/create-capability.js";
 
 describe("createCapability", () => {
@@ -41,5 +42,72 @@ describe("createCapability", () => {
         enabled: true,
       },
     ]);
+  });
+
+  it("creates cron jobs through the shared cron command service", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-create-"));
+    const state = await mkdtemp(join(tmpdir(), "sparkwright-tui-cron-state-"));
+    tempDirs.push(workspace, state);
+    const previousState = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = state;
+    try {
+      const result = await createCapability(
+        {
+          kind: "cron",
+          name: "daily-readme",
+          schedule: "every 1d",
+          prompt: "Read README.md",
+        },
+        workspace,
+      );
+
+      const jobs = JSON.parse(
+        await readFile(join(defaultCronRoot(), "jobs.json"), "utf8"),
+      ) as { jobs: Array<{ name: string; scheduleDisplay: string }> };
+      expect(result).toMatchObject({
+        kind: "cron",
+        message: "Created cron job daily-readme",
+      });
+      expect(jobs.jobs).toMatchObject([
+        { name: "daily-readme", scheduleDisplay: "every 1d" },
+      ]);
+    } finally {
+      if (previousState === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousState;
+    }
+  });
+
+  it("mentions the adjusted name when creating a duplicate cron job", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-create-"));
+    const state = await mkdtemp(join(tmpdir(), "sparkwright-tui-cron-state-"));
+    tempDirs.push(workspace, state);
+    const previousState = process.env.XDG_STATE_HOME;
+    process.env.XDG_STATE_HOME = state;
+    try {
+      const draft = {
+        kind: "cron" as const,
+        name: "daily-readme",
+        schedule: "every 1d",
+        prompt: "Read README.md",
+      };
+
+      const first = await createCapability(draft, workspace);
+      const second = await createCapability(draft, workspace);
+      const jobs = JSON.parse(
+        await readFile(join(defaultCronRoot(), "jobs.json"), "utf8"),
+      ) as { jobs: Array<{ name: string }> };
+
+      expect(first.message).toBe("Created cron job daily-readme");
+      expect(second.message).toBe(
+        "Created cron job daily-readme 2 (daily-readme already existed)",
+      );
+      expect(jobs.jobs.map((job) => job.name)).toEqual([
+        "daily-readme",
+        "daily-readme 2",
+      ]);
+    } finally {
+      if (previousState === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = previousState;
+    }
   });
 });

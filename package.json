@@ -42,6 +42,7 @@
     "release:check": "npm run check && node packages/cli/dist/index.js run \"inspect this repo\" --workspace examples/repo-pilot --target README.md --trace-level standard --model deterministic && npm run regression:matrix && npm run source:install-smoke && npm run release:install-smoke",
     "regression:matrix": "node scripts/regression-matrix.mjs",
     "regression:real-model": "node scripts/regression-real-model.mjs",
+    "regression:real-agents": "node scripts/regression-real-agents.mjs",
     "regression:real-skill-capabilities": "node scripts/regression-real-skill-capabilities.mjs",
     "release:install-smoke": "node scripts/release-install-smoke.mjs",
     "source:install-smoke": "node scripts/source-install-smoke.mjs"

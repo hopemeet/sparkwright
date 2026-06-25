@@ -36,6 +36,7 @@ describe("loadTuiConfig", () => {
         },
         run: { approvals: { edits: true } },
         ui: {
+          tuiPermissionMode: "accept-edits",
           theme: "mono",
           mouse: false,
           keybindings: { "help.open": "ctrl+h" },
@@ -49,11 +50,39 @@ describe("loadTuiConfig", () => {
     expect(loaded.config.model).toBe("openai/gpt-test");
     expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
     expect(loaded.config.approvals).toEqual({ edits: true });
+    expect(loaded.config.tuiPermissionMode).toBe("accept-edits");
     expect(loaded.config.theme).toBe("mono");
     expect(loaded.config.mouse).toBe(false);
     expect(loaded.config.resolvedBindings?.["help.open"]).toMatchObject([
       { ctrl: true, key: "h" },
     ]);
+    expect(loaded.errors).toEqual([]);
+  });
+
+  it("does not let project tuiPermissionMode relax a user boundary", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-config-"));
+    const xdg = await mkdtemp(join(tmpdir(), "sparkwright-tui-xdg-"));
+    tempDirs.push(workspace, xdg);
+    process.env.XDG_CONFIG_HOME = xdg;
+    delete process.env.SPARKWRIGHT_CONFIG;
+    await mkdir(join(xdg, "sparkwright"), { recursive: true });
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    const userConfig = join(xdg, "sparkwright", "config.json");
+    await writeFile(
+      userConfig,
+      JSON.stringify({ ui: { tuiPermissionMode: "read-only" } }),
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ ui: { tuiPermissionMode: "bypass" } }),
+      "utf8",
+    );
+
+    const loaded = await loadTuiConfig(workspace);
+
+    expect(loaded.config.tuiPermissionMode).toBe("read-only");
+    expect(loaded.sources.tuiPermissionMode).toContain(userConfig);
     expect(loaded.errors).toEqual([]);
   });
 });

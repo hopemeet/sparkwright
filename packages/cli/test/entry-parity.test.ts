@@ -42,7 +42,7 @@ describe("entry parity smoke", () => {
     );
   });
 
-  it("keeps CLI, TUI, and ACP read-only deterministic runs aligned", async () => {
+  it("keeps CLI, TUI, and ACP deterministic read-only tool behavior aligned", async () => {
     const cli = await runCliEntry();
     const tui = await runTuiEntry();
     const acp = await runAcpEntry();
@@ -57,7 +57,6 @@ describe("entry parity smoke", () => {
       expect(summary.runMetadata).toMatchObject({
         traceLevel: "debug",
         permissionMode: "default",
-        shouldWrite: false,
       });
       expect(summary.runMetadata?.capabilitySnapshot).toMatchObject({
         tools: expect.any(Number),
@@ -65,8 +64,14 @@ describe("entry parity smoke", () => {
     }
 
     expect(cli.source).toBe("cli");
+    expect(cli.runMetadata).toMatchObject({ shouldWrite: false });
     expect(tui.source).toBe("tui");
+    expect(tui.runMetadata).toMatchObject({
+      shouldWrite: true,
+    });
+    expect(tui.runMetadata).not.toHaveProperty("allowWorkspaceWriteApproval");
     expect(acp.source).toBe("acp");
+    expect(acp.runMetadata).toMatchObject({ shouldWrite: false });
   }, 45_000);
 
   async function runCliEntry(): Promise<EntrySummary> {

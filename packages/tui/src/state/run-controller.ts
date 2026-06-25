@@ -24,17 +24,18 @@ import type { SessionDiagnostics } from "../lib/sessions.js";
 import { loadSessionEvents } from "../lib/session-events.js";
 import { renderTranscript, type TranscriptHeader } from "../lib/transcript.js";
 import type { RunEvent } from "../lib/event-type.js";
+import {
+  toCoreRunFields,
+  type CoreRunPermissionFields,
+  type TuiPermissionMode,
+} from "../lib/permission.js";
 
 export interface RunControllerOptions {
   workspaceRoot: string;
   /** Session/trace storage root. Defaults to <workspace>/.sparkwright/sessions. */
   sessionRootDir?: string;
-  permissionMode?: PermissionMode;
+  tuiPermissionMode?: TuiPermissionMode;
   traceLevel?: TraceLevel;
-  shouldWrite?: boolean;
-  approveAll?: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
   /** Model reference shown by the TUI. Only request-sourced models are sent to the host. */
   modelName?: string;
   modelNameSource?: "config" | "request";
@@ -72,6 +73,7 @@ export class RunController {
   private client: Client | null = null;
   private clientPromise: Promise<Client> | null = null;
   private activeRunId: string | null = null;
+  private activeApprovalPermissionMode: PermissionMode | null = null;
   // Set once a cancel has been dispatched for the active run so a second Esc /
   // Ctrl+C (or both the InputBox and global-hotkey paths firing) doesn't send a
   // duplicate cancelRun. Reset when the next run starts.
@@ -191,22 +193,12 @@ export class RunController {
     this.opts.modelNameSource = source;
   }
 
-  updatePermissionMode(permissionMode: PermissionMode): void {
-    this.opts.permissionMode = permissionMode;
+  updateTuiPermissionMode(tuiPermissionMode: TuiPermissionMode): void {
+    this.opts.tuiPermissionMode = tuiPermissionMode;
   }
 
   updateTraceLevel(traceLevel: TraceLevel): void {
     this.opts.traceLevel = traceLevel;
-  }
-
-  updateApprovalDefaults(input: {
-    approveAll: boolean;
-    approveEdits: boolean;
-    approveShellSafe: boolean;
-  }): void {
-    this.opts.approveAll = input.approveAll;
-    this.opts.approveEdits = input.approveEdits;
-    this.opts.approveShellSafe = input.approveShellSafe;
   }
 
   isRunning(): boolean {
@@ -301,6 +293,8 @@ export class RunController {
     try {
       const traceLevel = this.opts.traceLevel ?? "standard";
       const input = this.pendingRunInput();
+      const permissions = this.coreRunFields();
+      this.activeApprovalPermissionMode = permissions.permissionMode;
       const { runId } = await client.startRun(
         createHostStartRunRequest({
           goal,
@@ -308,12 +302,9 @@ export class RunController {
           sessionId: this.sessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
-          permissionMode: this.opts.permissionMode,
+          permissionMode: permissions.permissionMode,
           traceLevel,
-          shouldWrite: this.shouldWrite(),
-          allowWorkspaceWriteApproval: this.allowWorkspaceWriteApproval()
-            ? true
-            : undefined,
+          shouldWrite: permissions.shouldWrite,
           metadata: this.runRequestMetadata({ traceLevel }),
         }),
       );
@@ -327,6 +318,7 @@ export class RunController {
       }
       this.store.setError(message);
       this.activeRunId = null;
+      this.activeApprovalPermissionMode = null;
     }
   }
 
@@ -482,7 +474,7 @@ export class RunController {
     const spawn = resolveHostStdioSpawn({
       workspaceRoot: this.opts.workspaceRoot,
       sessionRootDir: this.sessionRootDir(),
-      permissionMode: this.opts.permissionMode ?? "default",
+      permissionMode: this.coreRunFields().permissionMode,
     });
     this.clientPromise = createClient({
       spawn,
@@ -550,17 +542,15 @@ export class RunController {
     input: { traceLevel?: TraceLevel } = {},
   ): Record<string, unknown> {
     const traceLevel = input.traceLevel ?? this.opts.traceLevel ?? "standard";
+    const permissions = this.coreRunFields();
     return {
       ...createHostClientRunMetadata({
         source: "tui",
         sessionId: this.sessionId,
         workspaceRoot: this.opts.workspaceRoot,
-        permissionMode: this.opts.permissionMode ?? "default",
+        permissionMode: permissions.permissionMode,
         traceLevel,
-        shouldWrite: this.shouldWrite(),
-        allowWorkspaceWriteApproval: this.allowWorkspaceWriteApproval()
-          ? true
-          : undefined,
+        shouldWrite: permissions.shouldWrite,
         modelName: this.opts.modelName,
       }),
       ...inputMetadataRecord(this.pendingRunInput()),
@@ -578,11 +568,15 @@ export class RunController {
   }
 
   private shouldWrite(): boolean {
-    return this.opts.shouldWrite === true;
+    return this.coreRunFields().shouldWrite;
   }
 
-  private allowWorkspaceWriteApproval(): boolean {
-    return !this.shouldWrite();
+  private tuiPermissionMode(): TuiPermissionMode {
+    return this.opts.tuiPermissionMode ?? "ask";
+  }
+
+  private coreRunFields(): CoreRunPermissionFields {
+    return toCoreRunFields(this.tuiPermissionMode());
   }
 
   private hasTerminalRunEvent(): boolean {
@@ -683,6 +677,7 @@ export class RunController {
 
     client.on("run.completed", (msg) => {
       this.activeRunId = null;
+      this.activeApprovalPermissionMode = null;
       this.store.setStopReason(msg.payload.stopReason ?? null);
       const handoff = msg.payload.todoHandoff;
       if (handoff) {
@@ -707,11 +702,13 @@ export class RunController {
 
     client.on("run.failed", (msg) => {
       this.activeRunId = null;
+      this.activeApprovalPermissionMode = null;
       this.store.setError(runFailureMessage(msg.payload));
     });
 
     client.on("disconnect", (reason) => {
       this.activeRunId = null;
+      this.activeApprovalPermissionMode = null;
       this.store.setError(`host disconnected${reason ? `: ${reason}` : ""}`);
       this.client = null;
       this.clientPromise = null;
@@ -723,10 +720,9 @@ export class RunController {
 
   private approvalPolicyInput() {
     return {
-      approveAll: this.opts.approveAll,
-      approveEdits: this.opts.approveEdits,
-      approveShellSafe: this.opts.approveShellSafe,
-      permissionMode: this.opts.permissionMode,
+      permissionMode:
+        this.activeApprovalPermissionMode ??
+        this.coreRunFields().permissionMode,
     };
   }
 }

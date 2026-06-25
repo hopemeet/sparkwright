@@ -159,6 +159,7 @@ export async function runConfiguredDelegate(
         : undefined,
   });
 
+  const sessionId = input.sessionId ?? createSessionId();
   const parent = createRun({
     goal: input.goal,
     model: {
@@ -167,13 +168,17 @@ export async function runConfiguredDelegate(
       },
     },
     maxSteps: 1,
+    metadata: {
+      sessionId,
+      agentId: "main",
+    },
   });
   const persistence =
     input.persistTrace === false
       ? undefined
       : createDelegateRunPersistence({
           workspaceRoot: input.workspaceRoot,
-          sessionId: input.sessionId ?? createSessionId(),
+          sessionId,
           traceLevel: input.traceLevel ?? "standard",
           source: "delegates.run",
           parent,

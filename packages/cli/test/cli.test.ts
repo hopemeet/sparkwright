@@ -342,6 +342,50 @@ describe("runCli", () => {
     });
   });
 
+  it("warns when cron create adjusts a duplicate name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
+    tempDirs.push(root);
+
+    const create = async (output: ReturnType<typeof createOutputCapture>) => {
+      const result = await runCli(
+        [
+          "cron",
+          "create",
+          "--root-dir",
+          root,
+          "--schedule",
+          "every 1d",
+          "--prompt",
+          "summarize README.md",
+          "--name",
+          "readme-daily",
+        ],
+        {
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+      return result;
+    };
+
+    const firstOutput = createOutputCapture();
+    const first = await create(firstOutput);
+    expect(first.exitCode).toBe(0);
+    expect(firstOutput.stderrText()).toBe("");
+
+    const secondOutput = createOutputCapture();
+    const second = await create(secondOutput);
+    expect(second.exitCode).toBe(0);
+    expect(secondOutput.stderrText()).toContain(
+      'Cron job "readme-daily" already exists; created as "readme-daily 2".',
+    );
+    const parsed = JSON.parse(secondOutput.stdoutText()) as { name: string };
+    expect(parsed.name).toBe("readme-daily 2");
+  });
+
   it("inspects durable background tasks without starting tasks", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-task-cli-"));
     tempDirs.push(root);
@@ -5742,7 +5786,11 @@ describe("runCli", () => {
       traceEvents.find((event) => event.type === "subagent.completed"),
     ).toMatchObject({
       payload: { workspaceWrites: 1 },
-      metadata: { agentProfileId: "writer" },
+      metadata: {
+        agentId: "main",
+        childAgentId: "writer",
+        agentProfileId: "writer",
+      },
     });
   });
 
@@ -7001,6 +7049,10 @@ describe("runCli", () => {
       runId: string;
       tracePath: string;
       output: { exitCode: number; stdout: string };
+      events: Array<{
+        type: string;
+        metadata?: Record<string, unknown>;
+      }>;
     };
     expect(parsed).toMatchObject({
       ok: true,
@@ -7015,6 +7067,20 @@ describe("runCli", () => {
     const trace = await readFile(parsed.tracePath, "utf8");
     expect(trace).toContain('"type":"approval.requested"');
     expect(trace).toContain('"type":"subagent.completed"');
+    const stdoutSubagent = parsed.events.find(
+      (event) => event.type === "subagent.completed",
+    );
+    const traceSubagent = trace
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; metadata?: unknown })
+      .find((event) => event.type === "subagent.completed");
+    expect(stdoutSubagent?.metadata).toMatchObject({
+      agentId: "main",
+      childAgentId: "external_cli_fixture",
+      agentProfileId: "external_cli_fixture",
+    });
+    expect(traceSubagent?.metadata).toEqual(stdoutSubagent?.metadata);
   });
 
   it("enforces maxDepth for direct external command delegates", async () => {
