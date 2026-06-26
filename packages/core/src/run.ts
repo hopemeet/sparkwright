@@ -95,6 +95,7 @@ import {
 import {
   commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
+  stableRefTarget,
   toolOutcomeSnapshot,
 } from "./run-outcome.js";
 import { ControlledWorkspace } from "./workspace.js";
@@ -4195,6 +4196,12 @@ function isRepeatedToolCall(
 function semanticToolTarget(toolName: string, args: unknown): string {
   if (args && typeof args === "object") {
     const record = args as Record<string, unknown>;
+    // Capability calls (cron/agent/task) act on a stable `ref`; collapse to it
+    // so a model varying cosmetic job/patch fields cannot escape the guard.
+    const ref = stableRefTarget(record);
+    if (ref !== undefined) {
+      return `${toolName}::ref::${ref}`;
+    }
     if (toolName === "shell" && typeof record.command === "string") {
       const cwd =
         typeof record.cwd === "string" && record.cwd.length > 0

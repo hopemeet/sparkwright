@@ -10,7 +10,7 @@ export function createCronTool(options: CreateCronToolOptions) {
   return defineTool({
     name: "cron",
     description:
-      "Create, list, status/inspect, update, pause, resume, or remove scheduled SparkWright cron jobs. Jobs run in fresh sessions; starting cron runs is only available from the CLI.",
+      "Create, list, status/inspect, update, pause, resume, or remove scheduled SparkWright cron jobs. Jobs run in fresh sessions; starting cron runs is only available from the CLI. Field usage by action: `create` needs `job`; `update` needs `ref` + `patch`; `remove`/`pause`/`resume`/`status`/`inspect` need ONLY `ref` (do not send `job` or `patch` — they are ignored); `list` needs nothing. `remove` is idempotent: once it succeeds the job is gone, so a follow-up 'not found' means the deletion already worked — do not retry.",
     inputSchema: {
       type: "object",
       properties: {
@@ -30,7 +30,7 @@ export function createCronTool(options: CreateCronToolOptions) {
         ref: {
           type: "string",
           description:
-            "Job id or exact job name for update/pause/resume/status/inspect/remove.",
+            "Job id or exact job name. The only field needed for remove/pause/resume/status/inspect (and required alongside `patch` for update).",
         },
         job: createJobSchema,
         patch: updatePatchSchema,
@@ -116,7 +116,7 @@ const repeatSchema = {
 const createJobSchema = {
   type: "object",
   description:
-    "Create payload. schedule must be a string such as 'every 1h', '30m', an ISO timestamp, or a five-field cron expression.",
+    "Create payload (action='create' only). schedule must be a string such as 'every 1h', '30m', an ISO timestamp, or a five-field cron expression.",
   properties: {
     name: { type: "string" },
     prompt: { type: "string" },
@@ -132,7 +132,7 @@ const createJobSchema = {
 const updatePatchSchema = {
   type: "object",
   description:
-    "Update payload. schedule must be a string such as 'every 1h', '30m', an ISO timestamp, or a five-field cron expression.",
+    "Update payload (action='update' only). schedule must be a string such as 'every 1h', '30m', an ISO timestamp, or a five-field cron expression.",
   properties: {
     name: { type: "string" },
     prompt: { type: "string" },

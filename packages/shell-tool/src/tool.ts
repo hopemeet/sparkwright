@@ -181,8 +181,31 @@ export interface ShellToolOutput {
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;
+  /**
+   * The *pre-execution* safety classification. It is NOT an outcome: a value of
+   * `require_approval` on a returned result means the command was classified as
+   * needing approval, approval was then granted upstream, and the command ran.
+   * Read `executed` / `approvalStatus` (and `exitCode`) for what actually
+   * happened — never treat `decision: require_approval` as "blocked".
+   */
   decision: ShellSafetyDecision;
   reason: string;
+  /**
+   * @reserved Public shell-output field consumed by the model-visible shell
+   * observation and trace/report UIs. True once the command actually ran
+   * (whether it completed in the foreground or was promoted to a durable task).
+   * Reaching this result at all means the command executed; the flag makes that
+   * explicit so a model does not misread the safety `decision` as a block.
+   */
+  executed: boolean;
+  /**
+   * @reserved Public shell-output field consumed by the model-visible shell
+   * observation and trace/report UIs. The resolved approval state by the time
+   * the command executed: `approved` when the safety classification required
+   * approval and it was granted upstream before execution; `not_required` when
+   * the command was classified safe.
+   */
+  approvalStatus: "approved" | "not_required";
   /** Effective foreground budget used for this shell call. */
   foregroundTimeoutMs: number;
   /** True when a promotion handler was available for this shell call. */
@@ -291,6 +314,8 @@ export function createShellTool(
         timedOut: { type: "boolean" },
         decision: { type: "string" },
         reason: { type: "string" },
+        executed: { type: "boolean" },
+        approvalStatus: { type: "string", enum: ["approved", "not_required"] },
         foregroundTimeoutMs: { type: "integer" },
         promotionAvailable: { type: "boolean" },
         timeoutMsAliasUsed: { type: "boolean" },
@@ -324,6 +349,8 @@ export function createShellTool(
         "timedOut",
         "decision",
         "reason",
+        "executed",
+        "approvalStatus",
         "foregroundTimeoutMs",
         "promotionAvailable",
         "timeoutMsAliasUsed",
@@ -341,6 +368,8 @@ export function createShellTool(
       preserveFields: [
         "exitCode",
         "timedOut",
+        "executed",
+        "approvalStatus",
         "stderr",
         "foregroundTimeoutMs",
         "promotionAvailable",
@@ -563,6 +592,17 @@ interface PromotionRunContext {
   timeoutAliasWarning?: string;
 }
 
+/**
+ * Reaching execution with a `require_approval` classification means approval was
+ * granted upstream (core gates execution before this code runs); `allow` means
+ * approval was never needed. `deny` never reaches execution.
+ */
+function approvalStatusFromDecision(
+  decision: ShellSafetyDecision,
+): "approved" | "not_required" {
+  return decision === "require_approval" ? "approved" : "not_required";
+}
+
 async function runWithPromotion(
   ctx: PromotionRunContext,
 ): Promise<ShellToolOutput> {
@@ -628,6 +668,8 @@ async function runWithPromotion(
       timedOut,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      executed: true,
+      approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
       promotionAvailable: ctx.promotionAvailable,
       timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
@@ -665,6 +707,8 @@ async function runWithPromotion(
       timedOut: false,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      executed: true,
+      approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
       promotionAvailable: ctx.promotionAvailable,
       timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,
@@ -695,6 +739,8 @@ async function runWithPromotion(
       timedOut: true,
       decision: ctx.verdict.decision,
       reason: ctx.verdict.reason,
+      executed: true,
+      approvalStatus: approvalStatusFromDecision(ctx.verdict.decision),
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
       promotionAvailable: ctx.promotionAvailable,
       timeoutMsAliasUsed: ctx.timeoutMsAliasUsed,

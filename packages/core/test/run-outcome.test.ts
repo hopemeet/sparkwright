@@ -455,6 +455,149 @@ describe("run outcome evidence", () => {
     });
   });
 
+  it("treats a not-found after a successful same-ref destructive mutation as recovered", () => {
+    const log = new EventLog(createRunId());
+    // A cron remove succeeds (changed: true), then the model loops and re-issues
+    // remove with cosmetically varied job/patch fields. The follow-up failures
+    // are generic TOOL_EXECUTION_FAILED ("cron job not found" lives only in the
+    // message), so recovery must key on the prior mutation of the same `ref`.
+    const events = [
+      log.emit("run.created", { goal: "Delete the testcron job" }),
+      log.emit("tool.requested", {
+        id: "call_remove_ok",
+        toolName: "cron",
+        arguments: {
+          action: "remove",
+          ref: "c26560f10002",
+          job: { name: "testcron", prompt: "do a thing", schedule: "every 1h" },
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_remove_ok",
+        toolName: "cron",
+        status: "completed",
+        output: { action: "remove", changed: true },
+      }),
+      log.emit("tool.requested", {
+        id: "call_remove_again",
+        toolName: "cron",
+        arguments: {
+          // Same ref, different cosmetic fields — must collapse to one target.
+          action: "remove",
+          ref: "c26560f10002",
+          job: { name: "", prompt: "", schedule: "" },
+        },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_remove_again",
+        toolName: "cron",
+        status: "failed",
+        error: {
+          code: "TOOL_EXECUTION_FAILED",
+          message: "cron job not found: c26560f10002",
+        },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+    expect(summary.unresolvedFailures).toEqual([]);
+    expect(
+      summary.mutationFollowupFailures.map((failure) => failure.code),
+    ).toEqual(["TOOL_EXECUTION_FAILED"]);
+
+    // The whole run must not be marked failing on the post-deletion noise.
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      failing: false,
+    });
+
+    // The snapshot carries the high-signal diagnostic for trace report.
+    expect(toolOutcomeSnapshot(events)).toMatchObject({
+      unresolved: { total: 0, byCode: {} },
+      recovered: { total: 1, byCode: { TOOL_EXECUTION_FAILED: 1 } },
+      mutationFollowups: { count: 1, targets: ["cron::ref::c26560f10002"] },
+    });
+  });
+
+  it("does not flag a failure as destructive-mutation fallout when the mutation happened AFTER it", () => {
+    const log = new EventLog(createRunId());
+    // Ordering matters: a `changed: true` mutation that lands *after* the failure
+    // must not reach back in time and mislabel the failure as idempotent
+    // post-deletion fallout. (The later same-target completion still recovers the
+    // failure through the orthogonal same-target rule — that is fine — but it
+    // must NOT appear in the destructive-mutation diagnostic.)
+    const events = [
+      log.emit("run.created", { goal: "Inspect then edit a cron job" }),
+      log.emit("tool.requested", {
+        id: "call_status",
+        toolName: "cron",
+        arguments: { action: "status", ref: "c26560f10002" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_status",
+        toolName: "cron",
+        status: "completed",
+        output: { action: "status", changed: false },
+      }),
+      log.emit("tool.requested", {
+        id: "call_remove_fail",
+        toolName: "cron",
+        arguments: { action: "remove", ref: "c26560f10002" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_remove_fail",
+        toolName: "cron",
+        status: "failed",
+        error: { code: "TOOL_EXECUTION_FAILED", message: "transient error" },
+      }),
+      // Mutation happens AFTER the failure — must not reach back in time.
+      log.emit("tool.requested", {
+        id: "call_update",
+        toolName: "cron",
+        arguments: { action: "update", ref: "c26560f10002", patch: {} },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_update",
+        toolName: "cron",
+        status: "completed",
+        output: { action: "update", changed: true },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+    // The failure must NOT be attributed to a prior destructive mutation.
+    expect(summary.mutationFollowupFailures).toEqual([]);
+    expect(toolOutcomeSnapshot(events)?.mutationFollowups).toBeUndefined();
+  });
+
+  it("does not treat a not-found as recovered without a prior same-target mutation", () => {
+    const log = new EventLog(createRunId());
+    // Same code/shape as above but the target was never successfully mutated, so
+    // the failure must stay unresolved (no laundering of a genuine failure).
+    const events = [
+      log.emit("run.created", { goal: "Delete a cron job" }),
+      log.emit("tool.requested", {
+        id: "call_remove",
+        toolName: "cron",
+        arguments: { action: "remove", ref: "missing0001" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_remove",
+        toolName: "cron",
+        status: "failed",
+        error: {
+          code: "TOOL_EXECUTION_FAILED",
+          message: "cron job not found: missing0001",
+        },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+    expect(summary.mutationFollowupFailures).toEqual([]);
+    expect(summary.unresolvedFailures.map((failure) => failure.code)).toEqual([
+      "TOOL_EXECUTION_FAILED",
+    ]);
+  });
+
   it("classifies a legacy compact tool failure (flat errorCode) like the full shape", () => {
     const log = new EventLog(createRunId());
     // Older compact traces flattened the code to `errorCode`; the analyzer must
