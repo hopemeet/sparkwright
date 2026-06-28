@@ -2,12 +2,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createRunId, EventLog, openSpan } from "@sparkwright/core";
+import {
+  createRunId,
+  EventLog,
+  openSpan,
+  type ShellExecutionResult,
+  type ShellStreamingResult,
+} from "@sparkwright/core";
 import {
   resolveShellSandboxConfig,
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
 import {
+  ProcessTelemetryParser,
   TracedProcessRunner,
   inferProcessRuntime,
 } from "../src/traced-process-runner.js";
@@ -22,6 +29,148 @@ describe("inferProcessRuntime", () => {
     expect(inferProcessRuntime("tsx")).toBe("tsx");
     expect(inferProcessRuntime("./scripts/check")).toBe("custom");
     expect(inferProcessRuntime("C:\\Python\\python.exe")).toBe("python");
+  });
+});
+
+function createStreamingResult(input: {
+  stdout?: readonly string[];
+  stderr?: readonly string[];
+  metadata?: Record<string, unknown>;
+  status?: ShellExecutionResult["status"];
+  exitCode?: number | null;
+}): ShellStreamingResult {
+  return {
+    handle: {
+      stdout: () => asyncIterable(input.stdout ?? []),
+      stderr: () => asyncIterable(input.stderr ?? []),
+      abort: () => undefined,
+      metadata: {},
+    },
+    completed: Promise.resolve(
+      shellResult({
+        stdout: (input.stdout ?? []).join(""),
+        stderr: (input.stderr ?? []).join(""),
+        metadata: input.metadata,
+        status: input.status,
+        exitCode: input.exitCode,
+      }),
+    ),
+  };
+}
+
+async function* asyncIterable(
+  chunks: readonly string[],
+): AsyncIterable<string> {
+  for (const chunk of chunks) yield chunk;
+}
+
+function shellResult(input: {
+  stdout?: string;
+  stderr?: string;
+  metadata?: Record<string, unknown>;
+  status?: ShellExecutionResult["status"];
+  exitCode?: number | null;
+}): ShellExecutionResult {
+  const now = new Date().toISOString();
+  return {
+    status: input.status ?? "completed",
+    exitCode: input.exitCode ?? 0,
+    stdout: input.stdout ?? "",
+    stderr: input.stderr ?? "",
+    startedAt: now,
+    completedAt: now,
+    metadata: input.metadata ?? {},
+  };
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("ProcessTelemetryParser", () => {
+  const limits = {
+    maxProgressLineBytes: 8_192,
+    maxProgressDataBytes: 4_096,
+  };
+
+  it("parses LF, CRLF, final flush, and holds partial lines", () => {
+    const parser = new ProcessTelemetryParser({ limits });
+
+    expect(parser.push("plain half")).toMatchObject({
+      forwardableText: "",
+      progressChunks: [],
+    });
+    expect(parser.push("\n")).toMatchObject({
+      forwardableText: "plain half\n",
+      progressChunks: [],
+    });
+    expect(
+      parser.push('SPARKWRIGHT_EVENT: {"type":"progress","message":"lf"}\n')
+        .progressChunks,
+    ).toEqual([{ channel: "event", message: "lf" }]);
+    expect(
+      parser.push('SPARKWRIGHT_EVENT: {"type":"progress","message":"crlf"}\r\n')
+        .progressChunks,
+    ).toEqual([{ channel: "event", message: "crlf" }]);
+    expect(
+      parser.push('SPARKWRIGHT_EVENT: {"type":"progress","message":"final"}')
+        .progressChunks,
+    ).toEqual([]);
+    expect(parser.flush().progressChunks).toEqual([
+      { channel: "event", message: "final" },
+    ]);
+  });
+
+  it("drops malformed and unsupported token records while forwarding non-line-start tokens", () => {
+    const parser = new ProcessTelemetryParser({
+      limits: {
+        maxProgressLineBytes: 8_192,
+        maxProgressDataBytes: 12,
+      },
+    });
+
+    const nonLineStart =
+      'prefix SPARKWRIGHT_EVENT: {"type":"progress","message":"no"}\n';
+    expect(parser.push(nonLineStart)).toMatchObject({
+      forwardableText: nonLineStart,
+      progressChunks: [],
+      droppedSamples: [],
+    });
+    expect(parser.push("SPARKWRIGHT_EVENT: not-json\n").droppedSamples).toEqual(
+      [expect.objectContaining({ reason: "invalid_json" })],
+    );
+    expect(
+      parser.push('SPARKWRIGHT_EVENT: {"type":"metric"}\n').droppedSamples,
+    ).toEqual([expect.objectContaining({ reason: "unsupported_type" })]);
+    expect(
+      parser.push(
+        'SPARKWRIGHT_EVENT: {"type":"progress","data":{"value":"this is too long"}}\n',
+      ).droppedSamples,
+    ).toEqual([expect.objectContaining({ reason: "data_too_large" })]);
+    const lineLimitedParser = new ProcessTelemetryParser({
+      limits: {
+        maxProgressLineBytes: 40,
+        maxProgressDataBytes: 4_096,
+      },
+    });
+    expect(
+      lineLimitedParser.push(
+        `SPARKWRIGHT_EVENT: ${JSON.stringify({
+          type: "progress",
+          message: "line is too long for this test",
+        })}\n`,
+      ).droppedSamples,
+    ).toEqual([expect.objectContaining({ reason: "line_too_large" })]);
   });
 });
 
@@ -96,7 +245,7 @@ describe("TracedProcessRunner", () => {
     );
   });
 
-  it("routes inbox progress through the lifecycle span", async () => {
+  it("routes stderr token progress through the lifecycle span", async () => {
     const runId = createRunId();
     const events = new EventLog(runId);
     const runner = new TracedProcessRunner();
@@ -110,8 +259,8 @@ describe("TracedProcessRunner", () => {
       args: [
         "-e",
         [
-          "const fs = require('node:fs');",
-          "fs.appendFileSync(process.env.SPARKWRIGHT_TRACE_EVENTS,",
+          "process.stderr.write(",
+          "  process.env.SPARKWRIGHT_EVENT_TOKEN + ': ' +",
           "  JSON.stringify({ type: 'progress', message: 'half', data: { files: 2 } }) + '\\n');",
         ].join("\n"),
       ],
@@ -137,6 +286,100 @@ describe("TracedProcessRunner", () => {
     // started/completed events, not on every progress sample.
     expect(progress?.payload).not.toHaveProperty("commandPreview");
     expect(progress?.payload).not.toHaveProperty("argsPreview");
+    expect(result.output.stderrPreview).toBeUndefined();
+  });
+
+  it("drops malformed, oversized, and over-limit stderr token records without leaking them", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = new TracedProcessRunner();
+
+    const result = await runner.run({
+      emitter: events,
+      runId,
+      name: "progress-drops",
+      kind: "custom",
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "const token = process.env.SPARKWRIGHT_EVENT_TOKEN;",
+          "const write = (text) => process.stderr.write(token + ': ' + text + '\\n');",
+          "write('not-json');",
+          "write(JSON.stringify({ type: 'metric', message: 'future' }));",
+          "write(JSON.stringify({ type: 'progress', message: 'too big', data: { long: 'abcdefghijklmnop' } }));",
+          "write(JSON.stringify({ type: 'progress', message: 'one' }));",
+          "write(JSON.stringify({ type: 'progress', message: 'two' }));",
+        ].join("\n"),
+      ],
+      cwd: process.cwd(),
+      outputLimits: {
+        maxProgressEvents: 1,
+        maxProgressDataBytes: 16,
+      },
+    });
+
+    expect(result).toMatchObject({
+      progressCount: 1,
+      progressDropped: 4,
+      output: { stderrBytes: 0 },
+    });
+    expect(result).not.toHaveProperty("progressDroppedSamples");
+    expect(JSON.stringify(result.output)).not.toContain("SPARKWRIGHT_EVENT");
+    const completed = events
+      .all()
+      .find((event) => event.type === "extension.process.completed");
+    expect(completed?.payload).toMatchObject({
+      progressCount: 1,
+      progressDropped: 4,
+      progressDroppedSamples: [
+        expect.objectContaining({ reason: "invalid_json" }),
+        expect.objectContaining({ reason: "unsupported_type" }),
+        expect.objectContaining({ reason: "data_too_large" }),
+        expect.objectContaining({ reason: "limit_exceeded" }),
+      ],
+    });
+  });
+
+  it("flushes final stderr telemetry and awaits async progress before completing", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = new TracedProcessRunner();
+
+    const result = await runner.run({
+      emitter: events,
+      runId,
+      name: "final-progress",
+      kind: "custom",
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "process.stderr.write(",
+          "  process.env.SPARKWRIGHT_EVENT_TOKEN + ': ' +",
+          "  JSON.stringify({ type: 'progress', message: 'final' }));",
+        ].join("\n"),
+      ],
+      cwd: process.cwd(),
+      onProgress: async (chunk, context) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        context.emit("extension.process.progress", {
+          invocationId: context.invocationId,
+          ...chunk,
+        });
+      },
+    });
+
+    expect(result.progressCount).toBe(1);
+    const processEvents = events
+      .all()
+      .filter((event) => event.type.startsWith("extension.process."));
+    expect(processEvents.map((event) => event.type)).toEqual([
+      "extension.process.started",
+      "extension.process.progress",
+      "extension.process.completed",
+    ]);
+    expect(processEvents[1]?.payload).toMatchObject({ message: "final" });
   });
 
   it("lets callers route progress without extension lifecycle events", async () => {
@@ -159,8 +402,8 @@ describe("TracedProcessRunner", () => {
       args: [
         "-e",
         [
-          "const fs = require('node:fs');",
-          "fs.appendFileSync(process.env.SPARKWRIGHT_TRACE_EVENTS,",
+          "process.stderr.write(",
+          "  process.env.SPARKWRIGHT_EVENT_TOKEN + ': ' +",
           "  JSON.stringify({ type: 'progress', message: 'chunk' }) + '\\n');",
         ].join("\n"),
       ],
@@ -188,6 +431,7 @@ describe("TracedProcessRunner", () => {
       payload: { taskId: "task_1", channel: "event", data: "chunk" },
       spanId: taskSpan.frame.spanId,
     });
+    expect(JSON.stringify(result.output)).not.toContain("SPARKWRIGHT_EVENT");
   });
 
   it("pairs spawn failures with extension.process.failed", async () => {
@@ -296,24 +540,41 @@ describe("TracedProcessRunner", () => {
     }
   });
 
-  it("adds the progress inbox dir to sandbox allowWrite so the child can reach it", async () => {
+  it("parses sandbox stderr progress without adding an inbox allowWrite path", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-runner-"));
     try {
-      const captured: { allowWrite?: readonly string[] } = {};
+      const captured: {
+        allowWrite?: readonly string[];
+        env?: NodeJS.ProcessEnv;
+      } = {};
       const runtime: ShellSandboxRuntime = {
         id: "test-recording",
         platform: process.platform,
         isAvailable: async () => true,
-        execute: async (_request, config) => {
+        execute: async (request, config) => {
           captured.allowWrite = config.filesystem.allowWrite;
-          throw new Error("captured");
+          captured.env = request.env;
+          return createStreamingResult({
+            stdout: ["ok\n"],
+            stderr: [
+              'SPARKWRIGHT_EVENT: {"type":"progress","message":"sandbox"}\n',
+            ],
+            metadata: {
+              sandboxed: true,
+              sandboxMode: "enforce",
+              sandboxRuntime: "test-recording",
+              sandboxNetworkMode: "deny",
+              sandboxAvailable: true,
+              sandboxEnforced: true,
+            },
+          });
         },
       };
       const runId = createRunId();
       const events = new EventLog(runId);
       const runner = new TracedProcessRunner();
 
-      await runner.run({
+      const result = await runner.run({
         emitter: events,
         runId,
         name: "sandboxed",
@@ -328,15 +589,89 @@ describe("TracedProcessRunner", () => {
         sandboxRuntime: runtime,
       });
 
+      expect(result.progressCount).toBe(1);
+      expect(result.output).toMatchObject({
+        stdoutPreview: "ok\n",
+        stderrBytes: 0,
+      });
       expect(captured.allowWrite).toBeDefined();
       expect(
         captured.allowWrite?.some((path) =>
           path.includes("sparkwright-trace-"),
         ),
-      ).toBe(true);
+      ).toBe(false);
+      expect(captured.env).toMatchObject({
+        SPARKWRIGHT_PROCESS_PROTOCOL: "stdio-v1",
+        SPARKWRIGHT_EVENT_TOKEN: "SPARKWRIGHT_EVENT",
+      });
+      expect(captured.env).not.toHaveProperty("SPARKWRIGHT_TRACE_EVENTS");
+      expect(captured.env).not.toHaveProperty("SPARKWRIGHT_TRACE_PROTOCOL");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("holds streaming stderr partial lines and strips tokens from live output surfaces", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = new TracedProcessRunner();
+    const firstChunkSeen = deferred<void>();
+    const releaseRest = deferred<void>();
+    const completed = deferred<ShellExecutionResult>();
+    const output: Array<{ channel: string; data: string }> = [];
+    const progress: Array<{ channel?: string; message?: string }> = [];
+    const streaming: ShellStreamingResult = {
+      handle: {
+        stdout: () => asyncIterable([]),
+        async *stderr() {
+          firstChunkSeen.resolve();
+          yield "held";
+          await releaseRest.promise;
+          yield '\nSPARKWRIGHT_EVENT: {"type":"progress","message":"structured"}\nvisible';
+        },
+        abort: () => undefined,
+        metadata: {},
+      },
+      completed: completed.promise,
+    };
+
+    const observed = runner.observeStreaming({
+      emitter: events,
+      runId,
+      name: "live",
+      kind: "task",
+      streaming,
+      onOutput: (chunk) => {
+        output.push(chunk);
+      },
+      onProgress: (chunk) => {
+        progress.push(chunk);
+      },
+    });
+
+    await firstChunkSeen.promise;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(output).toEqual([]);
+
+    releaseRest.resolve();
+    completed.resolve(shellResult({ stderr: "ignored aggregate stderr" }));
+    const result = await observed;
+
+    expect(result.output.stderrPreview).toBe("held\nvisible");
+    expect(JSON.stringify(result.output)).not.toContain("SPARKWRIGHT_EVENT");
+    expect(output).toEqual([
+      { channel: "stderr", data: "held\n" },
+      { channel: "stderr", data: "visible" },
+    ]);
+    expect(JSON.stringify(output)).not.toContain("SPARKWRIGHT_EVENT");
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        { channel: "stderr", message: "held\n" },
+        { channel: "event", message: "structured" },
+        { channel: "stderr", message: "visible" },
+      ]),
+    );
+    expect(JSON.stringify(progress)).not.toContain("SPARKWRIGHT_EVENT");
   });
 
   it("emits artifacts for output beyond the artifact threshold", async () => {

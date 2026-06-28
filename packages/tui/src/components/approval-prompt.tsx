@@ -290,7 +290,7 @@ function skillEffect(
   name: string,
 ): string {
   if (toolName === "create_skill") {
-    return `effect: create .sparkwright/skills/${name}/SKILL.md`;
+    return `effect: draft proposal for .sparkwright/skills/${name}; current Skill package is unchanged`;
   }
   if (action === "draft") {
     return "effect: draft proposal only; original Skill package is unchanged";

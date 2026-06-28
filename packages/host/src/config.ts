@@ -23,17 +23,23 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import type {
-  RunBudget,
-  WorkflowHookMatcher,
-  WorkflowHookName,
+import {
+  clampAccessMode,
+  compileRunAccessMode,
+  type RunAccessMode,
+  type RunBudget,
+  type WorkflowHookMatcher,
+  type WorkflowHookName,
 } from "@sparkwright/core";
 import {
   PERMISSION_MODES,
   type PermissionMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
-import type { AgentProfile } from "@sparkwright/agent-runtime";
+import type {
+  AgentProfile,
+  AgentProfileWorkflowHookConfig,
+} from "@sparkwright/agent-runtime";
 import { MAX_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
 import {
@@ -56,10 +62,13 @@ import {
   APPROVALS_CONFIG_KEYS,
   AGENT_PROFILE_ACP_METADATA_CONFIG_KEYS,
   AGENT_PROFILE_CONFIG_KEYS,
+  AGENT_PROFILE_DELEGATE_TOOL_CONFIG_KEYS,
   AGENT_PROFILE_EXTERNAL_COMMAND_METADATA_CONFIG_KEYS,
+  AGENT_PROFILE_WORKFLOW_HOOK_CONFIG_KEYS,
   AGENT_PROFILE_MODES,
   AGENT_PROFILE_OPTIONAL_STRING_CONFIG_KEYS,
   AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS,
+  AGENT_EXPOSURE_MODES,
   AGENTS_CONFIG_KEYS,
   CAPABILITIES_CONFIG_KEYS,
   CONFIG_GROUP_CONFIG_KEYS,
@@ -71,6 +80,10 @@ import {
   DELEGATE_ENV_MODES,
   DELEGATE_WORKSPACE_ACCESS_MODES,
   EXTERNAL_COMMAND_INPUT_MODES,
+  EVENT_HOOK_CONFIG_KEYS,
+  EVENT_HOOK_TRIGGERS,
+  HOOKS_HTTP_ALLOW_CONFIG_KEYS,
+  HOOKS_HTTP_CONFIG_KEYS,
   HOOKS_CONFIG_KEYS,
   MCP_CONFIG_KEYS,
   MCP_DEFAULT_POLICY_CONFIG_KEYS,
@@ -108,9 +121,13 @@ import {
   VERIFICATION_STOP_GATE_CONFIG_KEYS,
   WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE,
   WORKFLOW_HOOK_ACTION_TYPES,
+  WORKFLOW_HOOK_AGENT_RESULT_MODES,
+  WORKFLOW_HOOK_COMMAND_RESULT_MODES,
   WORKFLOW_HOOK_CONFIG_KEYS,
   WORKFLOW_HOOK_CONTEXT_TYPES,
   WORKFLOW_HOOK_FREQUENCIES,
+  WORKFLOW_HOOK_HTTP_METHODS,
+  WORKFLOW_HOOK_HTTP_RESULT_MODES,
   WORKFLOW_HOOK_MATCHER_CONFIG_KEYS,
   WORKFLOW_HOOK_NAMES,
   WORKFLOW_HOOK_ON_ERROR_MODES,
@@ -118,12 +135,15 @@ import {
   WORKFLOW_HOOK_STDIN_MODES,
   WRITE_GUARDRAILS_CONFIG_KEYS,
   maxStepsSchema,
+  ACCESS_MODE_CONFIG_VALUES,
   PERMISSION_MODE_CONFIG_VALUES,
   workspaceSchema,
 } from "./config-zod-schema.js";
 import type {
   ApprovalDefaults,
+  AgentExposureMode,
   CapabilityDelegateToolConfig,
+  CapabilityEventHookConfig,
   CapabilityHookActionConfig,
   CapabilityHooksConfig,
   CapabilityMcpStartup,
@@ -148,7 +168,9 @@ import type {
 } from "./config-zod-schema.js";
 export type {
   ApprovalDefaults,
+  AgentExposureMode,
   CapabilityDelegateToolConfig,
+  CapabilityEventHookConfig,
   CapabilityHookActionConfig,
   CapabilityHooksConfig,
   CapabilityMcpStartup,
@@ -174,6 +196,11 @@ export type {
   TaskConfig,
   WriteGuardrailsConfig,
 } from "./config-zod-schema.js";
+
+type CapabilityHooksHttpConfig = NonNullable<CapabilityHooksConfig["http"]>;
+type CapabilityHooksHttpAllowRule = NonNullable<
+  CapabilityHooksHttpConfig["allow"]
+>[number];
 
 export const CONFIG_PROJECT_REL = ".sparkwright/config.json";
 export const CONFIG_USER_REL = ".config/sparkwright/config.json";
@@ -219,6 +246,22 @@ export interface SharedConfig {
   /** Active model in "provider/model" form (or the reserved "deterministic"). */
   model?: string;
   providers?: Record<string, ProviderConfig>;
+  /**
+   * High-level run autonomy preset (the user-facing access knob). Merges
+   * conservatively across layers (project clamps user). The loader derives the
+   * internal `permissionMode` from it via `compileRunAccessMode`.
+   */
+  accessMode?: RunAccessMode;
+  /**
+   * Project-layer maximum autonomy. Runtime overrides and lower layers are
+   * clamped to this ceiling, but more restrictive requests remain effective.
+   */
+  accessModeCeiling?: RunAccessMode;
+  /**
+   * Internal compile target derived from `accessMode`. Not a user-facing config
+   * field; downstream runtime/CLI consumers read this. Do not parse it from
+   * user config.
+   */
   permissionMode?: PermissionMode;
   /** Path relative to the config file, or absolute. */
   workspace?: string;
@@ -267,6 +310,16 @@ export interface CapabilityConfig {
 export interface CapabilityAgentsConfig {
   profiles?: AgentProfile[];
   delegateTools?: CapabilityDelegateToolConfig[];
+  /** Optional model for dynamic spawn_agent children; absent inherits the parent model. */
+  spawnModel?: string;
+  /** Optional default model for configured in-process delegates; profile.model wins. */
+  delegateModel?: string;
+  /** Direct delegate_* exposure mode. Default indexed. */
+  exposure?: AgentExposureMode;
+  /** Profile ids or delegate tool names kept as direct delegate_* tools in indexed mode. */
+  pinnedDelegates?: string[];
+  exposeChildrenAsDelegates?: boolean;
+  enableParallelDelegates?: boolean;
   /** Maximum allowed sub-agent depth. 0 disables spawning; absent keeps legacy defaults. */
   maxDepth?: number;
 }
@@ -312,6 +365,8 @@ export interface CapabilityMcpConfig {
 
 export interface SharedConfigSourceMap {
   model?: string;
+  accessMode?: string;
+  accessModeCeiling?: string;
   permissionMode?: string;
   workspace?: string;
   confidentialPaths?: string;
@@ -332,40 +387,18 @@ export interface SharedConfigError {
   message: string;
 }
 
+export interface SharedConfigWarning {
+  file: string;
+  field: string;
+  message: string;
+}
+
 export interface LoadedSharedConfig {
   config: SharedConfig;
   sources: SharedConfigSourceMap;
   attempted: { path: string; loaded: boolean }[];
   errors: SharedConfigError[];
-}
-
-/**
- * Permissiveness ranking for `permissionMode` (lower = more restrictive). Used
- * to merge layers conservatively: a later (lower-trust) layer may tighten the
- * mode but never relax it — mirroring how shell.sandbox merges. This blocks a
- * project config from escalating a user's mode to the auto-allow modes
- * `accept_edits`/`bypass_permissions`. The relative order of the human-gated
- * modes (plan/dont_ask/default) carries no security weight; only the auto-allow
- * modes ranking above them matters.
- */
-const PERMISSION_MODE_RANK: Record<PermissionMode, number> = {
-  plan: 0,
-  dont_ask: 1,
-  default: 2,
-  accept_edits: 3,
-  bypass_permissions: 4,
-};
-
-function stricterPermissionMode(
-  previous: PermissionMode | undefined,
-  next: PermissionMode | undefined,
-): PermissionMode | undefined {
-  if (previous === undefined) return next;
-  if (next === undefined) return previous;
-  // On equal rank the later layer wins; otherwise keep the more restrictive.
-  return PERMISSION_MODE_RANK[next] <= PERMISSION_MODE_RANK[previous]
-    ? next
-    : previous;
+  warnings: SharedConfigWarning[];
 }
 
 /**
@@ -422,8 +455,10 @@ export function configResolutionOrder(
   return order;
 }
 
+type ConfigLayerLabel = "user" | "project" | "env";
+
 interface ConfigLayerResolution {
-  label: string;
+  label: ConfigLayerLabel;
   candidates: string[];
 }
 
@@ -604,6 +639,16 @@ function isStringOption<T extends string>(
   return (
     typeof value === "string" && (options as readonly string[]).includes(value)
   );
+}
+
+function isHttpUrlString(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 interface ConfigValueSchema<T> {
@@ -1016,6 +1061,10 @@ function validateCapabilityHooks(
       });
     }
   }
+  if (raw.http !== undefined) {
+    const http = validateHooksHttpConfig(raw.http, filePath, errors);
+    if (http) out.http = http;
+  }
   if (raw.workflow !== undefined) {
     if (Array.isArray(raw.workflow)) {
       out.workflow = raw.workflow
@@ -1029,7 +1078,129 @@ function validateCapabilityHooks(
       });
     }
   }
+  if (raw.events !== undefined) {
+    if (Array.isArray(raw.events)) {
+      out.events = raw.events
+        .map((hook, i) => validateEventHookConfig(hook, i, filePath, errors))
+        .filter((hook): hook is CapabilityEventHookConfig => !!hook);
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities.hooks.events",
+        message: "must be an array",
+      });
+    }
+  }
   return out;
+}
+
+function validateHooksHttpConfig(
+  raw: unknown,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityHooksHttpConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({
+      file: filePath,
+      field: "capabilities.hooks.http",
+      message: "must be an object",
+    });
+    return undefined;
+  }
+  validateKnownKeys(
+    raw,
+    "capabilities.hooks.http",
+    filePath,
+    errors,
+    new Set<string>(HOOKS_HTTP_CONFIG_KEYS),
+  );
+  const out: CapabilityHooksHttpConfig = {};
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      "capabilities.hooks.http.enabled",
+      filePath,
+      errors,
+    );
+  }
+  if (raw.allow !== undefined) {
+    if (!Array.isArray(raw.allow)) {
+      errors.push({
+        file: filePath,
+        field: "capabilities.hooks.http.allow",
+        message: "must be an array",
+      });
+    } else {
+      out.allow = raw.allow
+        .map((entry, i) =>
+          validateHooksHttpAllowRule(
+            entry,
+            `capabilities.hooks.http.allow.${i}`,
+            filePath,
+            errors,
+          ),
+        )
+        .filter((entry): entry is CapabilityHooksHttpAllowRule => !!entry);
+    }
+  }
+  if (raw.allowPrivateNetwork !== undefined) {
+    out.allowPrivateNetwork = validateOptionalBoolean(
+      raw.allowPrivateNetwork,
+      "capabilities.hooks.http.allowPrivateNetwork",
+      filePath,
+      errors,
+    );
+  }
+  return out;
+}
+
+function validateHooksHttpAllowRule(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityHooksHttpAllowRule | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(HOOKS_HTTP_ALLOW_CONFIG_KEYS),
+  );
+  const hasOrigin = raw.origin !== undefined;
+  const hasHostname = raw.hostname !== undefined;
+  if (hasOrigin === hasHostname) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must specify exactly one of origin or hostname",
+    });
+    return undefined;
+  }
+  if (hasOrigin) {
+    if (!isHttpUrlString(raw.origin)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.origin`,
+        message: "must be an http(s) origin",
+      });
+      return undefined;
+    }
+    return { origin: raw.origin };
+  }
+  if (typeof raw.hostname !== "string" || raw.hostname.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.hostname`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  return { hostname: raw.hostname };
 }
 
 function validateWorkflowHookConfig(
@@ -1134,11 +1305,333 @@ function validateWorkflowHookConfig(
   return out;
 }
 
+function validateEventHookConfig(
+  raw: unknown,
+  index: number,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityEventHookConfig | undefined {
+  const field = `capabilities.hooks.events.${index}`;
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  const allowed = new Set<string>(EVENT_HOOK_CONFIG_KEYS);
+  for (const key of Object.keys(raw)) {
+    if (!allowed.has(key)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${key}`,
+        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
+      });
+    }
+  }
+  if (typeof raw.name !== "string" || raw.name.length === 0) {
+    errors.push({
+      file: filePath,
+      field: `${field}.name`,
+      message: "must be a non-empty string",
+    });
+    return undefined;
+  }
+  const trigger = validateEventHookTrigger(
+    raw.trigger,
+    field,
+    filePath,
+    errors,
+  );
+  if (!trigger) return undefined;
+  const action = validateEventHookAction(raw.action, field, filePath, errors);
+  if (!action) return undefined;
+  const out: CapabilityEventHookConfig = {
+    name: raw.name,
+    trigger,
+    action,
+  };
+  if (raw.description !== undefined) {
+    if (typeof raw.description === "string") {
+      out.description = raw.description;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.description`,
+        message: "must be a string",
+      });
+    }
+  }
+  if (raw.enabled !== undefined) {
+    out.enabled = validateOptionalBoolean(
+      raw.enabled,
+      `${field}.enabled`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.matcher !== undefined) {
+    const matcher = validateWorkflowHookMatcher(
+      raw.matcher,
+      `${field}.matcher`,
+      filePath,
+      errors,
+    );
+    if (matcher) out.matcher = matcher;
+  }
+  return out;
+}
+
+function validateEventHookTrigger(
+  raw: unknown,
+  parentField: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityEventHookConfig["trigger"] | undefined {
+  const field = `${parentField}.trigger`;
+  const values = Array.isArray(raw) ? raw : [raw];
+  if (
+    values.length === 0 ||
+    !values.every((value) => isStringOption(value, EVENT_HOOK_TRIGGERS))
+  ) {
+    errors.push({
+      file: filePath,
+      field,
+      message: `must be one of ${EVENT_HOOK_TRIGGERS.join(" | ")} or an array of those values`,
+    });
+    return undefined;
+  }
+  return Array.isArray(raw)
+    ? (values as CapabilityEventHookConfig["trigger"])
+    : (values[0] as CapabilityEventHookConfig["trigger"]);
+}
+
 function validateWorkflowHookAction(
   raw: unknown,
   parentField: string,
   filePath: string,
   errors: SharedConfigError[],
+): CapabilityHookActionConfig | undefined {
+  return validateHookAction(raw, parentField, filePath, errors, [
+    "block",
+    "context",
+    "command",
+    "http",
+    "agent",
+  ]);
+}
+
+function validateEventHookAction(
+  raw: unknown,
+  parentField: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): CapabilityEventHookConfig["action"] | undefined {
+  return validateHookAction(raw, parentField, filePath, errors, [
+    "command",
+    "http",
+    "agent",
+  ]) as CapabilityEventHookConfig["action"] | undefined;
+}
+
+function validateAgentProfileWorkflowHooks(
+  raw: unknown,
+  field: string,
+  profileId: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): AgentProfile["hooks"] | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(WORKFLOW_HOOK_NAMES),
+  );
+  const hooks: AgentProfileWorkflowHookConfig[] = [];
+  for (const hookName of WORKFLOW_HOOK_NAMES) {
+    const entriesRaw = raw[hookName];
+    if (entriesRaw === undefined) continue;
+    if (!Array.isArray(entriesRaw)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.${hookName}`,
+        message: "must be an array",
+      });
+      continue;
+    }
+    entriesRaw.forEach((entry, index) => {
+      const hook = validateAgentProfileWorkflowHookEntry(
+        entry,
+        `${field}.${hookName}.${index}`,
+        profileId,
+        hookName as WorkflowHookName,
+        index,
+        filePath,
+        errors,
+      );
+      if (hook) hooks.push(hook);
+    });
+  }
+  if (hooks.length === 0) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must contain at least one valid workflow hook",
+    });
+    return undefined;
+  }
+  return hooks;
+}
+
+function validateAgentProfileWorkflowHookEntry(
+  raw: unknown,
+  field: string,
+  profileId: string,
+  hook: WorkflowHookName,
+  index: number,
+  filePath: string,
+  errors: SharedConfigError[],
+): AgentProfileWorkflowHookConfig | undefined {
+  if (!isRecord(raw)) {
+    errors.push({ file: filePath, field, message: "must be an object" });
+    return undefined;
+  }
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(AGENT_PROFILE_WORKFLOW_HOOK_CONFIG_KEYS),
+  );
+  const action = validateAgentProfileWorkflowHookAction(
+    raw.action,
+    field,
+    filePath,
+    errors,
+  );
+  if (!action) return undefined;
+  const out: AgentProfileWorkflowHookConfig = {
+    name: `${profileId}.${hook}.${index}`,
+    hook,
+    action,
+  };
+  if (raw.name !== undefined) {
+    if (typeof raw.name === "string" && raw.name.length > 0) {
+      out.name = raw.name;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.name`,
+        message: "must be a non-empty string",
+      });
+    }
+  }
+  if (raw.description !== undefined) {
+    if (typeof raw.description === "string") {
+      out.description = raw.description;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.description`,
+        message: "must be a string",
+      });
+    }
+  }
+  if (raw.enabled !== undefined) {
+    const enabled = validateOptionalBoolean(
+      raw.enabled,
+      `${field}.enabled`,
+      filePath,
+      errors,
+    );
+    if (enabled !== undefined) out.enabled = enabled;
+  }
+  if (raw.onError !== undefined) {
+    if (isStringOption(raw.onError, WORKFLOW_HOOK_ON_ERROR_MODES)) {
+      out.onError = raw.onError;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.onError`,
+        message: "must be continue or block",
+      });
+    }
+  }
+  if (raw.frequency !== undefined) {
+    if (isStringOption(raw.frequency, WORKFLOW_HOOK_FREQUENCIES)) {
+      out.frequency = raw.frequency;
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.frequency`,
+        message: "must be always or oncePerTurn",
+      });
+    }
+  }
+  if (raw.matcher !== undefined) {
+    const matcher = validateAgentProfileWorkflowHookMatcher(
+      raw.matcher,
+      `${field}.matcher`,
+      filePath,
+      errors,
+    );
+    if (!matcher) return undefined;
+    out.matcher = matcher;
+  }
+  return out;
+}
+
+function validateAgentProfileWorkflowHookAction(
+  raw: unknown,
+  parentField: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): AgentProfileWorkflowHookConfig["action"] | undefined {
+  return validateHookAction(raw, parentField, filePath, errors, [
+    "block",
+    "context",
+    "command",
+    "http",
+  ]) as AgentProfileWorkflowHookConfig["action"] | undefined;
+}
+
+function validateAgentProfileWorkflowHookMatcher(
+  raw: unknown,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): WorkflowHookMatcher | undefined {
+  if (typeof raw === "string") {
+    const toolName = raw.trim();
+    if (toolName.length > 0) return { toolName };
+    errors.push({
+      file: filePath,
+      field,
+      message: "must be a non-empty string or matcher object",
+    });
+    return undefined;
+  }
+  const matcher = validateWorkflowHookMatcher(raw, field, filePath, errors);
+  if (!matcher) return undefined;
+  if (Object.keys(matcher).length === 0) {
+    errors.push({
+      file: filePath,
+      field,
+      message: "must include at least one matcher field",
+    });
+    return undefined;
+  }
+  return matcher;
+}
+
+function validateHookAction(
+  raw: unknown,
+  parentField: string,
+  filePath: string,
+  errors: SharedConfigError[],
+  allowedTypes: readonly CapabilityHookActionConfig["type"][],
 ): CapabilityHookActionConfig | undefined {
   const field = `${parentField}.action`;
   if (!isRecord(raw)) {
@@ -1146,11 +1639,14 @@ function validateWorkflowHookAction(
     return undefined;
   }
   const type = raw.type;
-  if (!isStringOption(type, WORKFLOW_HOOK_ACTION_TYPES)) {
+  if (
+    !isStringOption(type, WORKFLOW_HOOK_ACTION_TYPES) ||
+    !allowedTypes.includes(type)
+  ) {
     errors.push({
       file: filePath,
       field: `${field}.type`,
-      message: "must be block, context, or command",
+      message: `must be ${allowedTypes.join(", or ")}`,
     });
     return undefined;
   }
@@ -1202,6 +1698,165 @@ function validateWorkflowHookAction(
       ...(parsedContextType ? { contextType: parsedContextType } : {}),
     };
   }
+  if (type === "http") {
+    if (!isHttpUrlString(raw.url)) {
+      errors.push({
+        file: filePath,
+        field: `${field}.url`,
+        message: "must be an http(s) URL",
+      });
+      return undefined;
+    }
+    const method = raw.method;
+    const parsedMethod =
+      method === undefined
+        ? undefined
+        : isStringOption(method, WORKFLOW_HOOK_HTTP_METHODS)
+          ? method
+          : undefined;
+    if (method !== undefined && parsedMethod === undefined) {
+      errors.push({
+        file: filePath,
+        field: `${field}.method`,
+        message: `must be one of ${WORKFLOW_HOOK_HTTP_METHODS.join(" | ")}`,
+      });
+      return undefined;
+    }
+    return {
+      type,
+      url: raw.url,
+      ...(parsedMethod ? { method: parsedMethod } : {}),
+      ...(raw.headers !== undefined
+        ? {
+            headers: validateStringRecord(
+              raw.headers,
+              `${field}.headers`,
+              filePath,
+              errors,
+            ),
+          }
+        : {}),
+      ...(raw.body !== undefined
+        ? typeof raw.body === "string"
+          ? { body: raw.body }
+          : (errors.push({
+              file: filePath,
+              field: `${field}.body`,
+              message: "must be a string",
+            }),
+            {})
+        : {}),
+      ...(raw.timeoutMs !== undefined
+        ? {
+            timeoutMs: validateOptionalPositiveInteger(
+              raw.timeoutMs,
+              `${field}.timeoutMs`,
+              filePath,
+              errors,
+            ),
+          }
+        : {}),
+      ...(raw.blockOnFailure !== undefined
+        ? {
+            blockOnFailure: validateOptionalBoolean(
+              raw.blockOnFailure,
+              `${field}.blockOnFailure`,
+              filePath,
+              errors,
+            ),
+          }
+        : {}),
+      ...(raw.injectOutput !== undefined
+        ? isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
+          ? { injectOutput: raw.injectOutput }
+          : (errors.push({
+              file: filePath,
+              field: `${field}.injectOutput`,
+              message: "must be always, onFailure, or never",
+            }),
+            {})
+        : {}),
+      ...(raw.resultMode !== undefined
+        ? isStringOption(raw.resultMode, WORKFLOW_HOOK_HTTP_RESULT_MODES)
+          ? { resultMode: raw.resultMode }
+          : (errors.push({
+              file: filePath,
+              field: `${field}.resultMode`,
+              message: "must be status or responseJson",
+            }),
+            {})
+        : {}),
+    };
+  }
+
+  if (type === "agent") {
+    const agentId =
+      typeof raw.agentId === "string" && raw.agentId.length > 0
+        ? raw.agentId
+        : undefined;
+    const toolName =
+      typeof raw.toolName === "string" && raw.toolName.length > 0
+        ? raw.toolName
+        : undefined;
+    if (!agentId && !toolName) {
+      errors.push({
+        file: filePath,
+        field: `${field}.agentId`,
+        message: "agent actions require agentId or toolName",
+      });
+      return undefined;
+    }
+    if (typeof raw.goal !== "string" || raw.goal.length === 0) {
+      errors.push({
+        file: filePath,
+        field: `${field}.goal`,
+        message: "must be a non-empty string",
+      });
+      return undefined;
+    }
+    const metadata =
+      raw.metadata === undefined
+        ? undefined
+        : isRecord(raw.metadata)
+          ? raw.metadata
+          : undefined;
+    if (raw.metadata !== undefined && metadata === undefined) {
+      errors.push({
+        file: filePath,
+        field: `${field}.metadata`,
+        message: "must be an object",
+      });
+      return undefined;
+    }
+    return {
+      type,
+      ...(agentId ? { agentId } : {}),
+      ...(toolName ? { toolName } : {}),
+      goal: raw.goal,
+      ...(metadata ? { metadata } : {}),
+      ...(raw.resultMode !== undefined
+        ? isStringOption(raw.resultMode, WORKFLOW_HOOK_AGENT_RESULT_MODES)
+          ? { resultMode: raw.resultMode }
+          : (errors.push({
+              file: filePath,
+              field: `${field}.resultMode`,
+              message: "must be context or workflowResult",
+            }),
+            {})
+        : {}),
+      ...(raw.injectOutput !== undefined
+        ? isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
+          ? { injectOutput: raw.injectOutput }
+          : (errors.push({
+              file: filePath,
+              field: `${field}.injectOutput`,
+              message: "must be always, onFailure, or never",
+            }),
+            {})
+        : {}),
+    };
+  }
+
   if (typeof raw.command !== "string" || raw.command.length === 0) {
     errors.push({
       file: filePath,
@@ -1270,6 +1925,16 @@ function validateWorkflowHookAction(
             file: filePath,
             field: `${field}.stdin`,
             message: "must be none or json",
+          }),
+          {})
+      : {}),
+    ...(raw.resultMode !== undefined
+      ? isStringOption(raw.resultMode, WORKFLOW_HOOK_COMMAND_RESULT_MODES)
+        ? { resultMode: raw.resultMode }
+        : (errors.push({
+            file: filePath,
+            field: `${field}.resultMode`,
+            message: "must be exitCode or stdoutJson",
           }),
           {})
       : {}),
@@ -1715,6 +2380,71 @@ function validateCapabilities(
     if (agents) out.agents = agents;
   }
   return out;
+}
+
+function stripProjectHttpHooks(
+  capabilities: CapabilityConfig,
+  filePath: string,
+  errors: SharedConfigError[],
+): void {
+  const hooks = capabilities.hooks;
+  if (hooks) {
+    if (hooks.http !== undefined) {
+      errors.push({
+        file: filePath,
+        field: "capabilities.hooks.http",
+        message:
+          "HTTP hook transport policy cannot be configured in project config; move it to user config or SPARKWRIGHT_CONFIG",
+      });
+      delete hooks.http;
+    }
+    if (hooks.workflow) {
+      hooks.workflow = hooks.workflow.filter((hook, i) => {
+        if (hook.action.type !== "http") return true;
+        errors.push({
+          file: filePath,
+          field: `capabilities.hooks.workflow.${i}.action.type`,
+          message:
+            "http hook actions cannot be configured in project config; move the hook to user config or SPARKWRIGHT_CONFIG",
+        });
+        return false;
+      });
+    }
+    if (hooks.events) {
+      hooks.events = hooks.events.filter((hook, i) => {
+        if (hook.action.type !== "http") return true;
+        errors.push({
+          file: filePath,
+          field: `capabilities.hooks.events.${i}.action.type`,
+          message:
+            "http hook actions cannot be configured in project config; move the hook to user config or SPARKWRIGHT_CONFIG",
+        });
+        return false;
+      });
+    }
+  }
+  const profiles = capabilities.agents?.profiles;
+  if (profiles) {
+    profiles.forEach((profile, profileIndex) => {
+      if (!profile.hooks) return;
+      const hookIndexes = new Map<WorkflowHookName, number>();
+      profile.hooks = profile.hooks.filter((hook) => {
+        const hookIndex = hookIndexes.get(hook.hook) ?? 0;
+        hookIndexes.set(hook.hook, hookIndex + 1);
+        if (hook.action.type !== "http") return true;
+        errors.push({
+          file: filePath,
+          field: `capabilities.agents.profiles.${profileIndex}.hooks.${hook.hook}.${hookIndex}.action.type`,
+          message:
+            "http hook actions cannot be configured in project config; move the hook to user config or SPARKWRIGHT_CONFIG",
+        });
+        return false;
+      });
+      if (profile.hooks.length === 0) {
+        delete profile.hooks;
+      }
+    });
+  }
 }
 
 function validateWriteGuardrails(
@@ -2675,6 +3405,77 @@ function validateAgentProfile(
       );
     }
   }
+  if (raw.triggers !== undefined) {
+    profile.triggers = validateStringArray(
+      raw.triggers,
+      `${field}.triggers`,
+      filePath,
+      errors,
+    );
+  }
+  if (raw.when !== undefined) {
+    if (isRecord(raw.when)) {
+      validateKnownKeys(
+        raw.when,
+        `${field}.when`,
+        filePath,
+        errors,
+        new Set(["keywords"]),
+      );
+      if (raw.when.keywords !== undefined) {
+        const keywords = validateStringArray(
+          raw.when.keywords,
+          `${field}.when.keywords`,
+          filePath,
+          errors,
+        );
+        if (keywords !== undefined) profile.when = { keywords };
+      }
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.when`,
+        message: "must be an object",
+      });
+    }
+  }
+  if (raw.delegateTool !== undefined) {
+    if (isRecord(raw.delegateTool)) {
+      profile.delegateTool = validateAgentProfileDelegateTool(
+        raw.delegateTool,
+        `${field}.delegateTool`,
+        filePath,
+        errors,
+      );
+    } else {
+      errors.push({
+        file: filePath,
+        field: `${field}.delegateTool`,
+        message: "must be an object",
+      });
+    }
+  }
+  if (raw.exposeAsDelegate !== undefined) {
+    const parsed = validateOptionalBoolean(
+      raw.exposeAsDelegate,
+      `${field}.exposeAsDelegate`,
+      filePath,
+      errors,
+    );
+    if (parsed !== undefined) profile.exposeAsDelegate = parsed;
+  }
+  if (raw.hooks !== undefined) {
+    const hooks = validateAgentProfileWorkflowHooks(
+      raw.hooks,
+      `${field}.hooks`,
+      raw.id,
+      filePath,
+      errors,
+    );
+    if (hooks) {
+      profile.hooks = hooks;
+    }
+  }
   if (raw.policy !== undefined) {
     if (Array.isArray(raw.policy) && raw.policy.every(isRecord)) {
       profile.policy = raw.policy as unknown as AgentProfile["policy"];
@@ -2721,6 +3522,55 @@ function validateAgentProfile(
       });
   }
   return profile;
+}
+
+function validateAgentProfileDelegateTool(
+  raw: Record<string, unknown>,
+  field: string,
+  filePath: string,
+  errors: SharedConfigError[],
+): AgentProfile["delegateTool"] {
+  validateKnownKeys(
+    raw,
+    field,
+    filePath,
+    errors,
+    new Set<string>(AGENT_PROFILE_DELEGATE_TOOL_CONFIG_KEYS),
+  );
+  const out: NonNullable<AgentProfile["delegateTool"]> = {};
+  for (const key of DELEGATE_TOOL_OPTIONAL_STRING_CONFIG_KEYS) {
+    if (raw[key] !== undefined) {
+      if (typeof raw[key] === "string" && raw[key].length > 0) {
+        out[key] = raw[key];
+      } else {
+        errors.push({
+          file: filePath,
+          field: `${field}.${key}`,
+          message: "must be a non-empty string",
+        });
+      }
+    }
+  }
+  for (const key of DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS) {
+    if (raw[key] !== undefined) {
+      const parsed = validateOptionalBoolean(
+        raw[key],
+        `${field}.${key}`,
+        filePath,
+        errors,
+      );
+      if (parsed !== undefined) out[key] = parsed;
+    }
+  }
+  if (raw.maxSteps !== undefined) {
+    out.maxSteps = validateOptionalPositiveInteger(
+      raw.maxSteps,
+      `${field}.maxSteps`,
+      filePath,
+      errors,
+    );
+  }
+  return out;
 }
 
 function validateAgentProfileMetadata(
@@ -3045,6 +3895,69 @@ function validateCapabilityAgents(
       });
     }
   }
+  if (raw.spawnModel !== undefined) {
+    const model = validateZodValue(
+      modelSchema,
+      raw.spawnModel,
+      "capabilities.agents.spawnModel",
+      filePath,
+      errors,
+      "must be a non-empty model reference",
+    );
+    if (model !== undefined) out.spawnModel = model;
+  }
+  if (raw.delegateModel !== undefined) {
+    const model = validateZodValue(
+      modelSchema,
+      raw.delegateModel,
+      "capabilities.agents.delegateModel",
+      filePath,
+      errors,
+      "must be a non-empty model reference",
+    );
+    if (model !== undefined) out.delegateModel = model;
+  }
+  if (raw.exposure !== undefined) {
+    if (isStringOption(raw.exposure, AGENT_EXPOSURE_MODES)) {
+      out.exposure = raw.exposure;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "capabilities.agents.exposure",
+        message: `must be one of ${AGENT_EXPOSURE_MODES.join(" | ")}`,
+      });
+    }
+  }
+  if (raw.pinnedDelegates !== undefined) {
+    validateOptionalStringArray(
+      raw.pinnedDelegates,
+      "capabilities.agents.pinnedDelegates",
+      filePath,
+      errors,
+    );
+    const parsed = stringArray.safeParse(raw.pinnedDelegates);
+    if (parsed.success) {
+      out.pinnedDelegates = [...parsed.data];
+    }
+  }
+  if (raw.exposeChildrenAsDelegates !== undefined) {
+    const parsed = validateOptionalBoolean(
+      raw.exposeChildrenAsDelegates,
+      "capabilities.agents.exposeChildrenAsDelegates",
+      filePath,
+      errors,
+    );
+    if (parsed !== undefined) out.exposeChildrenAsDelegates = parsed;
+  }
+  if (raw.enableParallelDelegates !== undefined) {
+    const parsed = validateOptionalBoolean(
+      raw.enableParallelDelegates,
+      "capabilities.agents.enableParallelDelegates",
+      filePath,
+      errors,
+    );
+    if (parsed !== undefined) out.enableParallelDelegates = parsed;
+  }
   if (raw.maxDepth !== undefined) {
     out.maxDepth = validateOptionalNonNegativeInteger(
       raw.maxDepth,
@@ -3324,6 +4237,24 @@ export function normalizeGroupedConfig(
     }
     const knownSub = new Set<string>(CONFIG_GROUP_CONFIG_KEYS[group]);
     for (const subKey of Object.keys(groupValue)) {
+      if (group === "policy" && subKey === "permissionMode") {
+        errors.push({
+          file: filePath,
+          field: "policy.permissionMode",
+          message:
+            'removed; use run.accessMode ("read-only", "ask", "accept-edits", or "bypass")',
+        });
+        continue;
+      }
+      if (group === "ui" && subKey === "tuiPermissionMode") {
+        errors.push({
+          file: filePath,
+          field: "ui.tuiPermissionMode",
+          message:
+            "removed; use run.accessMode for configured run autonomy or the TUI runtime mode switch for temporary changes",
+        });
+        continue;
+      }
       if (!knownSub.has(subKey)) {
         errors.push({
           file: filePath,
@@ -3352,6 +4283,7 @@ function validateShared(
   raw: unknown,
   origin: string,
   filePath: string,
+  layer: ConfigLayerLabel = "env",
 ): {
   config: SharedConfig;
   sources: SharedConfigSourceMap;
@@ -3370,6 +4302,23 @@ function validateShared(
     return { config, sources, errors };
   }
   const obj = normalizeGroupedConfig(raw, filePath, errors);
+
+  if (Object.prototype.hasOwnProperty.call(obj, "permissionMode")) {
+    errors.push({
+      file: filePath,
+      field: "permissionMode",
+      message:
+        'removed; use run.accessMode ("read-only", "ask", "accept-edits", or "bypass")',
+    });
+  }
+  if (Object.prototype.hasOwnProperty.call(obj, "tuiPermissionMode")) {
+    errors.push({
+      file: filePath,
+      field: "tuiPermissionMode",
+      message:
+        "removed; use run.accessMode for configured run autonomy or the TUI runtime mode switch for temporary changes",
+    });
+  }
 
   if (obj.model !== undefined) {
     const model = validateZodValue(
@@ -3412,15 +4361,20 @@ function validateShared(
       });
     }
   }
-  if (obj.permissionMode !== undefined) {
-    if (isStringOption(obj.permissionMode, PERMISSION_MODE_CONFIG_VALUES)) {
-      config.permissionMode = obj.permissionMode;
+  if (obj.accessMode !== undefined) {
+    if (isStringOption(obj.accessMode, ACCESS_MODE_CONFIG_VALUES)) {
+      config.accessMode = obj.accessMode;
+      // permissionMode is an internal compile target, never user-parsed.
+      config.permissionMode = compileRunAccessMode(
+        obj.accessMode,
+      ).permissionMode;
+      sources.accessMode = origin;
       sources.permissionMode = origin;
     } else {
       errors.push({
         file: filePath,
-        field: "permissionMode",
-        message: `must be one of ${PERMISSION_MODES.join(" | ")}`,
+        field: "accessMode",
+        message: `must be one of ${ACCESS_MODE_CONFIG_VALUES.join(" | ")}`,
       });
     }
   }
@@ -3532,6 +4486,9 @@ function validateShared(
       errors,
     );
     if (capabilities) {
+      if (layer === "project") {
+        stripProjectHttpHooks(capabilities, filePath, errors);
+      }
       config.capabilities = capabilities;
     }
   }
@@ -3548,6 +4505,7 @@ export async function loadHostConfig(
   const sources: SharedConfigSourceMap = {};
   const attempted: LoadedSharedConfig["attempted"] = [];
   const errors: SharedConfigError[] = [];
+  const warnings: SharedConfigWarning[] = [];
 
   for (const { candidates, label } of order) {
     const existing = await existingConfigCandidatePaths(candidates);
@@ -3582,7 +4540,7 @@ export async function loadHostConfig(
     for (const candidate of candidates) {
       attempted.push({ path: candidate, loaded: candidate === path });
     }
-    const v = validateShared(r.value, `${label}:${path}`, path);
+    const v = validateShared(r.value, `${label}:${path}`, path, label);
     errors.push(...v.errors);
     if (v.config.workspace !== undefined) {
       v.config.workspace = isAbsolute(v.config.workspace)
@@ -3632,11 +4590,14 @@ export async function loadHostConfig(
       capabilities: layerCapabilities,
       shell: layerShell,
       tools: layerTools,
-      permissionMode: layerPermissionMode,
+      accessMode: layerAccessMode,
+      // permissionMode is derived from accessMode; never merged from a layer.
+      permissionMode: _layerPermissionMode,
       confidentialPaths: layerConfidentialPaths,
       write: layerWrite,
       ...rest
     } = v.config;
+    void _layerPermissionMode;
     Object.assign(merged, rest);
     if (providers) {
       merged.providers = { ...(merged.providers ?? {}), ...providers };
@@ -3654,18 +4615,42 @@ export async function loadHostConfig(
       merged.tools = mergeToolConfig(merged.tools, layerTools);
       sources.tools = v.sources.tools;
     }
-    // permissionMode and confidentialPaths are security boundaries: merge them
-    // conservatively (like shell.sandbox) so a later, lower-trust layer (e.g. a
-    // project config) can only tighten — never weaken — an earlier layer's
-    // policy. permissionMode keeps the stricter mode; confidentialPaths unions.
-    if (layerPermissionMode !== undefined) {
-      const previous = merged.permissionMode;
-      merged.permissionMode = stricterPermissionMode(
-        previous,
-        layerPermissionMode,
-      );
-      if (merged.permissionMode !== previous) {
-        sources.permissionMode = v.sources.permissionMode;
+    // accessMode is special: the project layer is the authoritative ceiling,
+    // while user/env layers are requests. A project accessMode clamps lower
+    // layers down but never raises a more restrictive request.
+    if (layerAccessMode !== undefined) {
+      if (label === "project") {
+        merged.accessModeCeiling = layerAccessMode;
+        sources.accessModeCeiling = v.sources.accessMode;
+      }
+      const requested =
+        label === "project"
+          ? (merged.accessMode ?? layerAccessMode)
+          : layerAccessMode;
+      const effective =
+        clampAccessMode(merged.accessModeCeiling, requested) ?? requested;
+      if (effective !== requested && merged.accessModeCeiling !== undefined) {
+        warnings.push({
+          file: path,
+          field: "accessMode",
+          message: `requested ${requested} was clamped to project ceiling ${merged.accessModeCeiling}`,
+        });
+      }
+      const previous = merged.accessMode;
+      merged.accessMode = effective;
+      if (merged.accessMode !== previous || sources.accessMode === undefined) {
+        sources.accessMode =
+          effective === requested
+            ? label === "project" && previous !== undefined
+              ? sources.accessMode
+              : v.sources.accessMode
+            : sources.accessModeCeiling;
+      }
+      if (merged.accessMode !== undefined) {
+        merged.permissionMode = compileRunAccessMode(
+          merged.accessMode,
+        ).permissionMode;
+        sources.permissionMode = sources.accessMode;
       }
     }
     if (layerConfidentialPaths !== undefined) {
@@ -3682,6 +4667,8 @@ export async function loadHostConfig(
     const { providers: providerSources, ...fieldSources } = v.sources;
     // These security-boundary sources are tracked above to reflect the layer
     // that actually won the conservative merge, not just the last to set them.
+    delete fieldSources.accessMode;
+    delete fieldSources.accessModeCeiling;
     delete fieldSources.permissionMode;
     delete fieldSources.confidentialPaths;
     delete fieldSources.write;
@@ -3691,7 +4678,7 @@ export async function loadHostConfig(
     }
   }
 
-  return { config: merged, sources, attempted, errors };
+  return { config: merged, sources, attempted, errors, warnings };
 }
 
 export interface ParsedModelRef {

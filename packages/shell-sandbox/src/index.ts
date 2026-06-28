@@ -578,8 +578,8 @@ export function buildBubblewrapInvocation(
     args.push("--bind", options.tmpRoot, "/tmp");
   }
   // Bind writable paths AFTER the private /tmp overlay so an explicitly
-  // allowed path under /tmp (e.g. the trace progress inbox) is not shadowed
-  // by the empty tmpRoot mounted over /tmp.
+  // allowed path under /tmp is not shadowed by the empty tmpRoot mounted over
+  // /tmp.
   for (const path of config.filesystem.allowWrite) {
     args.push("--bind-try", path, path);
   }

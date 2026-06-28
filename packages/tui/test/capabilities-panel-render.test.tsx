@@ -152,7 +152,7 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("deferred via tool_search");
     expect(text).toContain("approval / high risk");
     expect(text).toContain("tool sources");
-    expect(text).toContain("managed Skill package create");
+    expect(text).toContain("draft create proposal first");
     expect(text).toContain("draft proposal first");
     expect(text).toContain("apply only when requested");
   });
@@ -208,6 +208,7 @@ describe("CapabilitiesPanel rendering", () => {
                 profileId: "writer",
                 profileName: "Writer",
                 protocol: "in_process",
+                model: "anthropic/claude",
                 risk: "safe",
                 requiresApproval: false,
                 forbidNesting: true,
@@ -216,6 +217,14 @@ describe("CapabilitiesPanel rendering", () => {
                 shellAccess: false,
                 processSpawn: false,
                 gatedByRunWrite: true,
+                routing: {
+                  keywords: ["write", "patch"],
+                  mode: "sort",
+                  relevance: "relevant",
+                  score: 2,
+                  matchedKeywords: ["write"],
+                  reason: "matched write",
+                },
               },
             ],
           },
@@ -230,6 +239,8 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("1 delegates");
     expect(text).toContain("delegate_writer");
     expect(text).toContain("in_process");
+    expect(text).toContain("anthropic/claude");
+    expect(text).toContain("relevant");
     expect(text).toContain("workspace read_write");
     expect(text).toContain("requires --write");
   });
@@ -260,5 +271,63 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("agents (1 / 0 delegates)");
     expect(text).toContain("Writer");
     expect(text).not.toContain("SparkWright");
+  });
+
+  it("renders workflow rule summaries from the snapshot", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          ...snapshot(0),
+          rules: {
+            workflow: [
+              {
+                name: "documented-command-check",
+                source: "builtin",
+                lifecycle: "Stop",
+                matcher: "write-enabled goals about verification",
+                action: "block final answer when README commands are stale",
+                blockingPotential: true,
+                enabled: true,
+                active: false,
+                status: "available",
+                configurationHint:
+                  "Activated by the current goal and write access.",
+              },
+            ],
+            events: [
+              {
+                name: "record-tool",
+                source: "config",
+                trigger: "tool.completed",
+                matcher: "toolName=shell",
+                action: "command: node; injectOutput=always",
+                blockingPotential: false,
+                enabled: true,
+                active: true,
+                status: "active",
+                configurationHint: "Configured in capabilities.hooks.events.",
+              },
+            ],
+          },
+        }}
+        loading={false}
+        view="all"
+        onClose={() => {}}
+      />,
+      44,
+    );
+
+    expect(text).toContain("workflow rules");
+    expect(text).toContain("workflow rules (1)");
+    expect(text).toContain("documented-command-check");
+    expect(text).toContain("builtin");
+    expect(text).toContain("Stop");
+    expect(text).toContain("available");
+    expect(text).toContain("can block");
+    expect(text).toContain("matcher write-enabled goals about verification");
+    expect(text).toContain("event rules (1)");
+    expect(text).toContain("record-tool");
+    expect(text).toContain("tool.completed");
+    expect(text).toContain("non-blocking");
   });
 });

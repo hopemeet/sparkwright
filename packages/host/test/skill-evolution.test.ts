@@ -147,6 +147,12 @@ describe("skill proposal application", () => {
         sessionId: "session_xyz",
         rationale: "Tidy guidance",
       });
+      const applied = await applySkillProposal(workspace, withProv.id);
+      expect(applied.proposal.provenance).toEqual({
+        runId: "run_abc",
+        sessionId: "session_xyz",
+        rationale: "Tidy guidance",
+      });
 
       const emptyProv = await createSkillUpdateProposal({
         workspaceRoot: workspace,
@@ -256,6 +262,11 @@ describe("skill proposal application", () => {
         force: true,
       });
       expect(applied.changed).toBe(true);
+      expect(applied.proposal.guardFindings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ severity: "dangerous" }),
+        ]),
+      );
       expect(applied.guardFindings).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ severity: "dangerous" }),

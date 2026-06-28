@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, permissionMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -100,16 +100,10 @@
       },
       "description": "Named model providers. The reserved name \"deterministic\" is built in and must not be declared here."
     },
-    "permissionMode": {
+    "accessMode": {
       "type": "string",
-      "enum": [
-        "plan",
-        "default",
-        "accept_edits",
-        "dont_ask",
-        "bypass_permissions"
-      ],
-      "description": "Permission policy mode for runs started from the TUI."
+      "enum": ["read-only", "ask", "accept-edits", "bypass"],
+      "description": "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve."
     },
     "workspace": {
       "type": "string",
@@ -213,7 +207,7 @@
             "dont_ask",
             "bypass_permissions"
           ],
-          "description": "Default permission mode for unattended cron run/tick commands. CLI --permission-mode still overrides."
+          "description": "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides."
         }
       },
       "additionalProperties": false,
@@ -409,6 +403,48 @@
         "hooks": {
           "type": "object",
           "properties": {
+            "http": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "origin": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        },
+                        "required": ["origin"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "hostname": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["hostname"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "allowPrivateNetwork": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "description": "Host-owned allowlist and network policy for HTTP hook actions. Project configs cannot define this policy or HTTP hook actions."
+            },
             "workflow": {
               "type": "array",
               "items": {
@@ -424,13 +460,13 @@
                   "hook": {
                     "type": "string",
                     "enum": [
-                      "SessionStart",
-                      "UserPromptSubmit",
+                      "RunStart",
+                      "TurnStart",
                       "ModelOutput",
                       "PreToolUse",
                       "PostToolUse",
                       "Stop",
-                      "SessionEnd",
+                      "RunEnd",
                       "RuntimeSignal"
                     ]
                   },
@@ -606,9 +642,98 @@
                           "stdin": {
                             "type": "string",
                             "enum": ["none", "json"]
+                          },
+                          "resultMode": {
+                            "type": "string",
+                            "enum": ["exitCode", "stdoutJson"]
                           }
                         },
                         "required": ["type", "command"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "http"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "method": {
+                            "type": "string",
+                            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+                          },
+                          "headers": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "timeoutMs": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "blockOnFailure": {
+                            "type": "boolean"
+                          },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          },
+                          "resultMode": {
+                            "type": "string",
+                            "enum": ["status", "responseJson"]
+                          }
+                        },
+                        "required": ["type", "url"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "agent"
+                          },
+                          "agentId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "toolName": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "goal": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "resultMode": {
+                            "type": "string",
+                            "enum": ["context", "workflowResult"]
+                          },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          }
+                        },
+                        "required": ["type", "goal"],
                         "additionalProperties": false
                       }
                     ]
@@ -617,10 +742,290 @@
                 "required": ["name", "hook", "action"],
                 "additionalProperties": false
               }
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "trigger": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "run.started",
+                          "run.completed",
+                          "run.failed",
+                          "run.cancelled",
+                          "run.budget.checked",
+                          "model.requested",
+                          "model.completed",
+                          "tool.requested",
+                          "tool.completed",
+                          "tool.failed"
+                        ]
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "run.started",
+                            "run.completed",
+                            "run.failed",
+                            "run.cancelled",
+                            "run.budget.checked",
+                            "model.requested",
+                            "model.completed",
+                            "tool.requested",
+                            "tool.completed",
+                            "tool.failed"
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "matcher": {
+                    "type": "object",
+                    "properties": {
+                      "toolName": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "eventType": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "signal": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "pathGlob": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      },
+                      "excludePathGlob": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "action": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "command"
+                          },
+                          "command": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "args": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "cwd": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "timeoutMs": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "blockOnFailure": {
+                            "type": "boolean"
+                          },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          },
+                          "maxOutputBytes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "stdin": {
+                            "type": "string",
+                            "enum": ["none", "json"]
+                          },
+                          "resultMode": {
+                            "type": "string",
+                            "enum": ["exitCode", "stdoutJson"]
+                          }
+                        },
+                        "required": ["type", "command"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "http"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "method": {
+                            "type": "string",
+                            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+                          },
+                          "headers": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "timeoutMs": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "blockOnFailure": {
+                            "type": "boolean"
+                          },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          },
+                          "resultMode": {
+                            "type": "string",
+                            "enum": ["status", "responseJson"]
+                          }
+                        },
+                        "required": ["type", "url"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "agent"
+                          },
+                          "agentId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "toolName": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "goal": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "metadata": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "resultMode": {
+                            "type": "string",
+                            "enum": ["context", "workflowResult"]
+                          },
+                          "injectOutput": {
+                            "type": "string",
+                            "enum": ["always", "onFailure", "never"]
+                          }
+                        },
+                        "required": ["type", "goal"],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": ["name", "trigger", "action"],
+                "additionalProperties": false
+              }
             }
           },
           "additionalProperties": false,
-          "description": "Deterministic workflow hooks for host-created runs."
+          "description": "Deterministic workflow hooks and non-blocking event hooks for host-created runs."
         },
         "verification": {
           "type": "object",
@@ -872,6 +1277,38 @@
                 "additionalProperties": false
               }
             },
+            "spawnModel": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/]+(\\/.+)?$",
+              "description": "Optional raw model ref for dynamic spawn_agent children. If unset, they inherit the parent run model."
+            },
+            "delegateModel": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^/]+(\\/.+)?$",
+              "description": "Optional raw model ref for configured in-process delegates when the profile does not set model. ACP and external-command delegates resolve outside the parent process."
+            },
+            "exposure": {
+              "type": "string",
+              "enum": ["indexed", "all"],
+              "description": "Controls direct delegate_* tool exposure. \"indexed\" exposes non-opted-out agents through list_agents/delegate_agent/delegate_parallel and only exposes pinned or per-profile exposed delegates; \"all\" exposes every resolved delegate as a direct delegate_* tool. Default indexed."
+            },
+            "pinnedDelegates": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Profile ids or delegate tool names that should remain exposed as direct delegate_* tools when exposure is indexed."
+            },
+            "exposeChildrenAsDelegates": {
+              "type": "boolean",
+              "description": "Opt-in: auto-expose every child/all profile without an explicit delegate as a delegate_<id> tool. Default false. Per-profile exposeAsDelegate overrides this."
+            },
+            "enableParallelDelegates": {
+              "type": "boolean",
+              "description": "Opt-in: expose delegate_parallel for foreground fan-out across read-only configured delegates. Default false. The tool only accepts delegates with workspaceAccess \"none\"."
+            },
             "maxDepth": {
               "type": "integer",
               "minimum": 0,
@@ -885,11 +1322,6 @@
       },
       "additionalProperties": false,
       "description": "Host-owned capability runtime settings."
-    },
-    "tuiPermissionMode": {
-      "type": "string",
-      "enum": ["read-only", "ask", "accept-edits", "bypass"],
-      "description": "TUI permission mode, projected to core permission fields per run."
     },
     "theme": {
       "type": "string",
@@ -1023,17 +1455,6 @@
     "policy": {
       "type": "object",
       "properties": {
-        "permissionMode": {
-          "type": "string",
-          "enum": [
-            "plan",
-            "default",
-            "accept_edits",
-            "dont_ask",
-            "bypass_permissions"
-          ],
-          "description": "Permission policy mode for runs started from the TUI."
-        },
         "confidentialPaths": {
           "type": "array",
           "items": {
@@ -1130,11 +1551,16 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for security boundaries. Flattens to permissionMode/confidentialPaths/write and shell.sandbox."
+      "description": "Preferred grouping for security boundaries. Flattens to confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode."
     },
     "run": {
       "type": "object",
       "properties": {
+        "accessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"],
+          "description": "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve."
+        },
         "budget": {
           "type": "object",
           "properties": {
@@ -1201,7 +1627,7 @@
                 "dont_ask",
                 "bypass_permissions"
               ],
-              "description": "Default permission mode for unattended cron run/tick commands. CLI --permission-mode still overrides."
+              "description": "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides."
             }
           },
           "additionalProperties": false,
@@ -1209,16 +1635,11 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for run-shaping defaults. Flattens to runBudget/maxSteps/traceLevel/approvals."
+      "description": "Preferred grouping for run-shaping defaults. Flattens to accessMode/runBudget/maxSteps/traceLevel/approvals."
     },
     "ui": {
       "type": "object",
       "properties": {
-        "tuiPermissionMode": {
-          "type": "string",
-          "enum": ["read-only", "ask", "accept-edits", "bypass"],
-          "description": "TUI permission mode, projected to core permission fields per run."
-        },
         "theme": {
           "type": "string",
           "enum": ["dark", "light", "mono"],
@@ -1253,7 +1674,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for TUI-only preferences. Flattens to tuiPermissionMode/theme/mouse/keybindings."
+      "description": "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings."
     }
   },
   "additionalProperties": false

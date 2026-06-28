@@ -6,6 +6,8 @@ import type { CapabilityView } from "../lib/layer-payload.js";
 import { formatWorkspaceDisplayPath } from "../lib/path-display.js";
 import { DialogFrame } from "./dialog-frame.js";
 
+type CapabilityRules = NonNullable<CapabilitySnapshot["rules"]>;
+
 export function CapabilitiesPanel(props: {
   snapshot: CapabilitySnapshot | null;
   loading: boolean;
@@ -25,6 +27,8 @@ export function CapabilitiesPanel(props: {
   const mcpServers = snapshot?.mcp.statuses ?? [];
   const agents = configuredAgentProfiles(snapshot?.agents.profiles ?? []);
   const delegateTools = snapshot?.agents.delegateTools ?? [];
+  const workflowRules = snapshot?.rules?.workflow ?? [];
+  const eventRules = snapshot?.rules?.events ?? [];
   const cronTools = tools.filter((tool) =>
     tool.name.toLowerCase().includes("cron"),
   );
@@ -39,6 +43,8 @@ export function CapabilitiesPanel(props: {
         delegateTools,
         mcpServers,
         cronTools,
+        workflowRules,
+        eventRules,
         automation: snapshot.automation,
         workspaceRoot: props.workspaceRoot,
         theme: {
@@ -125,6 +131,8 @@ function capabilityRows(input: {
   delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
   mcpServers: CapabilitySnapshot["mcp"]["statuses"];
   cronTools: CapabilitySnapshot["tools"];
+  workflowRules: CapabilityRules["workflow"];
+  eventRules: NonNullable<CapabilityRules["events"]>;
   automation?: CapabilitySnapshot["automation"];
   workspaceRoot?: string;
 }): React.ReactElement[] {
@@ -147,6 +155,10 @@ function capabilityRows(input: {
   }
   if (input.view === "all" || input.view === "mcp") {
     addMcpRows(rows, input.mcpServers, input.theme);
+  }
+  if (input.view === "all") {
+    addWorkflowRuleRows(rows, input.workflowRules, input.theme);
+    addEventRuleRows(rows, input.eventRules, input.theme);
   }
   if (input.view === "cron") {
     addCronRows(rows, input.cronTools, input.automation, input.theme);
@@ -192,6 +204,8 @@ function addOverviewRows(
     delegateTools: CapabilitySnapshot["agents"]["delegateTools"];
     mcpServers: CapabilitySnapshot["mcp"]["statuses"];
     cronTools: CapabilitySnapshot["tools"];
+    workflowRules: CapabilityRules["workflow"];
+    eventRules: NonNullable<CapabilityRules["events"]>;
     automation?: CapabilitySnapshot["automation"];
   },
 ): void {
@@ -205,7 +219,8 @@ function addOverviewRows(
       <Text color={props.theme.success}>Available now: </Text>
       {props.tools.length} tools, {props.loadedSkills.length} loaded Skills,{" "}
       {props.agents.length} agents, {props.delegateTools.length} delegates,{" "}
-      {props.mcpServers.length} MCP servers
+      {props.mcpServers.length} MCP servers, {props.workflowRules.length}{" "}
+      workflow rules, {props.eventRules.length} event rules
     </Text>,
     ...(props.model
       ? [
@@ -400,7 +415,7 @@ function skillToolHint(name: string): string {
     case "list_skills":
       return "managed Skill inventory; shows built-in, user, and project packages";
     case "create_skill":
-      return "managed Skill package create; writes SKILL.md through approval";
+      return "managed Skill evolution; draft create proposal first, apply only when requested";
     case "update_skill":
       return "managed Skill evolution; draft proposal first, apply only when requested";
     default:
@@ -489,7 +504,9 @@ function addAgentsRows(
         {tool.toolName}
         <Text color={theme.muted}>
           {" "}
-          → {tool.profileId} · {tool.protocol} ·{" "}
+          → {tool.profileId} · {tool.protocol}
+          {tool.model ? ` · ${tool.model}` : ""}
+          {formatDelegateRouting(tool.routing)} ·{" "}
           {tool.requiresApproval ? "approval" : "no approval"} · workspace{" "}
           {tool.workspaceAccess}
           {tool.gatedByRunWrite ? " · requires --write" : ""}
@@ -497,6 +514,16 @@ function addAgentsRows(
       </Text>,
     );
   }
+}
+
+function formatDelegateRouting(
+  routing:
+    | CapabilitySnapshot["agents"]["delegateTools"][number]["routing"]
+    | undefined,
+): string {
+  if (!routing) return "";
+  if (routing.relevance) return ` · ${routing.relevance}`;
+  return routing.keywords.length > 0 ? " · triggers" : "";
 }
 
 function addMcpRows(
@@ -537,6 +564,93 @@ function addMcpRows(
         </Text>,
       );
     }
+  }
+}
+
+function addWorkflowRuleRows(
+  rows: React.ReactElement[],
+  rules: CapabilityRules["workflow"],
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(
+    rows,
+    `workflow rules (${rules.length})`,
+    "no workflow rules reported",
+    rules.length,
+  );
+  for (const rule of rules.slice(0, 12)) {
+    const ruleKey = `${rule.source}:${rule.lifecycle}:${rule.name}`;
+    rows.push(
+      <Text key={`workflow-rule:${ruleKey}`}>
+        <Text color={rule.active ? theme.success : theme.muted}>• </Text>
+        {rule.name}
+        <Text color={theme.muted}>
+          {" "}
+          · {rule.source} · {rule.lifecycle} · {rule.status} ·{" "}
+          {rule.blockingPotential ? "can block" : "non-blocking"}
+        </Text>
+      </Text>,
+      <Text key={`workflow-rule-detail:${ruleKey}`} color={theme.muted}>
+        matcher {rule.matcher} · action {rule.action}
+      </Text>,
+    );
+    if (rule.disableHint || rule.configurationHint) {
+      rows.push(
+        <Text key={`workflow-rule-hint:${ruleKey}`} color={theme.muted}>
+          {rule.configurationHint ?? rule.disableHint}
+        </Text>,
+      );
+    }
+  }
+  if (rules.length > 12) {
+    rows.push(
+      <Text key="workflow-rules-more" color={theme.muted}>
+        … {rules.length - 12} more
+      </Text>,
+    );
+  }
+}
+
+function addEventRuleRows(
+  rows: React.ReactElement[],
+  rules: NonNullable<CapabilityRules["events"]>,
+  theme: CapabilityRowTheme,
+): void {
+  pushSectionHeader(
+    rows,
+    `event rules (${rules.length})`,
+    "no event rules reported",
+    rules.length,
+  );
+  for (const rule of rules.slice(0, 12)) {
+    const ruleKey = `${rule.source}:${rule.trigger}:${rule.name}`;
+    rows.push(
+      <Text key={`event-rule:${ruleKey}`}>
+        <Text color={rule.active ? theme.success : theme.muted}>• </Text>
+        {rule.name}
+        <Text color={theme.muted}>
+          {" "}
+          · {rule.source} · {rule.trigger} · {rule.status} · non-blocking
+        </Text>
+      </Text>,
+      <Text key={`event-rule-detail:${ruleKey}`} color={theme.muted}>
+        matcher {rule.matcher} · action {rule.action}
+      </Text>,
+    );
+    if (rule.disableHint || rule.configurationHint) {
+      rows.push(
+        <Text key={`event-rule-hint:${ruleKey}`} color={theme.muted}>
+          {rule.configurationHint ?? rule.disableHint}
+        </Text>,
+      );
+    }
+  }
+  if (rules.length > 12) {
+    rows.push(
+      <Text key="event-rules-more" color={theme.muted}>
+        … {rules.length - 12} more
+      </Text>,
+    );
   }
 }
 

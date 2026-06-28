@@ -98,7 +98,7 @@ describe("createPermissionModePolicy", () => {
     expect(decision.decision).toBe("requires_approval");
   });
 
-  it("requires approval for non-read actions in plan mode", async () => {
+  it("allows safe read-only tools in plan mode", async () => {
     const policy = createPermissionModePolicy({ mode: "plan" });
 
     await expect(
@@ -107,7 +107,77 @@ describe("createPermissionModePolicy", () => {
       decision: "allow",
     });
     await expect(
+      policy.decide({
+        action: "tool.execute",
+        metadata: {
+          toolName: "read_file",
+          risk: "safe",
+          governance: { sideEffects: ["read"] },
+        },
+      }),
+    ).resolves.toMatchObject({
+      decision: "allow",
+    });
+    await expect(
+      policy.decide({
+        action: "tool.execute",
+        resource: {
+          kind: "tool",
+          name: "glob",
+          metadata: {
+            risk: "safe",
+            governance: { sideEffects: ["read"] },
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      decision: "allow",
+    });
+  });
+
+  it("requires approval for non-read tools in plan mode", async () => {
+    const policy = createPermissionModePolicy({ mode: "plan" });
+
+    await expect(
       policy.decide({ action: "tool.execute" }),
+    ).resolves.toMatchObject({
+      decision: "requires_approval",
+      reason: "Plan mode requires approval.",
+    });
+    await expect(
+      policy.decide({
+        action: "tool.execute",
+        metadata: {
+          toolName: "read_file",
+          risk: "safe",
+        },
+      }),
+    ).resolves.toMatchObject({
+      decision: "requires_approval",
+      reason: "Plan mode requires approval.",
+    });
+    await expect(
+      policy.decide({
+        action: "tool.execute",
+        metadata: {
+          toolName: "shell",
+          risk: "risky",
+          governance: { sideEffects: ["read"] },
+        },
+      }),
+    ).resolves.toMatchObject({
+      decision: "requires_approval",
+      reason: "Plan mode requires approval.",
+    });
+    await expect(
+      policy.decide({
+        action: "tool.execute",
+        metadata: {
+          toolName: "apply_patch",
+          risk: "safe",
+          governance: { sideEffects: ["write"] },
+        },
+      }),
     ).resolves.toMatchObject({
       decision: "requires_approval",
       reason: "Plan mode requires approval.",

@@ -23,10 +23,18 @@ import {
   preprocessSkillContentAsync,
   type PreprocessSkillOptions,
 } from "./preprocess.js";
+import { parseSkillManifestCompat } from "./manifest.js";
+import { createSkillPackageHasher } from "./package.js";
 
 const SKILL_FILE_NAME = "SKILL.md";
 const DEFAULT_MAX_SELECTED_SKILLS = 1;
 const DEFAULT_RESOURCE_FILE_LIMIT = 10;
+const DEFAULT_PACKAGE_HASH_MAX_FILES = 512;
+const DEFAULT_PACKAGE_HASH_MAX_BYTES = 16 * 1024 * 1024;
+const skillPackageHasher = createSkillPackageHasher({
+  maxFiles: DEFAULT_PACKAGE_HASH_MAX_FILES,
+  maxBytes: DEFAULT_PACKAGE_HASH_MAX_BYTES,
+});
 
 export interface SkillFrontmatter {
   name: string;
@@ -43,11 +51,13 @@ export interface SkillDefinition {
   license?: string;
   compatibility?: string[];
   allowedTools?: string[];
+  version?: string;
   /** Optional keyword hints that boost relevance scoring. */
   triggers?: string[];
   body: string;
   sourcePath: string;
   contentHash: string;
+  packageHash?: string;
   metadata: Record<string, unknown>;
 }
 
@@ -56,6 +66,7 @@ export interface SkillIndexEntry {
   description: string;
   sourcePath: string;
   contentHash: string;
+  packageHash?: string;
   version?: string;
   /** Optional keyword hints that boost relevance scoring. */
   triggers?: string[];
@@ -207,6 +218,8 @@ export async function prepareSkillsForRun(
           version: entry.version,
           sourcePath: entry.sourcePath,
           contentHash: entry.contentHash,
+          packageHash: entry.packageHash,
+          layer: skillLayer(entry.metadata),
           relevance: entry.relevance,
         })),
         skillRoots: options.skillRoots,
@@ -220,9 +233,11 @@ export async function prepareSkillsForRun(
           { name: skill.name, status: "loaded" },
           {
             ...baseMeta,
-            version: versionOf(skill.metadata),
+            version: skillVersion(skill),
             sourcePath: skill.sourcePath,
             contentHash: skill.contentHash,
+            packageHash: skill.packageHash,
+            layer: skillLayer(skill.metadata),
             selectionReason: reason,
             mode: "resident_context",
           },
@@ -337,6 +352,7 @@ export async function loadSkill(
       })
     : rawContent;
   const skill = parseSkill(content, sourcePath);
+  skill.packageHash = await skillPackageHashForSource(sourcePath);
   if (!options.layer) return skill;
   skill.metadata = {
     ...skill.metadata,
@@ -348,10 +364,7 @@ export async function loadSkill(
 
 function inferSkillName(content: string): string | undefined {
   try {
-    const parsed = parseSkillMarkdown(content);
-    return typeof parsed.frontmatter.name === "string"
-      ? parsed.frontmatter.name
-      : undefined;
+    return parseSkillManifestCompat(content).name;
   } catch {
     return undefined;
   }
@@ -365,27 +378,21 @@ export function parseSkill(
   content: string,
   sourcePath = SKILL_FILE_NAME,
 ): SkillDefinition {
-  const parsed = parseSkillMarkdown(content);
-  const name = stringField(parsed.frontmatter.name, "name", sourcePath);
-  const description = stringField(
-    parsed.frontmatter.description,
-    "description",
-    sourcePath,
-  );
-  validateSkillIdentity(name, description, sourcePath);
-  const metadata = recordField(parsed.frontmatter.metadata);
-  const compatibility = stringArrayField(parsed.frontmatter.compatibility);
-  const allowedTools = stringArrayField(parsed.frontmatter["allowed-tools"]);
-  const triggers = stringArrayField(parsed.frontmatter.triggers);
+  const manifest = parseSkillManifestCompat(content, sourcePath);
+  const metadata = { ...(manifest.metadata ?? {}) };
+  if (manifest.version && metadata.version === undefined) {
+    metadata.version = manifest.version;
+  }
 
   return {
-    name,
-    description,
-    license: optionalStringField(parsed.frontmatter.license),
-    compatibility,
-    allowedTools,
-    triggers,
-    body: parsed.body.trim(),
+    name: manifest.name,
+    description: manifest.description,
+    license: manifest.license,
+    compatibility: manifest.compatibility,
+    allowedTools: manifest.allowedTools,
+    version: manifest.version,
+    triggers: manifest.triggers,
+    body: manifest.instructions,
     sourcePath,
     contentHash: sha256(content),
     metadata,
@@ -654,7 +661,7 @@ export function createSkillLoaderTool(
         status: "loaded",
         name: skill.name,
         description: skill.description,
-        version: versionOf(skill.metadata),
+        version: skillVersion(skill),
         content: createSkillToolOutput(skill, resourceFiles),
         resourceFiles,
       };
@@ -726,7 +733,7 @@ export function createLoadedSkillContext(
       stability: "session",
       priority: 90,
       skillName: skill.name,
-      skillVersion: versionOf(skill.metadata),
+      skillVersion: skillVersion(skill),
       skillSourcePath: skill.sourcePath,
       skillContentHash: skill.contentHash,
       selectionReason,
@@ -756,70 +763,6 @@ export async function listSkillResourceFiles(
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
-}
-
-function parseSkillMarkdown(content: string): {
-  frontmatter: Record<string, unknown>;
-  body: string;
-} {
-  if (!content.startsWith("---\n")) {
-    throw new Error("Skill must start with YAML frontmatter.");
-  }
-
-  const end = content.indexOf("\n---", 4);
-  if (end === -1) {
-    throw new Error("Skill frontmatter must be closed with ---.");
-  }
-
-  return {
-    frontmatter: parseFrontmatter(content.slice(4, end)),
-    body: content.slice(end + 4),
-  };
-}
-
-function parseFrontmatter(source: string): Record<string, unknown> {
-  const root: Record<string, unknown> = {};
-  let currentObject: Record<string, unknown> | undefined;
-
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-    if (line.trim() === "" || line.trimStart().startsWith("#")) continue;
-
-    const nestedMatch = /^ {2}([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(line);
-    if (nestedMatch && currentObject) {
-      currentObject[nestedMatch[1]] = parseScalar(nestedMatch[2] ?? "");
-      continue;
-    }
-
-    const match = /^([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(line);
-    if (!match) {
-      throw new Error(`Unsupported skill frontmatter line: ${line}`);
-    }
-
-    const [, key, value = ""] = match;
-    if (value === "") {
-      currentObject = {};
-      root[key] = currentObject;
-    } else {
-      currentObject = undefined;
-      root[key] = parseScalar(value);
-    }
-  }
-
-  return root;
-}
-
-function parseScalar(value: string): unknown {
-  const trimmed = value.trim();
-
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-
-  const quoted = /^["'](.*)["']$/.exec(trimmed);
-  if (quoted) return quoted[1];
-
-  return trimmed;
 }
 
 async function findSkillFiles(root: string): Promise<string[]> {
@@ -905,7 +848,8 @@ function toSkillIndexEntry(skill: SkillDefinition): SkillIndexEntry {
     description: skill.description,
     sourcePath: skill.sourcePath,
     contentHash: skill.contentHash,
-    version: versionOf(skill.metadata),
+    ...(skill.packageHash ? { packageHash: skill.packageHash } : {}),
+    version: skillVersion(skill),
     ...(skill.triggers && skill.triggers.length > 0
       ? { triggers: skill.triggers }
       : {}),
@@ -913,59 +857,27 @@ function toSkillIndexEntry(skill: SkillDefinition): SkillIndexEntry {
   };
 }
 
-function stringField(
-  value: unknown,
-  field: string,
+async function skillPackageHashForSource(
   sourcePath: string,
-): string {
-  if (typeof value === "string" && value.trim() !== "") return value.trim();
-  throw new Error(`Skill ${field} must be a non-empty string: ${sourcePath}`);
+): Promise<string | undefined> {
+  if (basename(sourcePath) !== SKILL_FILE_NAME) return undefined;
+  try {
+    return (await skillPackageHasher.compute(dirname(sourcePath))).packageHash;
+  } catch {
+    return undefined;
+  }
 }
 
-function optionalStringField(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== ""
-    ? value.trim()
+function skillLayer(
+  metadata: Record<string, unknown>,
+): SkillRootLayer | undefined {
+  const value = metadata.sparkwrightLayer;
+  return value === "builtin" ||
+    value === "user" ||
+    value === "project" ||
+    value === "legacy"
+    ? value
     : undefined;
-}
-
-function stringArrayField(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "string") {
-    return value
-      .split(/\s+/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  if (Array.isArray(value)) {
-    return value.map(String).filter((item) => item.trim() !== "");
-  }
-  throw new Error("Skill string-list fields must be strings or arrays.");
-}
-
-function validateSkillIdentity(
-  name: string,
-  description: string,
-  sourcePath: string,
-): void {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
-    throw new Error(
-      `Skill name must use lowercase letters, numbers, and hyphens, max 64 chars: ${sourcePath}`,
-    );
-  }
-
-  if (description.length > 1024) {
-    throw new Error(
-      `Skill description must be at most 1024 characters: ${sourcePath}`,
-    );
-  }
-}
-
-function recordField(value: unknown): Record<string, unknown> {
-  if (value === undefined) return {};
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  throw new Error("Skill metadata must be an object when provided.");
 }
 
 function versionOf(metadata: Record<string, unknown>): string | undefined {
@@ -973,6 +885,12 @@ function versionOf(metadata: Record<string, unknown>): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return undefined;
+}
+
+function skillVersion(
+  skill: Pick<SkillDefinition, "version" | "metadata">,
+): string | undefined {
+  return skill.version ?? versionOf(skill.metadata);
 }
 
 /**
@@ -1162,10 +1080,13 @@ export {
   type ResolvedBundle,
 } from "./bundles.js";
 export {
+  createSkillPackageHasher,
   computeSkillPackageHash,
   listSkillPackageFiles,
   snapshotSkillPackage,
   type SkillPackageFile,
   type SkillPackageHash,
+  type SkillPackageHasher,
+  type SkillPackageHashOptions,
   type SnapshotSkillPackageResult,
 } from "./package.js";

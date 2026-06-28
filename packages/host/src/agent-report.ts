@@ -1,8 +1,6 @@
-import { readdir, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
 import type { AgentMode, AgentProfile } from "@sparkwright/agent-runtime";
 import { resolveCapabilityDirs, type CapabilityLayer } from "./layers.js";
-import { parseAgentProfileFile } from "./agent-profiles.js";
+import { discoverAgentProfileFileEntriesInDir } from "./agent-profiles.js";
 
 export type AgentReportLayer = CapabilityLayer | "config";
 
@@ -21,10 +19,23 @@ export interface AgentShadowDiagnostic {
   shadowedBy: AgentReportEntry;
 }
 
+/**
+ * Two profiles in the *same* layer resolve to the same id (an ambiguous
+ * basename collision, e.g. `review/foo.md` and `audit/foo.md`). Unlike a
+ * cross-layer shadow this is not legitimate layering: discovery fails closed
+ * (keeps the first, drops the rest) and surfaces it here.
+ */
+export interface AgentCollisionDiagnostic {
+  id: string;
+  kept: AgentReportEntry;
+  dropped: AgentReportEntry;
+}
+
 export interface AgentReport {
   roots: string[];
   profiles: AgentReportEntry[];
   shadows: AgentShadowDiagnostic[];
+  collisions: AgentCollisionDiagnostic[];
   errors: Array<{ source: string; message: string }>;
 }
 
@@ -36,41 +47,15 @@ export async function loadLayeredAgentReport(
   const roots = resolveCapabilityDirs("agents", { cwd: workspaceRoot, env });
   const errors: AgentReport["errors"] = [];
   const shadows: AgentShadowDiagnostic[] = [];
+  const collisions: AgentCollisionDiagnostic[] = [];
   const byId = new Map<string, AgentReportEntry>();
 
   for (const root of roots) {
-    let entries: string[];
-    try {
-      entries = await readdir(root.dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.toLowerCase().endsWith(".md")) continue;
-      const source = join(root.dir, entry);
-      const raw = await readFile(source, "utf8").catch((error: unknown) => {
-        errors.push({
-          source,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return undefined;
-      });
-      if (raw === undefined) continue;
-      addEntry(
-        byId,
-        shadows,
-        toReportEntry(
-          parseAgentProfileFile(basename(entry, ".md"), raw),
-          root.layer,
-          root.dir,
-          source,
-        ),
-      );
-    }
+    await loadAgentReportDir(root, byId, shadows, collisions, errors);
   }
 
   for (const profile of configProfiles ?? []) {
-    addEntry(byId, shadows, toReportEntry(profile, "config"));
+    addEntry(byId, shadows, collisions, toReportEntry(profile, "config"));
   }
 
   return {
@@ -79,19 +64,72 @@ export async function loadLayeredAgentReport(
       left.id.localeCompare(right.id),
     ),
     shadows,
+    collisions,
     errors,
   };
+}
+
+async function loadAgentReportDir(
+  root: { dir: string; layer: CapabilityLayer },
+  byId: Map<string, AgentReportEntry>,
+  shadows: AgentShadowDiagnostic[],
+  collisions: AgentCollisionDiagnostic[],
+  errors: AgentReport["errors"],
+): Promise<void> {
+  const entries = await discoverAgentProfileFileEntriesInDir(root.dir, {
+    onError(source, error) {
+      errors.push({
+        source,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    },
+    onFileCollision(collision) {
+      collisions.push({
+        id: collision.id,
+        kept: toReportEntry(
+          collision.kept.profile,
+          root.layer,
+          root.dir,
+          collision.kept.source,
+        ),
+        dropped: toReportEntry(
+          collision.dropped.profile,
+          root.layer,
+          root.dir,
+          collision.dropped.source,
+        ),
+      });
+    },
+  });
+  for (const entry of entries) {
+    addEntry(
+      byId,
+      shadows,
+      collisions,
+      toReportEntry(entry.profile, root.layer, root.dir, entry.source),
+    );
+  }
 }
 
 function addEntry(
   byId: Map<string, AgentReportEntry>,
   shadows: AgentShadowDiagnostic[],
+  collisions: AgentCollisionDiagnostic[],
   entry: AgentReportEntry,
 ): void {
   const existing = byId.get(entry.id);
-  if (existing) {
-    shadows.push({ id: entry.id, shadowed: existing, shadowedBy: entry });
+  if (!existing) {
+    byId.set(entry.id, entry);
+    return;
   }
+  if (existing.layer === entry.layer) {
+    // Same layer → ambiguous collision. Fail closed (keep the first), matching
+    // discoverAgentProfilesInDir, rather than silently overwriting.
+    collisions.push({ id: entry.id, kept: existing, dropped: entry });
+    return;
+  }
+  // Different layers → legitimate shadowing; the stronger layer wins.
+  shadows.push({ id: entry.id, shadowed: existing, shadowedBy: entry });
   byId.set(entry.id, entry);
 }
 

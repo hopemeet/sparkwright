@@ -23,6 +23,7 @@ import {
 import {
   runFailureMessage,
   type PermissionMode,
+  type RunAccessMode,
   type TraceLevel,
 } from "@sparkwright/protocol";
 import { HostRuntime } from "@sparkwright/host";
@@ -38,6 +39,7 @@ import { routeHostEventToAcp } from "./event.js";
 export interface SparkwrightAcpAgentOptions {
   defaultWorkspaceRoot: string;
   defaultModel?: string;
+  defaultAccessMode?: RunAccessMode;
   defaultPermissionMode?: PermissionMode;
   defaultTraceLevel?: TraceLevel;
   defaultShouldWrite?: boolean;
@@ -69,6 +71,7 @@ export class SparkwrightAcpAgent implements Agent {
   ) {
     this.sessions = new AcpSessionStore({
       defaultModel: options.defaultModel,
+      defaultAccessMode: options.defaultAccessMode,
       defaultPermissionMode: options.defaultPermissionMode,
       defaultTraceLevel: options.defaultTraceLevel,
       defaultShouldWrite: options.defaultShouldWrite,
@@ -194,14 +197,21 @@ export class SparkwrightAcpAgent implements Agent {
       goal,
       sessionId: session.sessionId,
       model: this.options.defaultModel,
-      permissionMode: this.options.defaultPermissionMode,
+      accessMode: this.options.defaultAccessMode,
+      permissionMode: this.options.defaultAccessMode
+        ? undefined
+        : this.options.defaultPermissionMode,
       traceLevel: this.options.defaultTraceLevel ?? "standard",
       shouldWrite: this.options.defaultShouldWrite === true,
       metadata: {
         source: "acp",
         acpSessionId: session.sessionId,
         workspaceRoot: session.cwd,
-        permissionMode: this.options.defaultPermissionMode ?? "default",
+        ...(this.options.defaultAccessMode
+          ? { accessMode: this.options.defaultAccessMode }
+          : {
+              permissionMode: this.options.defaultPermissionMode ?? "default",
+            }),
         traceLevel: this.options.defaultTraceLevel ?? "standard",
         shouldWrite: this.options.defaultShouldWrite === true,
       },
@@ -304,6 +314,7 @@ export class SparkwrightAcpAgent implements Agent {
     const runtime = new HostRuntime({
       workspaceRoot: cwd,
       defaultModel: this.options.defaultModel,
+      defaultAccessMode: this.options.defaultAccessMode,
       defaultPermissionMode: this.options.defaultPermissionMode,
       defaultTraceLevel: this.options.defaultTraceLevel,
       defaultShouldWrite: this.options.defaultShouldWrite,

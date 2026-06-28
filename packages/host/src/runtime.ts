@@ -43,6 +43,7 @@ import {
   type RunBudget,
   type RunRecord,
   type RunResult,
+  type RunAccessMode,
   type ContextUsageHint,
   type SessionCompactArtifact,
   type SessionCompactionMeasurement,
@@ -73,9 +74,16 @@ import {
   createAgentTool,
   createAgentProfilePolicy,
   deriveChildAgentProfile,
+  findSimilarSuccessfulDelegation,
+  rememberSuccessfulDelegation,
   runTodoSupervised,
   spawnSubAgent,
+  summarizeDelegationResult,
+  withAlreadyCompletedNote,
   type AgentProfile,
+  type AgentProfileWorkflowHookConfig,
+  type DelegationLedgerHit,
+  type DelegationLedgerKey,
   type DerivedChildAgentProfile,
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
@@ -91,7 +99,10 @@ import {
 import type {
   CapabilitySkillsConfig,
   CapabilityDelegateToolConfig,
+  CapabilityEventHookConfig,
+  CapabilityHooksConfig,
   CapabilityToolsConfig,
+  CapabilityWorkflowHookConfig,
   ShellConfig,
   TaskConfig,
   WriteGuardrailsConfig,
@@ -118,6 +129,8 @@ import {
   type CapabilityAutomationSummary,
   type CapabilityModelSummary,
   type CapabilitySkillInlineShellSummary,
+  type CapabilityEventRuleSummary,
+  type CapabilityWorkflowRuleSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import {
@@ -125,7 +138,12 @@ import {
   loadHostConfig,
   type CapabilityMcpConfig,
 } from "./config.js";
-import { resolveAgentProfiles } from "./agent-profiles.js";
+import {
+  resolveAgentProfiles,
+  type AgentProfileCollision,
+} from "./agent-profiles.js";
+import { MAIN_AGENT_ID } from "./agent-constants.js";
+import { buildAccessMetadata, resolveRunAccessFields } from "./run-access.js";
 import {
   existingSkillRoots,
   resolveSkillRootsForRuntime,
@@ -159,14 +177,29 @@ import {
   describeDelegateCapability,
   describeInProcessDelegateCapability,
   deriveDelegatePolicyProfile,
+  delegateToolDescription,
   delegateToolName,
+  evaluateDelegateRouting,
+  filterDirectDelegatesForExposure,
+  resolveAgentDelegateTools,
+  sanitizeToolSegment,
   type DelegateWorkspaceAccess,
   type DelegateCapabilityDescriptor,
+  type DelegateToolCollision,
+  type DelegateRoutingEvaluation,
+  type DelegateRoutingSummary,
   type DelegatePolicyProfile,
 } from "./delegate-capability.js";
-import { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
+import {
+  bindConfiguredEventHooks,
+  createConfiguredWorkflowHooks,
+} from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
 import { createDocumentedCommandStopHook } from "./documented-command-check.js";
+import {
+  describeActiveEventRules,
+  describeActiveWorkflowRules,
+} from "./active-rules.js";
 import {
   DISCOVERY_TOOL_NAME,
   WORKSPACE_WRITE_TOOL_NAMES,
@@ -182,22 +215,6 @@ import {
 function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env.SPARKWRIGHT_DEV_SKILLS;
   return value === "1" || value === "true";
-}
-
-function payloadAllowsWorkspaceWrites(
-  payload: RunStartRequestPayload | RunResumeRequestPayload,
-  permissionMode: PermissionMode,
-  defaultShouldWrite?: boolean,
-): boolean {
-  if (payload.shouldWrite !== undefined) return payload.shouldWrite;
-  if (payload.metadata?.shouldWrite !== undefined) {
-    return payload.metadata.shouldWrite === true;
-  }
-  if (defaultShouldWrite !== undefined) return defaultShouldWrite;
-  // Legacy SDK clients may omit shouldWrite. Preserve the old host behavior
-  // unless an entrypoint or embedder sets an explicit default.
-  if (permissionMode === "plan") return false;
-  return true;
 }
 
 function createHostRunPolicy(input: {
@@ -338,6 +355,10 @@ export interface RuntimeOptions {
   sessionRootDir?: string;
   /** Default model reference ("provider/model") when run.start omits one. */
   defaultModel?: string;
+  /** Default high-level access mode when run.start does not specify one. */
+  defaultAccessMode?: RunAccessMode;
+  /** Project/runtime ceiling for requested high-level access modes. */
+  accessModeCeiling?: RunAccessMode;
   /** Default permission mode when run.start does not specify one. */
   defaultPermissionMode?: PermissionMode;
   /** Default trace level when run.start does not specify one. */
@@ -393,6 +414,12 @@ interface PreparedHostRunEnvironment {
   toolCatalog: HostToolCatalogEntry[];
   tools: ToolDefinition[];
   workflowHooks: WorkflowHook[];
+  eventHookConfig?: CapabilityEventHookConfig[];
+  hookSandbox?: ShellConfig["sandbox"];
+  hookHttp?: CapabilityHooksConfig["http"];
+  hookSkillRoots: string[];
+  hookConfigPaths: string[];
+  delegateAgentTool?: ToolDefinition;
   sessionStore: FileSessionStore;
   parentRunRef: { current?: ReturnType<typeof createRun> };
   traceLevel: TraceLevel;
@@ -400,8 +427,6 @@ interface PreparedHostRunEnvironment {
   runMetadata: Record<string, unknown>;
   runStoreMetadata: Record<string, unknown>;
 }
-
-const MAIN_AGENT_ID = "main";
 
 function defaultSessionRootDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".sparkwright", "sessions");
@@ -533,6 +558,7 @@ function summarizeCapabilitySnapshot(
       skills: { indexed: 0, loaded: 0 },
       mcp: { servers: 0, tools: 0 },
       agents: { profiles: 0, delegateTools: 0 },
+      rules: { workflow: 0, events: 0 },
     };
   }
   return {
@@ -573,6 +599,12 @@ function summarizeCapabilitySnapshot(
       delegateToolNames: snapshot.agents.delegateTools.map(
         (delegate) => delegate.toolName,
       ),
+    },
+    rules: {
+      workflow: snapshot.rules?.workflow.length ?? 0,
+      workflowNames: snapshot.rules?.workflow.map((rule) => rule.name) ?? [],
+      events: snapshot.rules?.events?.length ?? 0,
+      eventNames: snapshot.rules?.events?.map((rule) => rule.name) ?? [],
     },
     shell: snapshot.shell,
   };
@@ -880,9 +912,37 @@ export class HostRuntime {
       agentId: MAIN_AGENT_ID,
       shellSandbox: mcpShellSandbox,
     });
+    const profileCollisions: AgentProfileCollision[] = [];
     const resolvedProfiles = await resolveAgentProfiles(
       workspaceRoot,
       agentConfig?.profiles,
+      (collision) => profileCollisions.push(collision),
+    );
+    emitAgentProfileCollisionWarnings(
+      pendingExtensionEvents,
+      profileCollisions,
+    );
+    const delegateToolCollisions: DelegateToolCollision[] = [];
+    const delegationTargets = resolveAgentDelegateTools(
+      resolvedProfiles,
+      agentConfig?.delegateTools,
+      {
+        includeAllChildProfiles: true,
+        onCollision: (collision) => delegateToolCollisions.push(collision),
+      },
+    );
+    emitDelegateToolCollisionWarnings(
+      pendingExtensionEvents,
+      delegateToolCollisions,
+    );
+    const delegateRouting = evaluateDelegateRouting({
+      goal: input.goal,
+      delegates: delegationTargets,
+      profiles: resolvedProfiles,
+    });
+    emitDelegateRoutingEvaluated(
+      pendingExtensionEvents,
+      delegateRouting.evaluations,
     );
     const traceLevel =
       input.traceLevel ?? loadedConfig.config.traceLevel ?? "standard";
@@ -931,11 +991,42 @@ export class HostRuntime {
       });
     const readOnlyChildTools = catalogToolDefinitions(readOnlyChildToolCatalog);
     const delegateChildTools = catalogToolDefinitions(delegateChildToolCatalog);
-    const delegateTools = createConfiguredDelegateTools({
+    const dynamicSpawnModel = createLazyModelAdapterResolver({
+      modelRef: agentConfig?.spawnModel,
+      parentModelRef: model.resolved.modelRef,
+      parentModel: model.adapter,
+      goal: input.goal,
+      workspaceRoot,
+      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+      label: "spawn_agent model",
+    });
+    const delegateModelForProfile = createInProcessDelegateModelResolver({
+      delegates: delegateRouting.delegates,
+      derivedAgents,
+      delegateModelRef: agentConfig?.delegateModel,
+      parentModelRef: model.resolved.modelRef,
+      parentModel: model.adapter,
+      goal: input.goal,
+      workspaceRoot,
+      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+    });
+    const delegateWorkflowHooksForProfile =
+      createInProcessDelegateHooksResolver({
+        delegates: delegateRouting.delegates,
+        derivedAgents,
+        workspaceRoot,
+        sandbox: shellConfig?.sandbox,
+        http: hookConfig?.http,
+        skillRoots: skillRoots.map((root) => root.root),
+        configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      });
+    const allDelegateTools = createConfiguredDelegateTools({
       getParent: () => parentRunRef.current,
-      delegates: agentConfig?.delegateTools ?? [],
+      delegates: delegateRouting.delegates,
       derivedAgents,
       model: model.adapter,
+      modelForProfile: delegateModelForProfile,
+      workflowHooksForProfile: delegateWorkflowHooksForProfile,
       childTools: delegateChildTools,
       workspaceRoot,
       parentRunPolicy,
@@ -947,15 +1038,53 @@ export class HostRuntime {
       allowReadWriteWorkspaceAccess: input.shouldWrite,
       maxDepth: agentConfig?.maxDepth,
     });
+    const directDelegates = filterDirectDelegatesForExposure(
+      delegateRouting.delegates,
+      agentConfig,
+      resolvedProfiles,
+    );
+    const directDelegateNames = new Set(
+      directDelegates.map((delegate) => delegateToolName(delegate)),
+    );
+    const delegateTools = allDelegateTools.filter((tool) =>
+      directDelegateNames.has(tool.name),
+    );
+    const delegateAgentTool = createDelegateAgentTool({
+      delegates: delegateRouting.delegates,
+      derivedAgents,
+      delegateTools: allDelegateTools,
+    });
+    const delegateParallelTool = shouldExposeDelegateParallelTool({
+      enabled: agentConfig?.enableParallelDelegates,
+      delegates: directDelegates,
+      emitter: pendingExtensionEvents,
+    })
+      ? createDelegateParallelTool({
+          getParent: () => parentRunRef.current,
+          delegates: delegateRouting.delegates,
+          derivedAgents,
+          model: model.adapter,
+          modelForProfile: delegateModelForProfile,
+          workflowHooksForProfile: delegateWorkflowHooksForProfile,
+          childTools: delegateChildTools,
+          parentRunPolicy,
+          approvalResolver,
+          childRunStoreFactory,
+          allowReadWriteWorkspaceAccess: input.shouldWrite,
+          maxDepth: agentConfig?.maxDepth,
+        })
+      : undefined;
     const delegateDescriptors = describeConfiguredDelegateTools({
-      delegates: agentConfig?.delegateTools ?? [],
+      delegates: delegateRouting.delegates,
       derivedAgents,
       delegateChildToolCatalog,
       allowReadWriteWorkspaceAccess: input.shouldWrite,
+      routingByProfileId: delegateRouting.routingByProfileId,
     });
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
       model: model.adapter,
+      modelForSpawn: dynamicSpawnModel,
       childTools: readOnlyChildTools,
       parentRunPolicy,
       childRunStoreFactory,
@@ -972,6 +1101,8 @@ export class HostRuntime {
       preparedSkills,
       preparedMcp,
       delegateTools,
+      delegateAgentTool,
+      delegateParallelTool,
       dynamicSpawnTool,
       shell: shellConfig,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -982,8 +1113,11 @@ export class HostRuntime {
         hooks: hookConfig?.workflow,
         workspaceRoot,
         sandbox: shellConfig?.sandbox,
+        http: hookConfig?.http,
         skillRoots: skillRoots.map((root) => root.root),
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
+        getRun: () => parentRunRef.current,
+        agentTool: delegateAgentTool,
       }),
       ...createVerificationWorkflowHooks({
         verification: loadedConfig.config.capabilities?.verification,
@@ -998,6 +1132,17 @@ export class HostRuntime {
         shouldWrite: input.shouldWrite,
       }),
     ];
+    const workflowRules = describeActiveWorkflowRules({
+      workflowHooks: hookConfig?.workflow,
+      verification: loadedConfig.config.capabilities?.verification,
+      documentedCommand: {
+        goal: input.goal,
+        shouldWrite: input.shouldWrite,
+      },
+    });
+    const eventRules = describeActiveEventRules({
+      eventHooks: hookConfig?.events,
+    });
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       model: modelCapabilitySummary(model.resolved),
       toolCatalog,
@@ -1018,6 +1163,8 @@ export class HostRuntime {
       shellForegroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
       shellPromotionAvailable: true,
+      workflowRules,
+      eventRules,
     });
 
     const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
@@ -1081,6 +1228,12 @@ export class HostRuntime {
         toolCatalog,
         tools,
         workflowHooks,
+        eventHookConfig: hookConfig?.events,
+        hookSandbox: shellConfig?.sandbox,
+        hookHttp: hookConfig?.http,
+        hookSkillRoots: skillRoots.map((root) => root.root),
+        hookConfigPaths: loadedConfig.attempted.map((entry) => entry.path),
+        delegateAgentTool,
         sessionStore,
         parentRunRef,
         traceLevel,
@@ -1241,20 +1394,34 @@ export class HostRuntime {
     { ok: true; runId: string } | { ok: false; error: ProtocolError }
   > {
     const { env, sessionId, todoPath } = input;
+    const runCleanups: Array<() => void> = [];
     const registerActiveRun = (
       run: ReturnType<typeof createRun>,
       runId: string,
     ): SparkwrightEvent[] => {
       env.parentRunRef.current = run;
       env.runIdHolder.value = runId;
+      const closeEventHooks = bindConfiguredEventHooks({
+        hooks: env.eventHookConfig,
+        run,
+        workspaceRoot: env.workspaceRoot,
+        sandbox: env.hookSandbox,
+        http: env.hookHttp,
+        skillRoots: env.hookSkillRoots,
+        configPaths: env.hookConfigPaths,
+        getRun: () => env.parentRunRef.current,
+        agentTool: env.delegateAgentTool,
+      });
+      runCleanups.push(closeEventHooks);
       this.active = {
         runId,
         run,
         trace: env.trace,
         sessionId,
-        closeCapabilities: env.preparedMcp
-          ? () => env.preparedMcp!.close()
-          : undefined,
+        closeCapabilities: async () => {
+          closeEventHooks();
+          await env.preparedMcp?.close();
+        },
       };
       const collected: SparkwrightEvent[] = [];
       run.events.subscribe((event: SparkwrightEvent) => {
@@ -1380,6 +1547,7 @@ export class HostRuntime {
         });
       })
       .finally(() => {
+        for (const cleanup of runCleanups.splice(0)) cleanup();
         void env.preparedMcp?.close().catch(() => {});
         this.active = null;
         for (const [id, p] of this.pendingApprovals) {
@@ -1448,13 +1616,14 @@ export class HostRuntime {
     }
 
     const modelRef = payload.model ?? this.opts.defaultModel;
-    const permissionMode =
-      payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
-    const shouldWrite = payloadAllowsWorkspaceWrites(
-      payload,
-      permissionMode,
-      this.opts.defaultShouldWrite,
-    );
+    const access = resolveRunAccessFields(payload, {
+      defaultAccessMode: this.opts.defaultAccessMode,
+      accessModeCeiling: this.opts.accessModeCeiling,
+      defaultPermissionMode: this.opts.defaultPermissionMode,
+      defaultShouldWrite: this.opts.defaultShouldWrite,
+    });
+    const { permissionMode, shouldWrite } = access;
+    const accessMetadata = buildAccessMetadata(access);
     const resumeSessionId = located.sessionId ?? createSessionId();
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
@@ -1471,11 +1640,13 @@ export class HostRuntime {
       runMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
+        ...accessMetadata,
         shouldWrite,
       },
       runStoreMetadata: {
         resumedFromRunId: payload.runId,
         ...(payload.metadata ?? {}),
+        ...accessMetadata,
         shouldWrite,
         ...(payload.metadata ? { resumeMetadata: payload.metadata } : {}),
       },
@@ -1605,13 +1776,14 @@ export class HostRuntime {
     { ok: true; runId: string } | { ok: false; error: ProtocolError }
   > {
     const modelRef = payload.model ?? this.opts.defaultModel;
-    const permissionMode =
-      payload.permissionMode ?? this.opts.defaultPermissionMode ?? "default";
-    const shouldWrite = payloadAllowsWorkspaceWrites(
-      payload,
-      permissionMode,
-      this.opts.defaultShouldWrite,
-    );
+    const access = resolveRunAccessFields(payload, {
+      defaultAccessMode: this.opts.defaultAccessMode,
+      accessModeCeiling: this.opts.accessModeCeiling,
+      defaultPermissionMode: this.opts.defaultPermissionMode,
+      defaultShouldWrite: this.opts.defaultShouldWrite,
+    });
+    const { permissionMode, shouldWrite } = access;
+    const accessMetadata = buildAccessMetadata(access);
     let sessionId: string;
     try {
       sessionId = payload.sessionId
@@ -1640,10 +1812,12 @@ export class HostRuntime {
       }),
       runMetadata: {
         ...(payload.metadata ?? {}),
+        ...accessMetadata,
         shouldWrite,
       },
       runStoreMetadata: {
         ...(payload.metadata ?? {}),
+        ...accessMetadata,
         shouldWrite,
       },
     });
@@ -2034,6 +2208,13 @@ export class HostRuntime {
       this.opts.workspaceRoot,
       agentConfig?.profiles,
     );
+    const delegationTargets = resolveAgentDelegateTools(
+      resolvedProfiles,
+      agentConfig?.delegateTools,
+      {
+        includeAllChildProfiles: true,
+      },
+    );
     const skillRoots = resolveSkillRootsForRuntime(
       this.opts.workspaceRoot,
       skillConfig?.roots,
@@ -2099,9 +2280,9 @@ export class HostRuntime {
       const delegateChildTools = catalogToolDefinitions(
         delegateChildToolCatalog,
       );
-      const delegateTools = createConfiguredDelegateTools({
+      const allDelegateTools = createConfiguredDelegateTools({
         getParent: () => undefined,
-        delegates: agentConfig?.delegateTools ?? [],
+        delegates: delegationTargets,
         derivedAgents,
         model: {
           async complete() {
@@ -2120,6 +2301,42 @@ export class HostRuntime {
         // (getParent returns undefined and the tool throws first).
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
       });
+      const directDelegates = filterDirectDelegatesForExposure(
+        delegationTargets,
+        agentConfig,
+        resolvedProfiles,
+      );
+      const directDelegateNames = new Set(
+        directDelegates.map((delegate) => delegateToolName(delegate)),
+      );
+      const delegateTools = allDelegateTools.filter((tool) =>
+        directDelegateNames.has(tool.name),
+      );
+      const delegateAgentTool = createDelegateAgentTool({
+        delegates: delegationTargets,
+        derivedAgents,
+        delegateTools: allDelegateTools,
+      });
+      const delegateParallelTool = shouldExposeDelegateParallelTool({
+        enabled: agentConfig?.enableParallelDelegates,
+        delegates: directDelegates,
+      })
+        ? createDelegateParallelTool({
+            getParent: () => undefined,
+            delegates: delegationTargets,
+            derivedAgents,
+            model: {
+              async complete() {
+                return { message: "" };
+              },
+            },
+            childTools: delegateChildTools,
+            parentRunPolicy: createDefaultPolicy(),
+            childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
+            allowReadWriteWorkspaceAccess: false,
+            maxDepth: agentConfig?.maxDepth,
+          })
+        : undefined;
       const dynamicSpawnTool = createDynamicSpawnAgentTool({
         getParent: () => undefined,
         model: {
@@ -2147,6 +2364,8 @@ export class HostRuntime {
         preparedSkills,
         preparedMcp,
         delegateTools,
+        delegateAgentTool,
+        delegateParallelTool,
         dynamicSpawnTool,
         shell: shellConfig,
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
@@ -2176,7 +2395,7 @@ export class HostRuntime {
           ...derivedAgents.map((agent) => agent.effectiveProfile),
         ],
         delegateTools: describeConfiguredDelegateTools({
-          delegates: agentConfig?.delegateTools ?? [],
+          delegates: delegationTargets,
           derivedAgents,
           delegateChildToolCatalog,
           allowReadWriteWorkspaceAccess: false,
@@ -2185,6 +2404,13 @@ export class HostRuntime {
         shellForegroundTimeoutMs:
           shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
         shellPromotionAvailable: true,
+        workflowRules: describeActiveWorkflowRules({
+          workflowHooks: loadedConfig.config.capabilities?.hooks?.workflow,
+          verification: loadedConfig.config.capabilities?.verification,
+        }),
+        eventRules: describeActiveEventRules({
+          eventHooks: loadedConfig.config.capabilities?.hooks?.events,
+        }),
         automation,
       });
     } finally {
@@ -2942,6 +3168,8 @@ function buildCapabilitySnapshot(input: {
   shellSandbox?: ShellSandboxStatus;
   shellForegroundTimeoutMs?: number;
   shellPromotionAvailable?: boolean;
+  workflowRules?: CapabilityWorkflowRuleSummary[];
+  eventRules?: CapabilityEventRuleSummary[];
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
@@ -3018,6 +3246,14 @@ function buildCapabilitySnapshot(input: {
               networkMode: input.shellSandbox.networkMode,
               filesystemIsolation: input.shellSandbox.filesystemIsolation,
             },
+          },
+        }
+      : {}),
+    ...(input.workflowRules || input.eventRules
+      ? {
+          rules: {
+            workflow: input.workflowRules ?? [],
+            ...(input.eventRules ? { events: input.eventRules } : {}),
           },
         }
       : {}),
@@ -3170,6 +3406,312 @@ function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
       (profile) => profile.id === MAIN_AGENT_ID || profile.mode === "primary",
     ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
   );
+}
+
+function emitAgentProfileCollisionWarnings(
+  emitter: EventEmitter,
+  collisions: readonly AgentProfileCollision[],
+): void {
+  for (const collision of collisions) {
+    const message = `Agent profile id collision for "${collision.id}": kept ${collision.keptSource}, dropped ${collision.droppedSource} (fail-closed).`;
+    emitter.emit(
+      "capability.index.failed",
+      {
+        kind: "agent_profile",
+        source: collision.droppedSource,
+        message,
+        code: "AGENT_PROFILE_ID_COLLISION",
+        severity: "warning",
+        profileId: collision.id,
+        keptSource: collision.keptSource,
+        droppedSource: collision.droppedSource,
+      },
+      {
+        source: "host",
+        severity: "warning",
+        failurePhase: "agent_profile_discovery",
+        agentId: MAIN_AGENT_ID,
+        profileId: collision.id,
+      },
+    );
+  }
+}
+
+function emitDelegateToolCollisionWarnings(
+  emitter: EventEmitter,
+  collisions: readonly DelegateToolCollision[],
+): void {
+  for (const collision of collisions) {
+    const message = `Delegate tool name collision for "${collision.toolName}": kept profile ${collision.conflictsWith}, dropped profile ${collision.profileId} (${collision.source}) (fail-closed).`;
+    emitter.emit(
+      "capability.index.failed",
+      {
+        kind: "delegate_tool",
+        source: collision.source,
+        message,
+        code: "DELEGATE_TOOL_NAME_COLLISION",
+        severity: "warning",
+        toolName: collision.toolName,
+        profileId: collision.profileId,
+        conflictsWith: collision.conflictsWith,
+        droppedSource: collision.source,
+        keptSource: collision.conflictsWith,
+      },
+      {
+        source: "host",
+        severity: "warning",
+        failurePhase: "delegate_tool_resolution",
+        agentId: MAIN_AGENT_ID,
+        profileId: collision.profileId,
+        toolName: collision.toolName,
+      },
+    );
+  }
+}
+
+function shouldExposeDelegateParallelTool(input: {
+  enabled?: boolean;
+  delegates: readonly CapabilityDelegateToolConfig[];
+  emitter?: EventEmitter;
+}): boolean {
+  if (input.enabled !== true) return false;
+  const conflictingDelegate = input.delegates.find(
+    (delegate) => delegateToolName(delegate) === DELEGATE_PARALLEL_TOOL_NAME,
+  );
+  if (!conflictingDelegate) return true;
+  const message = `Delegate tool name collision for "${DELEGATE_PARALLEL_TOOL_NAME}": built-in delegate_parallel was dropped because profile "${conflictingDelegate.profileId}" already owns that tool name (fail-closed).`;
+  input.emitter?.emit(
+    "capability.index.failed",
+    {
+      kind: "delegate_tool",
+      source: "builtin",
+      message,
+      code: "DELEGATE_TOOL_NAME_COLLISION",
+      severity: "warning",
+      toolName: DELEGATE_PARALLEL_TOOL_NAME,
+      profileId: conflictingDelegate.profileId,
+      conflictsWith: conflictingDelegate.profileId,
+      droppedSource: "builtin",
+      keptSource: "profile",
+    },
+    {
+      source: "host",
+      severity: "warning",
+      failurePhase: "delegate_tool_resolution",
+      agentId: MAIN_AGENT_ID,
+      profileId: conflictingDelegate.profileId,
+      toolName: DELEGATE_PARALLEL_TOOL_NAME,
+    },
+  );
+  return false;
+}
+
+function emitDelegateRoutingEvaluated(
+  emitter: EventEmitter,
+  evaluations: readonly DelegateRoutingEvaluation[],
+): void {
+  if (evaluations.length === 0) return;
+  const relevantCount = evaluations.filter(
+    (evaluation) => evaluation.relevance === "relevant",
+  ).length;
+  const lowCount = evaluations.length - relevantCount;
+  emitter.emit(
+    "agent.routing.evaluated",
+    {
+      mode: "sort",
+      delegateCount: evaluations.length,
+      relevantCount,
+      lowCount,
+      delegates: evaluations.map((evaluation) => ({
+        toolName: evaluation.toolName,
+        profileId: evaluation.profileId,
+        relevance: evaluation.relevance,
+        score: evaluation.score,
+        matchedKeywords: evaluation.matchedKeywords,
+        keywords: evaluation.keywords,
+        reason: evaluation.reason,
+      })),
+    },
+    {
+      source: "host",
+      agentId: MAIN_AGENT_ID,
+      mode: "sort",
+    },
+  );
+}
+
+/** Profile `model` is typed `unknown`; accept it only as a non-empty string. */
+function profileModelRef(profile: AgentProfile): string | undefined {
+  return typeof profile.model === "string" && profile.model.trim().length > 0
+    ? profile.model.trim()
+    : undefined;
+}
+
+/**
+ * Build a lazy model resolver for sub-agent scopes. Missing config and refs
+ * equal to the parent model return the already-built parent adapter. Configured
+ * refs are constructed on first use so a bad child-scope model fails that tool
+ * call without preventing unrelated parent runs from starting.
+ */
+function createLazyModelAdapterResolver(input: {
+  modelRef?: string;
+  parentModelRef?: string;
+  parentModel: ModelAdapter;
+  goal: string;
+  workspaceRoot: string;
+  targetPath?: string;
+  label: string;
+}): () => Promise<ModelAdapter> {
+  if (!input.modelRef || input.modelRef === input.parentModelRef) {
+    return async () => input.parentModel;
+  }
+  const modelRef = input.modelRef;
+  let cached: Promise<ModelAdapter> | undefined;
+  return () => {
+    cached ??= createModel({
+      modelRef,
+      goal: input.goal,
+      workspaceRoot: input.workspaceRoot,
+      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+    }).then((built) => {
+      if (!built.ok) {
+        throw new Error(`${input.label} "${modelRef}": ${built.message}`);
+      }
+      return built.adapter;
+    });
+    return cached;
+  };
+}
+
+/**
+ * Resolve configured in-process delegate models on call. Profile `model` wins,
+ * then `capabilities.agents.delegateModel`, then the parent adapter. ACP and
+ * external-command delegates are process-boundary integrations and never call
+ * this parent-process adapter resolver.
+ */
+/** @internal Exported for focused host regression tests. */
+export function createInProcessDelegateModelResolver(input: {
+  delegates: readonly CapabilityDelegateToolConfig[];
+  derivedAgents: readonly DerivedChildAgentProfile[];
+  delegateModelRef?: string;
+  parentModelRef?: string;
+  parentModel: ModelAdapter;
+  goal: string;
+  workspaceRoot: string;
+  targetPath?: string;
+}): (profileId: string) => Promise<ModelAdapter | undefined> {
+  const { byProfile, inProcessProfileIds } =
+    inProcessDelegateProfileIndex(input);
+  const byModelRef = new Map<string, Promise<ModelAdapter>>();
+  return async (profileId: string) => {
+    if (!inProcessProfileIds.has(profileId)) return undefined;
+    const profile = byProfile.get(profileId);
+    if (!profile) return undefined;
+    const modelRef = profileModelRef(profile) ?? input.delegateModelRef;
+    if (!modelRef || modelRef === input.parentModelRef) return undefined;
+    let adapter = byModelRef.get(modelRef);
+    if (!adapter) {
+      adapter = createModel({
+        modelRef,
+        goal: input.goal,
+        workspaceRoot: input.workspaceRoot,
+        ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+      }).then((built) => {
+        if (!built.ok) {
+          throw new Error(built.message);
+        }
+        return built.adapter;
+      });
+      byModelRef.set(modelRef, adapter);
+    }
+    try {
+      return await adapter;
+    } catch (error) {
+      throw new Error(
+        `agent "${profileId}" model "${modelRef}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  };
+}
+
+export type InProcessDelegateWorkflowHooksForProfile = (
+  profileId: string,
+  getRun: () => ReturnType<typeof createRun> | undefined,
+) => WorkflowHook[] | undefined;
+
+/** @internal Exported for focused host regression tests. */
+export function createInProcessDelegateHooksResolver(input: {
+  delegates: readonly CapabilityDelegateToolConfig[];
+  derivedAgents: readonly DerivedChildAgentProfile[];
+  workspaceRoot: string;
+  sandbox?: ShellConfig["sandbox"];
+  http?: CapabilityHooksConfig["http"];
+  skillRoots?: readonly string[];
+  configPaths?: readonly string[];
+}): InProcessDelegateWorkflowHooksForProfile {
+  const { byProfile, inProcessProfileIds } =
+    inProcessDelegateProfileIndex(input);
+  return (profileId, getRun) => {
+    if (!inProcessProfileIds.has(profileId)) return undefined;
+    const profile = byProfile.get(profileId);
+    if (!profile?.hooks?.length) return undefined;
+    return createConfiguredWorkflowHooks({
+      hooks: profile.hooks.map(capabilityWorkflowHookFromAgentProfileHook),
+      workspaceRoot: input.workspaceRoot,
+      sandbox: input.sandbox,
+      http: input.http,
+      skillRoots: input.skillRoots,
+      configPaths: input.configPaths,
+      getRun,
+    });
+  };
+}
+
+function inProcessDelegateProfileIndex(input: {
+  delegates: readonly CapabilityDelegateToolConfig[];
+  derivedAgents: readonly DerivedChildAgentProfile[];
+}): {
+  byProfile: Map<string, AgentProfile>;
+  inProcessProfileIds: Set<string>;
+} {
+  const byProfile = new Map(
+    input.derivedAgents.map((derived) => [
+      derived.effectiveProfile.id,
+      derived.effectiveProfile,
+    ]),
+  );
+  const inProcessProfileIds = new Set<string>();
+  for (const delegate of input.delegates) {
+    const profile = byProfile.get(delegate.profileId);
+    if (!profile) continue;
+    if (
+      acpConfigFromAgentProfile(profile) ||
+      externalCommandConfigFromAgentProfile(profile)
+    ) {
+      continue;
+    }
+    inProcessProfileIds.add(profile.id);
+  }
+  return { byProfile, inProcessProfileIds };
+}
+
+function capabilityWorkflowHookFromAgentProfileHook(
+  hook: AgentProfileWorkflowHookConfig,
+): CapabilityWorkflowHookConfig {
+  return {
+    name: hook.name,
+    hook: hook.hook,
+    action: hook.action,
+    ...(hook.description !== undefined
+      ? { description: hook.description }
+      : {}),
+    ...(hook.enabled !== undefined ? { enabled: hook.enabled } : {}),
+    ...(hook.onError !== undefined ? { onError: hook.onError } : {}),
+    ...(hook.frequency !== undefined ? { frequency: hook.frequency } : {}),
+    ...(hook.matcher !== undefined ? { matcher: hook.matcher } : {}),
+  };
 }
 
 /**
@@ -3373,6 +3915,10 @@ const snapshotOnlyChildRunStoreFactory = (): ReturnType<
   );
 };
 
+const DELEGATE_PARALLEL_TOOL_NAME = "delegate_parallel";
+const DELEGATE_AGENT_TOOL_NAME = "delegate_agent";
+const DELEGATE_PARALLEL_MAX_TASKS = 8;
+
 function withDelegatedAgentContract(profile: AgentProfile): AgentProfile {
   return {
     ...profile,
@@ -3387,11 +3933,101 @@ function withDelegatedAgentPrompt(prompt?: string): string {
     : DELEGATED_AGENT_CONTRACT;
 }
 
+interface DelegateParallelSpec {
+  delegate: CapabilityDelegateToolConfig;
+  profile: AgentProfile;
+  childProfile: AgentProfile;
+  toolName: string;
+  profileChildTools: ToolDefinition[];
+}
+
+interface DelegateParallelTask {
+  toolName?: string;
+  agentId?: string;
+  goal: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface DelegateAgentTask {
+  toolName?: string;
+  agentId?: string;
+  goal: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface DelegateParallelChildSummary {
+  index: number;
+  toolName: string;
+  profileId: string;
+  childRunId?: string;
+  spanId?: string;
+  signal: string;
+  stopReason?: string;
+  message?: string;
+  stepLimitReached?: boolean;
+  truncated?: boolean;
+  tokens?: number;
+  costUsd?: number;
+  toolCalls?: number;
+  modelCalls?: number;
+  alreadyCompleted?: boolean;
+  note?: string;
+  error?: string;
+}
+
+function configuredDelegateLedgerKey(
+  profileId: string,
+  toolName: string,
+): DelegationLedgerKey {
+  return {
+    kind: "configured_delegate",
+    agentProfileId: profileId,
+    delegateTool: toolName,
+  };
+}
+
+function childWorkflowHookSpawnOptions(
+  profileId: string,
+  workflowHooksForProfile: InProcessDelegateWorkflowHooksForProfile | undefined,
+): { workflowHooks?: WorkflowHook[]; createRun?: typeof createRun } {
+  const childRunRef: { current?: ReturnType<typeof createRun> } = {};
+  const workflowHooks = workflowHooksForProfile?.(
+    profileId,
+    () => childRunRef.current,
+  );
+  if (!workflowHooks?.length) return {};
+  return {
+    workflowHooks,
+    createRun(options) {
+      const child = createRun(options);
+      childRunRef.current = child;
+      return child;
+    },
+  };
+}
+
+function delegateTaskTargetName(task: {
+  agentId?: string;
+  toolName?: string;
+}): string {
+  return task.agentId ?? task.toolName ?? "(missing)";
+}
+
 export function createConfiguredDelegateTools(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   delegates: CapabilityDelegateToolConfig[];
   derivedAgents: DerivedChildAgentProfile[];
   model: ModelAdapter;
+  /**
+   * Per-profile model override for in-process delegates. When it resolves an
+   * adapter for a profile, the child runs on that model (honoring profile
+   * `model` and configured defaults); otherwise the child reuses the parent
+   * run's `model`.
+   */
+  modelForProfile?: (
+    profileId: string,
+  ) => ModelAdapter | Promise<ModelAdapter | undefined> | undefined;
+  workflowHooksForProfile?: InProcessDelegateWorkflowHooksForProfile;
   childTools: ToolDefinition[];
   workspaceRoot: string;
   parentRunPolicy: Policy;
@@ -3424,9 +4060,7 @@ export function createConfiguredDelegateTools(input: {
           getParent: input.getParent,
           profile,
           toolName,
-          description:
-            delegate.description ??
-            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          description: delegateToolDescription(delegate, profile),
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
@@ -3444,9 +4078,7 @@ export function createConfiguredDelegateTools(input: {
           getParent: input.getParent,
           profile,
           toolName,
-          description:
-            delegate.description ??
-            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          description: delegateToolDescription(delegate, profile),
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
@@ -3472,21 +4104,22 @@ export function createConfiguredDelegateTools(input: {
     });
     const agentTool = createAgentTool(input.getParent, {
       name: toolName,
-      description:
-        delegate.description ??
-        `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+      description: delegateToolDescription(delegate, profile),
       requiresApproval: delegate.requiresApproval,
       policy: capabilityFacts.policyProfile.policy,
       forbidNesting: delegate.forbidNesting ?? true,
-      buildSpawnInput: (args, parent) => {
+      delegationLedgerKey: configuredDelegateLedgerKey(profile.id, toolName),
+      buildSpawnInput: async (args, parent) => {
         const subagentDepth = assertSubagentDepthAllowed({
           parent,
           maxDepth: input.maxDepth,
           toolName,
         });
+        const childModel =
+          (await input.modelForProfile?.(profile.id)) ?? input.model;
         return {
           goal: args.goal,
-          model: input.model,
+          model: childModel,
           // Configured in-process delegates are stable profile-backed child
           // agents: their tool catalog can include workspace writes selected
           // by profile `use`/`allowedTools`, but every call is still checked
@@ -3499,6 +4132,10 @@ export function createConfiguredDelegateTools(input: {
           ]),
           maxSteps: delegate.maxSteps ?? profile.maxSteps,
           runBudget: profile.runBudget,
+          ...childWorkflowHookSpawnOptions(
+            profile.id,
+            input.workflowHooksForProfile,
+          ),
           interactionChannel: null,
           approvalResolver: input.approvalResolver,
           // Persist the child's trace under its own agent dir + register it in
@@ -3529,11 +4166,477 @@ export function createConfiguredDelegateTools(input: {
   return tools;
 }
 
+export function createDelegateAgentTool(input: {
+  delegates: CapabilityDelegateToolConfig[];
+  derivedAgents: DerivedChildAgentProfile[];
+  delegateTools: ToolDefinition[];
+}): ToolDefinition {
+  const byProfile = new Map(
+    input.derivedAgents.map((derived) => [
+      derived.effectiveProfile.id,
+      derived.effectiveProfile,
+    ]),
+  );
+  const toolByName = new Map(
+    input.delegateTools.map((tool) => [tool.name, tool]),
+  );
+  const targetByToolName = new Map<
+    string,
+    {
+      delegate: CapabilityDelegateToolConfig;
+      profile: AgentProfile;
+      toolName: string;
+      tool: ToolDefinition;
+    }
+  >();
+  const targetByAgentId = new Map<
+    string,
+    {
+      delegate: CapabilityDelegateToolConfig;
+      profile: AgentProfile;
+      toolName: string;
+      tool: ToolDefinition;
+    }
+  >();
+  for (const delegate of input.delegates) {
+    const profile = byProfile.get(delegate.profileId);
+    if (!profile) continue;
+    const toolName = delegateToolName(delegate);
+    const tool = toolByName.get(toolName);
+    if (!tool) continue;
+    const target = { delegate, profile, toolName, tool };
+    targetByToolName.set(toolName, target);
+    targetByAgentId.set(profile.id, target);
+  }
+  const availableAgentIds = [...targetByAgentId.keys()];
+  const availableToolNames = [...targetByToolName.keys()];
+  const availableHint =
+    availableAgentIds.length > 0
+      ? availableAgentIds
+          .map((agentId) => {
+            const target = targetByAgentId.get(agentId);
+            return target ? `${agentId} (${target.toolName})` : agentId;
+          })
+          .join(", ")
+      : "(none)";
+
+  const resolveTarget = (task: DelegateAgentTask) => {
+    const target = task.agentId
+      ? targetByAgentId.get(task.agentId)
+      : task.toolName
+        ? targetByToolName.get(task.toolName)
+        : undefined;
+    if (target) return target;
+    const targetName = task.agentId ?? task.toolName ?? "(missing)";
+    throw new Error(
+      `${DELEGATE_AGENT_TOOL_NAME} cannot find delegate target "${targetName}". Available agentId targets: ${availableHint}. Available toolName targets: ${availableToolNames.join(", ") || "(none)"}.`,
+    );
+  };
+
+  return defineTool({
+    name: DELEGATE_AGENT_TOOL_NAME,
+    description:
+      availableAgentIds.length > 0
+        ? `Delegate one bounded sub-task to a configured agent by agentId. Use delegate_parallel instead when multiple read-only agents should run together. Available agents: ${availableHint}.`
+        : "Delegate one bounded sub-task to a configured agent by agentId. No configured child agents are currently available.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agentId: {
+          type: "string",
+          description:
+            "Configured agent profile id to run, for example reviewer. Prefer this and leave toolName unset.",
+        },
+        toolName: {
+          type: "string",
+          description:
+            "Legacy delegate tool name to run. Prefer agentId unless the target is only known by tool name.",
+        },
+        goal: {
+          type: "string",
+          description: "Self-contained goal for that agent.",
+        },
+        metadata: {
+          type: "object",
+          description:
+            "Optional structured metadata to attach to the child run.",
+        },
+      },
+      required: ["goal"],
+    },
+    policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read"],
+      idempotency: "conditional",
+    },
+    previewArgs(args) {
+      const task = previewDelegateAgentArgs(args);
+      if (!task) return undefined;
+      const target = task.agentId ?? task.toolName;
+      return target && task.goal ? `${target}: ${task.goal}` : undefined;
+    },
+    policyForArgs(args) {
+      const task = parseDelegateAgentArgs(args);
+      const target = resolveTarget(task);
+      const delegatedArgs = delegateAgentToolArgs(task);
+      const perTarget = target.tool.policyForArgs?.(delegatedArgs);
+      return {
+        policy: perTarget?.policy ?? target.tool.policy,
+        governance: perTarget?.governance ?? target.tool.governance,
+      };
+    },
+    isReplaySafe: false,
+    async execute(args: unknown, ctx): Promise<unknown> {
+      const task = parseDelegateAgentArgs(args);
+      const target = resolveTarget(task);
+      return target.tool.execute(delegateAgentToolArgs(task), ctx);
+    },
+  });
+}
+
+export function createDelegateParallelTool(input: {
+  getParent: () => ReturnType<typeof createRun> | undefined;
+  delegates: CapabilityDelegateToolConfig[];
+  derivedAgents: DerivedChildAgentProfile[];
+  model: ModelAdapter;
+  modelForProfile?: (
+    profileId: string,
+  ) => ModelAdapter | Promise<ModelAdapter | undefined> | undefined;
+  workflowHooksForProfile?: InProcessDelegateWorkflowHooksForProfile;
+  childTools: ToolDefinition[];
+  parentRunPolicy: Policy;
+  approvalResolver?: ApprovalResolver;
+  allowReadWriteWorkspaceAccess: boolean;
+  maxDepth?: number;
+  childRunStoreFactory: (
+    childAgentId: string,
+  ) => ReturnType<typeof createSessionRunStoreFactory>;
+}): ToolDefinition {
+  const byProfile = new Map(
+    input.derivedAgents.map((derived) => [
+      derived.effectiveProfile.id,
+      derived.effectiveProfile,
+    ]),
+  );
+  const eligibleByToolName = new Map<string, DelegateParallelSpec>();
+  const eligibleByAgentId = new Map<string, DelegateParallelSpec>();
+  const rejectionByToolName = new Map<string, string>();
+  const rejectionByAgentId = new Map<string, string>();
+
+  for (const delegate of input.delegates) {
+    const profile = byProfile.get(delegate.profileId);
+    if (!profile) continue;
+    const toolName = delegateToolName(delegate);
+    if (acpConfigFromAgentProfile(profile)) {
+      const reason = "protocol acp is not supported by delegate_parallel v1";
+      rejectionByToolName.set(toolName, reason);
+      rejectionByAgentId.set(profile.id, reason);
+      continue;
+    }
+    if (externalCommandConfigFromAgentProfile(profile)) {
+      const reason =
+        "protocol external_command is not supported by delegate_parallel v1";
+      rejectionByToolName.set(toolName, reason);
+      rejectionByAgentId.set(profile.id, reason);
+      continue;
+    }
+    const capabilityFacts = inProcessDelegateCapabilityFacts({
+      delegate,
+      profile,
+      delegateChildTools: input.childTools,
+      allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+    });
+    if (capabilityFacts.workspaceAccess !== "none") {
+      const reason = `workspaceAccess ${capabilityFacts.workspaceAccess} is not allowed; delegate_parallel v1 only accepts workspaceAccess none`;
+      rejectionByToolName.set(toolName, reason);
+      rejectionByAgentId.set(profile.id, reason);
+      continue;
+    }
+    if (capabilityFacts.shellAccess) {
+      const reason = "shell access is not allowed by delegate_parallel v1";
+      rejectionByToolName.set(toolName, reason);
+      rejectionByAgentId.set(profile.id, reason);
+      continue;
+    }
+    const spec = {
+      delegate,
+      profile,
+      childProfile: withDelegatedAgentContract(profile),
+      toolName,
+      profileChildTools: childToolsForAgentProfile(input.childTools, profile),
+    };
+    eligibleByToolName.set(toolName, spec);
+    eligibleByAgentId.set(profile.id, spec);
+  }
+
+  const eligibleNames = [...eligibleByAgentId.keys()].map((agentId) => {
+    const spec = eligibleByAgentId.get(agentId);
+    return spec ? `${agentId} (${spec.toolName})` : agentId;
+  });
+  const description =
+    eligibleNames.length > 0
+      ? `Run multiple read-only configured delegates concurrently and return their combined results. Prefer this when a request needs more than one configured agent. Target delegates by agentId; legacy toolName also works. Only delegates with workspaceAccess none are accepted. Eligible delegates: ${eligibleNames.join(", ")}.`
+      : "Run multiple read-only configured delegates concurrently. No eligible read-only delegates are currently configured; calls will fail with a diagnostic.";
+
+  return defineTool({
+    name: DELEGATE_PARALLEL_TOOL_NAME,
+    description,
+    inputSchema: {
+      type: "object",
+      properties: {
+        delegates: {
+          type: "array",
+          minItems: 1,
+          maxItems: DELEGATE_PARALLEL_MAX_TASKS,
+          description:
+            "Delegates to run in foreground parallel. Each entry targets one configured agent by agentId (preferred) or one legacy delegate tool by toolName and supplies an isolated goal.",
+          items: {
+            type: "object",
+            properties: {
+              agentId: {
+                type: "string",
+                description:
+                  "Configured agent profile id to run, for example reviewer. Prefer this and leave toolName unset.",
+              },
+              toolName: {
+                type: "string",
+                description:
+                  "Legacy configured delegate tool name to run, for example delegate_review.",
+              },
+              goal: {
+                type: "string",
+                description: "Self-contained goal for that delegate.",
+              },
+              metadata: {
+                type: "object",
+                description:
+                  "Optional structured metadata to attach to that child run.",
+              },
+            },
+            required: ["goal"],
+          },
+        },
+      },
+      required: ["delegates"],
+    },
+    policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "sparkwright" },
+      sideEffects: ["read"],
+      idempotency: "conditional",
+    },
+    previewArgs(args) {
+      const parsed = previewDelegateParallelArgs(args);
+      return parsed.length > 0
+        ? parsed
+            .map((task) => `${delegateTaskTargetName(task)}: ${task.goal}`)
+            .join(" | ")
+        : undefined;
+    },
+    isReplaySafe: false,
+    async execute(args: unknown): Promise<unknown> {
+      const parent = input.getParent();
+      if (!parent) {
+        throw new Error(
+          `Tool "${DELEGATE_PARALLEL_TOOL_NAME}" was invoked but no parent RunHandle is available.`,
+        );
+      }
+      const tasks = parseDelegateParallelArgs(args);
+      const spawnInputs = tasks.map((task, index) => {
+        const spec = task.agentId
+          ? eligibleByAgentId.get(task.agentId)
+          : task.toolName
+            ? eligibleByToolName.get(task.toolName)
+            : undefined;
+        if (!spec) {
+          const reason =
+            (task.agentId
+              ? rejectionByAgentId.get(task.agentId)
+              : task.toolName
+                ? rejectionByToolName.get(task.toolName)
+                : undefined) ??
+            `unknown delegate; eligible delegates: ${eligibleNames.join(", ") || "(none)"}`;
+          throw new Error(
+            `delegate_parallel cannot run "${delegateTaskTargetName(task)}": ${reason}.`,
+          );
+        }
+        if (
+          (spec.delegate.forbidNesting ?? true) &&
+          typeof parent.record.metadata?.parentRunId === "string"
+        ) {
+          throw new Error(
+            `delegate_parallel refused to nest "${delegateTaskTargetName(task)}": parent run is itself a sub-agent.`,
+          );
+        }
+        const ledgerKey = configuredDelegateLedgerKey(
+          spec.profile.id,
+          spec.toolName,
+        );
+        const cached = findSimilarSuccessfulDelegation(
+          parent,
+          ledgerKey,
+          task.goal,
+        );
+        if (cached)
+          return { mode: "cached" as const, task, index, spec, cached };
+        const subagentDepth = assertSubagentDepthAllowed({
+          parent,
+          maxDepth: input.maxDepth,
+          toolName: DELEGATE_PARALLEL_TOOL_NAME,
+        });
+        return {
+          mode: "spawn" as const,
+          task,
+          index,
+          spec,
+          subagentDepth,
+          ledgerKey,
+        };
+      });
+
+      const preparedSpawnInputs = await Promise.all(
+        spawnInputs.map(async (spawnInput) => {
+          if (spawnInput.mode === "cached") {
+            return spawnInput;
+          }
+          const childModel =
+            (await input.modelForProfile?.(spawnInput.spec.profile.id)) ??
+            input.model;
+          return { ...spawnInput, childModel };
+        }),
+      );
+
+      const spawned = preparedSpawnInputs.map((spawnInput) => {
+        const { task, index, spec } = spawnInput;
+        if (spawnInput.mode === "cached") {
+          return {
+            mode: "cached" as const,
+            task,
+            index,
+            spec,
+            cached: summarizeCachedDelegateParallelChild({
+              index,
+              task,
+              spec,
+              cached: spawnInput.cached,
+            }),
+          };
+        }
+        const { subagentDepth, ledgerKey, childModel } = spawnInput;
+        return {
+          mode: "spawn" as const,
+          task,
+          index,
+          spec,
+          ledgerKey,
+          spawned: spawnSubAgent({
+            parent,
+            goal: task.goal,
+            model: childModel,
+            tools: spec.profileChildTools,
+            childAgentProfile: spec.childProfile,
+            policy: createLayeredPolicy([
+              input.parentRunPolicy,
+              createAgentProfilePolicy(spec.childProfile),
+            ]),
+            maxSteps: spec.delegate.maxSteps ?? spec.profile.maxSteps,
+            runBudget: spec.profile.runBudget,
+            ...childWorkflowHookSpawnOptions(
+              spec.profile.id,
+              input.workflowHooksForProfile,
+            ),
+            interactionChannel: null,
+            approvalResolver: input.approvalResolver,
+            runStore: input.childRunStoreFactory(spec.profile.id),
+            parentUsageTracker: parent.getUsageTracker(),
+            metadata: {
+              ...(task.metadata ?? {}),
+              subagentDepth,
+              agentId: spec.profile.id,
+              agentProfileId: spec.profile.id,
+              agentName: spec.profile.name,
+              delegateTool: spec.toolName,
+              entrypoint: "delegate_parallel",
+              parallelTool: DELEGATE_PARALLEL_TOOL_NAME,
+              parallelIndex: index,
+            },
+          }),
+        };
+      });
+
+      const results = await Promise.all(
+        spawned.map(async (item): Promise<DelegateParallelChildSummary> => {
+          if (item.mode === "cached") return item.cached;
+          const { task, index, spec, spawned: child, ledgerKey } = item;
+          try {
+            const result = await child.run.start();
+            const usage = child.run.usage();
+            const summary = summarizeDelegateParallelChild({
+              index,
+              task,
+              spec,
+              childRunId: child.childRunId,
+              spanId: child.spanId,
+              result,
+              usage,
+            });
+            rememberSuccessfulDelegation(
+              parent,
+              ledgerKey,
+              task.goal,
+              summarizeDelegationResult({
+                childRunId: child.childRunId,
+                spanId: child.spanId,
+                result,
+                usage,
+              }),
+            );
+            return summary;
+          } catch (error) {
+            return {
+              index,
+              toolName: spec.toolName,
+              profileId: spec.profile.id,
+              signal: "failed",
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }),
+      );
+      const completed = results.filter(
+        (result) => result.signal === "completed",
+      ).length;
+      const failed = results.length - completed;
+      const output = {
+        mode: "parallel",
+        completed,
+        failed,
+        results,
+        usage: aggregateDelegateParallelUsage(results),
+      };
+      if (failed > 0) {
+        throw Object.assign(
+          new Error(
+            `delegate_parallel completed ${completed}/${results.length} delegate(s); ${failed} did not complete.`,
+          ),
+          {
+            code: "DELEGATE_PARALLEL_INCOMPLETE",
+            metadata: output,
+          },
+        );
+      }
+      return output;
+    },
+  });
+}
+
 function describeConfiguredDelegateTools(input: {
   delegates: CapabilityDelegateToolConfig[];
   derivedAgents: DerivedChildAgentProfile[];
   delegateChildToolCatalog: readonly HostToolCatalogEntry[];
   allowReadWriteWorkspaceAccess: boolean;
+  routingByProfileId?: ReadonlyMap<string, DelegateRoutingSummary>;
 }): DelegateCapabilityDescriptor[] {
   const byProfile = new Map(
     input.derivedAgents.map((derived) => [
@@ -3556,6 +4659,7 @@ function describeConfiguredDelegateTools(input: {
           timeoutMs: acpConfig.timeoutMs,
           workspaceAccess: acpConfig.workspaceAccess ?? "none",
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+          routing: input.routingByProfileId?.get(profile.id),
         }),
       ];
     }
@@ -3572,6 +4676,7 @@ function describeConfiguredDelegateTools(input: {
           timeoutMs: externalCommandConfig.timeoutMs,
           workspaceAccess: externalCommandConfig.workspaceAccess ?? "none",
           allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+          routing: input.routingByProfileId?.get(profile.id),
           outputLimits: {
             stdoutBytes:
               externalCommandConfig.maxStdoutBytes ??
@@ -3597,6 +4702,7 @@ function describeConfiguredDelegateTools(input: {
         profile,
         ...capabilityFacts,
         allowReadWriteWorkspaceAccess: input.allowReadWriteWorkspaceAccess,
+        routing: input.routingByProfileId?.get(profile.id),
       }),
     ];
   });
@@ -3605,7 +4711,7 @@ function describeConfiguredDelegateTools(input: {
 function inProcessDelegateCapabilityFacts(input: {
   delegate: CapabilityDelegateToolConfig;
   profile: AgentProfile;
-  delegateChildTools: readonly Pick<ToolDefinition, "name">[];
+  delegateChildTools: readonly Pick<ToolDefinition, "name" | "governance">[];
   allowReadWriteWorkspaceAccess: boolean;
 }): {
   workspaceAccess: DelegateWorkspaceAccess;
@@ -3639,12 +4745,30 @@ function inProcessDelegateCapabilityFacts(input: {
 
 function inProcessDelegateWorkspaceAccess(input: {
   profile: AgentProfile;
-  delegateChildTools: readonly Pick<ToolDefinition, "name">[];
+  delegateChildTools: readonly Pick<ToolDefinition, "name" | "governance">[];
 }): DelegateWorkspaceAccess {
-  const hasWriteTool = WORKSPACE_WRITE_TOOL_NAMES.some((toolName) =>
-    inProcessDelegateHasTool(input.profile, input.delegateChildTools, toolName),
+  const hasWriteTool = input.delegateChildTools.some(
+    (tool) =>
+      inProcessDelegateCanUseTool(input.profile, tool) &&
+      inProcessDelegateToolCanMutate(tool),
   );
   return hasWriteTool ? "read_write" : "none";
+}
+
+function inProcessDelegateToolCanMutate(
+  tool: Pick<ToolDefinition, "name" | "governance">,
+): boolean {
+  if (
+    WORKSPACE_WRITE_TOOL_NAMES.includes(
+      tool.name as (typeof WORKSPACE_WRITE_TOOL_NAMES)[number],
+    )
+  ) {
+    return true;
+  }
+  const sideEffects = tool.governance?.sideEffects;
+  return Array.isArray(sideEffects)
+    ? sideEffects.some((effect) => effect !== "none" && effect !== "read")
+    : false;
 }
 
 function inProcessDelegateHasTool(
@@ -3652,11 +4776,20 @@ function inProcessDelegateHasTool(
   delegateChildTools: readonly Pick<ToolDefinition, "name">[],
   toolName: string,
 ): boolean {
-  if (!delegateChildTools.some((tool) => tool.name === toolName)) {
-    return false;
-  }
-  if (profile.allowedTools === undefined) return true;
-  return profile.allowedTools.includes(toolName);
+  return delegateChildTools.some(
+    (tool) =>
+      tool.name === toolName && inProcessDelegateCanUseTool(profile, tool),
+  );
+}
+
+function inProcessDelegateCanUseTool(
+  profile: AgentProfile,
+  tool: Pick<ToolDefinition, "name">,
+): boolean {
+  return (
+    profile.allowedTools === undefined ||
+    profile.allowedTools.includes(tool.name)
+  );
 }
 
 function childToolsForAgentProfile(
@@ -3676,6 +4809,7 @@ function childToolsForAgentProfile(
 export function createDynamicSpawnAgentTool(input: {
   getParent: () => ReturnType<typeof createRun> | undefined;
   model: ModelAdapter;
+  modelForSpawn?: () => ModelAdapter | Promise<ModelAdapter>;
   childTools: ToolDefinition[];
   parentRunPolicy: Policy;
   maxDepth?: number;
@@ -3759,12 +4893,6 @@ export function createDynamicSpawnAgentTool(input: {
           'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
         );
       }
-      const subagentDepth = assertSubagentDepthAllowed({
-        parent,
-        maxDepth: input.maxDepth,
-        toolName: "spawn_agent",
-      });
-
       const parsed = parseDynamicSpawnAgentArgs(args);
       const supportedTools = new Set(["read_file", "glob", "grep", "list_dir"]);
       const requestedTools = parsed.allowedTools ?? [
@@ -3798,10 +4926,9 @@ export function createDynamicSpawnAgentTool(input: {
       // Strip any leading `dynamic_` the role already carries so a re-used
       // agent id (models sometimes pass a prior child's `dynamic_<role>` id
       // back in as the new role) does not compound into `dynamic_dynamic_*`.
-      const roleSegment = sanitizeToolSegment(parsed.role).replace(
-        /^(?:dynamic_)+/,
-        "",
-      );
+      const roleSegment = sanitizeToolSegment(
+        parsed.role.toLowerCase(),
+      ).replace(/^(?:dynamic_)+/, "");
       const agentId = `dynamic_${roleSegment || "agent"}`;
       const childMaxSteps = parsed.maxSteps ?? parent.maxSteps;
       const profile: AgentProfile = {
@@ -3815,10 +4942,31 @@ export function createDynamicSpawnAgentTool(input: {
           dynamic: true,
         },
       };
+      const ledgerKey = dynamicSpawnLedgerKey({
+        role: parsed.role,
+        prompt: parsed.prompt,
+        allowedTools: childTools.map((tool) => tool.name),
+      });
+      const cached = findSimilarSuccessfulDelegation(
+        parent,
+        ledgerKey,
+        parsed.goal,
+      );
+      if (cached) return cachedDynamicSpawnOutput(cached);
+
+      const subagentDepth = assertSubagentDepthAllowed({
+        parent,
+        maxDepth: input.maxDepth,
+        toolName: "spawn_agent",
+      });
+      const childModel = input.modelForSpawn
+        ? await input.modelForSpawn()
+        : input.model;
+
       const spawned = spawnSubAgent({
         parent,
         goal: parsed.goal,
-        model: input.model,
+        model: childModel,
         tools: childTools,
         childAgentProfile: profile,
         policy: createLayeredPolicy([
@@ -3900,16 +5048,25 @@ export function createDynamicSpawnAgentTool(input: {
           reason:
             "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
           suggestedProfile: {
-            id: sanitizeToolSegment(parsed.role),
+            id: sanitizeToolSegment(parsed.role.toLowerCase()),
             name: parsed.role,
             mode: "child",
             prompt: parsed.prompt,
             allowedTools: childTools.map((tool) => tool.name),
             maxSteps: childMaxSteps,
-            delegateToolName: `delegate_${sanitizeToolSegment(parsed.role)}`,
+            delegateToolName: `delegate_${sanitizeToolSegment(parsed.role.toLowerCase())}`,
           },
         },
       };
+      rememberSuccessfulDelegation(parent, ledgerKey, parsed.goal, {
+        ...summarizeDelegationResult({
+          childRunId: spawned.childRunId,
+          spanId: spawned.spanId,
+          result,
+          usage,
+        }),
+        output,
+      });
       if (result.signal !== "completed") {
         // Surface the failure as a *structured* tool error. The observation
         // formatter truncates `error.message` to 500 chars but passes
@@ -3952,6 +5109,265 @@ export function createDynamicSpawnAgentTool(input: {
       return output;
     },
   });
+}
+
+function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
+  if (!args || typeof args !== "object") {
+    throw new Error("delegate_parallel expects an object argument.");
+  }
+  const record = args as Record<string, unknown>;
+  if (!Array.isArray(record.delegates)) {
+    throw new Error("delegate_parallel delegates must be an array.");
+  }
+  if (record.delegates.length < 1) {
+    throw new Error("delegate_parallel delegates must not be empty.");
+  }
+  if (record.delegates.length > DELEGATE_PARALLEL_MAX_TASKS) {
+    throw new Error(
+      `delegate_parallel accepts at most ${DELEGATE_PARALLEL_MAX_TASKS} delegates.`,
+    );
+  }
+  return record.delegates.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(
+        `delegate_parallel delegates.${index} must be an object.`,
+      );
+    }
+    const task = entry as Record<string, unknown>;
+    const metadata =
+      task.metadata === undefined
+        ? undefined
+        : objectField(task, "metadata", DELEGATE_PARALLEL_TOOL_NAME);
+    const toolName = optionalTargetStringField(
+      task,
+      "toolName",
+      DELEGATE_PARALLEL_TOOL_NAME,
+    );
+    const agentId = optionalTargetStringField(
+      task,
+      "agentId",
+      DELEGATE_PARALLEL_TOOL_NAME,
+    );
+    if (!toolName && !agentId) {
+      throw new Error(
+        `delegate_parallel delegates.${index} requires agentId or toolName.`,
+      );
+    }
+    return {
+      ...(toolName ? { toolName } : {}),
+      ...(agentId ? { agentId } : {}),
+      goal: stringField(task, "goal", DELEGATE_PARALLEL_TOOL_NAME),
+      ...(metadata ? { metadata } : {}),
+    };
+  });
+}
+
+function parseDelegateAgentArgs(args: unknown): DelegateAgentTask {
+  if (!args || typeof args !== "object") {
+    throw new Error(`${DELEGATE_AGENT_TOOL_NAME} expects an object argument.`);
+  }
+  const record = args as Record<string, unknown>;
+  const agentId = optionalTargetStringField(
+    record,
+    "agentId",
+    DELEGATE_AGENT_TOOL_NAME,
+  );
+  const toolName = optionalTargetStringField(
+    record,
+    "toolName",
+    DELEGATE_AGENT_TOOL_NAME,
+  );
+  if (!agentId && !toolName) {
+    throw new Error(
+      `${DELEGATE_AGENT_TOOL_NAME} requires agentId or toolName.`,
+    );
+  }
+  const metadata =
+    record.metadata === undefined
+      ? undefined
+      : objectField(record, "metadata", DELEGATE_AGENT_TOOL_NAME);
+  return {
+    ...(agentId ? { agentId } : {}),
+    ...(toolName ? { toolName } : {}),
+    goal: stringField(record, "goal", DELEGATE_AGENT_TOOL_NAME),
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function previewDelegateAgentArgs(
+  args: unknown,
+): Pick<DelegateAgentTask, "agentId" | "toolName" | "goal"> | undefined {
+  const record = previewRecord(args);
+  const agentId = previewString(record.agentId).trim();
+  const toolName = previewString(record.toolName).trim();
+  const goal = previewString(record.goal).trim();
+  return goal && (agentId || toolName)
+    ? {
+        ...(agentId ? { agentId } : {}),
+        ...(toolName ? { toolName } : {}),
+        goal,
+      }
+    : undefined;
+}
+
+function delegateAgentToolArgs(task: DelegateAgentTask): {
+  goal: string;
+  metadata?: Record<string, unknown>;
+} {
+  return {
+    goal: task.goal,
+    ...(task.metadata ? { metadata: task.metadata } : {}),
+  };
+}
+
+function optionalTargetStringField(
+  record: Record<string, unknown>,
+  field: string,
+  toolName: string,
+): string | undefined {
+  const value = record[field];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`${toolName} ${field} must be a string.`);
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function previewDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
+  const record = previewRecord(args);
+  if (!Array.isArray(record.delegates)) return [];
+  return record.delegates
+    .map((entry): DelegateParallelTask | undefined => {
+      const task = previewRecord(entry);
+      const toolName = previewString(task.toolName).trim();
+      const agentId = previewString(task.agentId).trim();
+      const goal = previewString(task.goal).trim();
+      return goal && (toolName || agentId)
+        ? {
+            ...(toolName ? { toolName } : {}),
+            ...(agentId ? { agentId } : {}),
+            goal,
+          }
+        : undefined;
+    })
+    .filter((task): task is DelegateParallelTask => task !== undefined);
+}
+
+function summarizeDelegateParallelChild(input: {
+  index: number;
+  task: DelegateParallelTask;
+  spec: DelegateParallelSpec;
+  childRunId: string;
+  spanId: string;
+  result: RunResult;
+  usage: ReturnType<ReturnType<typeof createRun>["usage"]>;
+}): DelegateParallelChildSummary {
+  const stepLimitReached = delegateParallelStepLimitReached(input.result);
+  const truncated = delegateParallelTruncated(input.result) || stepLimitReached;
+  return {
+    index: input.index,
+    toolName: input.spec.toolName,
+    profileId: input.spec.profile.id,
+    childRunId: input.childRunId,
+    spanId: input.spanId,
+    signal: input.result.signal,
+    stopReason: input.result.stopReason,
+    ...(typeof input.result.message === "string"
+      ? { message: input.result.message }
+      : {}),
+    ...(stepLimitReached ? { stepLimitReached: true } : {}),
+    ...(truncated ? { truncated: true } : {}),
+    tokens: input.usage.tokens.total,
+    costUsd: input.usage.costUsd,
+    toolCalls: input.usage.toolCalls,
+    modelCalls: input.usage.modelCalls,
+  };
+}
+
+function summarizeCachedDelegateParallelChild(input: {
+  index: number;
+  task: DelegateParallelTask;
+  spec: DelegateParallelSpec;
+  cached: DelegationLedgerHit;
+}): DelegateParallelChildSummary {
+  const result = withAlreadyCompletedNote(input.cached.result);
+  return {
+    index: input.index,
+    toolName: input.spec.toolName,
+    profileId: input.spec.profile.id,
+    childRunId: result.childRunId,
+    spanId: result.spanId,
+    signal: result.signal,
+    stopReason: result.stopReason,
+    ...(typeof result.message === "string" ? { message: result.message } : {}),
+    ...(result.stepLimitReached ? { stepLimitReached: true } : {}),
+    ...(result.truncated ? { truncated: true } : {}),
+    tokens: result.tokens,
+    costUsd: result.costUsd,
+    toolCalls: result.toolCalls,
+    modelCalls: result.modelCalls,
+    alreadyCompleted: true,
+    note: result.note,
+  };
+}
+
+function aggregateDelegateParallelUsage(
+  results: readonly DelegateParallelChildSummary[],
+): {
+  tokens: number;
+  costUsd: number;
+  toolCalls: number;
+  modelCalls: number;
+} {
+  return {
+    tokens: sumNumberFields(results, "tokens"),
+    costUsd: sumNumberFields(results, "costUsd"),
+    toolCalls: sumNumberFields(results, "toolCalls"),
+    modelCalls: sumNumberFields(results, "modelCalls"),
+  };
+}
+
+function sumNumberFields(
+  results: readonly DelegateParallelChildSummary[],
+  field: "tokens" | "costUsd" | "toolCalls" | "modelCalls",
+): number {
+  return results.reduce((sum, result) => sum + (result[field] ?? 0), 0);
+}
+
+function delegateParallelStepLimitReached(result: RunResult): boolean {
+  const metadata = isPlainRecord(result.metadata) ? result.metadata : {};
+  return metadata.stepLimitReached === true;
+}
+
+function delegateParallelTruncated(result: RunResult): boolean {
+  const metadata = isPlainRecord(result.metadata) ? result.metadata : {};
+  return metadata.truncated === true;
+}
+
+function dynamicSpawnLedgerKey(input: {
+  role: string;
+  prompt: string;
+  allowedTools: readonly string[];
+}): DelegationLedgerKey {
+  return {
+    kind: "dynamic_spawn",
+    role: sanitizeToolSegment(input.role.toLowerCase()),
+    prompt: input.prompt,
+    allowedTools: input.allowedTools,
+  };
+}
+
+function cachedDynamicSpawnOutput(hit: DelegationLedgerHit): unknown {
+  const result = withAlreadyCompletedNote(hit.result);
+  if (isPlainRecord(result.output)) {
+    return {
+      ...result.output,
+      alreadyCompleted: true,
+      note: result.note,
+    };
+  }
+  return result;
 }
 
 function parseDynamicSpawnAgentArgs(args: unknown): {
@@ -4009,18 +5425,26 @@ function previewString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function stringField(record: Record<string, unknown>, field: string): string {
+function stringField(
+  record: Record<string, unknown>,
+  field: string,
+  toolName = "spawn_agent",
+): string {
   const value = record[field];
   if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`spawn_agent ${field} must be a non-empty string.`);
+    throw new Error(`${toolName} ${field} must be a non-empty string.`);
   }
   return value.trim();
 }
 
-function integerField(record: Record<string, unknown>, field: string): number {
+function integerField(
+  record: Record<string, unknown>,
+  field: string,
+  toolName = "spawn_agent",
+): number {
   const value = record[field];
   if (!Number.isInteger(value)) {
-    throw new Error(`spawn_agent ${field} must be an integer.`);
+    throw new Error(`${toolName} ${field} must be an integer.`);
   }
   return value as number;
 }
@@ -4028,10 +5452,11 @@ function integerField(record: Record<string, unknown>, field: string): number {
 function objectField(
   record: Record<string, unknown>,
   field: string,
+  toolName = "spawn_agent",
 ): Record<string, unknown> {
   const value = record[field];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`spawn_agent ${field} must be an object.`);
+    throw new Error(`${toolName} ${field} must be an object.`);
   }
   return value as Record<string, unknown>;
 }
@@ -4390,11 +5815,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sanitizeToolSegment(value: string): string {
-  const clean = value.toLowerCase().replace(/[^a-z0-9_]+/g, "_");
-  return clean.replace(/^_+|_+$/g, "") || "agent";
-}
-
 function sessionCompactWarningContextItem(
   sessionId: string,
   message: string,
@@ -4509,6 +5929,16 @@ function mergeCapabilitySnapshots(
       ),
     },
     shell: configured.shell ?? last.shell,
+    rules: {
+      workflow: mergeWorkflowRules(
+        configured.rules?.workflow ?? [],
+        last.rules?.workflow ?? [],
+      ),
+      events: mergeEventRules(
+        configured.rules?.events ?? [],
+        last.rules?.events ?? [],
+      ),
+    },
     automation: configured.automation ?? last.automation,
   };
 }
@@ -4541,4 +5971,32 @@ function mergeByToolName<T extends { toolName: string }>(
   for (const entry of base) byName.set(entry.toolName, entry);
   for (const entry of next) byName.set(entry.toolName, entry);
   return [...byName.values()];
+}
+
+function mergeWorkflowRules(
+  base: CapabilityWorkflowRuleSummary[],
+  next: CapabilityWorkflowRuleSummary[],
+): CapabilityWorkflowRuleSummary[] {
+  const byKey = new Map<string, CapabilityWorkflowRuleSummary>();
+  for (const entry of base) byKey.set(workflowRuleKey(entry), entry);
+  for (const entry of next) byKey.set(workflowRuleKey(entry), entry);
+  return [...byKey.values()];
+}
+
+function workflowRuleKey(rule: CapabilityWorkflowRuleSummary): string {
+  return `${rule.source}:${rule.lifecycle}:${rule.name}`;
+}
+
+function mergeEventRules(
+  base: CapabilityEventRuleSummary[],
+  next: CapabilityEventRuleSummary[],
+): CapabilityEventRuleSummary[] {
+  const byKey = new Map<string, CapabilityEventRuleSummary>();
+  for (const entry of base) byKey.set(eventRuleKey(entry), entry);
+  for (const entry of next) byKey.set(eventRuleKey(entry), entry);
+  return [...byKey.values()];
+}
+
+function eventRuleKey(rule: CapabilityEventRuleSummary): string {
+  return `${rule.source}:${rule.trigger}:${rule.name}`;
 }

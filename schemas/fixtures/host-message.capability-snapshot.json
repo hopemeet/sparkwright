@@ -1,0 +1,159 @@
+{
+  "model": {
+    "modelRef": "openai/gpt-5.4-mini",
+    "providerKey": "openai",
+    "modelId": "gpt-5.4-mini",
+    "adapterId": "openai:gpt-5.4-mini",
+    "pricing": {
+      "source": "unavailable",
+      "costStatus": "unavailable",
+      "costUnavailableReason": "missing_pricing"
+    }
+  },
+  "tools": [{ "name": "read_file", "risk": "safe", "deferred": false }],
+  "skills": {
+    "indexed": [],
+    "loaded": []
+  },
+  "mcp": {
+    "statuses": []
+  },
+  "agents": {
+    "profiles": [{ "id": "main", "mode": "primary" }],
+    "delegateTools": [
+      {
+        "toolName": "delegate_writer",
+        "profileId": "writer",
+        "profileName": "Writer",
+        "protocol": "in_process",
+        "model": "anthropic/claude",
+        "risk": "safe",
+        "requiresApproval": false,
+        "approvalRequiredUnderCurrentRun": false,
+        "approvalReasons": [],
+        "approvalRunOptions": { "shouldWrite": false },
+        "forbidNesting": true,
+        "sideEffects": ["model", "workspace"],
+        "workspaceAccess": "read_write",
+        "shellAccess": false,
+        "processSpawn": false,
+        "gatedByRunWrite": true,
+        "routing": {
+          "keywords": ["write", "patch"],
+          "mode": "sort",
+          "relevance": "relevant",
+          "score": 2,
+          "matchedKeywords": ["write"],
+          "reason": "matched write"
+        }
+      }
+    ]
+  },
+  "shell": {
+    "foregroundTimeoutMs": 300000,
+    "promotionAvailable": true,
+    "sandbox": {
+      "mode": "warn",
+      "failIfUnavailable": false,
+      "runtimeId": "platform",
+      "platform": "darwin",
+      "available": true,
+      "networkMode": "deny",
+      "filesystemIsolation": "deny-list-guard"
+    }
+  },
+  "rules": {
+    "workflow": [
+      {
+        "name": "guard-shell",
+        "source": "config",
+        "lifecycle": "PreToolUse",
+        "matcher": "toolName=shell",
+        "action": "block: Shell disabled for this project",
+        "blockingPotential": true,
+        "enabled": true,
+        "active": true,
+        "status": "active",
+        "description": "Project shell guard.",
+        "disableHint": "Set this capabilities.hooks.workflow entry to enabled=false.",
+        "configurationHint": "Configured in capabilities.hooks.workflow."
+      },
+      {
+        "name": "verification:fast:test",
+        "source": "verification",
+        "lifecycle": "PostToolUse",
+        "matcher": "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+        "action": "command: npm test; injectOutput=onFailure",
+        "blockingPotential": false,
+        "enabled": true,
+        "active": true,
+        "status": "active"
+      },
+      {
+        "name": "documented-command-check",
+        "source": "builtin",
+        "lifecycle": "Stop",
+        "matcher": "write-enabled goals about verification, tests, handoff, release, docs, or documented commands",
+        "action": "block final answer when README documented commands reference missing workspace paths",
+        "blockingPotential": true,
+        "enabled": true,
+        "active": false,
+        "status": "available"
+      }
+    ],
+    "events": [
+      {
+        "name": "record-tool",
+        "source": "config",
+        "trigger": "tool.completed",
+        "matcher": "toolName=shell",
+        "action": "command: node; injectOutput=always",
+        "blockingPotential": false,
+        "enabled": true,
+        "active": true,
+        "status": "active",
+        "configurationHint": "Configured in capabilities.hooks.events."
+      }
+    ]
+  },
+  "automation": {
+    "cron": {
+      "rootDir": "/tmp/sparkwright/cron",
+      "total": 1,
+      "jobs": [
+        {
+          "id": "cron_01",
+          "name": "readme-daily",
+          "enabled": true,
+          "state": "scheduled",
+          "schedule": "every 1d",
+          "nextRunAt": "2026-06-28T00:00:00.000Z",
+          "lastRunAt": null,
+          "lastStatus": null,
+          "lastError": null,
+          "lastTracePath": null
+        }
+      ]
+    },
+    "tasks": {
+      "rootDir": "/tmp/sparkwright/tasks",
+      "total": 1,
+      "tasks": [
+        {
+          "id": "task_01",
+          "kind": "maintenance-check",
+          "status": "failed",
+          "title": "README maintenance",
+          "parentRunId": "run_automation_snapshot",
+          "createdAt": "2026-06-27T00:00:00.000Z",
+          "completedAt": "2026-06-27T00:00:01.000Z",
+          "outputChunks": 0,
+          "error": {
+            "code": "SYNTHETIC_TASK_FAILURE",
+            "message": "synthetic task failure"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -196,6 +196,14 @@ export {
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
 } from "./policy.js";
+export type { RunAccessMode, CompiledAccessMode } from "./access-mode.js";
+export {
+  ACCESS_MODES,
+  ACCESS_MODE_RANK,
+  isRunAccessMode,
+  compileRunAccessMode,
+  clampAccessMode,
+} from "./access-mode.js";
 
 // Execution environment boundary
 export type {

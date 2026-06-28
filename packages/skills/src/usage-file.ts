@@ -1,7 +1,8 @@
 // AI maintenance note: Durable SkillUsageRecorder. The interface is
-// synchronous for matcher hot paths, so this implementation loads once at
-// construction and performs small atomic JSON writes after mutations.
+// synchronous for matcher hot paths, so this implementation reloads before
+// reads/mutations and performs small atomic JSON writes after mutations.
 
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -36,6 +37,7 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
   }
 
   recordUse(name: string, at?: Date): void {
+    this.reload();
     const r = this.ensure(name);
     r.useCount += 1;
     r.lastUsedAt = (at ?? new Date()).toISOString();
@@ -44,6 +46,7 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
   }
 
   recordPatch(name: string, at?: Date): void {
+    this.reload();
     const r = this.ensure(name);
     r.patchCount += 1;
     r.lastPatchedAt = (at ?? new Date()).toISOString();
@@ -51,27 +54,36 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
   }
 
   forget(name: string): void {
+    this.reload();
     this.byName.delete(name);
     this.flush();
   }
 
   setState(name: string, state: SkillUsageState): void {
+    this.reload();
     this.ensure(name).state = state;
     this.flush();
   }
 
   get(name: string): SkillUsageRecord | undefined {
+    this.reload();
     const r = this.byName.get(name);
     return r ? cloneRecord(r) : undefined;
   }
 
   list(): SkillUsageRecord[] {
+    this.reload();
     return [...this.byName.values()]
       .map(cloneRecord)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   private load(): void {
+    this.reload();
+  }
+
+  private reload(): void {
+    this.byName.clear();
     if (!existsSync(this.path)) return;
     const raw = JSON.parse(readFileSync(this.path, "utf8")) as UsageFile;
     if (raw.schemaVersion !== "skill-usage.v0.1") {
@@ -86,9 +98,9 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
     mkdirSync(dirname(this.path), { recursive: true });
     const file: UsageFile = {
       schemaVersion: "skill-usage.v0.1",
-      records: this.list(),
+      records: this.snapshot(),
     };
-    const tmp = `${this.path}.${Date.now()}.tmp`;
+    const tmp = `${this.path}.${Date.now()}.${randomUUID()}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
@@ -108,6 +120,12 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
       this.byName.set(name, r);
     }
     return r;
+  }
+
+  private snapshot(): SkillUsageRecord[] {
+    return [...this.byName.values()]
+      .map(cloneRecord)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 }
 

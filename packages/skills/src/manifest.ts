@@ -8,6 +8,8 @@
 
 import type { SkillManifest } from "./types.js";
 
+const DESCRIPTION_MAX_LENGTH = 1024;
+
 /**
  * Input accepted by {@link parseSkillManifest} — either raw source text or a
  * pre-parsed object.
@@ -16,6 +18,10 @@ import type { SkillManifest } from "./types.js";
  * @stability experimental v0.1
  */
 export type SkillManifestInput = string | Record<string, unknown>;
+
+interface ParseSkillManifestOptions {
+  allowEmptyInstructions?: boolean;
+}
 
 /**
  * Parse a skill manifest from raw text or an object.
@@ -32,7 +38,35 @@ export function parseSkillManifest(
   input: SkillManifestInput,
   source?: string,
 ): SkillManifest {
-  if (typeof input !== "string") return parseSkillManifestObject(input, source);
+  return parseSkillManifestInternal(input, source, {
+    allowEmptyInstructions: false,
+  });
+}
+
+/**
+ * Compatibility parser for the legacy {@link import("./index.js").parseSkill}
+ * adapter. It uses the canonical manifest grammar, but preserves the old
+ * `parseSkill` behavior that accepted an empty markdown body.
+ *
+ * @internal
+ */
+export function parseSkillManifestCompat(
+  input: SkillManifestInput,
+  source?: string,
+): SkillManifest {
+  return parseSkillManifestInternal(input, source, {
+    allowEmptyInstructions: true,
+  });
+}
+
+function parseSkillManifestInternal(
+  input: SkillManifestInput,
+  source: string | undefined,
+  options: ParseSkillManifestOptions,
+): SkillManifest {
+  if (typeof input !== "string") {
+    return parseSkillManifestObjectInternal(input, source, options);
+  }
 
   const trimmed = input.trimStart();
   if (trimmed.startsWith("{")) {
@@ -51,15 +85,22 @@ export function parseSkillManifest(
         `Skill manifest JSON must be an object${source ? ` (${source})` : ""}.`,
       );
     }
-    return parseSkillManifestObject(raw as Record<string, unknown>, source);
+    return parseSkillManifestObjectInternal(
+      raw as Record<string, unknown>,
+      source,
+      options,
+    );
   }
 
   if (trimmed.startsWith("---")) {
     const { frontmatter, body } = splitFrontmatter(trimmed, source);
-    if (body && frontmatter.instructions === undefined) {
+    if (
+      frontmatter.instructions === undefined &&
+      (body !== "" || options.allowEmptyInstructions)
+    ) {
       frontmatter.instructions = body;
     }
-    return parseSkillManifestObject(frontmatter, source);
+    return parseSkillManifestObjectInternal(frontmatter, source, options);
   }
 
   throw new Error(
@@ -79,6 +120,16 @@ export function parseSkillManifestObject(
   raw: Record<string, unknown>,
   source?: string,
 ): SkillManifest {
+  return parseSkillManifestObjectInternal(raw, source, {
+    allowEmptyInstructions: false,
+  });
+}
+
+function parseSkillManifestObjectInternal(
+  raw: Record<string, unknown>,
+  source: string | undefined,
+  options: ParseSkillManifestOptions,
+): SkillManifest {
   const name = requireString(raw.name, "name", source);
   if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
     throw new Error(
@@ -89,7 +140,16 @@ export function parseSkillManifestObject(
   }
 
   const description = requireString(raw.description, "description", source);
-  const instructions = requireString(raw.instructions, "instructions", source);
+  if (description.length > DESCRIPTION_MAX_LENGTH) {
+    throw new Error(
+      `Skill description must be at most ${DESCRIPTION_MAX_LENGTH} characters${
+        source ? ` (${source})` : ""
+      }.`,
+    );
+  }
+  const instructions = requireString(raw.instructions, "instructions", source, {
+    allowEmpty: options.allowEmptyInstructions,
+  });
 
   const manifest: SkillManifest = {
     name,
@@ -118,25 +178,25 @@ export function parseSkillManifestObject(
   if (requiredCapabilities)
     manifest.requiredCapabilities = requiredCapabilities;
 
-  const version = optionalString(raw.version);
+  const metadata = optionalRecord(raw.metadata, "metadata", source);
+  const version =
+    optionalVersion(raw.version) ?? optionalVersion(metadata?.version);
   if (version) manifest.version = version;
+
+  const license = optionalString(raw.license);
+  if (license) manifest.license = license;
+
+  const compatibility = optionalStringList(
+    raw.compatibility,
+    "compatibility",
+    source,
+  );
+  if (compatibility) manifest.compatibility = compatibility;
 
   const sourcePath = optionalString(raw.source) ?? source;
   if (sourcePath) manifest.source = sourcePath;
 
-  const metadata = raw.metadata;
-  if (metadata !== undefined) {
-    if (
-      typeof metadata !== "object" ||
-      metadata === null ||
-      Array.isArray(metadata)
-    ) {
-      throw new Error(
-        `Skill metadata must be an object${source ? ` (${source})` : ""}.`,
-      );
-    }
-    manifest.metadata = { ...(metadata as Record<string, unknown>) };
-  }
+  if (metadata) manifest.metadata = { ...metadata };
 
   return manifest;
 }
@@ -239,8 +299,12 @@ function requireString(
   value: unknown,
   field: string,
   source: string | undefined,
+  options: { allowEmpty?: boolean } = {},
 ): string {
-  if (typeof value === "string" && value.trim() !== "") return value.trim();
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed !== "" || options.allowEmpty) return trimmed;
+  }
   throw new Error(
     `Skill manifest field '${field}' is required${
       source ? ` (${source})` : ""
@@ -252,6 +316,26 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== ""
     ? value.trim()
     : undefined;
+}
+
+function optionalVersion(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim() !== "") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function optionalRecord(
+  value: unknown,
+  field: string,
+  source: string | undefined,
+): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error(
+    `Skill ${field} must be an object${source ? ` (${source})` : ""}.`,
+  );
 }
 
 function optionalStringList(

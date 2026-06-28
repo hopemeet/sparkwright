@@ -9,14 +9,13 @@ import {
   type ApprovalDefaults,
 } from "@sparkwright/host";
 import { mergeBindings, type Bindings } from "./keybindings.js";
-import {
-  isTuiPermissionMode,
-  tuiPermissionModeFromCorePermissionMode,
-  type TuiPermissionMode,
-} from "./permission.js";
+import { type TuiPermissionMode } from "./permission.js";
 
 export interface TuiConfigFile {
+  /** Resolved from shared run.accessMode, not read as a TUI-owned file field. */
   tuiPermissionMode?: TuiPermissionMode;
+  /** Project-layer ceiling for runtime TUI mode switches. */
+  accessModeCeiling?: TuiPermissionMode;
   /** Model reference "provider/model" (e.g. "openai/gpt-4o-mini"). */
   model?: string;
   /** Provider definitions, merged by key across config layers. */
@@ -48,6 +47,7 @@ export interface TuiConfigFile {
 /** Per-field origin of resolved values. Surfaced by `/config`. */
 export interface SourceMap {
   tuiPermissionMode?: string;
+  accessModeCeiling?: string;
   model?: string;
   workspace?: string;
   theme?: string;
@@ -69,10 +69,12 @@ export interface LoadedTuiConfig {
   attempted: { path: string; loaded: boolean }[];
   /** Validation problems. Bad fields are dropped from `config`. */
   errors: ValidationError[];
+  /** Non-fatal config diagnostics such as access-mode clamping. */
+  warnings: ValidationError[];
 }
 
 const KNOWN_KEYS = new Set([
-  "tuiPermissionMode",
+  "accessMode",
   "permissionMode",
   "model",
   "providers",
@@ -95,21 +97,6 @@ const KNOWN_KEYS = new Set([
   "approvals",
 ]);
 const VALID_THEMES = ["dark", "light", "mono"];
-const TUI_PERMISSION_MODE_RANK: Record<TuiPermissionMode, number> = {
-  "read-only": 0,
-  ask: 1,
-  "accept-edits": 2,
-  bypass: 3,
-};
-
-function canApplyTuiPermissionMode(
-  previous: TuiPermissionMode | undefined,
-  next: TuiPermissionMode,
-): boolean {
-  if (previous === undefined) return true;
-  return TUI_PERMISSION_MODE_RANK[next] <= TUI_PERMISSION_MODE_RANK[previous];
-}
-
 /**
  * Validate only TUI-owned fields. Shared fields (model, providers,
  * permissionMode, approvals, capabilities, tools, shell, etc.) are loaded by
@@ -216,18 +203,6 @@ function validateUiOverlay(
       });
     }
   }
-  if (obj.tuiPermissionMode !== undefined) {
-    if (isTuiPermissionMode(obj.tuiPermissionMode)) {
-      config.tuiPermissionMode = obj.tuiPermissionMode;
-      sources.tuiPermissionMode = origin;
-    } else {
-      errors.push({
-        file: filePath,
-        field: "tuiPermissionMode",
-        message: "must be one of read-only | ask | accept-edits | bypass",
-      });
-    }
-  }
   return { config, sources, errors };
 }
 
@@ -242,9 +217,12 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   const shared = await loadHostConfig(cwd, process.env);
   const order = resolutionOrder(cwd);
   const merged: TuiConfigFile = {
-    tuiPermissionMode: tuiPermissionModeFromCorePermissionMode(
-      shared.config.permissionMode,
-    ),
+    tuiPermissionMode: shared.config.accessMode as
+      | TuiPermissionMode
+      | undefined,
+    accessModeCeiling: shared.config.accessModeCeiling as
+      | TuiPermissionMode
+      | undefined,
     model: shared.config.model,
     providers: shared.config.providers,
     approvals: shared.config.approvals,
@@ -254,7 +232,8 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
       | undefined,
   };
   const sources: SourceMap = {
-    tuiPermissionMode: shared.sources.permissionMode,
+    tuiPermissionMode: shared.sources.accessMode,
+    accessModeCeiling: shared.sources.accessModeCeiling,
     model: shared.sources.model,
     workspace: shared.sources.workspace,
     approvals: shared.sources.approvals,
@@ -263,6 +242,7 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
     (entry) => ({ path: entry.path, loaded: entry.loaded }),
   );
   const errors: ValidationError[] = [...shared.errors];
+  const warnings: ValidationError[] = [...shared.warnings];
 
   // Keybindings merge layer-by-layer (later files override earlier ones per
   // binding name), so user can override project defaults of their own choice.
@@ -285,25 +265,13 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
     const label = labelByPath.get(path) ?? "config";
     const v = validateUiOverlay(value, `${label}:${path}`, path);
     errors.push(...v.errors);
-    const { tuiPermissionMode: tuiPermissionModeSource, ...overlaySources } =
-      v.sources;
     if (v.config.keybindings) {
       mergedBindings = { ...(mergedBindings ?? {}), ...v.config.keybindings };
     }
     if (v.config.theme !== undefined) merged.theme = v.config.theme;
     if (v.config.mouse !== undefined) merged.mouse = v.config.mouse;
     if (v.config.vim !== undefined) merged.vim = v.config.vim;
-    if (
-      v.config.tuiPermissionMode !== undefined &&
-      canApplyTuiPermissionMode(
-        merged.tuiPermissionMode,
-        v.config.tuiPermissionMode,
-      )
-    ) {
-      merged.tuiPermissionMode = v.config.tuiPermissionMode;
-      sources.tuiPermissionMode = tuiPermissionModeSource;
-    }
-    Object.assign(sources, overlaySources);
+    Object.assign(sources, v.sources);
   }
 
   // Resolve final bindings (defaults + user overrides). Bad chord strings
@@ -319,7 +287,7 @@ export async function loadTuiConfig(cwd: string): Promise<LoadedTuiConfig> {
   merged.keybindings = mergedBindings;
   merged.resolvedBindings = resolved.bindings;
 
-  return { config: merged, sources, attempted, errors };
+  return { config: merged, sources, attempted, errors, warnings };
 }
 
 /**

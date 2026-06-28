@@ -19,7 +19,9 @@ import {
   defineTool,
   FileRunStore,
   LocalWorkspace,
+  type CreateRunOptions,
   type ModelAdapter,
+  type WorkflowHook,
 } from "@sparkwright/core";
 
 const tempDirs: string[] = [];
@@ -479,6 +481,45 @@ describe("spawnSubAgent", () => {
     expect(spawned.run.abortSignal.aborted).toBe(false);
     parent.cancel({ reason: "parent cancelled" });
     expect(spawned.run.abortSignal.aborted).toBe(true);
+  });
+
+  it("forwards workflow hooks to the child run create options", () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "child done" };
+      },
+    };
+    const workflowHook: WorkflowHook = {
+      name: "child-pretool",
+      hook: "PreToolUse",
+      handle() {
+        return { status: "continue" };
+      },
+    };
+    let capturedOptions: CreateRunOptions | undefined;
+
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+      workflowHooks: [workflowHook],
+      createRun(options) {
+        capturedOptions = options;
+        return createRun(options);
+      },
+    });
+
+    expect(spawned.run.record.goal).toBe("child task");
+    expect(capturedOptions?.workflowHooks).toEqual([workflowHook]);
   });
 
   it("defaults child maxSteps to the parent run budget when omitted", () => {

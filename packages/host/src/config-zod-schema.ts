@@ -1,4 +1,8 @@
-import { PERMISSION_MODES, TRACE_LEVELS } from "@sparkwright/protocol";
+import {
+  ACCESS_MODES,
+  PERMISSION_MODES,
+  TRACE_LEVELS,
+} from "@sparkwright/protocol";
 import type { WorkflowHookMatcher, WorkflowHookName } from "@sparkwright/core";
 import { MAX_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
 import type { ShellSandboxConfig } from "@sparkwright/shell-sandbox";
@@ -10,7 +14,7 @@ export const CONFIG_SCHEMA_ID =
 export const CONFIG_SCHEMA_PROTOCOL_VERSION = "0.2";
 export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
-  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, permissionMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy; other shared fields are wholesale-overridden.";
+  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); other shared fields are wholesale-overridden.";
 
 export const stringSchema = z.string();
 export const nonEmptyString = stringSchema.min(1);
@@ -34,6 +38,12 @@ const permissionModeSchema = z
   .enum(PERMISSION_MODES)
   .describe("Permission policy mode for runs started from the TUI.");
 export const PERMISSION_MODE_CONFIG_VALUES = permissionModeSchema.options;
+const accessModeSchema = z
+  .enum(ACCESS_MODES)
+  .describe(
+    "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve.",
+  );
+export const ACCESS_MODE_CONFIG_VALUES = accessModeSchema.options;
 const traceLevelSchema = z
   .enum(TRACE_LEVELS)
   .describe(
@@ -172,7 +182,7 @@ export const approvalsSchema = z
       .optional(),
     cronMode: permissionModeSchema
       .describe(
-        "Default permission mode for unattended cron run/tick commands. CLI --permission-mode still overrides.",
+        "Default permission mode for unattended cron run/tick commands. CLI --access-mode still overrides.",
       )
       .optional(),
   })
@@ -288,16 +298,29 @@ export const TOOLS_CONFIG_KEYS = toolsSchema.keyof().options;
 
 const stringOrStringArraySchema = z.union([z.string(), stringArray]);
 export const workflowHookNameSchema = z.enum([
-  "SessionStart",
-  "UserPromptSubmit",
+  "RunStart",
+  "TurnStart",
   "ModelOutput",
   "PreToolUse",
   "PostToolUse",
   "Stop",
-  "SessionEnd",
+  "RunEnd",
   "RuntimeSignal",
 ]);
 export const WORKFLOW_HOOK_NAMES = workflowHookNameSchema.options;
+export const eventHookTriggerSchema = z.enum([
+  "run.started",
+  "run.completed",
+  "run.failed",
+  "run.cancelled",
+  "run.budget.checked",
+  "model.requested",
+  "model.completed",
+  "tool.requested",
+  "tool.completed",
+  "tool.failed",
+]);
+export const EVENT_HOOK_TRIGGERS = eventHookTriggerSchema.options;
 export const workflowHookOnErrorSchema = z.enum(["continue", "block"]);
 export const WORKFLOW_HOOK_ON_ERROR_MODES = workflowHookOnErrorSchema.options;
 export const workflowHookFrequencySchema = z.enum(["always", "oncePerTurn"]);
@@ -306,6 +329,8 @@ export const workflowHookActionTypeSchema = z.enum([
   "block",
   "context",
   "command",
+  "http",
+  "agent",
 ]);
 export const WORKFLOW_HOOK_ACTION_TYPES = workflowHookActionTypeSchema.options;
 export const workflowHookContextTypeSchema = z.enum([
@@ -324,6 +349,56 @@ export const WORKFLOW_HOOK_OUTPUT_INJECTION_MODES =
   workflowHookOutputInjectionSchema.options;
 export const workflowHookStdinSchema = z.enum(["none", "json"]);
 export const WORKFLOW_HOOK_STDIN_MODES = workflowHookStdinSchema.options;
+export const workflowHookCommandResultModeSchema = z.enum([
+  "exitCode",
+  "stdoutJson",
+]);
+export const WORKFLOW_HOOK_COMMAND_RESULT_MODES =
+  workflowHookCommandResultModeSchema.options;
+export const workflowHookHttpMethodSchema = z.enum([
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+]);
+export const WORKFLOW_HOOK_HTTP_METHODS = workflowHookHttpMethodSchema.options;
+export const workflowHookHttpResultModeSchema = z.enum([
+  "status",
+  "responseJson",
+]);
+export const WORKFLOW_HOOK_HTTP_RESULT_MODES =
+  workflowHookHttpResultModeSchema.options;
+export const hookHttpAllowRuleSchema = z.union([
+  z
+    .object({
+      origin: z.string().url(),
+    })
+    .strict(),
+  z
+    .object({
+      hostname: nonEmptyString,
+    })
+    .strict(),
+]);
+export const HOOKS_HTTP_ALLOW_CONFIG_KEYS = ["origin", "hostname"] as const;
+export const hooksHttpConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    allow: z.array(hookHttpAllowRuleSchema).optional(),
+    allowPrivateNetwork: z.boolean().optional(),
+  })
+  .strict()
+  .describe(
+    "Host-owned allowlist and network policy for HTTP hook actions. Project configs cannot define this policy or HTTP hook actions.",
+  );
+export const HOOKS_HTTP_CONFIG_KEYS = hooksHttpConfigSchema.keyof().options;
+export const workflowHookAgentResultModeSchema = z.enum([
+  "context",
+  "workflowResult",
+]);
+export const WORKFLOW_HOOK_AGENT_RESULT_MODES =
+  workflowHookAgentResultModeSchema.options;
 
 export const workflowHookMatcherSchema = z
   .object({
@@ -368,21 +443,62 @@ export const workflowHookCommandActionSchema = z
     injectOutput: workflowHookOutputInjectionSchema.optional(),
     maxOutputBytes: positiveInteger.optional(),
     stdin: workflowHookStdinSchema.optional(),
+    resultMode: workflowHookCommandResultModeSchema.optional(),
   })
   .strict();
 export const WORKFLOW_HOOK_COMMAND_ACTION_CONFIG_KEYS =
   workflowHookCommandActionSchema.keyof().options;
 
+export const workflowHookHttpActionSchema = z
+  .object({
+    type: z.literal("http"),
+    url: z.string().url(),
+    method: workflowHookHttpMethodSchema.optional(),
+    headers: stringRecordSchema.optional(),
+    body: z.string().optional(),
+    timeoutMs: positiveInteger.optional(),
+    blockOnFailure: z.boolean().optional(),
+    injectOutput: workflowHookOutputInjectionSchema.optional(),
+    resultMode: workflowHookHttpResultModeSchema.optional(),
+  })
+  .strict();
+export const WORKFLOW_HOOK_HTTP_ACTION_CONFIG_KEYS =
+  workflowHookHttpActionSchema.keyof().options;
+
+export const workflowHookAgentActionSchema = z
+  .object({
+    type: z.literal("agent"),
+    agentId: nonEmptyString.optional(),
+    toolName: nonEmptyString.optional(),
+    goal: nonEmptyString,
+    metadata: z.record(z.string(), z.unknown()).optional(),
+    resultMode: workflowHookAgentResultModeSchema.optional(),
+    injectOutput: workflowHookOutputInjectionSchema.optional(),
+  })
+  .strict();
+export const WORKFLOW_HOOK_AGENT_ACTION_CONFIG_KEYS =
+  workflowHookAgentActionSchema.keyof().options;
+
 export const WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE = {
   block: WORKFLOW_HOOK_BLOCK_ACTION_CONFIG_KEYS,
   context: WORKFLOW_HOOK_CONTEXT_ACTION_CONFIG_KEYS,
   command: WORKFLOW_HOOK_COMMAND_ACTION_CONFIG_KEYS,
+  http: WORKFLOW_HOOK_HTTP_ACTION_CONFIG_KEYS,
+  agent: WORKFLOW_HOOK_AGENT_ACTION_CONFIG_KEYS,
 } as const;
 
 export const workflowHookActionSchema = z.union([
   workflowHookBlockActionSchema,
   workflowHookContextActionSchema,
   workflowHookCommandActionSchema,
+  workflowHookHttpActionSchema,
+  workflowHookAgentActionSchema,
+]);
+
+export const eventHookActionSchema = z.union([
+  workflowHookCommandActionSchema,
+  workflowHookHttpActionSchema,
+  workflowHookAgentActionSchema,
 ]);
 
 export const workflowHookConfigSchema = z
@@ -400,12 +516,69 @@ export const workflowHookConfigSchema = z
 export const WORKFLOW_HOOK_CONFIG_KEYS =
   workflowHookConfigSchema.keyof().options;
 
-export const hooksSchema = z
+export const agentProfileWorkflowHookActionSchema = z.union([
+  workflowHookBlockActionSchema,
+  workflowHookContextActionSchema,
+  workflowHookCommandActionSchema,
+  workflowHookHttpActionSchema,
+]);
+export const agentProfileWorkflowHookMatcherSchema = z.union([
+  nonEmptyString,
+  workflowHookMatcherSchema,
+]);
+export const agentProfileWorkflowHookEntrySchema = z
   .object({
-    workflow: z.array(workflowHookConfigSchema).optional(),
+    name: nonEmptyString.optional(),
+    description: z.string().optional(),
+    enabled: z.boolean().optional(),
+    onError: workflowHookOnErrorSchema.optional(),
+    frequency: workflowHookFrequencySchema.optional(),
+    matcher: agentProfileWorkflowHookMatcherSchema.optional(),
+    action: agentProfileWorkflowHookActionSchema,
+  })
+  .strict();
+export const AGENT_PROFILE_WORKFLOW_HOOK_CONFIG_KEYS =
+  agentProfileWorkflowHookEntrySchema.keyof().options;
+export const agentProfileHooksSchema = z
+  .object({
+    RunStart: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    TurnStart: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    ModelOutput: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    PreToolUse: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    PostToolUse: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    Stop: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    RunEnd: z.array(agentProfileWorkflowHookEntrySchema).optional(),
+    RuntimeSignal: z.array(agentProfileWorkflowHookEntrySchema).optional(),
   })
   .strict()
-  .describe("Deterministic workflow hooks for host-created runs.");
+  .describe(
+    "Per-agent workflow hook guardrails applied only to this profile's in-process child runs. Agent actions are intentionally not supported here.",
+  );
+export const AGENT_PROFILE_HOOKS_CONFIG_KEYS =
+  agentProfileHooksSchema.keyof().options;
+
+export const eventHookConfigSchema = z
+  .object({
+    name: nonEmptyString,
+    description: z.string().optional(),
+    trigger: z.union([eventHookTriggerSchema, z.array(eventHookTriggerSchema)]),
+    enabled: z.boolean().optional(),
+    matcher: workflowHookMatcherSchema.optional(),
+    action: eventHookActionSchema,
+  })
+  .strict();
+export const EVENT_HOOK_CONFIG_KEYS = eventHookConfigSchema.keyof().options;
+
+export const hooksSchema = z
+  .object({
+    http: hooksHttpConfigSchema.optional(),
+    workflow: z.array(workflowHookConfigSchema).optional(),
+    events: z.array(eventHookConfigSchema).optional(),
+  })
+  .strict()
+  .describe(
+    "Deterministic workflow hooks and non-blocking event hooks for host-created runs.",
+  );
 export const HOOKS_CONFIG_KEYS = hooksSchema.keyof().options;
 
 export const verificationModeSchema = z.enum(["off", "suggest", "require"]);
@@ -575,6 +748,11 @@ export const DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS = delegateToolSchema
     forbidNesting: true,
   })
   .keyof().options;
+export const agentProfileDelegateToolSchema = delegateToolSchema
+  .omit({ profileId: true })
+  .strict();
+export const AGENT_PROFILE_DELEGATE_TOOL_CONFIG_KEYS =
+  agentProfileDelegateToolSchema.keyof().options;
 
 export const agentProfileModeSchema = z.enum(["primary", "child", "all"]);
 export const AGENT_PROFILE_MODES = agentProfileModeSchema.options;
@@ -630,6 +808,16 @@ export const agentProfileMetadataSchema = z
   })
   .catchall(z.unknown());
 
+export const agentProfileWhenSchema = z
+  .object({
+    keywords: stringArray
+      .describe(
+        "Keyword hints used to sort/label this profile's delegate tool for a goal. This is a routing hint only; it does not hide or grant capabilities.",
+      )
+      .optional(),
+  })
+  .strict();
+
 export const agentProfileConfigSchema = z
   .object({
     id: nonEmptyString,
@@ -641,6 +829,20 @@ export const agentProfileConfigSchema = z
     use: z.array(toolUseSelectorSchema).optional(),
     allowedTools: stringArray.optional(),
     deniedTools: stringArray.optional(),
+    triggers: stringArray
+      .describe(
+        "Keyword hints used to sort/label this profile's delegate tool for a goal. This is a routing hint only; it does not hide or grant capabilities.",
+      )
+      .optional(),
+    when: agentProfileWhenSchema.optional(),
+    delegateTool: agentProfileDelegateToolSchema.optional(),
+    exposeAsDelegate: z
+      .boolean()
+      .describe(
+        "Tri-state automatic delegation opt-in/opt-out. true forces automatic delegate exposure even when capabilities.agents.exposeChildrenAsDelegates is off; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and direct aliases. An explicit delegateTool or delegateTools entry still wins.",
+      )
+      .optional(),
+    hooks: agentProfileHooksSchema.optional(),
     policy: z.array(z.object({}).catchall(z.unknown())).optional(),
     maxSteps: positiveInteger.optional(),
     runBudget: z.object({}).catchall(z.unknown()).optional(),
@@ -664,11 +866,56 @@ export const AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS = agentProfileConfigSchema
   })
   .keyof().options;
 
+export const AGENT_EXPOSURE_MODES = ["indexed", "all"] as const;
+export type AgentExposureMode = (typeof AGENT_EXPOSURE_MODES)[number];
+
+export const providersSchema = z
+  .record(z.string(), providerConfigSchema)
+  .describe(
+    'Named model providers. The reserved name "deterministic" is built in and must not be declared here.',
+  );
+export const modelSchema = nonEmptyString
+  .regex(/^[^/]+(\/.+)?$/)
+  .describe('Active model in the form "provider/model".');
+
 export const agentsConfigSchema = z
   .object({
     // Replaced with an external JSON Schema ref by scripts/generate-config-schema.ts.
     profiles: z.array(z.unknown()).optional(),
     delegateTools: z.array(delegateToolSchema).optional(),
+    spawnModel: modelSchema
+      .describe(
+        "Optional raw model ref for dynamic spawn_agent children. If unset, they inherit the parent run model.",
+      )
+      .optional(),
+    delegateModel: modelSchema
+      .describe(
+        "Optional raw model ref for configured in-process delegates when the profile does not set model. ACP and external-command delegates resolve outside the parent process.",
+      )
+      .optional(),
+    exposure: z
+      .enum(AGENT_EXPOSURE_MODES)
+      .describe(
+        'Controls direct delegate_* tool exposure. "indexed" exposes non-opted-out agents through list_agents/delegate_agent/delegate_parallel and only exposes pinned or per-profile exposed delegates; "all" exposes every resolved delegate as a direct delegate_* tool. Default indexed.',
+      )
+      .optional(),
+    pinnedDelegates: stringArray
+      .describe(
+        "Profile ids or delegate tool names that should remain exposed as direct delegate_* tools when exposure is indexed.",
+      )
+      .optional(),
+    exposeChildrenAsDelegates: z
+      .boolean()
+      .describe(
+        "Opt-in: auto-expose every child/all profile without an explicit delegate as a delegate_<id> tool. Default false. Per-profile exposeAsDelegate overrides this.",
+      )
+      .optional(),
+    enableParallelDelegates: z
+      .boolean()
+      .describe(
+        'Opt-in: expose delegate_parallel for foreground fan-out across read-only configured delegates. Default false. The tool only accepts delegates with workspaceAccess "none".',
+      )
+      .optional(),
     maxDepth: nonNegativeInteger
       .describe(
         "Global sub-agent depth ceiling. 0 disables sub-agent spawning.",
@@ -691,14 +938,6 @@ export const capabilitiesSchema = z
   .describe("Host-owned capability runtime settings.");
 export const CAPABILITIES_CONFIG_KEYS = capabilitiesSchema.keyof().options;
 
-export const providersSchema = z
-  .record(z.string(), providerConfigSchema)
-  .describe(
-    'Named model providers. The reserved name "deterministic" is built in and must not be declared here.',
-  );
-export const modelSchema = nonEmptyString
-  .regex(/^[^/]+(\/.+)?$/)
-  .describe('Active model in the form "provider/model".');
 export const taskConfigSchema = z
   .object({
     enabled: booleanSchema.optional(),
@@ -723,11 +962,6 @@ export const themeSchema = z
   .enum(["dark", "light", "mono"])
   .describe("Visual theme.");
 export const mouseSchema = z.boolean().describe("Enable mouse reporting.");
-export const tuiPermissionModeSchema = z
-  .enum(["read-only", "ask", "accept-edits", "bypass"])
-  .describe(
-    "TUI permission mode, projected to core permission fields per run.",
-  );
 export const keybindingsSchema = z
   .record(z.string(), z.union([z.string(), stringArray, z.null()]))
   .describe("Override default key chords for named TUI actions.");
@@ -745,19 +979,19 @@ export const IDENTITY_GROUP_CONFIG_KEYS = identityGroupSchema.keyof().options;
 
 export const policyGroupSchema = z
   .object({
-    permissionMode: permissionModeSchema.optional(),
     confidentialPaths: confidentialPathsSchema.optional(),
     write: writeGuardrailsSchema.optional(),
     sandbox: shellSandboxSchema.optional(),
   })
   .strict()
   .describe(
-    "Preferred grouping for security boundaries. Flattens to permissionMode/confidentialPaths/write and shell.sandbox.",
+    "Preferred grouping for security boundaries. Flattens to confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode.",
   );
 export const POLICY_GROUP_CONFIG_KEYS = policyGroupSchema.keyof().options;
 
 export const runGroupSchema = z
   .object({
+    accessMode: accessModeSchema.optional(),
     budget: runBudgetSchema.optional(),
     maxSteps: maxStepsSchema.optional(),
     traceLevel: traceLevelSchema.optional(),
@@ -765,20 +999,19 @@ export const runGroupSchema = z
   })
   .strict()
   .describe(
-    "Preferred grouping for run-shaping defaults. Flattens to runBudget/maxSteps/traceLevel/approvals.",
+    "Preferred grouping for run-shaping defaults. Flattens to accessMode/runBudget/maxSteps/traceLevel/approvals.",
   );
 export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
 
 export const uiGroupSchema = z
   .object({
-    tuiPermissionMode: tuiPermissionModeSchema.optional(),
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),
   })
   .strict()
   .describe(
-    "Preferred grouping for TUI-only preferences. Flattens to tuiPermissionMode/theme/mouse/keybindings.",
+    "Preferred grouping for TUI-only preferences. Flattens to theme/mouse/keybindings.",
   );
 export const UI_GROUP_CONFIG_KEYS = uiGroupSchema.keyof().options;
 
@@ -792,19 +1025,18 @@ export const CONFIG_GROUP_CONFIG_KEYS = {
 export const CONFIG_GROUP_FIELD_MAP = {
   identity: { model: "model", providers: "providers" },
   policy: {
-    permissionMode: "permissionMode",
     confidentialPaths: "confidentialPaths",
     write: "write",
     sandbox: "shell",
   },
   run: {
+    accessMode: "accessMode",
     budget: "runBudget",
     maxSteps: "maxSteps",
     traceLevel: "traceLevel",
     approvals: "approvals",
   },
   ui: {
-    tuiPermissionMode: "tuiPermissionMode",
     theme: "theme",
     mouse: "mouse",
     keybindings: "keybindings",
@@ -821,7 +1053,7 @@ export const sparkwrightConfigZodSchema = z
       .optional(),
     model: modelSchema.optional(),
     providers: providersSchema.optional(),
-    permissionMode: permissionModeSchema.optional(),
+    accessMode: accessModeSchema.optional(),
     workspace: workspaceSchema.optional(),
     confidentialPaths: confidentialPathsSchema.optional(),
     write: writeGuardrailsSchema.optional(),
@@ -833,7 +1065,6 @@ export const sparkwrightConfigZodSchema = z
     tools: toolsSchema.optional(),
     tasks: tasksSchema.optional(),
     capabilities: capabilitiesSchema.optional(),
-    tuiPermissionMode: tuiPermissionModeSchema.optional(),
     theme: themeSchema.optional(),
     mouse: mouseSchema.optional(),
     keybindings: keybindingsSchema.optional(),
@@ -872,11 +1103,18 @@ export type CapabilityWorkflowHookConfig = Omit<
   hook: WorkflowHookName;
   matcher?: WorkflowHookMatcher;
 };
+export type CapabilityEventHookConfig = Omit<
+  NonNullable<z.output<typeof hooksSchema>["events"]>[number],
+  "matcher"
+> & {
+  matcher?: WorkflowHookMatcher;
+};
 export type CapabilityHooksConfig = Omit<
   z.output<typeof hooksSchema>,
-  "workflow"
+  "workflow" | "events"
 > & {
   workflow?: CapabilityWorkflowHookConfig[];
+  events?: CapabilityEventHookConfig[];
 };
 export type CapabilityVerificationMode = z.output<
   typeof verificationModeSchema

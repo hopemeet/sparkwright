@@ -1,4 +1,4 @@
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   defineTool,
@@ -23,7 +23,6 @@ import {
 import { type SkillRoot } from "@sparkwright/skills";
 import {
   canonicalWorkspacePath,
-  readWorkspaceTextIfExists,
   writeCapabilityText,
   type CapabilityWriteResult,
 } from "./capability-mutation.js";
@@ -39,8 +38,8 @@ import {
   isToolUseSelector,
 } from "./tool-selectors.js";
 import {
+  createSkillCreateProposal,
   createSkillUpdateProposal,
-  inspectProposedSkillContent,
   listSkillProposals,
   type SkillProposalProvenance,
   type SkillProposalSummary,
@@ -92,6 +91,10 @@ export function createReadFileTool() {
       additionalProperties: false,
     },
     policy: { risk: "safe" },
+    governance: {
+      origin: { kind: "local", name: "@sparkwright/coding-tools" },
+      sideEffects: ["read"],
+    },
     previewArgs(args) {
       const r = previewRecord(args);
       const path = previewString(r.path);
@@ -383,7 +386,7 @@ export function createSkillInspectorTool(
     name: "list_skills",
     description:
       "List or validate workspace skills. Read-only: never writes. Use this " +
-      "to discover skills or check skill health; use create_skill to create one.",
+      "to discover current skills or check skill health; use create_skill to draft a create proposal.",
     inputSchema: {
       type: "object",
       properties: {
@@ -416,9 +419,10 @@ export function createSkillManagerTool(
   return defineTool({
     name: "create_skill",
     description:
-      "Create a workspace skill. Writes a SKILL.md under an existing or " +
-      "default skill root. Content is checked by the skill guard; a dangerous " +
-      "finding requires force=true. Use list_skills to list or validate skills.",
+      "Draft a proposal to create a project Skill. This does not apply the " +
+      "proposal or write the current Skill package; a human must review and " +
+      "apply it through the Skill proposal flow. Use list_skills to list or " +
+      "validate current skills.",
     inputSchema: {
       type: "object",
       properties: {
@@ -437,10 +441,6 @@ export function createSkillManagerTool(
           description:
             "Optional project skill root. Omit for the default .sparkwright/skills root.",
         },
-        force: {
-          type: "boolean",
-          description: "Overwrite an existing SKILL.md when creating.",
-        },
       },
       required: ["action"],
       additionalProperties: false,
@@ -455,13 +455,11 @@ export function createSkillManagerTool(
       const r = previewRecord(args);
       const action = previewString(r.action);
       const name = previewString(r.name);
-      const force = r.force === true ? " · force" : "";
       const preview = [action, name].filter(Boolean).join(" ");
-      return preview ? `${preview}${force}` : undefined;
+      return preview || undefined;
     },
     isReplaySafe: false,
     async execute(args: unknown, ctx) {
-      if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const input = parseSkillManagerArgs(args);
       if (!input.name || !isSkillName(input.name)) {
         throw new Error(
@@ -471,75 +469,28 @@ export function createSkillManagerTool(
       if (!input.description || input.description.trim().length === 0) {
         throw new Error("create_skill create requires description.");
       }
-      const root = resolveSkillCreateRoot(workspaceRoot, input.root);
-      const skillDir = join(root, input.name);
-      const skillPath = join(skillDir, "SKILL.md");
-      const content = renderSkillTemplate(input.name, input.description);
-      const outputPath = await canonicalWorkspacePath(ctx, skillPath);
-      const existing = await readWorkspaceTextIfExists(ctx, skillPath);
-
-      if (existing === content) {
-        ctx.reportWorkspaceWriteSkipped?.({
-          path: outputPath,
-          reason: `Skill ${input.name} already matches requested content.`,
-        });
-        return {
-          action: "create",
-          name: input.name,
-          path: outputPath,
-          changed: false,
-          status: "already_exists",
-        };
-      }
-
-      if (existing !== undefined && !input.force) {
-        throw new Error(
-          `Skill already exists with different content: ${outputPath}. Use a Skill proposal/update flow or pass force=true to overwrite.`,
-        );
-      }
-      // Run the same static guard the proposal pipeline applies, so a
-      // secret-exfil-shaped description cannot be written without review.
-      const guardFindings = inspectProposedSkillContent(input.name, content);
-      if (
-        guardFindings.some((finding) => finding.severity === "dangerous") &&
-        !input.force
-      ) {
-        throw new Error(
-          `create_skill content has dangerous guard findings ` +
-            `(${guardFindings
-              .filter((f) => f.severity === "dangerous")
-              .map((f) => f.ruleId)
-              .join(", ")}); pass force=true to create it anyway.`,
-        );
-      }
-      const write = await writeCapabilityText(
+      resolveSkillCreateRoot(workspaceRoot, input.root);
+      const provenance = skillProposalProvenanceFromContext(
         ctx,
-        skillPath,
-        content,
-        `Create Skill ${input.name}`,
+        input.description,
       );
-      ctx.reportCapabilityMutationCompleted?.({
-        action: "create_skill",
-        path: write.path,
-        reason: `Create Skill ${input.name}`,
-        fileCount: 1,
-        files: [
-          {
-            relativePath: "SKILL.md",
-            size: Buffer.byteLength(content, "utf8"),
-          },
-        ],
-        metadata: { kind: "skill", name: input.name },
-      });
-      return {
-        action: "create",
+      const existing = await findExistingRunSkillDraft(
+        workspaceRoot,
+        input.name,
+        provenance.runId,
+        "create",
+      );
+      if (existing) {
+        return skillDraftToolOutput(existing, false);
+      }
+      const proposal = await createSkillCreateProposal({
+        workspaceRoot,
         name: input.name,
-        path: write.path,
-        changed: true,
-        diffArtifactId: write.diffArtifactId,
-        writeSummary: write.summary,
-        ...(guardFindings.length > 0 ? { guardFindings } : {}),
-      };
+        description: input.description,
+        provenance,
+        mutationReporter: ctx,
+      });
+      return skillDraftToolOutput(proposal, true);
     },
   });
 }
@@ -1046,7 +997,6 @@ function parseSkillManagerArgs(args: unknown): {
   name?: string;
   description?: string;
   root?: string;
-  force?: boolean;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
     throw toolArgumentsInvalid("create_skill expects an object argument.");
@@ -1056,6 +1006,11 @@ function parseSkillManagerArgs(args: unknown): {
   if (action !== "create") {
     throw toolArgumentsInvalid("create_skill action must be create.");
   }
+  if ("force" in record) {
+    throw toolArgumentsInvalid(
+      "create_skill no longer accepts force; review the proposal and apply with force if needed.",
+    );
+  }
   return {
     action,
     ...(typeof record.name === "string" ? { name: record.name.trim() } : {}),
@@ -1063,7 +1018,6 @@ function parseSkillManagerArgs(args: unknown): {
       ? { description: record.description.trim() }
       : {}),
     ...(typeof record.root === "string" ? { root: record.root } : {}),
-    ...(typeof record.force === "boolean" ? { force: record.force } : {}),
   };
 }
 
@@ -1086,12 +1040,13 @@ async function findExistingRunSkillDraft(
   workspaceRoot: string,
   skillName: string,
   runId: string | undefined,
+  kind: "create" | "update" = "update",
 ): Promise<SkillProposalSummary | undefined> {
   if (!runId) return undefined;
   const proposals = await listSkillProposals(workspaceRoot);
   return proposals.find(
     (proposal) =>
-      proposal.kind === "update" &&
+      proposal.kind === kind &&
       proposal.state === "draft" &&
       proposal.skillName === skillName &&
       proposal.provenance?.runId === runId,
@@ -1115,6 +1070,9 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    ...(proposal.guardFindings
+      ? { guardFindings: proposal.guardFindings }
+      : {}),
     summary: changed
       ? proposal.summary
       : `${proposal.summary} Existing draft proposal returned; no new proposal was created.`,
@@ -1157,21 +1115,6 @@ function parseSkillUpdateArgs(args: unknown): {
     description,
     body,
   };
-}
-
-function renderSkillTemplate(name: string, description: string): string {
-  return [
-    "---",
-    `name: ${name}`,
-    `description: ${description}`,
-    'version: "1.0.0"',
-    "metadata:",
-    '  version: "1.0.0"',
-    "---",
-    "",
-    `Use this skill when the user asks for ${description}`,
-    "",
-  ].join("\n");
 }
 
 function isSkillName(value: string): boolean {
@@ -1249,6 +1192,9 @@ function cloneAgentConfigShape(agents: AgentConfigShape): AgentConfigShape {
         ? { allowedTools: [...profile.allowedTools] }
         : {}),
       ...(profile.deniedTools ? { deniedTools: [...profile.deniedTools] } : {}),
+      ...(profile.delegateTool
+        ? { delegateTool: { ...profile.delegateTool } }
+        : {}),
     })),
     delegateTools: agents.delegateTools.map((tool) => ({ ...tool })),
   };
@@ -1363,6 +1309,11 @@ function validateAgentConfigShape(
         message: "must be a positive integer",
       });
     }
+    validateInlineDelegateTool(
+      profile.delegateTool,
+      `${field}.delegateTool`,
+      errors,
+    );
   }
   for (const [index, tool] of agents.delegateTools.entries()) {
     if (!ids.has(tool.profileId)) {
@@ -1373,6 +1324,65 @@ function validateAgentConfigShape(
     }
   }
   return errors;
+}
+
+function validateInlineDelegateTool(
+  delegateTool: AgentProfile["delegateTool"] | undefined,
+  field: string,
+  errors: Array<{ field: string; message: string }>,
+): void {
+  if (delegateTool === undefined) return;
+  if (!isPlainObject(delegateTool)) {
+    errors.push({ field, message: "must be an object" });
+    return;
+  }
+  if (
+    delegateTool.toolName !== undefined &&
+    (typeof delegateTool.toolName !== "string" ||
+      delegateTool.toolName.length === 0)
+  ) {
+    errors.push({ field: `${field}.toolName`, message: "must be a string" });
+  }
+  if (
+    delegateTool.description !== undefined &&
+    typeof delegateTool.description !== "string"
+  ) {
+    errors.push({
+      field: `${field}.description`,
+      message: "must be a string",
+    });
+  }
+  if (
+    delegateTool.requiresApproval !== undefined &&
+    typeof delegateTool.requiresApproval !== "boolean"
+  ) {
+    errors.push({
+      field: `${field}.requiresApproval`,
+      message: "must be a boolean",
+    });
+  }
+  if (
+    delegateTool.forbidNesting !== undefined &&
+    typeof delegateTool.forbidNesting !== "boolean"
+  ) {
+    errors.push({
+      field: `${field}.forbidNesting`,
+      message: "must be a boolean",
+    });
+  }
+  const maxSteps = delegateTool.maxSteps;
+  if (maxSteps !== undefined) {
+    if (
+      typeof maxSteps !== "number" ||
+      !Number.isInteger(maxSteps) ||
+      maxSteps < 1
+    ) {
+      errors.push({
+        field: `${field}.maxSteps`,
+        message: "must be a positive integer",
+      });
+    }
+  }
 }
 
 function agentCallabilityFields(
@@ -1390,9 +1400,11 @@ function agentCallabilityFields(
 } {
   const mode = profile.mode ?? "child";
   const childEligible = mode === "child" || mode === "all";
-  const delegate = agents.delegateTools.find(
-    (tool) => tool.profileId === profile.id,
-  );
+  const delegate =
+    agents.delegateTools.find((tool) => tool.profileId === profile.id) ??
+    (profile.delegateTool
+      ? { profileId: profile.id, ...profile.delegateTool }
+      : undefined);
   const resolvedDelegateToolName = delegate
     ? delegateToolName(delegate)
     : undefined;
@@ -1637,7 +1649,9 @@ function stringArrayArg(value: unknown, field: string): string[] {
 }
 
 function isAgentId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value);
+  // `:` is accepted for explicit namespaced ids (e.g. review:foo). Ids stay
+  // flat by default; the path is never auto-derived into the id.
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(value);
 }
 
 function isStringArray(value: unknown): value is string[] {

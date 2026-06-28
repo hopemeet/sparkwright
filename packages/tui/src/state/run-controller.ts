@@ -1,13 +1,17 @@
 import { writeFile, mkdir, readFile } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
+  buildImageRunInputPart,
   createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostStartRunRequest,
+  createRunInputPayloadFromParts,
+  imageMediaTypeForPath,
   recordHostClientStartFailure,
   resolveHostClientApprovalByPolicy,
   resolveHostStdioSpawn,
+  runInputMetadataRecord,
 } from "@sparkwright/host";
 import type {
   CapabilitySnapshot,
@@ -52,7 +56,6 @@ type ApprovalDecision = "approved" | "denied";
  * replay to tell a continuation run apart from a real user turn.
  */
 const TODO_CONTINUATION_GOAL_PREFIX = "Continue from the todo ledger.";
-const MAX_TUI_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Drives runs against a Sparkwright host. The host is launched lazily on
@@ -226,8 +229,7 @@ export class RunController {
     const trimmed = imagePath.trim();
     if (!trimmed) return { ok: false, message: "usage: /image <path>" };
     const resolved = resolve(this.opts.workspaceRoot, trimmed);
-    const mediaType = mediaTypeForImagePath(resolved);
-    if (!mediaType) {
+    if (!imageMediaTypeForPath(resolved)) {
       return {
         ok: false,
         message: "unsupported image type; use png, jpg, jpeg, gif, or webp",
@@ -242,23 +244,25 @@ export class RunController {
         message: error instanceof Error ? error.message : String(error),
       };
     }
-    if (bytes.byteLength > MAX_TUI_IMAGE_BYTES) {
+    const imagePart = buildImageRunInputPart({
+      sourcePath: trimmed,
+      resolvedPath: resolved,
+      bytes,
+    });
+    if (!imagePart.ok && imagePart.reason === "too_large") {
       return {
         ok: false,
-        message: `image is too large (${bytes.byteLength} bytes); limit is ${MAX_TUI_IMAGE_BYTES}`,
+        message: `image is too large (${imagePart.byteLength} bytes); limit is ${imagePart.maxBytes}`,
       };
     }
-    const name = basename(trimmed);
-    this.pendingInputParts.push({
-      type: "image",
-      data: bytes.toString("base64"),
-      mediaType,
-      name,
-      metadata: {
-        sourcePath: trimmed,
-        byteLength: bytes.byteLength,
-      },
-    });
+    if (!imagePart.ok) {
+      return {
+        ok: false,
+        message: "unsupported image type; use png, jpg, jpeg, gif, or webp",
+      };
+    }
+    const name = imagePart.part.name;
+    this.pendingInputParts.push(imagePart.part);
     return { ok: true, name, count: this.pendingInputParts.length };
   }
 
@@ -302,6 +306,7 @@ export class RunController {
           sessionId: this.sessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
+          accessMode: this.tuiPermissionMode(),
           permissionMode: permissions.permissionMode,
           traceLevel,
           shouldWrite: permissions.shouldWrite,
@@ -548,23 +553,19 @@ export class RunController {
         source: "tui",
         sessionId: this.sessionId,
         workspaceRoot: this.opts.workspaceRoot,
+        accessMode: this.tuiPermissionMode(),
         permissionMode: permissions.permissionMode,
         traceLevel,
         shouldWrite: permissions.shouldWrite,
         modelName: this.opts.modelName,
       }),
-      ...inputMetadataRecord(this.pendingRunInput()),
+      ...runInputMetadataRecord(this.pendingRunInput()),
     };
   }
 
   private pendingRunInput(): RunInputPayload | undefined {
     if (this.pendingInputParts.length === 0) return undefined;
-    const parts = [...this.pendingInputParts];
-    const summary = inputSummary(parts);
-    return {
-      parts,
-      metadata: summary,
-    };
+    return createRunInputPayloadFromParts(this.pendingInputParts);
   }
 
   private shouldWrite(): boolean {
@@ -735,40 +736,6 @@ function validateSessionId(id: string): string {
     throw new Error("Session id must be a safe path segment.");
   }
   return id;
-}
-
-function mediaTypeForImagePath(path: string): string | undefined {
-  switch (extname(path).toLowerCase()) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    default:
-      return undefined;
-  }
-}
-
-function inputMetadataRecord(
-  input: RunInputPayload | undefined,
-): Record<string, unknown> {
-  const summary = inputSummary(input?.parts ?? []);
-  return summary.attachmentCount > 0 ? { input: summary } : {};
-}
-
-function inputSummary(parts: readonly RunInputPart[]): {
-  attachmentCount: number;
-  imageCount?: number;
-} {
-  const imageCount = parts.filter((part) => part.type === "image").length;
-  return {
-    attachmentCount: parts.length,
-    ...(imageCount > 0 ? { imageCount } : {}),
-  };
 }
 
 /** The most recent goal carried by a loaded event stream, or null. */

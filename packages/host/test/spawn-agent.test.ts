@@ -261,6 +261,7 @@ describe("host spawn_agent wiring", () => {
           goal: "read",
           role: "reader",
           prompt: "Read.",
+          allowedTools: ["read_file"],
         },
         { run: parent.record } as never,
       ),

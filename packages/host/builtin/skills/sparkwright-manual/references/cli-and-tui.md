@@ -80,8 +80,8 @@ SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read_file","argumen
 - `--target path`: workspace-relative target file for the repo-pilot path.
 - `--write`: allow the deterministic path to propose a write.
 - `--yes`: approve CLI approval prompts non-interactively.
-- `--permission-mode mode`: one of `plan`, `default`, `accept_edits`,
-  `dont_ask`, `bypass_permissions`.
+- `--access-mode mode`: one of `read-only`, `ask`, `accept-edits`, `bypass`.
+  The run autonomy preset; compiles to the internal permission/write fields.
 - `--trace-level level`: one of `standard`, `debug`.
 - `--session-id id`: attach a run to a known session id.
 - `--model provider/model`: select a configured provider/model.
@@ -162,8 +162,18 @@ npm exec sparkwright -- skills create code-reviewer --description "review code c
 ```bash
 npm exec sparkwright -- agents list --workspace .
 npm exec sparkwright -- agents validate --workspace .
-npm exec sparkwright -- agents create reviewer --prompt "Review code changes" --allow inspect_diff --max-steps 4 --workspace .
+npm exec sparkwright -- agents create reviewer \
+  --prompt "Review code changes" \
+  --model openai/gpt-5.4-mini \
+  --use workspace.read \
+  --max-steps 4 \
+  --workspace .
 ```
+
+`agents create` covers the common profile fields. Add profile-scoped workflow
+hooks by editing `.sparkwright/agents/<id>.md` or
+`capabilities.agents.profiles[].hooks`, then run `agents validate` or
+`config validate`.
 
 These commands write user or workspace configuration where applicable. Treat
 config changes as user-visible state changes.

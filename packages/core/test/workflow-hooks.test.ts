@@ -10,6 +10,46 @@ import {
 import { createRunId } from "../src/ids.js";
 
 describe("runWorkflowHooks", () => {
+  it("emits canonical lifecycle payloads", async () => {
+    const run = {
+      id: createRunId(),
+      goal: "g",
+      state: "running" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: {},
+    };
+    const events = new EventLog(run.id);
+    const hooks: WorkflowHook[] = [
+      {
+        name: "run-start",
+        hook: "RunStart",
+        handle: () => ({
+          status: "continue",
+          metadata: { matched: true },
+        }),
+      },
+    ];
+
+    const result = await runWorkflowHooks({
+      hooks,
+      hook: "RunStart",
+      run,
+      payload: {},
+      events,
+    });
+
+    expect(result.status).toBe("continued");
+    expect(events.all().at(0)?.payload).toMatchObject({
+      hook: "RunStart",
+    });
+    expect(events.all().at(0)?.payload).not.toHaveProperty("configuredHook");
+    expect(events.all().map((event) => event.type)).toEqual([
+      "workflow_hook.started",
+      "workflow_hook.completed",
+    ]);
+  });
+
   it("matches hooks, collects context, and returns rewrites in order", async () => {
     const run = {
       id: createRunId(),

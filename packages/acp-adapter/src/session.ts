@@ -6,6 +6,7 @@ import type { AgentSideConnection, SessionId } from "@agentclientprotocol/sdk";
 import type {
   HostEvent,
   PermissionMode,
+  RunAccessMode,
   TraceLevel,
 } from "@sparkwright/protocol";
 
@@ -19,6 +20,7 @@ export interface AcpSessionInfo {
 
 export interface AcpSessionStoreOptions {
   defaultModel?: string;
+  defaultAccessMode?: RunAccessMode;
   defaultPermissionMode?: PermissionMode;
   defaultTraceLevel?: TraceLevel;
   defaultShouldWrite?: boolean;
@@ -99,6 +101,7 @@ export class AcpSessionStore {
           ? { extraMcpServers: mcpServers }
           : {}),
         defaultModel: this.options.defaultModel,
+        defaultAccessMode: this.options.defaultAccessMode,
         defaultPermissionMode: this.options.defaultPermissionMode,
         defaultTraceLevel: this.options.defaultTraceLevel,
         defaultShouldWrite: this.options.defaultShouldWrite,

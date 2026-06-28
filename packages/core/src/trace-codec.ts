@@ -151,9 +151,19 @@ function standardPayload(event: SparkwrightEvent): unknown {
       return summarizeApprovalRequest(event.payload);
     case "extension.process.progress":
       return processProgressSnapshot(event);
+    case "extension.process.completed":
+    case "extension.process.failed":
+      return processTerminalSnapshot(event.payload);
     default:
       return event.payload;
   }
+}
+
+function processTerminalSnapshot(
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const { progressDroppedSamples: _progressDroppedSamples, ...rest } = payload;
+  return rest;
 }
 
 function processProgressSnapshot(event: SparkwrightEvent): unknown {

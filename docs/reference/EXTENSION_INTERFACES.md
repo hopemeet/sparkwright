@@ -444,11 +444,22 @@ interface AgentProfile {
   name?: string;
   description?: string;
   mode?: "primary" | "child" | "all"; // carried for orchestration; not applied by agent-runtime
-  model?: unknown; // carried for orchestration; not applied by agent-runtime
+  model?: unknown; // not applied by agent-runtime; the host applies it to in-process delegate child runs
   prompt?: string; // compiled into the run prompt builder when spawning from this profile
   use?: string[]; // broad tool selectors intersected through parent/child profiles
   allowedTools?: string[];
   deniedTools?: string[];
+  triggers?: string[]; // deterministic routing hints; hosts may sort/label but not grant permissions
+  when?: {
+    keywords?: string[]; // first lightweight routing condition supported by the host
+  };
+  delegateTool?: {
+    toolName?: string;
+    description?: string;
+    requiresApproval?: boolean;
+    forbidNesting?: boolean;
+    maxSteps?: number;
+  };
   policy?: CapabilityRule[];
   maxSteps?: number;
   runBudget?: RunBudget;
@@ -525,7 +536,8 @@ Use this decision rule:
 - Code-level deterministic workflow policy:
   `createRun({ workflowHooks })`.
 - Proposal/content validation owned by an embedder:
-  `ValidationHook`.
+  low-level `ValidationHook`. New project-facing validation should compile into
+  workflow hooks or rule packs.
 - In-process telemetry or loop instrumentation:
   `RunHook`.
 - External event subscribers owned by a host:
@@ -533,14 +545,31 @@ Use this decision rule:
 
 Supported lifecycle names:
 
-- `SessionStart`
-- `UserPromptSubmit`
+- `RunStart`
+- `TurnStart`
 - `ModelOutput`
 - `PreToolUse`
 - `PostToolUse`
 - `Stop`
-- `SessionEnd`
+- `RunEnd`
 - `RuntimeSignal`
+
+`RunStart` and `RunEnd` are run-level start and end points; they are not
+long-lived session boundaries. The hook names above are canonical in SDK,
+configuration, inspection, and trace payloads.
+
+Lifecycle effects:
+
+| Lifecycle       | `block` effect                                                                                                                      | `rewrite` effect                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `RunStart`      | Fails the run with `hook_stopped` / `WORKFLOW_HOOK_BLOCKED`.                                                                        | No current effect.                                                                          |
+| `TurnStart`     | Fails the run with `hook_stopped` / `WORKFLOW_HOOK_BLOCKED`.                                                                        | No current effect.                                                                          |
+| `ModelOutput`   | Adds continuation context and advances to another model turn.                                                                       | No current effect.                                                                          |
+| `PreToolUse`    | Synthesizes a failed `ToolResult` (`TOOL_BLOCKED_BY_WORKFLOW_HOOK`) and lets the run continue.                                      | Rewrites requested tool arguments before budget, repeat, policy, and tool execution checks. |
+| `PostToolUse`   | Adds continuation context after the completed or failed tool result; it does not undo the tool result.                              | No current effect.                                                                          |
+| `Stop`          | Adds continuation context and advances to another model turn instead of completing.                                                 | No current effect.                                                                          |
+| `RunEnd`        | Current call sites are fire-and-forget; a block can emit hook lifecycle events but does not change the already-terminal run result. | No current effect.                                                                          |
+| `RuntimeSignal` | Can fail or stop the run when called from an awaited runtime-signal gate.                                                           | No current effect.                                                                          |
 
 Hooks are wired with `createRun({ workflowHooks: [...] })`. Each hook can
 carry a matcher so broad lifecycle names remain usable without adding many
@@ -573,11 +602,8 @@ matching supports `*` for one path segment and `**` for multiple segments.
 Handlers return one of:
 
 - `continue` — optionally injects `ContextItem[]`.
-- `block` — prevents the current path from continuing. `PreToolUse` becomes a
-  failed tool result; `ModelOutput` / `Stop` inject continuation context so the
-  model can correct itself; `PostToolUse` injects continuation context after
-  the completed tool result; `RuntimeSignal` can stop the run with
-  `hook_stopped`.
+- `block` — prevents the current lifecycle path from continuing; the concrete
+  effect depends on the lifecycle table above.
 - `rewrite` — currently supported for `PreToolUse` tool arguments.
 - `skipped` — records that a hook intentionally did nothing.
 
@@ -587,12 +613,39 @@ event: `workflow_hook.completed`, `workflow_hook.blocked`, or
 continues, matching `RunHook`; set `onError: "block"` for governance hooks
 that should fail closed.
 
+Host config can set `capabilities.hooks.events` for non-blocking event
+observation rules. Event rules compile through the user-hook event subscription
+lane, not the awaited workflow-hook gates, so slow or failing event actions
+cannot block the run or inject workflow context. They still emit `user_hook.*`
+and, for command actions, `extension.process.*` evidence.
+
 Configured command actions additionally run through the host
 `TracedProcessRunner`. The hook lifecycle remains `workflow_hook.*`, while the
 external process itself emits `extension.process.started` and a terminal
 `extension.process.completed` / `extension.process.failed` with bounded output
-summary and optional log artifacts. Progress reported through the runner inbox
-is host-ingested: scripts do not write arbitrary SparkWright events.
+summary and optional log artifacts. Progress reported through stderr
+`SPARKWRIGHT_EVENT:` token lines is host-ingested: scripts do not write
+arbitrary SparkWright events, and token lines are stripped from stderr previews,
+artifacts, live output callbacks, and task output.
+
+Command actions can set `resultMode: "stdoutJson"` to parse successful stdout
+as a `WorkflowHookResult`. This lets a sandboxed command produce `block`,
+`rewrite`, `skipped`, or `continue` dynamically while preserving the same core
+result protocol. Omit it, or use `exitCode`, to keep the legacy exit-code
+behavior. When `stdoutJson` is enabled, stdout is reserved for the final control
+JSON; progress belongs on stderr through the helper/wire protocol.
+
+Workflow hook actions can also call `http(s)` endpoints (`type: "http"`) or
+configured delegate agents (`type: "agent"`). HTTP actions can parse
+`resultMode: "responseJson"` as a `WorkflowHookResult`, but host config keeps
+HTTP hook transport fail-closed: project config cannot define HTTP hook actions
+or `capabilities.hooks.http`, and trusted config must explicitly enable HTTP
+hooks plus allow each destination. The default HTTP request body is a hook/run
+summary, not the full run record or event payload. Private-network targets
+require explicit opt-in, while link-local and cloud metadata addresses are
+blocked. Agent actions can parse `resultMode: "workflowResult"`. Event hooks
+support `command`, `http`, and `agent` actions in the non-blocking user-hook
+lane.
 
 The same runner also has an observation path for shell commands that were
 already started in the foreground and then promoted to a task. In that case the

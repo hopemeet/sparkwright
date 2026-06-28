@@ -133,6 +133,50 @@ export async function createModel(
   };
 }
 
+/**
+ * Build one model adapter per requested profile, reusing {@link createModel}
+ * so child agents inherit the same provider/pricing resolution as the main run.
+ * Adapters are deduped by `modelRef`, so several profiles on the same model
+ * share a single adapter (and a single config read). A failure on any ref
+ * fails the whole resolution, attributed to the profile, mirroring how an
+ * unresolvable main model fails the run rather than silently degrading.
+ */
+export async function resolveProfileModelAdapters(input: {
+  requests: ReadonlyArray<{ profileId: string; modelRef: string }>;
+  goal: string;
+  workspaceRoot: string;
+  targetPath?: string;
+  env?: Record<string, string | undefined>;
+}): Promise<
+  | { ok: true; adapters: Map<string, ModelAdapter> }
+  | { ok: false; message: string }
+> {
+  const adapters = new Map<string, ModelAdapter>();
+  const byRef = new Map<string, ModelAdapter>();
+  for (const request of input.requests) {
+    let adapter = byRef.get(request.modelRef);
+    if (!adapter) {
+      const built = await createModel({
+        modelRef: request.modelRef,
+        goal: input.goal,
+        workspaceRoot: input.workspaceRoot,
+        ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+        ...(input.env ? { env: input.env } : {}),
+      });
+      if (!built.ok) {
+        return {
+          ok: false,
+          message: `agent "${request.profileId}" model "${request.modelRef}": ${built.message}`,
+        };
+      }
+      adapter = built.adapter;
+      byRef.set(request.modelRef, adapter);
+    }
+    adapters.set(request.profileId, adapter);
+  }
+  return { ok: true, adapters };
+}
+
 export async function inspectResolvedModelConfig(input: {
   modelRef?: string;
   workspaceRoot: string;

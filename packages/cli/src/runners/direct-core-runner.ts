@@ -24,6 +24,7 @@ import {
   catalogToolDefinitions,
   createCliDiagnosticToolCatalog,
   createDocumentedCommandStopHook,
+  bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
   DETERMINISTIC_PROVIDER,
   loadHostConfig,
@@ -218,6 +219,16 @@ export async function startDirectCoreRun(
   }
 
   run.events.subscribe(recordEvent);
+  const closeEventHooks = bindConfiguredEventHooks({
+    hooks: loadedConfig.config.capabilities?.hooks?.events,
+    run,
+    workspaceRoot,
+    env,
+    sandbox: loadedConfig.config.shell?.sandbox,
+    skillRoots: skillRoots.map((root) => root.root),
+    configPaths: loadedConfig.attempted.map((entry) => entry.path),
+    getRun: () => run,
+  });
 
   try {
     const result = await run.start();
@@ -261,6 +272,7 @@ export async function startDirectCoreRun(
       stopReason: result.stopReason,
     };
   } finally {
+    closeEventHooks();
     const displayState =
       run.record.state === "completed" &&
       completedRunHasCliIssues(eventSummary, documentedCommandIssueCount)

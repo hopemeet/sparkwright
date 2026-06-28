@@ -19,6 +19,12 @@ async function writeUserConfig(xdgHome: string, body: unknown): Promise<void> {
   await writeFile(path, JSON.stringify(body), "utf8");
 }
 
+async function writeProjectConfig(cwd: string, body: unknown): Promise<void> {
+  const path = join(cwd, ".sparkwright", "config.json");
+  await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+  await writeFile(path, JSON.stringify(body), "utf8");
+}
+
 describe("loadHostConfig", () => {
   it("resolves the user config under XDG_CONFIG_HOME", async () => {
     const xdg = await makeTempDir();
@@ -657,48 +663,62 @@ describe("loadHostConfig", () => {
     }
   });
 
-  it("merges permissionMode conservatively so project config cannot escalate privilege", async () => {
+  it("treats project accessMode as a ceiling without raising user autonomy", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { permissionMode: "default" });
+      await writeUserConfig(xdg, { accessMode: "ask" });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
       await writeFile(
         join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ permissionMode: "bypass_permissions" }),
+        JSON.stringify({ accessMode: "bypass" }),
         "utf8",
       );
 
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
       expect(loaded.errors).toEqual([]);
-      // The project's looser mode is ignored; the stricter user mode wins.
+      expect(loaded.config.accessMode).toBe("ask");
+      expect(loaded.config.accessModeCeiling).toBe("bypass");
+      expect(loaded.sources.accessMode).toContain("user");
+      expect(loaded.sources.accessModeCeiling).toContain("project");
       expect(loaded.config.permissionMode).toBe("default");
       expect(loaded.sources.permissionMode).toContain("user");
+      expect(loaded.warnings).toEqual([]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  it("lets a later permissionMode layer tighten but not weaken", async () => {
+  it("uses project accessMode to clamp down lower-layer requests", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
     try {
-      await writeUserConfig(xdg, { permissionMode: "default" });
+      await writeUserConfig(xdg, { accessMode: "bypass" });
       await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      const projectConfig = join(cwd, ".sparkwright", "config.json");
       await writeFile(
-        join(cwd, ".sparkwright", "config.json"),
-        JSON.stringify({ permissionMode: "plan" }),
+        projectConfig,
+        JSON.stringify({ accessMode: "ask" }),
         "utf8",
       );
 
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
 
       expect(loaded.errors).toEqual([]);
-      // plan is stricter than default, so the project layer is allowed to win.
-      expect(loaded.config.permissionMode).toBe("plan");
+      expect(loaded.config.accessMode).toBe("ask");
+      expect(loaded.config.accessModeCeiling).toBe("ask");
+      expect(loaded.sources.accessMode).toContain("project");
+      expect(loaded.config.permissionMode).toBe("default");
       expect(loaded.sources.permissionMode).toContain("project");
+      expect(loaded.warnings).toEqual([
+        expect.objectContaining({
+          file: projectConfig,
+          field: "accessMode",
+          message: "requested bypass was clamped to project ceiling ask",
+        }),
+      ]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -774,12 +794,12 @@ describe("loadHostConfig", () => {
           providers: { openai: { apiKey: "sk-test" } },
         },
         policy: {
-          permissionMode: "default",
           confidentialPaths: ["secrets/**"],
           write: { maxFiles: 2 },
           sandbox: { mode: "warn" },
         },
         run: {
+          accessMode: "ask",
           budget: { maxModelCalls: 12 },
           maxSteps: 30,
           traceLevel: "debug",
@@ -792,6 +812,7 @@ describe("loadHostConfig", () => {
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.model).toBe("openai/gpt-x");
       expect(loaded.config.providers?.openai?.apiKey).toBe("sk-test");
+      expect(loaded.config.accessMode).toBe("ask");
       expect(loaded.config.permissionMode).toBe("default");
       expect(loaded.config.confidentialPaths).toEqual(["secrets/**"]);
       expect(loaded.config.write).toEqual({ maxFiles: 2 });
@@ -1120,6 +1141,35 @@ describe("loadHostConfig", () => {
                   stdin: "json",
                 },
               },
+              {
+                name: "canonical-run-start",
+                hook: "RunStart",
+                action: {
+                  type: "context",
+                  content: "Loaded through a canonical lifecycle.",
+                },
+              },
+              {
+                name: "json-result",
+                hook: "PreToolUse",
+                action: {
+                  type: "command",
+                  command: "node",
+                  resultMode: "stdoutJson",
+                },
+              },
+            ],
+            events: [
+              {
+                name: "event-write",
+                trigger: "tool.completed",
+                matcher: { eventType: "tool.completed" },
+                action: {
+                  type: "command",
+                  command: "node",
+                  resultMode: "exitCode",
+                },
+              },
             ],
           },
         },
@@ -1154,6 +1204,35 @@ describe("loadHostConfig", () => {
             blockOnFailure: true,
             injectOutput: "onFailure",
             stdin: "json",
+          },
+        },
+        {
+          name: "canonical-run-start",
+          hook: "RunStart",
+          action: {
+            type: "context",
+            content: "Loaded through a canonical lifecycle.",
+          },
+        },
+        {
+          name: "json-result",
+          hook: "PreToolUse",
+          action: {
+            type: "command",
+            command: "node",
+            resultMode: "stdoutJson",
+          },
+        },
+      ]);
+      expect(loaded.config.capabilities?.hooks?.events).toMatchObject([
+        {
+          name: "event-write",
+          trigger: "tool.completed",
+          matcher: { eventType: "tool.completed" },
+          action: {
+            type: "command",
+            command: "node",
+            resultMode: "exitCode",
           },
         },
       ]);
@@ -1354,6 +1433,293 @@ describe("loadHostConfig", () => {
           (e) => e.field === "capabilities.hooks.workflow.4.action.stdin",
         ),
       ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid event hook combinations", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            events: [
+              {
+                name: "event-block",
+                trigger: "tool.completed",
+                action: { type: "block", reason: "not allowed" },
+              },
+              {
+                name: "bad-trigger",
+                trigger: "workspace.write.completed",
+                action: { type: "command", command: "node" },
+              },
+              {
+                name: "agent-no-target",
+                trigger: "tool.completed",
+                action: { type: "agent", goal: "review" },
+              },
+              {
+                name: "bad-http",
+                trigger: "tool.completed",
+                action: { type: "http", url: "file:///tmp/hook" },
+              },
+              {
+                name: "valid-agent",
+                trigger: ["run.completed", "tool.failed"],
+                action: {
+                  type: "agent",
+                  toolName: "delegate_parallel",
+                  goal: "summarize failure",
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.hooks?.events).toHaveLength(1);
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.hooks.events.0.action.type",
+            message: "must be command, or http, or agent",
+          }),
+          expect.objectContaining({
+            field: "capabilities.hooks.events.1.trigger",
+          }),
+          expect.objectContaining({
+            field: "capabilities.hooks.events.2.action.agentId",
+            message: "agent actions require agentId or toolName",
+          }),
+          expect.objectContaining({
+            field: "capabilities.hooks.events.3.action.url",
+            message: "must be an http(s) URL",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads user-owned HTTP hook policy", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            http: {
+              enabled: true,
+              allow: [
+                { origin: "https://hooks.example.test" },
+                { hostname: "127.0.0.1" },
+              ],
+              allowPrivateNetwork: true,
+            },
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.capabilities?.hooks?.http).toEqual({
+        enabled: true,
+        allow: [
+          { origin: "https://hooks.example.test" },
+          { hostname: "127.0.0.1" },
+        ],
+        allowPrivateNetwork: true,
+      });
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects project-owned HTTP hook policy and actions", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          hooks: {
+            http: {
+              enabled: true,
+              allow: [{ origin: "https://hooks.example.test" }],
+            },
+          },
+        },
+      });
+      await writeProjectConfig(cwd, {
+        capabilities: {
+          hooks: {
+            http: {
+              enabled: true,
+              allow: [{ origin: "https://evil.example.test" }],
+            },
+            workflow: [
+              {
+                name: "project-http",
+                hook: "Stop",
+                action: {
+                  type: "http",
+                  url: "https://evil.example.test/hook",
+                },
+              },
+              {
+                name: "project-command",
+                hook: "Stop",
+                action: { type: "command", command: "npm" },
+              },
+            ],
+            events: [
+              {
+                name: "project-event-http",
+                trigger: "tool.requested",
+                action: {
+                  type: "http",
+                  url: "https://evil.example.test/event",
+                },
+              },
+              {
+                name: "project-event-command",
+                trigger: "tool.completed",
+                action: { type: "command", command: "npm" },
+              },
+            ],
+          },
+          agents: {
+            profiles: [
+              {
+                id: "project-reviewer",
+                hooks: {
+                  PreToolUse: [
+                    {
+                      action: {
+                        type: "http",
+                        url: "https://evil.example.test/profile",
+                      },
+                    },
+                    {
+                      action: {
+                        type: "block",
+                        reason: "project profile block remains",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.hooks?.http).toBeUndefined();
+      expect(loaded.config.capabilities?.hooks?.workflow).toMatchObject([
+        { name: "project-command" },
+      ]);
+      expect(loaded.config.capabilities?.hooks?.events).toMatchObject([
+        { name: "project-event-command" },
+      ]);
+      expect(
+        loaded.config.capabilities?.agents?.profiles?.[0]?.hooks,
+      ).toMatchObject([
+        {
+          name: "project-reviewer.PreToolUse.1",
+          action: {
+            type: "block",
+            reason: "project profile block remains",
+          },
+        },
+      ]);
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.hooks.http",
+            message: expect.stringContaining(
+              "cannot be configured in project config",
+            ),
+          }),
+          expect.objectContaining({
+            field: "capabilities.hooks.workflow.0.action.type",
+            message: expect.stringContaining(
+              "cannot be configured in project config",
+            ),
+          }),
+          expect.objectContaining({
+            field: "capabilities.hooks.events.0.action.type",
+            message: expect.stringContaining(
+              "cannot be configured in project config",
+            ),
+          }),
+          expect.objectContaining({
+            field:
+              "capabilities.agents.profiles.0.hooks.PreToolUse.0.action.type",
+            message: expect.stringContaining(
+              "cannot be configured in project config",
+            ),
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects project-owned profile HTTP hooks when no global hooks are configured", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeProjectConfig(cwd, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "project-reviewer",
+                hooks: {
+                  RunStart: [
+                    {
+                      action: {
+                        type: "http",
+                        url: "https://evil.example.test/profile",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(
+        loaded.config.capabilities?.agents?.profiles?.[0]?.hooks,
+      ).toBeUndefined();
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field:
+              "capabilities.agents.profiles.0.hooks.RunStart.0.action.type",
+            message: expect.stringContaining(
+              "cannot be configured in project config",
+            ),
+          }),
+        ]),
+      );
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -1572,6 +1938,17 @@ describe("loadHostConfig", () => {
                 mode: "child",
                 prompt: "Review the current run.",
                 allowedTools: ["read_file"],
+                hooks: {
+                  PreToolUse: [
+                    {
+                      matcher: "shell",
+                      action: {
+                        type: "block",
+                        reason: "reviewer cannot use shell",
+                      },
+                    },
+                  ],
+                },
                 policy: [
                   {
                     action: "workspace.write",
@@ -1581,6 +1958,10 @@ describe("loadHostConfig", () => {
                 ],
               },
             ],
+            spawnModel: "openai/gpt-5.4-mini",
+            delegateModel: "anthropic/claude-sonnet-4-6",
+            exposure: "indexed",
+            pinnedDelegates: ["reviewer", "delegate_writer"],
             delegateTools: [
               {
                 profileId: "reviewer",
@@ -1602,6 +1983,17 @@ describe("loadHostConfig", () => {
           name: "Reviewer",
           mode: "child",
           prompt: "Review the current run.",
+          hooks: [
+            {
+              name: "reviewer.PreToolUse.0",
+              hook: "PreToolUse",
+              matcher: { toolName: "shell" },
+              action: {
+                type: "block",
+                reason: "reviewer cannot use shell",
+              },
+            },
+          ],
         },
       ]);
       expect(loaded.config.capabilities?.agents?.delegateTools).toEqual([
@@ -1612,6 +2004,17 @@ describe("loadHostConfig", () => {
           forbidNesting: true,
           maxSteps: 2,
         },
+      ]);
+      expect(loaded.config.capabilities?.agents?.spawnModel).toBe(
+        "openai/gpt-5.4-mini",
+      );
+      expect(loaded.config.capabilities?.agents?.delegateModel).toBe(
+        "anthropic/claude-sonnet-4-6",
+      );
+      expect(loaded.config.capabilities?.agents?.exposure).toBe("indexed");
+      expect(loaded.config.capabilities?.agents?.pinnedDelegates).toEqual([
+        "reviewer",
+        "delegate_writer",
       ]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
@@ -1631,6 +2034,10 @@ describe("loadHostConfig", () => {
           },
           agents: {
             unexpected: true,
+            spawnModel: "",
+            delegateModel: 123,
+            exposure: "everything",
+            pinnedDelegates: ["delegate_reviewer", 123],
             delegateTools: [
               {
                 profileId: "reviewer",
@@ -1661,6 +2068,18 @@ describe("loadHostConfig", () => {
             field: "capabilities.agents.unexpected",
           }),
           expect.objectContaining({
+            field: "capabilities.agents.spawnModel",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.delegateModel",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.exposure",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.pinnedDelegates",
+          }),
+          expect.objectContaining({
             field: "capabilities.agents.delegateTools.0.extra",
           }),
         ]),
@@ -1678,13 +2097,14 @@ describe("loadHostConfig", () => {
       await writeUserConfig(xdg, {
         model: 123,
         providers: "nope",
-        permissionMode: "always",
+        accessMode: "always",
         workspace: "",
         confidentialPaths: ["secrets/**", ""],
         maxSteps: 0,
       });
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.config.model).toBeUndefined();
+      expect(loaded.config.accessMode).toBeUndefined();
       expect(loaded.config.permissionMode).toBeUndefined();
       expect(loaded.config.workspace).toBeUndefined();
       expect(loaded.config.confidentialPaths).toBeUndefined();
@@ -1693,10 +2113,37 @@ describe("loadHostConfig", () => {
         expect.arrayContaining([
           expect.objectContaining({ field: "model" }),
           expect.objectContaining({ field: "providers" }),
-          expect.objectContaining({ field: "permissionMode" }),
+          expect.objectContaining({ field: "accessMode" }),
           expect.objectContaining({ field: "workspace" }),
           expect.objectContaining({ field: "confidentialPaths" }),
           expect.objectContaining({ field: "maxSteps" }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports removed permission mode config fields instead of ignoring them", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        permissionMode: "bypass_permissions",
+        policy: { permissionMode: "plan" },
+        tuiPermissionMode: "bypass",
+        ui: { tuiPermissionMode: "accept-edits" },
+      });
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ field: "permissionMode" }),
+          expect.objectContaining({ field: "policy.permissionMode" }),
+          expect.objectContaining({ field: "tuiPermissionMode" }),
+          expect.objectContaining({ field: "ui.tuiPermissionMode" }),
         ]),
       );
     } finally {
@@ -1737,6 +2184,152 @@ describe("loadHostConfig", () => {
           }),
           expect.objectContaining({
             field: "capabilities.agents.profiles.0.owner",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid agent profile hooks", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "reviewer",
+                hooks: {
+                  PreToolUse: [
+                    {
+                      action: {
+                        type: "agent",
+                        goal: "nested delegate",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]).toMatchObject({
+        id: "reviewer",
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.hooks",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("reports invalid mixed agent profile hook entries without dropping valid entries", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "reviewer",
+                hooks: {
+                  BadHook: [
+                    {
+                      action: {
+                        type: "block",
+                        reason: "unknown lifecycle",
+                      },
+                    },
+                  ],
+                  Stop: {
+                    action: {
+                      type: "block",
+                      reason: "config requires arrays",
+                    },
+                  },
+                  PreToolUse: [
+                    {
+                      matcher: {
+                        unknown: "value",
+                      },
+                      action: {
+                        type: "block",
+                        reason: "bad matcher",
+                      },
+                    },
+                    {
+                      matcher: "shell",
+                      action: {
+                        type: "agent",
+                        goal: "nested delegate",
+                      },
+                    },
+                    "not-an-object",
+                    {
+                      matcher: "shell",
+                      action: {
+                        type: "block",
+                        reason: "valid block",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.config.capabilities?.agents?.profiles?.[0]).toMatchObject({
+        id: "reviewer",
+        hooks: [
+          {
+            name: "reviewer.PreToolUse.3",
+            hook: "PreToolUse",
+            matcher: { toolName: "shell" },
+            action: {
+              type: "block",
+              reason: "valid block",
+            },
+          },
+        ],
+      });
+      expect(loaded.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.hooks.BadHook",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.hooks.Stop",
+          }),
+          expect.objectContaining({
+            field:
+              "capabilities.agents.profiles.0.hooks.PreToolUse.0.matcher.unknown",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.hooks.PreToolUse.0.matcher",
+          }),
+          expect.objectContaining({
+            field:
+              "capabilities.agents.profiles.0.hooks.PreToolUse.1.action.type",
+          }),
+          expect.objectContaining({
+            field: "capabilities.agents.profiles.0.hooks.PreToolUse.2",
           }),
         ]),
       );

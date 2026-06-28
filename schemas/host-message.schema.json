@@ -331,6 +331,11 @@
           "description": "Whether this run is allowed to request workspace writes."
         },
         "model": { "type": "string", "minLength": 1 },
+        "accessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"],
+          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+        },
         "permissionMode": {
           "type": "string",
           "enum": [
@@ -390,6 +395,11 @@
           "description": "Allow resuming checkpoints that are terminal or otherwise normally refused."
         },
         "model": { "type": "string", "minLength": 1 },
+        "accessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"],
+          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+        },
         "permissionMode": {
           "type": "string",
           "enum": [
@@ -597,7 +607,93 @@
             "sandbox": { "$ref": "#/$defs/CapabilityShellSandboxSummary" }
           },
           "additionalProperties": false
-        }
+        },
+        "rules": {
+          "type": "object",
+          "required": ["workflow"],
+          "properties": {
+            "workflow": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityWorkflowRuleSummary" }
+            },
+            "events": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityEventRuleSummary" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "automation": { "$ref": "#/$defs/CapabilityAutomationSummary" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityWorkflowRuleSummary": {
+      "type": "object",
+      "required": [
+        "name",
+        "source",
+        "lifecycle",
+        "matcher",
+        "action",
+        "blockingPotential",
+        "enabled",
+        "active",
+        "status"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "enum": ["config", "verification", "builtin"]
+        },
+        "lifecycle": { "type": "string", "minLength": 1 },
+        "matcher": { "type": "string" },
+        "action": { "type": "string" },
+        "blockingPotential": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["active", "available", "inactive", "disabled"]
+        },
+        "description": { "type": "string" },
+        "disableHint": { "type": "string" },
+        "configurationHint": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityEventRuleSummary": {
+      "type": "object",
+      "required": [
+        "name",
+        "source",
+        "trigger",
+        "matcher",
+        "action",
+        "blockingPotential",
+        "enabled",
+        "active",
+        "status"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "enum": ["config", "verification", "builtin"]
+        },
+        "trigger": { "type": "string", "minLength": 1 },
+        "matcher": { "type": "string" },
+        "action": { "type": "string" },
+        "blockingPotential": { "const": false },
+        "enabled": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "status": {
+          "type": "string",
+          "enum": ["active", "available", "inactive", "disabled"]
+        },
+        "description": { "type": "string" },
+        "disableHint": { "type": "string" },
+        "configurationHint": { "type": "string" }
       },
       "additionalProperties": false
     },
@@ -664,7 +760,8 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "origin": { "type": "string" },
-        "risk": { "type": "string" }
+        "risk": { "type": "string" },
+        "deferred": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -742,7 +839,11 @@
           "type": "string",
           "enum": ["acp", "external_command", "in_process"]
         },
-        "risk": { "const": "risky" },
+        "model": { "type": "string", "minLength": 1 },
+        "risk": {
+          "type": "string",
+          "enum": ["safe", "risky", "denied"]
+        },
         "requiresApproval": { "type": "boolean" },
         "approvalRequiredUnderCurrentRun": { "type": "boolean" },
         "approvalReasons": { "type": "array", "items": { "type": "string" } },
@@ -762,6 +863,7 @@
         "shellAccess": { "type": "boolean" },
         "processSpawn": { "type": "boolean" },
         "gatedByRunWrite": { "type": "boolean" },
+        "routing": { "$ref": "#/$defs/CapabilityDelegateRoutingSummary" },
         "command": { "type": "string", "minLength": 1 },
         "args": { "type": "array", "items": { "type": "string" } },
         "timeoutMs": { "type": "number" },
@@ -770,6 +872,110 @@
           "properties": {
             "stdoutBytes": { "type": "number" },
             "stderrBytes": { "type": "number" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityDelegateRoutingSummary": {
+      "type": "object",
+      "required": ["keywords"],
+      "properties": {
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "mode": { "const": "sort" },
+        "relevance": {
+          "type": "string",
+          "enum": ["relevant", "low"]
+        },
+        "score": { "type": "number" },
+        "matchedKeywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityAutomationSummary": {
+      "type": "object",
+      "required": ["cron", "tasks"],
+      "properties": {
+        "cron": {
+          "type": "object",
+          "required": ["rootDir", "jobs", "total"],
+          "properties": {
+            "rootDir": { "type": "string" },
+            "jobs": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityCronJobSummary" }
+            },
+            "total": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "tasks": {
+          "type": "object",
+          "required": ["rootDir", "tasks", "total"],
+          "properties": {
+            "rootDir": { "type": "string" },
+            "tasks": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/CapabilityTaskSummary" }
+            },
+            "total": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityCronJobSummary": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "enabled",
+        "state",
+        "schedule",
+        "nextRunAt",
+        "lastRunAt",
+        "lastStatus",
+        "lastError"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "state": { "type": "string" },
+        "schedule": { "type": "string" },
+        "nextRunAt": { "type": ["string", "null"] },
+        "lastRunAt": { "type": ["string", "null"] },
+        "lastStatus": { "type": ["string", "null"] },
+        "lastError": { "type": ["string", "null"] },
+        "lastTracePath": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityTaskSummary": {
+      "type": "object",
+      "required": ["id", "kind", "status", "parentRunId", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string" },
+        "status": { "type": "string" },
+        "title": { "type": "string" },
+        "parentRunId": { "type": "string", "minLength": 1 },
+        "createdAt": { "type": "string" },
+        "completedAt": { "type": "string" },
+        "outputChunks": { "type": "number" },
+        "lastOutputAt": { "type": "string" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
           },
           "additionalProperties": false
         }

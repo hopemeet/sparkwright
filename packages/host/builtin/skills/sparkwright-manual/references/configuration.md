@@ -12,7 +12,7 @@ Personal config: ~/.config/sparkwright/config.yaml
   TUI preferences. Existing config.json/config.yaml/config.yml files are loaded.
 
 Project config: <workspace>/.sparkwright/config.yaml
-  Use for team-safe runtime defaults: permissionMode, tools, workflow hooks,
+  Use for team-safe runtime defaults: run.accessMode, tools, workflow hooks,
   skills, MCP, agents, and project convention directories. Existing
   config.json/config.yaml/config.yml files are loaded.
 
@@ -37,9 +37,10 @@ Config is loaded in this order, with later sources overriding earlier sources:
 Within the user or project layer, `config.json` wins over `config.yaml`, which
 wins over `config.yml`; multiple files in one layer are reported as a conflict.
 
-`providers` is merged by provider key. Most other fields are replaced by the
-later source. `capabilities` is not deep-merged across files; keep related
-project capability settings together when possible.
+`providers` is merged by provider key. Project `run.accessMode` is the workspace
+access ceiling; CLI/TUI/runtime requests above it are clamped. Most other fields
+are replaced by the later source. `capabilities` is not deep-merged across files;
+keep related project capability settings together when possible.
 
 ## Scaffold
 
@@ -74,7 +75,7 @@ npm exec sparkwright -- capabilities inspect --workspace . --format text
 ```json
 {
   "model": "deterministic",
-  "permissionMode": "default",
+  "accessMode": "ask",
   "workspace": "."
 }
 ```
@@ -143,13 +144,13 @@ OpenAI-compatible proxies omit reasoning summary deltas.
 ```json
 {
   "policy": {
-    "permissionMode": "default",
     "write": {
       "maxFiles": 1,
       "maxDiffLines": 200,
       "allowDeletions": false
     }
   },
+  "run": { "accessMode": "ask" },
   "tools": {
     "defer": ["todo_write", "read_anchored_text", "edit_anchored_text"]
   },
@@ -234,12 +235,25 @@ forbidden paths, inject project context, run tests after writes, or prevent
 final answers until verification has happened. Lower-level `RunHook`,
 `ValidationHook`, and `UserHookRunner` APIs are for SDK embedders and host
 integrations, not the usual project config surface.
+For guardrails that should apply only to one configured delegate profile, use
+`capabilities.agents.profiles[].hooks` instead of global workflow hooks.
+Project config cannot define HTTP hook actions or the HTTP hook transport
+policy; keep those in trusted user config or an explicit `SPARKWRIGHT_CONFIG`
+file.
 
 ```json
 {
   "capabilities": {
     "hooks": {
       "workflow": [
+        {
+          "name": "startup-note",
+          "hook": "RunStart",
+          "action": {
+            "type": "context",
+            "content": "Mention test status before final answer."
+          }
+        },
         {
           "name": "block-generated",
           "description": "Generated files are produced by build tooling.",
@@ -270,6 +284,21 @@ integrations, not the usual project config surface.
             "injectOutput": "onFailure"
           }
         }
+      ],
+      "events": [
+        {
+          "name": "log-write",
+          "trigger": "tool.completed",
+          "matcher": {
+            "eventType": "tool.completed",
+            "toolName": ["edit_anchored_text", "apply_patch"]
+          },
+          "action": {
+            "type": "command",
+            "command": "node",
+            "args": ["scripts/log-write.js"]
+          }
+        }
       ]
     }
   }
@@ -279,19 +308,37 @@ integrations, not the usual project config surface.
 Command actions run without a shell. Set `stdin` to `json` when the command
 needs the workflow hook input on stdin; omit it or use `none` for empty stdin.
 Use `PostToolUse` for feedback after an action. Use `Stop` when the same rule
-must gate the final answer.
+must gate the final answer. Workflow lifecycle names are canonical-only:
+`RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`, `PostToolUse`, `Stop`,
+`RunEnd`, and `RuntimeSignal`. Set `resultMode` to `stdoutJson` when a command
+should return a JSON `WorkflowHookResult` on stdout; keep stdout reserved for
+that final control JSON and report live progress with helper calls such as
+`progress("checking policy")` or a stderr `SPARKWRIGHT_EVENT:` progress token
+line. Use
+`capabilities.hooks.events` for non-blocking event subscribers; event hooks emit
+`user_hook.*` / `extension.process.*` evidence but do not block or inject
+workflow context. Workflow hooks can also use `http` actions with
+`resultMode: "responseJson"` or `agent` actions with
+`resultMode: "workflowResult"`; event hooks support `command`, `http`, and
+`agent` actions in the non-blocking lane. HTTP hook actions are fail-closed:
+trusted config must set `capabilities.hooks.http.enabled: true` plus `allow`
+rules, default HTTP bodies contain only hook/run summary metadata, private
+network targets require explicit opt-in, and link-local/cloud metadata
+addresses remain blocked.
 
 ## Common Fields
 
 - `model`: active model in `provider/model` form. The reserved
   `deterministic` provider is built in.
 - `providers`: named provider definitions. Keep API keys private.
-- `permissionMode`: default run permission mode.
+- `accessMode`: default run autonomy preset (`read-only`, `ask`,
+  `accept-edits`, or `bypass`). In project config, this is the workspace access
+  ceiling; CLI/TUI runtime requests above it are clamped.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
 - `approvals`: default approval auto-grants for CLI/host clients that opt into
-  those scopes, plus `cronMode` for unattended cron defaults. TUI approval
-  behavior comes from `tuiPermissionMode`.
+  those scopes, plus `cronMode` for unattended cron defaults. Run autonomy
+  comes from `accessMode`.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `tasks`: routing and budget defaults for model-backed auxiliary tasks such as
   session compaction. `tasks.<name>.budget.maxSourceChars` is the
@@ -299,21 +346,22 @@ must gate the final answer.
   tokenizer-aware refinement, and dollar caps are only enforceable when pricing
   is known.
 - `capabilities.hooks.workflow`: deterministic project workflow hooks.
+- `capabilities.hooks.events`: non-blocking event hook subscribers.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
   schema loading.
-- `capabilities.agents`: agent profiles and delegate tools.
-- `tuiPermissionMode`, `theme`, `mouse`, `keybindings`: TUI-only preferences.
-  `tuiPermissionMode` accepts `read-only`, `ask`, `accept-edits`, or `bypass`
-  and is projected by the TUI to core run permission fields.
+- `capabilities.agents`: agent profiles, profile-scoped child workflow hooks,
+  and delegate tools.
+- `theme`, `mouse`, `keybindings`: TUI-only preferences. TUI run autonomy uses
+  shared `accessMode`; Shift+Tab changes the runtime mode for the current TUI
+  process without writing config.
 
-## Permission Modes
+## Access Modes
 
-- `plan`: prefer read-only planning.
-- `default`: normal approval behavior for risky actions.
-- `accept_edits`: accept workspace edits while preserving other policy gates.
-- `dont_ask`: avoid interactive approval prompts where the host permits it.
-- `bypass_permissions`: trusted-host escape hatch.
+- `read-only`: read-only planning.
+- `ask`: normal approval behavior for risky actions.
+- `accept-edits`: accept workspace edits while preserving other policy gates.
+- `bypass`: trusted-host escape hatch.
 
 Deny rules should remain authoritative. Skills, MCP servers, and agent profiles
 do not grant authority by themselves.
@@ -364,12 +412,47 @@ That keeps only the Skill index resident up front and lets the model pull
 relevant bodies through `skill_load`. Set `loadSelectedSkills: true` only when
 the user deliberately wants matched Skill bodies in resident context.
 
-Project agent profiles can live under `.sparkwright/agents/<id>.md`.
-Config-defined profiles live under `capabilities.agents.profiles`, and matching
-config entries win over markdown profiles. Agent profiles can use broad `use`
-selectors and concrete `allowedTools`; both filters are applied. Set
-`capabilities.agents.maxDepth` to cap nested child/delegate spawning. Only
-`delegateTools` entries become callable tools.
+Project agent profiles can live under `.sparkwright/agents/<id>.md` or nested
+subfolders under `.sparkwright/agents/`; the id is the markdown filename
+without `.md`. Config-defined profiles live under
+`capabilities.agents.profiles`, and matching config entries win over markdown
+profiles. `use` is the recommended capability axis; `allowedTools` (or the
+markdown alias `tools`) is an advanced concrete-name allowlist that only narrows
+selected tools. Set `capabilities.agents.maxDepth` to cap nested child/delegate
+spawning.
+Non-`main` profiles that omit `mode` default to child/delegate agents and are
+callable through `delegate_agent` by `agentId` unless they set
+`exposeAsDelegate: false`; `id: main` or `mode: primary` marks the primary
+profile and is excluded from delegate targets. Profile `model` wins, then
+`capabilities.agents.delegateModel`, then the parent run model for in-process
+delegates. Inline profile `delegateTool` blocks and explicit `delegateTools`
+entries define optional direct aliases; `exposure`, `pinnedDelegates`, and
+per-profile `exposeAsDelegate` decide whether those aliases appear as top-level
+`delegate_*` tools. Explicit `delegateTools` win when both target the same
+profile or tool name.
+
+Profile `hooks` attach workflow hooks to configured in-process child/delegate
+runs only. They apply through `delegate_agent`, direct delegate aliases, and
+`delegate_parallel` when the target is an in-process profile. They do not run on
+the main agent, dynamic `spawn_agent` children, ACP delegates, or
+external-command delegates. Supported profile hook actions are `command`,
+`block`, `context`, and `http`; `agent` actions are only for global workflow
+hooks. HTTP actions still follow the trusted HTTP hook policy; project config
+profile hooks that use HTTP actions are rejected like global project HTTP hooks.
+The same shape works in Agent.md frontmatter or under
+`capabilities.agents.profiles[].hooks`.
+
+Profiles can include routing hints with `triggers: [...]` or
+`when.keywords: [...]`. These hints only sort and label delegates for the
+current goal (`relevant` / `low`) and are recorded in trace as
+`agent.routing.evaluated`; they do not hide tools or change permissions.
+
+Set `capabilities.agents.enableParallelDelegates: true` to expose the opt-in
+`delegate_parallel` tool. It runs multiple configured in-process delegates in
+foreground parallel by `agentId` (preferred) or legacy `toolName`, but only
+when those delegates are read-only
+(`workspaceAccess: "none"`) and have no shell access. ACP, external-command,
+workspace-writing, and shell-capable delegates fail closed with a diagnostic.
 
 Agent profiles may also describe an external ACP-compatible worker under
 `metadata.acp`. When such a profile is exposed through `delegateTools`,

@@ -110,10 +110,14 @@ Common fields:
 - `id`
 - `name`
 - `description`
-- `mode`
+- `mode` (optional; non-`main` profiles default to child/delegate agents)
+- `model`
 - `prompt`
-- `allowedTools`
+- `use`
+- `allowedTools` (advanced concrete-name narrowing)
 - `deniedTools`
+- `hooks` (profile-scoped workflow hooks for in-process child runs)
+- `delegateTool`
 - `policy`
 - `maxSteps`
 - `runBudget`
@@ -136,16 +140,27 @@ External ACP delegates use `metadata.acp` on a profile:
 }
 ```
 
-Expose the profile with `capabilities.agents.delegateTools` to create a
-risky, approval-gated delegate tool. Use the command and args for the installed
-ACP-compatible agent process on the host machine. ACP delegates default to
-`envMode: "explicit"`; they receive only a minimal process environment plus
-configured `env` unless `envMode: "inherit"` is set.
+Expose the profile with inline `delegateTool` or
+`capabilities.agents.delegateTools` to create a risky, approval-gated delegate
+tool. Explicit `delegateTools` entries win over inline profile `delegateTool`
+when both target the same profile or tool name. Use the command and args for the
+installed ACP-compatible agent process on the host machine. ACP delegates
+default to `envMode: "explicit"`; they receive only a minimal process
+environment plus configured `env` unless `envMode: "inherit"` is set.
 
 Child agents inherit the parent run's permission mode, write guardrails, target
 path, and confidential read scope before their own profile policy is applied.
 Agent profiles can narrow behavior, but they do not grant authority outside the
 parent run boundary.
+
+Profile `hooks` are scoped guardrails for configured in-process child runs.
+They apply when the profile is invoked through `delegate_agent`, a direct
+delegate alias, or `delegate_parallel`; they do not apply to the main run,
+dynamic `spawn_agent` children, ACP delegates, or external-command delegates.
+Supported profile hook actions are `command`, `block`, `context`, and `http`;
+`agent` hook actions belong to global workflow hooks. HTTP actions still follow
+the trusted HTTP hook policy, and project config cannot define HTTP hook
+actions.
 
 For local assistants that run as regular CLI commands, use
 `metadata.externalCommand` instead:
@@ -181,7 +196,12 @@ Useful commands:
 ```bash
 npm exec sparkwright -- agents list --workspace .
 npm exec sparkwright -- agents validate --workspace .
-npm exec sparkwright -- agents create reviewer --prompt "Review code changes" --allow inspect_diff --max-steps 4 --workspace .
+npm exec sparkwright -- agents create reviewer \
+  --prompt "Review code changes" \
+  --model openai/gpt-5.4-mini \
+  --use workspace.read \
+  --max-steps 4 \
+  --workspace .
 ```
 
 In-run, agent profile capabilities are split across two tools so read-only
@@ -211,10 +231,25 @@ Child agents cannot override inherited denies.
 
 ## Delegate Tools
 
-Delegate tools expose an agent profile as a callable tool. Use them when a task
-needs scoped sub-work with an explicit prompt, tool allow-list, policy, and
-budget. The child run returns a result to the parent; the parent does not
-automatically inherit the child's entire context.
+Configured non-`main` profiles default to child/delegate agents and are indexed
+for delegation; `id: main` or `mode: primary` profiles are excluded. They can be
+called with `delegate_agent` by `agentId` unless they set
+`exposeAsDelegate: false`.
+Direct `delegate_*` aliases are optional: use them when a task needs a stable
+named tool for pinned or all direct exposure. The child run returns a result to
+the parent; the parent does not automatically inherit the child's entire
+context.
+
+Agent profile `triggers` and `when.keywords` are routing hints. SparkWright can
+sort and label delegates as `relevant` or `low` for the current goal, but the
+first implementation keeps every delegate visible and leaves policy unchanged.
+
+`capabilities.agents.enableParallelDelegates: true` exposes
+`delegate_parallel`, a foreground fan-out tool for configured in-process
+delegates. It targets agents by `agentId` (preferred) or legacy `toolName`,
+starts multiple read-only delegates concurrently, and waits for all children to
+finish. Version 1 rejects ACP delegates, external-command delegates,
+workspace-writing delegates, and delegates with shell access.
 
 Do not use delegation to avoid policy. Parent restrictions remain constraining.
 

@@ -135,7 +135,7 @@ describe("external command delegate tool", () => {
     );
   });
 
-  it("summarizes trace inbox progress on the external delegate result", async () => {
+  it("summarizes stderr token progress on the external delegate result", async () => {
     const fixture = await createProgressFixtureCommand();
     const parent = createRun({
       goal: "parent",
@@ -175,7 +175,10 @@ describe("external command delegate tool", () => {
       progressTail: Array<Record<string, unknown>>;
     };
 
-    expect(JSON.parse(result.stdout)).toEqual({ traceInbox: true });
+    expect(JSON.parse(result.stdout)).toEqual({
+      processProtocol: "stdio-v1",
+      eventToken: "SPARKWRIGHT_EVENT",
+    });
     expect(result).toMatchObject({
       progressCount: 7,
       progressDropped: 0,
@@ -841,25 +844,21 @@ async function createProgressFixtureCommand(): Promise<{
   await writeFile(
     commandPath,
     `
-import { appendFileSync } from "node:fs";
-
-const inbox = process.env.SPARKWRIGHT_TRACE_EVENTS;
-if (inbox) {
-  for (let index = 1; index <= 7; index += 1) {
-    appendFileSync(
-      inbox,
-      JSON.stringify({
-        type: "progress",
-        channel: "event",
-        message: \`phase \${index}\`,
-        data: { index },
-      }) + "\\n",
-      "utf8",
-    );
-  }
+const token = process.env.SPARKWRIGHT_EVENT_TOKEN ?? "SPARKWRIGHT_EVENT";
+for (let index = 1; index <= 7; index += 1) {
+  process.stderr.write(
+    token + ": " + JSON.stringify({
+      type: "progress",
+      message: \`phase \${index}\`,
+      data: { index },
+    }) + "\\n",
+  );
 }
 
-process.stdout.write(JSON.stringify({ traceInbox: Boolean(inbox) }));
+process.stdout.write(JSON.stringify({
+  processProtocol: process.env.SPARKWRIGHT_PROCESS_PROTOCOL,
+  eventToken: process.env.SPARKWRIGHT_EVENT_TOKEN,
+}));
 `,
     "utf8",
   );

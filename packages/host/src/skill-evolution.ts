@@ -966,6 +966,8 @@ async function updateProposalState(
     closedAt: extra.closedAt ?? proposal.closedAt,
     statusReason: extra.statusReason ?? proposal.statusReason,
     supersededBy: extra.supersededBy ?? proposal.supersededBy,
+    guardFindings: proposal.guardFindings,
+    provenance: proposal.provenance,
   };
   await mutations.writeJson(join(proposal.path, "metadata.json"), metadata, {
     reason: `Update proposal state ${proposal.id} to ${state}`,

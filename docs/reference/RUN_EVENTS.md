@@ -43,13 +43,37 @@ A timeline should be built from event families rather than exact payload shapes.
 | Sub-agent lifecycle               | `subagent.requested`, `subagent.started`, `subagent.completed`, `subagent.failed`                                                                                             | Group by `childRunId`; show parent request and child terminal status together     |
 | Background task / terminal output | `task.created`, `task.started`, `task.output`, `task.completed`, `task.failed`, `task.cancelled`                                                                              | Stream output incrementally; cap retained inline output                           |
 | Host-controlled process           | `extension.process.started`, `extension.process.progress`, `extension.process.completed`, `extension.process.failed`                                                          | Show external process invocation, bounded output summary, and progress            |
-| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`                                                    | Show capability changes as environment/context evidence                           |
+| Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`, `agent.routing.evaluated`                         | Show capability changes as environment/context evidence                           |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                                                                 | Show as host automation, not model-authored work                                  |
 | Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation and blocking decisions                    |
+
+Host-controlled process progress is accepted from line-start anchored stderr
+token lines such as
+`SPARKWRIGHT_EVENT: {"type":"progress","message":"running tests"}`. The host
+normalizes accepted records to `extension.process.progress`; malformed,
+unsupported, oversized, and over-limit records are stripped from stderr output
+surfaces and counted in `progressDropped`.
 
 A backend projection can materialize these rows into a read model, but the
 source of truth should remain the append-only event log plus `run.json`,
 `result.json`, and artifacts.
+
+`capability.index.failed` is also used for non-terminal capability discovery
+diagnostics when the payload carries `severity: "warning"`. For example, agent
+profile id collisions report `kind: "agent_profile"`,
+`code: "AGENT_PROFILE_ID_COLLISION"`, `profileId`, `keptSource`, and
+`droppedSource` while the run continues with the fail-closed kept profile.
+Delegate tool-name collisions report `kind: "delegate_tool"` and
+`code: "DELEGATE_TOOL_NAME_COLLISION"` with `toolName`, `profileId`,
+`conflictsWith`, `keptSource`, and `droppedSource`.
+`agent.routing.evaluated` records deterministic delegate-routing hints for the
+current goal when profiles declare routing keywords. The first implementation
+uses `mode: "sort"` only: all delegates remain visible, but matching delegates
+are ordered ahead of low-relevance delegates and the evaluation is preserved in
+trace.
+Parallel delegate fan-out does not add a separate event family: the parent tool
+call is visible through `tool.*`, and each child is visible through
+`subagent.*` with metadata `entrypoint: "delegate_parallel"`.
 
 ## Model Selection Evidence
 

@@ -7,6 +7,7 @@ import {
   createSkillLockfile,
   createSkillLoaderTool,
   createLoadedSkillContext,
+  createSkillPackageHasher,
   computeSkillPackageHash,
   filterSkillsForAgent,
   isDevSkill,
@@ -185,6 +186,41 @@ Review carefully.
     expect(listed.map((file) => file.relativePath)).toEqual(
       after.files.map((file) => file.relativePath),
     );
+  });
+
+  it("caches package hashes by package fingerprint and supports guard limits", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-skill-package-cache-"),
+    );
+    const skillDir = join(root, "reviewer");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      `---
+name: reviewer
+description: Reviews code changes.
+---
+Review carefully.
+`,
+    );
+    await writeFile(join(skillDir, "references", "guide.md"), "guide\n");
+
+    const hasher = createSkillPackageHasher();
+    const first = await hasher.compute(skillDir);
+    const second = await hasher.compute(skillDir);
+    expect(second.packageHash).toBe(first.packageHash);
+    expect(hasher.size).toBe(1);
+
+    await writeFile(join(skillDir, "references", "guide.md"), "new guide\n");
+    const after = await hasher.compute(skillDir);
+    expect(after.packageHash).not.toBe(first.packageHash);
+
+    await expect(
+      createSkillPackageHasher({ maxBytes: 1 }).compute(skillDir),
+    ).rejects.toThrow(/byte limit/);
+    await expect(
+      computeSkillPackageHash(skillDir, { maxFiles: 1 }),
+    ).rejects.toThrow(/file limit/);
   });
 
   it("lets stronger roots shadow weaker skills with the same name", async () => {
@@ -421,6 +457,18 @@ Body
     const indexed = captured.find((e) => e.type === "skill.indexed")!;
     expect((indexed.payload as { count: number }).count).toBeGreaterThan(0);
     expect(indexed.metadata.sourcePackage).toBe("@sparkwright/skills");
+    const indexedSkills = indexed.metadata.skills as Array<{
+      name: string;
+      packageHash?: string;
+    }>;
+    expect(indexedSkills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "code-reviewer",
+          packageHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        }),
+      ]),
+    );
   });
 
   it("skips invalid skills during run preparation and emits skill.failed", async () => {

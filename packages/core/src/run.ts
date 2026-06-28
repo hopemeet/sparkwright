@@ -1020,7 +1020,7 @@ export class SparkwrightRun implements RunHandle {
     this.lastLoopState = cloneLoopState(state);
 
     const sessionStartHooks = await this.runWorkflowHookPhase(
-      "SessionStart",
+      "RunStart",
       {
         goal: this.record.goal,
         resumedFromCheckpoint: this.resumedFromCheckpoint !== undefined,
@@ -1059,7 +1059,7 @@ export class SparkwrightRun implements RunHandle {
       }
 
       const promptSubmitHooks = await this.runWorkflowHookPhase(
-        "UserPromptSubmit",
+        "TurnStart",
         {
           goal: this.record.goal,
           transition: state.transition,
@@ -4013,7 +4013,7 @@ export class SparkwrightRun implements RunHandle {
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
-    this.kickWorkflowHookPhase("SessionEnd", {
+    this.kickWorkflowHookPhase("RunEnd", {
       state: "completed",
       reason,
       result: completedPayload,
@@ -4063,7 +4063,7 @@ export class SparkwrightRun implements RunHandle {
       failure,
       metadata: { ...safeMetadata },
     });
-    this.kickWorkflowHookPhase("SessionEnd", {
+    this.kickWorkflowHookPhase("RunEnd", {
       state: "failed",
       reason,
       failure,

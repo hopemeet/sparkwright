@@ -41,6 +41,21 @@ describe("formatEvent", () => {
     });
     expect(
       formatEvent(
+        event("capability.index.failed", {
+          kind: "agent_profile",
+          code: "AGENT_PROFILE_ID_COLLISION",
+          severity: "warning",
+          profileId: "reviewer",
+          source: "/tmp/project/.sparkwright/agents/reviewer.md",
+        }),
+      ),
+    ).toMatchObject({
+      color: "yellow",
+      detail:
+        "warning agent_profile AGENT_PROFILE_ID_COLLISION reviewer /tmp/project/.sparkwright/agents/reviewer.md",
+    });
+    expect(
+      formatEvent(
         event("capability.mutation.completed", {
           action: "write_text",
           path: "/tmp/project/.sparkwright/skill-evolution/proposals/p1/proposal.md",
@@ -79,6 +94,18 @@ describe("formatEvent", () => {
         }),
       ),
     ).toMatchObject({ color: "magenta", detail: "planner → reviewer" });
+    expect(
+      formatEvent(
+        event("agent.routing.evaluated", {
+          mode: "sort",
+          relevantCount: 1,
+          lowCount: 2,
+        }),
+      ),
+    ).toMatchObject({
+      color: "magenta",
+      detail: "sort 1 relevant 2 low",
+    });
   });
 
   it("formats subagent lifecycle events", () => {

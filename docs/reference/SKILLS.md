@@ -113,6 +113,11 @@ legacy workspace roots after builtin/user roots. `create` writes
 `<workspace>/.sparkwright/skills/<name>/SKILL.md` unless `--root` is passed. It
 refuses to overwrite an existing Skill unless `--force` is passed.
 
+The model-facing `create_skill` tool is intentionally different from the manual
+CLI create command: it drafts a Skill Evolution proposal and does not write the
+current project Skill package. A human applies or rejects the proposal through
+the proposal flow.
+
 Reports include each Skill's `layer`, `root`, and filesystem `source`. When two
 layers declare the same Skill name, the stronger layer wins and `validate`
 returns a `shadows` entry showing which source was replaced.
@@ -131,14 +136,25 @@ Start by inspecting the current Skill surface:
 
 ```bash
 sparkwright skills stats --workspace . --last 20 --format text
+sparkwright skills stats --workspace . --skill code-reviewer --package-hash sha256:... --format text
 sparkwright skills doctor --workspace . --format text
 ```
 
-`stats` reads recent session traces and reports Skill indexing/loading,
-failures, associated run status, and associated tool failures. Tool failures are
-reported as associated with loaded Skills, not caused by them. `doctor` performs
-deterministic checks such as load errors, shadowing, legacy-root warnings, and
-package hash validity.
+`stats` reads recent session traces, including agent traces under
+`agents/<agent-id>/trace.jsonl`, and reports Skill indexing/loading, failures,
+associated run status, associated tool failures, and package-hash-aligned
+proposal/history rollups. The report includes the trace/evolution window,
+freshness timestamps, analyzer findings, and a rebuildable session projection
+cache summary. Session projections are stored under
+`.sparkwright/skill-stats/sessions/` and are invalidated by trace file
+fingerprints plus the projection algorithm version. A lightweight
+`.sparkwright/skill-stats/catalog.json` maps Skill names, keys, and package
+hashes to session projections so targeted `--skill`, `--skill-key`, and
+`--package-hash` queries can skip unrelated sessions after the catalog is warm.
+Raw trace and evolution files remain the source of truth. Tool failures are
+reported as associated with loaded Skills, not caused by them. `doctor`
+performs deterministic checks such as load errors, shadowing, legacy-root
+warnings, and package hash validity.
 
 Create a new project Skill through a draft proposal:
 
@@ -349,15 +365,22 @@ const run = createRun({
 
 ## Loading Strategy
 
-The helper uses progressive loading:
+SparkWright host-created runs use progressive on-demand loading by default:
+the run gets a Skill index plus the governed `skill_load` tool, and selected
+Skill bodies are not resident-loaded unless config sets
+`capabilities.skills.loadSelectedSkills: true`.
+
+The low-level `prepareSkillsForRun` helper still supports both modes. Its
+pipeline is:
 
 1. Index all discovered Skills by `name`, `description`, version, path, and content hash.
 2. Create one `skill_index` context item listing discovered Skills without host
    source paths or content hashes in the model-visible body.
-3. Select matching Skills with a deterministic goal matcher.
-4. Load selected Skill bodies into additional context items.
-5. Optionally expose a governed `skill_load` tool for on-demand body loading.
-6. Return metadata for selected Skills so callers can store it on the run.
+3. Optionally select matching Skills with a deterministic goal matcher and load
+   them into resident context when `loadSelectedSkills` is true.
+4. Optionally expose a governed `skill_load` tool for on-demand body/resource
+   loading.
+5. Return metadata for resident-loaded Skills so callers can store it on the run.
 
 This keeps Skill behavior outside the core run loop while still making loaded
 Skills visible to context assembly and trace metadata. Loaded Skill context keeps

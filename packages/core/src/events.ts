@@ -92,6 +92,7 @@ export type EventType =
   | "capability.mutation.completed"
   | "mcp.server.prepared"
   | "agent.profile.derived"
+  | "agent.routing.evaluated"
   | "prompt.built"
   | "validation.started"
   | "validation.completed"

@@ -207,15 +207,3 @@ export async function loadSkillFromFile(path: string): Promise<SkillManifest> {
   await attachAssets(manifest, resolved);
   return manifest;
 }
-
-/** @internal */
-export function _suffixesForTesting(): {
-  dir: string;
-  md: string;
-  json: string;
-} {
-  return { dir: SKILL_DIR_FILE, md: FLAT_MD_SUFFIX, json: FLAT_JSON_SUFFIX };
-}
-
-// Silence unused import warning when basename is not used downstream.
-void basename;

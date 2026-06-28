@@ -5,6 +5,7 @@ import type {
   RunInputPayload,
   RunResumeRequestPayload,
   RunStartRequestPayload,
+  RunAccessMode,
   TraceLevel,
 } from "@sparkwright/protocol";
 
@@ -19,6 +20,7 @@ export interface HostClientRunMetadataInput {
   sessionId?: string;
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
+  accessMode?: RunAccessMode;
   modelName?: string;
 }
 
@@ -36,7 +38,10 @@ export function createHostClientRunMetadata(
     source: input.source,
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
-    ...(input.permissionMode ? { permissionMode: input.permissionMode } : {}),
+    ...(input.accessMode ? { accessMode: input.accessMode } : {}),
+    ...(!input.accessMode && input.permissionMode
+      ? { permissionMode: input.permissionMode }
+      : {}),
     ...(input.targetPath ? { targetPath: input.targetPath } : {}),
     shouldWrite: input.shouldWrite,
     traceLevel: input.traceLevel,
@@ -49,6 +54,7 @@ export function createHostStartRunRequest(input: {
   sessionId?: string;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
+  accessMode?: RunAccessMode;
   permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
@@ -62,7 +68,8 @@ export function createHostStartRunRequest(input: {
     ...(input.input ? { input: input.input } : {}),
     sessionId: input.sessionId,
     model: resolveHostRequestModel(input),
-    permissionMode: input.permissionMode,
+    accessMode: input.accessMode,
+    permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
@@ -80,6 +87,7 @@ export function createHostResumeRunRequest(input: {
   force: boolean;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
+  accessMode?: RunAccessMode;
   permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
@@ -93,7 +101,8 @@ export function createHostResumeRunRequest(input: {
     fromTrace: input.fromTrace,
     force: input.force,
     model: resolveHostRequestModel(input),
-    permissionMode: input.permissionMode,
+    accessMode: input.accessMode,
+    permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0

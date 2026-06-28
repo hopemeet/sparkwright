@@ -7,7 +7,7 @@
 // Conflict rule: when a bundle and a single skill share the same name, the
 // BUNDLE wins. Embedders that don't like this can call `getSkill` directly.
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { SkillManifest } from "./types.js";
 
@@ -258,6 +258,3 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9-]/g, "")
     .replace(/-{2,}/g, "-");
 }
-
-// Reference `stat` so the import isn't pruned if future code needs it.
-void stat;

@@ -91,6 +91,30 @@ describe("TUI ↔ host via sdk-node", () => {
     ).toThrow(/safe path segment/);
   });
 
+  it("attaches local image input before the next run", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "photo.png"), Buffer.from([1, 2, 3]));
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "deterministic",
+      store,
+    });
+
+    await expect(controller.attachImage("notes.txt")).resolves.toEqual({
+      ok: false,
+      message: "unsupported image type; use png, jpg, jpeg, gif, or webp",
+    });
+    await expect(controller.attachImage("photo.png")).resolves.toEqual({
+      ok: true,
+      name: "photo.png",
+      count: 1,
+    });
+    expect(controller.pendingAttachmentCount()).toBe(1);
+
+    controller.shutdown();
+  });
+
   it("runs a deterministic goal through the host", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
     await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
@@ -539,6 +563,61 @@ describe("TUI ↔ host via sdk-node", () => {
       expect(runJson.metadata).not.toHaveProperty(
         "allowWorkspaceWriteApproval",
       );
+    } finally {
+      controller.shutdown();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  }, 30_000);
+
+  it("runs safe read tools without approval in read-only TUI mode", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-tui-"));
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        message: "read README",
+        toolCalls: [
+          {
+            toolName: "read_file",
+            arguments: { path: "README.md", offset: 1, limit: 20 },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const store = new EventStore();
+    const controller = new RunController({
+      workspaceRoot: workspace,
+      modelName: "scripted",
+      tuiPermissionMode: "read-only",
+      store,
+    });
+
+    try {
+      await controller.start("read README");
+      const firstState = await Promise.race([
+        waitForDone(store).then(() => "done" as const),
+        waitForApproval(store).then(() => "approval" as const),
+      ]);
+
+      expect(firstState).toBe("done");
+      const snap = store.getSnapshot();
+      expect(snap.pendingApproval).toBeNull();
+      expect(
+        snap.events.some((event) => event.type === "approval.requested"),
+      ).toBe(false);
+      expect(
+        snap.events.some((event) => {
+          const payload = event.payload as { toolName?: string } | undefined;
+          return (
+            event.type === "tool.completed" && payload?.toolName === "read_file"
+          );
+        }),
+      ).toBe(true);
     } finally {
       controller.shutdown();
       if (previousScript === undefined) {

@@ -212,6 +212,9 @@ describe("trace", () => {
         runtime: "custom",
         exitCode: 0,
         progressDropped: 3,
+        progressDroppedSamples: [
+          { reason: "invalid_json", preview: "SPARKWRIGHT_EVENT: not json" },
+        ],
       }),
     );
 
@@ -232,6 +235,49 @@ describe("trace", () => {
         expect.objectContaining({ message: "second" }),
       ],
       progressTail: [],
+    });
+    expect(lines[1]?.payload).not.toHaveProperty("progressDroppedSamples");
+  });
+
+  it("keeps process progress dropped samples at debug trace level", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-debug-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressDropped: 1,
+        progressDroppedSamples: [
+          { reason: "invalid_json", preview: "SPARKWRIGHT_EVENT: not json" },
+        ],
+      }),
+    );
+
+    const lines = (await readFile(store.tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+
+    expect(lines[1]?.payload).toMatchObject({
+      progressDropped: 1,
+      progressDroppedSamples: [
+        { reason: "invalid_json", preview: "SPARKWRIGHT_EVENT: not json" },
+      ],
     });
   });
 
