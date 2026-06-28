@@ -6,6 +6,9 @@ major; breaking changes bump the major.
 
 ## Unreleased
 
+- Add optional `accessMode` to `run.start` and `run.resume` payloads as the
+  preferred high-level run autonomy field. Hosts compile it to legacy
+  `permissionMode`/`shouldWrite` and record conflicts in metadata.
 - Add optional `traceLevel` to `run.start` and `run.resume` payloads.
 - Add optional `autoApproved` to `approval.resolve` so clients can mark
   policy/flag-driven approvals structurally.
@@ -16,6 +19,14 @@ major; breaking changes bump the major.
 - Add optional `llm` to `session.compact` payloads. Provider/scripted model refs
   route to the model-backed Tier 3 summarizer; deterministic refs keep the
   preview path and return a warning.
+- Add optional `model` to capability delegate summaries so clients can inspect
+  profile-preferred delegate models.
+- Add optional `rules.workflow` to capability snapshots so clients can inspect
+  configured workflow hooks, verification-generated hooks, and built-in
+  workflow rule availability without changing run behavior.
+- Add optional `rules.events` to capability snapshots so clients can inspect
+  configured non-blocking event hook subscribers. Workflow rule lifecycles are
+  reported with canonical hook names.
 - Promote persisted compact artifacts to `session-compact.v2` with top-level
   `freedChars`; unsupported v1 artifacts are ignored rather than migrated.
 - Add `metadata.summaryFingerprint` and `metadata.measurement` to compact

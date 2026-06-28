@@ -21,7 +21,13 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   const p = rec(event.payload);
 
   let color = "gray";
-  if (t.endsWith(".failed") || t.endsWith(".rejected") || t.endsWith(".denied"))
+  if (t.startsWith("capability.") && p?.severity === "warning")
+    color = "yellow";
+  else if (
+    t.endsWith(".failed") ||
+    t.endsWith(".rejected") ||
+    t.endsWith(".denied")
+  )
     color = "red";
   else if (isVerificationHook(p)) color = verificationHookColor(t, p);
   else if (isWorkflowHook(t)) color = workflowHookColor(t, p);
@@ -59,7 +65,13 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     else if (t === "skill.failed") detail = str(p.source ?? p.message);
     else if (t === "skill.loaded") detail = str(p.name);
     else if (t === "capability.index.failed") {
-      detail = [str(p.kind), str(p.code), str(p.source)]
+      detail = [
+        str(p.severity),
+        str(p.kind),
+        str(p.code),
+        str(p.profileId),
+        str(p.source),
+      ]
         .filter(Boolean)
         .join(" ");
     } else if (t === "mcp.server.prepared") {
@@ -71,6 +83,14 @@ export function formatEvent(event: RunEvent): FormattedEvent {
       detail = [str(p.parentAgentId), str(p.childAgentId)]
         .filter(Boolean)
         .join(" → ");
+    } else if (t === "agent.routing.evaluated") {
+      detail = [
+        str(p.mode),
+        `${p.relevantCount ?? 0} relevant`,
+        `${p.lowCount ?? 0} low`,
+      ]
+        .filter(Boolean)
+        .join(" ");
     } else if (t.startsWith("subagent.")) {
       const meta = rec(event.metadata);
       detail =

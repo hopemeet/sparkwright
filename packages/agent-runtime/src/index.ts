@@ -35,6 +35,9 @@ import type {
   ToolResult,
   UsageSnapshot,
   UsageTracker,
+  WorkflowHook,
+  WorkflowHookMatcher,
+  WorkflowHookName,
 } from "@sparkwright/core";
 import {
   createAppPromptSection,
@@ -57,6 +60,74 @@ export interface CapabilityRule {
   source?: "parent_agent" | "parent_run" | "child_agent" | "runtime";
 }
 
+export interface AgentProfileDelegateTool {
+  toolName?: string;
+  description?: string;
+  requiresApproval?: boolean;
+  forbidNesting?: boolean;
+  maxSteps?: number;
+}
+
+export interface AgentProfileRoutingCondition {
+  /**
+   * Optional deterministic keyword hints used by hosts to sort or annotate
+   * delegate tools for a specific goal. They are hints only; they must not
+   * grant permissions or hide a delegate unless an embedder opts into a
+   * separate gating mode.
+   */
+  keywords?: string[];
+}
+
+export type AgentProfileWorkflowHookOutputInjection =
+  | "always"
+  | "onFailure"
+  | "never";
+
+export type AgentProfileWorkflowHookAction =
+  | {
+      type: "block";
+      reason: string;
+    }
+  | {
+      type: "context";
+      content: string;
+      contextType?: "system" | "user" | "summary";
+    }
+  | {
+      type: "command";
+      command: string;
+      args?: string[];
+      cwd?: string;
+      timeoutMs?: number;
+      blockOnFailure?: boolean;
+      injectOutput?: AgentProfileWorkflowHookOutputInjection;
+      maxOutputBytes?: number;
+      stdin?: "none" | "json";
+      resultMode?: "exitCode" | "stdoutJson";
+    }
+  | {
+      type: "http";
+      url: string;
+      method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      headers?: Record<string, string>;
+      body?: string;
+      timeoutMs?: number;
+      blockOnFailure?: boolean;
+      injectOutput?: AgentProfileWorkflowHookOutputInjection;
+      resultMode?: "status" | "responseJson";
+    };
+
+export interface AgentProfileWorkflowHookConfig {
+  name: string;
+  description?: string;
+  hook: WorkflowHookName;
+  enabled?: boolean;
+  onError?: "continue" | "block";
+  frequency?: "always" | "oncePerTurn";
+  matcher?: WorkflowHookMatcher;
+  action: AgentProfileWorkflowHookAction;
+}
+
 export interface AgentProfile {
   id: string;
   name?: string;
@@ -67,8 +138,10 @@ export interface AgentProfile {
    */
   mode?: AgentMode;
   /**
-   * Preferred model for this profile. Carried for application-level
-   * orchestration; not applied to model selection by agent-runtime itself.
+   * Preferred model ("provider/model") for this profile. agent-runtime carries
+   * it for orchestration but does not select on it; the host applies it to
+   * in-process delegate child runs (see `resolveProfileModelAdapters` and
+   * `createConfiguredDelegateTools` in @sparkwright/host).
    */
   model?: unknown;
   /**
@@ -85,6 +158,36 @@ export interface AgentProfile {
   use?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
+  /**
+   * Optional deterministic routing hints for delegate discovery. Hosts may use
+   * these to sort/label delegate tools for a goal; absence preserves the
+   * profile's existing ordering and visibility.
+   */
+  triggers?: string[];
+  /**
+   * Lightweight routing condition hints. The first host implementation only
+   * supports keyword matching (`when.keywords`) and treats it the same as
+   * `triggers`; richer condition DSLs should be added deliberately.
+   */
+  when?: AgentProfileRoutingCondition;
+  delegateTool?: AgentProfileDelegateTool;
+  /**
+   * Tri-state opt-in/opt-out for automatic delegate exposure. `undefined` means
+   * "not configured" (the host's `capabilities.agents.exposeChildrenAsDelegates`
+   * flag decides for direct aliases); `true` forces this child/all profile into
+   * automatic delegate exposure even when the global flag is off; `false`
+   * suppresses automatic `delegate_agent` targeting and direct alias exposure.
+   * An explicit `delegateTool` (inline) or a
+   * `capabilities.agents.delegateTools[]` entry still wins. See
+   * `resolveAgentDelegateTools` in @sparkwright/host.
+   */
+  exposeAsDelegate?: boolean;
+  /**
+   * Neutral deterministic workflow-hook carrier for profile-authored child-run
+   * guardrails. Host compiles this structural shape into runtime
+   * `WorkflowHook[]`; agent-runtime does not import host config types.
+   */
+  hooks?: AgentProfileWorkflowHookConfig[];
   policy?: CapabilityRule[];
   maxSteps?: number;
   runBudget?: RunBudget;
@@ -568,6 +671,11 @@ export interface SpawnSubAgentInput {
   runBudget?: RunBudget;
   hooks?: RunHook[];
   /**
+   * Deterministic workflow hooks registered on the child run. Distinct from the
+   * lower-level `hooks`/RunHook lane.
+   */
+  workflowHooks?: WorkflowHook[];
+  /**
    * Optional child profile. When supplied, the child's effective policy is
    * derived via `deriveChildAgentProfile` + `createAgentProfilePolicy` and
    * layered on top of any explicit `policy` override.
@@ -639,6 +747,7 @@ export type SubAgentEntrypoint =
   | "run"
   | "spawn_agent"
   | "delegate"
+  | "delegate_parallel"
   | "delegates_run"
   | "acp"
   | "external_command";
@@ -734,6 +843,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
       input.interactionChannel === null ? undefined : input.interactionChannel,
     approvalResolver: input.approvalResolver,
     hooks: input.hooks,
+    workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,
     runBudget: input.runBudget,
     abortSignal: parent.abortSignal,
@@ -878,6 +988,7 @@ function isSubAgentEntrypoint(value: unknown): value is SubAgentEntrypoint {
     value === "run" ||
     value === "spawn_agent" ||
     value === "delegate" ||
+    value === "delegate_parallel" ||
     value === "delegates_run" ||
     value === "acp" ||
     value === "external_command"
@@ -1020,10 +1131,36 @@ export interface AgentToolResult {
   note?: string;
 }
 
-interface AgentToolCompletedCacheEntry {
-  goal: string;
-  result: AgentToolResult;
+export interface DelegationLedgerKey {
+  kind: "agent_tool" | "configured_delegate" | "dynamic_spawn";
+  agentProfileId?: string;
+  delegateTool?: string;
+  role?: string;
+  prompt?: string;
+  allowedTools?: readonly string[];
 }
+
+export interface DelegationLedgerResult extends AgentToolResult {
+  truncated?: boolean;
+  output?: Record<string, unknown>;
+}
+
+interface DelegationLedgerEntry {
+  key: string;
+  goal: string;
+  result: DelegationLedgerResult;
+}
+
+export interface DelegationLedgerHit {
+  goal: string;
+  result: DelegationLedgerResult;
+}
+
+const DELEGATION_LEDGER_MAX_RESULTS = 24;
+const delegationLedgersByParent = new WeakMap<
+  RunHandle,
+  DelegationLedgerEntry[]
+>();
 
 export interface CreateAgentToolOptions {
   /** Tool name registered with the parent. Default: "delegate". */
@@ -1037,7 +1174,14 @@ export interface CreateAgentToolOptions {
   buildSpawnInput(
     input: AgentToolInvocationInput,
     parent: RunHandle,
-  ): Omit<SpawnSubAgentInput, "parent">;
+  ):
+    | Omit<SpawnSubAgentInput, "parent">
+    | Promise<Omit<SpawnSubAgentInput, "parent">>;
+  /**
+   * Stable identity for sharing completed delegation results with other
+   * delegation entrypoints on the same parent run.
+   */
+  delegationLedgerKey?: DelegationLedgerKey;
   /**
    * Summarize the child's terminal state back into the parent-visible tool
    * result. Default: a small structured object with id/result/usage.
@@ -1081,10 +1225,10 @@ export function createAgentTool(
   const name = options.name ?? DEFAULT_AGENT_TOOL_NAME;
   const description = options.description ?? DEFAULT_AGENT_TOOL_DESCRIPTION;
   const summarize = options.summarize ?? defaultSummarize;
-  const successfulResultsByParent = new Map<
-    string,
-    AgentToolCompletedCacheEntry[]
-  >();
+  const delegationLedgerKey = options.delegationLedgerKey ?? {
+    kind: "agent_tool",
+    delegateTool: name,
+  };
 
   return defineTool({
     name,
@@ -1125,17 +1269,14 @@ export function createAgentTool(
       }
       const parsed = parseAgentToolArgs(args);
       const prior = findSimilarSuccessfulDelegation(
-        successfulResultsByParent.get(parent.record.id) ?? [],
+        parent,
+        delegationLedgerKey,
         parsed.goal,
       );
       if (prior) {
-        return {
-          ...prior.result,
-          alreadyCompleted: true,
-          note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
-        };
+        return withAlreadyCompletedNote(prior.result);
       }
-      const spawnOverrides = options.buildSpawnInput(parsed, parent);
+      const spawnOverrides = await options.buildSpawnInput(parsed, parent);
       const spawned = spawnSubAgent({ ...spawnOverrides, parent });
       const result = await spawned.run.start();
       const usage = spawned.run.usage();
@@ -1160,9 +1301,9 @@ export function createAgentTool(
       if (stepLimitReached) {
         return withStepLimitReachedNote(output, structured);
       }
-      const results = successfulResultsByParent.get(parent.record.id) ?? [];
-      results.push({ goal: parsed.goal, result: structured });
-      successfulResultsByParent.set(parent.record.id, results.slice(-8));
+      rememberSuccessfulDelegation(parent, delegationLedgerKey, parsed.goal, {
+        ...structured,
+      });
       return output;
     },
   });
@@ -1202,7 +1343,14 @@ export * from "./concurrency/index.js";
 export * from "./todo/index.js";
 
 function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
+  return summarizeDelegationResult(input);
+}
+
+export function summarizeDelegationResult(
+  input: AgentToolSummarizeInput,
+): DelegationLedgerResult {
   const stepLimitReached = runResultStepLimitReached(input.result);
+  const truncated = runResultTruncated(input.result) || stepLimitReached;
   return {
     childRunId: input.childRunId,
     spanId: input.spanId,
@@ -1214,6 +1362,7 @@ function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
     toolCalls: input.usage.toolCalls,
     modelCalls: input.usage.modelCalls,
     ...(stepLimitReached ? { stepLimitReached: true } : {}),
+    ...(truncated ? { truncated: true } : {}),
   };
 }
 
@@ -1222,6 +1371,82 @@ function runResultStepLimitReached(result: RunResult): boolean {
     (result.metadata as { stepLimitReached?: unknown } | undefined)
       ?.stepLimitReached === true
   );
+}
+
+function runResultTruncated(result: RunResult): boolean {
+  return (
+    (result.metadata as { truncated?: unknown } | undefined)?.truncated === true
+  );
+}
+
+export function findSimilarSuccessfulDelegation(
+  parent: RunHandle,
+  key: DelegationLedgerKey,
+  goal: string,
+): DelegationLedgerHit | undefined {
+  const entries = delegationLedgersByParent.get(parent) ?? [];
+  const normalizedKey = delegationLedgerKeyString(key);
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const candidate = entries[i];
+    if (!candidate || candidate.key !== normalizedKey) continue;
+    if (similarGoalScore(candidate.goal, goal) >= 0.35) {
+      return { goal: candidate.goal, result: candidate.result };
+    }
+  }
+  return undefined;
+}
+
+export function rememberSuccessfulDelegation(
+  parent: RunHandle,
+  key: DelegationLedgerKey,
+  goal: string,
+  result: DelegationLedgerResult,
+): boolean {
+  if (!isReusableDelegationResult(result)) return false;
+  const entries = delegationLedgersByParent.get(parent) ?? [];
+  entries.push({
+    key: delegationLedgerKeyString(key),
+    goal,
+    result: { ...result },
+  });
+  delegationLedgersByParent.set(
+    parent,
+    entries.slice(-DELEGATION_LEDGER_MAX_RESULTS),
+  );
+  return true;
+}
+
+function isReusableDelegationResult(result: DelegationLedgerResult): boolean {
+  return (
+    result.signal === "completed" &&
+    result.stepLimitReached !== true &&
+    result.truncated !== true
+  );
+}
+
+export function withAlreadyCompletedNote(
+  result: DelegationLedgerResult,
+): DelegationLedgerResult {
+  return {
+    ...result,
+    alreadyCompleted: true,
+    note: "A similar delegation already completed in this parent run; summarize the previous child result instead of spawning another child agent.",
+  };
+}
+
+function delegationLedgerKeyString(key: DelegationLedgerKey): string {
+  const allowedTools =
+    key.allowedTools && key.allowedTools.length > 0
+      ? [...new Set(key.allowedTools)].sort()
+      : undefined;
+  return JSON.stringify({
+    kind: key.kind,
+    ...(key.agentProfileId ? { agentProfileId: key.agentProfileId } : {}),
+    ...(key.delegateTool ? { delegateTool: key.delegateTool } : {}),
+    ...(key.role ? { role: key.role } : {}),
+    ...(key.prompt ? { prompt: key.prompt } : {}),
+    ...(allowedTools ? { allowedTools } : {}),
+  });
 }
 
 function withStepLimitReachedNote(
@@ -1270,20 +1495,6 @@ function isAgentToolResult(value: unknown): value is AgentToolResult {
     typeof (value as { spanId?: unknown }).spanId === "string" &&
     typeof (value as { signal?: unknown }).signal === "string"
   );
-}
-
-function findSimilarSuccessfulDelegation(
-  results: AgentToolCompletedCacheEntry[],
-  goal: string,
-): { result: AgentToolResult } | undefined {
-  for (let i = results.length - 1; i >= 0; i -= 1) {
-    const candidate = results[i];
-    if (!candidate) continue;
-    if (similarGoalScore(candidate.goal, goal) >= 0.35) {
-      return { result: candidate.result };
-    }
-  }
-  return undefined;
 }
 
 function similarGoalScore(a: string, b: string): number {

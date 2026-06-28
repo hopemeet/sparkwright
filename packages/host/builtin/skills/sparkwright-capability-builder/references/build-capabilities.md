@@ -75,8 +75,9 @@ npm exec sparkwright -- agents validate --workspace .
 ```
 
 Add `--delegate <tool_name>` only when the main agent should be able to call
-the profile as a tool. A profile without a delegate tool is still inspectable
-but not callable by the main agent.
+the profile as a tool. For committed markdown profiles, an inline
+`delegateTool` block provides the same callable surface. A profile without
+either delegate form is still inspectable but not callable by the main agent.
 
 Use allow/deny rules to constrain the child agent. Child allow rules must not
 be treated as permission escalation; inherited policy still applies.

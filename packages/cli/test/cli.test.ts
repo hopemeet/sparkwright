@@ -569,7 +569,9 @@ describe("runCli", () => {
                 id: "reviewer",
                 name: "Reviewer",
                 mode: "child",
+                model: "deterministic",
                 prompt: "Review files.",
+                triggers: ["review", "diff"],
                 allowedTools: ["read_file"],
                 maxSteps: 3,
               },
@@ -578,6 +580,7 @@ describe("runCli", () => {
                 name: "Writer",
                 mode: "child",
                 prompt: "Patch files.",
+                triggers: ["write", "patch"],
                 use: ["workspace.write"],
                 allowedTools: ["apply_patch"],
                 maxSteps: 3,
@@ -607,15 +610,16 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     const report = JSON.parse(output.stdoutText());
-    const tool = (report.tools?.available ?? []).find(
+    const delegateAgentTool = (report.tools?.available ?? []).find(
+      (t: { name: string }) => t.name === "delegate_agent",
+    );
+    const directDelegateTool = (report.tools?.available ?? []).find(
       (t: { name: string }) => t.name === "delegate_reviewer",
     );
-    // A real run materializes this in-process child-agent delegate as a tool,
-    // so the inventory must list it (regression: it was dropped because only
-    // external ACP/command delegates had a descriptor).
-    expect(tool).toBeTruthy();
-    expect(tool.source).toBe("delegate");
-    expect(tool.origin).toBe("in_process:reviewer");
+    expect(delegateAgentTool).toBeTruthy();
+    expect(delegateAgentTool.source).toBe("builtin");
+    expect(delegateAgentTool.origin).toBe("local:sparkwright");
+    expect(directDelegateTool).toBeUndefined();
     expect(report.agents?.delegateTools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -623,6 +627,7 @@ describe("runCli", () => {
           profileId: "reviewer",
           profileName: "Reviewer",
           protocol: "in_process",
+          model: "deterministic",
           risk: "safe",
           requiresApproval: false,
           approvalRequiredUnderCurrentRun: false,
@@ -631,6 +636,7 @@ describe("runCli", () => {
           workspaceAccess: "none",
           shellAccess: false,
           processSpawn: false,
+          routing: { keywords: ["review", "diff"] },
         }),
         expect.objectContaining({
           toolName: "delegate_writer",
@@ -645,8 +651,87 @@ describe("runCli", () => {
           shellAccess: false,
           processSpawn: false,
           gatedByRunWrite: true,
+          routing: { keywords: ["write", "patch"] },
         }),
       ]),
+    );
+  });
+
+  it("reports delegate_parallel reserved-name collisions in capabilities inspect", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            exposure: "all",
+            enableParallelDelegates: true,
+            profiles: [
+              { id: "primary", name: "Primary", mode: "primary" },
+              {
+                id: "parallel",
+                name: "Parallel",
+                mode: "child",
+                allowedTools: [],
+                maxSteps: 1,
+              },
+            ],
+            delegateTools: [
+              { profileId: "parallel", toolName: "delegate_parallel" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    const jsonOutput = createOutputCapture();
+    const jsonResult = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: {
+          stdout: jsonOutput.stdout,
+          stderr: jsonOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(jsonResult.exitCode).toBe(0);
+    const report = JSON.parse(jsonOutput.stdoutText());
+    expect(
+      (report.tools?.available ?? []).filter(
+        (tool: { name: string }) => tool.name === "delegate_parallel",
+      ),
+    ).toHaveLength(1);
+    expect(report.agents?.delegateToolCollisions).toEqual([
+      {
+        toolName: "delegate_parallel",
+        profileId: "builtin:delegate_parallel",
+        conflictsWith: "parallel",
+        source: "builtin",
+      },
+    ]);
+
+    const textOutput = createOutputCapture();
+    const textResult = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: {
+          stdout: textOutput.stdout,
+          stderr: textOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(textResult.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain("agents: 2 effective");
+    expect(textOutput.stdoutText()).toContain("1 collisions");
+    expect(textOutput.stdoutText()).toContain("delegate tool collisions: 1");
+    expect(textOutput.stdoutText()).toContain(
+      "delegate_parallel: builtin:delegate_parallel (builtin) dropped; owned by parallel (fail-closed)",
     );
   });
 
@@ -992,6 +1077,134 @@ describe("runCli", () => {
     expect(sessionJson.runIds).toHaveLength(1);
   });
 
+  it("clamps CLI access-mode overrides to the project access ceiling", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ run: { accessMode: "read-only" } }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "inspect temp",
+        "--workspace",
+        workspace,
+        "--access-mode",
+        "bypass",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const sessionDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      result.sessionId!,
+    );
+    const sessionJson = JSON.parse(
+      await readFile(join(sessionDir, "session.json"), "utf8"),
+    ) as { runIds: string[] };
+    const runJson = JSON.parse(
+      await readFile(
+        join(
+          sessionDir,
+          "agents",
+          "main",
+          "runs",
+          sessionJson.runIds[0]!,
+          "run.json",
+        ),
+        "utf8",
+      ),
+    ) as { metadata?: Record<string, unknown> };
+
+    expect(runJson.metadata).toMatchObject({
+      source: "cli",
+      accessMode: "read-only",
+      permissionMode: "plan",
+      shouldWrite: false,
+    });
+  });
+
+  it("allows safe read tools without approval in read-only access mode", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "read temp",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--access-mode",
+        "read-only",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "README.md", offset: 1, limit: 20 },
+                },
+                {
+                  toolName: "glob",
+                  arguments: {
+                    path: ".",
+                    patterns: ["README.md"],
+                    maxPaths: 5,
+                  },
+                },
+              ],
+            },
+            { message: "read-only tools completed" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(events.map((event) => event.type)).not.toContain(
+      "approval.requested",
+    );
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool.completed",
+          payload: expect.objectContaining({ toolName: "read_file" }),
+        }),
+        expect.objectContaining({
+          type: "tool.completed",
+          payload: expect.objectContaining({ toolName: "glob" }),
+        }),
+        expect.objectContaining({ type: "workspace.read" }),
+      ]),
+    );
+  });
+
   it("writes host run sessions under --session-root", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
@@ -1152,9 +1365,8 @@ describe("runCli", () => {
         workspace,
         "--target",
         "README.md",
-        "--write",
-        "--permission-mode",
-        "accept_edits",
+        "--access-mode",
+        "accept-edits",
       ],
       {
         io: {
@@ -1173,47 +1385,6 @@ describe("runCli", () => {
     const events = await readTrace(result.tracePath);
     expect(events.map((event) => event.type)).toContain(
       "workspace.write.completed",
-    );
-    expect(events.map((event) => event.type)).not.toContain(
-      "approval.requested",
-    );
-  });
-
-  it("denies approval-gated writes in dont_ask mode", async () => {
-    const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
-    const output = createOutputCapture();
-
-    const result = await runCli(
-      [
-        "run",
-        "--direct-core",
-        "dont ask temp write",
-        "--workspace",
-        workspace,
-        "--target",
-        "README.md",
-        "--write",
-        "--permission-mode",
-        "dont_ask",
-      ],
-      {
-        io: {
-          stdout: output.stdout,
-          stderr: output.stderr,
-          stdinIsTTY: false,
-        },
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    await expect(readFile(join(workspace, "README.md"), "utf8")).resolves.toBe(
-      "# Demo\n",
-    );
-
-    const events = await readTrace(result.tracePath);
-    expect(events.map((event) => event.type)).toContain(
-      "workspace.write.denied",
     );
     expect(events.map((event) => event.type)).not.toContain(
       "approval.requested",
@@ -1308,12 +1479,16 @@ describe("runCli", () => {
     expect(first.stdoutText()).toContain(configPath);
     const configText = await readFile(configPath, "utf8");
     expect(configText).toContain("# yaml-language-server: $schema=file://");
+    expect(configText).toContain("  accessMode: ask");
+    expect(configText).toContain("  traceLevel: standard");
     expect(configText).toContain("ui:");
     expect(configText).toContain("  theme: dark");
     expect(configText).toContain("  mouse: true");
     expect(configText).toContain("# tasks:");
     expect(configText).toContain("#   compaction:");
     expect(configText).toContain("#       maxSourceChars: 60000");
+    expect(configText).toContain("#     # spawnModel: openai/gpt-5.4-mini");
+    expect(configText).toContain("#     # delegateModel: openai/gpt-5.4-mini");
 
     const cwd = await mkdtemp(join(tmpdir(), "sw-"));
     tempDirs.push(cwd);
@@ -1325,9 +1500,11 @@ describe("runCli", () => {
       "REPLACE_WITH_YOUR_API_KEY",
     );
     expect(loaded.config.permissionMode).toBe("default");
+    expect(loaded.config.traceLevel).toBe("standard");
     expect(loaded.config.runBudget?.maxModelCalls).toBe(80);
     expect(loaded.config.runBudget?.maxCostUsd).toBe(2.0);
     expect(loaded.config.tools).toBeUndefined();
+    expect(loaded.config.capabilities?.agents).toBeUndefined();
     if (process.platform !== "win32") {
       // Secret-bearing file must not be group/world readable on POSIX.
       const mode = (await stat(configPath)).mode & 0o777;
@@ -1417,7 +1594,7 @@ describe("runCli", () => {
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({ policy: { permissionMode: "nope" } }),
+      JSON.stringify({ run: { accessMode: "nope" } }),
       "utf8",
     );
 
@@ -1427,11 +1604,11 @@ describe("runCli", () => {
       { io: { stdout: bad.stdout, stderr: bad.stderr } },
     );
     expect(badResult.exitCode).toBe(1);
-    expect(bad.stdoutText()).toContain("permissionMode");
+    expect(bad.stdoutText()).toContain("accessMode");
 
     await writeFile(
       join(workspace, ".sparkwright", "config.json"),
-      JSON.stringify({ policy: { permissionMode: "plan" } }),
+      JSON.stringify({ run: { accessMode: "read-only" } }),
       "utf8",
     );
     const good = createOutputCapture();
@@ -1573,6 +1750,9 @@ describe("runCli", () => {
     );
     await expect(readFile(configPath, "utf8")).resolves.toContain(
       "# yaml-language-server: $schema=file://",
+    );
+    await expect(readFile(configPath, "utf8")).resolves.toContain(
+      "  traceLevel: standard",
     );
   });
 
@@ -1864,6 +2044,67 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("tool: list_skills");
     // append_file was retired in favor of edit_anchored_text / apply_patch.
     expect(output.stdoutText()).not.toContain("tool: append_file");
+  });
+
+  it("shows workflow and event rules in capability inspect text output", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          hooks: {
+            workflow: [
+              {
+                name: "guard-shell",
+                hook: "PreToolUse",
+                matcher: { toolName: "shell" },
+                action: { type: "block", reason: "No shell." },
+              },
+            ],
+            events: [
+              {
+                name: "record-tool",
+                trigger: "tool.completed",
+                matcher: { toolName: "shell" },
+                action: { type: "command", command: "node" },
+              },
+            ],
+          },
+          verification: {
+            mode: "require",
+            profiles: {
+              fast: [{ id: "test", command: "npm", args: ["test"] }],
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("workflow rules: 4");
+    expect(output.stdoutText()).toContain(
+      "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=shell; action=block: No shell.",
+    );
+    expect(output.stdoutText()).toContain(
+      "rule: verification:fast:test [verification] PostToolUse active; canBlock=false",
+    );
+    expect(output.stdoutText()).toContain(
+      "rule: documented-command-check [builtin] Stop available; canBlock=true",
+    );
+    expect(output.stdoutText()).toContain("event rules: 1");
+    expect(output.stdoutText()).toContain(
+      "event rule: record-tool [config] tool.completed active; canBlock=false; matcher=toolName=shell; action=command: node; injectOutput=always",
+    );
   });
 
   it("shows missing model pricing in capability inspect", async () => {
@@ -2302,6 +2543,10 @@ describe("runCli", () => {
     const sessionRoot = join(workspace, ".sparkwright", "sessions");
     const sessionId = "session_skill_stats";
     const runId = "run_skill_stats";
+    const residentRunId = "run_resident_skill_stats";
+    const agentRunId = "run_agent_skill_stats";
+    const legacyRunId = "run_legacy_skill_stats";
+    const unknownRunId = "run_unknown_skill_stats";
     const sessionDir = join(sessionRoot, sessionId);
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
@@ -2311,7 +2556,8 @@ describe("runCli", () => {
           id: sessionId,
           createdAt: "2026-06-13T00:00:00.000Z",
           updatedAt: "2026-06-13T00:00:02.000Z",
-          runIds: [runId],
+          runIds: [runId, residentRunId, agentRunId, legacyRunId, unknownRunId],
+          agents: ["main", "dynamic_reviewer"],
           eventCount: 0,
         },
         null,
@@ -2332,31 +2578,224 @@ describe("runCli", () => {
             skills: [
               {
                 name: "code-reviewer",
+                layer: "project",
                 sourcePath: skillPath,
                 contentHash: "sha256:indexed",
+                packageHash: "sha256:package",
+              },
+            ],
+          },
+        ),
+        traceEvent(2, runId, "tool.failed", {
+          toolName: "glob",
+          error: { code: "EACCES", message: "denied" },
+        }),
+        traceEvent(
+          3,
+          runId,
+          "skill.loaded",
+          { name: "code-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(4, runId, "tool.failed", {
+          toolName: "read_file",
+          error: { code: "ENOENT", message: "missing" },
+        }),
+        traceEvent(
+          5,
+          runId,
+          "skill.failed",
+          {
+            name: "code-reviewer",
+            status: "resource_denied",
+            message: "Denied resource.",
+          },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(6, runId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 2, byCode: { EACCES: 1, ENOENT: 1 } },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+        traceEvent(
+          7,
+          residentRunId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "resident-reviewer",
+                layer: "project",
+                contentHash: "sha256:resident-indexed",
+                packageHash: "sha256:resident",
               },
             ],
           },
         ),
         traceEvent(
-          2,
-          runId,
+          8,
+          residentRunId,
           "skill.loaded",
-          { name: "code-reviewer" },
-          { mode: "on_demand_tool", contentHash: "sha256:loaded" },
+          { name: "resident-reviewer", status: "loaded" },
+          { mode: "resident_context", packageHash: "sha256:resident" },
         ),
-        traceEvent(3, runId, "tool.failed", {
-          toolName: "read_file",
-          error: { code: "ENOENT", message: "missing" },
-        }),
-        traceEvent(4, runId, "run.completed", {
+        traceEvent(9, residentRunId, "run.completed", {
           status: "completed",
           toolOutcome: {
-            unresolved: { total: 1, byCode: { ENOENT: 1 } },
+            unresolved: { total: 0, byCode: {} },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+        traceEvent(
+          13,
+          legacyRunId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "legacy-reviewer",
+                layer: "project",
+                sourcePath: join(
+                  workspace,
+                  ".sparkwright",
+                  "skills",
+                  "legacy-reviewer",
+                  "SKILL.md",
+                ),
+                contentHash: "sha256:legacy",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          14,
+          legacyRunId,
+          "skill.loaded",
+          { name: "legacy-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(15, legacyRunId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 0, byCode: {} },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+        traceEvent(
+          16,
+          unknownRunId,
+          "skill.loaded",
+          { name: "unknown-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(17, unknownRunId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 0, byCode: {} },
             recovered: { total: 0, byCode: {} },
           },
         }),
       ].join(""),
+      "utf8",
+    );
+
+    const agentTraceDir = join(sessionDir, "agents", "dynamic_reviewer");
+    await mkdir(agentTraceDir, { recursive: true });
+    await writeFile(
+      join(agentTraceDir, "trace.jsonl"),
+      [
+        traceEvent(
+          10,
+          agentRunId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "agent-reviewer",
+                layer: "project",
+                contentHash: "sha256:agent-indexed",
+                packageHash: "sha256:agent",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          11,
+          agentRunId,
+          "skill.loaded",
+          { name: "agent-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(12, agentRunId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 0, byCode: {} },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+      ].join(""),
+      "utf8",
+    );
+
+    const proposalId = "skillprop_stats";
+    const historyId = "skillver_stats";
+    const evolutionRoot = join(workspace, ".sparkwright", "skill-evolution");
+    const proposalDir = join(evolutionRoot, "proposals", proposalId);
+    const historyDir = join(
+      evolutionRoot,
+      "history",
+      "code-reviewer",
+      historyId,
+    );
+    await mkdir(proposalDir, { recursive: true });
+    await mkdir(historyDir, { recursive: true });
+    await writeFile(
+      join(proposalDir, "metadata.json"),
+      JSON.stringify(
+        {
+          id: proposalId,
+          kind: "update",
+          state: "applied",
+          skillName: "code-reviewer",
+          targetLayer: "project",
+          targetPath: skillDir,
+          createdAt: "2026-06-13T00:00:13.000Z",
+          updatedAt: "2026-06-13T00:00:14.000Z",
+          closedAt: "2026-06-13T00:00:15.000Z",
+          basePackageHash: "sha256:package",
+          afterPackageHash: "sha256:package-after",
+          summary: "Improve review guidance.",
+          sourceLayer: "project",
+          sourcePath: skillPath,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(join(proposalDir, "proposal.md"), "# proposal\n", "utf8");
+    await writeFile(join(proposalDir, "patch.diff"), "diff\n", "utf8");
+    await writeFile(
+      join(historyDir, "metadata.json"),
+      JSON.stringify(
+        {
+          id: historyId,
+          skillName: "code-reviewer",
+          proposalId,
+          kind: "update",
+          createdAt: "2026-06-13T00:00:16.000Z",
+          beforePackageHash: "sha256:package",
+          afterPackageHash: "sha256:package-after",
+          targetPath: skillDir,
+        },
+        null,
+        2,
+      ),
       "utf8",
     );
 
@@ -2383,12 +2822,72 @@ describe("runCli", () => {
     const stats = JSON.parse(output.stdoutText()) as {
       sessionsScanned: number;
       tracesScanned: number;
+      window: {
+        trace: {
+          sessionLimit: number;
+          sessionsScanned: number;
+          firstSessionUpdatedAt?: string;
+          lastSessionUpdatedAt?: string;
+          firstEventAt?: string;
+          lastEventAt?: string;
+          runCount: number;
+          terminalRunCount: number;
+          openRunCount: number;
+        };
+        evolution: {
+          proposalsScanned: number;
+          historyScanned: number;
+          firstCreatedAt?: string;
+          lastCreatedAt?: string;
+          lastClosedAt?: string;
+        };
+      };
+      freshness: {
+        computedAt: string;
+        latestTraceEventAt?: string;
+        latestEvolutionAt?: string;
+        latestEvidenceAt?: string;
+      };
+      projectionCache: {
+        enabled: boolean;
+        cacheDir: string;
+        hits: number;
+        misses: number;
+        writes: number;
+        errors: unknown[];
+      };
+      catalog: {
+        enabled: boolean;
+        used: boolean;
+        candidateSessions: number;
+        selectedSessions: number;
+        hits: number;
+        misses: number;
+        writes: number;
+        errors: unknown[];
+      };
+      findings: Array<{
+        code: string;
+        severity: string;
+        relation: string;
+        skillName: string;
+        evidence: { metrics: Record<string, number | string> };
+      }>;
       skills: Array<{
         name: string;
         layer?: string;
         indexedCount: number;
         loadedCount: number;
         explicitLoadCount: number;
+        residentLoadCount: number;
+        packageHash?: string;
+        legacyContentHash?: string;
+        identityConfidence: string;
+        loadFailures: {
+          total: number;
+          byMode: Record<string, number>;
+          byStatus: Record<string, number>;
+        };
         runIds: string[];
         sessionIds: string[];
         associatedRuns: { completed: number };
@@ -2396,30 +2895,286 @@ describe("runCli", () => {
           total: number;
           unresolved: number;
           byTool: Record<string, number>;
+          byCode: Record<string, number>;
+          beforeFirstLoad: number;
+          afterFirstLoad: number;
+        };
+        evolution: {
+          proposals: {
+            total: number;
+            asBase: number;
+            asAfter: number;
+            byState: Record<string, number>;
+            byKind: Record<string, number>;
+            ids: string[];
+          };
+          history: {
+            total: number;
+            asBefore: number;
+            asAfter: number;
+            byKind: Record<string, number>;
+            ids: string[];
+          };
         };
       }>;
     };
     expect(stats.sessionsScanned).toBe(1);
-    expect(stats.tracesScanned).toBe(1);
+    expect(stats.tracesScanned).toBe(2);
+    expect(stats.window.trace).toEqual(
+      expect.objectContaining({
+        sessionLimit: 5,
+        sessionsScanned: 1,
+        firstSessionUpdatedAt: "2026-06-13T00:00:02.000Z",
+        lastSessionUpdatedAt: "2026-06-13T00:00:02.000Z",
+        firstEventAt: "2026-06-13T00:00:01.000Z",
+        lastEventAt: "2026-06-13T00:00:17.000Z",
+        runCount: 5,
+        terminalRunCount: 5,
+        openRunCount: 0,
+      }),
+    );
+    expect(stats.window.evolution).toEqual(
+      expect.objectContaining({
+        proposalsScanned: 1,
+        historyScanned: 1,
+        firstCreatedAt: "2026-06-13T00:00:13.000Z",
+        lastCreatedAt: "2026-06-13T00:00:16.000Z",
+        lastClosedAt: "2026-06-13T00:00:15.000Z",
+      }),
+    );
+    expect(stats.freshness.latestTraceEventAt).toBe("2026-06-13T00:00:17.000Z");
+    expect(stats.freshness.latestEvolutionAt).toBe("2026-06-13T00:00:16.000Z");
+    expect(stats.freshness.latestEvidenceAt).toBe("2026-06-13T00:00:17.000Z");
+    expect(stats.projectionCache).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        hits: 0,
+        misses: 1,
+        writes: 1,
+        errors: [],
+      }),
+    );
+    expect(stats.catalog).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        used: false,
+        candidateSessions: 1,
+        selectedSessions: 1,
+        hits: 0,
+        misses: 0,
+        writes: 1,
+        errors: [],
+      }),
+    );
+    const projectionCachePath = join(
+      workspace,
+      ".sparkwright",
+      "skill-stats",
+      "sessions",
+      `${sessionId}.json`,
+    );
+    expect(await readFile(projectionCachePath, "utf8")).toContain(
+      '"schemaVersion": "skill-stats-session.v1"',
+    );
+    expect(stats.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "SKILL_LOAD_FAILURES",
+          severity: "warning",
+          relation: "observed",
+          skillName: "code-reviewer",
+        }),
+        expect.objectContaining({
+          code: "ASSOCIATED_TOOL_FAILURES",
+          severity: "info",
+          relation: "associated",
+          skillName: "code-reviewer",
+        }),
+        expect.objectContaining({
+          code: "SKILL_EVOLUTION_ACTIVITY",
+          severity: "info",
+          relation: "observed",
+          skillName: "code-reviewer",
+        }),
+        expect.objectContaining({
+          code: "LEGACY_SKILL_IDENTITY",
+          severity: "info",
+          relation: "observed",
+          skillName: "legacy-reviewer",
+        }),
+        expect.objectContaining({
+          code: "UNKNOWN_SKILL_IDENTITY",
+          severity: "info",
+          relation: "observed",
+          skillName: "unknown-reviewer",
+        }),
+      ]),
+    );
     expect(stats.skills).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           name: "code-reviewer",
           layer: "project",
+          packageHash: "sha256:package",
+          identityConfidence: "package_hash",
           indexedCount: 1,
           loadedCount: 1,
-          explicitLoadCount: 1,
+          residentLoadCount: 0,
+          explicitLoadCount: 2,
+          loadFailures: {
+            total: 1,
+            byMode: { on_demand_tool: 1 },
+            byStatus: { resource_denied: 1 },
+          },
           runIds: [runId],
           sessionIds: [sessionId],
           associatedRuns: expect.objectContaining({ completed: 1 }),
           associatedToolFailures: {
-            total: 1,
-            unresolved: 1,
-            byTool: { read_file: 1 },
+            total: 2,
+            unresolved: 2,
+            byTool: { glob: 1, read_file: 1 },
+            byCode: { EACCES: 1, ENOENT: 1 },
+            beforeFirstLoad: 1,
+            afterFirstLoad: 1,
           },
+          evolution: expect.objectContaining({
+            proposals: expect.objectContaining({
+              total: 1,
+              asBase: 1,
+              asAfter: 0,
+              byState: { applied: 1 },
+              byKind: { update: 1 },
+              ids: [proposalId],
+            }),
+            history: expect.objectContaining({
+              total: 1,
+              asBefore: 1,
+              asAfter: 0,
+              byKind: { update: 1 },
+              ids: [historyId],
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          name: "resident-reviewer",
+          layer: "project",
+          packageHash: "sha256:resident",
+          identityConfidence: "package_hash",
+          indexedCount: 1,
+          loadedCount: 1,
+          residentLoadCount: 1,
+          explicitLoadCount: 0,
+        }),
+        expect.objectContaining({
+          name: "agent-reviewer",
+          layer: "project",
+          packageHash: "sha256:agent",
+          identityConfidence: "package_hash",
+          indexedCount: 1,
+          loadedCount: 1,
+          explicitLoadCount: 1,
+        }),
+        expect.objectContaining({
+          name: "legacy-reviewer",
+          layer: "project",
+          legacyContentHash: "sha256:legacy",
+          identityConfidence: "legacy_content_hash",
+          indexedCount: 1,
+          loadedCount: 1,
+          explicitLoadCount: 1,
+        }),
+        expect.objectContaining({
+          name: "unknown-reviewer",
+          identityConfidence: "name_only_unknown",
+          indexedCount: 0,
+          loadedCount: 1,
+          explicitLoadCount: 1,
         }),
       ]),
     );
+    expect(
+      stats.skills.filter((skill) => skill.name === "resident-reviewer"),
+    ).toHaveLength(1);
+
+    const cachedOutput = createOutputCapture();
+    const cachedResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: cachedOutput.stdout, stderr: cachedOutput.stderr },
+      },
+    );
+    expect(cachedResult.exitCode).toBe(0);
+    const cachedStats = JSON.parse(cachedOutput.stdoutText()) as {
+      projectionCache: {
+        hits: number;
+        misses: number;
+        writes: number;
+        errors: unknown[];
+      };
+      skills: unknown[];
+    };
+    expect(cachedStats.projectionCache).toEqual(
+      expect.objectContaining({
+        hits: 1,
+        misses: 0,
+        writes: 0,
+        errors: [],
+      }),
+    );
+    expect(cachedStats.skills).toEqual(stats.skills);
+
+    await writeFile(
+      projectionCachePath,
+      '{"schemaVersion":"skill-stats-session.v1"}\n',
+    );
+    const repairedOutput = createOutputCapture();
+    const repairedResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: repairedOutput.stdout, stderr: repairedOutput.stderr },
+      },
+    );
+    expect(repairedResult.exitCode).toBe(0);
+    const repairedStats = JSON.parse(repairedOutput.stdoutText()) as {
+      projectionCache: {
+        hits: number;
+        misses: number;
+        writes: number;
+        errors: unknown[];
+      };
+      skills: unknown[];
+    };
+    expect(repairedStats.projectionCache).toEqual(
+      expect.objectContaining({
+        hits: 0,
+        misses: 1,
+        writes: 1,
+        errors: [],
+      }),
+    );
+    expect(repairedStats.skills).toEqual(stats.skills);
 
     const textOutput = createOutputCapture();
     const text = await runCli(
@@ -2441,8 +3196,339 @@ describe("runCli", () => {
     );
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain("- code-reviewer (project)");
-    expect(textOutput.stdoutText()).toContain("failed tools: read_file=1");
+    expect(textOutput.stdoutText()).toContain("window: runs=5");
+    expect(textOutput.stdoutText()).toContain("freshness: computed=");
+    expect(textOutput.stdoutText()).toContain("projection cache: enabled=true");
+    expect(textOutput.stdoutText()).toContain("catalog: enabled=true");
+    expect(textOutput.stdoutText()).toContain(
+      "target: skill=code-reviewer, skillKey=any, package=any",
+    );
+    expect(textOutput.stdoutText()).toContain("findings: 3");
+    expect(textOutput.stdoutText()).toContain("finding detail:");
+    expect(textOutput.stdoutText()).toContain("package: sha256:package");
+    expect(textOutput.stdoutText()).toContain(
+      "load failure detail: modes=on_demand_tool=1, statuses=resource_denied=1",
+    );
+    expect(textOutput.stdoutText()).toContain("before load=1, after load=1");
+    expect(textOutput.stdoutText()).toContain(
+      "failed tools: glob=1, read_file=1",
+    );
+    expect(textOutput.stdoutText()).toContain(
+      "failure codes: EACCES=1, ENOENT=1",
+    );
+    expect(textOutput.stdoutText()).toContain(
+      "proposals: 1 total, base=1, after=0, states=applied=1, kinds=update=1",
+    );
+    expect(textOutput.stdoutText()).toContain(
+      "history: 1 total, before=1, after=0, kinds=update=1",
+    );
     expect(textOutput.stdoutText()).toContain("not causal claims");
+  });
+
+  it("uses the skill stats catalog for targeted stats queries", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillRoot = join(workspace, ".sparkwright", "skills");
+    const codeSkillDir = join(skillRoot, "code-reviewer");
+    const otherSkillDir = join(skillRoot, "other-reviewer");
+    await mkdir(codeSkillDir, { recursive: true });
+    await mkdir(otherSkillDir, { recursive: true });
+    const codeSkillPath = join(codeSkillDir, "SKILL.md");
+    const otherSkillPath = join(otherSkillDir, "SKILL.md");
+    await writeFile(
+      codeSkillPath,
+      [
+        "---",
+        "name: code-reviewer",
+        "description: Reviews code changes.",
+        "---",
+        "Review code.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      otherSkillPath,
+      [
+        "---",
+        "name: other-reviewer",
+        "description: Reviews other changes.",
+        "---",
+        "Review other work.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const sessionRoot = join(workspace, ".sparkwright", "sessions");
+    const codeSessionId = "session_catalog_code";
+    const otherSessionId = "session_catalog_other";
+    const codeRunId = "run_catalog_code";
+    const otherRunId = "run_catalog_other";
+    const codeSessionDir = join(sessionRoot, codeSessionId);
+    const otherSessionDir = join(sessionRoot, otherSessionId);
+    await mkdir(codeSessionDir, { recursive: true });
+    await mkdir(otherSessionDir, { recursive: true });
+    await writeFile(
+      join(codeSessionDir, "session.json"),
+      JSON.stringify(
+        {
+          id: codeSessionId,
+          createdAt: "2026-06-13T00:00:20.000Z",
+          updatedAt: "2026-06-13T00:00:25.000Z",
+          runIds: [codeRunId],
+          agents: ["main"],
+          eventCount: 0,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(
+      join(otherSessionDir, "session.json"),
+      JSON.stringify(
+        {
+          id: otherSessionId,
+          createdAt: "2026-06-13T00:00:10.000Z",
+          updatedAt: "2026-06-13T00:00:15.000Z",
+          runIds: [otherRunId],
+          agents: ["main"],
+          eventCount: 0,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(join(codeSessionDir, "events.jsonl"), "", "utf8");
+    await writeFile(join(otherSessionDir, "events.jsonl"), "", "utf8");
+    await writeFile(
+      join(codeSessionDir, "trace.jsonl"),
+      [
+        traceEvent(
+          21,
+          codeRunId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "code-reviewer",
+                layer: "project",
+                sourcePath: codeSkillPath,
+                contentHash: "sha256:code-content",
+                packageHash: "sha256:code-package",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          22,
+          codeRunId,
+          "skill.loaded",
+          { name: "code-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(23, codeRunId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 0, byCode: {} },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+      ].join(""),
+      "utf8",
+    );
+    await writeFile(
+      join(otherSessionDir, "trace.jsonl"),
+      [
+        traceEvent(
+          31,
+          otherRunId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "other-reviewer",
+                layer: "project",
+                sourcePath: otherSkillPath,
+                contentHash: "sha256:other-content",
+                packageHash: "sha256:other-package",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          32,
+          otherRunId,
+          "skill.loaded",
+          { name: "other-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(33, otherRunId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 0, byCode: {} },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+      ].join(""),
+      "utf8",
+    );
+
+    const warmOutput = createOutputCapture();
+    const warmResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "2",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: warmOutput.stdout, stderr: warmOutput.stderr } },
+    );
+    expect(warmResult.exitCode).toBe(0);
+    const warmStats = JSON.parse(warmOutput.stdoutText()) as {
+      sessionsScanned: number;
+      tracesScanned: number;
+      catalog: {
+        used: boolean;
+        candidateSessions: number;
+        selectedSessions: number;
+        writes: number;
+      };
+      projectionCache: { misses: number; writes: number };
+    };
+    expect(warmStats.sessionsScanned).toBe(2);
+    expect(warmStats.tracesScanned).toBe(2);
+    expect(warmStats.projectionCache).toEqual(
+      expect.objectContaining({ misses: 2, writes: 2 }),
+    );
+    expect(warmStats.catalog).toEqual(
+      expect.objectContaining({
+        used: false,
+        candidateSessions: 2,
+        selectedSessions: 2,
+        writes: 1,
+      }),
+    );
+
+    const targetOutput = createOutputCapture();
+    const targetResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "2",
+        "--skill",
+        "code-reviewer",
+        "--package-hash",
+        "sha256:code-package",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: targetOutput.stdout, stderr: targetOutput.stderr } },
+    );
+    expect(targetResult.exitCode).toBe(0);
+    const targetStats = JSON.parse(targetOutput.stdoutText()) as {
+      sessionsScanned: number;
+      tracesScanned: number;
+      query: { skillName?: string; packageHash?: string };
+      catalog: {
+        used: boolean;
+        hits: number;
+        misses: number;
+        selectedSessions: number;
+        candidateSessions: number;
+      };
+      projectionCache: { hits: number; misses: number };
+      skills: Array<{
+        name: string;
+        skillKey: string;
+        packageHash?: string;
+        firstEventAt?: string;
+        lastEventAt?: string;
+        sampleRunIds: string[];
+        failureRunIds: string[];
+      }>;
+    };
+    expect(targetStats.query).toEqual(
+      expect.objectContaining({
+        skillName: "code-reviewer",
+        packageHash: "sha256:code-package",
+      }),
+    );
+    expect(targetStats.catalog).toEqual(
+      expect.objectContaining({
+        used: true,
+        hits: 1,
+        misses: 0,
+        selectedSessions: 1,
+        candidateSessions: 2,
+      }),
+    );
+    expect(targetStats.sessionsScanned).toBe(1);
+    expect(targetStats.tracesScanned).toBe(1);
+    expect(targetStats.projectionCache).toEqual(
+      expect.objectContaining({ hits: 1, misses: 0 }),
+    );
+    expect(targetStats.skills).toEqual([
+      expect.objectContaining({
+        name: "code-reviewer",
+        skillKey: "code-reviewer|project|package:sha256:code-package",
+        packageHash: "sha256:code-package",
+        firstEventAt: "2026-06-13T00:00:21.000Z",
+        lastEventAt: "2026-06-13T00:00:22.000Z",
+        sampleRunIds: [codeRunId],
+        failureRunIds: [],
+      }),
+    ]);
+
+    const keyOutput = createOutputCapture();
+    const keyResult = await runCli(
+      [
+        "skills",
+        "stats",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "2",
+        "--skill-key",
+        "code-reviewer|project|package:sha256:code-package",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: keyOutput.stdout, stderr: keyOutput.stderr } },
+    );
+    expect(keyResult.exitCode).toBe(0);
+    const keyStats = JSON.parse(keyOutput.stdoutText()) as {
+      query: { skillKey?: string };
+      catalog: { hits: number; selectedSessions: number };
+      skills: Array<{ skillKey: string }>;
+    };
+    expect(keyStats.query.skillKey).toBe(
+      "code-reviewer|project|package:sha256:code-package",
+    );
+    expect(keyStats.catalog).toEqual(
+      expect.objectContaining({ hits: 1, selectedSessions: 1 }),
+    );
+    expect(keyStats.skills).toEqual([
+      expect.objectContaining({
+        skillKey: "code-reviewer|project|package:sha256:code-package",
+      }),
+    ]);
   });
 
   it("doctors skills with package hashes and deterministic blockers", async () => {
@@ -3957,6 +5043,8 @@ describe("runCli", () => {
         "reviewer",
         "--name",
         "Reviewer",
+        "--model",
+        "anthropic/opus",
         "--prompt",
         "Inspect changes for correctness and risk.",
         "--allow",
@@ -4012,6 +5100,7 @@ describe("runCli", () => {
       expect.objectContaining({
         id: "reviewer",
         name: "Reviewer",
+        model: "anthropic/opus",
         prompt: "Inspect changes for correctness and risk.",
         allowedTools: ["read_file", "glob"],
         maxSteps: 4,
@@ -4036,6 +5125,7 @@ describe("runCli", () => {
     );
     expect(listed.exitCode).toBe(0);
     expect(listOutput.stdoutText()).toContain("reviewer (Reviewer)");
+    expect(listOutput.stdoutText()).toContain("model: anthropic/opus");
     expect(listOutput.stdoutText()).toContain("delegate_reviewer -> reviewer");
 
     const validateOutput = createOutputCapture();
@@ -4080,6 +5170,113 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("errors: 1");
     expect(output.stdoutText()).toContain(
       "delegateTools.0.profileId: must reference an existing profile id",
+    );
+  });
+
+  it("reports markdown agent id collisions in agents validate", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "agents", "audit"), {
+      recursive: true,
+    });
+    await mkdir(join(workspace, ".sparkwright", "agents", "review"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "agents", "audit", "foo.md"),
+      "---\nname: AuditFoo\n---\naudit prompt",
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".sparkwright", "agents", "review", "foo.md"),
+      "---\nname: ReviewFoo\n---\nreview prompt",
+      "utf8",
+    );
+
+    const textOutput = createOutputCapture();
+    const textResult = await runCli(
+      ["agents", "validate", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: textOutput.stdout, stderr: textOutput.stderr },
+      },
+    );
+
+    expect(textResult.exitCode).toBe(1);
+    expect(textOutput.stdoutText()).toContain("collisions: 1");
+    expect(textOutput.stdoutText()).toContain("errors: 1");
+    expect(textOutput.stdoutText()).toContain(
+      'same-layer agent id collision for "foo"',
+    );
+    expect(textOutput.stdoutText()).toContain("audit/foo.md");
+    expect(textOutput.stdoutText()).toContain("review/foo.md");
+
+    const jsonOutput = createOutputCapture();
+    const jsonResult = await runCli(
+      ["agents", "validate", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: jsonOutput.stdout, stderr: jsonOutput.stderr },
+      },
+    );
+
+    expect(jsonResult.exitCode).toBe(1);
+    const report = JSON.parse(jsonOutput.stdoutText()) as {
+      errors: Array<{ field: string; message: string }>;
+      agentReport: {
+        collisions: Array<{ id: string }>;
+        shadows: unknown[];
+      };
+    };
+    expect(report.errors).toEqual([
+      expect.objectContaining({
+        field: "agentReport.collisions.0",
+        message: expect.stringContaining(
+          'same-layer agent id collision for "foo"',
+        ),
+      }),
+    ]);
+    expect(report.agentReport.collisions).toEqual([
+      expect.objectContaining({ id: "foo" }),
+    ]);
+    expect(report.agentReport.shadows).toEqual([]);
+  });
+
+  it("agents validate honors the injected environment for user agent roots", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const injectedXdg = await mkdtemp(
+      join(tmpdir(), "sparkwright-agents-xdg-"),
+    );
+    tempDirs.push(injectedXdg);
+    const userAgentsDir = join(injectedXdg, "sparkwright", "agents");
+    await mkdir(userAgentsDir, { recursive: true });
+    await writeFile(
+      join(userAgentsDir, "reviewer.md"),
+      "---\nname: UserReviewer\nmode: child\n---\nreview prompt",
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      ["agents", "validate", "--workspace", workspace, "--format", "json"],
+      {
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: injectedXdg,
+        },
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      agentReport: {
+        roots: string[];
+        profiles: Array<{ id: string; layer: string }>;
+      };
+    };
+    expect(report.agentReport.roots).toContain(userAgentsDir);
+    expect(report.agentReport.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "reviewer", layer: "user" }),
+      ]),
     );
   });
 
@@ -5724,8 +6921,11 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "delegate_writer",
-                  arguments: { goal: "Patch README.md from the delegate." },
+                  toolName: "delegate_agent",
+                  arguments: {
+                    agentId: "writer",
+                    goal: "Patch README.md from the delegate.",
+                  },
                 },
               ],
             },
@@ -5925,9 +7125,8 @@ describe("runCli", () => {
         workspace,
         "--model",
         "scripted",
-        "--write",
-        "--permission-mode",
-        "accept_edits",
+        "--access-mode",
+        "accept-edits",
         "--trace-level",
         "debug",
       ],
@@ -7083,6 +8282,78 @@ describe("runCli", () => {
     expect(traceSubagent?.metadata).toEqual(stdoutSubagent?.metadata);
   });
 
+  it("fails direct delegate runs when the target tool name collided", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            profiles: [
+              {
+                id: "kept",
+                metadata: {
+                  externalCommand: {
+                    command: process.execPath,
+                    args: ["-e", "process.stdout.write('kept')"],
+                    input: "none",
+                  },
+                },
+              },
+              {
+                id: "dropped",
+                metadata: {
+                  externalCommand: {
+                    command: process.execPath,
+                    args: ["-e", "process.stdout.write('dropped')"],
+                    input: "none",
+                  },
+                },
+              },
+            ],
+            delegateTools: [
+              { profileId: "kept", toolName: "delegate_same" },
+              { profileId: "dropped", toolName: "delegate_same" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "delegates",
+        "run",
+        "delegate_same",
+        "--goal",
+        "inspect readme",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "delegate tool collision for delegate_same: profile dropped (config) was dropped; owned by profile kept (fail-closed)",
+    );
+    expect(JSON.parse(output.stdoutText())).toMatchObject({
+      ok: false,
+      code: "config_error",
+    });
+  });
+
   it("enforces maxDepth for direct external command delegates", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const commandPath = join(workspace, "delegate-fixture.mjs");
@@ -7423,7 +8694,7 @@ function traceEvent(
     id: `evt_${sequence}`,
     runId,
     type,
-    timestamp: `2026-06-13T00:00:0${sequence}.000Z`,
+    timestamp: `2026-06-13T00:00:${String(sequence).padStart(2, "0")}.000Z`,
     sequence,
     payload,
     metadata,

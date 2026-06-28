@@ -79,7 +79,7 @@ function createVerificationSuggestionHook(
 ): WorkflowHook {
   return {
     name: "verification:suggest",
-    hook: "SessionStart",
+    hook: "RunStart",
     handle() {
       const renderedCommands = commands
         .map((command) =>

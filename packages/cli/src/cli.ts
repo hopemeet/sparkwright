@@ -1,14 +1,6 @@
 import { existsSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import {
-  basename,
-  dirname,
-  extname,
-  isAbsolute,
-  join,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
@@ -38,6 +30,11 @@ import {
   resumeRunFromCheckpoint,
   summarizeTraceFile,
   validateSessionTraceConsistency,
+  compileRunAccessMode,
+  clampAccessMode,
+  isRunAccessMode,
+  ACCESS_MODES,
+  type RunAccessMode,
   type RunRecord,
   type ContextItem,
   type SessionTraceConsistencyReport,
@@ -50,13 +47,11 @@ import {
   verifyTraceFile,
 } from "@sparkwright/core";
 import {
-  isPermissionMode,
   isTraceLevel,
   type CapabilityDelegateToolSummary,
   type CapabilitySnapshot,
   type PermissionMode,
   type RunInputPayload,
-  type RunInputPart,
   type SessionCompactionInspectReport,
   type TraceLevel,
 } from "@sparkwright/protocol";
@@ -95,12 +90,20 @@ import {
   loadHostConfig,
   configResolutionOrder,
   DEFAULT_DEFERRED_TOOLS,
+  MAX_RUN_IMAGE_INPUT_BYTES,
+  SUPPORTED_RUN_IMAGE_INPUT_TYPES,
+  buildImageRunInputPart,
   formatToolUseSelectorList,
+  createRunInputPayloadFromParts,
   isToolUseSelector,
   projectConfigCandidatePaths,
   readConfigFileObject,
   resolveAgentProfiles,
+  resolveAgentDelegateTools,
   resolveConfigWriteTarget,
+  delegateToolName,
+  filterDirectDelegatesForExposure,
+  summarizeRunInputParts,
   describeExternalDelegateCapability,
   existingSkillRoots,
   HostRuntime,
@@ -116,6 +119,7 @@ import {
   writeConfigFileObject,
   type AgentReport,
   type DelegateCapabilityDescriptor,
+  type DelegateToolCollision,
   type ApplySkillProposalResult,
   type SkillDoctorReport,
   type SkillHistoryEntry,
@@ -171,6 +175,7 @@ interface ParsedArgs {
   /** Workspace-relative paths/globs whose contents the run must not read. */
   confidentialPaths: string[];
   imagePaths: string[];
+  accessMode?: RunAccessMode;
   shouldWrite: boolean;
   approveAll: boolean;
   approveEdits: boolean;
@@ -184,6 +189,8 @@ interface ParsedArgs {
   eventType?: string;
   runId?: string;
   skillName?: string;
+  skillKey?: string;
+  packageHash?: string;
   contains?: string;
   limit?: number;
   afterSequence?: number;
@@ -236,9 +243,17 @@ export async function runCli(
   for (const e of cfg.errors) {
     writeLine(io.stderr, `config: ${e.file}: ${e.field}: ${e.message}`);
   }
+  for (const warning of cfg.warnings) {
+    writeLine(
+      io.stderr,
+      `config warning: ${warning.file}: ${warning.field}: ${warning.message}`,
+    );
+  }
 
   const parsed = parseArgs(argv, cwd, {
     model: cfg.config.model,
+    accessMode: cfg.config.accessMode,
+    accessModeCeiling: cfg.config.accessModeCeiling,
     permissionMode:
       argv[0] === "cron"
         ? (cfg.config.approvals?.cronMode ?? cfg.config.permissionMode)
@@ -305,7 +320,7 @@ export async function runCli(
   }
 
   if (command === "agents") {
-    return handleAgentsCommand(parsed.value, io);
+    return handleAgentsCommand(parsed.value, io, env);
   }
 
   if (command === "config") {
@@ -407,14 +422,12 @@ function directCoreEnabled(env: Record<string, string | undefined>): boolean {
   return env.SPARKWRIGHT_ENABLE_DIRECT_CORE === "1";
 }
 
-const MAX_CLI_IMAGE_BYTES = 20 * 1024 * 1024;
-
 function loadCliRunInput(
   imagePaths: readonly string[],
   cwd: string,
 ): { ok: true; input?: RunInputPayload } | { ok: false; message: string } {
   if (imagePaths.length === 0) return { ok: true };
-  const parts: RunInputPart[] = [];
+  const parts: NonNullable<RunInputPayload["parts"]> = [];
   for (const imagePath of imagePaths) {
     const resolved = resolve(cwd, imagePath);
     let bytes: Buffer;
@@ -426,40 +439,29 @@ function loadCliRunInput(
         message: `Could not read image ${imagePath}: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-    if (bytes.byteLength > MAX_CLI_IMAGE_BYTES) {
-      return {
-        ok: false,
-        message: `Image is too large (${bytes.byteLength} bytes): ${imagePath}. Limit is ${MAX_CLI_IMAGE_BYTES} bytes.`,
-      };
-    }
-    const mediaType = mediaTypeForImagePath(resolved);
-    if (!mediaType) {
-      return {
-        ok: false,
-        message: `Unsupported image type for ${imagePath}. Use png, jpg, jpeg, gif, or webp.`,
-      };
-    }
-    parts.push({
-      type: "image",
-      data: bytes.toString("base64"),
-      mediaType,
-      name: basename(imagePath),
-      metadata: {
-        sourcePath: imagePath,
-        byteLength: bytes.byteLength,
-      },
+    const imagePart = buildImageRunInputPart({
+      sourcePath: imagePath,
+      resolvedPath: resolved,
+      bytes,
     });
+    if (!imagePart.ok && imagePart.reason === "too_large") {
+      return {
+        ok: false,
+        message: `Image is too large (${imagePart.byteLength} bytes): ${imagePath}. Limit is ${MAX_RUN_IMAGE_INPUT_BYTES} bytes.`,
+      };
+    }
+    if (!imagePart.ok) {
+      return {
+        ok: false,
+        message: `Unsupported image type for ${imagePath}. Use ${SUPPORTED_RUN_IMAGE_INPUT_TYPES}.`,
+      };
+    }
+    parts.push(imagePart.part);
   }
 
   return {
     ok: true,
-    input: {
-      parts,
-      metadata: {
-        imageCount: parts.length,
-        attachmentCount: parts.length,
-      },
-    },
+    input: createRunInputPayloadFromParts(parts),
   };
 }
 
@@ -469,7 +471,6 @@ function contextItemsForCliInput(
 ): ContextItem[] {
   const parts = input?.parts ?? [];
   if (parts.length === 0) return [];
-  const imageCount = parts.filter((part) => part.type === "image").length;
   return [
     {
       id: createContextItemId(),
@@ -481,27 +482,10 @@ function contextItemsForCliInput(
         layer: "runtime",
         stability: "turn",
         multimodal: true,
-        attachmentCount: parts.length,
-        ...(imageCount > 0 ? { imageCount } : {}),
+        ...summarizeRunInputParts(parts),
       },
     },
   ];
-}
-
-function mediaTypeForImagePath(path: string): string | undefined {
-  switch (extname(path).toLowerCase()) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    default:
-      return undefined;
-  }
 }
 
 function maybePrintFirstRunConfigHint(input: {
@@ -691,6 +675,8 @@ function validationCodeForMessage(message: string): string {
 
 interface ConfigDefaults {
   model?: string;
+  accessMode?: RunAccessMode;
+  accessModeCeiling?: RunAccessMode;
   permissionMode?: PermissionMode;
   workspace?: string;
   confidentialPaths?: string[];
@@ -763,7 +749,13 @@ function parseArgs(
   let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   const imagePaths: string[] = [];
-  let shouldWrite = false;
+  let accessMode = defaults.accessMode;
+  // accessMode is the autonomy knob: read-only implies no writes, the others
+  // imply writes. Deprecated --write maps to an ask-level request whenever a
+  // project/config access boundary is already in play.
+  let shouldWrite = accessMode
+    ? compileRunAccessMode(accessMode).shouldWrite
+    : false;
   let approveAll = defaults.approveAll ?? false;
   let approveEdits = defaults.approveEdits ?? false;
   let approveShellSafe = defaults.approveShellSafe ?? false;
@@ -777,6 +769,8 @@ function parseArgs(
   let eventType: string | undefined;
   let runId: string | undefined;
   let skillName: string | undefined;
+  let skillKey: string | undefined;
+  let packageHash: string | undefined;
   let contains: string | undefined;
   let limit: number | undefined;
   let afterSequence: number | undefined;
@@ -791,6 +785,15 @@ function parseArgs(
   let llm = false;
   let compaction = false;
   let delegateGoal: string | undefined;
+
+  const applyRequestedAccessMode = (requested: RunAccessMode): void => {
+    const effective =
+      clampAccessMode(defaults.accessModeCeiling, requested) ?? requested;
+    accessMode = effective;
+    const compiled = compileRunAccessMode(effective);
+    permissionMode = compiled.permissionMode;
+    shouldWrite = compiled.shouldWrite;
+  };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -882,7 +885,14 @@ function parseArgs(
     }
 
     if (arg === "--write") {
-      shouldWrite = true;
+      if (
+        accessMode !== undefined ||
+        defaults.accessModeCeiling !== undefined
+      ) {
+        applyRequestedAccessMode("ask");
+      } else {
+        shouldWrite = true;
+      }
       args.splice(index, 1);
       index -= 1;
       continue;
@@ -916,16 +926,15 @@ function parseArgs(
       continue;
     }
 
-    if (arg === "--permission-mode") {
+    if (arg === "--access-mode") {
       const value = args[index + 1];
-      if (!isPermissionMode(value)) {
+      if (!isRunAccessMode(value)) {
         return {
           ok: false,
-          message:
-            "Usage: --permission-mode must be one of: plan, default, accept_edits, dont_ask, bypass_permissions",
+          message: `Usage: --access-mode must be one of: ${ACCESS_MODES.join(", ")}`,
         };
       }
-      permissionMode = value;
+      applyRequestedAccessMode(value);
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1009,6 +1018,29 @@ function parseArgs(
       if (!value)
         return { ok: false, message: "Usage: --skill requires a name" };
       skillName = value;
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--skill-key") {
+      const value = args[index + 1];
+      if (!value)
+        return { ok: false, message: "Usage: --skill-key requires a key" };
+      skillKey = value;
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--package-hash") {
+      const value = args[index + 1];
+      if (!value)
+        return {
+          ok: false,
+          message: "Usage: --package-hash requires a hash",
+        };
+      packageHash = value;
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1333,6 +1365,7 @@ function parseArgs(
       targetPathSource,
       confidentialPaths,
       imagePaths,
+      accessMode,
       shouldWrite,
       approveAll,
       approveEdits,
@@ -1345,6 +1378,8 @@ function parseArgs(
       eventType,
       runId,
       skillName,
+      skillKey,
+      packageHash,
       contains,
       limit,
       afterSequence,
@@ -1810,6 +1845,7 @@ interface CapabilityInspectReport {
     delegateTools: Array<
       DelegateCapabilityDescriptor | CapabilityDelegateToolSummary
     >;
+    delegateToolCollisions: DelegateToolCollision[];
   };
   mcp: {
     servers: Array<{
@@ -1845,6 +1881,24 @@ interface CapabilityInspectReport {
   };
 }
 
+function appendReservedDelegateToolCollisions(input: {
+  enabled?: boolean;
+  delegates: Array<{ profileId: string; toolName?: string }>;
+  collisions: DelegateToolCollision[];
+}): void {
+  if (input.enabled !== true) return;
+  const conflicting = input.delegates.find(
+    (delegate) => delegateToolName(delegate) === DELEGATE_PARALLEL_TOOL_NAME,
+  );
+  if (!conflicting) return;
+  input.collisions.push({
+    toolName: DELEGATE_PARALLEL_TOOL_NAME,
+    profileId: `builtin:${DELEGATE_PARALLEL_TOOL_NAME}`,
+    conflictsWith: conflicting.profileId,
+    source: "builtin",
+  });
+}
+
 interface SkillInlineShellInspect {
   enabled: boolean;
   timeoutMs?: number;
@@ -1861,6 +1915,8 @@ interface CapabilityToolInspectEntry {
   origin?: string;
   deferred?: boolean;
 }
+
+const DELEGATE_PARALLEL_TOOL_NAME = "delegate_parallel";
 
 async function handleCapabilitiesCommand(
   parsed: ParsedArgs,
@@ -2090,8 +2146,35 @@ async function loadCapabilityInspectReport(
   // External descriptors are retained as the snapshot-less fallback. When a
   // host runtime is available, it is the authoritative source for configured
   // delegate descriptors, including in-process child-agent delegates.
-  const configuredDelegates = capabilities?.agents?.delegateTools ?? [];
-  const externalDelegateDescriptors = configuredDelegates.flatMap(
+  const delegateToolCollisions: DelegateToolCollision[] = [];
+  const delegationTargets = resolveAgentDelegateTools(
+    profiles,
+    capabilities?.agents?.delegateTools,
+    {
+      includeAllChildProfiles: true,
+      onCollision: (collision) => delegateToolCollisions.push(collision),
+    },
+  );
+  const directDelegates = filterDirectDelegatesForExposure(
+    delegationTargets,
+    capabilities?.agents,
+    profiles,
+  );
+  appendReservedDelegateToolCollisions({
+    enabled: capabilities?.agents?.enableParallelDelegates,
+    delegates: directDelegates,
+    collisions: delegateToolCollisions,
+  });
+  const externalDelegateDescriptors = delegationTargets.flatMap((delegate) => {
+    const profile = profileById.get(delegate.profileId);
+    if (!profile) return [];
+    const descriptor = describeExternalDelegateCapability({
+      delegate,
+      profile,
+    });
+    return descriptor ? [descriptor] : [];
+  });
+  const directExternalDelegateDescriptors = directDelegates.flatMap(
     (delegate) => {
       const profile = profileById.get(delegate.profileId);
       if (!profile) return [];
@@ -2107,6 +2190,8 @@ async function loadCapabilityInspectReport(
   });
   const delegateDescriptors =
     runtime?.agents.delegateTools ?? externalDelegateDescriptors;
+  const toolInventoryDelegateDescriptors =
+    runtime?.agents.delegateTools ?? directExternalDelegateDescriptors;
 
   return {
     workspace: workspaceRoot,
@@ -2119,7 +2204,7 @@ async function loadCapabilityInspectReport(
         config: loaded.config.tools ?? {},
         runtime,
         mcpServers,
-        delegateTools: delegateDescriptors,
+        delegateTools: toolInventoryDelegateDescriptors,
       }),
     },
     shell: {
@@ -2147,6 +2232,7 @@ async function loadCapabilityInspectReport(
     agents: {
       ...agents,
       delegateTools: delegateDescriptors,
+      delegateToolCollisions,
     },
     mcp: {
       servers: mcpServers,
@@ -2287,6 +2373,12 @@ const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
     name: "create_agent",
     source: "builtin",
     risk: "risky",
+    origin: "local:sparkwright",
+  },
+  {
+    name: "delegate_agent",
+    source: "builtin",
+    risk: "safe",
     origin: "local:sparkwright",
   },
   {
@@ -2478,6 +2570,32 @@ function formatCapabilityInspectReport(
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
     `skill inline shell: enabled=${String(report.skills.inlineShell.enabled)}; writePolicy=${report.skills.inlineShell.writePolicy}; sandbox=${report.skills.inlineShell.sandboxMode}; failClosed=${String(report.skills.inlineShell.failClosed)}${report.skills.inlineShell.timeoutMs !== undefined ? `; timeoutMs=${report.skills.inlineShell.timeoutMs}` : ""}${report.skills.inlineShell.maxOutputChars !== undefined ? `; maxOutputChars=${report.skills.inlineShell.maxOutputChars}` : ""}`,
   ];
+  const workflowRules = report.runtime?.rules?.workflow ?? [];
+  const eventRules = report.runtime?.rules?.events ?? [];
+  lines.push(`workflow rules: ${workflowRules.length}`);
+  for (const rule of workflowRules) {
+    lines.push(
+      `  rule: ${rule.name} [${rule.source}] ${rule.lifecycle} ${rule.status}; canBlock=${String(rule.blockingPotential)}; matcher=${rule.matcher}; action=${rule.action}`,
+    );
+    const hints = [rule.configurationHint, rule.disableHint].filter(
+      (hint): hint is string => typeof hint === "string" && hint.length > 0,
+    );
+    if (hints.length > 0) {
+      lines.push(`    hint: ${hints.join(" ")}`);
+    }
+  }
+  lines.push(`event rules: ${eventRules.length}`);
+  for (const rule of eventRules) {
+    lines.push(
+      `  event rule: ${rule.name} [${rule.source}] ${rule.trigger} ${rule.status}; canBlock=false; matcher=${rule.matcher}; action=${rule.action}`,
+    );
+    const hints = [rule.configurationHint, rule.disableHint].filter(
+      (hint): hint is string => typeof hint === "string" && hint.length > 0,
+    );
+    if (hints.length > 0) {
+      lines.push(`    hint: ${hints.join(" ")}`);
+    }
+  }
   for (const tool of report.runtime?.tools ?? []) {
     lines.push(
       `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}${tool.deferred ? "; deferred" : ""})` : tool.deferred ? " (deferred)" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
@@ -2498,8 +2616,11 @@ function formatCapabilityInspectReport(
       lines.push(`  - ${error.source}: ${error.message}`);
     }
   }
+  const agentCollisionCount =
+    report.agents.collisions.length +
+    report.agents.delegateToolCollisions.length;
   lines.push(
-    `agents: ${report.agents.profiles.length} effective, ${report.agents.roots.length} roots, ${report.agents.shadows.length} shadows, ${report.agents.errors.length} errors, ${report.agents.delegateTools.length} delegate tools`,
+    `agents: ${report.agents.profiles.length} effective, ${report.agents.roots.length} roots, ${report.agents.shadows.length} shadows, ${agentCollisionCount} collisions, ${report.agents.errors.length} errors, ${report.agents.delegateTools.length} delegate tools`,
   );
   for (const agent of report.agents.profiles) {
     lines.push(
@@ -2510,8 +2631,10 @@ function formatCapabilityInspectReport(
     const writeGate = tool.gatedByRunWrite ? "; gated=--write" : "";
     const approvalRequired =
       tool.approvalRequiredUnderCurrentRun ?? tool.requiresApproval;
+    const model = tool.model ? `; model=${tool.model}` : "";
+    const routing = formatDelegateRouting(tool.routing);
     lines.push(
-      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}; approval=current-run:${approvalRequired ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
+      `  delegate: ${tool.toolName} -> ${tool.profileId} (${tool.protocol}${model}${routing}; approval=current-run:${approvalRequired ? "required" : "not-required"}; workspace=${tool.workspaceAccess}${writeGate})`,
     );
   }
   if (report.agents.shadows.length > 0) {
@@ -2521,6 +2644,26 @@ function formatCapabilityInspectReport(
         `  - ${shadow.id}: ${formatAgentOrigin(
           shadow.shadowed,
         )} shadowed by ${formatAgentOrigin(shadow.shadowedBy)}`,
+      );
+    }
+  }
+  if (report.agents.collisions.length > 0) {
+    lines.push(`agent id collisions: ${report.agents.collisions.length}`);
+    for (const collision of report.agents.collisions) {
+      lines.push(
+        `  - ${collision.id}: kept ${formatAgentOrigin(
+          collision.kept,
+        )}, dropped ${formatAgentOrigin(collision.dropped)} (fail-closed)`,
+      );
+    }
+  }
+  if (report.agents.delegateToolCollisions.length > 0) {
+    lines.push(
+      `delegate tool collisions: ${report.agents.delegateToolCollisions.length}`,
+    );
+    for (const collision of report.agents.delegateToolCollisions) {
+      lines.push(
+        `  - ${collision.toolName}: ${collision.profileId} (${collision.source}) dropped; owned by ${collision.conflictsWith} (fail-closed)`,
       );
     }
   }
@@ -2564,6 +2707,26 @@ function formatCapabilityModelLine(
       ? `; pricing=unavailable:${pricing.costUnavailableReason ?? "unknown"}`
       : `; pricing=${pricing.source}`;
   return `${model.modelRef}${suffix}`;
+}
+
+function formatDelegateRouting(
+  routing:
+    | CapabilitySnapshot["agents"]["delegateTools"][number]["routing"]
+    | undefined,
+): string {
+  if (!routing) return "";
+  if (routing.relevance) {
+    const score =
+      typeof routing.score === "number" ? ` score=${routing.score}` : "";
+    const matched =
+      routing.matchedKeywords && routing.matchedKeywords.length > 0
+        ? ` matched=${routing.matchedKeywords.join(",")}`
+        : "";
+    return `; routing=${routing.relevance}${score}${matched}`;
+  }
+  return routing.keywords.length > 0
+    ? `; triggers=${routing.keywords.join(",")}`
+    : "";
 }
 
 function formatAgentOrigin(agent: {
@@ -2643,6 +2806,8 @@ async function handleSkillsCommand(
         skillRoots: roots,
         limit: parsed.limit,
         skillName: parsed.skillName,
+        skillKey: parsed.skillKey,
+        packageHash: parsed.packageHash,
       });
       if (parsed.format === "json") {
         writeLine(io.stdout, JSON.stringify(stats, null, 2));
@@ -3386,21 +3551,60 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
   const lines = [
     `sessions scanned: ${report.sessionsScanned}/${report.sessionLimit}`,
     `traces scanned: ${report.tracesScanned}`,
+    `window: runs=${report.window.trace.runCount}, terminal=${report.window.trace.terminalRunCount}, open=${report.window.trace.openRunCount}`,
+    `freshness: computed=${report.freshness.computedAt}, latest evidence=${report.freshness.latestEvidenceAt ?? "none"}`,
+    `projection cache: enabled=${report.projectionCache.enabled}, hits=${report.projectionCache.hits}, misses=${report.projectionCache.misses}, writes=${report.projectionCache.writes}, errors=${report.projectionCache.errors.length}`,
+    `catalog: enabled=${report.catalog.enabled}, used=${report.catalog.used}, hits=${report.catalog.hits}, misses=${report.catalog.misses}, writes=${report.catalog.writes}, selected=${report.catalog.selectedSessions}/${report.catalog.candidateSessions}, errors=${report.catalog.errors.length}`,
     `skills: ${report.skills.length}`,
+    `findings: ${report.findings.length}`,
   ];
+  if (
+    report.query.skillName ||
+    report.query.skillKey ||
+    report.query.packageHash
+  ) {
+    lines.push(
+      `target: skill=${report.query.skillName ?? "any"}, skillKey=${report.query.skillKey ?? "any"}, package=${report.query.packageHash ?? "any"}`,
+    );
+  }
+  if (report.window.trace.firstEventAt || report.window.trace.lastEventAt) {
+    lines.push(
+      `trace event window: first=${report.window.trace.firstEventAt ?? "none"}, last=${report.window.trace.lastEventAt ?? "none"}`,
+    );
+  }
+  if (
+    report.window.evolution.proposalsScanned > 0 ||
+    report.window.evolution.historyScanned > 0
+  ) {
+    lines.push(
+      `evolution window: proposals=${report.window.evolution.proposalsScanned}, history=${report.window.evolution.historyScanned}, latest=${report.freshness.latestEvolutionAt ?? "none"}`,
+    );
+  }
   if (report.skills.length === 0) {
     lines.push("(none)");
   }
   for (const skill of report.skills) {
     lines.push(`- ${skill.name}${skill.layer ? ` (${skill.layer})` : ""}`);
+    lines.push(`  identity: ${skill.identityConfidence}`);
+    if (skill.packageHash) lines.push(`  package: ${skill.packageHash}`);
+    if (skill.legacyContentHash) {
+      lines.push(`  legacy content: ${skill.legacyContentHash}`);
+    }
     if (skill.sourcePath) lines.push(`  source: ${skill.sourcePath}`);
     if (skill.shadowedBy) lines.push(`  shadowed by: ${skill.shadowedBy}`);
     if (skill.shadows && skill.shadows.length > 0) {
       lines.push(`  shadows: ${skill.shadows.join(", ")}`);
     }
     lines.push(
-      `  indexed: ${skill.indexedCount}, loaded: ${skill.loadedCount}, explicit loads: ${skill.explicitLoadCount}, load failures: ${skill.loadFailureCount}`,
+      `  indexed: ${skill.indexedCount}, loaded: ${skill.loadedCount}, resident loads: ${skill.residentLoadCount}, explicit loads: ${skill.explicitLoadCount}, load failures: ${skill.loadFailureCount}`,
     );
+    const loadFailureModes = Object.entries(skill.loadFailures.byMode);
+    const loadFailureStatuses = Object.entries(skill.loadFailures.byStatus);
+    if (loadFailureModes.length > 0 || loadFailureStatuses.length > 0) {
+      lines.push(
+        `  load failure detail: modes=${formatCountPairs(loadFailureModes)}, statuses=${formatCountPairs(loadFailureStatuses)}`,
+      );
+    }
     lines.push(
       `  runs: ${skill.runIds.length}, sessions: ${skill.sessionIds.length}`,
     );
@@ -3408,7 +3612,7 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
       `  associated runs: completed=${skill.associatedRuns.completed}, failed=${skill.associatedRuns.failed}, cancelled=${skill.associatedRuns.cancelled}`,
     );
     lines.push(
-      `  associated tool failures: ${skill.associatedToolFailures.total} total, ${skill.associatedToolFailures.unresolved} unresolved`,
+      `  associated tool failures: ${skill.associatedToolFailures.total} total, ${skill.associatedToolFailures.unresolved} unresolved, before load=${skill.associatedToolFailures.beforeFirstLoad}, after load=${skill.associatedToolFailures.afterFirstLoad}`,
     );
     const failedTools = Object.entries(skill.associatedToolFailures.byTool);
     if (failedTools.length > 0) {
@@ -3418,6 +3622,30 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
           .join(", ")}`,
       );
     }
+    const failureCodes = Object.entries(skill.associatedToolFailures.byCode);
+    if (failureCodes.length > 0) {
+      lines.push(`  failure codes: ${formatCountPairs(failureCodes)}`);
+    }
+    const proposalRollup = skill.evolution.proposals;
+    if (proposalRollup.total > 0) {
+      lines.push(
+        `  proposals: ${proposalRollup.total} total, base=${proposalRollup.asBase}, after=${proposalRollup.asAfter}, states=${formatCountPairs(Object.entries(proposalRollup.byState))}, kinds=${formatCountPairs(Object.entries(proposalRollup.byKind))}`,
+      );
+    }
+    const historyRollup = skill.evolution.history;
+    if (historyRollup.total > 0) {
+      lines.push(
+        `  history: ${historyRollup.total} total, before=${historyRollup.asBefore}, after=${historyRollup.asAfter}, kinds=${formatCountPairs(Object.entries(historyRollup.byKind))}`,
+      );
+    }
+  }
+  if (report.findings.length > 0) {
+    lines.push("finding detail:");
+    for (const finding of report.findings) {
+      lines.push(
+        `- ${finding.severity} ${finding.relation} ${finding.code} ${finding.skillName}: ${finding.message}`,
+      );
+    }
   }
   if (report.traceErrors.length > 0) {
     lines.push(`trace errors: ${report.traceErrors.length}`);
@@ -3425,10 +3653,30 @@ function formatSkillStatsReport(report: SkillStatsReport): string {
       lines.push(`- ${error.sessionId}: ${error.message}`);
     }
   }
+  if (report.projectionCache.errors.length > 0) {
+    lines.push(
+      `projection cache errors: ${report.projectionCache.errors.length}`,
+    );
+    for (const error of report.projectionCache.errors) {
+      lines.push(`- ${error.sessionId}: ${error.message}`);
+    }
+  }
+  if (report.catalog.errors.length > 0) {
+    lines.push(`catalog errors: ${report.catalog.errors.length}`);
+    for (const error of report.catalog.errors) {
+      lines.push(`- ${error.path}: ${error.message}`);
+    }
+  }
   lines.push(
     "note: tool failures are associated with loaded skills, not causal claims.",
   );
   return lines.join("\n");
+}
+
+function formatCountPairs(entries: Array<[string, number]>): string {
+  return entries.length > 0
+    ? entries.map(([key, count]) => `${key}=${count}`).join(", ")
+    : "none";
 }
 
 function formatSkillDoctorReport(report: SkillDoctorReport): string {
@@ -3637,6 +3885,7 @@ function formatSkillOrigin(skill: {
 async function handleAgentsCommand(
   parsed: ParsedArgs,
   io: CliIO,
+  env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
   const subcommand = parsed.subcommand;
   if (
@@ -3654,7 +3903,10 @@ async function handleAgentsCommand(
     const agents = getAgentsConfig(loaded.value);
 
     if (subcommand === "create") {
-      const input = parseAgentsCreateArgs(splitCliWords(parsed.goal));
+      const input = parseAgentsCreateArgs(
+        splitCliWords(parsed.goal),
+        parsed.modelName,
+      );
       if (!input.ok) {
         writeLine(io.stderr, input.message);
         return { exitCode: 1 };
@@ -3705,7 +3957,10 @@ async function handleAgentsCommand(
       return { exitCode: 0 };
     }
 
-    const report = validateAgentConfig(agents);
+    const report =
+      subcommand === "validate"
+        ? await buildAgentValidationReport(parsed.workspaceRoot, agents, env)
+        : validateAgentConfig(agents);
     if (parsed.format === "json") {
       writeLine(
         io.stdout,
@@ -3715,6 +3970,7 @@ async function handleAgentsCommand(
             exists: loaded.exists,
             agents,
             errors: report.errors,
+            ...(report.agentReport ? { agentReport: report.agentReport } : {}),
           },
           null,
           2,
@@ -3728,6 +3984,7 @@ async function handleAgentsCommand(
           exists: loaded.exists,
           agents,
           errors: report.errors,
+          agentReport: report.agentReport,
         }),
       );
     }
@@ -4136,6 +4393,7 @@ async function handleConfigValidate(
           schemaFilesChecked: schemaReport.filesChecked,
           schemaPath: schemaReport.schemaPath,
           loadErrors: loaded.errors,
+          warnings: loaded.warnings,
           schemaErrors: schemaReport.errors,
           errors,
         },
@@ -4148,6 +4406,12 @@ async function handleConfigValidate(
       io.stdout,
       `Config OK (${loadedCount} file(s) loaded, ${schemaReport.filesChecked} schema-checked).`,
     );
+    for (const warning of loaded.warnings) {
+      writeLine(
+        io.stdout,
+        `  warning: ${warning.file} (${warning.field}): ${warning.message}`,
+      );
+    }
   } else {
     writeLine(
       io.stdout,
@@ -4346,6 +4610,7 @@ async function handleConfigExplain(
           layers: report.layers,
           fields: report.fields,
           errors: report.errors,
+          warnings: report.warnings,
         },
         null,
         2,
@@ -4366,6 +4631,7 @@ function buildConfigInspectReport(
   sources: Awaited<ReturnType<typeof loadHostConfig>>["sources"];
   fields: Array<{ field: string; source: string; value?: unknown }>;
   errors: Awaited<ReturnType<typeof loadHostConfig>>["errors"];
+  warnings: Awaited<ReturnType<typeof loadHostConfig>>["warnings"];
 } {
   return {
     ok: loaded.errors.length === 0,
@@ -4374,6 +4640,7 @@ function buildConfigInspectReport(
     sources: loaded.sources,
     fields: describeConfigFields(loaded),
     errors: loaded.errors,
+    warnings: loaded.warnings,
   };
 }
 
@@ -4393,7 +4660,8 @@ function describeConfigFields(
   };
 
   add("model", sources.model, config.model);
-  add("permissionMode", sources.permissionMode, config.permissionMode);
+  add("accessMode", sources.accessMode, config.accessMode);
+  add("accessModeCeiling", sources.accessModeCeiling, config.accessModeCeiling);
   add("workspace", sources.workspace, config.workspace);
   add("confidentialPaths", sources.confidentialPaths, config.confidentialPaths);
   add("write", sources.write, config.write);
@@ -4446,6 +4714,15 @@ function formatConfigInspectReport(
           ),
         ]
       : []),
+    ...(report.warnings.length > 0
+      ? [
+          "Warnings:",
+          ...report.warnings.map(
+            (warning) =>
+              `  ${warning.file} (${warning.field}): ${warning.message}`,
+          ),
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -4474,6 +4751,14 @@ function formatConfigExplainReport(
       "Errors:",
       ...report.errors.map(
         (error) => `  ${error.file} (${error.field}): ${error.message}`,
+      ),
+    );
+  }
+  if (report.warnings.length > 0) {
+    lines.push(
+      "Warnings:",
+      ...report.warnings.map(
+        (warning) => `  ${warning.file} (${warning.field}): ${warning.message}`,
       ),
     );
   }
@@ -4601,10 +4886,18 @@ interface AgentProfileConfigShape {
   name?: string;
   description?: string;
   mode?: "primary" | "child" | "all";
+  model?: string;
   prompt?: string;
   use?: string[];
   allowedTools?: string[];
   deniedTools?: string[];
+  delegateTool?: {
+    toolName?: string;
+    description?: string;
+    requiresApproval?: boolean;
+    forbidNesting?: boolean;
+    maxSteps?: number;
+  };
   maxSteps?: number;
   metadata?: Record<string, unknown>;
 }
@@ -4621,9 +4914,27 @@ interface AgentDelegateToolConfigShape {
 interface AgentsConfigShape {
   profiles: AgentProfileConfigShape[];
   delegateTools: AgentDelegateToolConfigShape[];
+  exposure?: "indexed" | "all";
+  pinnedDelegates?: string[];
+  exposeChildrenAsDelegates?: boolean;
+  enableParallelDelegates?: boolean;
+  maxDepth?: number;
 }
 
-function parseAgentsCreateArgs(args: string[]):
+interface AgentValidationError {
+  field: string;
+  message: string;
+}
+
+interface AgentValidationReport {
+  errors: AgentValidationError[];
+  agentReport?: AgentReport;
+}
+
+function parseAgentsCreateArgs(
+  args: string[],
+  modelRef?: string,
+):
   | {
       ok: true;
       value: {
@@ -4638,7 +4949,7 @@ function parseAgentsCreateArgs(args: string[]):
     return {
       ok: false,
       message:
-        "Usage: sparkwright agents create <id> --prompt <text> [--name text] [--use selector] [--allow tool] [--max-steps n] [--delegate tool_name]",
+        "Usage: sparkwright agents create <id> --prompt <text> [--name text] [--model provider/model] [--use selector] [--allow tool] [--max-steps n] [--delegate tool_name]",
     };
   }
 
@@ -4729,6 +5040,7 @@ function parseAgentsCreateArgs(args: string[]):
     name: name ?? id,
     ...(description ? { description } : {}),
     mode,
+    ...(modelRef ? { model: modelRef } : {}),
     prompt: prompt.trim(),
     ...(use.length > 0 ? { use } : {}),
     ...(allowedTools.length > 0 ? { allowedTools } : {}),
@@ -4777,6 +5089,25 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
     delegateTools: Array.isArray(agents.delegateTools)
       ? agents.delegateTools.filter(isPlainObject).map(recordToDelegateTool)
       : [],
+    ...(agents.exposure === "indexed" || agents.exposure === "all"
+      ? { exposure: agents.exposure }
+      : {}),
+    ...(Array.isArray(agents.pinnedDelegates)
+      ? {
+          pinnedDelegates: agents.pinnedDelegates.filter(
+            (delegate): delegate is string => typeof delegate === "string",
+          ),
+        }
+      : {}),
+    ...(typeof agents.exposeChildrenAsDelegates === "boolean"
+      ? { exposeChildrenAsDelegates: agents.exposeChildrenAsDelegates }
+      : {}),
+    ...(typeof agents.enableParallelDelegates === "boolean"
+      ? { enableParallelDelegates: agents.enableParallelDelegates }
+      : {}),
+    ...(typeof agents.maxDepth === "number" && Number.isFinite(agents.maxDepth)
+      ? { maxDepth: agents.maxDepth }
+      : {}),
   };
 }
 
@@ -4804,14 +5135,52 @@ function setAgentsConfig(
     ...(agents.delegateTools.length > 0
       ? { delegateTools: agents.delegateTools }
       : {}),
+    ...(agents.exposure !== undefined ? { exposure: agents.exposure } : {}),
+    ...(agents.pinnedDelegates !== undefined
+      ? { pinnedDelegates: agents.pinnedDelegates }
+      : {}),
+    ...(agents.exposeChildrenAsDelegates !== undefined
+      ? { exposeChildrenAsDelegates: agents.exposeChildrenAsDelegates }
+      : {}),
+    ...(agents.enableParallelDelegates !== undefined
+      ? { enableParallelDelegates: agents.enableParallelDelegates }
+      : {}),
+    ...(agents.maxDepth !== undefined ? { maxDepth: agents.maxDepth } : {}),
   };
   config.capabilities = capabilities;
 }
 
-function validateAgentConfig(agents: AgentsConfigShape): {
-  errors: Array<{ field: string; message: string }>;
-} {
-  const errors: Array<{ field: string; message: string }> = [];
+async function buildAgentValidationReport(
+  workspaceRoot: string,
+  agents: AgentsConfigShape,
+  env: Record<string, string | undefined> = process.env,
+): Promise<AgentValidationReport> {
+  const configReport = validateAgentConfig(agents);
+  const agentReport = await loadLayeredAgentReport(
+    workspaceRoot,
+    agents.profiles,
+    env,
+  );
+  const collisionErrors = agentReport.collisions.map((collision, index) => ({
+    field: `agentReport.collisions.${index}`,
+    message:
+      `same-layer agent id collision for "${collision.id}": ` +
+      `kept ${formatAgentOrigin(collision.kept)}, dropped ${formatAgentOrigin(
+        collision.dropped,
+      )} (fail-closed)`,
+  }));
+  const readErrors = agentReport.errors.map((error, index) => ({
+    field: `agentReport.errors.${index}`,
+    message: `${error.source}: ${error.message}`,
+  }));
+  return {
+    errors: [...configReport.errors, ...collisionErrors, ...readErrors],
+    agentReport,
+  };
+}
+
+function validateAgentConfig(agents: AgentsConfigShape): AgentValidationReport {
+  const errors: AgentValidationError[] = [];
   const ids = new Set<string>();
   for (const [index, profile] of agents.profiles.entries()) {
     const field = `profiles.${index}`;
@@ -4889,7 +5258,8 @@ function formatAgentReport(input: {
   path: string;
   exists: boolean;
   agents: AgentsConfigShape;
-  errors: Array<{ field: string; message: string }>;
+  errors: AgentValidationError[];
+  agentReport?: AgentReport;
 }): string {
   const lines = [
     `config: ${input.path}${input.exists ? "" : " (not created yet)"}`,
@@ -4899,6 +5269,9 @@ function formatAgentReport(input: {
     lines.push(
       `- ${profile.id}${profile.name ? ` (${profile.name})` : ""}${profile.mode ? ` · ${profile.mode}` : ""}`,
     );
+    if (typeof profile.model === "string" && profile.model.length > 0) {
+      lines.push(`  model: ${profile.model}`);
+    }
     if (profile.use?.length) {
       lines.push(`  use: ${profile.use.join(", ")}`);
     }
@@ -4908,6 +5281,11 @@ function formatAgentReport(input: {
     if (profile.deniedTools?.length) {
       lines.push(`  deny: ${profile.deniedTools.join(", ")}`);
     }
+    if (profile.delegateTool) {
+      lines.push(
+        `  delegate: ${delegateToolName({ profileId: profile.id, ...profile.delegateTool })}`,
+      );
+    }
   }
   if (input.agents.delegateTools.length > 0) {
     lines.push(`delegateTools: ${input.agents.delegateTools.length}`);
@@ -4915,6 +5293,37 @@ function formatAgentReport(input: {
       lines.push(
         `- ${tool.toolName ?? `delegate_${tool.profileId}`} -> ${tool.profileId}`,
       );
+    }
+  }
+  if (input.agentReport) {
+    lines.push(
+      `discovered agents: ${input.agentReport.profiles.length} effective, ${input.agentReport.roots.length} roots, ${input.agentReport.shadows.length} shadows, ${input.agentReport.collisions.length} collisions, ${input.agentReport.errors.length} errors`,
+    );
+    if (input.agentReport.shadows.length > 0) {
+      lines.push(`shadows: ${input.agentReport.shadows.length}`);
+      for (const shadow of input.agentReport.shadows) {
+        lines.push(
+          `- ${shadow.id}: ${formatAgentOrigin(
+            shadow.shadowed,
+          )} shadowed by ${formatAgentOrigin(shadow.shadowedBy)}`,
+        );
+      }
+    }
+    if (input.agentReport.collisions.length > 0) {
+      lines.push(`collisions: ${input.agentReport.collisions.length}`);
+      for (const collision of input.agentReport.collisions) {
+        lines.push(
+          `- ${collision.id}: kept ${formatAgentOrigin(
+            collision.kept,
+          )}, dropped ${formatAgentOrigin(collision.dropped)} (fail-closed)`,
+        );
+      }
+    }
+    if (input.agentReport.errors.length > 0) {
+      lines.push(`agent report errors: ${input.agentReport.errors.length}`);
+      for (const error of input.agentReport.errors) {
+        lines.push(`- ${error.source}: ${error.message}`);
+      }
     }
   }
   if (input.errors.length > 0) {
@@ -4927,7 +5336,9 @@ function formatAgentReport(input: {
 }
 
 function isAgentId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(value);
+  // `:` is accepted for explicit namespaced ids (e.g. review:foo). Ids stay
+  // flat by default; the path is never auto-derived into the id.
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(value);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -5386,16 +5797,16 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
-    return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model]';
+    return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]';
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
   }
   if (command === "tui") {
-    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]";
+    return "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug] [--session-id id]";
   }
   if (command === "acp") {
-    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]";
+    return "Usage: sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug]";
   }
   if (command === "session") {
     return "Usage: sparkwright session <summary|inspect|check|repair|compact|resume> <session-id> [goal] [--workspace path] [--session-root path] [--model provider/model] [--llm] [--compaction]";
@@ -6305,18 +6716,18 @@ function renderUserConfigTemplate(): string {
     "    #     gemini-3.1-pro: {}",
     "    #     gemini-3-flash: {}",
     "",
-    "policy:",
-    "  permissionMode: default",
-    "  # write:",
-    "  #   maxFiles: 10",
-    "  #   allowDeletions: true",
-    "  # confidentialPaths: ['.env', '.env.*', 'secrets/**']",
+    "# policy:",
+    "#   write:",
+    "#     maxFiles: 10",
+    "#     allowDeletions: true",
+    "#   confidentialPaths: ['.env', '.env.*', 'secrets/**']",
     "",
     "run:",
+    "  accessMode: ask",
+    "  traceLevel: standard",
     "  budget:",
     "    maxModelCalls: 80",
     "    maxCostUsd: 2.0",
-    "  # traceLevel: standard",
     "",
     "# tasks:",
     "#   compaction:",
@@ -6335,6 +6746,13 @@ function renderUserConfigTemplate(): string {
     "# tools:",
     "#   use: [workspace.read, workspace.write, shell, planning, skills, agents, mcp]",
     "",
+    "# capabilities:",
+    "#   agents:",
+    "#     # Optional: dynamic spawn_agent children. If unset, they inherit identity.model.",
+    "#     # spawnModel: openai/gpt-5.4-mini",
+    "#     # Optional: configured in-process delegates when Agent.md/profile model is unset.",
+    "#     # delegateModel: openai/gpt-5.4-mini",
+    "",
   ].join("\n");
 }
 
@@ -6348,13 +6766,13 @@ function renderProjectConfigTemplate(): string {
     `  defer: [${PROJECT_CONFIG_DEFERRED_TOOLS.join(", ")}]`,
     "",
     "policy:",
-    "  permissionMode: default",
     "  write:",
     "    maxFiles: 5",
     "    maxDiffLines: 200",
     "    allowDeletions: true",
     "",
     "run:",
+    "  accessMode: ask",
     "  budget:",
     "    maxModelCalls: 80",
     "    maxCostUsd: 2.0",
@@ -6514,8 +6932,8 @@ function usage(): string {
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
     "       sparkwright --version|-v      # print CLI package version",
-    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug] [--session-id id]",
-    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--permission-mode mode] [--trace-level standard|debug]",
+    "       sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug] [--session-id id]",
+    "       sparkwright acp [--workspace path] [--session-root path] [--model provider/model] [--write] [--access-mode mode] [--trace-level standard|debug]",
     "       sparkwright capabilities inspect [--workspace path] [--model provider/model] [--resolve-mcp] [--format json|text]",
     "       sparkwright doctor paths [--workspace path] [--session-root path] [--format json|text]",
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
@@ -6524,21 +6942,21 @@ function usage(): string {
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
-    "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
+    "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list|show|create|update|apply|reject|supersede|prune [--workspace path] [--format json|text]",
     "       sparkwright skills history <skill-name> [--workspace path] [--format json|text]",
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--session-id id] [--model provider/model] [--verbose]',
+    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--verbose]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",
     "       sparkwright trace report <trace.jsonl> [--format json|text]",
     "       sparkwright trace verify <trace.jsonl> [--format json|text]",
     "       sparkwright session <summary|inspect|check|repair|compact> <session-id> [--workspace path] [--session-root path] [--format json|text] [--apply] [--compaction]",
-    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--permission-mode mode] [--model provider/model] [--verbose]',
+    '       sparkwright session resume <session-id> "next goal" [--workspace path] [--session-root path] [--target README.md] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--model provider/model] [--verbose]',
     "       sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace] [--model provider/model] [--verbose]",
   ].join("\n");
 }
@@ -6574,7 +6992,7 @@ function skillsUsage(): string {
   return [
     "Usage: sparkwright skills list [--workspace path] [--format json|text]",
     "       sparkwright skills validate [--workspace path] [--format json|text]",
-    "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--format json|text]",
+    "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",
     "       sparkwright skills proposals show <id> [--workspace path] [--format json|text]",
@@ -6609,6 +7027,6 @@ function agentsUsage(): string {
   return [
     "Usage: sparkwright agents list [--workspace path] [--format json|text]",
     "       sparkwright agents validate [--workspace path] [--format json|text]",
-    '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--use selector] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
+    '       sparkwright agents create <id> --prompt "what it should do" [--name text] [--model provider/model] [--use selector] [--allow tool] [--deny tool] [--delegate tool_name] [--max-steps n] [--workspace path] [--force]',
   ].join("\n");
 }

@@ -44,9 +44,8 @@ describe("formatToolRequestPreview", () => {
       formatToolRequestPreview("create_skill", {
         action: "create",
         name: "repo-reviewer",
-        force: true,
       }),
-    ).toBe("create repo-reviewer · force");
+    ).toBe("create repo-reviewer");
   });
 
   it("sanitizes fallback previews", () => {

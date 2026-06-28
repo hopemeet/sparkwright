@@ -138,10 +138,11 @@ with helpers such as `summarizeTraceJsonl` / `summarizeTraceFile`; they should
 not become a second source of truth.
 
 Host-controlled process runners (`extension.process.*`) follow the same rule:
-external scripts may report progress only through a host-owned inbox, while the
-host assigns event ids, sequence, timestamps, and span fields. Redaction remains
-at the trace persistence boundary (`FileRunStore`), and large stdout/stderr
-content should be summarized inline and materialized through `artifact.created`.
+external scripts may report progress only through host-owned stderr token-line
+telemetry, while the host assigns event ids, sequence, timestamps, and span
+fields. Redaction remains at the trace persistence boundary (`FileRunStore`),
+and large stdout/stderr content should be summarized inline and materialized
+through `artifact.created`.
 
 For local integrity checks, `validateSessionTraceConsistency` inspects a
 session directory and verifies that session events, run membership, trace

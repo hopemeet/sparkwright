@@ -95,6 +95,7 @@ import {
 import {
   commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
+  stableRefTarget,
   toolOutcomeSnapshot,
 } from "./run-outcome.js";
 import { ControlledWorkspace } from "./workspace.js";
@@ -1019,7 +1020,7 @@ export class SparkwrightRun implements RunHandle {
     this.lastLoopState = cloneLoopState(state);
 
     const sessionStartHooks = await this.runWorkflowHookPhase(
-      "SessionStart",
+      "RunStart",
       {
         goal: this.record.goal,
         resumedFromCheckpoint: this.resumedFromCheckpoint !== undefined,
@@ -1058,7 +1059,7 @@ export class SparkwrightRun implements RunHandle {
       }
 
       const promptSubmitHooks = await this.runWorkflowHookPhase(
-        "UserPromptSubmit",
+        "TurnStart",
         {
           goal: this.record.goal,
           transition: state.transition,
@@ -4012,7 +4013,7 @@ export class SparkwrightRun implements RunHandle {
     };
     this.setState("completed", reason);
     this.events.emit("run.completed", completedPayload);
-    this.kickWorkflowHookPhase("SessionEnd", {
+    this.kickWorkflowHookPhase("RunEnd", {
       state: "completed",
       reason,
       result: completedPayload,
@@ -4062,7 +4063,7 @@ export class SparkwrightRun implements RunHandle {
       failure,
       metadata: { ...safeMetadata },
     });
-    this.kickWorkflowHookPhase("SessionEnd", {
+    this.kickWorkflowHookPhase("RunEnd", {
       state: "failed",
       reason,
       failure,
@@ -4195,6 +4196,12 @@ function isRepeatedToolCall(
 function semanticToolTarget(toolName: string, args: unknown): string {
   if (args && typeof args === "object") {
     const record = args as Record<string, unknown>;
+    // Capability calls (cron/agent/task) act on a stable `ref`; collapse to it
+    // so a model varying cosmetic job/patch fields cannot escape the guard.
+    const ref = stableRefTarget(record);
+    if (ref !== undefined) {
+      return `${toolName}::ref::${ref}`;
+    }
     if (toolName === "shell" && typeof record.command === "string") {
       const cwd =
         typeof record.cwd === "string" && record.cwd.length > 0

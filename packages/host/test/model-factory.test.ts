@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   createModel,
   inspectResolvedModelConfig,
+  resolveProfileModelAdapters,
 } from "../src/model-factory.js";
 
 describe("model factory pricing diagnostics", () => {
@@ -85,6 +86,62 @@ describe("model factory pricing diagnostics", () => {
           },
         },
       });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveProfileModelAdapters", () => {
+  it("dedupes adapters by modelRef and keys them by profile", async () => {
+    const workspace = await configuredWorkspace({ model: "deterministic" });
+    try {
+      const result = await resolveProfileModelAdapters({
+        requests: [
+          { profileId: "a", modelRef: "deterministic" },
+          { profileId: "b", modelRef: "deterministic" },
+        ],
+        goal: "g",
+        workspaceRoot: workspace,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect([...result.adapters.keys()].sort()).toEqual(["a", "b"]);
+        // Same ref → one adapter instance shared across profiles.
+        expect(result.adapters.get("a")).toBe(result.adapters.get("b"));
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails with the profile attribution when a model is unresolvable", async () => {
+    const workspace = await configuredWorkspace({ model: "deterministic" });
+    try {
+      const result = await resolveProfileModelAdapters({
+        requests: [{ profileId: "reviewer", modelRef: "nope/missing-model" }],
+        goal: "g",
+        workspaceRoot: workspace,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.message).toContain("reviewer");
+        expect(result.message).toContain("nope/missing-model");
+      }
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("returns an empty map when there are no requests", async () => {
+    const workspace = await configuredWorkspace({ model: "deterministic" });
+    try {
+      const result = await resolveProfileModelAdapters({
+        requests: [],
+        goal: "g",
+        workspaceRoot: workspace,
+      });
+      expect(result).toEqual({ ok: true, adapters: new Map() });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

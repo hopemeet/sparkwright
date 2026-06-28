@@ -190,6 +190,11 @@ async function realCreateSkillCase() {
   const trace = await traceFromOutput(result.stdout, { workspace });
   const requests = toolRequests(trace.events);
   const skillEntries = await skillDirEntries(workspace, "release-reviewer");
+  const proposals = await listProposalIds(workspace);
+  const proposedEntries =
+    proposals.length === 1
+      ? await proposalSkillEntries(workspace, proposals[0], "release-reviewer")
+      : [];
   const failures = toolFailures(trace.events);
   const outcome = runOutcome(trace.events);
   const recoveredCreateSkillFailures =
@@ -209,19 +214,24 @@ async function realCreateSkillCase() {
     requests.includes("create_skill") &&
     !requests.includes("shell") &&
     (failures.length === 0 || recoveredCreateSkillFailures) &&
-    skillEntries.includes("SKILL.md") &&
-    !skillEntries.includes("skill.md") &&
-    count(trace.events, "workspace.write.completed") === 1;
+    skillEntries.length === 0 &&
+    proposals.length === 1 &&
+    proposedEntries.includes("SKILL.md") &&
+    !proposedEntries.includes("skill.md") &&
+    count(trace.events, "capability.mutation.completed") > 0 &&
+    count(trace.events, "workspace.write.completed") === 0;
 
   record({
     id: "REAL_SKILL_CREATE",
-    name: "real model creates skill through create_skill",
+    name: "real model drafts a skill create proposal through create_skill",
     status: ok ? "passed" : "failed",
     command: commandString(result.command),
     trace: trace.path,
     session: trace.sessionId,
     evidence:
-      `tools=${requests.join(",")}; entries=${skillEntries.join(",")}; ` +
+      `tools=${requests.join(",")}; appliedEntries=${skillEntries.join(",")}; ` +
+      `proposals=${proposals.join(",")}; proposedEntries=${proposedEntries.join(",")}; ` +
+      `capabilityMutations=${count(trace.events, "capability.mutation.completed")}; ` +
       `writes=${count(trace.events, "workspace.write.completed")}`,
     reason: ok
       ? undefined
@@ -229,8 +239,14 @@ async function realCreateSkillCase() {
           exitCode: result.exitCode,
           requests,
           skillEntries,
+          proposals,
+          proposedEntries,
           failures,
           outcome,
+          capabilityMutations: count(
+            trace.events,
+            "capability.mutation.completed",
+          ),
           writes: count(trace.events, "workspace.write.completed"),
         }),
   });
@@ -353,6 +369,24 @@ async function listProposalIds(workspace) {
   try {
     return await readdir(
       join(workspace, ".sparkwright", "skill-evolution", "proposals"),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function proposalSkillEntries(workspace, proposalId, name) {
+  try {
+    return await readdir(
+      join(
+        workspace,
+        ".sparkwright",
+        "skill-evolution",
+        "proposals",
+        proposalId,
+        "after",
+        name,
+      ),
     );
   } catch {
     return [];

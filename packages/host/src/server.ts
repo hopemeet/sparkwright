@@ -5,7 +5,13 @@ import type {
   HostResponse,
   ProtocolError,
 } from "@sparkwright/protocol";
-import { PROTOCOL_VERSION, isRequest } from "@sparkwright/protocol";
+import {
+  ACCESS_MODES,
+  PERMISSION_MODES,
+  PROTOCOL_VERSION,
+  TRACE_LEVELS,
+  isRequest,
+} from "@sparkwright/protocol";
 import type { Connection } from "./connection.js";
 import { nextMessageId, nowIso } from "./connection.js";
 import { HostRuntime, type RuntimeOptions } from "./runtime.js";
@@ -14,6 +20,8 @@ export interface ServeConnectionOptions {
   workspaceRoot: string;
   sessionRootDir?: string;
   defaultModel?: string;
+  defaultAccessMode?: RuntimeOptions["defaultAccessMode"];
+  accessModeCeiling?: RuntimeOptions["accessModeCeiling"];
   defaultPermissionMode?: RuntimeOptions["defaultPermissionMode"];
   defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
   defaultShouldWrite?: RuntimeOptions["defaultShouldWrite"];
@@ -36,6 +44,8 @@ export function serveConnection(
     workspaceRoot: opts.workspaceRoot,
     sessionRootDir: opts.sessionRootDir,
     defaultModel: opts.defaultModel,
+    defaultAccessMode: opts.defaultAccessMode,
+    accessModeCeiling: opts.accessModeCeiling,
     defaultPermissionMode: opts.defaultPermissionMode,
     defaultTraceLevel: opts.defaultTraceLevel,
     defaultShouldWrite: opts.defaultShouldWrite,
@@ -296,6 +306,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "confidentialPaths",
           "shouldWrite",
           "model",
+          "accessMode",
           "permissionMode",
           "traceLevel",
           "metadata",
@@ -306,14 +317,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalStringArray(req.payload, "confidentialPaths") ??
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
-        optionalEnum(req.payload, "permissionMode", [
-          "plan",
-          "default",
-          "accept_edits",
-          "dont_ask",
-          "bypass_permissions",
-        ]) ??
-        optionalEnum(req.payload, "traceLevel", ["standard", "debug"]) ??
+        optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
+        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
+        optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.resume":
@@ -327,6 +333,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "fromTrace",
           "force",
           "model",
+          "accessMode",
           "permissionMode",
           "traceLevel",
           "metadata",
@@ -339,14 +346,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??
         optionalString(req.payload, "model") ??
-        optionalEnum(req.payload, "permissionMode", [
-          "plan",
-          "default",
-          "accept_edits",
-          "dont_ask",
-          "bypass_permissions",
-        ]) ??
-        optionalEnum(req.payload, "traceLevel", ["standard", "debug"]) ??
+        optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
+        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
+        optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.inject_message":

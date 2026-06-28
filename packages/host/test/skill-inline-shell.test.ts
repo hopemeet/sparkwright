@@ -18,7 +18,7 @@ describe("createSkillInlineShellRunner", () => {
     const output = await runner({
       command: "printf hello",
       cwd: process.cwd(),
-      timeoutMs: 1_000,
+      timeoutMs: 5_000,
       maxOutputChars: 32,
     });
 
@@ -39,6 +39,53 @@ describe("createSkillInlineShellRunner", () => {
         output: expect.objectContaining({
           stdoutPreview: "hello",
         }),
+      }),
+    });
+  });
+
+  it("keeps inline shell progress correlated with the skill_script process", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = createSkillInlineShellRunner({ emitter: events, runId });
+
+    const output = await runner({
+      command: [
+        `${process.execPath} -e "`,
+        "const token = process.env.SPARKWRIGHT_EVENT_TOKEN;",
+        "process.stderr.write(token + ': ' + JSON.stringify({ type: 'progress', message: 'loading skill' }) + '\\n');",
+        "process.stdout.write('body');",
+        '"',
+      ].join(" "),
+      cwd: process.cwd(),
+      timeoutMs: 5_000,
+      maxOutputChars: 64,
+    });
+
+    expect(output).toBe("body");
+    const started = events
+      .all()
+      .find((event) => event.type === "extension.process.started");
+    const progress = events
+      .all()
+      .find((event) => event.type === "extension.process.progress");
+    const completed = events
+      .all()
+      .find((event) => event.type === "extension.process.completed");
+    expect(started?.payload).toMatchObject({
+      name: "skill-inline-shell",
+      kind: "skill_script",
+    });
+    expect(progress).toMatchObject({
+      spanId: started?.spanId,
+      payload: expect.objectContaining({
+        channel: "event",
+        message: "loading skill",
+      }),
+    });
+    expect(completed?.payload).toMatchObject({
+      kind: "skill_script",
+      output: expect.not.objectContaining({
+        stderrPreview: expect.stringContaining("SPARKWRIGHT_EVENT"),
       }),
     });
   });

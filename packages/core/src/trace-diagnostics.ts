@@ -48,6 +48,15 @@ export interface TraceSummary {
       total: number;
       byCode: Record<string, number>;
     };
+    /**
+     * Failures that followed a successful destructive mutation of the same
+     * target ("succeeded, then same target returned not-found"). A subset of
+     * `recovered`, surfaced separately for a high-signal report finding.
+     */
+    mutationFollowups: {
+      total: number;
+      targets: string[];
+    };
   };
   /** @reserved Public trace-summary field consumed by diagnostics UIs. */
   commandFailures: {
@@ -664,6 +673,21 @@ function analyzeToolRecovery({
     });
   }
 
+  if (summary.toolFailures.mutationFollowups.total > 0) {
+    const targets = summary.toolFailures.mutationFollowups.targets;
+    findings.push({
+      severity: "medium",
+      code: "DESTRUCTIVE_MUTATION_THEN_NOT_FOUND",
+      title: "Destructive mutation succeeded, then same target failed",
+      evidence: [
+        `${summary.toolFailures.mutationFollowups.total} follow-up failure(s) on a target that was already mutated successfully`,
+        targets.length > 0 ? `target(s): ${targets.join(", ")}` : "",
+      ].filter(Boolean),
+      recommendation:
+        "The destructive operation already succeeded; the later 'not found' calls are expected fallout. Treat the run as successful and have the model report the first success instead of looping.",
+    });
+  }
+
   return findings;
 }
 
@@ -1164,6 +1188,10 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
         total: 0,
         byCode: recoveredToolFailureCodes,
       },
+      mutationFollowups: {
+        total: 0,
+        targets: [],
+      },
     },
     commandFailures: {
       total: 0,
@@ -1607,21 +1635,66 @@ function collectClassifiedToolFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  // Prefer the snapshot the run persisted (computed over the full event
-  // stream). This preserves legacy trace compatibility for older traces that
-  // may not retain enough tool.requested detail to classify same-target
-  // recovery.
-  const snapshot = persistedToolOutcome(events) ?? toolOutcomeSnapshot(events);
+  // Recompute from the raw events only when every failed tool call still carries
+  // its request arguments — that is exactly the detail same-target recovery (and
+  // the destructive-mutation-then-not-found diagnostic) needs, so the recompute
+  // is reliable for *all* failures and reflects the current classification even
+  // for traces whose persisted snapshot predates a classifier change. Otherwise
+  // (older/compacted runs that stripped those arguments, including mixed traces
+  // where only some runs retain them) defer to the persisted snapshot so a
+  // recorded recovery is not flipped back to an unresolved failure.
+  const snapshot = everyFailedToolCallHasRequestArgs(events)
+    ? toolOutcomeSnapshot(events)
+    : (persistedToolOutcome(events) ?? toolOutcomeSnapshot(events));
   if (!snapshot) return;
   summary.toolFailures.unresolved.total = snapshot.unresolved.total;
   summary.toolFailures.unresolved.byCode = { ...snapshot.unresolved.byCode };
   summary.toolFailures.recovered.total = snapshot.recovered.total;
   summary.toolFailures.recovered.byCode = { ...snapshot.recovered.byCode };
+  if (snapshot.mutationFollowups) {
+    summary.toolFailures.mutationFollowups.total =
+      snapshot.mutationFollowups.count;
+    summary.toolFailures.mutationFollowups.targets = [
+      ...snapshot.mutationFollowups.targets,
+    ];
+  }
 
   for (const [code, count] of Object.entries(snapshot.unresolved.byCode)) {
     summary.errorCount += count;
     summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + count;
   }
+}
+
+/**
+ * True when the trace has at least one tool failure AND every failed tool call
+ * has a matching `tool.requested` that still carries its `arguments`. That is
+ * the exact detail a recompute needs to classify same-target recovery, so the
+ * recompute is reliable for *all* failures rather than only some of them.
+ *
+ * A loose "any request has arguments" check would be wrong for mixed traces: a
+ * single args-bearing run would force a recompute that then misclassifies an
+ * older/compacted run whose failed call lost its request arguments (a persisted
+ * `recovered` failure would flip to `unresolved`). When any failed call lacks
+ * request arguments we cannot fully reclassify, so we defer to the persisted
+ * snapshot instead.
+ */
+function everyFailedToolCallHasRequestArgs(
+  events: readonly SparkwrightEvent[],
+): boolean {
+  const requestHasArgs = new Map<string, boolean>();
+  for (const event of events) {
+    if (event.type !== "tool.requested" || !isRecord(event.payload)) continue;
+    const id = stringValue(event.payload.id);
+    if (id) requestHasArgs.set(id, "arguments" in event.payload);
+  }
+  let sawFailure = false;
+  for (const event of events) {
+    if (event.type !== "tool.failed" || !isRecord(event.payload)) continue;
+    sawFailure = true;
+    const id = stringValue(event.payload.toolCallId);
+    if (!id || !requestHasArgs.get(id)) return false;
+  }
+  return sawFailure;
 }
 
 /** The tool-outcome snapshot persisted on `run.completed`, if present. */
@@ -1636,6 +1709,9 @@ function persistedToolOutcome(
     return {
       unresolved: tallyFromRaw(raw.unresolved),
       recovered: tallyFromRaw(raw.recovered),
+      ...(isRecord(raw.mutationFollowups)
+        ? { mutationFollowups: mutationFollowupsFromRaw(raw.mutationFollowups) }
+        : {}),
     };
   }
   return undefined;
@@ -1655,6 +1731,19 @@ function tallyFromRaw(raw: unknown): {
   return {
     total: typeof raw.total === "number" ? raw.total : 0,
     byCode,
+  };
+}
+
+function mutationFollowupsFromRaw(raw: Record<string, unknown>): {
+  count: number;
+  targets: string[];
+} {
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.filter((value): value is string => typeof value === "string")
+    : [];
+  return {
+    count: typeof raw.count === "number" ? raw.count : 0,
+    targets,
   };
 }
 

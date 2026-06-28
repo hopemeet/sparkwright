@@ -140,6 +140,10 @@ const instanceChecks = [
     instance: "schemas/fixtures/host-message.response.error.json",
   },
   {
+    schema: "host-message.schema.json#/$defs/CapabilitySnapshot",
+    instance: "schemas/fixtures/host-message.capability-snapshot.json",
+  },
+  {
     schema: "host-message.schema.json",
     instance: "schemas/fixtures/host-message.event.host-ready.json",
   },

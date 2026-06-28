@@ -63,6 +63,7 @@
         "skill.loaded",
         "mcp.server.prepared",
         "agent.profile.derived",
+        "agent.routing.evaluated",
         "prompt.built",
         "validation.started",
         "validation.completed",
@@ -140,6 +141,62 @@
     "parentSpanId": {
       "type": "string",
       "description": "Optional. Parent span in the trace tree. Set from AsyncLocalStorage at emit time when using withSpan(). Added by ADR-0008."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": ["extension.process.completed", "extension.process.failed"]
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/ExtensionProcessTerminalPayload"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "ExtensionProcessTerminalPayload": {
+      "type": "object",
+      "properties": {
+        "progressDroppedSamples": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/ProcessTelemetryDroppedSample"
+          },
+          "description": "Debug-only bounded samples for dropped stderr telemetry token lines. Standard traces filter this field and keep only progressDropped."
+        }
+      },
+      "additionalProperties": true
+    },
+    "ProcessTelemetryDroppedSample": {
+      "type": "object",
+      "required": ["reason", "preview"],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "invalid_json",
+            "unsupported_type",
+            "line_too_large",
+            "data_too_large",
+            "limit_exceeded"
+          ]
+        },
+        "preview": {
+          "type": "string",
+          "maxLength": 240
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

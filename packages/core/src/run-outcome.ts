@@ -14,12 +14,26 @@ export interface ClassifiedToolFailure {
   code?: string;
   category: ToolFailureCategory;
   recovered: boolean;
+  /**
+   * True when this failure was recovered specifically because the *same target*
+   * had already been mutated successfully earlier in the run (e.g. a destructive
+   * `cron remove` succeeded, then later calls returned "not found"). These are
+   * expected idempotent fallout, not real failures, but they are worth calling
+   * out as a distinct high-signal pattern in diagnostics.
+   */
+  recoveredByPriorMutation?: boolean;
 }
 
 export interface ToolOutcomeSummary {
   failures: ClassifiedToolFailure[];
   unresolvedFailures: ClassifiedToolFailure[];
   recoveredFailures: ClassifiedToolFailure[];
+  /**
+   * Recovered failures that followed a successful destructive mutation of the
+   * same target. Surfaced separately so reports can explain the "succeeded, then
+   * same target returned not-found" loop instead of silently dropping it.
+   */
+  mutationFollowupFailures: ClassifiedToolFailure[];
   /** @reserved Public outcome field consumed by policy / diagnostics UIs. */
   policyDenials: ClassifiedToolFailure[];
 }
@@ -210,6 +224,12 @@ export function analyzeToolOutcomes(
   // Indexes of successful read/discovery completions, used to recognize that a
   // model recovered from a not-found probe by reading a *different* file.
   const completedReadIndexes: number[] = [];
+  // Event indexes at which a target completed a state-changing mutation
+  // (`changed: true`). A runtime failure on such a target is expected idempotent
+  // fallout (the target is already gone) only when the mutation happened
+  // *before* the failure — order matters, so we keep the indexes, not just a
+  // set membership.
+  const mutatedByTarget = new Map<string, number[]>();
 
   for (const [index, event] of events.entries()) {
     if (event.type === "tool.requested" && isRecord(event.payload)) {
@@ -240,6 +260,14 @@ export function analyzeToolOutcomes(
       const indexes = completedByTarget.get(targetKey) ?? [];
       indexes.push(index);
       completedByTarget.set(targetKey, indexes);
+      if (
+        isRecord(event.payload.output) &&
+        event.payload.output.changed === true
+      ) {
+        const mutationIndexes = mutatedByTarget.get(targetKey) ?? [];
+        mutationIndexes.push(index);
+        mutatedByTarget.set(targetKey, mutationIndexes);
+      }
     } else if (
       event.type === "workspace.write.completed" &&
       isRecord(event.payload)
@@ -284,6 +312,18 @@ export function analyzeToolOutcomes(
       isReadFamilyTool(toolName) &&
       isNotFoundCode(code) &&
       completedReadIndexes.some((completedIndex) => completedIndex > index);
+    // A runtime failure on a target that already completed a successful mutation
+    // earlier in the run is expected idempotent fallout (the destructive op
+    // already took effect; the target is gone). The "not found" lives only in
+    // the message, so the generic TOOL_EXECUTION_FAILED code cannot be matched
+    // by isNotFoundCode — key on the prior mutation instead. Scoped to runtime
+    // errors so it never masks an arg/policy mistake.
+    const recoveredByPriorMutation =
+      category === "tool_runtime_error" &&
+      Boolean(targetKey) &&
+      (mutatedByTarget.get(targetKey as string) ?? []).some(
+        (mutationIndex) => mutationIndex < index,
+      );
     failures.push({
       toolCallId,
       toolName,
@@ -293,7 +333,10 @@ export function analyzeToolOutcomes(
       recovered:
         category !== "policy_denial" &&
         category !== "approval_denial" &&
-        (recoveredBySameTarget || recoveredByLaterRead),
+        (recoveredBySameTarget ||
+          recoveredByLaterRead ||
+          recoveredByPriorMutation),
+      ...(recoveredByPriorMutation ? { recoveredByPriorMutation: true } : {}),
     });
   }
 
@@ -304,6 +347,9 @@ export function analyzeToolOutcomes(
       !failure.recovered,
   );
   const recoveredFailures = failures.filter((failure) => failure.recovered);
+  const mutationFollowupFailures = failures.filter(
+    (failure) => failure.recoveredByPriorMutation,
+  );
   const policyDenials = failures.filter(
     (failure) =>
       failure.category === "policy_denial" ||
@@ -314,6 +360,7 @@ export function analyzeToolOutcomes(
     failures,
     unresolvedFailures,
     recoveredFailures,
+    mutationFollowupFailures,
     policyDenials,
   };
 }
@@ -440,6 +487,13 @@ export function commandOutcomeSnapshot(
 export interface ToolOutcomeSnapshot {
   unresolved: { total: number; byCode: Record<string, number> };
   recovered: { total: number; byCode: Record<string, number> };
+  /**
+   * High-signal diagnostic: failures that followed a successful destructive
+   * mutation of the same target ("succeeded, then same target returned
+   * not-found"). Counted within `recovered`; surfaced separately so reports can
+   * name the pattern. Omitted when none occurred.
+   */
+  mutationFollowups?: { count: number; targets: string[] };
 }
 
 /**
@@ -467,6 +521,13 @@ export function toolOutcomeSnapshot(
     }
     return byCode;
   };
+  const mutationFollowupTargets = [
+    ...new Set(
+      outcomes.mutationFollowupFailures
+        .map((failure) => failure.targetKey)
+        .filter((key): key is string => Boolean(key)),
+    ),
+  ];
   return {
     unresolved: {
       total: outcomes.unresolvedFailures.length,
@@ -476,6 +537,14 @@ export function toolOutcomeSnapshot(
       total: outcomes.recoveredFailures.length,
       byCode: tallyByCode(outcomes.recoveredFailures),
     },
+    ...(outcomes.mutationFollowupFailures.length > 0
+      ? {
+          mutationFollowups: {
+            count: outcomes.mutationFollowupFailures.length,
+            targets: mutationFollowupTargets,
+          },
+        }
+      : {}),
   };
 }
 
@@ -950,10 +1019,26 @@ function isProbeCommand(command: string): boolean {
   );
 }
 
+/**
+ * The stable identity of a capability call (cron/agent/task) is its top-level
+ * `ref` (a job id or exact name). The nested `job`/`patch` fields are cosmetic
+ * and a looping model can vary them while hammering the same target, so both the
+ * doom-loop guard (`semanticToolTarget` in run.ts) and outcome recovery key on
+ * `ref` first when it is present.
+ */
+export function stableRefTarget(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined;
+  const ref = args.ref;
+  return typeof ref === "string" && ref.length > 0 ? ref : undefined;
+}
+
 function targetValue(
   args: unknown,
 ): { kind: string; value: string } | undefined {
   if (!isRecord(args)) return undefined;
+
+  const ref = stableRefTarget(args);
+  if (ref !== undefined) return { kind: "ref", value: ref };
 
   const fields = [
     "path",

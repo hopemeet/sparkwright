@@ -38,11 +38,7 @@ export function formatToolRequestPreview(
   if (r && (name === "create_skill" || name === "update_skill")) {
     const action = str(r.action);
     const skill = str(r.name);
-    const force = r.force === true ? " · force" : "";
-    return truncatePlain(
-      [action, skill].filter(Boolean).join(" ") + force,
-      max,
-    );
+    return truncatePlain([action, skill].filter(Boolean).join(" "), max);
   }
   return args !== undefined ? oneLine(args, max) : "";
 }

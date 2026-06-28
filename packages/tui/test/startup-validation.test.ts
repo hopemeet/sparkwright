@@ -14,25 +14,25 @@ describe("runTui startup validation", () => {
     tempDirs = [];
   });
 
-  it("rejects an invalid permission mode", async () => {
+  it("rejects an invalid access mode", async () => {
     const stderr = captureStderr();
     try {
-      const result = await runTui(["--permission-mode", "root"]);
+      const result = await runTui(["--access-mode", "root"]);
 
       expect(result.exitCode).toBe(1);
-      expect(stderr.text()).toContain("--permission-mode must be one of");
+      expect(stderr.text()).toContain("--access-mode must be one of");
     } finally {
       stderr.restore();
     }
   });
 
-  it("rejects a missing permission mode value", async () => {
+  it("rejects a missing access mode value", async () => {
     const stderr = captureStderr();
     try {
-      const result = await runTui(["--permission-mode"]);
+      const result = await runTui(["--access-mode"]);
 
       expect(result.exitCode).toBe(1);
-      expect(stderr.text()).toContain("--permission-mode requires a value");
+      expect(stderr.text()).toContain("--access-mode requires a value");
     } finally {
       stderr.restore();
     }

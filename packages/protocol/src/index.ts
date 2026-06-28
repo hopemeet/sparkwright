@@ -29,6 +29,27 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
   );
 }
 
+/**
+ * High-level run autonomy preset. The single user-facing access knob; the host
+ * compiles it to `permissionMode` + `shouldWrite`. Mirrors
+ * `@sparkwright/core`'s ACCESS_MODES (kept in sync, like PermissionMode).
+ */
+export const ACCESS_MODES = [
+  "read-only",
+  "ask",
+  "accept-edits",
+  "bypass",
+] as const;
+
+export type RunAccessMode = (typeof ACCESS_MODES)[number];
+
+export function isRunAccessMode(value: unknown): value is RunAccessMode {
+  return (
+    typeof value === "string" &&
+    (ACCESS_MODES as readonly string[]).includes(value)
+  );
+}
+
 export const TRACE_LEVELS = ["standard", "debug"] as const;
 
 export type TraceLevel = (typeof TRACE_LEVELS)[number];
@@ -259,6 +280,12 @@ export interface RunStartRequestPayload {
   shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
+  /**
+   * High-level run autonomy preset. When present, the host compiles it to
+   * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`
+   * is ignored (with a diagnostic). Preferred over `permissionMode`.
+   */
+  accessMode?: RunAccessMode;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -281,6 +308,12 @@ export interface RunResumeRequestPayload {
   force?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
+  /**
+   * High-level run autonomy preset. When present, the host compiles it to
+   * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`
+   * is ignored (with a diagnostic). Preferred over `permissionMode`.
+   */
+  accessMode?: RunAccessMode;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -540,6 +573,13 @@ export interface CapabilityDelegateToolSummary {
   /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
   protocol: "acp" | "external_command" | "in_process";
+  /**
+   * Preferred model ("provider/model") this delegate runs on, when the profile
+   * declares one. Omitted when the delegate inherits the parent run's model.
+   *
+   * @reserved Public capability-inspection field consumed by routing/inspect UIs.
+   */
+  model?: string;
   risk: "safe" | "risky" | "denied";
   /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
   requiresApproval: boolean;
@@ -560,6 +600,14 @@ export interface CapabilityDelegateToolSummary {
   processSpawn: boolean;
   /** @reserved Public capability-inspection field consumed by permission UIs. */
   gatedByRunWrite?: boolean;
+  /**
+   * Optional deterministic routing hint/evaluation. Present when a profile
+   * declares routing keywords; relevance is present after a goal has been
+   * evaluated. Sorting hints do not hide delegates.
+   *
+   * @reserved Public capability-inspection field consumed by routing/inspect UIs.
+   */
+  routing?: CapabilityDelegateRoutingSummary;
   command?: string;
   args?: string[];
   timeoutMs?: number;
@@ -567,6 +615,15 @@ export interface CapabilityDelegateToolSummary {
     stdoutBytes?: number;
     stderrBytes?: number;
   };
+}
+
+export interface CapabilityDelegateRoutingSummary {
+  keywords: string[];
+  mode?: "sort";
+  relevance?: "relevant" | "low";
+  score?: number;
+  matchedKeywords?: string[];
+  reason?: string;
 }
 
 export interface CapabilityCronJobSummary {
@@ -608,6 +665,47 @@ export interface CapabilityAutomationSummary {
   };
 }
 
+export type CapabilityWorkflowRuleSource =
+  | "config"
+  | "verification"
+  | "builtin";
+
+export type CapabilityWorkflowRuleStatus =
+  | "active"
+  | "available"
+  | "inactive"
+  | "disabled";
+
+export interface CapabilityWorkflowRuleSummary {
+  name: string;
+  source: CapabilityWorkflowRuleSource;
+  lifecycle: string;
+  matcher: string;
+  action: string;
+  blockingPotential: boolean;
+  enabled: boolean;
+  active: boolean;
+  status: CapabilityWorkflowRuleStatus;
+  description?: string;
+  disableHint?: string;
+  configurationHint?: string;
+}
+
+export interface CapabilityEventRuleSummary {
+  name: string;
+  source: CapabilityWorkflowRuleSource;
+  trigger: string;
+  matcher: string;
+  action: string;
+  blockingPotential: false;
+  enabled: boolean;
+  active: boolean;
+  status: CapabilityWorkflowRuleStatus;
+  description?: string;
+  disableHint?: string;
+  configurationHint?: string;
+}
+
 export interface CapabilitySnapshot {
   model?: CapabilityModelSummary;
   tools: CapabilityToolSummary[];
@@ -627,6 +725,10 @@ export interface CapabilitySnapshot {
     foregroundTimeoutMs?: number;
     promotionAvailable?: boolean;
     sandbox: CapabilityShellSandboxSummary;
+  };
+  rules?: {
+    workflow: CapabilityWorkflowRuleSummary[];
+    events?: CapabilityEventRuleSummary[];
   };
   automation?: CapabilityAutomationSummary;
 }

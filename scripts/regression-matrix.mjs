@@ -533,8 +533,11 @@ async function delegateCwdCase() {
           {
             toolCalls: [
               {
-                toolName: "delegate_runner",
-                arguments: { goal: "Print the child shell cwd." },
+                toolName: "delegate_agent",
+                arguments: {
+                  agentId: "runner",
+                  goal: "Print the child shell cwd.",
+                },
               },
             ],
           },
@@ -560,7 +563,7 @@ async function delegateCwdCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "delegate_runner -> child shell pwd with cwd='.' resolves inside workspace; subagent.completed",
+      "delegate_agent(runner) -> child shell pwd with cwd='.' resolves inside workspace; subagent.completed",
     failureRule:
       "Fails if configured delegate child shell false-denies cwd='.', resolves outside the workspace, or loses subagent finality.",
     harness: true,
@@ -706,8 +709,11 @@ async function delegateNoTaskManagerTimeoutCase() {
           {
             toolCalls: [
               {
-                toolName: "delegate_runner",
-                arguments: { goal: "Run a long child shell command." },
+                toolName: "delegate_agent",
+                arguments: {
+                  agentId: "runner",
+                  goal: "Run a long child shell command.",
+                },
               },
             ],
           },

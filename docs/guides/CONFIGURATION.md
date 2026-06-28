@@ -18,7 +18,7 @@ Personal config: ~/.config/sparkwright/config.yaml
   Existing config.json/config.yaml/config.yml files are also loaded.
 
 Project config: <workspace>/.sparkwright/config.yaml
-  Put team-safe runtime defaults here: permissionMode, tools, skills, MCP,
+  Put team-safe runtime defaults here: run.accessMode, tools, skills, MCP,
   agents. This file is safe to commit when it does not contain secrets.
   Existing config.json/config.yaml/config.yml files are also loaded.
 
@@ -60,9 +60,10 @@ exist in the same layer, the first one still wins and validation reports a
 same-layer conflict so the duplicate can be removed deliberately.
 
 The `providers` map is merged by provider key. The security boundaries —
-`permissionMode`, `confidentialPaths`, `write`, and `shell.sandbox` — merge
-conservatively, so a later (lower-trust) layer can only tighten them, never
-weaken them. Most other fields are replaced wholesale by the later source. In
+`run.accessMode`, `confidentialPaths`, `write`, and `shell.sandbox` — merge
+conservatively. Project `run.accessMode` is the workspace access ceiling, and
+requests above it are clamped; the other boundaries cannot be weakened by a
+later layer. Most other fields are replaced wholesale by the later source. In
 particular, `capabilities` is not deep-merged across files; put related project
 capability settings in the same project config file when possible.
 
@@ -126,7 +127,7 @@ Use the built-in deterministic provider when you want an offline smoke test:
 ```json
 {
   "model": "deterministic",
-  "permissionMode": "default",
+  "accessMode": "ask",
   "workspace": "."
 }
 ```
@@ -206,8 +207,10 @@ Put project-wide behavior in `<workspace>/.sparkwright/config.yaml`:
 
 ```json
 {
+  "run": {
+    "accessMode": "ask"
+  },
   "policy": {
-    "permissionMode": "default",
     "write": {
       "maxFiles": 1,
       "maxDiffLines": 200,
@@ -317,6 +320,11 @@ project context, run tests after writes, or prevent final answers until required
 verification has happened. Lower-level `RunHook`, `ValidationHook`, and
 `UserHookRunner` APIs remain available for SDK embedders and host integrations,
 but they are not the recommended project configuration surface.
+For guardrails that should apply only to one configured delegate profile, use
+`capabilities.agents.profiles[].hooks` instead of global workflow hooks.
+Project config cannot define HTTP hook actions or the HTTP hook transport
+policy; keep those in trusted user config or an explicit `SPARKWRIGHT_CONFIG`
+file.
 
 Block generated files before a write tool runs:
 
@@ -345,7 +353,7 @@ Block generated files before a write tool runs:
 }
 ```
 
-Inject a project rule at session start:
+Inject a project rule at run start:
 
 ```json
 {
@@ -354,7 +362,7 @@ Inject a project rule at session start:
       "workflow": [
         {
           "name": "testing-rule",
-          "hook": "SessionStart",
+          "hook": "RunStart",
           "action": {
             "type": "context",
             "contextType": "system",
@@ -366,6 +374,10 @@ Inject a project rule at session start:
   }
 }
 ```
+
+Workflow lifecycle names are canonical-only: `RunStart`, `TurnStart`,
+`ModelOutput`, `PreToolUse`, `PostToolUse`, `Stop`, `RunEnd`, and
+`RuntimeSignal`.
 
 Run a command after workspace writes and feed the result back into the run:
 
@@ -396,16 +408,63 @@ Run a command after workspace writes and feed the result back into the run:
 }
 ```
 
+Observe a tool event without blocking the run:
+
+```json
+{
+  "capabilities": {
+    "hooks": {
+      "events": [
+        {
+          "name": "log-write",
+          "trigger": "tool.completed",
+          "matcher": {
+            "eventType": "tool.completed",
+            "toolName": ["edit_anchored_text", "apply_patch"]
+          },
+          "action": {
+            "type": "command",
+            "command": "node",
+            "args": ["scripts/log-write.js"]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
 Command actions use `command` plus `args`; user arguments are not shell-expanded
 by the config surface. Relative `cwd` values resolve from the workspace root.
 Command stdout and stderr are truncated before they are stored. Set
 `injectOutput` to `always`, `onFailure`, or `never` to control whether command
-output is added as workflow-hook context. Set `stdin` to `json` when the command
-should receive the workflow hook input on stdin (`hook`, `run`, `step`,
-`payload`, and `metadata`); omit it or set `none` for the default empty stdin.
-Set `frequency` to `oncePerTurn` when a hook should run at most once for the
-same run step. Command hooks use the same `shell.sandbox` process boundary as
-the built-in shell tool.
+output is added as workflow-hook context. Workflow command hooks can set
+`stdin` to `json` to receive `hook`, `run`, `step`, `payload`, and `metadata`;
+event command hooks receive `run`, event `payload`, and event metadata. Omit it
+or set `none` for the default empty stdin. Set `frequency` to `oncePerTurn` when
+a workflow hook should run at most once for the same run step. Command hooks use
+the same `shell.sandbox` process boundary as the built-in shell tool.
+
+Set `resultMode` to `stdoutJson` when a command should return a JSON
+`WorkflowHookResult` on stdout. This can dynamically return `block`, `rewrite`,
+`skipped`, or `continue`; malformed JSON follows the hook's `onError` behavior.
+When `stdoutJson` is enabled, stdout is reserved for that final control JSON.
+Write live progress through the script helper, for example
+`progress("checking policy")`, or through the raw stderr wire
+`SPARKWRIGHT_EVENT: {"type":"progress","message":"checking policy"}`. The host
+strips progress token lines from stderr previews, log artifacts, live output,
+and task output before recording process output.
+HTTP actions call an `http(s)` URL and can set `resultMode: "responseJson"` to
+parse a JSON `WorkflowHookResult`, but they are disabled unless trusted config
+sets `capabilities.hooks.http.enabled: true` and an explicit `allow` rule. By
+default HTTP hook bodies contain only hook/run summary metadata, not the full
+run record or event payload. Private-network destinations require
+`allowPrivateNetwork: true`; link-local and cloud metadata addresses remain
+blocked. Agent actions call `delegate_agent` by `agentId` or `toolName`;
+`resultMode: "workflowResult"` lets the delegate return a workflow result.
+Non-blocking `capabilities.hooks.events` rules support `command`, `http`, and
+`agent` actions, emit `user_hook.*` evidence, and never block or inject workflow
+context.
 
 `PostToolUse` command failures are fed back into the run so the model can
 correct course. Pair a post-tool check with a `Stop` hook when a condition must
@@ -548,9 +607,8 @@ Example:
 ---
 name: Reviewer
 description: Inspect changes for correctness, risk, and missing tests.
-mode: child
-allowedTools: [read_file, glob]
-deniedTools: [shell]
+model: openai/gpt-5.4-mini
+use: [workspace.read]
 maxSteps: 4
 ---
 
@@ -559,9 +617,57 @@ tests. Report findings with file references.
 ```
 
 Profiles describe role guidance and constraints. They do not grant authority by
-themselves. Only entries listed in `capabilities.agents.delegateTools` become
-callable parent-run tools, and those tools still go through policy, approval,
-validation, and trace.
+themselves. Non-`main` profiles that omit `mode` default to child/delegate
+agents and are indexed for `delegate_agent`; `id: main` or `mode: primary`
+marks the primary profile. Inline profile `delegateTool` blocks and entries
+listed in `capabilities.agents.delegateTools` define optional direct aliases,
+and those tools still go through policy, approval, validation, and trace.
+Explicit `delegateTools` entries win over inline delegate hints for the same
+profile or tool name.
+
+Configured profiles can also attach workflow hooks that run only inside that
+profile's in-process child run:
+
+```json
+{
+  "capabilities": {
+    "agents": {
+      "profiles": [
+        {
+          "id": "db-reader",
+          "name": "DB Reader",
+          "description": "Execute read-only database queries.",
+          "use": ["workspace.read", "shell"],
+          "hooks": {
+            "PreToolUse": [
+              {
+                "matcher": "shell",
+                "action": {
+                  "type": "command",
+                  "command": "./scripts/validate-readonly-query.sh",
+                  "stdin": "json",
+                  "blockOnFailure": true,
+                  "injectOutput": "onFailure"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Profile hooks apply through `delegate_agent`, direct delegate aliases, and
+`delegate_parallel` when the target is a configured in-process delegate. They do
+not run on the main agent, dynamic `spawn_agent` children, ACP delegates, or
+external-command delegates. Profile hooks support lifecycle names
+`RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`, `PostToolUse`, `Stop`,
+`RunEnd`, and `RuntimeSignal`, and the action subset `command`, `block`,
+`context`, and `http`. The `agent` action is reserved for global workflow
+hooks. HTTP actions still follow the trusted HTTP hook policy; project config
+profile hooks that use HTTP actions are rejected like global project HTTP hooks.
 
 ## File-Authored Commands
 
@@ -603,8 +709,11 @@ Put user arguments in prompt text instead.
   `deterministic` provider is built in.
 - `providers`: named provider definitions. Keep provider keys in personal
   config, not project config.
-- `permissionMode`: default run permission mode. Merges conservatively across
-  layers — a later layer can only tighten, never escalate, the mode.
+- `accessMode`: default run autonomy preset (`read-only`, `ask`, `accept-edits`,
+  `bypass`). The single user-facing access knob; compiles internally to the
+  run's permission/write fields. In project config, this is the workspace
+  access ceiling: user, environment, CLI, and TUI runtime requests can ask for a
+  stricter mode but cannot exceed the project ceiling.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
 - `confidentialPaths`: opt-in read-confidentiality globs. Unions across layers
@@ -632,18 +741,24 @@ Put user arguments in prompt text instead.
   entrypoint does not pass one. CLI `--trace-level` overrides.
 - `approvals`: default approval auto-grants (`shellSafe`, `edits`, `all`) for
   CLI/host clients that opt into those scopes, plus `cronMode` for unattended
-  cron run/tick defaults. TUI approval behavior comes from `tuiPermissionMode`;
-  CLI flags (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--permission-mode`)
-  still override.
+  cron run/tick defaults. Run autonomy comes from `accessMode`; CLI flags
+  (`--yes`, `--yes-edits`, `--yes-shell-safe`, `--access-mode`) and the TUI
+  runtime mode switch can request stricter temporary behavior, subject to the
+  project access ceiling.
 - `tools`: preferred tool selector, allow/disable, and defer settings.
 - `capabilities.skills`: Skill roots and loading behavior.
 - `capabilities.mcp`: MCP server definitions, default policy, and MCP tool
   schema loading.
-- `capabilities.agents`: agent profiles and delegate tools.
-- `tuiPermissionMode`, `theme`, `mouse`, `keybindings`: TUI-only preferences.
-  `tuiPermissionMode` accepts `read-only`, `ask`, `accept-edits`, or `bypass`
-  and is projected by the TUI to the shared run `permissionMode` plus
-  `shouldWrite`.
+- `capabilities.agents`: agent profiles, profile-scoped child workflow hooks,
+  indexed delegation, and optional direct delegate aliases. The default
+  `exposure: "indexed"` lets the model call non-opted-out profiles through
+  `delegate_agent`; use `pinnedDelegates` or `exposure: "all"` when direct
+  `delegate_*` tools are needed. Set `enableParallelDelegates: true` to expose
+  the opt-in `delegate_parallel` fan-out tool for read-only configured
+  delegates.
+- `theme`, `mouse`, `keybindings`: TUI-only preferences. TUI run autonomy uses
+  the shared `accessMode`; Shift+Tab changes the mode for the active TUI
+  process without writing config.
 
 Child agents and delegate tools do not weaken the parent run. Spawned child
 agents inherit the parent run's permission mode, write guardrails, target path,
@@ -660,25 +775,26 @@ the layering intent obvious:
 {
   "identity": { "model": "openai/gpt-x", "providers": { "openai": {} } },
   "policy": {
-    "permissionMode": "default",
     "confidentialPaths": ["secrets/**"],
     "write": { "maxFiles": 1 },
     "sandbox": { "mode": "warn" }
   },
   "run": {
+    "accessMode": "ask",
     "budget": { "maxModelCalls": 50 },
     "traceLevel": "standard",
     "approvals": { "shellSafe": true }
   },
-  "ui": { "tuiPermissionMode": "ask", "theme": "dark" }
+  "ui": { "theme": "dark" }
 }
 ```
 
 - `identity` → `model`, `providers` (belongs in the user config).
-- `policy` → `permissionMode`, `confidentialPaths`, `write`, and `sandbox`
-  (maps to `shell.sandbox`) — the conservatively-merged security boundaries.
-- `run` → `runBudget` (as `budget`), `maxSteps`, `traceLevel`, `approvals`.
-- `ui` → `tuiPermissionMode`, `theme`, `mouse`, `keybindings`.
+- `policy` → `confidentialPaths`, `write`, and `sandbox` (maps to
+  `shell.sandbox`) — the conservatively-merged security boundaries.
+- `run` → `accessMode`, `runBudget` (as `budget`), `maxSteps`, `traceLevel`,
+  `approvals`.
+- `ui` → `theme`, `mouse`, `keybindings`.
 - `capabilities` is already its own group.
 
 The flat and grouped forms are equivalent; `sparkwright init` now emits the
@@ -864,19 +980,49 @@ sparkwright agents list --workspace .
 sparkwright agents validate --workspace .
 sparkwright agents create reviewer \
   --prompt "Inspect changes for correctness and risk." \
+  --model openai/gpt-5.4-mini \
   --use workspace.read \
-  --allow read_file \
-  --allow glob \
   --delegate delegate_reviewer \
   --workspace .
 ```
 
 Markdown profiles are folded under `capabilities.agents.profiles`; if the same
 id exists in a config file, the config entry wins. `use` accepts the same broad
-tool selectors as top-level `tools.use`; it is intersected with inherited
-selectors and concrete `allowedTools`. `capabilities.agents.maxDepth` can cap
-nested child/delegate spawning globally. Advanced fields such as policy and run
-budget should stay in the config file.
+tool selectors as top-level `tools.use` and is the recommended capability axis.
+Non-`main` profiles that omit `mode` default to child/delegate agents, while
+`id: main` or `mode: primary` marks the primary profile. `allowedTools` remains
+an advanced concrete-name allowlist and only narrows the tools selected by
+`use`. `capabilities.agents.maxDepth` can cap nested child/delegate spawning
+globally. Advanced fields such as policy and run budget should stay in the
+config file.
+
+Profile `hooks` attach workflow hooks to configured in-process child/delegate
+runs only. They are useful for per-agent guardrails such as validating a
+profile's shell command before it executes. They follow the same lifecycle names
+as global workflow hooks, but only support `command`, `block`, `context`, and
+`http` actions; they do not support `agent` actions and do not apply to the
+main run, dynamic `spawn_agent`, ACP delegates, or external-command delegates.
+Project config profile hooks cannot define HTTP actions; keep those in trusted
+user config or `SPARKWRIGHT_CONFIG`.
+
+`capabilities.agents.spawnModel` sets the model for ad hoc `spawn_agent`
+children. If unset, spawned children inherit the parent run's effective model.
+`capabilities.agents.delegateModel` sets the default model for configured
+in-process delegates when the profile itself does not set `model`; profile
+`model` wins, then `delegateModel`, then the parent run model. ACP and
+external-command delegates run across their own process/protocol boundary and
+do not use this parent-process model selection.
+
+`capabilities.agents.enableParallelDelegates: true` exposes `delegate_parallel`
+as an `agents` selector tool. It is off by default. Calls target configured
+agents by `agentId` (preferred) or legacy delegate `toolName`. Profiles with
+`exposeAsDelegate: false` are omitted from the automatic delegation index unless
+they are explicitly listed with `delegateTool` / `delegateTools`. The first
+version only runs configured in-process delegates that are read-only
+(`workspaceAccess: "none"`) and have no shell access; ACP, external-command,
+workspace-writing, and shell delegates are rejected with a diagnostic. The call
+is foreground blocking and starts every accepted child before waiting for all
+results.
 
 ## Cost Metadata
 
@@ -909,7 +1055,6 @@ metadata.
 
 ```json
 {
-  "tuiPermissionMode": "ask",
   "theme": "dark",
   "mouse": true,
   "keybindings": {
@@ -921,12 +1066,12 @@ metadata.
 }
 ```
 
-`tuiPermissionMode`, `theme`, `mouse`, and `keybindings` are TUI-only.
-`tuiPermissionMode` is the interactive TUI permission selector
-(`read-only`, `ask`, `accept-edits`, `bypass`); lower-trust config layers can
-tighten it but cannot relax an earlier layer to a more permissive mode.
-Provider, model, core `permissionMode`, and workspace settings apply to both
-CLI and TUI surfaces.
+`theme`, `mouse`, and `keybindings` are TUI-only. TUI run autonomy uses the
+shared run `accessMode`; the interactive selector
+(`read-only`, `ask`, `accept-edits`, `bypass`) is a runtime override for the
+current TUI process and is clamped by any project access ceiling.
+Provider, model, run `accessMode`, and workspace settings apply to both CLI and
+TUI surfaces.
 `palette.open` and `quick.switch` are unbound by default; use `/palette` and
 `/quick` (the quick mode of `/sessions`), or add bindings here if you want
 direct shortcuts.
@@ -987,8 +1132,9 @@ SparkWright treats config and project capabilities as user-owned assets:
   `tools.disabled`, `tools.defer`, and MCP server `enabled` settings.
 - If a project setting does not combine with a user setting, remember that most
   fields other than `providers` are replaced wholesale — except the security
-  boundaries (`permissionMode`, `confidentialPaths`, `write`, `shell.sandbox`),
-  which merge conservatively and cannot be weakened by a later layer.
+  boundaries (`accessMode`, `confidentialPaths`, `write`, `shell.sandbox`),
+  which merge conservatively. Project `accessMode` is a ceiling; requests above
+  it are clamped.
 - If an MCP server cannot start, verify `cwd`, command path, timeout, and
   whether `enabled` is false.
 

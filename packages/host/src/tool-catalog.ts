@@ -129,6 +129,8 @@ export function createMainHostToolCatalog(input: {
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;
   delegateTools?: ToolDefinition[];
+  delegateAgentTool?: ToolDefinition;
+  delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   shell?: ShellConfig;
   configPaths?: readonly string[];
@@ -216,6 +218,8 @@ function createMainHostToolCatalogList(input: {
   preparedSkills?: PreparedToolSource | null;
   preparedMcp?: PreparedToolSource | null;
   delegateTools?: ToolDefinition[];
+  delegateAgentTool?: ToolDefinition;
+  delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   shell?: ShellConfig;
   configPaths?: readonly string[];
@@ -270,6 +274,12 @@ function createMainHostToolCatalogList(input: {
     ...(input.delegateTools ?? []).map((tool) =>
       catalogEntry(tool, "delegate"),
     ),
+    ...(input.delegateAgentTool
+      ? [catalogEntry(input.delegateAgentTool, "agent")]
+      : []),
+    ...(input.delegateParallelTool
+      ? [catalogEntry(input.delegateParallelTool, "agent")]
+      : []),
     ...(input.dynamicSpawnTool
       ? [catalogEntry(input.dynamicSpawnTool, "agent")]
       : []),

@@ -3,6 +3,7 @@ import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
 import type {
   PermissionMode,
   RunInputPayload,
+  RunAccessMode,
   TraceLevel,
 } from "@sparkwright/protocol";
 import { getRunFailure, runFailureMessage } from "@sparkwright/protocol";
@@ -48,6 +49,7 @@ export interface HostRunInput {
   approveAll: boolean;
   approveEdits?: boolean;
   approveShellSafe?: boolean;
+  accessMode?: RunAccessMode;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId: string;
@@ -66,6 +68,7 @@ export interface HostResumeInput {
   approveAll: boolean;
   approveEdits?: boolean;
   approveShellSafe?: boolean;
+  accessMode?: RunAccessMode;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId?: string;
@@ -113,6 +116,7 @@ async function runHostLifecycle(
     approveAll,
     approveEdits,
     approveShellSafe,
+    accessMode,
     permissionMode,
     modelName,
     targetPath,
@@ -269,6 +273,7 @@ async function runHostLifecycle(
             source: "cli",
             targetPath,
             shouldWrite,
+            accessMode,
             traceLevel,
           }),
           ...inputMetadataSummary(input.input),
@@ -277,6 +282,7 @@ async function runHostLifecycle(
           createHostStartRunRequest({
             goal: input.goal,
             sessionId,
+            accessMode,
             permissionMode,
             targetPath,
             traceLevel,
@@ -294,6 +300,7 @@ async function runHostLifecycle(
           source: "cli",
           targetPath,
           shouldWrite,
+          accessMode,
           traceLevel,
         });
         const resumed = await client.resumeRun(
@@ -302,6 +309,7 @@ async function runHostLifecycle(
             sessionId,
             fromTrace: input.fromTrace,
             force: input.force,
+            accessMode,
             permissionMode,
             targetPath,
             traceLevel,

@@ -25,9 +25,12 @@ import {
 } from "./external-command-agent.js";
 import {
   delegateToolName,
+  delegateToolDescription,
   describeDelegateCapability,
   errorCode,
+  resolveAgentDelegateTools,
   type DelegateFailureCode,
+  type DelegateToolCollision,
 } from "./delegate-capability.js";
 
 export interface RunConfiguredDelegateInput {
@@ -85,7 +88,32 @@ export async function runConfiguredDelegate(
   }
 
   const agentConfig = loaded.config.capabilities?.agents;
-  const delegates = agentConfig?.delegateTools ?? [];
+  const profiles = await resolveAgentProfiles(
+    input.workspaceRoot,
+    loaded.config.capabilities?.agents?.profiles,
+  );
+  const delegateToolCollisions: DelegateToolCollision[] = [];
+  const delegates = resolveAgentDelegateTools(
+    profiles,
+    agentConfig?.delegateTools,
+    {
+      exposeChildrenAsDelegates: agentConfig?.exposeChildrenAsDelegates,
+      onCollision: (collision) => delegateToolCollisions.push(collision),
+    },
+  );
+  const targetCollision = delegateToolCollisions.find(
+    (item) => item.toolName === input.toolName,
+  );
+  if (targetCollision) {
+    return {
+      ok: false,
+      code: "config_error",
+      message:
+        `delegate tool collision for ${input.toolName}: ` +
+        `profile ${targetCollision.profileId} (${targetCollision.source}) was dropped; ` +
+        `owned by profile ${targetCollision.conflictsWith} (fail-closed)`,
+    };
+  }
   const delegate = delegates.find(
     (item) => delegateToolName(item) === input.toolName,
   );
@@ -97,10 +125,6 @@ export async function runConfiguredDelegate(
     };
   }
 
-  const profiles = await resolveAgentProfiles(
-    input.workspaceRoot,
-    loaded.config.capabilities?.agents?.profiles,
-  );
   const profile = profiles.find((item) => item.id === delegate.profileId);
   if (!profile) {
     return {
@@ -189,9 +213,7 @@ export async function runConfiguredDelegate(
           getParent: () => parent,
           profile,
           toolName: input.toolName,
-          description:
-            delegate.description ??
-            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          description: delegateToolDescription(delegate, profile),
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,
@@ -203,9 +225,7 @@ export async function runConfiguredDelegate(
           getParent: () => parent,
           profile,
           toolName: input.toolName,
-          description:
-            delegate.description ??
-            `Delegate a bounded task to ${profile.name ?? profile.id}.`,
+          description: delegateToolDescription(delegate, profile),
           workspaceRoot: input.workspaceRoot,
           requiresApproval: delegate.requiresApproval,
           forbidNesting: delegate.forbidNesting ?? true,

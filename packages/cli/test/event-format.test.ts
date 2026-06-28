@@ -5,7 +5,7 @@ import {
   shouldPrintLiveEvent,
 } from "../src/event-format.js";
 
-function event(type: string): SparkwrightEvent {
+function event(type: string, payload: unknown = {}): SparkwrightEvent {
   return {
     id: `evt_${type}`,
     runId: "run_test",
@@ -13,7 +13,7 @@ function event(type: string): SparkwrightEvent {
     timestamp: "2026-06-20T00:00:00.000Z",
     monotonicUs: 1,
     sequence: 1,
-    payload: {},
+    payload,
   } as SparkwrightEvent;
 }
 
@@ -45,5 +45,37 @@ describe("event-format live output filtering", () => {
       "[1] model.completed step=? adapter= tokens= toolCalls=0",
     ]);
     expect(formatter.flush()).toEqual([]);
+  });
+
+  it("formats capability index diagnostics with payload detail", () => {
+    expect(
+      createLiveEventFormatter().format(
+        event("capability.index.failed", {
+          kind: "agent_profile",
+          code: "AGENT_PROFILE_ID_COLLISION",
+          severity: "warning",
+          profileId: "reviewer",
+          message:
+            'Agent profile id collision for "reviewer": kept /tmp/a.md, dropped /tmp/b.md (fail-closed).',
+        }),
+      ),
+    ).toEqual([
+      '[1] capability.index.failed severity=warning agent_profile AGENT_PROFILE_ID_COLLISION reviewer message=Agent profile id collision for "reviewer": kept /tmp/a.md, dropped /tmp/b.md (fail-closed).',
+    ]);
+  });
+
+  it("formats delegate routing evaluations", () => {
+    expect(
+      createLiveEventFormatter().format(
+        event("agent.routing.evaluated", {
+          mode: "sort",
+          delegateCount: 3,
+          relevantCount: 1,
+          lowCount: 2,
+        }),
+      ),
+    ).toEqual([
+      "[1] agent.routing.evaluated mode=sort delegates=3 relevant=1 low=2",
+    ]);
   });
 });

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   checkDocumentedCommands,
+  createDocumentedCommandRulePack,
   createDocumentedCommandStopHook,
+  DOCUMENTED_COMMAND_RULE_ID,
+  DOCUMENTED_COMMAND_RULE_NAME,
+  evaluateDocumentedCommandRule,
 } from "../src/documented-command-check.js";
 
 const tempDirs: string[] = [];
@@ -17,6 +21,61 @@ afterEach(() => {
 });
 
 describe("documented command check", () => {
+  it("describes the built-in documented-command rule pack", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "sparkwright-host-doc-cmd-"));
+    tempDirs.push(workspace);
+
+    const active = createDocumentedCommandRulePack({
+      workspaceRoot: workspace,
+      goal: "Prepare this repo for handoff and make documented commands pass",
+      shouldWrite: true,
+    });
+
+    expect(active).toMatchObject({
+      name: DOCUMENTED_COMMAND_RULE_NAME,
+      id: DOCUMENTED_COMMAND_RULE_ID,
+      source: "builtin",
+      lifecycle: "Stop",
+      blockingPotential: true,
+      activation: {
+        enabled: true,
+        active: true,
+        hasRunContext: true,
+        reason:
+          "write-enabled goal requests verification/handoff/documented-command validation",
+      },
+    });
+    expect(active.hooks).toEqual([
+      expect.objectContaining({
+        id: DOCUMENTED_COMMAND_RULE_ID,
+        name: DOCUMENTED_COMMAND_RULE_NAME,
+        hook: "Stop",
+      }),
+    ]);
+
+    const inactive = createDocumentedCommandRulePack({
+      workspaceRoot: workspace,
+      goal: "Answer a read-only question",
+      shouldWrite: false,
+    });
+    expect(inactive).toMatchObject({
+      activation: {
+        enabled: true,
+        active: false,
+        hasRunContext: true,
+        reason: "workspace writes are disabled",
+      },
+      hooks: [],
+    });
+
+    expect(evaluateDocumentedCommandRule({})).toMatchObject({
+      enabled: true,
+      active: false,
+      hasRunContext: false,
+      reason: "workspace writes are disabled",
+    });
+  });
+
   it("detects stale README command paths", () => {
     const workspace = mkdtempSync(join(tmpdir(), "sparkwright-host-doc-cmd-"));
     tempDirs.push(workspace);
@@ -91,6 +150,13 @@ describe("documented command check", () => {
             "README.md: cargo --manifest-path points to missing file: rust-utils/Cargo.toml",
         },
       ],
+      metadata: {
+        source: "builtin",
+        ruleName: DOCUMENTED_COMMAND_RULE_NAME,
+        activationReason:
+          "write-enabled goal requests verification/handoff/documented-command validation",
+        issueCount: 1,
+      },
     });
 
     expect(
@@ -107,7 +173,15 @@ describe("documented command check", () => {
         payload: { message: "done again" },
         metadata: {},
       }),
-    ).toBeUndefined();
+    ).toMatchObject({
+      status: "continue",
+      metadata: {
+        source: "builtin",
+        ruleName: DOCUMENTED_COMMAND_RULE_NAME,
+        issueCount: 1,
+        repeatedIssueSignature: true,
+      },
+    });
 
     mkdirSync(join(workspace, "rust-utils"), { recursive: true });
     writeFileSync(join(workspace, "rust-utils", "Cargo.toml"), "[package]\n");
@@ -125,6 +199,14 @@ describe("documented command check", () => {
         payload: { message: "done" },
         metadata: {},
       }),
-    ).toBeUndefined();
+    ).toMatchObject({
+      status: "continue",
+      metadata: {
+        source: "builtin",
+        ruleName: DOCUMENTED_COMMAND_RULE_NAME,
+        issueCount: 0,
+        issues: [],
+      },
+    });
   });
 });

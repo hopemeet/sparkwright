@@ -91,6 +91,41 @@ export function formatEvent(event: SparkwrightEvent): string {
     return `[${event.sequence}] ${event.type} ${String(payload.stage ?? "")} ${String(payload.hookName ?? "")} ${String(firstFinding?.code ?? "")}`.trim();
   }
 
+  if (event.type === "capability.index.failed" && isRecord(payload)) {
+    const severity = stringField(payload, "severity");
+    const kind = stringField(payload, "kind");
+    const code = stringField(payload, "code");
+    const profileId = stringField(payload, "profileId");
+    const message = stringField(payload, "message");
+    const source = stringField(payload, "source");
+    return [
+      `[${event.sequence}] ${event.type}`,
+      severity ? `severity=${severity}` : "",
+      kind,
+      code,
+      profileId,
+      message
+        ? `message=${previewText(message)}`
+        : source
+          ? `source=${source}`
+          : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
+  if (event.type === "agent.routing.evaluated" && isRecord(payload)) {
+    return [
+      `[${event.sequence}] ${event.type}`,
+      `mode=${String(payload.mode ?? "")}`,
+      `delegates=${String(payload.delegateCount ?? "")}`,
+      `relevant=${String(payload.relevantCount ?? "")}`,
+      `low=${String(payload.lowCount ?? "")}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
   if (
     (event.type === "tool.requested" || event.type === "tool.started") &&
     isRecord(payload)
@@ -144,4 +179,12 @@ function previewText(value: string, max = 120): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringField(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

@@ -230,6 +230,7 @@ Current event types:
 - `skill.loaded`
 - `mcp.server.prepared`
 - `agent.profile.derived`
+- `agent.routing.evaluated`
 - `prompt.built`: provider-neutral prompt messages were rendered. Payloads include message/section counts, section metadata, and cache block summaries (`cacheBlocks`, `stablePrefixBlockCount`) so provider adapters and trace sinks can reason about prompt-cache reuse.
 - `validation.started`
 - `validation.completed`
@@ -273,21 +274,28 @@ Current event types:
   `{ phase: string, toolName?: string, message: string }`. Loop continues.
 - `workflow_hook.started` / `workflow_hook.completed` /
   `workflow_hook.blocked` / `workflow_hook.failed`: deterministic workflow
-  hook lifecycle for `SessionStart`, `UserPromptSubmit`, `ModelOutput`,
-  `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`, and `RuntimeSignal`.
-  Payloads carry `{ hookName, hookId?, hook, step?, metadata }`; completion
-  includes the normalized hook result, blocked includes reason/findings, and
-  failed includes `{ error: { code, message } }`.
+  hook lifecycle for `RunStart`, `TurnStart`, `ModelOutput`,
+  `PreToolUse`, `PostToolUse`, `Stop`, `RunEnd`, and `RuntimeSignal`.
+  Payloads carry `{ hookName, hookId?, hook, step?, metadata }`; `hook` is the
+  canonical lifecycle value used by the run loop. Completion includes the hook
+  result. Blocked events include reason/findings, and failed events include
+  `{ error: { code, message } }`.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write
-  arbitrary SparkWright events; host runners may expose a JSONL progress inbox
-  and re-emit accepted progress with host-owned `event.sequence`, `timestamp`,
-  `monotonicUs`, and span fields. Terminal payloads include a shared
+  arbitrary SparkWright events; host runners expose stderr token-line progress
+  under `SPARKWRIGHT_PROCESS_PROTOCOL=stdio-v1` and re-emit accepted
+  `type:"progress"` records with host-owned `event.sequence`, `timestamp`,
+  `monotonicUs`, and span fields. Unknown record types, malformed JSON, and
+  oversized records are stripped from stderr surfaces, counted in
+  `progressDropped`, and do not fail the process. Token lines are removed from
+  stderr previews, log artifacts, live `onOutput()` streams, and task output.
+  Terminal payloads include a shared
   `ProcessOutputSummary` with bounded stdout/stderr previews, byte counts,
   truncation flags, and optional `artifactIds` for materialized logs.
   `standard` traces suppress raw progress events and fold progress head/tail
-  samples into the terminal event; `debug` traces keep raw progress.
+  samples into the terminal event; `debug` traces keep raw progress and bounded
+  `progressDroppedSamples`.
 - `interaction.requested`: the runtime asked the InteractionChannel for an
   approval / question / notification. Payload:
   `{ kind: "approval"|"question"|"notification", request|notification }`.
@@ -308,6 +316,9 @@ Current event types:
   child `run.*` outcome reports them. External-command delegate terminal
   results may also carry bounded child progress summaries (`progressCount`,
   `progressDropped`, `progressHead`, `progressTail`).
+  `entrypoint` can be `delegate_parallel` when the child was launched by the
+  opt-in foreground fan-out tool; no separate parallel-delegate event type is
+  required.
 - `task.created` / `task.started` / `task.output` / `task.completed` /
   `task.failed` / `task.cancelled`: background-task lifecycle events emitted
   by `@sparkwright/agent-runtime` Tasks. Tasks are spawned by a run and live
@@ -354,7 +365,9 @@ Common metadata:
         "name": "code-reviewer",
         "version": "1.0.0",
         "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-        "contentHash": "..."
+        "contentHash": "...",
+        "packageHash": "sha256:...",
+        "layer": "project"
       }
     ]
   }
@@ -395,6 +408,8 @@ event back to the recovery-aware tool outcome.
     "version": "1.0.0",
     "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
     "contentHash": "...",
+    "packageHash": "sha256:...",
+    "layer": "project",
     "selectionReason": "Matched goal against skill name or description.",
     "mode": "resident_context"
   }
@@ -646,7 +661,7 @@ proposal/content validation that needs code access to the subject.
 }
 ```
 
-Tool-result validation failures are returned to the model as failed tool observations so the model can recover. Workspace-write validation failures emit `workspace.write.denied` and prevent mutation. `pre_terminal` validation failures inject continuation context and keep the loop running for compatibility with older stop-hook integrations. Final-output validation failures fail the run with `stopReason: "validation_failed"` and failure category `validation`.
+Tool-result validation failures are returned to the model as failed tool observations so the model can recover. Workspace-write validation failures emit `workspace.write.denied` and prevent mutation. `pre_terminal` validation failures inject continuation context and keep the loop running for compatibility with older stop-hook integrations. Final-output validation failures fail the run with `stopReason: "validation_failed"` and failure category `validation`. For new project-facing policy, prefer `WorkflowHook` / `capabilities.hooks.workflow`; keep `ValidationHook` for embedder-owned validation and workspace-write internals.
 
 ### Context Compaction Request
 

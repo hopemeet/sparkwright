@@ -198,6 +198,43 @@ describe("config schema drift guard", () => {
     }
   });
 
+  it("agents model defaults validate as raw model refs", () => {
+    const validate = buildValidator();
+
+    expect(
+      validate({
+        capabilities: {
+          agents: {
+            spawnModel: "openai/gpt-5.4-mini",
+            delegateModel: "anthropic/claude-sonnet-4-6",
+          },
+        },
+      }),
+      JSON.stringify(validate.errors),
+    ).toBe(true);
+
+    expect(
+      validate({
+        capabilities: {
+          agents: {
+            spawnModel: "",
+            delegateModel: 123,
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(validate.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          instancePath: "/capabilities/agents/spawnModel",
+        }),
+        expect.objectContaining({
+          instancePath: "/capabilities/agents/delegateModel",
+        }),
+      ]),
+    );
+  });
+
   it("the repository's own project config validates against the schema", async () => {
     const validate = buildValidator();
     const repoRoot = dirname(schemasDir.replace(/\/$/, ""));

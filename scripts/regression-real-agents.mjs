@@ -148,7 +148,7 @@ async function realCreateAgentCase() {
 
 async function realDelegateAgentCase() {
   const prompt =
-    "Call delegate_mini_reviewer exactly once to inspect README.md and report one concrete project risk. Do not call create_agent. Do not use shell. After the delegate returns, summarize the risk in one sentence.";
+    "Call delegate_agent exactly once with agentId mini_reviewer to inspect README.md and report one concrete project risk. Do not call create_agent. Do not use shell. After the delegate returns, summarize the risk in one sentence.";
   const result = await runCli([
     "run",
     prompt,
@@ -178,10 +178,17 @@ async function realDelegateAgentCase() {
   const subagent = trace.events.find(
     (event) => event.type === "subagent.completed",
   );
+  const delegateAgentCalls = trace.events.filter(
+    (event) =>
+      event.type === "tool.requested" &&
+      event.payload?.toolName === "delegate_agent",
+  );
+  const delegateAgentTarget = delegateAgentCalls[0]?.payload?.arguments;
   const metadata = subagent?.metadata ?? {};
   const ok =
     result.exitCode === 0 &&
-    requests.filter((name) => name === "delegate_mini_reviewer").length === 1 &&
+    delegateAgentCalls.length === 1 &&
+    delegateAgentTarget?.agentId === "mini_reviewer" &&
     !requests.includes("create_agent") &&
     !requests.includes("shell") &&
     failures.length === 0 &&
@@ -212,6 +219,8 @@ async function realDelegateAgentCase() {
       : failureDetails({
           exitCode: result.exitCode,
           requests,
+          delegateAgentCalls: delegateAgentCalls.length,
+          delegateAgentTarget,
           failures,
           verify,
           sessionReport,

@@ -58,6 +58,34 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "triggers": {
+      "type": "array",
+      "description": "Keyword hints used by hosts to sort or label this profile's delegate tool for a goal. This is a routing hint only; it does not hide or grant capabilities.",
+      "items": { "type": "string" }
+    },
+    "when": {
+      "type": "object",
+      "description": "Lightweight routing condition hints. The first host implementation supports keyword matching only.",
+      "properties": {
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "delegateTool": {
+      "$ref": "#/$defs/inlineDelegateTool",
+      "description": "Optional inline delegate exposure for this profile. Explicit capabilities.agents.delegateTools entries win when they target the same profile or tool name."
+    },
+    "exposeAsDelegate": {
+      "type": "boolean",
+      "description": "Tri-state automatic delegation control. true forces automatic delegate exposure even when capabilities.agents.exposeChildrenAsDelegates is off; false suppresses automatic delegate_agent/list_agents/delegate_parallel targeting and direct aliases. An explicit delegateTool or delegateTools entry still wins."
+    },
+    "hooks": {
+      "$ref": "#/$defs/agentProfileHooks",
+      "description": "Per-agent workflow hook guardrails applied only to this profile's in-process child runs. Agent actions are intentionally not supported here."
+    },
     "policy": {
       "type": "array",
       "items": {
@@ -92,6 +120,146 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "agentProfileHooks": {
+      "type": "object",
+      "properties": {
+        "RunStart": { "$ref": "#/$defs/agentProfileHookList" },
+        "TurnStart": { "$ref": "#/$defs/agentProfileHookList" },
+        "ModelOutput": { "$ref": "#/$defs/agentProfileHookList" },
+        "PreToolUse": { "$ref": "#/$defs/agentProfileHookList" },
+        "PostToolUse": { "$ref": "#/$defs/agentProfileHookList" },
+        "Stop": { "$ref": "#/$defs/agentProfileHookList" },
+        "RunEnd": { "$ref": "#/$defs/agentProfileHookList" },
+        "RuntimeSignal": { "$ref": "#/$defs/agentProfileHookList" }
+      },
+      "additionalProperties": false
+    },
+    "agentProfileHookList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/agentProfileHookEntry" }
+    },
+    "agentProfileHookEntry": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "onError": { "type": "string", "enum": ["continue", "block"] },
+        "frequency": { "type": "string", "enum": ["always", "oncePerTurn"] },
+        "matcher": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "$ref": "#/$defs/workflowHookMatcher" }
+          ]
+        },
+        "action": {
+          "oneOf": [
+            { "$ref": "#/$defs/workflowHookBlockAction" },
+            { "$ref": "#/$defs/workflowHookContextAction" },
+            { "$ref": "#/$defs/workflowHookCommandAction" },
+            { "$ref": "#/$defs/workflowHookHttpAction" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowHookMatcher": {
+      "type": "object",
+      "properties": {
+        "toolName": { "$ref": "#/$defs/stringOrStringArray" },
+        "eventType": { "$ref": "#/$defs/stringOrStringArray" },
+        "signal": { "$ref": "#/$defs/stringOrStringArray" },
+        "status": { "$ref": "#/$defs/stringOrStringArray" },
+        "pathGlob": { "$ref": "#/$defs/stringOrStringArray" },
+        "excludePathGlob": { "$ref": "#/$defs/stringOrStringArray" }
+      },
+      "additionalProperties": false
+    },
+    "stringOrStringArray": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "workflowHookBlockAction": {
+      "type": "object",
+      "required": ["type", "reason"],
+      "properties": {
+        "type": { "const": "block" },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "workflowHookContextAction": {
+      "type": "object",
+      "required": ["type", "content"],
+      "properties": {
+        "type": { "const": "context" },
+        "content": { "type": "string", "minLength": 1 },
+        "contextType": {
+          "type": "string",
+          "enum": ["system", "user", "summary"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowHookCommandAction": {
+      "type": "object",
+      "required": ["type", "command"],
+      "properties": {
+        "type": { "const": "command" },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "type": "string", "minLength": 1 },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "blockOnFailure": { "type": "boolean" },
+        "injectOutput": {
+          "type": "string",
+          "enum": ["always", "onFailure", "never"]
+        },
+        "maxOutputBytes": { "type": "integer", "minimum": 1 },
+        "stdin": { "type": "string", "enum": ["none", "json"] },
+        "resultMode": { "type": "string", "enum": ["exitCode", "stdoutJson"] }
+      },
+      "additionalProperties": false
+    },
+    "workflowHookHttpAction": {
+      "type": "object",
+      "required": ["type", "url"],
+      "properties": {
+        "type": { "const": "http" },
+        "url": { "type": "string", "format": "uri" },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "body": { "type": "string" },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "blockOnFailure": { "type": "boolean" },
+        "injectOutput": {
+          "type": "string",
+          "enum": ["always", "onFailure", "never"]
+        },
+        "resultMode": { "type": "string", "enum": ["status", "responseJson"] }
+      },
+      "additionalProperties": false
+    },
+    "inlineDelegateTool": {
+      "type": "object",
+      "properties": {
+        "toolName": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "requiresApproval": { "type": "boolean" },
+        "forbidNesting": { "type": "boolean" },
+        "maxSteps": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
     "workspaceAccess": {
       "type": "string",
       "enum": ["none", "read_write"],

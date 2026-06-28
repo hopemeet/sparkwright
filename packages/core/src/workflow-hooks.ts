@@ -12,13 +12,13 @@ import type { ContextItem, RunRecord } from "./types.js";
 import type { ValidationFinding } from "./validation.js";
 
 export type WorkflowHookName =
-  | "SessionStart"
-  | "UserPromptSubmit"
+  | "RunStart"
+  | "TurnStart"
   | "ModelOutput"
   | "PreToolUse"
   | "PostToolUse"
   | "Stop"
-  | "SessionEnd"
+  | "RunEnd"
   | "RuntimeSignal";
 
 export type WorkflowRuntimeSignal =

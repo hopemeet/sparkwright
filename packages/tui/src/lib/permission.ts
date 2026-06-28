@@ -14,6 +14,13 @@ export interface CoreRunPermissionFields {
   shouldWrite: boolean;
 }
 
+const TUI_PERMISSION_MODE_RANK: Record<TuiPermissionMode, number> = {
+  "read-only": 0,
+  ask: 1,
+  "accept-edits": 2,
+  bypass: 3,
+};
+
 export function isTuiPermissionMode(
   value: unknown,
 ): value is TuiPermissionMode {
@@ -57,21 +64,27 @@ export function nextTuiPermissionMode(
   return TUI_PERMISSION_MODES[(index + 1) % TUI_PERMISSION_MODES.length]!;
 }
 
-export function tuiPermissionModeFromCorePermissionMode(
-  mode: PermissionMode | undefined,
-): TuiPermissionMode | undefined {
-  switch (mode) {
-    case undefined:
-      return undefined;
-    case "plan":
-      return "read-only";
-    case "default":
-      return "ask";
-    case "accept_edits":
-      return "accept-edits";
-    case "bypass_permissions":
-      return "bypass";
-    case "dont_ask":
-      return "read-only";
-  }
+export function nextAllowedTuiPermissionMode(
+  mode: TuiPermissionMode,
+  ceiling: TuiPermissionMode | undefined,
+): TuiPermissionMode {
+  if (ceiling === undefined) return nextTuiPermissionMode(mode);
+  const allowed = TUI_PERMISSION_MODES.filter(
+    (candidate) =>
+      TUI_PERMISSION_MODE_RANK[candidate] <= TUI_PERMISSION_MODE_RANK[ceiling],
+  );
+  const current = clampTuiPermissionMode(ceiling, mode);
+  const index = allowed.indexOf(current);
+  return allowed[(index + 1) % allowed.length]!;
+}
+
+export function clampTuiPermissionMode(
+  ceiling: TuiPermissionMode | undefined,
+  requested: TuiPermissionMode,
+): TuiPermissionMode {
+  if (ceiling === undefined) return requested;
+  return TUI_PERMISSION_MODE_RANK[requested] <=
+    TUI_PERMISSION_MODE_RANK[ceiling]
+    ? requested
+    : ceiling;
 }

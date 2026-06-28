@@ -212,6 +212,9 @@ describe("trace", () => {
         runtime: "custom",
         exitCode: 0,
         progressDropped: 3,
+        progressDroppedSamples: [
+          { reason: "invalid_json", preview: "SPARKWRIGHT_EVENT: not json" },
+        ],
       }),
     );
 
@@ -232,6 +235,49 @@ describe("trace", () => {
         expect.objectContaining({ message: "second" }),
       ],
       progressTail: [],
+    });
+    expect(lines[1]?.payload).not.toHaveProperty("progressDroppedSamples");
+  });
+
+  it("keeps process progress dropped samples at debug trace level", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-process-debug-"));
+    tempDirs.push(root);
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const store = new FileRunStore(run, { rootDir: root, traceLevel: "debug" });
+
+    store.append(
+      log.emit("extension.process.started", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+      }),
+    );
+    store.append(
+      log.emit("extension.process.completed", {
+        invocationId: "proc_1",
+        name: "hook",
+        kind: "workflow_hook",
+        runtime: "custom",
+        exitCode: 0,
+        progressDropped: 1,
+        progressDroppedSamples: [
+          { reason: "invalid_json", preview: "SPARKWRIGHT_EVENT: not json" },
+        ],
+      }),
+    );
+
+    const lines = (await readFile(store.tracePath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SparkwrightEvent);
+
+    expect(lines[1]?.payload).toMatchObject({
+      progressDropped: 1,
+      progressDroppedSamples: [
+        { reason: "invalid_json", preview: "SPARKWRIGHT_EVENT: not json" },
+      ],
     });
   });
 
@@ -1649,6 +1695,201 @@ describe("trace", () => {
 
     expect(report.findings.map((finding) => finding.code)).not.toContain(
       "IN_FLIGHT_DUPLICATE_STORM",
+    );
+  });
+
+  it("reports a destructive mutation that succeeded then returned not-found on the same target", () => {
+    const log = new EventLog(createRunId());
+    const jsonl = [
+      log.emit("run.created", { goal: "Delete the testcron job" }),
+      log.emit("tool.requested", {
+        id: "call_remove_ok",
+        toolName: "cron",
+        arguments: { action: "remove", ref: "c26560f10002" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_remove_ok",
+        toolName: "cron",
+        status: "completed",
+        output: { action: "remove", changed: true },
+      }),
+      log.emit("tool.requested", {
+        id: "call_remove_again",
+        toolName: "cron",
+        arguments: { action: "remove", ref: "c26560f10002", job: { name: "" } },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_remove_again",
+        toolName: "cron",
+        status: "failed",
+        error: {
+          code: "TOOL_EXECUTION_FAILED",
+          message: "cron job not found: c26560f10002",
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    // The post-deletion not-found must NOT show up as an unresolved failure...
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
+    );
+    // ...and the high-signal pattern must be surfaced explicitly.
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "DESTRUCTIVE_MUTATION_THEN_NOT_FOUND",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("cron::ref::c26560f10002"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("recomputes over raw events so a stale persisted snapshot does not mask the new classification", () => {
+    const log = new EventLog(createRunId());
+    // The run was recorded BEFORE the destructive-mutation classifier existed,
+    // so its persisted run.completed.toolOutcome lacks `mutationFollowups` and
+    // still counts the post-deletion not-found as unresolved. Because the raw
+    // events retain tool.requested arguments, the report must recompute and
+    // surface the correct classification instead of trusting the stale snapshot.
+    const jsonl = [
+      log.emit("run.created", { goal: "Delete the testcron job" }),
+      log.emit("tool.requested", {
+        id: "call_remove_ok",
+        toolName: "cron",
+        arguments: { action: "remove", ref: "c26560f10002" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_remove_ok",
+        toolName: "cron",
+        status: "completed",
+        output: { action: "remove", changed: true },
+      }),
+      log.emit("tool.requested", {
+        id: "call_remove_again",
+        toolName: "cron",
+        arguments: { action: "remove", ref: "c26560f10002" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_remove_again",
+        toolName: "cron",
+        status: "failed",
+        error: {
+          code: "TOOL_EXECUTION_FAILED",
+          message: "cron job not found: c26560f10002",
+        },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        // Stale snapshot shape from before the classifier change.
+        toolOutcome: {
+          unresolved: { total: 1, byCode: { TOOL_EXECUTION_FAILED: 1 } },
+          recovered: { total: 0, byCode: {} },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
+    );
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "DESTRUCTIVE_MUTATION_THEN_NOT_FOUND",
+        }),
+      ]),
+    );
+  });
+
+  it("falls back to the persisted snapshot when raw events stripped tool.requested arguments", () => {
+    const log = new EventLog(createRunId());
+    // A compacted trace whose tool.requested events no longer carry arguments
+    // cannot be reclassified, so the persisted snapshot (here: already recovered)
+    // remains authoritative and the report must not invent an unresolved failure.
+    const jsonl = [
+      log.emit("run.created", { goal: "Read a busy file" }),
+      log.emit("tool.requested", { id: "call_read", toolName: "read_file" }),
+      log.emit("tool.failed", {
+        toolCallId: "call_read",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "EBUSY", message: "resource busy" },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        toolOutcome: {
+          unresolved: { total: 0, byCode: {} },
+          recovered: { total: 1, byCode: { EBUSY: 1 } },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
+    );
+  });
+
+  it("does not let an args-bearing run force a recompute that misclassifies a stripped run in a mixed trace", () => {
+    const log = new EventLog(createRunId());
+    // Mixed multi-run trace: a newer run still carries request arguments, but an
+    // older/compacted run stripped them and recorded its EBUSY failure as
+    // recovered. Recompute is only safe when EVERY failed call retains its
+    // request args, so the stripped run's recovery must be preserved rather than
+    // flipped to unresolved by the presence of the other run's arguments.
+    const jsonl = [
+      // Newer run with request arguments (clean).
+      log.emit("run.created", { goal: "newer run with args" }),
+      log.emit("tool.requested", {
+        id: "call_ok",
+        toolName: "read_file",
+        arguments: { path: "x.txt" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_ok",
+        toolName: "read_file",
+        status: "completed",
+        output: { path: "x.txt" },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+      // Older/compacted run: request args stripped, persisted snapshot recovered.
+      log.emit("run.created", { goal: "older compacted run" }),
+      log.emit("tool.requested", { id: "call_busy", toolName: "read_file" }),
+      log.emit("tool.failed", {
+        toolCallId: "call_busy",
+        toolName: "read_file",
+        status: "failed",
+        error: { code: "EBUSY", message: "resource busy" },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        toolOutcome: {
+          unresolved: { total: 0, byCode: {} },
+          recovered: { total: 1, byCode: { EBUSY: 1 } },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
     );
   });
 

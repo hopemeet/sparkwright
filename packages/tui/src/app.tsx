@@ -86,9 +86,9 @@ import {
 } from "./lib/config.js";
 import { formatWorkspaceDisplayPath } from "./lib/path-display.js";
 import {
-  nextTuiPermissionMode,
+  clampTuiPermissionMode,
+  nextAllowedTuiPermissionMode,
   toCoreRunFields,
-  tuiPermissionModeFromCorePermissionMode,
   type TuiPermissionMode,
 } from "./lib/permission.js";
 
@@ -96,7 +96,6 @@ export interface CliOverrides {
   workspaceRoot?: string;
   sessionRootDir?: string;
   tuiPermissionMode?: TuiPermissionMode;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   modelName?: string;
   sessionId?: string;
@@ -111,6 +110,7 @@ interface Resolved {
   workspaceRoot: string;
   sessionRootDir: string;
   tuiPermissionMode: TuiPermissionMode;
+  accessModeCeiling?: TuiPermissionMode;
   permissionMode: PermissionMode;
   traceLevel: TraceLevel;
   shouldWrite: boolean;
@@ -149,18 +149,17 @@ function resolveConfig(
       : undefined;
   if (cli.modelName) sources.model = "cli:--model";
 
-  const legacyCliMode = tuiPermissionModeFromCorePermissionMode(
-    cli.permissionMode,
+  const requestedTuiPermissionMode: TuiPermissionMode =
+    cli.tuiPermissionMode ?? loaded.config.tuiPermissionMode ?? "ask";
+  const tuiPermissionMode = clampTuiPermissionMode(
+    loaded.config.accessModeCeiling,
+    requestedTuiPermissionMode,
   );
-  const tuiPermissionMode: TuiPermissionMode =
-    cli.tuiPermissionMode ??
-    legacyCliMode ??
-    loaded.config.tuiPermissionMode ??
-    "ask";
   if (cli.tuiPermissionMode) {
-    sources.tuiPermissionMode = "cli:--permission-mode";
-  } else if (legacyCliMode) {
-    sources.tuiPermissionMode = "cli:--permission-mode";
+    sources.tuiPermissionMode =
+      tuiPermissionMode === requestedTuiPermissionMode
+        ? "cli:--access-mode"
+        : (loaded.sources.accessModeCeiling ?? "project ceiling");
   } else if (!loaded.config.tuiPermissionMode) {
     sources.tuiPermissionMode = "default";
   }
@@ -175,6 +174,7 @@ function resolveConfig(
     workspaceRoot,
     sessionRootDir,
     tuiPermissionMode,
+    accessModeCeiling: loaded.config.accessModeCeiling,
     permissionMode,
     traceLevel,
     shouldWrite,
@@ -329,8 +329,12 @@ function AppReady(
   const effModel = modelOverride ? modelOverride.modelName : resolved.modelName;
   const [permissionModeOverride, setPermissionModeOverride] =
     useState<TuiPermissionMode | null>(null);
-  const effTuiPermissionMode =
+  const requestedEffTuiPermissionMode =
     permissionModeOverride ?? resolved.tuiPermissionMode;
+  const effTuiPermissionMode = clampTuiPermissionMode(
+    resolved.accessModeCeiling,
+    requestedEffTuiPermissionMode,
+  );
   const effCorePermission = toCoreRunFields(effTuiPermissionMode);
   const effectiveResolved = useMemo<Resolved>(() => {
     const next: Resolved = {
@@ -342,13 +346,17 @@ function AppReady(
     if (permissionModeOverride) {
       next.sources = {
         ...resolved.sources,
-        tuiPermissionMode: "runtime:shift+tab",
+        tuiPermissionMode:
+          effTuiPermissionMode === requestedEffTuiPermissionMode
+            ? "runtime:shift+tab"
+            : (resolved.sources.accessModeCeiling ?? "project ceiling"),
       };
     }
     return next;
   }, [
     resolved,
     effTuiPermissionMode,
+    requestedEffTuiPermissionMode,
     effCorePermission.permissionMode,
     effCorePermission.shouldWrite,
     permissionModeOverride,
@@ -1434,10 +1442,17 @@ function AppReady(
   const modelLabel = effModel ?? "deterministic";
 
   function cyclePermissionMode(): void {
-    const next = nextTuiPermissionMode(effTuiPermissionMode);
+    const next = nextAllowedTuiPermissionMode(
+      effTuiPermissionMode,
+      resolved.accessModeCeiling,
+    );
+    const effectiveNext = clampTuiPermissionMode(
+      resolved.accessModeCeiling,
+      next,
+    );
     setPermissionModeOverride(next);
-    controller.updateTuiPermissionMode(next);
-    store.appendNotice(`permission -> ${next} (next run)`);
+    controller.updateTuiPermissionMode(effectiveNext);
+    store.appendNotice(`permission -> ${effectiveNext} (next run)`);
   }
 
   function commitModelSelection(modelName: string): void {

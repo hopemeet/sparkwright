@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { RunHandle, ToolDefinition } from "@sparkwright/core";
 import type { AgentProfile } from "@sparkwright/agent-runtime";
+import { matchSkills } from "@sparkwright/skills";
+import { MAIN_AGENT_ID } from "./agent-constants.js";
 import type { CapabilityDelegateToolConfig } from "./config.js";
 
 export type DelegateProtocol = "acp" | "external_command" | "in_process";
@@ -25,6 +27,13 @@ export interface DelegateCapabilityDescriptor {
   /** @reserved Public capability-inspection field consumed by host protocol clients. */
   profileName?: string;
   protocol: DelegateProtocol;
+  /**
+   * Preferred model ("provider/model") this delegate runs on, when the profile
+   * declares one. Omitted when the delegate inherits the parent run's model.
+   *
+   * @reserved Public capability-inspection field consumed by routing/inspect UIs.
+   */
+  model?: string;
   risk: DelegateInvocationRisk;
   /** Legacy config echo. Prefer approvalRequiredUnderCurrentRun for diagnostics. */
   requiresApproval: boolean;
@@ -49,6 +58,14 @@ export interface DelegateCapabilityDescriptor {
    * @reserved Public capability-inspection field consumed by permission UIs.
    */
   gatedByRunWrite?: boolean;
+  /**
+   * Optional deterministic routing hint/evaluation. Present when the profile
+   * declares `triggers` or `when.keywords`; `relevance` is present only after a
+   * goal has been evaluated. This sorts/labels delegates but does not hide them.
+   *
+   * @reserved Public capability-inspection field consumed by routing/inspect UIs.
+   */
+  routing?: DelegateRoutingSummary;
   command?: string;
   args?: string[];
   timeoutMs?: number;
@@ -56,6 +73,33 @@ export interface DelegateCapabilityDescriptor {
     stdoutBytes?: number;
     stderrBytes?: number;
   };
+}
+
+export type DelegateRoutingRelevance = "relevant" | "low";
+
+export interface DelegateRoutingSummary {
+  keywords: string[];
+  mode?: "sort";
+  relevance?: DelegateRoutingRelevance;
+  score?: number;
+  matchedKeywords?: string[];
+  reason?: string;
+}
+
+export interface DelegateRoutingEvaluation extends DelegateRoutingSummary {
+  toolName: string;
+  profileId: string;
+  mode: "sort";
+  relevance: DelegateRoutingRelevance;
+  score: number;
+  matchedKeywords: string[];
+  reason: string;
+}
+
+export interface DelegateRoutingPlan {
+  delegates: CapabilityDelegateToolConfig[];
+  routingByProfileId: Map<string, DelegateRoutingSummary>;
+  evaluations: DelegateRoutingEvaluation[];
 }
 
 export interface DelegatePolicyProfile {
@@ -68,25 +112,6 @@ export interface DelegatePolicyProfile {
   approvalRunOptions?: {
     shouldWrite?: boolean;
   };
-}
-
-export interface DelegateResultSummary {
-  protocol: DelegateProtocol;
-  /** @reserved Public delegate-result identity field consumed by trace and orchestration UIs. */
-  agentProfileId: string;
-  exitCode?: number | null;
-  signal?: NodeJS.Signals | null;
-  stopReason?: string;
-  /** @reserved Public delegate-result metric consumed by trace and orchestration UIs. */
-  messageChars?: number;
-  toolCalls?: number;
-  /** @reserved Public delegate-result metric consumed by trace and orchestration UIs. */
-  stdoutChars?: number;
-  /** @reserved Public delegate-result metric consumed by trace and orchestration UIs. */
-  stderrChars?: number;
-  stdoutTruncated?: boolean;
-  stderrTruncated?: boolean;
-  outputTruncated?: boolean;
 }
 
 export function deriveDelegatePolicyProfile(input: {
@@ -145,7 +170,7 @@ export class DelegateExecutionError extends Error {
   }
 }
 
-export function currentSubagentDepth(
+function currentSubagentDepth(
   metadata: Record<string, unknown> | undefined,
 ): number {
   const configured = metadata?.subagentDepth;
@@ -187,6 +212,318 @@ export function delegateToolName(
   );
 }
 
+/** The profile's preferred model as a string, when it declares one. */
+function profileModelString(
+  profile: Pick<AgentProfile, "model">,
+): string | undefined {
+  return typeof profile.model === "string" && profile.model.trim().length > 0
+    ? profile.model.trim()
+    : undefined;
+}
+
+/** Spreadable `{ model }` for a descriptor, omitted when the profile has none. */
+function modelField(profile: Pick<AgentProfile, "model">): { model?: string } {
+  const model = profileModelString(profile);
+  return model ? { model } : {};
+}
+
+function routingField(profile: Pick<AgentProfile, "triggers" | "when">): {
+  routing?: DelegateRoutingSummary;
+} {
+  const keywords = profileRoutingKeywords(profile);
+  return keywords.length > 0 ? { routing: { keywords } } : {};
+}
+
+function profileRoutingKeywords(
+  profile: Pick<AgentProfile, "triggers" | "when">,
+): string[] {
+  return uniqueStrings([
+    ...(profile.triggers ?? []),
+    ...(profile.when?.keywords ?? []),
+  ]);
+}
+
+export function evaluateDelegateRouting(input: {
+  goal: string;
+  delegates: readonly CapabilityDelegateToolConfig[];
+  profiles: readonly AgentProfile[];
+}): DelegateRoutingPlan {
+  const byProfile = new Map(
+    input.profiles.map((profile) => [profile.id, profile]),
+  );
+  const candidates = input.delegates.map((delegate, index) => {
+    const profile = byProfile.get(delegate.profileId);
+    const keywords = profile ? profileRoutingKeywords(profile) : [];
+    return { delegate, index, profile, keywords };
+  });
+  type Candidate = (typeof candidates)[number];
+  const routed = candidates.filter(
+    (candidate) =>
+      candidate.profile !== undefined && candidate.keywords.length > 0,
+  ) as Array<Candidate & { profile: AgentProfile }>;
+  if (routed.length === 0) {
+    return {
+      delegates: [...input.delegates],
+      routingByProfileId: new Map(),
+      evaluations: [],
+    };
+  }
+
+  const matches = matchSkills(
+    input.goal,
+    routed.map((candidate) => ({
+      name: candidate.profile.id,
+      description: [candidate.profile.name, candidate.profile.description]
+        .filter((value): value is string => typeof value === "string")
+        .join(" "),
+      instructions: "",
+      triggers: candidate.keywords,
+    })),
+    { includeZero: true, limit: routed.length },
+  );
+  const matchByProfileId = new Map(
+    matches.map((match) => [match.skill.name, match]),
+  );
+  const routingByProfileId = new Map<string, DelegateRoutingSummary>();
+  const evaluationByIndex = new Map<number, DelegateRoutingEvaluation>();
+
+  for (const candidate of routed) {
+    const match = matchByProfileId.get(candidate.profile.id);
+    const score = match?.score ?? 0;
+    const matchedKeywords = match?.matchedKeywords ?? [];
+    const relevance: DelegateRoutingRelevance = score > 0 ? "relevant" : "low";
+    const reason =
+      relevance === "relevant"
+        ? matchedKeywords.length > 0
+          ? `matched ${matchedKeywords.join(", ")}`
+          : "matched profile name or description"
+        : "no routing keyword matched the current goal";
+    const evaluation: DelegateRoutingEvaluation = {
+      toolName: delegateToolName(candidate.delegate),
+      profileId: candidate.profile.id,
+      keywords: candidate.keywords,
+      mode: "sort",
+      relevance,
+      score,
+      matchedKeywords,
+      reason,
+    };
+    routingByProfileId.set(candidate.profile.id, evaluation);
+    evaluationByIndex.set(candidate.index, evaluation);
+  }
+
+  const sorted = [...candidates].sort((left, right) => {
+    const leftRouting = left.profile
+      ? routingByProfileId.get(left.profile.id)
+      : undefined;
+    const rightRouting = right.profile
+      ? routingByProfileId.get(right.profile.id)
+      : undefined;
+    const leftRank = routingSortRank(leftRouting);
+    const rightRank = routingSortRank(rightRouting);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    if (
+      leftRouting?.relevance === "relevant" &&
+      rightRouting?.relevance === "relevant" &&
+      leftRouting.score !== rightRouting.score
+    ) {
+      return (rightRouting.score ?? 0) - (leftRouting.score ?? 0);
+    }
+    return left.index - right.index;
+  });
+
+  return {
+    delegates: sorted.map((candidate) => candidate.delegate),
+    routingByProfileId,
+    evaluations: sorted
+      .map((candidate) => evaluationByIndex.get(candidate.index))
+      .filter((evaluation): evaluation is DelegateRoutingEvaluation =>
+        Boolean(evaluation),
+      ),
+  };
+}
+
+export function delegateToolDescription(
+  delegate: Pick<
+    CapabilityDelegateToolConfig,
+    "description" | "profileId" | "toolName"
+  >,
+  profile: Pick<AgentProfile, "id" | "name" | "description" | "model" | "use">,
+): string {
+  // An explicit author description is returned verbatim; only the generated
+  // description is enriched with routing material (Phase 3a, pure text).
+  if (delegate.description) return delegate.description;
+  const label = profile.name ?? profile.id;
+  const base =
+    profile.description && profile.description.trim().length > 0
+      ? `Delegate to ${label}: ${profile.description.trim()}`
+      : `Delegate a bounded task to ${label}.`;
+  const facets: string[] = [];
+  const model = profileModelString(profile);
+  if (model) facets.push(`model ${model}`);
+  if (profile.use && profile.use.length > 0) {
+    facets.push(`capabilities ${profile.use.join(", ")}`);
+  }
+  return facets.length > 0 ? `${base} (${facets.join("; ")})` : base;
+}
+
+/** How a resolved delegate tool was introduced, for collision diagnostics. */
+export type DelegateToolSource = "config" | "inline" | "auto" | "builtin";
+
+/**
+ * A delegate tool that was dropped because its derived tool name collides with
+ * one already claimed by another profile. Surfaced (never silently dropped) so
+ * `review:foo` and `review/foo` — both sanitizing to `delegate_review_foo` —
+ * fail closed instead of one silently winning.
+ */
+export interface DelegateToolCollision {
+  toolName: string;
+  /** The profile whose delegate tool was dropped. */
+  profileId: string;
+  /** The profile that already owns `toolName`. */
+  conflictsWith: string;
+  source: DelegateToolSource;
+}
+
+export interface ResolveAgentDelegateToolsOptions {
+  /**
+   * When true, synthesize a `delegate_<id>` for every `mode in {child, all}`
+   * profile that has no explicit delegate and is not opted out via
+   * `exposeAsDelegate: false`. Default false — auto-exposure changes the main
+   * agent's tool surface, so it stays opt-in.
+   */
+  exposeChildrenAsDelegates?: boolean;
+  /**
+   * When true, synthesize a delegate target for every `mode in {child, all}`
+   * profile that has no explicit delegate and is not opted out via
+   * `exposeAsDelegate: false`. Use this for indexed/generic delegation
+   * surfaces where callability is addressed by `agentId` instead of a named
+   * tool.
+   */
+  includeAllChildProfiles?: boolean;
+  /** Invoked once per dropped tool-name collision (fail-closed reporting). */
+  onCollision?: (collision: DelegateToolCollision) => void;
+}
+
+export function resolveAgentDelegateTools(
+  profiles: readonly AgentProfile[],
+  configuredDelegates: readonly CapabilityDelegateToolConfig[] = [],
+  options: ResolveAgentDelegateToolsOptions = {},
+): CapabilityDelegateToolConfig[] {
+  const resolved: CapabilityDelegateToolConfig[] = [];
+  const ownerByToolName = new Map<string, string>();
+  const claimedProfileIds = new Set<string>();
+
+  const claim = (
+    delegate: CapabilityDelegateToolConfig,
+    source: DelegateToolSource,
+  ): void => {
+    const toolName = delegateToolName(delegate);
+    const owner = ownerByToolName.get(toolName);
+    if (owner !== undefined && owner !== delegate.profileId) {
+      options.onCollision?.({
+        toolName,
+        profileId: delegate.profileId,
+        conflictsWith: owner,
+        source,
+      });
+      return;
+    }
+    resolved.push(delegate);
+    ownerByToolName.set(toolName, delegate.profileId);
+    claimedProfileIds.add(delegate.profileId);
+  };
+
+  // Explicit config wins: it is the precise layer and keeps authoring order.
+  for (const delegate of configuredDelegates) {
+    claim({ ...delegate }, "config");
+  }
+  // Inline `profile.delegateTool` folds under config; same-profile config
+  // already claimed it, so skip (explicit wins, not a collision).
+  for (const profile of profiles) {
+    const inline = profile.delegateTool;
+    if (!inline || claimedProfileIds.has(profile.id)) continue;
+    claim({ profileId: profile.id, ...inline }, "inline");
+  }
+  // Auto-exposure (opt-in): child/all profiles with no explicit delegate.
+  for (const profile of profiles) {
+    if (claimedProfileIds.has(profile.id)) continue;
+    if (profile.id === MAIN_AGENT_ID || profile.mode === "primary") continue;
+    const expose =
+      (options.includeAllChildProfiles === true &&
+        profile.exposeAsDelegate !== false) ||
+      profile.exposeAsDelegate === true ||
+      (options.exposeChildrenAsDelegates === true &&
+        profile.exposeAsDelegate !== false);
+    if (!expose) continue;
+    claim({ profileId: profile.id }, "auto");
+  }
+
+  return resolved;
+}
+
+export type DirectDelegateExposureMode = "indexed" | "all";
+
+export interface DirectDelegateExposureConfig {
+  exposure?: DirectDelegateExposureMode;
+  pinnedDelegates?: readonly string[];
+  exposeChildrenAsDelegates?: boolean;
+  delegateTools?: readonly Pick<
+    CapabilityDelegateToolConfig,
+    "profileId" | "toolName"
+  >[];
+}
+
+export function directDelegateExposureMode(
+  config: DirectDelegateExposureConfig | undefined,
+): DirectDelegateExposureMode {
+  return config?.exposure ?? "indexed";
+}
+
+export function filterDirectDelegatesForExposure<
+  T extends Pick<CapabilityDelegateToolConfig, "profileId" | "toolName">,
+>(
+  delegates: readonly T[],
+  config: DirectDelegateExposureConfig | undefined,
+  profiles: readonly {
+    id: string;
+    exposeAsDelegate?: boolean;
+    delegateTool?: unknown;
+  }[] = [],
+): T[] {
+  if (directDelegateExposureMode(config) === "all") return [...delegates];
+  const pinned = new Set(config?.pinnedDelegates ?? []);
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const isExplicitDelegate = (delegate: T, toolName: string): boolean => {
+    const configured = config?.delegateTools ?? [];
+    if (
+      configured.some(
+        (entry) =>
+          entry.profileId === delegate.profileId ||
+          (entry.toolName !== undefined && entry.toolName === toolName),
+      )
+    ) {
+      return true;
+    }
+    return profileById.get(delegate.profileId)?.delegateTool !== undefined;
+  };
+  return delegates.filter((delegate) => {
+    const toolName = delegateToolName(delegate);
+    const profile = profileById.get(delegate.profileId);
+    if (config?.exposeChildrenAsDelegates === true) {
+      return (
+        profile?.exposeAsDelegate !== false ||
+        isExplicitDelegate(delegate, toolName)
+      );
+    }
+    return (
+      pinned.has(delegate.profileId) ||
+      pinned.has(toolName) ||
+      profile?.exposeAsDelegate === true
+    );
+  });
+}
+
 export function describeDelegateCapability(input: {
   delegate: CapabilityDelegateToolConfig;
   profile: AgentProfile;
@@ -198,6 +535,7 @@ export function describeDelegateCapability(input: {
   allowReadWriteWorkspaceAccess?: boolean;
   outputLimits?: DelegateCapabilityDescriptor["outputLimits"];
   policyProfile?: DelegatePolicyProfile;
+  routing?: DelegateRoutingSummary;
 }): DelegateCapabilityDescriptor {
   const policyProfile =
     input.policyProfile ??
@@ -213,6 +551,8 @@ export function describeDelegateCapability(input: {
     profileId: input.profile.id,
     profileName: input.profile.name,
     protocol: input.protocol,
+    ...modelField(input.profile),
+    ...routingSummary(input.profile, input.routing),
     risk: policyProfile.policy.risk,
     requiresApproval: input.delegate.requiresApproval ?? true,
     ...approval,
@@ -236,6 +576,7 @@ export function describeInProcessDelegateCapability(input: {
   gatedByRunWrite?: boolean;
   allowReadWriteWorkspaceAccess?: boolean;
   policyProfile?: DelegatePolicyProfile;
+  routing?: DelegateRoutingSummary;
 }): DelegateCapabilityDescriptor {
   const policyProfile =
     input.policyProfile ??
@@ -251,6 +592,8 @@ export function describeInProcessDelegateCapability(input: {
     profileId: input.profile.id,
     profileName: input.profile.name,
     protocol: "in_process",
+    ...modelField(input.profile),
+    ...routingSummary(input.profile, input.routing),
     risk: policyProfile.policy.risk,
     requiresApproval: input.delegate.requiresApproval === true,
     ...approval,
@@ -284,6 +627,30 @@ function delegatePolicyProfileApprovalFacts(
   return policyProfile.approvalRunOptions === undefined
     ? facts
     : { ...facts, approvalRunOptions: policyProfile.approvalRunOptions };
+}
+
+function routingSummary(
+  profile: Pick<AgentProfile, "id" | "triggers" | "when">,
+  routing?: DelegateRoutingSummary,
+): { routing?: DelegateRoutingSummary } {
+  return routing ? { routing } : routingField(profile);
+}
+
+function routingSortRank(routing: DelegateRoutingSummary | undefined): number {
+  if (!routing?.relevance) return 1;
+  return routing.relevance === "relevant" ? 0 : 2;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 export function describeExternalDelegateCapability(input: {
@@ -338,16 +705,6 @@ export function workspaceAccessField(
   record: Record<string, unknown>,
 ): DelegateWorkspaceAccess | undefined {
   return record.workspaceAccess === "read_write" ? "read_write" : undefined;
-}
-
-export function validateWorkspaceAccess(
-  value: unknown,
-  field: string,
-  addError: (field: string, message: string) => void,
-): void {
-  if (value !== undefined && value !== "none" && value !== "read_write") {
-    addError(field, "must be none or read_write");
-  }
 }
 
 export function assertWorkspaceAccess(input: {
@@ -441,8 +798,17 @@ export function errorCode(error: unknown): DelegateFailureCode {
   return "DELEGATE_EXECUTION_FAILED";
 }
 
+/**
+ * Canonical tool-name segment sanitizer. Collapses any run of characters
+ * outside `[A-Za-z0-9_.-]` to a single `_` and trims leading/trailing `_`.
+ * This is the single source of truth for delegate (and dynamic agent) tool
+ * names — runtime.ts imports this rather than keeping a second, divergent
+ * sanitizer, so collision detection sees one canonical form.
+ */
 export function sanitizeToolSegment(value: string): string {
-  const normalized = value.replace(/[^a-zA-Z0-9_.-]+/g, "_");
+  const normalized = value
+    .replace(/[^a-zA-Z0-9_.-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
   return normalized.length > 0 ? normalized : "agent";
 }
 

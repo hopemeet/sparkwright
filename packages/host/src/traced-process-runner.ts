@@ -1,9 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import {
   createArtifactId,
   openSpan,
@@ -33,13 +30,42 @@ const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const DEFAULT_MAX_PROGRESS_EVENTS = 200;
 const DEFAULT_MAX_PROGRESS_LINE_BYTES = 8_192;
 const DEFAULT_MAX_PROGRESS_DATA_BYTES = 4_096;
-const PROGRESS_POLL_MS = 50;
+const PROCESS_PROTOCOL = "stdio-v1";
+const PROCESS_EVENT_TOKEN = "SPARKWRIGHT_EVENT";
+const DROPPED_SAMPLE_LIMIT = 5;
+const DROPPED_SAMPLE_PREVIEW_BYTES = 240;
 const TIMEOUT_KILL_GRACE_MS = 500;
 
 export interface ProgressChunk {
   message?: string;
   data?: Record<string, unknown>;
   channel?: "stdout" | "stderr" | "event";
+}
+
+export type ProcessTelemetryDroppedReason =
+  | "invalid_json"
+  | "unsupported_type"
+  | "line_too_large"
+  | "data_too_large"
+  | "limit_exceeded";
+
+export interface ProcessTelemetryDroppedSample {
+  reason: ProcessTelemetryDroppedReason;
+  preview: string;
+}
+
+export interface ProcessTelemetryParseResult {
+  forwardableText: string;
+  progressChunks: ProgressChunk[];
+  droppedSamples: ProcessTelemetryDroppedSample[];
+}
+
+export interface ProcessTelemetryParserOptions {
+  limits: {
+    maxProgressLineBytes: number;
+    maxProgressDataBytes: number;
+  };
+  token?: string;
 }
 
 export interface ProgressContext {
@@ -144,14 +170,6 @@ interface RawProcessResult {
   error?: { code: string; message: string };
 }
 
-interface InboxState {
-  dir: string;
-  path: string;
-  handle: FileHandle;
-  offset: number;
-  pending: string;
-}
-
 export class TracedProcessRunner {
   async run(input: TracedProcessInput): Promise<TracedProcessResult> {
     const invocationId = `proc_${randomUUID().replaceAll("-", "")}`;
@@ -165,8 +183,6 @@ export class TracedProcessRunner {
       limits.previewBytes,
       limits.maxStderrBytes,
     );
-    let progressCount = 0;
-    let progressDropped = 0;
     let sandbox: SandboxSummary | undefined;
     let raw: RawProcessResult | undefined;
     const startedAt = Date.now();
@@ -190,44 +206,18 @@ export class TracedProcessRunner {
         ...chunk,
       });
     };
-    const onProgress = input.onProgress ?? defaultProgress;
-    const inbox = await createInbox();
+    const progress = createProgressEmitter({
+      limits,
+      context,
+      onProgress: input.onProgress ?? defaultProgress,
+    });
     const env = {
       ...sanitizeEnv(input.env),
-      SPARKWRIGHT_TRACE_PROTOCOL: "extension-jsonl-v1",
-      SPARKWRIGHT_TRACE_INVOCATION_ID: invocationId,
-      SPARKWRIGHT_TRACE_EVENTS: inbox.path,
+      SPARKWRIGHT_PROCESS_PROTOCOL: PROCESS_PROTOCOL,
+      SPARKWRIGHT_EVENT_TOKEN: PROCESS_EVENT_TOKEN,
     };
-    let drainChain = Promise.resolve();
-    const queueDrain = (final: boolean): void => {
-      drainChain = drainChain
-        .then(() =>
-          drainInbox(inbox, final, limits, async (chunk) => {
-            if (progressCount >= limits.maxProgressEvents) {
-              progressDropped += 1;
-              return;
-            }
-            progressCount += 1;
-            await onProgress(chunk, context);
-          }),
-        )
-        .then((dropped) => {
-          progressDropped += dropped;
-        })
-        .catch(() => {
-          progressDropped += 1;
-        });
-    };
-    const poll = setInterval(() => queueDrain(false), PROGRESS_POLL_MS);
-
-    // The progress inbox lives under the OS temp dir. Under a filesystem-isolated
-    // sandbox the child cannot see it unless it is explicitly writable, so add
-    // the inbox dir to allowWrite before spawning.
-    const execInput = input.sandbox
-      ? { ...input, sandbox: withInboxWrite(input.sandbox, inbox.dir) }
-      : input;
     try {
-      raw = await this.execute(execInput, env, stdout, stderr);
+      raw = await this.execute(input, env, stdout, stderr, progress);
       sandbox = raw.sandbox;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -238,12 +228,6 @@ export class TracedProcessRunner {
         timedOut: false,
         error: { code: "PROCESS_RUNNER_ERROR", message },
       };
-    } finally {
-      clearInterval(poll);
-      queueDrain(true);
-      await drainChain;
-      await inbox.handle.close().catch(() => undefined);
-      await rm(inbox.dir, { recursive: true, force: true });
     }
 
     const durationMs = Date.now() - startedAt;
@@ -266,8 +250,8 @@ export class TracedProcessRunner {
       durationMs,
       output,
       ...(sandbox ? { sandbox } : {}),
-      progressCount,
-      progressDropped,
+      progressCount: progress.count,
+      progressDropped: progress.dropped,
       ...(raw.error ? { error: raw.error } : {}),
     };
     if (lifecycle) {
@@ -286,8 +270,11 @@ export class TracedProcessRunner {
           durationMs,
           output,
           ...(sandbox ? { sandbox } : {}),
-          progressCount,
-          progressDropped,
+          progressCount: progress.count,
+          progressDropped: progress.dropped,
+          ...(progress.droppedSamples.length > 0
+            ? { progressDroppedSamples: progress.droppedSamples }
+            : {}),
           ...(raw.error ? { error: raw.error, errorCode: raw.error.code } : {}),
         },
       );
@@ -309,8 +296,6 @@ export class TracedProcessRunner {
       limits.previewBytes,
       limits.maxStderrBytes,
     );
-    let progressCount = 0;
-    let progressDropped = 0;
     let raw: RawProcessResult | undefined;
     let sandbox: SandboxSummary | undefined = input.sandbox;
     const startedAt = processStartedAtMs(input.startedAt);
@@ -321,18 +306,10 @@ export class TracedProcessRunner {
         emitWithFrame(input.emitter, input.spanFrame, type, payload, metadata),
     };
     const onProgress = input.onProgress ?? (() => undefined);
-    const emitProgress = async (chunk: ProgressChunk): Promise<void> => {
-      if (progressCount >= limits.maxProgressEvents) {
-        progressDropped += 1;
-        return;
-      }
-      progressCount += 1;
-      try {
-        await onProgress(chunk, context);
-      } catch {
-        progressDropped += 1;
-      }
-    };
+    const progress = createProgressEmitter({ limits, context, onProgress });
+    const stderrTelemetry = new ProcessTelemetryParser({ limits });
+    let sawStdout = Boolean(input.initialStdout);
+    let sawStderr = Boolean(input.initialStderr);
     const appendOutput = async (
       channel: ProcessOutputChunk["channel"],
       data: string,
@@ -341,7 +318,13 @@ export class TracedProcessRunner {
       if (channel === "stdout") stdout.append(data);
       else stderr.append(data);
       await input.onOutput?.({ channel, data }, context);
-      await emitProgress({ channel, message: data });
+      await progress.emit({ channel, message: data }, data);
+    };
+    const appendStderrTelemetry = async (data: string): Promise<void> => {
+      if (!data) return;
+      sawStderr = true;
+      const parsed = stderrTelemetry.push(data);
+      await appendParsedStderr(parsed, appendOutput, progress);
     };
     const abort = (): void => {
       input.streaming.handle.abort("task cancelled");
@@ -350,26 +333,33 @@ export class TracedProcessRunner {
 
     try {
       await appendOutput("stdout", input.initialStdout ?? "");
-      await appendOutput("stderr", input.initialStderr ?? "");
+      await appendStderrTelemetry(input.initialStderr ?? "");
       const stdoutDrain = (async () => {
         for await (const chunk of input.streaming.handle.stdout()) {
+          sawStdout = true;
           await appendOutput("stdout", chunk);
         }
       })();
       const stderrDrain = (async () => {
         for await (const chunk of input.streaming.handle.stderr()) {
-          await appendOutput("stderr", chunk);
+          await appendStderrTelemetry(chunk);
         }
       })();
       const final = await input.streaming.completed;
       await Promise.allSettled([stdoutDrain, stderrDrain]);
-      if (!stdout.text && final.stdout) {
+      await appendParsedStderr(stderrTelemetry.flush(), appendOutput, progress);
+      if (!sawStdout && final.stdout) {
         await appendOutput("stdout", final.stdout);
       }
-      if (!stderr.text && final.stderr) {
-        await appendOutput("stderr", final.stderr);
+      if (!sawStderr && final.stderr) {
+        await appendStderrTelemetry(final.stderr);
+        await appendParsedStderr(
+          stderrTelemetry.flush(),
+          appendOutput,
+          progress,
+        );
       }
-      raw = rawFromShellResult(final);
+      raw = rawFromShellResult(final, stderr.text);
       sandbox = raw.sandbox ?? sandbox;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -404,8 +394,8 @@ export class TracedProcessRunner {
       durationMs,
       output,
       ...(sandbox ? { sandbox } : {}),
-      progressCount,
-      progressDropped,
+      progressCount: progress.count,
+      progressDropped: progress.dropped,
       ...(raw.error ? { error: raw.error } : {}),
     };
   }
@@ -415,9 +405,16 @@ export class TracedProcessRunner {
     env: NodeJS.ProcessEnv,
     stdout: OutputCollector,
     stderr: OutputCollector,
+    progress: ProgressEmitter,
   ): Promise<RawProcessResult> {
     if (input.sandbox && input.sandbox.mode !== "off") {
-      const sandboxed = await this.executeSandboxed(input, env, stdout, stderr);
+      const sandboxed = await this.executeSandboxed(
+        input,
+        env,
+        stdout,
+        stderr,
+        progress,
+      );
       if (sandboxed.status === "completed") return sandboxed.result;
       if (input.sandbox.failIfUnavailable) {
         stderr.append(`${sandboxed.reason}\n`);
@@ -432,10 +429,17 @@ export class TracedProcessRunner {
           },
         };
       }
-      return this.executeRaw(input, env, stdout, stderr, sandboxed.sandbox);
+      return this.executeRaw(
+        input,
+        env,
+        stdout,
+        stderr,
+        progress,
+        sandboxed.sandbox,
+      );
     }
 
-    return this.executeRaw(input, env, stdout, stderr);
+    return this.executeRaw(input, env, stdout, stderr, progress);
   }
 
   private async executeSandboxed(
@@ -443,6 +447,7 @@ export class TracedProcessRunner {
     env: NodeJS.ProcessEnv,
     stdout: OutputCollector,
     stderr: OutputCollector,
+    progress: ProgressEmitter,
   ): Promise<
     | { status: "completed"; result: RawProcessResult }
     | { status: "fallback"; reason: string; sandbox: SandboxSummary }
@@ -483,7 +488,12 @@ export class TracedProcessRunner {
     }
     return {
       status: "completed",
-      result: await collectStreamingResult(started.result, stdout, stderr),
+      result: await collectStreamingResult(
+        started.result,
+        stdout,
+        stderr,
+        progress,
+      ),
     };
   }
 
@@ -492,6 +502,7 @@ export class TracedProcessRunner {
     env: NodeJS.ProcessEnv,
     stdout: OutputCollector,
     stderr: OutputCollector,
+    progress: ProgressEmitter,
     fallbackSandbox?: SandboxSummary,
   ): Promise<RawProcessResult> {
     return new Promise<RawProcessResult>((resolve) => {
@@ -500,18 +511,43 @@ export class TracedProcessRunner {
       // eslint-disable-next-line prefer-const -- assigned after spawn; finish closes over it.
       let timer: NodeJS.Timeout | undefined;
       let killTimer: NodeJS.Timeout | undefined;
+      const telemetry = new ProcessTelemetryParser({ limits: progress.limits });
+      let stderrChain = Promise.resolve();
+      const appendStderr = (text: string): void => {
+        if (!text) return;
+        stderrChain = stderrChain
+          .then(async () => {
+            const parsed = telemetry.push(text);
+            stderr.append(parsed.forwardableText);
+            await progress.emitParsed(parsed);
+          })
+          .catch(() => {
+            progress.recordDropped("invalid_json", text);
+          });
+      };
       const finish = (result: RawProcessResult): void => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
-        resolve({
-          ...result,
-          timedOut: result.timedOut || timedOut,
-          ...((result.sandbox ?? fallbackSandbox)
-            ? { sandbox: result.sandbox ?? fallbackSandbox }
-            : {}),
-        });
+        stderrChain = stderrChain
+          .then(async () => {
+            const parsed = telemetry.flush();
+            stderr.append(parsed.forwardableText);
+            await progress.emitParsed(parsed);
+          })
+          .catch(() => {
+            progress.recordDropped("invalid_json", "");
+          })
+          .then(() => {
+            resolve({
+              ...result,
+              timedOut: result.timedOut || timedOut,
+              ...((result.sandbox ?? fallbackSandbox)
+                ? { sandbox: result.sandbox ?? fallbackSandbox }
+                : {}),
+            });
+          });
       };
       let child: ReturnType<typeof spawn>;
       try {
@@ -581,7 +617,7 @@ export class TracedProcessRunner {
         );
       });
       child.stderr?.on("data", (chunk: Buffer | string) => {
-        stderr.append(
+        appendStderr(
           typeof chunk === "string" ? chunk : chunk.toString("utf8"),
         );
       });
@@ -619,118 +655,247 @@ export class TracedProcessRunner {
   }
 }
 
-async function createInbox(): Promise<InboxState> {
-  const dir = await mkdtemp(join(tmpdir(), "sparkwright-trace-"));
-  const path = join(dir, "events.jsonl");
-  await writeFile(path, "", { mode: 0o600 });
-  // Hold a long-lived read handle and track a byte offset so each poll reads
-  // only the newly-appended bytes via positional reads, instead of re-reading
-  // the whole (potentially large, noisy) inbox file every tick.
-  const handle = await open(path, "r");
-  return { dir, path, handle, offset: 0, pending: "" };
+interface ProgressEmitter {
+  readonly limits: NormalizedLimits;
+  readonly count: number;
+  readonly dropped: number;
+  readonly droppedSamples: ProcessTelemetryDroppedSample[];
+  emit(chunk: ProgressChunk, preview?: string): Promise<void>;
+  emitParsed(parsed: ProcessTelemetryParseResult): Promise<void>;
+  recordDropped(reason: ProcessTelemetryDroppedReason, preview: string): void;
 }
 
-const INBOX_READ_CHUNK_BYTES = 64 * 1024;
-
-async function drainInbox(
-  inbox: InboxState,
-  final: boolean,
-  limits: NormalizedLimits,
-  emit: (chunk: ProgressChunk) => Promise<void>,
-): Promise<number> {
+function createProgressEmitter(input: {
+  limits: NormalizedLimits;
+  context: ProgressContext;
+  onProgress: (
+    chunk: ProgressChunk,
+    context: ProgressContext,
+  ) => void | Promise<void>;
+}): ProgressEmitter {
+  let count = 0;
   let dropped = 0;
-  const parts: Buffer[] = [];
-  const buffer = Buffer.allocUnsafe(INBOX_READ_CHUNK_BYTES);
-  for (;;) {
-    let bytesRead: number;
-    try {
-      ({ bytesRead } = await inbox.handle.read(
-        buffer,
-        0,
-        buffer.length,
-        inbox.offset,
-      ));
-    } catch {
-      return 1;
-    }
-    if (bytesRead <= 0) break;
-    parts.push(Buffer.from(buffer.subarray(0, bytesRead)));
-    inbox.offset += bytesRead;
-  }
-  if (parts.length > 0) {
-    inbox.pending += Buffer.concat(parts).toString("utf8");
-  }
-  const lines = inbox.pending.split(/\r?\n/);
-  inbox.pending = final ? "" : (lines.pop() ?? "");
-  if (final && inbox.pending.trim()) {
-    lines.push(inbox.pending);
-    inbox.pending = "";
-  }
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    if (Buffer.byteLength(line, "utf8") > limits.maxProgressLineBytes) {
-      dropped += 1;
-      continue;
-    }
-    const parsed = parseProgressLine(line, limits);
-    if (!parsed) {
-      dropped += 1;
-      continue;
-    }
-    await emit(parsed);
-  }
-  return dropped;
+  const droppedSamples: ProcessTelemetryDroppedSample[] = [];
+  const recordDropped = (
+    reason: ProcessTelemetryDroppedReason,
+    preview: string,
+  ): void => {
+    dropped += 1;
+    if (droppedSamples.length >= DROPPED_SAMPLE_LIMIT) return;
+    droppedSamples.push({
+      reason,
+      preview: truncateUtf8(preview, DROPPED_SAMPLE_PREVIEW_BYTES),
+    });
+  };
+  return {
+    limits: input.limits,
+    get count() {
+      return count;
+    },
+    get dropped() {
+      return dropped;
+    },
+    get droppedSamples() {
+      return droppedSamples;
+    },
+    async emit(chunk, preview) {
+      if (count >= input.limits.maxProgressEvents) {
+        recordDropped("limit_exceeded", preview ?? safeJsonStringify(chunk));
+        return;
+      }
+      count += 1;
+      try {
+        await input.onProgress(chunk, input.context);
+      } catch {
+        dropped += 1;
+      }
+    },
+    async emitParsed(parsed) {
+      for (const sample of parsed.droppedSamples) {
+        recordDropped(sample.reason, sample.preview);
+      }
+      for (const chunk of parsed.progressChunks) {
+        await this.emit(chunk, safeJsonStringify(chunk));
+      }
+    },
+    recordDropped,
+  };
 }
 
-function parseProgressLine(
-  line: string,
-  limits: NormalizedLimits,
-): ProgressChunk | undefined {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(line) as unknown;
-  } catch {
-    return undefined;
+async function appendParsedStderr(
+  parsed: ProcessTelemetryParseResult,
+  appendOutput: (
+    channel: ProcessOutputChunk["channel"],
+    data: string,
+  ) => Promise<void>,
+  progress: ProgressEmitter,
+): Promise<void> {
+  if (parsed.forwardableText) {
+    await appendOutput("stderr", parsed.forwardableText);
   }
-  if (!isRecord(raw) || raw.type !== "progress") return undefined;
-  const chunk: ProgressChunk = {};
-  if (typeof raw.message === "string") chunk.message = raw.message;
-  if (
-    raw.channel === "stdout" ||
-    raw.channel === "stderr" ||
-    raw.channel === "event"
-  ) {
-    chunk.channel = raw.channel;
+  await progress.emitParsed(parsed);
+}
+
+export class ProcessTelemetryParser {
+  private pending = "";
+  private readonly tokenPrefix: string;
+
+  constructor(private readonly options: ProcessTelemetryParserOptions) {
+    this.tokenPrefix = `${options.token ?? PROCESS_EVENT_TOKEN}:`;
   }
+
+  push(chunk: string): ProcessTelemetryParseResult {
+    if (!chunk) return emptyTelemetryResult();
+    this.pending += chunk;
+    return this.drainCompleteLines();
+  }
+
+  flush(): ProcessTelemetryParseResult {
+    if (!this.pending) return emptyTelemetryResult();
+    const pending = this.pending;
+    this.pending = "";
+    return this.processLine(pending);
+  }
+
+  private drainCompleteLines(): ProcessTelemetryParseResult {
+    let forwardableText = "";
+    const progressChunks: ProgressChunk[] = [];
+    const droppedSamples: ProcessTelemetryDroppedSample[] = [];
+    for (;;) {
+      const newlineIndex = this.pending.indexOf("\n");
+      if (newlineIndex < 0) break;
+      const line = this.pending.slice(0, newlineIndex + 1);
+      this.pending = this.pending.slice(newlineIndex + 1);
+      const parsed = this.processLine(line);
+      forwardableText += parsed.forwardableText;
+      progressChunks.push(...parsed.progressChunks);
+      droppedSamples.push(...parsed.droppedSamples);
+    }
+    return { forwardableText, progressChunks, droppedSamples };
+  }
+
+  private processLine(line: string): ProcessTelemetryParseResult {
+    const body = line.endsWith("\n")
+      ? line.slice(0, line.endsWith("\r\n") ? -2 : -1)
+      : line;
+    if (!body.startsWith(this.tokenPrefix)) {
+      return {
+        forwardableText: line,
+        progressChunks: [],
+        droppedSamples: [],
+      };
+    }
+    const preview = truncateUtf8(body, DROPPED_SAMPLE_PREVIEW_BYTES);
+    if (
+      Buffer.byteLength(body, "utf8") > this.options.limits.maxProgressLineBytes
+    ) {
+      return droppedTelemetryResult("line_too_large", preview);
+    }
+    const jsonText = body.slice(this.tokenPrefix.length).trimStart();
+    let raw: unknown;
+    try {
+      raw = JSON.parse(jsonText) as unknown;
+    } catch {
+      return droppedTelemetryResult("invalid_json", preview);
+    }
+    const normalized = normalizeTelemetryRecord(
+      raw,
+      this.options.limits,
+      preview,
+    );
+    if ("sample" in normalized) {
+      return {
+        forwardableText: "",
+        progressChunks: [],
+        droppedSamples: [normalized.sample],
+      };
+    }
+    return {
+      forwardableText: "",
+      progressChunks: [normalized.chunk],
+      droppedSamples: [],
+    };
+  }
+}
+
+function normalizeTelemetryRecord(
+  raw: unknown,
+  limits: ProcessTelemetryParserOptions["limits"],
+  preview: string,
+): { chunk: ProgressChunk } | { sample: ProcessTelemetryDroppedSample } {
+  if (!isRecord(raw) || raw.type !== "progress") {
+    return { sample: { reason: "unsupported_type", preview } };
+  }
+  const chunk: ProgressChunk = {
+    channel: "event",
+    message:
+      typeof raw.message === "string" && raw.message ? raw.message : "progress",
+  };
   if (isRecord(raw.data)) {
     const data = sanitizeProgressData(raw.data);
     if (
-      Buffer.byteLength(JSON.stringify(data), "utf8") <=
+      Buffer.byteLength(JSON.stringify(data), "utf8") >
       limits.maxProgressDataBytes
     ) {
-      chunk.data = data;
-    } else {
-      chunk.data = { truncated: true };
+      return { sample: { reason: "data_too_large", preview } };
     }
+    chunk.data = data;
   }
-  return chunk;
+  return { chunk };
+}
+
+function emptyTelemetryResult(): ProcessTelemetryParseResult {
+  return { forwardableText: "", progressChunks: [], droppedSamples: [] };
+}
+
+function droppedTelemetryResult(
+  reason: ProcessTelemetryDroppedReason,
+  preview: string,
+): ProcessTelemetryParseResult {
+  return {
+    forwardableText: "",
+    progressChunks: [],
+    droppedSamples: [{ reason, preview }],
+  };
 }
 
 async function collectStreamingResult(
   streaming: ShellStreamingResult,
   stdout: OutputCollector,
   stderr: OutputCollector,
+  progress: ProgressEmitter,
 ): Promise<RawProcessResult> {
+  const telemetry = new ProcessTelemetryParser({ limits: progress.limits });
+  let sawStdout = false;
+  let sawStderr = false;
   const stdoutDrain = (async () => {
-    for await (const chunk of streaming.handle.stdout()) stdout.append(chunk);
+    for await (const chunk of streaming.handle.stdout()) {
+      sawStdout = true;
+      stdout.append(chunk);
+    }
   })();
   const stderrDrain = (async () => {
-    for await (const chunk of streaming.handle.stderr()) stderr.append(chunk);
+    for await (const chunk of streaming.handle.stderr()) {
+      sawStderr = true;
+      const parsed = telemetry.push(chunk);
+      stderr.append(parsed.forwardableText);
+      await progress.emitParsed(parsed);
+    }
   })();
   const final = await streaming.completed;
   await Promise.allSettled([stdoutDrain, stderrDrain]);
-  if (!stdout.text && final.stdout) stdout.append(final.stdout);
-  if (!stderr.text && final.stderr) stderr.append(final.stderr);
+  const flushed = telemetry.flush();
+  stderr.append(flushed.forwardableText);
+  await progress.emitParsed(flushed);
+  if (!sawStdout && final.stdout) stdout.append(final.stdout);
+  if (!sawStderr && final.stderr) {
+    const parsed = telemetry.push(final.stderr);
+    stderr.append(parsed.forwardableText);
+    await progress.emitParsed(parsed);
+    const finalFlush = telemetry.flush();
+    stderr.append(finalFlush.forwardableText);
+    await progress.emitParsed(finalFlush);
+  }
   const timedOut = final.metadata.timedOut === true;
   return {
     exitCode: final.exitCode,
@@ -741,7 +906,7 @@ async function collectStreamingResult(
       ? {
           error: {
             code: timedOut ? "PROCESS_TIMEOUT" : "PROCESS_FAILED",
-            message: final.stderr || "Process failed.",
+            message: stderr.text || "Process failed.",
           },
         }
       : {}),
@@ -912,6 +1077,19 @@ function appendBounded(
   return Buffer.byteLength(sliceText, "utf8");
 }
 
+function truncateUtf8(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  return Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
+}
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 interface NormalizedLimits {
   previewBytes: number;
   artifactBytes: number;
@@ -1029,20 +1207,6 @@ function processStartedAtMs(startedAt: string | number | undefined): number {
   return Date.now();
 }
 
-function withInboxWrite(
-  sandbox: ResolvedShellSandboxConfig,
-  inboxDir: string,
-): ResolvedShellSandboxConfig {
-  if (sandbox.filesystem.allowWrite.includes(inboxDir)) return sandbox;
-  return {
-    ...sandbox,
-    filesystem: {
-      ...sandbox.filesystem,
-      allowWrite: [...sandbox.filesystem.allowWrite, inboxDir],
-    },
-  };
-}
-
 function sanitizeEnv(
   env: Record<string, string | undefined> | undefined,
 ): NodeJS.ProcessEnv {
@@ -1080,7 +1244,10 @@ function sandboxSummary(
   };
 }
 
-function rawFromShellResult(final: ShellExecutionResult): RawProcessResult {
+function rawFromShellResult(
+  final: ShellExecutionResult,
+  sanitizedStderr = final.stderr,
+): RawProcessResult {
   const timedOut = final.metadata.timedOut === true;
   return {
     exitCode: final.exitCode,
@@ -1098,7 +1265,7 @@ function rawFromShellResult(final: ShellExecutionResult): RawProcessResult {
               : final.status === "denied"
                 ? "PROCESS_DENIED"
                 : "PROCESS_FAILED",
-            message: final.stderr || "Process failed.",
+            message: sanitizedStderr || "Process failed.",
           },
         }
       : {}),

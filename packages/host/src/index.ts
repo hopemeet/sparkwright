@@ -53,8 +53,14 @@ export {
   shouldAppendDiscoveryTool,
 } from "./tool-selectors.js";
 export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
-export { createConfiguredWorkflowHooks } from "./workflow-hooks.js";
-export type { CreateConfiguredWorkflowHooksOptions } from "./workflow-hooks.js";
+export {
+  bindConfiguredEventHooks,
+  createConfiguredWorkflowHooks,
+} from "./workflow-hooks.js";
+export type {
+  BindConfiguredEventHooksOptions,
+  CreateConfiguredWorkflowHooksOptions,
+} from "./workflow-hooks.js";
 export {
   TracedProcessRunner,
   inferProcessRuntime,
@@ -71,11 +77,24 @@ export { createVerificationWorkflowHooks } from "./verification.js";
 export type { CreateVerificationWorkflowHooksOptions } from "./verification.js";
 export {
   checkDocumentedCommands,
+  createDocumentedCommandRulePack,
   createDocumentedCommandStopHook,
+  DOCUMENTED_COMMAND_RULE_ACTION_SUMMARY,
+  DOCUMENTED_COMMAND_RULE_CONFIGURATION_HINT,
+  DOCUMENTED_COMMAND_RULE_DESCRIPTION,
+  DOCUMENTED_COMMAND_RULE_DISABLE_HINT,
+  DOCUMENTED_COMMAND_RULE_ID,
+  DOCUMENTED_COMMAND_RULE_MATCHER_SUMMARY,
+  DOCUMENTED_COMMAND_RULE_NAME,
+  evaluateDocumentedCommandRule,
   shouldCheckDocumentedCommands,
   summarizeDocumentedCommandIssues,
 } from "./documented-command-check.js";
-export type { DocumentedCommandIssue } from "./documented-command-check.js";
+export type {
+  DocumentedCommandIssue,
+  DocumentedCommandRuleActivation,
+  DocumentedCommandRulePack,
+} from "./documented-command-check.js";
 export {
   projectSkillRoot,
   existingSkillRoots,
@@ -90,9 +109,20 @@ export type {
 } from "./skill-report.js";
 export { collectSkillStats } from "./skill-stats.js";
 export type {
+  SkillStatsCatalogInfo,
   SkillStatsEntry,
+  SkillStatsFinding,
+  SkillStatsFindingCode,
+  SkillStatsFindingRelation,
+  SkillStatsFindingSeverity,
+  SkillStatsFreshness,
+  SkillStatsIdentityConfidence,
   SkillStatsOptions,
+  SkillStatsProjectionCacheInfo,
+  SkillStatsQuery,
+  SkillStatsQueryScope,
   SkillStatsReport,
+  SkillStatsWindow,
 } from "./skill-stats.js";
 export { createFileCapabilityPackageWriter } from "./capability-package-mutation.js";
 export type {
@@ -154,6 +184,7 @@ export type {
   AgentReportEntry,
   AgentReportLayer,
   AgentShadowDiagnostic,
+  AgentCollisionDiagnostic,
 } from "./agent-report.js";
 export { resolveCapabilityDirs, userConfigBase } from "./layers.js";
 export type {
@@ -167,6 +198,7 @@ export {
   discoverProjectAgentProfiles,
   mergeAgentProfilesById,
   parseAgentProfileFile,
+  type AgentProfileCollision,
 } from "./agent-profiles.js";
 export {
   loadHostConfig,
@@ -192,11 +224,21 @@ export {
 } from "./config.js";
 export {
   delegateToolName,
+  delegateToolDescription,
   describeDelegateCapability,
   describeExternalDelegateCapability,
+  directDelegateExposureMode,
+  filterDirectDelegatesForExposure,
+  resolveAgentDelegateTools,
+  sanitizeToolSegment,
   type DelegateCapabilityDescriptor,
   type DelegateFailureCode,
   type DelegateProtocol,
+  type DelegateToolCollision,
+  type DelegateToolSource,
+  type DirectDelegateExposureConfig,
+  type DirectDelegateExposureMode,
+  type ResolveAgentDelegateToolsOptions,
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
 export { validateRunInput } from "./run-input-validation.js";
@@ -242,6 +284,20 @@ export type {
   HostClientRunMetadataInput,
   HostClientSource,
 } from "./client-run.js";
+export {
+  MAX_RUN_IMAGE_INPUT_BYTES,
+  SUPPORTED_RUN_IMAGE_INPUT_TYPES,
+  buildImageRunInputPart,
+  createRunInputPayloadFromParts,
+  imageMediaTypeForPath,
+  runInputMetadataRecord,
+  summarizeRunInputParts,
+} from "./client-input.js";
+export type {
+  BuildImageRunInputPartResult,
+  RunImageInputPart,
+  RunInputSummary,
+} from "./client-input.js";
 export type {
   SharedConfig,
   SharedConfigSourceMap,

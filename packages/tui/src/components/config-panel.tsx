@@ -49,7 +49,7 @@ export function ConfigPanel(props: {
         <Text dimColor> ({resolved.sources.model ?? "?"})</Text>
       </Text>
       <Text>
-        <Text dimColor>tuiPermissionMode: </Text>
+        <Text dimColor>accessMode: </Text>
         {resolved.tuiPermissionMode}
         <Text dimColor> ({resolved.sources.tuiPermissionMode ?? "?"})</Text>
       </Text>

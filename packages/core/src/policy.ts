@@ -192,7 +192,7 @@ export function createPermissionModePolicy(
           return baseDecision;
 
         case "plan":
-          if (isReadOnlyAction(input.action)) return baseDecision;
+          if (isReadOnlyAction(input)) return baseDecision;
           return requireApproval(input, "Plan mode requires approval.");
 
         case "accept_edits":
@@ -454,8 +454,29 @@ function requireApproval(
   };
 }
 
-function isReadOnlyAction(action: string): boolean {
-  return action === "workspace.read" || action.endsWith(".read");
+function isReadOnlyAction(input: PolicyInput): boolean {
+  if (input.action === "workspace.read" || input.action.endsWith(".read")) {
+    return true;
+  }
+
+  if (input.action !== "tool.execute") return false;
+
+  const risk = toolRiskFromInput(input);
+  if (risk !== "safe") return false;
+
+  const sideEffects = sideEffectsFromInput(input);
+  return (
+    sideEffects.length > 0 &&
+    sideEffects.every((effect) => effect === "read" || effect === "none")
+  );
+}
+
+function toolRiskFromInput(input: PolicyInput): string | undefined {
+  const fromResource = input.resource?.metadata?.risk;
+  if (typeof fromResource === "string") return fromResource;
+
+  const fromMetadata = input.metadata?.risk;
+  return typeof fromMetadata === "string" ? fromMetadata : undefined;
 }
 
 function governanceFromInput(

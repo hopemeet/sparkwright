@@ -46,6 +46,10 @@ export interface SkillManifest {
   requiredCapabilities?: string[];
   /** Optional semantic version string. */
   version?: string;
+  /** Optional package license identifier or short license text. */
+  license?: string;
+  /** Optional compatibility labels used by diagnostics and migration tooling. */
+  compatibility?: string[];
   /** Filesystem source path, if loaded from disk. */
   source?: string;
   /**

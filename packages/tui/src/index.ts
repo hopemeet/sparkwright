@@ -7,18 +7,12 @@ import {
   loadHostConfig,
   validateRunInput,
 } from "@sparkwright/host";
-import {
-  isPermissionMode,
-  isTraceLevel,
-  type PermissionMode,
-  type TraceLevel,
-} from "@sparkwright/protocol";
+import { isTraceLevel, type TraceLevel } from "@sparkwright/protocol";
 import { App, type AppProps } from "./app.js";
 import { installTerminalRestore } from "./lib/terminal-restore.js";
 import {
   isTuiPermissionMode,
   TUI_PERMISSION_MODES,
-  tuiPermissionModeFromCorePermissionMode,
   type TuiPermissionMode,
 } from "./lib/permission.js";
 
@@ -31,7 +25,6 @@ interface CliOverrides {
   workspaceRoot?: string;
   sessionRootDir?: string;
   tuiPermissionMode?: TuiPermissionMode;
-  permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   modelName?: string;
   sessionId?: string;
@@ -64,19 +57,15 @@ function parseArgs(
       out.tuiPermissionMode = "accept-edits";
     } else if (a === "--yes-shell-safe") {
       out.tuiPermissionMode = "ask";
-    } else if (a === "--permission-mode") {
+    } else if (a === "--access-mode") {
       const v = argv[i + 1];
-      if (!v) errors.push("Usage: --permission-mode requires a value");
+      if (!v) errors.push("Usage: --access-mode requires a value");
       else if (isTuiPermissionMode(v)) {
         out.tuiPermissionMode = v;
         i += 1;
-      } else if (isPermissionMode(v)) {
-        out.permissionMode = v;
-        out.tuiPermissionMode = tuiPermissionModeFromCorePermissionMode(v);
-        i += 1;
       } else {
         errors.push(
-          `Usage: --permission-mode must be one of: ${TUI_PERMISSION_MODES.join(", ")} (legacy: plan, default, accept_edits, dont_ask, bypass_permissions)`,
+          `Usage: --access-mode must be one of: ${TUI_PERMISSION_MODES.join(", ")}`,
         );
         i += 1;
       }
@@ -178,7 +167,7 @@ async function maybePrintFirstRunConfigHint(initialCwd: string): Promise<void> {
 
 function tuiUsage(): string {
   return [
-    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--permission-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
+    "Usage: sparkwright tui [--workspace path] [--session-root path] [--model provider/model] [--access-mode read-only|ask|accept-edits|bypass] [--trace-level standard|debug] [--session-id id]",
     "       sparkwright tui [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all]  # deprecated aliases",
     "       node packages/tui/dist/index.js [same options]",
   ].join("\n");

@@ -96,8 +96,9 @@ logs, or workspace storage.
 {
   "id": "reviewer",
   "description": "Read-only code review helper.",
+  "model": "openai/gpt-5.4-mini",
   "prompt": "Inspect changes for correctness, risk, and missing tests.",
-  "allowedTools": ["inspect_diff", "skill_load", "mcp_*"],
+  "use": ["workspace.read"],
   "maxSteps": 4,
   "runBudget": {
     "maxToolCalls": 4,
@@ -117,6 +118,17 @@ logs, or workspace storage.
 Use profiles to make delegation explicit. Parent restrictions should remain
 constraining for child agents; child allow rules must not override inherited
 denies.
+
+Prefer `use` selectors for profile authority. `allowedTools` remains an
+advanced concrete-name allowlist for narrowing a selector-selected tool set.
+
+Use profile `hooks` when a guardrail belongs to one configured in-process
+delegate rather than the whole project run. Profile hooks follow the workflow
+hook lifecycle but are intentionally scoped to that child profile and support
+only `command`, `block`, `context`, and `http` actions. HTTP actions still
+follow the trusted HTTP hook policy; project config cannot define HTTP hook
+actions. Use global workflow hooks for main-run rules, cross-profile rules, or
+`agent` hook actions.
 
 Read [packages/agent-runtime/README.md](../../packages/agent-runtime/README.md)
 for the current helper package.

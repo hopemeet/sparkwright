@@ -45,6 +45,10 @@
     "recovered": {
       "total": 0,
       "byCode": {}
+    },
+    "mutationFollowups": {
+      "total": 0,
+      "targets": []
     }
   },
   "commandFailures": {

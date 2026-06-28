@@ -175,17 +175,18 @@ Begin a new agent run.
 
 **Payload**
 
-| Field            | Type                      | Required | Notes                                                                                                                                                                                                                     |
-| ---------------- | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `goal`           | string                    | yes      | User goal text.                                                                                                                                                                                                           |
-| `input.parts`    | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`. |
-| `sessionId`      | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                        |
-| `targetPath`     | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                   |
-| `shouldWrite`    | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                  |
-| `model`          | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                |
-| `permissionMode` | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                   |
-| `traceLevel`     | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                   |
-| `metadata`       | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                       |
+| Field            | Type                      | Required | Notes                                                                                                                                                                                                                         |
+| ---------------- | ------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `goal`           | string                    | yes      | User goal text.                                                                                                                                                                                                               |
+| `input.parts`    | array                     | no       | Extensible content parts for the same user turn. Supported part types are `text`, `image`, `file`, and `audio`; image/file/audio parts carry `data` (base64) or `uri`, plus optional `mediaType`, `name`, and `metadata`.     |
+| `sessionId`      | string                    | no       | Existing session to write into; host creates a new one if omitted.                                                                                                                                                            |
+| `targetPath`     | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                       |
+| `shouldWrite`    | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                      |
+| `model`          | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
+| `accessMode`     | string                    | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
+| `permissionMode` | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
+| `traceLevel`     | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                       |
+| `metadata`       | object                    | no       | Free-form, propagated to runRecord.                                                                                                                                                                                           |
 
 **Response result**
 
@@ -230,18 +231,19 @@ prefer checking the host capability list before using it.
 
 **Payload**
 
-| Field            | Type    | Required | Notes                                                                      |
-| ---------------- | ------- | -------- | -------------------------------------------------------------------------- |
-| `runId`          | string  | yes      | Prior run id to resume.                                                    |
-| `sessionId`      | string  | no       | Session scope used to disambiguate where the prior run lives.              |
-| `targetPath`     | string  | no       | Workspace-relative target path the resumed run should focus on if needed.  |
-| `shouldWrite`    | boolean | no       | Whether this resumed run is allowed to request workspace writes.           |
-| `fromTrace`      | boolean | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.         |
-| `force`          | boolean | no       | Allow resuming checkpoints that are terminal or normally refused.          |
-| `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`. |
-| `permissionMode` | string  | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.    |
-| `traceLevel`     | string  | no       | `standard` or `debug`; defaults to `standard`.                             |
-| `metadata`       | object  | no       | Free-form metadata propagated to the resumed run record and trace context. |
+| Field            | Type    | Required | Notes                                                                                                                                                                                                                         |
+| ---------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `runId`          | string  | yes      | Prior run id to resume.                                                                                                                                                                                                       |
+| `sessionId`      | string  | no       | Session scope used to disambiguate where the prior run lives.                                                                                                                                                                 |
+| `targetPath`     | string  | no       | Workspace-relative target path the resumed run should focus on if needed.                                                                                                                                                     |
+| `shouldWrite`    | boolean | no       | Whether this resumed run is allowed to request workspace writes.                                                                                                                                                              |
+| `fromTrace`      | boolean | no       | Reconstruct a best-effort checkpoint from `trace.jsonl` if needed.                                                                                                                                                            |
+| `force`          | boolean | no       | Allow resuming checkpoints that are terminal or normally refused.                                                                                                                                                             |
+| `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
+| `accessMode`     | string  | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
+| `permissionMode` | string  | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
+| `traceLevel`     | string  | no       | `standard` or `debug`; defaults to `standard`.                                                                                                                                                                                |
+| `metadata`       | object  | no       | Free-form metadata propagated to the resumed run record and trace context.                                                                                                                                                    |
 
 **Response result**
 
@@ -524,6 +526,7 @@ scanning files or interpreting local config.
         "toolName": "delegate_writer",
         "profileId": "writer",
         "protocol": "in_process",
+        "model": "anthropic/claude",
         "risk": "safe",
         "requiresApproval": false,
         "approvalRequiredUnderCurrentRun": false,
@@ -535,6 +538,33 @@ scanning files or interpreting local config.
         "shellAccess": false,
         "processSpawn": false,
         "gatedByRunWrite": true
+      }
+    ]
+  },
+  "rules": {
+    "workflow": [
+      {
+        "name": "verification:fast:test",
+        "source": "verification",
+        "lifecycle": "PostToolUse",
+        "matcher": "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+        "action": "command: npm test; injectOutput=onFailure",
+        "blockingPotential": false,
+        "enabled": true,
+        "active": true,
+        "status": "active",
+        "disableHint": "Set capabilities.verification.mode=off or remove this command from the selected profile."
+      },
+      {
+        "name": "documented-command-check",
+        "source": "builtin",
+        "lifecycle": "Stop",
+        "matcher": "write-enabled goals about verification, tests, handoff, release, docs, or documented commands",
+        "action": "block final answer when README documented commands reference missing workspace paths",
+        "blockingPotential": true,
+        "enabled": true,
+        "active": false,
+        "status": "available"
       }
     ]
   },
@@ -557,6 +587,16 @@ scanning files or interpreting local config.
 `workspaceAccess: "none"` means the external delegate is not handed the project
 cwd or `{{workspaceRoot}}`. Use `"read_write"` only for explicitly trusted
 delegates that should inspect or mutate the workspace directly.
+Delegate summaries may include `model` when a profile declares a preferred
+model; omitted means the delegate inherits the parent run model.
+Delegate summaries may also include `routing`. When present, `keywords` echo the
+profile's deterministic routing hints; after a run goal is evaluated,
+`relevance`, `score`, `matchedKeywords`, and `reason` explain the sort-only
+routing decision. `mode: "sort"` means no delegate was hidden.
+When `capabilities.agents.enableParallelDelegates` is enabled, the opt-in
+`delegate_parallel` fan-out surface appears as a regular tool summary in the
+capability snapshot. Delegate summaries stay per-profile; parallel eligibility
+is enforced by the tool at call time.
 For `in_process` delegates, `workspaceAccess` reports the profile-selected
 potential capability; `gatedByRunWrite: true` means the current run still needs
 workspace writes enabled (for example CLI `--write`) before the delegate can use
@@ -567,6 +607,15 @@ default because the child run enforces its own tool policies; set
 `approvalRequiredUnderCurrentRun`, `approvalReasons`, and `approvalRunOptions`;
 those fields describe the runtime gate under the inspected run options rather
 than promising an unconditional approval boolean.
+Capability snapshots may include `rules.workflow` and `rules.events`,
+host-authored inspection summaries for configured workflow hooks,
+verification-generated hooks, documented-command built-in rules, and
+non-blocking event subscribers. These summaries are diagnostics only:
+workflow-rule `lifecycle` uses the canonical workflow hook value,
+event-rule `trigger` uses the configured event trigger, `blockingPotential`
+describes whether the rule can block under its executor semantics, and `active`
+reflects the inspected run context when the host has one. Event rules are
+reported with `blockingPotential: false`.
 
 ---
 

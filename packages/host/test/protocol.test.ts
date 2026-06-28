@@ -264,6 +264,951 @@ describe("host protocol", () => {
     });
   });
 
+  it("rejects an invalid run.start accessMode at the wire boundary", async () => {
+    const pair = createConnectionPair();
+    serveConnection(pair.hostSide, {
+      workspaceRoot: process.cwd(),
+      defaultModel: "deterministic",
+    });
+    pair.clientSend({
+      envelope: "request",
+      id: "h",
+      kind: "handshake",
+      timestamp: TIMESTAMP,
+      payload: {
+        protocolVersion: PROTOCOL_VERSION,
+        client: { name: "test", version: "0.0.0" },
+      },
+    });
+    await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+    pair.clientSend({
+      envelope: "request",
+      id: "bad-access",
+      kind: "run.start",
+      timestamp: TIMESTAMP,
+      payload: { goal: "go", accessMode: "yolo" },
+    } as unknown as HostMessage);
+    const resp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "bad-access",
+    );
+    expect(resp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "invalid_payload" },
+    });
+  });
+
+  it("accepts run.start accessMode and runs to completion", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-access-"));
+    const pair = createConnectionPair();
+    try {
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "s",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "inspect repo",
+          model: "deterministic",
+          accessMode: "ask",
+        },
+      });
+      const startResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "s",
+      );
+      expect(startResp).toMatchObject({ ok: true });
+
+      const terminal = await pair.waitFor(
+        (m) =>
+          m.envelope === "event" &&
+          (m.kind === "run.completed" || m.kind === "run.failed"),
+      );
+      if (terminal.envelope !== "event") {
+        throw new Error("expected a terminal event");
+      }
+      expect(terminal.kind).toBe("run.completed");
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("does not resolve a configured delegateModel during parent run preparation", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-lazy-delegate-model-"),
+    );
+    const pair = createConnectionPair();
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              delegateModel: "missing/delegate-model",
+              profiles: [
+                { id: "main", mode: "primary" },
+                {
+                  id: "reviewer",
+                  name: "Reviewer",
+                  mode: "child",
+                  prompt: "Review files when explicitly delegated.",
+                  allowedTools: [],
+                  maxSteps: 1,
+                },
+              ],
+              delegateTools: [
+                { profileId: "reviewer", toolName: "delegate_reviewer" },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "s",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "inspect repo without delegating",
+          model: "deterministic",
+        },
+      });
+      const startResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "s",
+      );
+      expect(startResp).toMatchObject({ ok: true });
+
+      const terminal = await pair.waitFor(
+        (m) =>
+          m.envelope === "event" &&
+          (m.kind === "run.completed" || m.kind === "run.failed"),
+      );
+      expect(terminal).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+      });
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces markdown agent profile id collisions as run warnings", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-agent-collision-"),
+    );
+    const pair = createConnectionPair();
+    const sessionId = "session_agent_profile_collision";
+    try {
+      const keptSource = join(
+        workspace,
+        ".sparkwright",
+        "agents",
+        "alpha",
+        "reviewer.md",
+      );
+      const droppedSource = join(
+        workspace,
+        ".sparkwright",
+        "agents",
+        "beta",
+        "reviewer.md",
+      );
+      await mkdir(join(workspace, ".sparkwright", "agents", "alpha"), {
+        recursive: true,
+      });
+      await mkdir(join(workspace, ".sparkwright", "agents", "beta"), {
+        recursive: true,
+      });
+      await writeFile(
+        keptSource,
+        "# Reviewer\n\nUse the kept profile.\n",
+        "utf8",
+      );
+      await writeFile(
+        droppedSource,
+        "# Reviewer\n\nThis duplicate must be dropped.\n",
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+
+      pair.clientSend({
+        envelope: "request",
+        id: "s",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "inspect repo",
+          sessionId,
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "s" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const streamedEvents = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      const streamedWarning = streamedEvents.find((event) => {
+        const payload = event.payload as { code?: string };
+        return (
+          event.type === "capability.index.failed" &&
+          payload.code === "AGENT_PROFILE_ID_COLLISION"
+        );
+      });
+      expect(streamedWarning).toMatchObject({
+        type: "capability.index.failed",
+        payload: {
+          kind: "agent_profile",
+          source: droppedSource,
+          code: "AGENT_PROFILE_ID_COLLISION",
+          severity: "warning",
+          profileId: "reviewer",
+          keptSource,
+          droppedSource,
+        },
+        metadata: {
+          source: "host",
+          severity: "warning",
+          failurePhase: "agent_profile_discovery",
+          agentId: "main",
+          profileId: "reviewer",
+        },
+      });
+      expect((streamedWarning?.payload as { message?: string }).message).toBe(
+        `Agent profile id collision for "reviewer": kept ${keptSource}, dropped ${droppedSource} (fail-closed).`,
+      );
+
+      const traceEvents = (
+        await readFile(
+          join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      expect(
+        traceEvents.some((event) => {
+          const payload = event.payload as { code?: string };
+          return (
+            event.type === "capability.index.failed" &&
+            payload.code === "AGENT_PROFILE_ID_COLLISION"
+          );
+        }),
+      ).toBe(true);
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces delegate tool-name collisions as run warnings", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-delegate-tool-collision-"),
+    );
+    const pair = createConnectionPair();
+    const sessionId = "session_delegate_tool_collision";
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              profiles: [
+                { id: "main", mode: "primary" },
+                { id: "kept", mode: "child", allowedTools: [] },
+                { id: "dropped", mode: "child", allowedTools: [] },
+              ],
+              delegateTools: [
+                { profileId: "kept", toolName: "delegate_same" },
+                { profileId: "dropped", toolName: "delegate_same" },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+
+      pair.clientSend({
+        envelope: "request",
+        id: "s",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "inspect repo",
+          sessionId,
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "s" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const warning = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent)
+        .find((event) => {
+          const payload = event.payload as { code?: string };
+          return (
+            event.type === "capability.index.failed" &&
+            payload.code === "DELEGATE_TOOL_NAME_COLLISION"
+          );
+        });
+      expect(warning).toMatchObject({
+        type: "capability.index.failed",
+        payload: {
+          kind: "delegate_tool",
+          source: "config",
+          code: "DELEGATE_TOOL_NAME_COLLISION",
+          severity: "warning",
+          toolName: "delegate_same",
+          profileId: "dropped",
+          conflictsWith: "kept",
+          droppedSource: "config",
+          keptSource: "kept",
+        },
+        metadata: {
+          source: "host",
+          severity: "warning",
+          failurePhase: "delegate_tool_resolution",
+          agentId: "main",
+          profileId: "dropped",
+          toolName: "delegate_same",
+        },
+      });
+      expect((warning?.payload as { message?: string }).message).toBe(
+        'Delegate tool name collision for "delegate_same": kept profile kept, dropped profile dropped (config) (fail-closed).',
+      );
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces delegate routing sort decisions as run events", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-agent-routing-"),
+    );
+    const pair = createConnectionPair();
+    const sessionId = "session_agent_routing";
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              profiles: [
+                { id: "main", mode: "primary" },
+                {
+                  id: "writer",
+                  name: "Writer",
+                  mode: "child",
+                  triggers: ["patch", "write"],
+                },
+                {
+                  id: "reviewer",
+                  name: "Reviewer",
+                  mode: "child",
+                  triggers: ["review", "diff", "risk"],
+                },
+              ],
+              delegateTools: [
+                { profileId: "writer", toolName: "delegate_writer" },
+                { profileId: "reviewer", toolName: "delegate_reviewer" },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+
+      pair.clientSend({
+        envelope: "request",
+        id: "s",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "review the login diff for auth risks",
+          sessionId,
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "s" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const streamedEvents = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      const routingEvent = streamedEvents.find(
+        (event) => event.type === "agent.routing.evaluated",
+      );
+      expect(routingEvent).toMatchObject({
+        type: "agent.routing.evaluated",
+        payload: {
+          mode: "sort",
+          delegateCount: 2,
+          relevantCount: 1,
+          lowCount: 1,
+          delegates: [
+            expect.objectContaining({
+              toolName: "delegate_reviewer",
+              profileId: "reviewer",
+              relevance: "relevant",
+            }),
+            expect.objectContaining({
+              toolName: "delegate_writer",
+              profileId: "writer",
+              relevance: "low",
+            }),
+          ],
+        },
+        metadata: {
+          source: "host",
+          agentId: "main",
+          mode: "sort",
+        },
+      });
+
+      const traceEvents = (
+        await readFile(
+          join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+          "utf8",
+        )
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      expect(
+        traceEvents.some((event) => event.type === "agent.routing.evaluated"),
+      ).toBe(true);
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("exposes delegate_parallel only when explicitly enabled", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-delegate-parallel-inspect-"),
+    );
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      const baseConfig = {
+        capabilities: {
+          agents: {
+            profiles: [
+              { id: "main", mode: "primary" },
+              {
+                id: "reviewer",
+                name: "Reviewer",
+                mode: "child",
+                allowedTools: [],
+              },
+            ],
+            delegateTools: [
+              { profileId: "reviewer", toolName: "delegate_reviewer" },
+            ],
+          },
+        },
+      };
+      await writeFile(configPath, JSON.stringify(baseConfig), "utf8");
+
+      const defaultRuntime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const defaultInspect = await defaultRuntime.inspectCapabilities();
+      expect(defaultInspect).toMatchObject({ ok: true });
+      if (!defaultInspect.ok) throw new Error(defaultInspect.error.message);
+      expect(
+        defaultInspect.snapshot.tools.some(
+          (tool) => tool.name === "delegate_parallel",
+        ),
+      ).toBe(false);
+
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              ...baseConfig.capabilities.agents,
+              enableParallelDelegates: true,
+            },
+          },
+        }),
+        "utf8",
+      );
+      const enabledRuntime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const enabledInspect = await enabledRuntime.inspectCapabilities();
+      expect(enabledInspect).toMatchObject({ ok: true });
+      if (!enabledInspect.ok) throw new Error(enabledInspect.error.message);
+      expect(
+        enabledInspect.snapshot.tools.find(
+          (tool) => tool.name === "delegate_parallel",
+        ),
+      ).toMatchObject({
+        name: "delegate_parallel",
+        origin: "local:sparkwright",
+        risk: "safe",
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("does not duplicate delegate_parallel when a delegate uses the reserved name", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-delegate-parallel-collision-"),
+    );
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              exposure: "all",
+              enableParallelDelegates: true,
+              profiles: [
+                { id: "main", mode: "primary" },
+                {
+                  id: "parallel",
+                  name: "Parallel",
+                  mode: "child",
+                  allowedTools: [],
+                },
+              ],
+              delegateTools: [
+                { profileId: "parallel", toolName: "delegate_parallel" },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+      const inspect = await runtime.inspectCapabilities();
+      expect(inspect).toMatchObject({ ok: true });
+      if (!inspect.ok) throw new Error(inspect.error.message);
+      expect(
+        inspect.snapshot.tools.filter(
+          (tool) => tool.name === "delegate_parallel",
+        ),
+      ).toHaveLength(1);
+      expect(inspect.snapshot.agents.delegateTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            toolName: "delegate_parallel",
+            profileId: "parallel",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("includes active workflow rule descriptors in capability inspection", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-active-rules-"),
+    );
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          capabilities: {
+            hooks: {
+              workflow: [
+                {
+                  name: "guard-shell",
+                  description: "Project shell guard.",
+                  hook: "PreToolUse",
+                  matcher: { toolName: "shell" },
+                  action: { type: "block", reason: "No shell." },
+                },
+                {
+                  name: "disabled-note",
+                  hook: "RunStart",
+                  enabled: false,
+                  action: { type: "context", content: "Disabled note." },
+                },
+              ],
+              events: [
+                {
+                  name: "event-run-end",
+                  trigger: "run.completed",
+                  matcher: { eventType: "run.completed" },
+                  action: { type: "command", command: "node" },
+                },
+              ],
+            },
+            verification: {
+              mode: "require",
+              profiles: {
+                fast: [
+                  {
+                    id: "test",
+                    command: "npm",
+                    args: ["test"],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        "utf8",
+      );
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: () => {},
+      });
+
+      const inspect = await runtime.inspectCapabilities();
+
+      expect(inspect).toMatchObject({ ok: true });
+      if (!inspect.ok) throw new Error(inspect.error.message);
+      expect(inspect.snapshot.rules?.workflow).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "guard-shell",
+            source: "config",
+            lifecycle: "PreToolUse",
+            matcher: "toolName=shell",
+            action: "block: No shell.",
+            blockingPotential: true,
+            enabled: true,
+            active: true,
+            status: "active",
+          }),
+          expect.objectContaining({
+            name: "disabled-note",
+            source: "config",
+            lifecycle: "RunStart",
+            enabled: false,
+            active: false,
+            status: "disabled",
+          }),
+          expect.objectContaining({
+            name: "verification:fast:test",
+            source: "verification",
+            lifecycle: "PostToolUse",
+            matcher:
+              "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+            action: "command: npm test; injectOutput=onFailure",
+            blockingPotential: false,
+            enabled: true,
+            active: true,
+          }),
+          expect.objectContaining({
+            name: "verification:stop-gate",
+            source: "verification",
+            lifecycle: "Stop",
+            blockingPotential: true,
+            enabled: true,
+            active: true,
+          }),
+          expect.objectContaining({
+            name: "documented-command-check",
+            source: "builtin",
+            lifecycle: "Stop",
+            blockingPotential: true,
+            enabled: true,
+            active: false,
+            status: "available",
+          }),
+        ]),
+      );
+      expect(inspect.snapshot.rules?.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "event-run-end",
+            source: "config",
+            trigger: "run.completed",
+            matcher: "eventType=run.completed",
+            action: "command: node; injectOutput=always",
+            blockingPotential: false,
+            enabled: true,
+            active: true,
+            status: "active",
+          }),
+        ]),
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("marks the documented-command built-in active for matching write runs", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-documented-command-rule-"),
+    );
+    let resolveTerminal!: () => void;
+    const terminal = new Promise<void>((resolve) => {
+      resolveTerminal = resolve;
+    });
+    try {
+      const runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+        emit: (event) => {
+          if (event.kind === "run.completed" || event.kind === "run.failed") {
+            resolveTerminal();
+          }
+        },
+      });
+
+      const started = await runtime.startRun({
+        goal: "prepare handoff and verify documented commands",
+        shouldWrite: true,
+      });
+      expect(started).toMatchObject({ ok: true });
+      if (!started.ok) throw new Error(started.error.message);
+
+      const inspect = await runtime.inspectCapabilities();
+
+      expect(inspect).toMatchObject({ ok: true });
+      if (!inspect.ok) throw new Error(inspect.error.message);
+      expect(inspect.snapshot.rules?.workflow).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: "documented-command-check",
+            source: "builtin",
+            lifecycle: "Stop",
+            active: true,
+            status: "active",
+          }),
+        ]),
+      );
+      await Promise.race([
+        terminal,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("run did not finish")), 3000),
+        ),
+      ]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when delegate_parallel is reserved by an existing delegate", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-delegate-parallel-warning-"),
+    );
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    const pair = createConnectionPair();
+    try {
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          capabilities: {
+            agents: {
+              exposure: "all",
+              enableParallelDelegates: true,
+              profiles: [
+                { id: "main", mode: "primary" },
+                {
+                  id: "parallel",
+                  name: "Parallel",
+                  mode: "child",
+                  allowedTools: [],
+                },
+              ],
+              delegateTools: [
+                { profileId: "parallel", toolName: "delegate_parallel" },
+              ],
+            },
+          },
+        }),
+        "utf8",
+      );
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "r",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: { goal: "hello", sessionId: "session_delegate_parallel" },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "r" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const warning = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent)
+        .find((event) => {
+          const payload = event.payload as { code?: string };
+          return (
+            event.type === "capability.index.failed" &&
+            payload.code === "DELEGATE_TOOL_NAME_COLLISION"
+          );
+        });
+      expect(warning).toMatchObject({
+        type: "capability.index.failed",
+        payload: {
+          kind: "delegate_tool",
+          source: "builtin",
+          code: "DELEGATE_TOOL_NAME_COLLISION",
+          severity: "warning",
+          toolName: "delegate_parallel",
+          profileId: "parallel",
+          droppedSource: "builtin",
+          keptSource: "profile",
+        },
+        metadata: {
+          source: "host",
+          severity: "warning",
+          failurePhase: "delegate_tool_resolution",
+          agentId: "main",
+          profileId: "parallel",
+          toolName: "delegate_parallel",
+        },
+      });
+    } finally {
+      pair.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("forwards completed-with-tool-failures outcome on run.completed", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-outcome-"),
@@ -1286,8 +2231,9 @@ describe("host protocol", () => {
           origin: "local:@sparkwright/coding-tools",
         });
         expect(tools.some((tool) => tool.name === "read_file")).toBe(true);
+        expect(tools.some((tool) => tool.name === "delegate_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "delegate_reviewer")).toBe(
-          true,
+          false,
         );
         expect(tools.some((tool) => tool.name === "spawn_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "create_skill")).toBe(true);
@@ -1615,8 +2561,11 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "delegate_writer",
-            arguments: { goal: "Patch README.md from the writer delegate." },
+            toolName: "delegate_agent",
+            arguments: {
+              agentId: "writer",
+              goal: "Patch README.md from the writer delegate.",
+            },
           },
         ],
       },
@@ -1868,8 +2817,11 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "delegate_runner",
-            arguments: { goal: "Run a tiny shell command." },
+            toolName: "delegate_agent",
+            arguments: {
+              agentId: "runner",
+              goal: "Run a tiny shell command.",
+            },
           },
         ],
       },

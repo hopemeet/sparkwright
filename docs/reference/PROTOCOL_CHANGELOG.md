@@ -12,6 +12,38 @@ Conventions:
 
 ## Unreleased
 
+- `config.schema.json`: breaking/pre-adoption — workflow hook lifecycle values
+  are canonical-only (`RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`,
+  `PostToolUse`, `Stop`, `RunEnd`, `RuntimeSignal`); legacy lifecycle values and
+  workflow hook `mode` are removed. Non-blocking subscribers move to
+  `capabilities.hooks.events`, and hook actions now include `http` and `agent`
+  transports. Migration: rename old lifecycle values, move observe-mode rules to
+  `hooks.events`, and replace duplicate trace lifecycle fields with `hook`.
+
+- `host-message.schema.json`: additive — `CapabilitySnapshot.rules.events` may
+  include non-blocking event-rule summaries for `capabilities.hooks.events`.
+  Migration: none; clients should render the field as optional diagnostics.
+
+- `workflow_hook.*` payloads: breaking/pre-adoption — payloads carry one
+  canonical `hook` lifecycle field. Migration: stop reading `configuredHook` or
+  workflow hook `mode` from trace payloads.
+
+- `host-message.schema.json`: additive — `CapabilitySnapshot.rules.workflow`
+  may include active workflow rule summaries for configured hooks,
+  verification-generated hooks, and built-in workflow rules. Migration: none;
+  clients should treat the field as optional diagnostics.
+
+- `event.schema.json`: additive — new `agent.routing.evaluated` event type.
+  Hosts emit it when delegate routing hints are evaluated for a goal. The first
+  mode is `sort`, which preserves the full delegate tool set while recording
+  relevant/low ordering evidence. Migration: none; consumers may render it as
+  agent-routing diagnostics.
+
+- `host-message.schema.json`: additive —
+  `CapabilityDelegateToolSummary.routing` may include delegate routing keywords
+  and, after a run goal is evaluated, relevant/low score details. Migration:
+  none; clients should treat the field as optional diagnostics.
+
 - `host-message.schema.json`: additive — `CapabilitySnapshot.shell` may include
   `foregroundTimeoutMs` and `promotionAvailable` alongside sandbox status.
   Migration: none; clients should treat the fields as optional diagnostics.
@@ -102,6 +134,11 @@ Conventions:
   - `extension.process.failed`
     `standard` traces suppress raw progress events and aggregate progress
     head/tail samples onto the terminal event; `debug` traces keep progress.
+    Process-backed scripts report progress through stderr token lines under
+    `SPARKWRIGHT_PROCESS_PROTOCOL=stdio-v1`; token lines are stripped from
+    stderr output surfaces, unknown record types are dropped and counted, and
+    terminal process payloads may include bounded debug-only
+    `progressDroppedSamples`.
     Migration: none; consumers that exhaustively match event types should add a
     default ignore arm or render these as host process evidence.
 

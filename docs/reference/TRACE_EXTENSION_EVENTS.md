@@ -74,26 +74,56 @@ Terminal events add:
 }
 ```
 
-External scripts do not write SparkWright events directly. A host runner may
-inject:
+External scripts do not write SparkWright events directly. A host runner injects
+the stderr observation protocol:
 
 ```txt
-SPARKWRIGHT_TRACE_PROTOCOL=extension-jsonl-v1
-SPARKWRIGHT_TRACE_INVOCATION_ID=<invocationId>
-SPARKWRIGHT_TRACE_EVENTS=<private temp dir>/events.jsonl
+SPARKWRIGHT_PROCESS_PROTOCOL=stdio-v1
+SPARKWRIGHT_EVENT_TOKEN=SPARKWRIGHT_EVENT
 ```
 
-Scripts may append JSONL progress records only:
+User-authored scripts should prefer helper functions:
+
+```python
+progress("checking policy")
+emit_result(continue_())
+```
+
+The raw wire format is a line-start anchored stderr token line:
+
+```txt
+SPARKWRIGHT_EVENT: {"type":"progress","message":"indexed files","data":{"files":42}}
+```
+
+P0 `stdio-v1` accepts only `type:"progress"` records:
 
 ```json
 { "type": "progress", "message": "indexed files", "data": { "files": 42 } }
 ```
 
-The host ignores script-supplied event ids, sequence numbers, timestamps,
-span ids, and arbitrary event types. Progress timestamps and `monotonicUs`
-are host ingest-time values. `standard` traces suppress raw
-`extension.process.progress` rows and aggregate `progressHead` /
-`progressTail` onto the terminal event; `debug` traces keep raw progress rows.
+Records normalize to `extension.process.progress` with `channel:"event"`.
+Unknown `type` values are reserved for forward compatibility: older hosts drop
+and count them instead of failing the process. Adding a new record type is
+compatible within `stdio-v1`; changing framing, token syntax, JSON envelope, or
+stdout/stderr channel assignment requires a new protocol such as `stdio-v2`.
+
+Malformed JSON, unsupported types, oversized token lines, oversized data, and
+records beyond the per-process progress limit are stripped from all external
+stderr surfaces and counted in `progressDropped`. Debug traces may include a
+small bounded `progressDroppedSamples` array on the terminal process event;
+standard traces keep only the count. Token lines are removed from stderr
+previews, log artifacts, live output callbacks, and task output.
+
+For workflow command hooks, stdout remains the control plane when
+`resultMode:"stdoutJson"` is enabled. The command must write exactly the final
+`WorkflowHookResult` JSON to stdout; progress belongs on stderr. Stdout logs
+still make `stdoutJson` invalid and follow the hook's `onError` behavior.
+
+The host ignores script-supplied event ids, sequence numbers, timestamps, and
+span ids. Progress timestamps and `monotonicUs` are host ingest-time values.
+`standard` traces suppress raw `extension.process.progress` rows and aggregate
+`progressHead` / `progressTail` onto the terminal event; `debug` traces keep raw
+progress rows.
 
 Foreground shell commands promoted to background tasks are different: the host
 adopts an already running process, so the user-visible lifecycle remains
@@ -105,7 +135,7 @@ Skill inline shell preprocessing, when enabled, uses the same process contract
 with `name: "skill-inline-shell"` and `kind: "skill_script"`. These commands
 run during host skill loading, before the run event log may exist; hosts buffer
 their `extension.process.*` events and flush them once the run starts. The
-script still reports only progress JSONL through the host-owned inbox.
+script still reports progress through stderr token lines.
 `skill_script` command arguments are redacted in process lifecycle previews to a
 stable hash/byte summary, and `cwd` is rendered relative to the workspace when
 possible. Failed inline shell output is not inserted into the model-facing Skill
@@ -118,15 +148,19 @@ Emitted after a Skill source has been scanned and reduced to index metadata.
 
 ```json
 {
-  "count": 2,
-  "skills": [
-    {
-      "name": "code-reviewer",
-      "version": "1.0.0",
-      "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-      "contentHash": "..."
-    }
-  ]
+  "payload": { "count": 2 },
+  "metadata": {
+    "skills": [
+      {
+        "name": "code-reviewer",
+        "version": "1.0.0",
+        "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
+        "contentHash": "...",
+        "packageHash": "sha256:...",
+        "layer": "project"
+      }
+    ]
+  }
 }
 ```
 
@@ -137,10 +171,14 @@ indexed and used.
 
 ```json
 {
-  "toolCallId": "call_01h",
-  "source": ".sparkwright/skills/bad/SKILL.md",
-  "message": "Skill description must be a non-empty string: ...",
-  "phase": "load"
+  "payload": {
+    "toolCallId": "call_01h",
+    "source": ".sparkwright/skills/bad/SKILL.md",
+    "message": "Skill description must be a non-empty string: ..."
+  },
+  "metadata": {
+    "phase": "load"
+  }
 }
 ```
 
@@ -154,13 +192,16 @@ loader tool.
 
 ```json
 {
-  "name": "code-reviewer",
-  "version": "1.0.0",
-  "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
-  "contentHash": "...",
-  "selectionReason": "Matched goal against skill name or description.",
-  "agentId": "reviewer",
-  "mode": "resident_context"
+  "payload": { "name": "code-reviewer", "status": "loaded" },
+  "metadata": {
+    "version": "1.0.0",
+    "sourcePath": ".sparkwright/skills/code-reviewer/SKILL.md",
+    "contentHash": "...",
+    "packageHash": "sha256:...",
+    "layer": "project",
+    "selectionReason": "Matched goal against skill name or description.",
+    "mode": "resident_context"
+  }
 }
 ```
 

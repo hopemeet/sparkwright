@@ -52,7 +52,7 @@ const run = createRun({
 
 ## Loading Modes
 
-Default mode loads matching Skill bodies as resident context:
+The low-level helper defaults to resident context for backward compatibility:
 
 ```ts
 await prepareSkillsForRun({
@@ -61,7 +61,11 @@ await prepareSkillsForRun({
 });
 ```
 
-Index-only mode can expose a governed `skill_load` tool:
+SparkWright host-created runs use progressive on-demand loading by default:
+they inject the Skill index, expose a governed `skill_load` tool, and do not
+resident-load selected Skill bodies unless config opts in.
+
+Use index + loader mode explicitly when embedding the helper directly:
 
 ```ts
 await prepareSkillsForRun({
@@ -72,10 +76,12 @@ await prepareSkillsForRun({
 });
 ```
 
-`skill_load` returns the Skill body as a normal tool observation. That is useful
-for on-demand progressive loading, but it is not identical to resident context:
-the observation formatter may summarize or truncate long output. Use default
-loading when the selected Skill must be stable, high-priority context.
+`skill_load` returns the Skill body as a normal tool observation. That is the
+host default because it keeps prompt context small and lets the model load a
+Skill only when the task falls within its scope. It is not identical to resident
+context: the observation formatter may summarize or truncate long output. Use
+resident loading only when a selected Skill must be stable, high-priority
+context for every run.
 
 ## Frontmatter
 
