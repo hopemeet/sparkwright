@@ -104,6 +104,61 @@ describe("run outcome evidence", () => {
     ]);
   });
 
+  it("does not classify node -e probes as verification failures", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Fix and verify with npm test" }),
+      log.emit("tool.requested", {
+        id: "call_probe",
+        toolName: "shell",
+        arguments: {
+          command: 'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_probe",
+        toolName: "shell",
+        status: "completed",
+        output: {
+          exitCode: 7,
+          timedOut: false,
+          stdout: "",
+          stderr: "probe failed\n",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_fail",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_fail",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false, stdout: "", stderr: "fail" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_pass",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_pass",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
+      }),
+    ];
+
+    const summary = analyzeCommandOutcomes(events);
+
+    expect(summary.failures).toHaveLength(2);
+    expect(
+      summary.verificationFailures.map((failure) => failure.command),
+    ).toEqual(["npm test"]);
+    expect(summary.unresolvedVerificationFailures).toEqual([]);
+  });
+
   it("treats a not-found read probe as recovered when a different file is read next", () => {
     const log = new EventLog(createRunId());
     const events = [

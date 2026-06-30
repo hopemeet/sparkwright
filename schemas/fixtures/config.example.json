@@ -50,7 +50,7 @@
           "name": "Reviewer",
           "mode": "child",
           "prompt": "Inspect changes for correctness, risk, and missing tests.",
-          "allowedTools": ["read_file", "glob"],
+          "allowedTools": ["read", "glob"],
           "maxSteps": 4
         }
       ],

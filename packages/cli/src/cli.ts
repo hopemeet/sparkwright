@@ -6,6 +6,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject, ValidateFunction } from "ajv";
 import {
   FileTaskStore,
+  InMemoryTaskStore,
+  TaskManager,
   type TaskId,
   type TaskOutputChunk,
   type TaskRecord,
@@ -107,6 +109,9 @@ import {
   describeExternalDelegateCapability,
   existingSkillRoots,
   HostRuntime,
+  catalogEntryOrigin,
+  canonicalToolName,
+  createMainHostToolCatalog,
   projectSkillRoot,
   resolveCapabilityDirs,
   resolveConfiguredToolAllowlist,
@@ -1913,7 +1918,13 @@ interface CapabilityToolInspectEntry {
   source: "builtin" | "mcp" | "delegate";
   risk?: "safe" | "risky" | "denied";
   origin?: string;
+  canonicalName?: string;
+  legacyNames?: string[];
+  defaultExposureTier?: string;
+  effectiveLoading?: "eager" | "deferred";
   deferred?: boolean;
+  relatedTools?: string[];
+  requiresTool?: string[];
 }
 
 const DELEGATE_PARALLEL_TOOL_NAME = "delegate_parallel";
@@ -2296,117 +2307,6 @@ function buildSkillInlineShellInspect(
   };
 }
 
-const BUILTIN_CAPABILITY_TOOLS: CapabilityToolInspectEntry[] = [
-  {
-    name: "read_file",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "glob",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "grep",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "read_anchored_text",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "write_file",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "edit_anchored_text",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "apply_patch",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "cron",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "list_skills",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "create_skill",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "update_skill",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "list_agents",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "create_agent",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "delegate_agent",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "shell",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:@sparkwright/shell-tool",
-  },
-  {
-    name: "task",
-    source: "builtin",
-    risk: "risky",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "todo_write",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-  {
-    name: "spawn_agent",
-    source: "builtin",
-    risk: "safe",
-    origin: "local:sparkwright",
-  },
-];
-
 function buildCapabilityToolInventory(input: {
   workspaceRoot: string;
   config: ToolsConfigShape;
@@ -2437,6 +2337,9 @@ function buildCapabilityToolInventory(input: {
         source: "mcp" as const,
         risk: "safe" as const,
         origin: `mcp:${server.name}`,
+        defaultExposureTier: "advanced",
+        effectiveLoading:
+          server.toolSchemaLoad === "defer" ? "deferred" : "eager",
         ...(server.toolSchemaLoad === "defer" ? { deferred: true } : {}),
       })),
   );
@@ -2446,6 +2349,9 @@ function buildCapabilityToolInventory(input: {
       source: "delegate" as const,
       risk: tool.risk,
       origin: `${tool.protocol}:${tool.profileId}`,
+      defaultExposureTier: "advanced",
+      effectiveLoading: "deferred",
+      deferred: true,
     }),
   );
   // Resolve `tools.use` selectors (and `tools.allowed`) into a concrete-name
@@ -2466,7 +2372,11 @@ function buildCapabilityToolInventory(input: {
     ...input.config,
     allowed: effectiveAllowed,
   };
-  const available = [...BUILTIN_CAPABILITY_TOOLS, ...mcpTools, ...delegateTools]
+  const builtinTools = buildBuiltinCapabilityTools({
+    workspaceRoot: input.workspaceRoot,
+    config: effectiveConfig,
+  });
+  const available = [...builtinTools, ...mcpTools, ...delegateTools]
     .filter((tool) => toolAllowedByConfig(tool.name, effectiveConfig))
     .map((tool) => ({
       ...tool,
@@ -2474,6 +2384,10 @@ function buildCapabilityToolInventory(input: {
       toolDeferredByConfig(tool.name, input.config)
         ? { deferred: true }
         : {}),
+      effectiveLoading:
+        tool.deferred === true || toolDeferredByConfig(tool.name, input.config)
+          ? "deferred"
+          : (tool.effectiveLoading ?? "eager"),
     }));
   // tool_search is derived infrastructure (see shouldAppendDiscoveryTool): it is
   // appended when a deferred tool survived and is exempt from allow/selector
@@ -2489,9 +2403,56 @@ function buildCapabilityToolInventory(input: {
       source: "builtin",
       risk: "safe",
       origin: "local:@sparkwright/core",
+      defaultExposureTier: "infrastructure",
+      effectiveLoading: "eager",
     });
   }
   return available.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function buildBuiltinCapabilityTools(input: {
+  workspaceRoot: string;
+  config: ToolsConfigShape;
+}): CapabilityToolInspectEntry[] {
+  const catalog = createMainHostToolCatalog({
+    workspaceRoot: input.workspaceRoot,
+    skillRoots: [],
+    taskManager: new TaskManager({ store: new InMemoryTaskStore() }),
+    getParentRunId: () => createRunId(),
+    todoPath: join(input.workspaceRoot, ".sparkwright", "inspect-todo.md"),
+    toolConfig: {
+      ...input.config,
+      disabled: [...(input.config.disabled ?? []), "tool_search"],
+    },
+  });
+  return catalog.map((entry) => ({
+    name: entry.definition.name,
+    source: "builtin",
+    ...(entry.definition.policy?.risk === "safe" ||
+    entry.definition.policy?.risk === "risky" ||
+    entry.definition.policy?.risk === "denied"
+      ? { risk: entry.definition.policy.risk }
+      : {}),
+    ...(catalogEntryOrigin(entry) ? { origin: catalogEntryOrigin(entry) } : {}),
+    canonicalName: entry.definition.canonicalName ?? entry.definition.name,
+    ...(entry.definition.legacyNames && entry.definition.legacyNames.length > 0
+      ? { legacyNames: entry.definition.legacyNames }
+      : {}),
+    ...(entry.definition.defaultExposureTier
+      ? { defaultExposureTier: entry.definition.defaultExposureTier }
+      : {}),
+    effectiveLoading:
+      entry.definition.deferLoading === true ? "deferred" : "eager",
+    ...(entry.definition.deferLoading === true ? { deferred: true } : {}),
+    ...(entry.definition.relatedTools &&
+    entry.definition.relatedTools.length > 0
+      ? { relatedTools: entry.definition.relatedTools }
+      : {}),
+    ...(entry.definition.requiresTool &&
+    entry.definition.requiresTool.length > 0
+      ? { requiresTool: entry.definition.requiresTool }
+      : {}),
+  }));
 }
 
 function runtimeToolToInspectEntry(input: {
@@ -2508,11 +2469,32 @@ function runtimeToolToInspectEntry(input: {
       source: "delegate",
       risk: delegate.risk,
       origin: `${delegate.protocol}:${delegate.profileId}`,
+      ...(input.tool.canonicalName
+        ? { canonicalName: input.tool.canonicalName }
+        : {}),
+      ...(input.tool.legacyNames
+        ? { legacyNames: input.tool.legacyNames }
+        : {}),
+      ...(input.tool.defaultExposureTier
+        ? { defaultExposureTier: input.tool.defaultExposureTier }
+        : {}),
+      ...(input.tool.effectiveLoading
+        ? { effectiveLoading: input.tool.effectiveLoading }
+        : {}),
       ...(input.tool.deferred === true ? { deferred: true } : {}),
+      ...(input.tool.relatedTools
+        ? { relatedTools: input.tool.relatedTools }
+        : {}),
+      ...(input.tool.requiresTool
+        ? { requiresTool: input.tool.requiresTool }
+        : {}),
     };
   }
 
-  const source = input.tool.origin?.startsWith("mcp:") ? "mcp" : "builtin";
+  const source =
+    input.tool.source === "mcp" || input.tool.origin?.startsWith("mcp:")
+      ? "mcp"
+      : "builtin";
   return {
     name: input.tool.name,
     source,
@@ -2522,7 +2504,23 @@ function runtimeToolToInspectEntry(input: {
       ? { risk: input.tool.risk }
       : {}),
     ...(input.tool.origin ? { origin: input.tool.origin } : {}),
+    ...(input.tool.canonicalName
+      ? { canonicalName: input.tool.canonicalName }
+      : {}),
+    ...(input.tool.legacyNames ? { legacyNames: input.tool.legacyNames } : {}),
+    ...(input.tool.defaultExposureTier
+      ? { defaultExposureTier: input.tool.defaultExposureTier }
+      : {}),
+    ...(input.tool.effectiveLoading
+      ? { effectiveLoading: input.tool.effectiveLoading }
+      : {}),
     ...(input.tool.deferred === true ? { deferred: true } : {}),
+    ...(input.tool.relatedTools
+      ? { relatedTools: input.tool.relatedTools }
+      : {}),
+    ...(input.tool.requiresTool
+      ? { requiresTool: input.tool.requiresTool }
+      : {}),
   };
 }
 
@@ -2543,7 +2541,9 @@ function isToolNameListed(
   toolName: string,
   names: readonly string[] | undefined,
 ): boolean {
-  return Boolean(names?.includes(toolName));
+  if (!names) return false;
+  const canonical = canonicalToolName(toolName);
+  return names.some((name) => canonicalToolName(name) === canonical);
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -2597,13 +2597,31 @@ function formatCapabilityInspectReport(
     }
   }
   for (const tool of report.runtime?.tools ?? []) {
+    const loading =
+      tool.effectiveLoading ?? (tool.deferred ? "deferred" : "eager");
+    const tier = tool.defaultExposureTier
+      ? `; tier=${tool.defaultExposureTier}`
+      : "";
+    const legacy =
+      tool.legacyNames && tool.legacyNames.length > 0
+        ? `; legacy=${tool.legacyNames.join(",")}`
+        : "";
     lines.push(
-      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}${tool.deferred ? "; deferred" : ""})` : tool.deferred ? " (deferred)" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier}${legacy})` : ` (loading=${loading}${tier}${legacy})`}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const tool of report.tools.available) {
+    const loading =
+      tool.effectiveLoading ?? (tool.deferred ? "deferred" : "eager");
+    const tier = tool.defaultExposureTier
+      ? `; tier=${tool.defaultExposureTier}`
+      : "";
+    const legacy =
+      tool.legacyNames && tool.legacyNames.length > 0
+        ? `; legacy=${tool.legacyNames.join(",")}`
+        : "";
     lines.push(
-      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}` : ""}${tool.deferred ? "; deferred" : ""}${tool.risk ? ")" : ""}${tool.origin ? ` ${tool.origin}` : ""}`,
+      `  diagnostic tool: ${tool.name}${tool.risk ? ` (${tool.risk}; loading=${loading}${tier}${legacy})` : ` (loading=${loading}${tier}${legacy})`}${tool.origin ? ` ${tool.origin}` : ""}`,
     );
   }
   for (const root of report.skills.roots) lines.push(`  root: ${root}`);
@@ -4823,7 +4841,7 @@ const CONFIG_EXAMPLES: Record<string, unknown> = {
             name: "block-generated",
             hook: "PreToolUse",
             matcher: {
-              toolName: ["write_file", "edit_anchored_text", "apply_patch"],
+              toolName: ["write", "edit_anchored_text", "edit"],
               pathGlob: "src/generated/**",
             },
             action: {
@@ -5534,7 +5552,7 @@ async function handleCronCommand(
       skillRoots: cron.value.skillRoots,
     });
     writeLine(io.stdout, JSON.stringify(result, null, 2));
-    return { exitCode: 0 };
+    return { exitCode: result.failed > 0 ? 1 : 0 };
   } catch (error) {
     writeLine(
       io.stderr,
@@ -5768,6 +5786,10 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (isHelpArg(argv[0])) return usage();
 
   const command = argv[0];
+  const runResumeHelp =
+    command === "run" &&
+    argv[1] === "resume" &&
+    argv.slice(2).some((arg) => isHelpArg(arg));
   const supportsNestedHelp = new Set([
     "agents",
     "capabilities",
@@ -5786,7 +5808,8 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     !(
       supportsNestedHelp.has(command) &&
       argv.slice(2).some((arg) => isHelpArg(arg))
-    )
+    ) &&
+    !runResumeHelp
   )
     return undefined;
 
@@ -5797,6 +5820,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
     ].join("\n");
   }
   if (command === "run") {
+    if (runResumeHelp) return runResumeUsage();
     return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]';
   }
   if (command === "trace") {
@@ -5825,6 +5849,10 @@ function helpForArgs(argv: readonly string[]): string | undefined {
 
 function isHelpArg(value: string | undefined): boolean {
   return value === "--help" || value === "-h" || value === "help";
+}
+
+function runResumeUsage(): string {
+  return "Usage: sparkwright run resume <run-id> [--session <session-id>] [--workspace path] [--session-root path] [--force] [--from-trace]";
 }
 
 function isVersionArg(value: string | undefined): boolean {
@@ -6744,7 +6772,7 @@ function renderUserConfigTemplate(): string {
     "  mouse: true",
     "",
     "# tools:",
-    "#   use: [workspace.read, workspace.write, shell, planning, skills, agents, mcp]",
+    "#   use: [workspace.read, workspace.write, bash, planning, skills, agents, mcp]",
     "",
     "# capabilities:",
     "#   agents:",
@@ -6762,7 +6790,7 @@ function renderProjectConfigTemplate(): string {
     "# Project Sparkwright config. Safe to commit; keep provider keys in your user config.",
     "# Unset tools.use means all tools. Set it to a tightening selector whitelist.",
     "tools:",
-    "  use: [workspace.read, workspace.write, shell, planning, skills]",
+    "  use: [workspace.read, workspace.write, bash, planning, skills]",
     `  defer: [${PROJECT_CONFIG_DEFERRED_TOOLS.join(", ")}]`,
     "",
     "policy:",

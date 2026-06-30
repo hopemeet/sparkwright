@@ -233,6 +233,99 @@ describe("@sparkwright/sdk-core Client", () => {
     });
   });
 
+  it("sends task inspection requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const listed = client.listTasks({ status: "running", limit: 5 });
+    let request = transport.sent[0];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "task.list",
+      payload: { status: "running", limit: 5 },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: { tasks: [] },
+    });
+    await expect(listed).resolves.toEqual({ tasks: [] });
+
+    const got = client.getTask({ taskId: "task_1" });
+    request = transport.sent[1];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "task.get",
+      payload: { taskId: "task_1" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: {
+        id: "task_1",
+        parentRunId: "run_1",
+        kind: "shell.promoted",
+        status: "running",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        metadata: {},
+      },
+    });
+    await expect(got).resolves.toMatchObject({ id: "task_1" });
+
+    const output = client.outputTask({
+      taskId: "task_1",
+      fromSequence: 3,
+      maxChunks: 10,
+    });
+    request = transport.sent[2];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "task.output",
+      payload: { taskId: "task_1", fromSequence: 3, maxChunks: 10 },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: {
+        taskId: "task_1",
+        chunks: [],
+        nextSequence: 3,
+        complete: false,
+        status: "running",
+        stalled: true,
+      },
+    });
+    await expect(output).resolves.toMatchObject({ taskId: "task_1" });
+
+    const stopped = client.stopTask({ taskId: "task_1" });
+    request = transport.sent[3];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "task.stop",
+      payload: { taskId: "task_1" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: { cancelled: true, status: "cancelled" },
+    });
+    await expect(stopped).resolves.toEqual({
+      cancelled: true,
+      status: "cancelled",
+    });
+  });
+
   it("starts a run and collects stable lifecycle evidence", async () => {
     const transport = new FakeTransport();
     const client = new Client({

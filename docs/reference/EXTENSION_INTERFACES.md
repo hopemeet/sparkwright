@@ -288,7 +288,7 @@ Guidelines for new tools:
   code, and failing sections before successful noise.
 - Put large raw stdout, logs, diffs, screenshots, and generated content in
   artifacts when possible, and return the artifact reference in the result.
-- If a tool cannot support a common input shape (for example, `read_file` with a
+- If a tool cannot support a common input shape (for example, `read` with a
   glob path), reject it with a targeted error and name the correct discovery
   tool instead of returning a generic missing-file error.
 
@@ -581,7 +581,7 @@ const blockGenerated: WorkflowHook = {
   description: "Prevent direct edits to generated files.",
   hook: "PreToolUse",
   matcher: {
-    toolName: "write_file",
+    toolName: "write",
     pathGlob: "src/generated/**",
     excludePathGlob: "src/generated/fixtures/**",
   },

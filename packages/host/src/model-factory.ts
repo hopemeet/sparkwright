@@ -250,21 +250,22 @@ export async function inspectResolvedModelConfig(input: {
 
 /** Two-turn deterministic model used for protocol smoke tests and TUI demos. */
 function createDemoModel(goal: string, targetPath: string): ModelAdapter {
-  let turn = 0;
+  const turnsByRun = new Map<string, number>();
   return {
     id: DETERMINISTIC_PROVIDER,
-    async complete() {
-      turn += 1;
+    async complete(input) {
+      const runKey = input.run.id;
+      const turn = (turnsByRun.get(runKey) ?? 0) + 1;
+      turnsByRun.set(runKey, turn);
+      const runGoal = input.run.goal || goal;
       if (turn === 1) {
         return {
-          message: `Inspecting ${targetPath} for goal: "${goal}"`,
-          toolCalls: [
-            { toolName: "read_file", arguments: { path: targetPath } },
-          ],
+          message: `Inspecting ${targetPath} for goal: "${runGoal}"`,
+          toolCalls: [{ toolName: "read", arguments: { path: targetPath } }],
         };
       }
       return {
-        message: `Done — would proceed further with a real model. Goal was: "${goal}"`,
+        message: `Done — would proceed further with a real model. Goal was: "${runGoal}"`,
       };
     },
   };

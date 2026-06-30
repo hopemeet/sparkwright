@@ -237,6 +237,8 @@ export class EventStore {
     this.state = {
       ...this.state,
       status,
+      lastError:
+        status === "running" || status === "done" ? null : this.state.lastError,
       runStartedAt,
       runEndedAt,
       activePhase: this.deriveActivePhase(),

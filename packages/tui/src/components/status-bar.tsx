@@ -3,6 +3,7 @@ import { Box, Text, useStdout } from "ink";
 import type { StoreState } from "../state/event-store.js";
 import { useTheme } from "../lib/theme-context.js";
 import { Spinner } from "./spinner.js";
+import { summarizeTaskActivity } from "../lib/task-activity.js";
 
 /**
  * Live status bar. Static identity (brand, cwd, session) belongs to the
@@ -15,6 +16,8 @@ export function StatusBar(props: {
   modelLabel: string;
   permissionMode: string;
   focused: boolean;
+  unreadCompletedTasks?: number;
+  unreadFailedTasks?: number;
 }): React.ReactElement {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -46,6 +49,15 @@ export function StatusBar(props: {
   const total = props.state.usage?.totalTokens;
   const cost = props.state.usage?.estimatedCostUsd;
   const isRunning = props.state.status === "running";
+  const tasks = summarizeTaskActivity(props.state.events);
+  const unreadCompleted = props.unreadCompletedTasks ?? 0;
+  const unreadFailed = props.unreadFailedTasks ?? 0;
+  const taskParts = [
+    tasks.running > 0 ? `${tasks.running} running` : "",
+    unreadFailed > 0 ? `${unreadFailed} failed unread` : "",
+    unreadCompleted > 0 ? `${unreadCompleted} completed unread` : "",
+    tasks.failed > 0 && unreadFailed === 0 ? `${tasks.failed} failed` : "",
+  ].filter(Boolean);
   // Single compact line pinned above the input. Only the fields you actually
   // watch while working live here; static context (cwd, session id) is shown
   // once in the welcome area and via /config, so it doesn't squat on-screen.
@@ -70,6 +82,18 @@ export function StatusBar(props: {
         <Text color={theme.muted}> · ${cost.toFixed(cost < 1 ? 4 : 2)}</Text>
       ) : null}
       {!props.focused ? <Text color={theme.muted}> · ⊙ blurred</Text> : null}
+      {taskParts.length > 0 ? (
+        <Text
+          color={
+            tasks.failed > 0 || unreadFailed > 0 ? theme.error : theme.muted
+          }
+        >
+          {" "}
+          · tasks: {taskParts.join(", ")}
+          {tasks.untrackedWritePossible ? " · untracked writes possible" : ""}
+          {" · ctrl+o"}
+        </Text>
+      ) : null}
       <Box flexGrow={1} />
       <Text color={theme.accent}>{modelLabel}</Text>
       <Text color={theme.muted}> · {props.permissionMode}</Text>

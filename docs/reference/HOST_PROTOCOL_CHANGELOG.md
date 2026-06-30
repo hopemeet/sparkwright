@@ -34,6 +34,8 @@ major; breaking changes bump the major.
 - Add canonical `failure` to `run.failed` while keeping deprecated `error` for
   compatibility; clients should use the shared failure shape across terminal
   failure events.
+- Add host task snapshot requests: `task.list`, `task.get`, `task.output`, and
+  `task.stop`, plus `task_not_found` for missing durable background task ids.
 
 ## 1.3 (2026-06-14)
 

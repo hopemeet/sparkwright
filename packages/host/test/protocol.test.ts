@@ -299,6 +299,170 @@ describe("host protocol", () => {
     });
   });
 
+  it("serves durable task list/get/output requests", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-tasks-"));
+    const pair = createConnectionPair();
+    try {
+      const taskStore = new FileTaskStore({
+        rootDir: join(workspace, ".sparkwright", "tasks"),
+      });
+      const taskId = createTaskId();
+      taskStore.create({
+        id: taskId,
+        parentRunId: "run_task_parent" as RunId,
+        kind: "shell.promoted",
+        title: "background shell",
+        metadata: { command: "node bg.js" },
+      });
+      taskStore.update(taskId, {
+        status: "running",
+        startedAt: "2026-06-30T00:00:00.000Z",
+      });
+      taskStore.appendOutput(taskId, {
+        taskId,
+        timestamp: "2026-06-30T00:00:01.000Z",
+        channel: "stdout",
+        data: "tick 1\n",
+      });
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+      const ready = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "host.ready",
+      );
+      expect(ready).toMatchObject({
+        payload: {
+          capabilities: expect.arrayContaining([
+            "task.list",
+            "task.get",
+            "task.output",
+            "task.stop",
+          ]),
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_list",
+        kind: "task.list",
+        timestamp: TIMESTAMP,
+        payload: { status: "running", limit: 10 },
+      });
+      const listResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_list",
+      );
+      expect(listResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          tasks: [
+            expect.objectContaining({
+              id: taskId,
+              kind: "shell.promoted",
+              status: "running",
+            }),
+          ],
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_get",
+        kind: "task.get",
+        timestamp: TIMESTAMP,
+        payload: { taskId },
+      });
+      const getResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_get",
+      );
+      expect(getResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          id: taskId,
+          parentRunId: "run_task_parent",
+          metadata: { command: "node bg.js" },
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_output",
+        kind: "task.output",
+        timestamp: TIMESTAMP,
+        payload: { taskId, fromSequence: 0, maxChunks: 1 },
+      });
+      const outputResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_output",
+      );
+      expect(outputResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          taskId,
+          chunks: [
+            expect.objectContaining({
+              sequence: 0,
+              channel: "stdout",
+              data: "tick 1\n",
+            }),
+          ],
+          nextSequence: 1,
+          complete: false,
+          status: "running",
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_missing",
+        kind: "task.get",
+        timestamp: TIMESTAMP,
+        payload: { taskId: "task_missing" },
+      });
+      const missingResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_missing",
+      );
+      expect(missingResp).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "task_not_found" },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_bad_output",
+        kind: "task.output",
+        timestamp: TIMESTAMP,
+        payload: { taskId, fromSequence: -1 },
+      } as unknown as HostMessage);
+      const badOutputResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_bad_output",
+      );
+      expect(badOutputResp).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+    } finally {
+      pair.close();
+      await rmWhenReady(workspace);
+    }
+  });
+
   it("accepts run.start accessMode and runs to completion", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-access-"));
     const pair = createConnectionPair();
@@ -1010,8 +1174,7 @@ describe("host protocol", () => {
             name: "verification:fast:test",
             source: "verification",
             lifecycle: "PostToolUse",
-            matcher:
-              "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+            matcher: "toolName=write|edit_anchored_text|edit; status=completed",
             action: "command: npm test; injectOutput=onFailure",
             blockingPotential: false,
             enabled: true,
@@ -1891,13 +2054,13 @@ describe("host protocol", () => {
                 {
                   id: "main",
                   mode: "primary",
-                  allowedTools: ["read_file"],
+                  allowedTools: ["read"],
                 },
                 {
                   id: "reviewer",
                   name: "Reviewer",
                   mode: "child",
-                  allowedTools: ["read_file"],
+                  allowedTools: ["read"],
                 },
               ],
               delegateTools: [
@@ -2227,10 +2390,10 @@ describe("host protocol", () => {
             resp.result as { skills: { indexed: Array<{ name: string }> } }
           ).skills.indexed.some((skill) => skill.name === "reviewer"),
         ).toBe(true);
-        expect(tools.find((tool) => tool.name === "read_file")).toMatchObject({
+        expect(tools.find((tool) => tool.name === "read")).toMatchObject({
           origin: "local:@sparkwright/coding-tools",
         });
-        expect(tools.some((tool) => tool.name === "read_file")).toBe(true);
+        expect(tools.some((tool) => tool.name === "read")).toBe(true);
         expect(tools.some((tool) => tool.name === "delegate_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "delegate_reviewer")).toBe(
           false,
@@ -2447,7 +2610,7 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               reason: "exercise approval trace",
@@ -2572,7 +2735,7 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               reason: "delegate write regression",
@@ -2609,7 +2772,7 @@ describe("host protocol", () => {
                   mode: "child",
                   prompt: "Apply the requested workspace patch.",
                   use: ["workspace.write"],
-                  allowedTools: ["apply_patch"],
+                  allowedTools: ["edit"],
                   maxSteps: 3,
                 },
               ],
@@ -2729,12 +2892,20 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
+            toolName: "tool_search",
+            arguments: { query: "select:spawn_agent" },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
             toolName: "spawn_agent",
             arguments: {
               goal: "Read README.md.",
               role: "reader",
               prompt: "Read only.",
-              allowedTools: ["read_file"],
+              allowedTools: ["read"],
               maxSteps: 2,
             },
           },
@@ -2828,7 +2999,7 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "printf child-shell" },
           },
         ],
@@ -2853,7 +3024,7 @@ describe("host protocol", () => {
                   mode: "child",
                   prompt: "Run the requested shell command.",
                   use: ["shell"],
-                  allowedTools: ["shell"],
+                  allowedTools: ["bash"],
                   maxSteps: 4,
                 },
               ],
@@ -2909,7 +3080,7 @@ describe("host protocol", () => {
       }
       expect(approval.payload).toMatchObject({
         details: {
-          toolName: "shell",
+          toolName: "bash",
           arguments: { command: "printf child-shell" },
         },
       });
@@ -2944,7 +3115,7 @@ describe("host protocol", () => {
         ),
         "child-shell",
       );
-      expect(childTrace).toContain('"toolName":"shell"');
+      expect(childTrace).toContain('"toolName":"bash"');
       expect(childTrace).toContain("child-shell");
     } finally {
       pair.close();
@@ -3039,7 +3210,7 @@ describe("host protocol", () => {
         message: "write then verify",
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               reason: "Add verified section",

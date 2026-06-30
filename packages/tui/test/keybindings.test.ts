@@ -57,6 +57,11 @@ describe("chordMatches", () => {
     expect(chordMatches(chord, {}, "\x03\x03")).toBe(true);
     expect(chordMatches(chord, { ctrl: true }, "c")).toBe(true);
   });
+  it("matches ctrl+i when terminals report a tab control byte", () => {
+    const chord = parseChord("ctrl+i")!;
+    expect(chordMatches(chord, {}, "\t")).toBe(true);
+    expect(chordMatches(chord, { tab: true }, "")).toBe(true);
+  });
   it("matches special keys via Ink flags", () => {
     const esc = parseChord("esc")!;
     expect(chordMatches(esc, { escape: true }, "")).toBe(true);
@@ -85,7 +90,8 @@ describe("ctrlCPressCount", () => {
 describe("mergeBindings", () => {
   it("keeps core bindings available by default", () => {
     expect(DEFAULTS["help.open"]).toEqual([parseChord("?")]);
-    expect(DEFAULTS["events.open"]).toEqual([parseChord("ctrl+o")]);
+    expect(DEFAULTS["activity.open"]).toEqual([parseChord("ctrl+o")]);
+    expect(DEFAULTS["events.open"]).toEqual([]);
     expect(DEFAULTS["cancel.run"]).toEqual([parseChord("esc")]);
     expect(DEFAULTS["cycle-permission-mode"]).toEqual([
       parseChord("shift+tab"),
@@ -101,6 +107,7 @@ describe("mergeBindings", () => {
     const { bindings, errors } = mergeBindings({ "help.open": "ctrl+p" });
     expect(errors).toEqual([]);
     expect(bindings["help.open"]).toEqual([parseChord("ctrl+p")]);
+    expect(bindings["activity.open"]).toEqual(DEFAULTS["activity.open"]);
     expect(bindings["events.open"]).toEqual(DEFAULTS["events.open"]);
   });
   it("clears binding when value is null/empty", () => {

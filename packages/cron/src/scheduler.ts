@@ -16,6 +16,7 @@ export interface CronSchedulerOptions extends Omit<
 export interface CronTickResult {
   attempted: number;
   completed: number;
+  failed: number;
   skippedBecauseLocked: boolean;
   /** @reserved Public scheduler-tick field consumed by cron diagnostics. */
   skippedBecauseJobLocked?: number;
@@ -34,20 +35,30 @@ export async function tickCron(
     const now = options.now ?? new Date();
     const due = await store.getDueJobs(now);
     let completed = 0;
+    let failed = 0;
     let skippedBecauseJobLocked = 0;
     for (const job of due) {
       const result = await executeCronJob(store, job, options, now);
       if (result.skippedBecauseLocked) skippedBecauseJobLocked += 1;
-      else completed += 1;
+      else if (result.result.ok) completed += 1;
+      else failed += 1;
     }
     return {
       attempted: due.length,
       completed,
+      failed,
       skippedBecauseLocked: false,
       skippedBecauseJobLocked,
     };
   });
-  return result ?? { attempted: 0, completed: 0, skippedBecauseLocked: true };
+  return (
+    result ?? {
+      attempted: 0,
+      completed: 0,
+      failed: 0,
+      skippedBecauseLocked: true,
+    }
+  );
 }
 
 export async function runCronJobByRef(

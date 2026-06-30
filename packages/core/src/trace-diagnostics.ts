@@ -225,6 +225,7 @@ interface TraceReportFacts {
   workspaceReadTotal: number;
   workspaceReadRatio: number;
   topDuplicateReads: Record<string, number>;
+  topRepeatedReadWindows: Record<string, number>;
   topTools: Record<string, number>;
   repeatedToolRequests: RepeatedToolRequest[];
   repeatedCommandFailures: Array<{ label: string; count: number }>;
@@ -297,6 +298,10 @@ function collectTraceReportFacts(
     summary.workspaceReads.duplicatePaths,
     8,
   );
+  const topRepeatedReadWindows = firstEntries(
+    collectRepeatedReadWindows(events),
+    8,
+  );
   const topTools = firstEntries(summary.toolCalls, 8);
   const repeatedToolRequests = collectRepeatedToolRequests(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
@@ -320,6 +325,7 @@ function collectTraceReportFacts(
     workspaceReadTotal,
     workspaceReadRatio,
     topDuplicateReads,
+    topRepeatedReadWindows,
     topTools,
     repeatedToolRequests,
     repeatedCommandFailures,
@@ -420,7 +426,10 @@ function analyzeCommandFailures({
       recommendation:
         "Do not trust final answers until the verification command passes or the failure is explicitly resolved.",
     });
-  } else if (summary.commandFailures.total > 0) {
+  } else if (
+    summary.commandFailures.total > 0 &&
+    !allCommandFailuresAreRecoveredVerification(summary)
+  ) {
     findings.push({
       severity: "medium",
       code: "COMMAND_FAILURES",
@@ -454,6 +463,19 @@ function analyzeCommandFailures({
   }
 
   return findings;
+}
+
+function allCommandFailuresAreRecoveredVerification(
+  summary: TraceSummary,
+): boolean {
+  const verification = summary.commandFailures.verification;
+  return (
+    summary.commandFailures.total > 0 &&
+    verification.total === summary.commandFailures.total &&
+    verification.unresolved === 0 &&
+    typeof verification.lastSuccessfulVerificationCommand === "string" &&
+    verification.lastSuccessfulVerificationCommand.length > 0
+  );
 }
 
 function analyzeMultiAgentAuditability({
@@ -554,6 +576,7 @@ function analyzeEfficiency({
     workspaceReadTotal,
     workspaceReadRatio,
     topDuplicateReads,
+    topRepeatedReadWindows,
     topTools,
     repeatedToolRequests,
     trajectory,
@@ -635,7 +658,7 @@ function analyzeEfficiency({
     budgetCheckCount: trajectory.metrics.budgetCheckCount,
     workspaceWrites,
     uniqueWritePaths: uniqueWritePaths.length,
-    topDuplicateReads,
+    topDuplicateReads: topRepeatedReadWindows,
     repeatedToolRequests,
     verificationLag,
   });
@@ -1751,15 +1774,50 @@ function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  // Prefer the snapshot the run persisted (computed over the full event
-  // stream). This preserves legacy trace compatibility for older traces that
-  // may not retain command exit evidence in tool.completed output.
+  const recomputed = everyShellCompletionHasCommandEvidence(events)
+    ? commandOutcomeSnapshot(events)
+    : undefined;
+  // Prefer recomputing when raw debug events still carry shell command
+  // evidence. Otherwise, use the run-persisted snapshot for standard/legacy
+  // traces that may not retain command args in tool.completed output.
   const snapshot =
-    persistedCommandOutcome(events) ?? commandOutcomeSnapshot(events);
+    recomputed ??
+    persistedCommandOutcome(events) ??
+    commandOutcomeSnapshot(events);
   if (!snapshot) return;
   summary.commandFailures.total = snapshot.total;
   summary.commandFailures.byExitCode = snapshot.byExitCode;
   summary.commandFailures.verification = snapshot.verification;
+}
+
+function everyShellCompletionHasCommandEvidence(
+  events: readonly SparkwrightEvent[],
+): boolean {
+  const commandByCallId = new Map<string, string>();
+  let shellCompletions = 0;
+
+  for (const event of events) {
+    if (!isRecord(event.payload)) continue;
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      if (!isShellToolName(toolName)) continue;
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const command = stringValue(recordValue(event.payload.arguments)?.command);
+      if (callId && command) commandByCallId.set(callId, command);
+      continue;
+    }
+
+    if (event.type !== "tool.completed") continue;
+    const toolName = stringValue(event.payload.toolName);
+    if (!isShellToolName(toolName)) continue;
+    shellCompletions += 1;
+    const output = recordValue(event.payload.output);
+    if (stringValue(output?.command)) continue;
+    const callId = stringValue(event.payload.toolCallId, event.payload.id);
+    if (!callId || !commandByCallId.has(callId)) return false;
+  }
+
+  return shellCompletions > 0;
 }
 
 /** The command-outcome snapshot persisted on `run.completed`, if present. */
@@ -1848,7 +1906,7 @@ function collectSafetySummary(
       if (action === "workspace.write") {
         summary.safety.approvals.workspaceWrite += 1;
       }
-      if (toolName === "shell") {
+      if (isShellToolName(toolName)) {
         summary.safety.approvals.shell += 1;
         summary.safety.shell.approvals += 1;
       }
@@ -1916,7 +1974,7 @@ function collectSafetySummary(
       continue;
     }
     if (event.type === "tool.requested") {
-      if (event.payload.toolName === "shell") {
+      if (isShellToolName(event.payload.toolName)) {
         summary.safety.shell.requested += 1;
       }
       continue;
@@ -1944,6 +2002,47 @@ function collectWorkspaceRead(
   const path = stringValue(event.payload.path);
   if (!path) return;
   workspaceReadPaths[path] = (workspaceReadPaths[path] ?? 0) + 1;
+}
+
+function collectRepeatedReadWindows(
+  events: readonly SparkwrightEvent[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const event of events) {
+    if (event.type !== "tool.completed") continue;
+    if (!isRecord(event.payload)) continue;
+    const toolName = stringValue(event.payload.toolName);
+    if (!toolName || !isFileReadLikeTraceTool(toolName)) continue;
+    const output = recordValue(event.payload.output);
+    if (!output) continue;
+    const path = stringValue(output.path, output.filePath);
+    if (!path) continue;
+    const key = readWindowDiagnosticKey(path, output);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return Object.fromEntries(
+    Object.entries(counts).filter(([, count]) => count > 1),
+  );
+}
+
+function readWindowDiagnosticKey(
+  path: string,
+  output: Record<string, unknown>,
+): string {
+  const startLine = optionalNumberValue(output.startLine);
+  const endLine = optionalNumberValue(output.endLine);
+  if (startLine !== undefined && endLine !== undefined) {
+    return `${path}:lines ${startLine}-${endLine}`;
+  }
+  return path;
+}
+
+function isFileReadLikeTraceTool(toolName: string): boolean {
+  return (
+    toolName === "read" ||
+    toolName === "read_file" ||
+    toolName === "read_anchored_text"
+  );
 }
 
 function traceReportHeadline(
@@ -1991,7 +2090,7 @@ function collectVerificationLagAfterLastWrite(
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
       const args = recordValue(event.payload.arguments);
       const command = stringValue(args?.command);
-      if (toolName === "shell" && callId && command) {
+      if (isShellToolName(toolName) && callId && command) {
         commandByCallId.set(callId, command);
       }
       continue;
@@ -2006,7 +2105,7 @@ function collectVerificationLagAfterLastWrite(
     if (event.type !== "tool.completed") continue;
     const toolName = stringValue(event.payload.toolName);
     const callId = stringValue(event.payload.toolCallId, event.payload.id);
-    if (toolName !== "shell" || !callId) continue;
+    if (!isShellToolName(toolName) || !callId) continue;
     const command =
       commandByCallId.get(callId) ??
       stringValue(recordValue(event.payload.output)?.command);
@@ -2051,7 +2150,7 @@ function collectRepeatedCommandFailures(
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
       const args = recordValue(event.payload.arguments);
       const command = stringValue(args?.command);
-      if (toolName === "shell" && callId && command) {
+      if (isShellToolName(toolName) && callId && command) {
         commandByCallId.set(callId, command);
       }
       continue;
@@ -2060,7 +2159,7 @@ function collectRepeatedCommandFailures(
     if (event.type !== "tool.completed") continue;
     const toolName = stringValue(event.payload.toolName);
     const callId = stringValue(event.payload.toolCallId, event.payload.id);
-    if (toolName !== "shell" || !callId) continue;
+    if (!isShellToolName(toolName) || !callId) continue;
     const command = commandByCallId.get(callId);
     if (!command) continue;
     const output = recordValue(event.payload.output);
@@ -2263,7 +2362,7 @@ function collectSuccessfulVerificationEvents(
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
       const args = recordValue(event.payload.arguments);
       const command = stringValue(args?.command);
-      if (toolName === "shell" && callId && command) {
+      if (isShellToolName(toolName) && callId && command) {
         commandByCallId.set(callId, command);
       }
       continue;
@@ -2272,7 +2371,7 @@ function collectSuccessfulVerificationEvents(
     if (event.type === "tool.completed") {
       const toolName = stringValue(event.payload.toolName);
       const callId = stringValue(event.payload.toolCallId, event.payload.id);
-      if (toolName !== "shell" || !callId) continue;
+      if (!isShellToolName(toolName) || !callId) continue;
       const command =
         commandByCallId.get(callId) ??
         stringValue(recordValue(event.payload.output)?.command);
@@ -2965,4 +3064,8 @@ function subagentIdentity(event: SparkwrightEvent): string | undefined {
   return isRecord(event.payload)
     ? stringValue(event.payload.agentProfileId, event.payload.childRunId)
     : undefined;
+}
+
+function isShellToolName(value: unknown): boolean {
+  return value === "bash" || value === "shell";
 }

@@ -743,6 +743,59 @@ describe("foreground→background promotion", () => {
     expect(stderrReturnCalled).toBe(1);
   });
 
+  it("does not wait for iterator return or process completion after promotion", async () => {
+    let stdoutReturnCalled = 0;
+    const never = new Promise<never>(() => {});
+    const environment: ExecutionEnvironment = {
+      id: "nonblocking-release",
+      kind: "test",
+      capabilities: ["shell.execute"],
+      describe: () => ({}),
+      executeShell: async () => completedResult(""),
+      executeShellStreaming: async (): Promise<ShellStreamingResult> => ({
+        completed: never,
+        handle: {
+          metadata: {},
+          stdout: () =>
+            ({
+              [Symbol.asyncIterator]() {
+                return {
+                  async next() {
+                    return never;
+                  },
+                  async return() {
+                    stdoutReturnCalled += 1;
+                    return never;
+                  },
+                };
+              },
+            }) as AsyncIterable<string>,
+          stderr: async function* () {},
+          abort: () => {},
+        },
+      }),
+    };
+
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 10,
+      onPromote: () => ({ taskId: "task_nonblocking" }),
+    });
+
+    const result = await Promise.race([
+      tool.execute({ command: "sleep 99" }, runtimeContext()),
+      new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 100),
+      ),
+    ]);
+
+    expect(result).toMatchObject({
+      promoted: true,
+      taskId: "task_nonblocking",
+    });
+    expect(stdoutReturnCalled).toBe(1);
+  });
+
   it("falls back to abort + timedOut when the promotion handler throws", async () => {
     const environment = streamingEnv({
       stdoutChunks: ["partial\n"],

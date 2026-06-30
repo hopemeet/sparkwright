@@ -28,7 +28,11 @@ import { StatusBar } from "./components/status-bar.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
-import type { CapabilitySnapshot } from "@sparkwright/protocol";
+import type {
+  CapabilitySnapshot,
+  TaskOutputChunkSnapshot,
+  TaskRecordSnapshot,
+} from "@sparkwright/protocol";
 import { AttentionManager } from "./lib/attention.js";
 import { CommandRegistry } from "./lib/commands.js";
 import {
@@ -91,6 +95,10 @@ import {
   toCoreRunFields,
   type TuiPermissionMode,
 } from "./lib/permission.js";
+import {
+  summarizeTaskActivity,
+  type ActivityTab,
+} from "./lib/task-activity.js";
 
 export interface CliOverrides {
   workspaceRoot?: string;
@@ -109,6 +117,7 @@ export interface AppProps {
 interface Resolved {
   workspaceRoot: string;
   sessionRootDir: string;
+  sessionRootLabel: string;
   tuiPermissionMode: TuiPermissionMode;
   accessModeCeiling?: TuiPermissionMode;
   permissionMode: PermissionMode;
@@ -140,6 +149,9 @@ function resolveConfig(
   else if (!loaded.config.workspace) sources.workspace = "default:cwd";
   const sessionRootDir =
     cli.sessionRootDir ?? join(workspaceRoot, ".sparkwright", "sessions");
+  const sessionRootLabel = cli.sessionRootDir
+    ? sessionRootDir
+    : ".sparkwright/sessions";
 
   const modelName = cli.modelName ?? loaded.config.model;
   const modelNameSource = cli.modelName
@@ -173,6 +185,7 @@ function resolveConfig(
   return {
     workspaceRoot,
     sessionRootDir,
+    sessionRootLabel,
     tuiPermissionMode,
     accessModeCeiling: loaded.config.accessModeCeiling,
     permissionMode,
@@ -306,6 +319,11 @@ function AppReady(
   const [capabilitySnapshot, setCapabilitySnapshot] =
     useState<CapabilitySnapshot | null>(null);
   const [loadingCapabilities, setLoadingCapabilities] = useState(false);
+  const [taskRecords, setTaskRecords] = useState<TaskRecordSnapshot[]>([]);
+  const [taskOutputs, setTaskOutputs] = useState<
+    Record<string, TaskOutputChunkSnapshot[]>
+  >({});
+  const [loadingTasks, setLoadingTasks] = useState(false);
   const [skillReviewSnapshot, setSkillReviewSnapshot] =
     useState<TuiSkillReviewDetail | null>(null);
   const [loadingSkillReview, setLoadingSkillReview] = useState(false);
@@ -316,9 +334,11 @@ function AppReady(
   // second press exits when idle with no layer open.
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const theme = resolved.theme;
-  // Todo band: collapsed by default (active items only); ctrl+o expands to show
+  // Todo band: collapsed by default (active items only); ctrl+t expands to show
   // completed items too.
   const [todoExpanded, setTodoExpanded] = useState(false);
+  const [lastActivityTab, setLastActivityTab] = useState<ActivityTab>("tasks");
+  const [lastSeenTaskSequence, setLastSeenTaskSequence] = useState(0);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputHandleRef = useRef<InputBoxHandle | null>(null);
@@ -478,11 +498,19 @@ function AppReady(
           message: state.lastError ?? "unknown error",
         });
       } else {
-        attention.notify("run done");
+        const cancelledRun =
+          state.stopReason === "manual_cancelled" ||
+          state.stopReason === "user_cancelled";
+        if (cancelledRun && toastSnapshot.current?.variant === "error") {
+          toasts.dismiss();
+        }
+        attention.notify(cancelledRun ? "run cancelled" : "run done");
         toasts.push({
-          variant: "success",
-          title: "run done",
-          message: state.stopReason ?? "completed",
+          variant: cancelledRun ? "info" : "success",
+          title: cancelledRun ? "run cancelled" : "run done",
+          message: cancelledRun
+            ? "cancelled"
+            : (state.stopReason ?? "completed"),
         });
         const goals = skillLearnGoalsRef.current;
         const notice = detectSkillLearnNotice(goals);
@@ -1057,12 +1085,20 @@ function AppReady(
     });
     reg.register({
       name: "events",
-      title: "Open Run Inspector",
-      description:
-        "Inspect run events with filters, search, and payload detail.",
+      title: "Open Activity Events",
+      description: "Open the activity drawer on the event stream.",
       category: "view",
       hint: formatBinding(resolved.bindings["events.open"]) || undefined,
-      run: () => layers.toggle("events"),
+      aliases: ["inspect", "inspector"],
+      run: () => openActivity("events"),
+    });
+    reg.register({
+      name: "tasks",
+      title: "Open Background Tasks",
+      description: "Open the activity drawer on durable background tasks.",
+      category: "view",
+      hint: formatBinding(resolved.bindings["activity.open"]) || undefined,
+      run: () => openActivity("tasks"),
     });
     reg.register({
       name: "config",
@@ -1299,6 +1335,7 @@ function AppReady(
 
   function startGoal(value: string): void {
     quitArmedUntilRef.current = 0;
+    if (toastSnapshot.current?.variant === "error") toasts.dismiss();
     skillLearnGoalsRef.current.push(value);
     void controller.start(value);
   }
@@ -1314,6 +1351,12 @@ function AppReady(
         message: `queued · ${queue.size} waiting`,
       });
       return;
+    }
+    if (state.stopReason === "manual_cancelled" && queued.length > 0) {
+      toasts.push({
+        variant: "info",
+        message: `${queued.length} queued prompt${queued.length === 1 ? "" : "s"} paused after cancel`,
+      });
     }
     startGoal(value);
   }
@@ -1379,10 +1422,11 @@ function AppReady(
   // resubmit to resume.
   useEffect(() => {
     if (state.status !== "done" && state.status !== "idle") return;
+    if (state.stopReason === "manual_cancelled") return;
     if (controller.isRunning() || queued.length === 0) return;
     const next = queue.dequeue();
     if (next) startGoal(next);
-  }, [state.status, queued.length, controller, queue]);
+  }, [state.status, state.stopReason, queued.length, controller, queue]);
 
   // Layer-aware hotkeys: when a layer owns input, the App-level hotkeys
   // step back so they don't double-handle keys. Each binding is resolved
@@ -1399,9 +1443,13 @@ function AppReady(
       }
       if (
         top?.name !== "approval" &&
-        b["events.open"].some((c) => chordMatches(c, key, input))
+        b["activity.open"].some((c) => chordMatches(c, key, input))
       ) {
-        layers.toggle("events");
+        openActivity();
+        return;
+      }
+      if (!top && b["events.open"].some((c) => chordMatches(c, key, input))) {
+        openActivity("events");
         return;
       }
       if (
@@ -1440,6 +1488,90 @@ function AppReady(
   }
 
   const modelLabel = effModel ?? "deterministic";
+  const taskActivity = useMemo(
+    () => summarizeTaskActivity(state.events, taskRecords, taskOutputs),
+    [state.events, taskRecords, taskOutputs],
+  );
+  const unreadTaskCount = taskActivity.tasks.filter(
+    (task) =>
+      task.lastSequence > lastSeenTaskSequence &&
+      (task.status === "completed" ||
+        task.status === "failed" ||
+        task.status === "cancelled"),
+  ).length;
+  const unreadFailedTaskCount = taskActivity.tasks.filter(
+    (task) =>
+      task.lastSequence > lastSeenTaskSequence &&
+      (task.status === "failed" || task.status === "cancelled"),
+  ).length;
+
+  async function refreshTaskSnapshots(): Promise<void> {
+    setLoadingTasks(true);
+    try {
+      const records = await loadSessionTaskRecords();
+      const outputEntries = await Promise.all(
+        records
+          .slice(0, 12)
+          .map(
+            async (record): Promise<[string, TaskOutputChunkSnapshot[]]> => [
+              record.id,
+              await controller.readTaskOutput(record.id, 200),
+            ],
+          ),
+      );
+      const outputs: Record<string, TaskOutputChunkSnapshot[]> =
+        Object.fromEntries(outputEntries);
+      setTaskRecords(records);
+      setTaskOutputs(outputs);
+    } finally {
+      setLoadingTasks(false);
+    }
+  }
+
+  async function loadSessionTaskRecords(): Promise<TaskRecordSnapshot[]> {
+    const runIds = runIdsFromEvents(state.events);
+    if (runIds.length === 0) return [];
+    const batches = await Promise.all(
+      runIds.map((parentRunId) =>
+        controller.listTasks({ parentRunId, limit: 50 }),
+      ),
+    );
+    return mergeTaskRecords(batches.flat()).slice(0, 50);
+  }
+
+  function handleActivityTabChange(tab: ActivityTab): void {
+    setLastActivityTab(tab);
+    if (tab === "tasks") void refreshTaskSnapshots();
+  }
+
+  function stopActivityTask(taskId: string): void {
+    void controller.stopTask(taskId).then((cancelled) => {
+      toasts.push({
+        variant: cancelled ? "success" : "warning",
+        title: cancelled ? "task stopped" : "task not stopped",
+        message: taskId,
+      });
+      void refreshTaskSnapshots();
+    });
+  }
+
+  function openActivity(tab?: ActivityTab): void {
+    if (layers.has("activity") && !tab) {
+      layers.pop("activity");
+      return;
+    }
+    const nextTab =
+      tab ?? (taskActivity.running > 0 ? "tasks" : lastActivityTab);
+    setLastActivityTab(nextTab);
+    if (nextTab === "tasks") void refreshTaskSnapshots();
+    setLastSeenTaskSequence(
+      taskActivity.tasks.reduce(
+        (max, task) => Math.max(max, task.lastSequence),
+        lastSeenTaskSequence,
+      ),
+    );
+    layers.push("activity", { tab: nextTab });
+  }
 
   function cyclePermissionMode(): void {
     const next = nextAllowedTuiPermissionMode(
@@ -1495,7 +1627,11 @@ function AppReady(
             registry={registry}
             resolved={effectiveResolved}
             sessionList={sessionList}
+            sessionRootLabel={resolved.sessionRootLabel}
             events={state.events}
+            taskRecords={taskRecords}
+            taskOutputs={taskOutputs}
+            loadingTasks={loadingTasks}
             labels={labels}
             renameTarget={renameTarget}
             effModel={effModel}
@@ -1506,6 +1642,9 @@ function AppReady(
             loadingCapabilities={loadingCapabilities}
             skillReviewSnapshot={skillReviewSnapshot}
             loadingSkillReview={loadingSkillReview}
+            onActivityTabChange={handleActivityTabChange}
+            onRefreshTasks={() => void refreshTaskSnapshots()}
+            onStopTask={stopActivityTask}
             onCommitModel={commitModelSelection}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
@@ -1582,12 +1721,20 @@ function AppReady(
           while there's active work to watch — idle/done/error leave just the
           input (run completion/failure already surfaces as a toast, and a
           /model switch leaves a scrollback line). */}
-        {state.status === "running" || state.status === "awaiting-approval" ? (
+        {state.status === "running" ||
+        state.status === "awaiting-approval" ||
+        taskActivity.running > 0 ||
+        unreadTaskCount > 0 ? (
           <StatusBar
             state={state}
             modelLabel={modelLabel}
             permissionMode={effTuiPermissionMode}
             focused={focused}
+            unreadCompletedTasks={Math.max(
+              0,
+              unreadTaskCount - unreadFailedTaskCount,
+            )}
+            unreadFailedTasks={unreadFailedTaskCount}
           />
         ) : null}
 
@@ -1677,7 +1824,11 @@ function AppReady(
             registry={registry}
             resolved={effectiveResolved}
             sessionList={sessionList}
+            sessionRootLabel={resolved.sessionRootLabel}
             events={state.events}
+            taskRecords={taskRecords}
+            taskOutputs={taskOutputs}
+            loadingTasks={loadingTasks}
             labels={labels}
             renameTarget={renameTarget}
             effModel={effModel}
@@ -1688,6 +1839,9 @@ function AppReady(
             loadingCapabilities={loadingCapabilities}
             skillReviewSnapshot={skillReviewSnapshot}
             loadingSkillReview={loadingSkillReview}
+            onActivityTabChange={handleActivityTabChange}
+            onRefreshTasks={() => void refreshTaskSnapshots()}
+            onStopTask={stopActivityTask}
             onCommitModel={commitModelSelection}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
@@ -1797,11 +1951,60 @@ function AppReady(
   );
 }
 
+function runIdsFromEvents(events: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const event of events) {
+    const id = runIdFromEvent(event);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function runIdFromEvent(event: unknown): string | undefined {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    return undefined;
+  }
+  const record = event as Record<string, unknown>;
+  if (typeof record.runId === "string") return record.runId;
+  const payload = record.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+  const payloadRecord = payload as Record<string, unknown>;
+  return typeof payloadRecord.runId === "string"
+    ? payloadRecord.runId
+    : undefined;
+}
+
+function mergeTaskRecords(
+  records: readonly TaskRecordSnapshot[],
+): TaskRecordSnapshot[] {
+  const byId = new Map<string, TaskRecordSnapshot>();
+  for (const record of records) byId.set(record.id, record);
+  return [...byId.values()].sort((a, b) =>
+    taskRecordSortTime(b).localeCompare(taskRecordSortTime(a)),
+  );
+}
+
+function taskRecordSortTime(task: TaskRecordSnapshot): string {
+  return (
+    task.completedAt ??
+    task.lastOutputAt ??
+    task.startedAt ??
+    task.createdAt ??
+    ""
+  );
+}
+
 export function inputFooterLines(bindings: Bindings, width = 100): string[] {
   const items = ["enter run", "\\↵ newline", "/ commands", "@ files"];
   for (const [name, label] of [
     ["cycle-permission-mode", "mode"],
     ["history.search", "search"],
+    ["activity.open", "activity"],
     ["events.open", "inspector"],
     ["cancel.run", "cancel"],
     ["quit.app", "quit x2"],

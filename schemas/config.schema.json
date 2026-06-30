@@ -301,7 +301,7 @@
                 "enum": [
                   "workspace.read",
                   "workspace.write",
-                  "shell",
+                  "bash",
                   "planning",
                   "skills",
                   "agents",

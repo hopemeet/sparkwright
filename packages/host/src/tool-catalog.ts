@@ -39,6 +39,10 @@ import {
   shouldAppendDiscoveryTool,
   type ToolSelectorCatalogEntry,
 } from "./tool-selectors.js";
+import {
+  applyBuiltinToolIdentity,
+  normalizeToolNameList,
+} from "./tool-identities.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 
@@ -67,13 +71,16 @@ export function createReadOnlyChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
 }): HostToolCatalogEntry[] {
-  return applyToolConfigToCatalog(
-    [
-      catalogEntry(createReadFileTool(), "coding"),
-      catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
-      catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
-      catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
-    ],
+  return withDeferredToolSearch(
+    applyToolConfigToCatalog(
+      [
+        catalogEntry(createReadFileTool(), "coding"),
+        catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
+        catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
+        catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
+      ],
+      input.toolConfig,
+    ),
     input.toolConfig,
   );
 }
@@ -310,7 +317,7 @@ function applyToolConfigToCatalog(
   );
   const selectorAllowed = resolveSelectorAllowlist(entries, config?.use);
   const effectiveAllowed = intersectAllowlists(
-    config?.allowed,
+    normalizeToolNameList(config?.allowed),
     selectorAllowed,
   );
   return applyToolConfig(
@@ -381,14 +388,17 @@ export function resolveConfiguredToolAllowlist(input: {
     selectorEntries,
     config?.use,
   );
-  return intersectAllowlists(config?.allowed, selectorAllowed);
+  return intersectAllowlists(
+    normalizeToolNameList(config?.allowed),
+    selectorAllowed,
+  );
 }
 
 function catalogEntry(
   definition: ToolDefinition,
   source: HostToolCatalogSource,
 ): HostToolCatalogEntry {
-  return { definition, source };
+  return { definition: applyBuiltinToolIdentity(definition, source), source };
 }
 
 function toolToDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -397,6 +407,11 @@ function toolToDescriptor(tool: ToolDefinition): ToolDescriptor {
     description: tool.description,
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
+    canonicalName: tool.canonicalName,
+    legacyNames: tool.legacyNames,
+    defaultExposureTier: tool.defaultExposureTier,
+    relatedTools: tool.relatedTools,
+    requiresTool: tool.requiresTool,
     timeoutMs: tool.timeoutMs,
     loading: {
       defer: tool.deferLoading,

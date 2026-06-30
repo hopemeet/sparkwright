@@ -19,6 +19,7 @@ export type BindingName =
   | "help.open"
   | "cancel.run"
   | "quit.app"
+  | "activity.open"
   | "events.open"
   | "todo.toggle"
   | "history.search"
@@ -55,7 +56,8 @@ export const DEFAULTS: Bindings = {
   "help.open": [parseChord("?")!],
   "cancel.run": [parseChord("esc")!],
   "quit.app": [parseChord("ctrl+c")!],
-  "events.open": [parseChord("ctrl+o")!],
+  "activity.open": [parseChord("ctrl+o")!],
+  "events.open": [],
   // Expand/collapse the todo band's completed items. ctrl+t = "todo".
   "todo.toggle": [parseChord("ctrl+t")!],
   // history.search is handled inside InputBox (ctrl+r is bash-standard);
@@ -131,6 +133,17 @@ export function chordMatches(
 ): boolean {
   if (chord.ctrl && chord.key === "c" && ctrlCPressCount(inkInput) > 0) {
     return !chord.meta;
+  }
+  // Most terminals encode Ctrl+I as the Tab control byte. Ink therefore may
+  // report Ctrl+I as `key.tab` instead of `{ ctrl: true, input: "i" }`.
+  if (
+    chord.ctrl &&
+    !chord.shift &&
+    !chord.meta &&
+    chord.key === "i" &&
+    (inkInput === "\t" || inkKey.tab)
+  ) {
+    return true;
   }
   if (!!chord.ctrl !== !!inkKey.ctrl) return false;
   if (!!chord.meta !== !!inkKey.meta) return false;

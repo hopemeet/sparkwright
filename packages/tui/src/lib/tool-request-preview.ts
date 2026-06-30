@@ -7,11 +7,11 @@ export function formatToolRequestPreview(
 ): string {
   if (max < 8) return "";
   const r = rec(args);
-  if (r && name === "shell") {
+  if (r && isShellToolName(name)) {
     const command = str(r.command);
     return command ? truncatePlain(`$ ${command}`, max) : "";
   }
-  if (r && name === "read_file") {
+  if (r && (name === "read" || name === "read_file")) {
     const path = str(r.path);
     const offset = typeof r.offset === "number" ? `:${r.offset}` : "";
     const limit = typeof r.limit === "number" ? ` +${r.limit}` : "";
@@ -40,7 +40,32 @@ export function formatToolRequestPreview(
     const skill = str(r.name);
     return truncatePlain([action, skill].filter(Boolean).join(" "), max);
   }
+  if (r && (name === "task" || name.startsWith("task_"))) {
+    const action = str(r.action) || taskActionFromToolName(name);
+    const taskId = str(r.taskId);
+    const status = str(r.status);
+    const kind = str(r.kind);
+    const readsOutput = action === "output";
+    const from =
+      readsOutput && typeof r.fromSequence === "number"
+        ? `from ${r.fromSequence}`
+        : "";
+    const maxChunks =
+      readsOutput && typeof r.maxChunks === "number"
+        ? `${r.maxChunks} chunks`
+        : "";
+    return truncatePlain(
+      [action, shortTaskId(taskId), status, kind, from, maxChunks]
+        .filter(Boolean)
+        .join(" "),
+      max,
+    );
+  }
   return args !== undefined ? oneLine(args, max) : "";
+}
+
+function isShellToolName(name: string): boolean {
+  return name === "bash" || name === "shell";
 }
 
 /** Best-effort one-line preview of a value (object -> compact JSON). */
@@ -79,4 +104,17 @@ function str(value: unknown): string {
 function truncatePlain(text: string, max: number): string {
   if (max <= 0) return "";
   return text.length > max ? text.slice(0, Math.max(0, max - 1)) + "…" : text;
+}
+
+function taskActionFromToolName(name: string): string {
+  if (name === "task_list") return "list";
+  if (name === "task_get") return "get";
+  if (name === "task_output") return "output";
+  if (name === "task_stop") return "stop";
+  if (name === "task_create") return "create";
+  return "";
+}
+
+function shortTaskId(id: string): string {
+  return id.length > 18 ? `${id.slice(0, 9)}...${id.slice(-6)}` : id;
 }

@@ -1,6 +1,7 @@
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createRunId, type ModelInput } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   createModel,
@@ -147,6 +148,58 @@ describe("resolveProfileModelAdapters", () => {
     }
   });
 });
+
+describe("deterministic demo model", () => {
+  it("uses the active run goal and keeps turn state isolated by run", async () => {
+    const workspace = await configuredWorkspace({ model: "deterministic" });
+    try {
+      const created = await createModel({
+        modelRef: "deterministic",
+        goal: "parent construction goal",
+        workspaceRoot: workspace,
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+
+      const childA = modelInput("child A goal");
+      const childB = modelInput("child B goal");
+
+      await expect(created.adapter.complete(childA)).resolves.toMatchObject({
+        message: expect.stringContaining('goal: "child A goal"'),
+        toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
+      });
+      await expect(created.adapter.complete(childB)).resolves.toMatchObject({
+        message: expect.stringContaining('goal: "child B goal"'),
+        toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
+      });
+      await expect(
+        created.adapter.complete({ ...childA, step: 2 }),
+      ).resolves.toMatchObject({
+        message: expect.stringContaining('Goal was: "child A goal"'),
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+function modelInput(goal: string): ModelInput {
+  const now = "2026-01-01T00:00:00.000Z";
+  return {
+    run: {
+      id: createRunId(),
+      goal,
+      state: "running",
+      createdAt: now,
+      updatedAt: now,
+      metadata: {},
+    },
+    context: [],
+    tools: [],
+    events: [],
+    step: 1,
+  };
+}
 
 async function configuredWorkspace(config: unknown): Promise<string> {
   const workspace = await mkdtemp(join(tmpdir(), "sparkwright-model-"));

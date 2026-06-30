@@ -447,6 +447,88 @@ an artifact, the response remains `ok: true`, `artifactPath` is `null`,
 }
 ```
 
+### `task.list`
+
+List durable background tasks known to the host task store. This is a
+workspace-scoped snapshot/polling API; clients that need a run-local view should
+pass `parentRunId`. It does not subscribe to live output.
+
+**Payload**
+
+| Field         | Type           | Required | Notes                                                        |
+| ------------- | -------------- | -------- | ------------------------------------------------------------ |
+| `status`      | string         | no       | `pending`, `running`, `completed`, `failed`, or `cancelled`. |
+| `kind`        | string         | no       | Filter by task kind.                                         |
+| `parentRunId` | string         | no       | Filter to tasks spawned by a run.                            |
+| `limit`       | integer 1..200 | no       | Default 50.                                                  |
+
+**Response result:** `{ "tasks": TaskRecordSnapshot[] }`.
+
+### `task.get`
+
+Fetch one durable background task record.
+
+**Payload**
+
+| Field    | Type   | Required |
+| -------- | ------ | -------- |
+| `taskId` | string | yes      |
+
+**Response result:** a `TaskRecordSnapshot`. Unknown ids return
+`task_not_found`.
+
+### `task.output`
+
+Fetch buffered output chunks for a background task. The response drains the
+currently buffered snapshot from `fromSequence` and returns immediately; clients
+poll again with `nextSequence` to follow new output.
+
+**Payload**
+
+| Field          | Type            | Required | Notes        |
+| -------------- | --------------- | -------- | ------------ |
+| `taskId`       | string          | yes      | Task id.     |
+| `fromSequence` | integer >= 0    | no       | Default 0.   |
+| `maxChunks`    | integer 1..1000 | no       | Default 200. |
+
+**Response result**
+
+```json
+{
+  "taskId": "task_abc",
+  "chunks": [
+    {
+      "taskId": "task_abc",
+      "sequence": 0,
+      "timestamp": "2026-06-30T00:00:00.000Z",
+      "channel": "stdout",
+      "data": "line\n"
+    }
+  ],
+  "nextSequence": 1,
+  "complete": false,
+  "status": "running",
+  "stalled": false
+}
+```
+
+Unknown ids return `task_not_found`.
+
+### `task.stop`
+
+Request cancellation of a live background task. Durable historical task records
+can be inspected, but a host can only stop tasks for which the current process
+still owns a live handle.
+
+**Payload**
+
+| Field    | Type   | Required |
+| -------- | ------ | -------- |
+| `taskId` | string | yes      |
+
+**Response result:** `{ "cancelled": boolean, "status"?: string }`. Unknown ids
+return `task_not_found`.
+
 ### `capability.inspect`
 
 Return the host-authored capability snapshot known to this connection. This is
@@ -479,7 +561,7 @@ scanning files or interpreting local config.
       "warning": "No pricing configured for model \"openai/gpt-5.4-mini\"; cost estimates will be unavailable. Add a provider model cost block to enable cost reporting."
     }
   },
-  "tools": [{ "name": "read_file", "risk": "safe" }],
+  "tools": [{ "name": "read", "risk": "safe" }],
   "skills": {
     "indexed": [
       {
@@ -547,7 +629,7 @@ scanning files or interpreting local config.
         "name": "verification:fast:test",
         "source": "verification",
         "lifecycle": "PostToolUse",
-        "matcher": "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+        "matcher": "toolName=write|edit_anchored_text|edit; status=completed",
         "action": "command: npm test; injectOutput=onFailure",
         "blockingPotential": false,
         "enabled": true,

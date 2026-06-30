@@ -18,6 +18,22 @@ function ev(
 }
 
 describe("EventStore active phase projection", () => {
+  it("clears stale errors when a new run starts and completes", () => {
+    const store = new EventStore();
+
+    store.setError("manual_cancelled");
+    expect(store.getSnapshot().lastError).toBe("manual_cancelled");
+
+    store.setStatus("running");
+    expect(store.getSnapshot().status).toBe("running");
+    expect(store.getSnapshot().lastError).toBeNull();
+
+    store.setError("temporary failure");
+    store.setStatus("done");
+    expect(store.getSnapshot().status).toBe("done");
+    expect(store.getSnapshot().lastError).toBeNull();
+  });
+
   it("shows and clears the model thinking phase", () => {
     const store = new EventStore();
 

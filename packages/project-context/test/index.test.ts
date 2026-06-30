@@ -251,12 +251,10 @@ describe("buildAgentPromptBuilder", () => {
     };
 
     expect(await guidanceOf([])).toBeUndefined();
-    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
-    expect(await guidanceOf([{ name: "write_file" }])).toContain("write_file");
-    expect(await guidanceOf([{ name: "write_file" }])).toContain(
-      "source of truth",
-    );
-    expect(await guidanceOf([{ name: "write_file" }])).toContain(
+    expect(await guidanceOf([{ name: "read" }])).toBeUndefined();
+    expect(await guidanceOf([{ name: "write" }])).toContain("write");
+    expect(await guidanceOf([{ name: "write" }])).toContain("source of truth");
+    expect(await guidanceOf([{ name: "write" }])).toContain(
       "run that command next",
     );
   });
@@ -274,8 +272,8 @@ describe("buildAgentPromptBuilder", () => {
     };
 
     expect(await guidanceOf([])).toBeUndefined();
-    expect(await guidanceOf([{ name: "read_file" }])).toBeUndefined();
-    const guidance = await guidanceOf([{ name: "shell" }]);
+    expect(await guidanceOf([{ name: "read" }])).toBeUndefined();
+    const guidance = await guidanceOf([{ name: "bash" }]);
     expect(guidance).toContain("temporary environment outside the workspace");
     expect(guidance).toContain("mktemp -d /tmp/sparkwright-venv");
   });
@@ -293,10 +291,10 @@ describe("buildAgentPromptBuilder", () => {
     };
 
     expect(await guidanceOf([])).toBeUndefined();
-    const guidance = await guidanceOf([{ name: "read_file" }]);
+    const guidance = await guidanceOf([{ name: "read" }]);
     expect(guidance).toContain("Repository-maintainer evidence");
     expect(guidance).toContain("A path listing alone is discovery");
-    expect(guidance).toContain("shell is denied");
+    expect(guidance).toContain("bash is denied");
   });
 
   it("injects delegation-relay guidance only when a spawn/delegate tool is present", async () => {

@@ -82,7 +82,7 @@ describe("host tools", () => {
     ]);
   });
 
-  it("rejects read_file glob paths with tool guidance", async () => {
+  it("rejects read glob paths with tool guidance", async () => {
     const ctx = await createWorkspace({
       "packages/tui/package.json": "{}\n",
     });
@@ -90,13 +90,13 @@ describe("host tools", () => {
 
     await expect(
       tool.execute({ path: "packages/*/package.json" }, ctx),
-    ).rejects.toThrow(/read_file does not support glob patterns.*glob/);
+    ).rejects.toThrow(/read does not support glob patterns.*glob/);
     await expect(
       tool.execute({ path: "packages/*/package.json" }, ctx),
     ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
   });
 
-  it("rejects read_file directory paths with tool guidance", async () => {
+  it("rejects read directory paths with tool guidance", async () => {
     const ctx = await createWorkspace({
       "docs/README.md": "# Docs\n",
     });
@@ -110,7 +110,7 @@ describe("host tools", () => {
     });
   });
 
-  it("normalizes read_file absolute and file URL paths", async () => {
+  it("normalizes read absolute and file URL paths", async () => {
     const ctx = await createWorkspace({
       "docs/README.md": "# Docs\n",
     });
@@ -135,7 +135,54 @@ describe("host tools", () => {
     });
   });
 
-  it("rejects read_file escaped paths as tool argument errors", async () => {
+  it("returns a structured nextOffset for paginated reads", async () => {
+    const ctx = await createWorkspace({
+      "PROJECT_NOTES.md": ["one", "two", "three", "four", "five"].join("\n"),
+    });
+    const tool = createReadFileTool();
+
+    await expect(
+      tool.execute({ path: "PROJECT_NOTES.md", limit: 2 }, ctx),
+    ).resolves.toMatchObject({
+      path: "PROJECT_NOTES.md",
+      startLine: 1,
+      endLine: 2,
+      hasMore: true,
+      nextOffset: 3,
+    });
+    await expect(
+      tool.execute({ path: "PROJECT_NOTES.md", offset: 3, limit: 2 }, ctx),
+    ).resolves.toMatchObject({
+      startLine: 3,
+      endLine: 4,
+      hasMore: true,
+      nextOffset: 5,
+    });
+  });
+
+  it("caps default read windows to a model-visible character budget", async () => {
+    const lines = Array.from(
+      { length: 300 },
+      (_, index) => `line ${index + 1}: ${"x".repeat(80)}`,
+    ).join("\n");
+    const ctx = await createWorkspace({ "PROJECT_NOTES.md": lines });
+    const tool = createReadFileTool();
+
+    const result = await tool.execute({ path: "PROJECT_NOTES.md" }, ctx);
+
+    expect(result).toMatchObject({
+      path: "PROJECT_NOTES.md",
+      startLine: 1,
+      hasMore: true,
+      truncated: true,
+    });
+    expect(result.content.length).toBeLessThanOrEqual(6000);
+    expect(result.endLine).toBeGreaterThan(1);
+    expect(result.nextOffset).toBe(result.endLine + 1);
+    expect(result.note).toContain("capped at 6000 chars");
+  });
+
+  it("rejects read escaped paths as tool argument errors", async () => {
     const ctx = await createWorkspace({
       "README.md": "# Demo\n",
     });
@@ -177,7 +224,7 @@ describe("host tools", () => {
 
   it("applies disabled and deferred tool config", () => {
     const read = defineTool({
-      name: "read_file",
+      name: "read",
       description: "read",
       inputSchema: { type: "object" },
       execute: () => ({}),
@@ -208,7 +255,7 @@ describe("host tools", () => {
     });
 
     expect(tools.map((tool) => tool.name)).toEqual([
-      "read_file",
+      "read",
       "mcp_docs_search",
       "mcp_required",
     ]);
@@ -225,7 +272,7 @@ describe("host tools", () => {
 
   it("restricts tool config to allowed names before disabled and defer", () => {
     const read = defineTool({
-      name: "read_file",
+      name: "read",
       description: "read",
       inputSchema: { type: "object" },
       execute: () => ({}),
@@ -251,15 +298,12 @@ describe("host tools", () => {
     });
 
     const tools = applyToolConfig([read, mcpSearch, shell, eager], {
-      allowed: ["read_file", "mcp_docs_search", "shell"],
+      allowed: ["read", "mcp_docs_search", "shell"],
       disabled: ["shell"],
       defer: ["mcp_docs_search"],
     });
 
-    expect(tools.map((tool) => tool.name)).toEqual([
-      "read_file",
-      "mcp_docs_search",
-    ]);
+    expect(tools.map((tool) => tool.name)).toEqual(["read", "mcp_docs_search"]);
     expect(tools.find((tool) => tool.name === "mcp_docs_search")).toMatchObject(
       { deferLoading: true },
     );
@@ -298,7 +342,7 @@ describe("host tools", () => {
       execute: () => ({}),
     });
     const read = defineTool({
-      name: "read_file",
+      name: "read",
       description: "read",
       inputSchema: { type: "object" },
       execute: () => ({}),
@@ -324,7 +368,7 @@ describe("host tools", () => {
       deferLoading: true,
     });
     expect(
-      defaults.find((tool) => tool.name === "read_file")?.deferLoading,
+      defaults.find((tool) => tool.name === "read")?.deferLoading,
     ).toBeUndefined();
 
     const eager = applyToolConfig(
@@ -366,11 +410,11 @@ describe("host tools", () => {
       entries.map((entry) => [entry.definition.name, entry]),
     );
 
-    expect(byName.get("read_file")).toMatchObject({ source: "coding" });
-    expect(catalogEntryOrigin(byName.get("read_file")!)).toBe(
+    expect(byName.get("read")).toMatchObject({ source: "coding" });
+    expect(catalogEntryOrigin(byName.get("read")!)).toBe(
       "local:@sparkwright/coding-tools",
     );
-    expect(byName.get("shell")).toMatchObject({ source: "shell" });
+    expect(byName.get("bash")).toMatchObject({ source: "shell" });
     expect(byName.get("cron")).toMatchObject({ source: "cron" });
     expect(byName.get("create_skill")).toMatchObject({ source: "skill" });
     expect(byName.get("task")).toMatchObject({ source: "task" });
@@ -400,7 +444,7 @@ describe("host tools", () => {
       },
       shell: { sandbox: { mode: "off" } },
       toolConfig: {
-        allowed: ["read_file", "todo_write", "mcp_demo_call_tool"],
+        allowed: ["read", "todo_write", "mcp_demo_call_tool"],
       },
     });
 
@@ -409,7 +453,7 @@ describe("host tools", () => {
     // though it is not itself listed in `allowed`. This matches the `use` path
     // and keeps the deferred tool reachable.
     expect(entries.map((entry) => entry.definition.name)).toEqual([
-      "read_file",
+      "read",
       "todo_write",
       "mcp_demo_call_tool",
       "tool_search",
@@ -452,9 +496,9 @@ describe("host tools", () => {
     // resolveSelectorAllowlist returns only selector-matched tools; tool_search
     // is appended later as derived infrastructure, not by the resolver.
     expect(resolveSelectorAllowlist(entries, ["workspace.write"])).toEqual([
-      "write_file",
+      "write",
       "edit_anchored_text",
-      "apply_patch",
+      "edit",
     ]);
     expect(resolveSelectorAllowlist(entries, ["mcp:demo"])).toEqual([
       "mcp_demo_call_tool",
@@ -476,7 +520,7 @@ describe("host tools", () => {
     });
 
     expect(entries.map((entry) => entry.definition.name)).toEqual([
-      "read_file",
+      "read",
       "glob",
       "grep",
       "list_dir",
@@ -504,7 +548,7 @@ describe("host tools", () => {
         workspaceRoot: "/tmp/ws",
         toolConfig: { use: ["workspace.read"] },
       }),
-    ).toEqual(["read_file", "glob", "grep", "list_dir", "read_anchored_text"]);
+    ).toEqual(["read", "glob", "grep", "list_dir", "read_anchored_text"]);
 
     // mcp:<server> matches by origin server name across provided MCP tools.
     expect(
@@ -573,6 +617,7 @@ describe("host tools", () => {
 
     expect(entries.map((entry) => entry.definition.name)).toEqual([
       "mcp_demo_call_tool",
+      "tool_search",
     ]);
   });
 
@@ -590,13 +635,14 @@ describe("host tools", () => {
     });
 
     expect(entries.map((entry) => entry.definition.name)).toEqual([
-      "read_file",
+      "read",
       "glob",
       "grep",
       "list_dir",
+      "tool_search",
     ]);
     expect(new Set(entries.map((entry) => entry.source))).toEqual(
-      new Set(["coding"]),
+      new Set(["coding", "core"]),
     );
 
     const disabled = createReadOnlyChildToolCatalog({
@@ -604,7 +650,7 @@ describe("host tools", () => {
       toolConfig: { disabled: ["list_dir"] },
     });
     expect(disabled.map((entry) => entry.definition.name)).toEqual([
-      "read_file",
+      "read",
       "glob",
       "grep",
     ]);
@@ -617,9 +663,9 @@ describe("host tools", () => {
     });
 
     expect(entries.map((entry) => entry.definition.name)).toEqual([
-      "write_file",
+      "write",
       "edit_anchored_text",
-      "apply_patch",
+      "edit",
       "tool_search",
     ]);
     expect(new Set(entries.map((entry) => entry.source))).toEqual(
@@ -634,7 +680,7 @@ describe("host tools", () => {
       toolConfig: { use: ["shell"] },
     });
 
-    expect(entries.map((entry) => entry.definition.name)).toEqual(["shell"]);
+    expect(entries.map((entry) => entry.definition.name)).toEqual(["bash"]);
     expect(entries.map((entry) => entry.source)).toEqual(["shell"]);
   });
 
@@ -646,7 +692,7 @@ describe("host tools", () => {
       toolConfig: { use: ["shell"] },
     });
     const shell = entries.find(
-      (entry) => entry.definition.name === "shell",
+      (entry) => entry.definition.name === "bash",
     )?.definition;
 
     const result = (await shell!.execute(
@@ -691,7 +737,7 @@ describe("host tools", () => {
             mode: "child",
             prompt: "Inspect files.",
             use: ["workspace.read"],
-            allowedTools: ["read_file"],
+            allowedTools: ["read"],
             maxSteps: 2,
           },
           inheritedPolicy: [],
@@ -716,7 +762,7 @@ describe("host tools", () => {
       run: parent.record,
     } as never);
 
-    expect(childToolNames).toEqual(["read_file"]);
+    expect(childToolNames).toEqual(["read"]);
   });
 
   it("delegates by agentId through the generic delegate_agent tool", async () => {
@@ -756,7 +802,7 @@ describe("host tools", () => {
           mode: "child" as const,
           prompt: "Inspect files.",
           use: ["workspace.read"],
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
           maxSteps: 2,
         },
         inheritedPolicy: [],
@@ -1406,7 +1452,7 @@ describe("host tools", () => {
       role: "Risk Reader",
       prompt: "Read project files and report one risk.",
       goal: "Inspect README.md for one risk.",
-      allowedTools: ["read_file"],
+      allowedTools: ["read"],
       maxSteps: 2,
     };
 
@@ -1473,7 +1519,7 @@ describe("host tools", () => {
           role: "Risk Reader",
           prompt: "Read project files and report one risk.",
           goal: "Inspect README.md for one risk.",
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
           maxSteps: 2,
         },
         { run: parent.record } as never,
@@ -1527,7 +1573,7 @@ describe("host tools", () => {
           role: "Risk Reader",
           prompt: "Read project files and report one risk.",
           goal: "Inspect README.md for one risk.",
-          allowedTools: ["read_file"],
+          allowedTools: ["read"],
           maxSteps: 2,
         },
         { run: parent.record } as never,
@@ -1567,7 +1613,7 @@ describe("host tools", () => {
             name: "Writer",
             mode: "child",
             prompt: "Write.",
-            allowedTools: ["write_file"],
+            allowedTools: ["write"],
             maxSteps: 1,
           },
           inheritedPolicy: [],
@@ -2194,18 +2240,18 @@ describe("host tools", () => {
     });
 
     expect(entries.map((entry) => entry.definition.name)).toEqual([
-      "read_file",
+      "read",
       "glob",
       "grep",
       "list_dir",
       "read_anchored_text",
-      "write_file",
+      "write",
       "edit_anchored_text",
-      "apply_patch",
+      "edit",
       "tool_search",
     ]);
     expect(
-      entries.find((entry) => entry.definition.name === "read_file"),
+      entries.find((entry) => entry.definition.name === "read"),
     ).toMatchObject({
       source: "coding",
     });
@@ -2573,7 +2619,7 @@ describe("host tools", () => {
         mode: "child",
         prompt: "Review changes and report concrete risks.",
         use: ["workspace.read"],
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxSteps: 2,
         delegateToolName: "delegate_reviewer",
       },
@@ -2616,7 +2662,7 @@ describe("host tools", () => {
             mode: "child",
             prompt: "Review changes and report concrete risks.",
             use: ["workspace.read"],
-            allowedTools: ["read_file"],
+            allowedTools: ["read"],
             maxSteps: 2,
           },
         ],
@@ -2728,7 +2774,7 @@ describe("host tools", () => {
       name: "Reviewer",
       mode: "child",
       prompt: "Review changes and report concrete risks.",
-      allowedTools: ["read_file"],
+      allowedTools: ["read"],
       maxSteps: 2,
       delegateToolName: "delegate_reviewer",
     };
@@ -2758,7 +2804,7 @@ describe("host tools", () => {
       name: "Reviewer",
       mode: "child",
       prompt: "Review changes and report concrete risks.",
-      allowedTools: ["read_file"],
+      allowedTools: ["read"],
       maxSteps: 2,
       delegateToolName: "delegate_reviewer",
     };
@@ -2793,7 +2839,7 @@ describe("host tools", () => {
         id: "reviewer",
         name: "Reviewer",
         prompt: "Review changes and report concrete risks.",
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxSteps: 2,
         delegateToolName: "delegate_reviewer",
       },
@@ -2861,7 +2907,7 @@ describe("host tools", () => {
         id: "reviewer",
         name: "Reviewer",
         prompt: "Review changes and report concrete risks.",
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxSteps: 2,
         delegateToolName: "delegate_reviewer",
       },
@@ -2922,7 +2968,7 @@ describe("host tools", () => {
         id: "reviewer",
         name: "Reviewer",
         prompt: "Review changes and report concrete risks.",
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxSteps: 2,
         delegateToolName: "delegate_reviewer",
       },
@@ -3002,7 +3048,7 @@ describe("host tools", () => {
         id: "reviewer",
         name: "Reviewer",
         prompt: "Review changes and report concrete risks.",
-        allowedTools: ["read_file"],
+        allowedTools: ["read"],
         maxSteps: 2,
         delegateToolName: "delegate_reviewer",
       },
@@ -3193,7 +3239,7 @@ describe("host tools", () => {
     const result = await tool.execute(
       {
         command:
-          "node -e \"setTimeout(() => console.log('promoted done'), 80)\"",
+          "node -e \"setTimeout(() => console.log('promoted done'), 200)\"",
       },
       ctx,
     );
@@ -3202,6 +3248,7 @@ describe("host tools", () => {
     expect(result.taskId).toMatch(/^task_/);
     const handle = manager.handle(result.taskId as TaskId);
     expect(handle).toBeDefined();
+    expect(handle!.record.status).toBe("running");
     const record = await handle!.wait();
     expect(record.status).toBe("completed");
 
@@ -3216,7 +3263,12 @@ describe("host tools", () => {
       .all()
       .filter((event) => event.type.startsWith("task."));
     expect(taskEvents.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["task.started", "task.output", "task.completed"]),
+      expect.arrayContaining([
+        "task.created",
+        "task.started",
+        "task.output",
+        "task.completed",
+      ]),
     );
     expect(
       events.all().some((event) => event.type.startsWith("extension.")),
@@ -3224,10 +3276,19 @@ describe("host tools", () => {
     const taskStarted = taskEvents.find(
       (event) => event.type === "task.started",
     );
+    const taskCreated = taskEvents.find(
+      (event) => event.type === "task.created",
+    );
     const taskOutput = taskEvents.find((event) => event.type === "task.output");
     const taskCompleted = taskEvents.find(
       (event) => event.type === "task.completed",
     );
+    expect(taskCreated).toMatchObject({
+      payload: expect.objectContaining({
+        taskId: result.taskId,
+        parentRunId: ctx.run.id,
+      }),
+    });
     expect(taskOutput).toMatchObject({
       spanId: taskStarted?.spanId,
       payload: expect.objectContaining({

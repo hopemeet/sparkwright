@@ -85,6 +85,10 @@ import {
   type DelegationLedgerHit,
   type DelegationLedgerKey,
   type DerivedChildAgentProfile,
+  type TaskId,
+  type TaskOutputChunk,
+  type TaskRecord,
+  type TaskStatus,
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
@@ -125,6 +129,8 @@ import {
   type SessionCompactionInspectArtifact,
   type SessionCompactionInspectEvent,
   type SessionCompactionInspectReport,
+  type TaskOutputChunkSnapshot,
+  type TaskRecordSnapshot,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
   type CapabilityModelSummary,
@@ -163,6 +169,7 @@ import {
   createReadOnlyChildToolCatalog,
   type HostToolCatalogEntry,
 } from "./tool-catalog.js";
+import { canonicalToolName } from "./tool-identities.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -702,6 +709,114 @@ export class HostRuntime {
 
   private taskRootDir(): string {
     return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+  }
+
+  listTasks(input: {
+    status?: TaskStatus;
+    kind?: string;
+    parentRunId?: string;
+    limit?: number;
+  }): { ok: true; tasks: TaskRecordSnapshot[] } {
+    const tasks = this.taskManager.store
+      .list({
+        status: input.status,
+        kind: input.kind,
+        parentRunId: input.parentRunId as RunId | undefined,
+      })
+      .sort(compareTaskRecordsNewestFirst)
+      .slice(0, input.limit ?? 50)
+      .map(taskRecordSnapshot);
+    return { ok: true, tasks };
+  }
+
+  getTask(
+    taskId: string,
+  ):
+    | { ok: true; task: TaskRecordSnapshot }
+    | { ok: false; error: ProtocolError } {
+    const id = taskId as unknown as TaskId;
+    const task = this.taskManager.store.get(id);
+    if (!task) return { ok: false, error: taskNotFoundError(taskId) };
+    return { ok: true, task: taskRecordSnapshot(task) };
+  }
+
+  async readTaskOutput(input: {
+    taskId: string;
+    fromSequence?: number;
+    maxChunks?: number;
+  }): Promise<
+    | {
+        ok: true;
+        taskId: string;
+        chunks: TaskOutputChunkSnapshot[];
+        nextSequence: number;
+        complete: boolean;
+        status: TaskStatus;
+        error?: TaskRecord["error"];
+        lastOutputAt?: string;
+        stalled: boolean;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    const id = input.taskId as unknown as TaskId;
+    const initial = this.taskManager.store.get(id);
+    if (!initial) return { ok: false, error: taskNotFoundError(input.taskId) };
+
+    const fromSequence = input.fromSequence ?? 0;
+    const maxChunks = input.maxChunks ?? 200;
+    const chunks: TaskOutputChunk[] = [];
+    const iterator = this.taskManager.store
+      .loadOutput(id, fromSequence)
+      [Symbol.asyncIterator]();
+    try {
+      while (chunks.length < maxChunks) {
+        const next = await raceWithImmediate(iterator);
+        if (next === IMMEDIATE_NONE || next.done) break;
+        chunks.push(next.value);
+      }
+    } finally {
+      await iterator.return?.();
+    }
+
+    const latest = this.taskManager.store.get(id) ?? initial;
+    const lastSequence =
+      chunks.length > 0
+        ? chunks[chunks.length - 1]!.sequence
+        : fromSequence - 1;
+    return {
+      ok: true,
+      taskId: input.taskId,
+      chunks: chunks.map(taskOutputChunkSnapshot),
+      nextSequence: lastSequence + 1,
+      complete: isTerminalTaskStatus(latest.status),
+      status: latest.status,
+      ...(latest.error ? { error: latest.error } : {}),
+      ...(latest.lastOutputAt ? { lastOutputAt: latest.lastOutputAt } : {}),
+      stalled: latest.status === "running" && chunks.length === 0,
+    };
+  }
+
+  async stopTask(
+    taskId: string,
+  ): Promise<
+    | { ok: true; cancelled: boolean; status?: TaskStatus }
+    | { ok: false; error: ProtocolError }
+  > {
+    const id = taskId as unknown as TaskId;
+    const before = this.taskManager.store.get(id);
+    if (!before) return { ok: false, error: taskNotFoundError(taskId) };
+    if (isTerminalTaskStatus(before.status)) {
+      return { ok: true, cancelled: false, status: before.status };
+    }
+    const handle = this.taskManager.handle(id);
+    if (!handle) return { ok: true, cancelled: false, status: before.status };
+    await handle.cancel();
+    const after = this.taskManager.store.get(id);
+    return {
+      ok: true,
+      cancelled: after?.status === "cancelled",
+      ...(after?.status ? { status: after.status } : {}),
+    };
   }
 
   async inspectCapabilities(
@@ -3176,11 +3291,33 @@ function buildCapabilitySnapshot(input: {
     ...(input.model ? { model: input.model } : {}),
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
+      canonicalName: entry.definition.canonicalName ?? entry.definition.name,
+      ...(entry.definition.legacyNames &&
+      entry.definition.legacyNames.length > 0
+        ? { legacyNames: entry.definition.legacyNames }
+        : {}),
+      ...(entry.definition.defaultExposureTier
+        ? { defaultExposureTier: entry.definition.defaultExposureTier }
+        : {}),
+      source: entry.source,
       origin:
         formatToolOrigin(entry.definition.governance?.origin) ??
         catalogEntryOrigin(entry),
       risk: entry.definition.policy?.risk,
+      ...(entry.definition.governance
+        ? { governance: entry.definition.governance }
+        : {}),
+      effectiveLoading:
+        entry.definition.deferLoading === true ? "deferred" : "eager",
       ...(entry.definition.deferLoading === true ? { deferred: true } : {}),
+      ...(entry.definition.relatedTools &&
+      entry.definition.relatedTools.length > 0
+        ? { relatedTools: entry.definition.relatedTools }
+        : {}),
+      ...(entry.definition.requiresTool &&
+      entry.definition.requiresTool.length > 0
+        ? { requiresTool: entry.definition.requiresTool }
+        : {}),
     })),
     skills: {
       indexed: input.indexedSkills.map((skill) => ({
@@ -3367,6 +3504,90 @@ async function readCronJobsForSnapshot(
   } catch {
     return [];
   }
+}
+
+function taskRecordSnapshot(record: TaskRecord): TaskRecordSnapshot {
+  return {
+    id: record.id,
+    parentRunId: record.parentRunId,
+    kind: record.kind,
+    ...(record.title ? { title: record.title } : {}),
+    status: record.status,
+    createdAt: record.createdAt,
+    ...(record.startedAt ? { startedAt: record.startedAt } : {}),
+    ...(record.lastOutputAt ? { lastOutputAt: record.lastOutputAt } : {}),
+    ...(record.lastProgressAt ? { lastProgressAt: record.lastProgressAt } : {}),
+    ...(record.lastHealthCheckAt
+      ? { lastHealthCheckAt: record.lastHealthCheckAt }
+      : {}),
+    ...(record.outputChunks !== undefined
+      ? { outputChunks: record.outputChunks }
+      : {}),
+    ...(record.outputBytes !== undefined
+      ? { outputBytes: record.outputBytes }
+      : {}),
+    ...(record.completedAt ? { completedAt: record.completedAt } : {}),
+    ...(record.result !== undefined ? { result: record.result } : {}),
+    ...(record.error ? { error: record.error } : {}),
+    metadata:
+      typeof record.metadata === "object" &&
+      record.metadata !== null &&
+      !Array.isArray(record.metadata)
+        ? record.metadata
+        : {},
+  };
+}
+
+function taskOutputChunkSnapshot(
+  chunk: TaskOutputChunk,
+): TaskOutputChunkSnapshot {
+  return {
+    taskId: chunk.taskId,
+    sequence: chunk.sequence,
+    timestamp: chunk.timestamp,
+    channel: chunk.channel,
+    data: chunk.data,
+  };
+}
+
+function compareTaskRecordsNewestFirst(a: TaskRecord, b: TaskRecord): number {
+  return taskSortTime(b).localeCompare(taskSortTime(a));
+}
+
+function taskSortTime(task: TaskRecord): string {
+  return (
+    task.completedAt ?? task.lastOutputAt ?? task.startedAt ?? task.createdAt
+  );
+}
+
+function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
+
+function taskNotFoundError(taskId: string): ProtocolError {
+  return {
+    code: "task_not_found",
+    message: `Task not found: ${taskId}`,
+  };
+}
+
+const IMMEDIATE_NONE = Symbol("IMMEDIATE_NONE");
+type ImmediateNone = typeof IMMEDIATE_NONE;
+
+async function raceWithImmediate<T>(
+  iterator: AsyncIterator<T>,
+): Promise<IteratorResult<T> | ImmediateNone> {
+  let settled = false;
+  const next = iterator.next().then((result) => {
+    settled = true;
+    return result;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  if (settled) return next;
+  return IMMEDIATE_NONE;
 }
 
 function readTasksForSnapshot(
@@ -3896,9 +4117,16 @@ function intersectToolNameAllowlists(
   right: readonly string[] | undefined,
 ): string[] | undefined {
   if (left === undefined) return right ? [...right] : undefined;
-  if (right === undefined) return [...left];
-  const rightSet = new Set(right);
-  return left.filter((name) => rightSet.has(name));
+  if (right === undefined) return left.map(canonicalToolName);
+  const rightByCanonical = new Map(
+    right.map((name) => [canonicalToolName(name), name]),
+  );
+  const out: string[] = [];
+  for (const name of left) {
+    const matched = rightByCanonical.get(canonicalToolName(name));
+    if (matched && !out.includes(matched)) out.push(matched);
+  }
+  return out;
 }
 
 /**
@@ -4726,7 +4954,7 @@ function inProcessDelegateCapabilityFacts(input: {
   const shellAccess = inProcessDelegateHasTool(
     input.profile,
     input.delegateChildTools,
-    "shell",
+    "bash",
   );
   return {
     workspaceAccess,
@@ -4778,7 +5006,8 @@ function inProcessDelegateHasTool(
 ): boolean {
   return delegateChildTools.some(
     (tool) =>
-      tool.name === toolName && inProcessDelegateCanUseTool(profile, tool),
+      canonicalToolName(tool.name) === canonicalToolName(toolName) &&
+      inProcessDelegateCanUseTool(profile, tool),
   );
 }
 
@@ -4788,7 +5017,9 @@ function inProcessDelegateCanUseTool(
 ): boolean {
   return (
     profile.allowedTools === undefined ||
-    profile.allowedTools.includes(tool.name)
+    profile.allowedTools.some(
+      (name) => canonicalToolName(name) === canonicalToolName(tool.name),
+    )
   );
 }
 
@@ -4797,8 +5028,8 @@ function childToolsForAgentProfile(
   profile: AgentProfile,
 ): ToolDefinition[] {
   if (profile.allowedTools === undefined) return [...childTools];
-  const allowed = new Set(profile.allowedTools);
-  return childTools.filter((tool) => allowed.has(tool.name));
+  const allowed = new Set(profile.allowedTools.map(canonicalToolName));
+  return childTools.filter((tool) => allowed.has(canonicalToolName(tool.name)));
 }
 
 /**
@@ -4841,10 +5072,10 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Supported: read_file, glob, grep, list_dir. Defaults to all four. Use grep to find a symbol by name (glob only matches paths, not contents).",
+            "Optional subset of read-only tools to expose. Supported: read, glob, grep, list_dir. Defaults to read, glob, and grep. Use grep to find a symbol by name (glob only matches paths, not contents).",
           items: {
             type: "string",
-            enum: ["read_file", "glob", "grep", "list_dir"],
+            enum: ["read", "glob", "grep", "list_dir"],
           },
         },
         maxSteps: {
@@ -4894,15 +5125,12 @@ export function createDynamicSpawnAgentTool(input: {
         );
       }
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set(["read_file", "glob", "grep", "list_dir"]);
-      const requestedTools = parsed.allowedTools ?? [
-        "read_file",
-        "glob",
-        "grep",
-        "list_dir",
-      ];
+      const supportedTools = new Set(["read", "glob", "grep", "list_dir"]);
+      const requestedTools = (
+        parsed.allowedTools ?? ["read", "glob", "grep"]
+      ).map(canonicalToolName);
       const availableTools = new Map(
-        input.childTools.map((tool) => [tool.name, tool]),
+        input.childTools.map((tool) => [canonicalToolName(tool.name), tool]),
       );
       const invalidTools = requestedTools.filter(
         (name) => !supportedTools.has(name) || !availableTools.has(name),
@@ -4917,6 +5145,20 @@ export function createDynamicSpawnAgentTool(input: {
       const childTools = requestedTools
         .map((name) => availableTools.get(name))
         .filter((tool): tool is ToolDefinition => tool !== undefined);
+      if (
+        childTools.some(
+          (tool) =>
+            tool.name !== DISCOVERY_TOOL_NAME && tool.deferLoading === true,
+        )
+      ) {
+        const discovery = availableTools.get(DISCOVERY_TOOL_NAME);
+        if (
+          discovery &&
+          !childTools.some((tool) => tool.name === discovery.name)
+        ) {
+          childTools.push(discovery);
+        }
+      }
       if (childTools.length === 0) {
         throw new Error(
           "spawn_agent requires at least one enabled child tool.",
@@ -5390,7 +5632,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
         if (typeof value !== "string" || !value.trim()) {
           throw new Error("spawn_agent allowedTools must contain strings.");
         }
-        return value.trim();
+        return canonicalToolName(value.trim());
       })
     : undefined;
   if (allowedTools && new Set(allowedTools).size !== allowedTools.length) {

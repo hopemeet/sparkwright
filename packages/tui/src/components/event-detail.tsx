@@ -66,6 +66,7 @@ export function eventMatchesFilter(
     case "tools":
       return (
         type.startsWith("tool.") ||
+        type.startsWith("task.") ||
         type.startsWith("mcp.") ||
         type.startsWith("subagent.")
       );
@@ -123,7 +124,7 @@ export function summarizeRunInspectorFacts(
     if (event.type === "run.failed") facts.runFailed += 1;
     if (event.type === "tool.requested") {
       facts.toolCalls += 1;
-      if (str(payload.toolName) === "shell") {
+      if (isShellToolName(str(payload.toolName))) {
         const args = rec(payload.arguments ?? payload.input ?? payload.args);
         const command = str(args.command);
         if (command) facts.lastCommand = command;
@@ -165,6 +166,10 @@ export function summarizeRunInspectorFacts(
   }
   facts.changedFiles = [...changedFiles].sort();
   return facts;
+}
+
+function isShellToolName(name: string): boolean {
+  return name === "bash" || name === "shell";
 }
 
 export function eventMatchesSearch(

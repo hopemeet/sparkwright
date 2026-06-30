@@ -223,7 +223,7 @@ Emitted after an MCP server has been prepared or skipped.
     {
       "toolName": "mcp_github_read_file",
       "serverName": "github",
-      "mcpToolName": "read_file"
+      "mcpToolName": "read"
     }
   ]
 }

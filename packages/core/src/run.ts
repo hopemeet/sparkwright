@@ -3371,6 +3371,9 @@ export class SparkwrightRun implements RunHandle {
         toolName: feedback.toolName,
         path: feedback.path,
         count: feedback.count,
+        ...(feedback.nextUnreadOffset !== undefined
+          ? { nextUnreadOffset: feedback.nextUnreadOffset }
+          : {}),
         step,
         ...(feedback.currentToolCallId
           ? { toolCallId: feedback.currentToolCallId }
@@ -4202,7 +4205,7 @@ function semanticToolTarget(toolName: string, args: unknown): string {
     if (ref !== undefined) {
       return `${toolName}::ref::${ref}`;
     }
-    if (toolName === "shell" && typeof record.command === "string") {
+    if (isShellToolName(toolName) && typeof record.command === "string") {
       const cwd =
         typeof record.cwd === "string" && record.cwd.length > 0
           ? `\u0000cwd:${record.cwd}`
@@ -4226,6 +4229,10 @@ function semanticToolTarget(toolName: string, args: unknown): string {
     serialized = String(args);
   }
   return `${toolName}::args::${serialized}`;
+}
+
+function isShellToolName(toolName: string): boolean {
+  return toolName === "bash" || toolName === "shell";
 }
 
 function isIdempotentNoopToolResult(result: ToolResult): boolean {

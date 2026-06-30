@@ -28,4 +28,13 @@ describe("ToastStore", () => {
     vi.advanceTimersByTime(60_000);
     expect(s.getSnapshot().current?.message).toBe("boom");
   });
+
+  it("dismisses a sticky error and advances queued status toasts", () => {
+    const s = new ToastStore();
+    s.push({ message: "manual_cancelled", variant: "error" });
+    s.push({ message: "run cancelled", variant: "info" });
+    s.dismiss();
+    expect(s.getSnapshot().current?.message).toBe("run cancelled");
+    expect(s.getSnapshot().queueDepth).toBe(0);
+  });
 });

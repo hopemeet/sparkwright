@@ -12,6 +12,11 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — host requests now include
+  `task.list`, `task.get`, `task.output`, and `task.stop`; protocol errors may
+  include `task_not_found`. Migration: clients may poll durable background task
+  state without parsing task tool output.
+
 - `config.schema.json`: breaking/pre-adoption — workflow hook lifecycle values
   are canonical-only (`RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`,
   `PostToolUse`, `Stop`, `RunEnd`, `RuntimeSignal`); legacy lifecycle values and

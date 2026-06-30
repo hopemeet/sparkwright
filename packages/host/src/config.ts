@@ -46,7 +46,9 @@ import {
   formatToolUseSelectorList,
   intersectToolUseSelectors,
   isToolUseSelector,
+  normalizeToolUseSelector,
 } from "./tool-selectors.js";
+import { normalizeToolNameList } from "./tool-identities.js";
 import {
   booleanSchema,
   integerArray,
@@ -1014,7 +1016,7 @@ function validateToolNameArray(
     });
     return undefined;
   }
-  return values;
+  return normalizeToolNameList(values);
 }
 
 function validateToolUseSelectorArray(
@@ -1034,7 +1036,15 @@ function validateToolUseSelectorArray(
     });
     return undefined;
   }
-  return values;
+  return uniquePreservingOrder(values.map(normalizeToolUseSelector));
+}
+
+function uniquePreservingOrder(values: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    if (!out.includes(value)) out.push(value);
+  }
+  return out;
 }
 
 function validateCapabilityHooks(
@@ -3397,7 +3407,7 @@ function validateAgentProfile(
   }
   for (const key of AGENT_PROFILE_TOOL_ARRAY_CONFIG_KEYS) {
     if (raw[key] !== undefined) {
-      profile[key] = validateStringArray(
+      profile[key] = validateToolNameArray(
         raw[key],
         `${field}.${key}`,
         filePath,

@@ -1990,6 +1990,60 @@ describe("trace", () => {
     );
   });
 
+  it("does not treat sequential paginated reads as duplicate low progress", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit(
+        "run.created",
+        { goal: "read a large file sequentially" },
+        { sessionId: "s1" },
+      ),
+    ];
+
+    for (let i = 0; i < 6; i += 1) {
+      events.push(
+        log.emit("model.requested", { step: i + 1 }),
+        log.emit("model.completed", { step: i + 1, message: `step ${i}` }),
+      );
+      if (i >= 5) continue;
+      const startLine = i * 1000 + 1;
+      const endLine = startLine + 999;
+      events.push(
+        log.emit("tool.requested", {
+          id: `read_${i}`,
+          toolName: "read_file",
+          arguments: { path: "PROJECT_NOTES.md", offset: startLine },
+        }),
+        log.emit("tool.completed", {
+          toolCallId: `read_${i}`,
+          toolName: "read_file",
+          status: "completed",
+          output: {
+            path: "PROJECT_NOTES.md",
+            startLine,
+            endLine,
+            hasMore: true,
+            nextOffset: endLine + 1,
+          },
+        }),
+        log.emit("workspace.read", { path: "PROJECT_NOTES.md" }),
+      );
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.topDuplicateReads).toMatchObject({
+      "PROJECT_NOTES.md": 5,
+    });
+    expect(
+      report.findings.some((finding) => finding.code === "LOW_NET_PROGRESS"),
+    ).toBe(false);
+  });
+
   it("does not flag low net progress for a short run that verified late", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -2148,6 +2202,142 @@ describe("trace", () => {
           ]),
         }),
       ]),
+    );
+  });
+
+  it("does not warn for verification command failures that later pass", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.completed", {
+        toolCallId: "call_fail",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_pass",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      log.emit("run.completed", {
+        state: "completed",
+        reason: "final_answer",
+        commandOutcome: {
+          total: 1,
+          byExitCode: { "1": 1 },
+          verification: {
+            total: 1,
+            unresolved: 0,
+            lastFailureCommand: "npm test",
+            lastFailureExitCode: 1,
+            lastFailureTimedOut: false,
+            lastSuccessfulVerificationCommand: "npm test",
+          },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "COMMAND_FAILURES",
+    );
+  });
+
+  it("reports node -e probe failures separately from recovered verification", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit(
+        "run.created",
+        { goal: "fix and verify with npm test" },
+        { sessionId: "s1" },
+      ),
+      log.emit("tool.requested", {
+        id: "probe",
+        toolName: "shell",
+        arguments: {
+          command: 'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "probe",
+        toolName: "shell",
+        status: "completed",
+        output: {
+          exitCode: 7,
+          timedOut: false,
+          stdout: "",
+          stderr: "probe failed\n",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "fail",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "fail",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false, stdout: "", stderr: "fail" },
+      }),
+      log.emit("tool.requested", {
+        id: "pass",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "pass",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
+      }),
+      log.emit("run.completed", {
+        state: "completed",
+        commandOutcome: {
+          total: 2,
+          byExitCode: { "7": 1, "1": 1 },
+          verification: {
+            total: 2,
+            unresolved: 1,
+            lastCommand:
+              'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+            lastExitCode: 7,
+            lastTimedOut: false,
+            lastFailureCommand: "npm test",
+            lastFailureExitCode: 1,
+            lastFailureTimedOut: false,
+            lastSuccessfulVerificationCommand: "npm test",
+          },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "COMMAND_FAILURES",
+          evidence: expect.arrayContaining([
+            "2 command failure(s)",
+            "1:1, 7:1",
+            "last successful verification: npm test",
+            "last verification failure: npm test",
+          ]),
+        }),
+      ]),
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_VERIFICATION_FAILURES",
     );
   });
 

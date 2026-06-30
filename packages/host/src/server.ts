@@ -9,6 +9,7 @@ import {
   ACCESS_MODES,
   PERMISSION_MODES,
   PROTOCOL_VERSION,
+  TASK_STATUSES,
   TRACE_LEVELS,
   isRequest,
 } from "@sparkwright/protocol";
@@ -136,6 +137,10 @@ async function handleRequest(
             "sessions",
             "session.inspect",
             "session.compact",
+            "task.list",
+            "task.get",
+            "task.output",
+            "task.stop",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -249,6 +254,48 @@ async function handleRequest(
           skippedReason: r.skippedReason,
           warnings: r.warnings,
           artifactPath: r.artifactPath,
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "task.list": {
+      const r = runtime.listTasks(req.payload);
+      respondOk(conn, req.id, { tasks: r.tasks });
+      return false;
+    }
+    case "task.get": {
+      const r = runtime.getTask(req.payload.taskId);
+      if (r.ok)
+        respondOk(conn, req.id, r.task as unknown as Record<string, unknown>);
+      else respondError(conn, req.id, r.error);
+      return false;
+    }
+    case "task.output": {
+      const r = await runtime.readTaskOutput(req.payload);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          taskId: r.taskId,
+          chunks: r.chunks,
+          nextSequence: r.nextSequence,
+          complete: r.complete,
+          status: r.status,
+          ...(r.error ? { error: r.error } : {}),
+          ...(r.lastOutputAt ? { lastOutputAt: r.lastOutputAt } : {}),
+          stalled: r.stalled,
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "task.stop": {
+      const r = await runtime.stopTask(req.payload.taskId);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          cancelled: r.cancelled,
+          ...(r.status ? { status: r.status } : {}),
         });
       } else {
         respondError(conn, req.id, r.error);
@@ -406,6 +453,35 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "reason") ??
         optionalBoolean(req.payload, "llm")
       );
+    case "task.list":
+      return (
+        requireOnly(req.payload, ["status", "kind", "parentRunId", "limit"]) ??
+        optionalEnum(req.payload, "status", [...TASK_STATUSES]) ??
+        optionalString(req.payload, "kind") ??
+        optionalString(req.payload, "parentRunId") ??
+        optionalPositiveInteger(req.payload, "limit", 200)
+      );
+    case "task.get":
+      return (
+        requireOnly(req.payload, ["taskId"]) ??
+        requireString(req.payload, "taskId")
+      );
+    case "task.output":
+      return (
+        requireOnly(req.payload, ["taskId", "fromSequence", "maxChunks"]) ??
+        requireString(req.payload, "taskId") ??
+        optionalNonNegativeInteger(
+          req.payload,
+          "fromSequence",
+          Number.MAX_SAFE_INTEGER,
+        ) ??
+        optionalPositiveInteger(req.payload, "maxChunks", 1000)
+      );
+    case "task.stop":
+      return (
+        requireOnly(req.payload, ["taskId"]) ??
+        requireString(req.payload, "taskId")
+      );
     case "capability.inspect":
       return (
         requireOnly(req.payload, ["sessionId", "model"]) ??
@@ -516,6 +592,18 @@ function optionalPositiveInteger(
   return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= max
     ? undefined
     : `${key} must be an integer between 1 and ${max}`;
+}
+
+function optionalNonNegativeInteger(
+  record: Record<string, unknown>,
+  key: string,
+  max: number,
+): string | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= max
+    ? undefined
+    : `${key} must be an integer between 0 and ${max}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

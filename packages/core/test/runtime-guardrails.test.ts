@@ -188,6 +188,45 @@ describe("createFileReadDedupStage", () => {
     });
     expect(should).toBe(false);
   });
+
+  it("keeps distinct paginated windows while deduping repeated windows", async () => {
+    const page1 = toolResultWithMeta("page one", {
+      filePath: "PROJECT_NOTES.md",
+      startLine: 1,
+      endLine: 2000,
+    });
+    const page2 = toolResultWithMeta("stale page two", {
+      filePath: "PROJECT_NOTES.md",
+      startLine: 2001,
+      endLine: 4000,
+    });
+    const page2Latest = toolResultWithMeta("latest page two", {
+      filePath: "PROJECT_NOTES.md",
+      startLine: 2001,
+      endLine: 4000,
+    });
+
+    const stage = createFileReadDedupStage();
+    const should = await stage.shouldRun({
+      items: [page1, page2, page2Latest],
+      hints: { reasons: [] },
+      totalChars: 0,
+      reactive: false,
+    });
+    expect(should).toBe(true);
+
+    const res = await stage.apply({
+      items: [page1, page2, page2Latest],
+      hints: { reasons: [] },
+      totalChars: 0,
+      reactive: false,
+    });
+
+    expect(res.items[0]!.content).toBe("page one");
+    expect(res.items[1]!.content).toContain("superseded");
+    expect(res.items[2]!.content).toBe("latest page two");
+    expect(res.items[1]!.metadata.dedupKeptItemId).toBe(page2Latest.id);
+  });
 });
 
 describe("createObservationOneLineStage", () => {

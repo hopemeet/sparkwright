@@ -53,6 +53,11 @@ export interface ToolSearchMatch {
   description: string;
   inputSchema: unknown;
   outputSchema?: unknown;
+  canonicalName?: string;
+  legacyNames?: string[];
+  defaultExposureTier?: string;
+  relatedTools?: string[];
+  requiresTool?: string[];
   /**
    * Lowercased keyword overlap score (0..N). Always 0 for `select:` queries
    * (exact lookup). Higher is better.
@@ -145,6 +150,9 @@ export function createToolSearchTool(
       const pool = deferredOnly
         ? descriptors.filter((descriptor) => isDeferredDescriptor(descriptor))
         : descriptors;
+      const poolByName = new Map(
+        pool.map((descriptor) => [descriptor.name, descriptor]),
+      );
       const deferredCatalogSize = descriptors.filter((descriptor) =>
         isDeferredDescriptor(descriptor),
       ).length;
@@ -158,7 +166,10 @@ export function createToolSearchTool(
           .filter((s) => s.length > 0);
         const matches: ToolSearchMatch[] = [];
         for (const name of names) {
-          const descriptor = pool.find((entry) => entry.name === name);
+          const descriptor = pool.find(
+            (entry) =>
+              entry.name === name || (entry.legacyNames ?? []).includes(name),
+          );
           if (descriptor) {
             matches.push(descriptorToMatch(descriptor, 0));
           }
@@ -166,7 +177,7 @@ export function createToolSearchTool(
         return {
           query: input.query,
           mode: "select",
-          matches,
+          matches: expandRelatedMatches(matches, poolByName),
           deferredCatalogSize,
         };
       }
@@ -183,9 +194,14 @@ export function createToolSearchTool(
       return {
         query: input.query,
         mode: "keyword",
-        matches: ranked
-          .slice(0, maxResults)
-          .map(({ descriptor, score }) => descriptorToMatch(descriptor, score)),
+        matches: expandRelatedMatches(
+          ranked
+            .slice(0, maxResults)
+            .map(({ descriptor, score }) =>
+              descriptorToMatch(descriptor, score),
+            ),
+          poolByName,
+        ),
         deferredCatalogSize,
       };
     },
@@ -222,7 +238,8 @@ function tokenize(value: string): string[] {
 
 function scoreDescriptor(descriptor: ToolDescriptor, tokens: string[]): number {
   if (tokens.length === 0) return 0;
-  const haystack = `${descriptor.name} ${descriptor.description}`.toLowerCase();
+  const haystack =
+    `${descriptor.name} ${(descriptor.legacyNames ?? []).join(" ")} ${descriptor.description}`.toLowerCase();
   let score = 0;
   for (const token of tokens) {
     if (!token) continue;
@@ -241,7 +258,37 @@ function descriptorToMatch(
     description: descriptor.description,
     inputSchema: descriptor.inputSchema,
     outputSchema: descriptor.outputSchema,
+    canonicalName: descriptor.canonicalName,
+    legacyNames: descriptor.legacyNames,
+    defaultExposureTier: descriptor.defaultExposureTier,
+    relatedTools: descriptor.relatedTools,
+    requiresTool: descriptor.requiresTool,
     score,
     deferred: isDeferredDescriptor(descriptor),
   };
+}
+
+function expandRelatedMatches(
+  initialMatches: ToolSearchMatch[],
+  poolByName: Map<string, ToolDescriptor>,
+): ToolSearchMatch[] {
+  const matchesByName = new Map(
+    initialMatches.map((match) => [match.name, match]),
+  );
+  const queue = [...initialMatches];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const name of [
+      ...(current.requiresTool ?? []),
+      ...(current.relatedTools ?? []),
+    ]) {
+      if (matchesByName.has(name)) continue;
+      const descriptor = poolByName.get(name);
+      if (!descriptor) continue;
+      const match = descriptorToMatch(descriptor, 0);
+      matchesByName.set(name, match);
+      queue.push(match);
+    }
+  }
+  return [...matchesByName.values()];
 }

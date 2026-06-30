@@ -48,6 +48,30 @@ describe("formatToolRequestPreview", () => {
     ).toBe("create repo-reviewer");
   });
 
+  it("keeps background task operations concise", () => {
+    expect(
+      formatToolRequestPreview("task", {
+        action: "output",
+        taskId: "task_mqzd1c1b30yc24hj",
+        fromSequence: 0,
+        maxChunks: 10,
+      }),
+    ).toBe("output task_mqzd...yc24hj from 0 10 chunks");
+    expect(
+      formatToolRequestPreview("task_get", {
+        taskId: "task_mqzd1c1b30yc24hj",
+      }),
+    ).toBe("get task_mqzd...yc24hj");
+    expect(
+      formatToolRequestPreview("task", {
+        action: "get",
+        taskId: "task_mqzd1c1b30yc24hj",
+        fromSequence: 0,
+        maxChunks: 5,
+      }),
+    ).toBe("get task_mqzd...yc24hj");
+  });
+
   it("sanitizes fallback previews", () => {
     expect(oneLine({ value: "\u001b[2Jhello\nworld" }, 80)).toBe(
       '{"value":"hello world"}',

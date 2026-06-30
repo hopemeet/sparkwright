@@ -52,6 +52,7 @@ export {
   resolveSelectorAllowlist,
   shouldAppendDiscoveryTool,
 } from "./tool-selectors.js";
+export { canonicalToolName, normalizeToolNameList } from "./tool-identities.js";
 export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export {
   bindConfiguredEventHooks,

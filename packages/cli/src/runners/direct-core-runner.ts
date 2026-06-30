@@ -404,7 +404,7 @@ function createDeterministicModel(input: {
           message: `Reading ${input.targetPath}.`,
           toolCalls: [
             {
-              toolName: "read_file",
+              toolName: "read",
               arguments: { path: input.targetPath },
             },
           ],
@@ -453,7 +453,7 @@ function createDeterministicModel(input: {
                   },
                 }
               : {
-                  toolName: "write_file",
+                  toolName: "write",
                   arguments: {
                     path: input.targetPath,
                     content: `## ${heading}\n\n${body}\n`,
@@ -537,7 +537,7 @@ function hasDeterministicSection(
   events: SparkwrightEvent[],
   heading: string,
 ): boolean {
-  const read = latestToolOutput<{ content?: string }>(events, "read_file");
+  const read = latestToolOutput<{ content?: string }>(events, "read");
   return typeof read?.content === "string" && read.content.includes(heading);
 }
 

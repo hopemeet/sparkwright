@@ -125,7 +125,7 @@ export function analyzeCommandOutcomes(
     if (event.type === "tool.requested" && isRecord(event.payload)) {
       const id = stringValue(event.payload.id);
       const toolName = stringValue(event.payload.toolName);
-      if (!id || toolName !== "shell") continue;
+      if (!id || !isShellToolName(toolName)) continue;
       const args = isRecord(event.payload.arguments)
         ? event.payload.arguments
         : undefined;
@@ -137,7 +137,7 @@ export function analyzeCommandOutcomes(
     const toolCallId = stringValue(event.payload.toolCallId);
     const call = toolCallId ? shellCalls.get(toolCallId) : undefined;
     const toolName = stringValue(event.payload.toolName);
-    if (!call && toolName !== "shell") continue;
+    if (!call && !isShellToolName(toolName)) continue;
     const output = isRecord(event.payload.output)
       ? event.payload.output
       : undefined;
@@ -210,6 +210,10 @@ export function analyzeCommandOutcomes(
     unresolvedVerificationFailures,
     byExitCode,
   };
+}
+
+function isShellToolName(value: unknown): boolean {
+  return value === "bash" || value === "shell";
 }
 
 export function analyzeToolOutcomes(
@@ -1014,6 +1018,7 @@ function isProbeCommand(command: string): boolean {
   return (
     /^(pwd|ls|find|rg|grep|cat|sed|head|tail|wc|stat)\b/.test(command) ||
     /^(which|command\s+-v)\b/.test(command) ||
+    /^node(?:\s+\S+)*\s+-e\b/.test(command) ||
     /\b(--version|-v)\b/.test(command) ||
     /\bpython(?:\d+(?:\.\d+)*)?\s+--version\b/.test(command)
   );

@@ -1243,7 +1243,7 @@ describe("createVerificationWorkflowHooks", () => {
         run,
         step: 1,
         payload: {
-          toolName: "apply_patch",
+          toolName: "edit",
           status: "completed",
           path: "src/a.ts",
         },

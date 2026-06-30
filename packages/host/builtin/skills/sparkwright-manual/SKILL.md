@@ -2,7 +2,7 @@
 name: sparkwright-manual
 description: Operational manual for running, configuring, debugging, and extending SparkWright itself. Do NOT use for testing or debugging the user's own application code (e.g. their login, auth, or business features) — that is outside SparkWright's scope.
 triggers: trace session resume cron artifacts background task troubleshoot replay repair config provider model workspace permission tool skill MCP agent profile CLI TUI command flag
-allowed-tools: shell
+allowed-tools: bash
 metadata:
   version: 0.1.0
 ---
@@ -15,7 +15,7 @@ For requests to create, scaffold, wire, or configure project capabilities,
 prefer the `sparkwright-capability-builder` skill.
 
 This skill is an operational index. Its references are plain files: open the one
-you need with a file-reading tool (e.g. read_file) using the full paths listed
+you need with a file-reading tool (e.g. read) using the full paths listed
 under `<skill_files>` in the skill_load result. Do NOT call skill_load again —
 this skill's body is already in context. Read only the reference needed for the
 current task, not every reference by default.

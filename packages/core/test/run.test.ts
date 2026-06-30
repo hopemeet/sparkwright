@@ -1213,6 +1213,105 @@ describe("SparkwrightRun", () => {
     ).toEqual(["README.md", "README.md"]);
   });
 
+  it("feeds back the next unread offset when paging backwards", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
+    tempDirs.push(root);
+    await writeFile(
+      join(root, "PROJECT_NOTES.md"),
+      ["one", "two", "three", "four", "five", "six"].join("\n"),
+      "utf8",
+    );
+    let modelCalls = 0;
+    let healthContext: string | undefined;
+
+    const readFileTool = defineTool({
+      name: "read_file",
+      description: "Read a paginated file.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          offset: { type: "number" },
+          limit: { type: "number" },
+        },
+        required: ["path"],
+      },
+      policy: { risk: "safe" },
+      async execute(args, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        const input = args as { path: string; offset?: number; limit?: number };
+        const content = await ctx.workspace.readText(input.path);
+        const lines = content.split("\n");
+        const startLine = input.offset ?? 1;
+        const limit = input.limit ?? 2;
+        const endLine = Math.min(lines.length, startLine + limit - 1);
+        return {
+          path: input.path,
+          content: lines.slice(startLine - 1, endLine).join("\n"),
+          startLine,
+          endLine,
+          totalLines: lines.length,
+          hasMore: endLine < lines.length,
+          ...(endLine < lines.length ? { nextOffset: endLine + 1 } : {}),
+        };
+      },
+    });
+
+    const run = createRun({
+      goal: "read pages without going backwards",
+      workspace: new LocalWorkspace(root),
+      tools: [readFileTool],
+      maxSteps: 6,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "PROJECT_NOTES.md", offset: 3, limit: 2 },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 3) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
+                },
+              ],
+            };
+          }
+
+          healthContext = input.context
+            .filter((item) => item.source?.uri === "run.health")
+            .map((item) => item.content)
+            .find((content) => content.includes("continue from offset 5"));
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(healthContext).toContain("same unchanged content");
+    expect(healthContext).toContain("continue from offset 5");
+  });
+
   it("does not feed back unchanged reads after the file is written", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
     tempDirs.push(root);

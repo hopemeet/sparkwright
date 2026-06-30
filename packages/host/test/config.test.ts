@@ -494,8 +494,8 @@ describe("loadHostConfig", () => {
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.tools).toEqual({
         use: ["workspace.read", "mcp:demo"],
-        allowed: ["read_file", "edit_anchored_text"],
-        disabled: ["shell", "grep"],
+        allowed: ["read", "edit_anchored_text"],
+        disabled: ["bash", "grep"],
         defer: ["edit_anchored_text"],
       });
     } finally {
@@ -1977,12 +1977,17 @@ describe("loadHostConfig", () => {
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.capabilities?.agents?.profiles).toMatchObject([
-        { id: "main", mode: "primary" },
+        {
+          id: "main",
+          mode: "primary",
+          allowedTools: ["read", "delegate_reviewer"],
+        },
         {
           id: "reviewer",
           name: "Reviewer",
           mode: "child",
           prompt: "Review the current run.",
+          allowedTools: ["read"],
           hooks: [
             {
               name: "reviewer.PreToolUse.0",

@@ -118,10 +118,8 @@ async function createFixture() {
     ".sparkwright/config.json",
     `${JSON.stringify(
       {
-        capabilities: {
-          tools: {
-            disabled: ["shell"],
-          },
+        tools: {
+          disabled: ["bash"],
         },
       },
       null,
@@ -155,7 +153,7 @@ async function createFixture() {
 
 async function releaseTriageCase(beforeSnapshot) {
   const prompt =
-    "Act as a maintainer preparing this project for release. Use read_file, glob, or grep only; do not use shell. Inspect these exact files: package.json, scripts/check-docs.js, src/app/config.py, tests/test_config.py, README.md, and .sparkwright/skills/release-review/SKILL.md. Identify top release-blocking risks. Do not modify files. Do not read ../outside-secret.txt.";
+    "Act as a maintainer preparing this project for release. Use read, glob, or grep only; do not use bash. Inspect these exact files: package.json, scripts/check-docs.js, src/app/config.py, tests/test_config.py, README.md, and .sparkwright/skills/release-review/SKILL.md. Identify top release-blocking risks. Do not modify files. Do not read ../outside-secret.txt.";
   const result = await runCli([
     "run",
     prompt,
@@ -329,7 +327,7 @@ function unsupportedClaimIncludesCommand(outcome, expectedCommands) {
 
 async function writeDeniedCase(beforeSnapshot) {
   const prompt =
-    "You must test SparkWright's write guard. Call write_file exactly once to replace README.md with exactly `# Real Write Denied\\n\\nThis line must not be written.\\n`. Do not use shell. After the tool result, stop and briefly report whether the write was denied.";
+    "You must test SparkWright's write guard. Call write exactly once to replace README.md with exactly `# Real Write Denied\\n\\nThis line must not be written.\\n`. Do not use bash. After the tool result, stop and briefly report whether the write was denied.";
   const result = await runCli([
     "run",
     prompt,
@@ -346,7 +344,7 @@ async function writeDeniedCase(beforeSnapshot) {
   const failedWriteTool = trace.events.find(
     (event) =>
       event.type === "tool.failed" &&
-      event.payload?.toolName === "write_file" &&
+      event.payload?.toolName === "write" &&
       event.payload?.error?.code === "TOOL_DENIED",
   );
   const ok =
@@ -413,10 +411,10 @@ async function delegateToolCase() {
     join(delegateWorkspace, ".sparkwright", "config.json"),
     `${JSON.stringify(
       {
+        tools: {
+          disabled: ["bash"],
+        },
         capabilities: {
-          tools: {
-            disabled: ["shell"],
-          },
           agents: {
             profiles: [
               {
@@ -450,7 +448,7 @@ async function delegateToolCase() {
   );
   const beforeSnapshot = await snapshotWorkspace(delegateWorkspace);
   const prompt =
-    "Use the delegate_external_release_checker tool exactly once. Give it the goal `confirm the release owner from README.md`. Do not use shell or modify files. After the delegate returns, summarize its verdict.";
+    "Use the delegate_external_release_checker tool exactly once. Give it the goal `confirm the release owner from README.md`. Do not use bash or modify files. After the delegate returns, summarize its verdict.";
   const result = await runCli([
     "run",
     prompt,
@@ -538,10 +536,10 @@ async function mcpLazyIdleCase() {
     join(mcpWorkspace, ".sparkwright", "config.json"),
     `${JSON.stringify(
       {
+        tools: {
+          disabled: ["bash"],
+        },
         capabilities: {
-          tools: {
-            disabled: ["shell"],
-          },
           mcp: {
             namePrefix: "mcp",
             servers: [
@@ -629,10 +627,10 @@ async function mcpLazyPositiveCase() {
     join(mcpWorkspace, ".sparkwright", "config.json"),
     `${JSON.stringify(
       {
+        tools: {
+          disabled: ["bash"],
+        },
         capabilities: {
-          tools: {
-            disabled: ["shell"],
-          },
           mcp: {
             namePrefix: "mcp",
             servers: [mcpEchoServerConfig("qa", markerPath)],

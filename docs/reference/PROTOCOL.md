@@ -430,7 +430,7 @@ event back to the recovery-aware tool outcome.
       {
         "toolName": "mcp_github_read_file",
         "serverName": "github",
-        "mcpToolName": "read_file"
+        "mcpToolName": "read"
       }
     ]
   }
@@ -781,7 +781,7 @@ The important protocol property is that accepted anchored edits still produce `w
 
 ```json
 {
-  "name": "read_file",
+  "name": "read",
   "description": "Read a UTF-8 text file inside the workspace.",
   "inputSchema": {
     "type": "object",
@@ -843,7 +843,7 @@ Tool descriptors may also include optional runtime hints:
 {
   "id": "call_01h",
   "runId": "run_01h",
-  "toolName": "read_file",
+  "toolName": "read",
   "arguments": {
     "path": "README.md"
   }

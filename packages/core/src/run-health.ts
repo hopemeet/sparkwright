@@ -37,6 +37,7 @@ export interface RunHealthFeedback {
   toolName: string;
   path: string;
   count: number;
+  nextUnreadOffset?: number;
   currentToolCallId?: string;
   previousToolCallId?: string;
   message: string;
@@ -48,6 +49,13 @@ interface ReadSnapshot {
   fingerprint: string;
   count: number;
   lastToolCallId?: string;
+}
+
+interface ReadProgress {
+  path: string;
+  maxEndLine?: number;
+  totalLines?: number;
+  hasMore: boolean;
 }
 
 export function collectRepeatedToolRequests(
@@ -131,6 +139,7 @@ export function analyzeLowNetProgress(
 
 export class RunHealthAnalyzer {
   private readonly readSnapshots = new Map<string, ReadSnapshot>();
+  private readonly readProgress = new Map<string, ReadProgress>();
   private readonly pendingFeedback: RunHealthFeedback[] = [];
 
   observeEvent(event: SparkwrightEvent): void {
@@ -162,6 +171,9 @@ export class RunHealthAnalyzer {
     if (!fingerprint) return;
 
     const key = readWindowKey(toolName, path, output);
+    const progressKey = readProgressKey(toolName, path);
+    const previousProgress = this.readProgress.get(progressKey);
+    this.updateReadProgress(progressKey, path, output);
     const currentToolCallId = stringValue(payload.toolCallId, payload.id);
     const previous = this.readSnapshots.get(key);
     if (!previous || previous.fingerprint !== fingerprint) {
@@ -176,6 +188,10 @@ export class RunHealthAnalyzer {
     }
 
     const count = previous.count + 1;
+    const nextUnreadOffset = repeatedReadNextUnreadOffset(
+      previousProgress,
+      output,
+    );
     this.readSnapshots.set(key, {
       ...previous,
       count,
@@ -190,11 +206,13 @@ export class RunHealthAnalyzer {
       count,
       currentToolCallId,
       previousToolCallId: previous.lastToolCallId,
-      message:
-        `\`${toolName}\` returned the same unchanged content for \`${path}\` ` +
-        `${count} times. Use the earlier observation instead of reading this ` +
-        `same file window again, unless a new write or external change gives ` +
-        `you a concrete reason to re-check it.`,
+      ...(nextUnreadOffset !== undefined ? { nextUnreadOffset } : {}),
+      message: repeatedReadFeedbackMessage({
+        toolName,
+        path,
+        count,
+        nextUnreadOffset,
+      }),
     });
   }
 
@@ -202,7 +220,62 @@ export class RunHealthAnalyzer {
     for (const [key, snapshot] of this.readSnapshots) {
       if (snapshot.path === path) this.readSnapshots.delete(key);
     }
+    for (const [key, progress] of this.readProgress) {
+      if (progress.path === path) this.readProgress.delete(key);
+    }
   }
+
+  private updateReadProgress(
+    key: string,
+    path: string,
+    output: Record<string, unknown>,
+  ): void {
+    const endLine = optionalNumberValue(output.endLine);
+    const totalLines = optionalNumberValue(output.totalLines);
+    const hasMore = output.hasMore === true;
+    const previous = this.readProgress.get(key);
+    this.readProgress.set(key, {
+      path,
+      maxEndLine:
+        endLine === undefined
+          ? previous?.maxEndLine
+          : Math.max(previous?.maxEndLine ?? 0, endLine),
+      totalLines: totalLines ?? previous?.totalLines,
+      hasMore,
+    });
+  }
+}
+
+function repeatedReadFeedbackMessage(input: {
+  toolName: string;
+  path: string;
+  count: number;
+  nextUnreadOffset?: number;
+}): string {
+  const next =
+    input.nextUnreadOffset !== undefined
+      ? ` Lines after this window were already read; if you still need to page forward, continue from offset ${input.nextUnreadOffset}.`
+      : "";
+  return (
+    `\`${input.toolName}\` returned the same unchanged content for ` +
+    `\`${input.path}\` ${input.count} times. Use the earlier observation ` +
+    `instead of reading this same file window again, unless a new write or ` +
+    `external change gives you a concrete reason to re-check it.` +
+    next
+  );
+}
+
+function repeatedReadNextUnreadOffset(
+  progress: ReadProgress | undefined,
+  output: Record<string, unknown>,
+): number | undefined {
+  if (!progress?.maxEndLine) return undefined;
+  if (output.hasMore !== true && progress.hasMore !== true) return undefined;
+  const startLine = optionalNumberValue(output.startLine);
+  if (startLine !== undefined && startLine > progress.maxEndLine) {
+    return undefined;
+  }
+  return progress.maxEndLine + 1;
 }
 
 function readWindowKey(
@@ -224,6 +297,10 @@ function readWindowKey(
     truncated,
     hasMore,
   });
+}
+
+function readProgressKey(toolName: string, path: string): string {
+  return `${toolName}\u0000${path}`;
 }
 
 function readResultFingerprint(
@@ -253,6 +330,7 @@ function readResultFingerprint(
 
 function isFileReadLikeTool(toolName: string): boolean {
   return (
+    toolName === "read" ||
     toolName === "read_file" ||
     toolName === "read_text" ||
     toolName === "read_anchored_text"

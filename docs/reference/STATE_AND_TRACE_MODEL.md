@@ -308,11 +308,12 @@ should implement `TaskStore` in `@sparkwright/agent-runtime` and keep the parent
 run id in task metadata.
 
 When a foreground shell is promoted to a task, the host adopts the already
-running process instead of restarting it. Stdout/stderr remain durable in
-`TaskStore`; trace output is mirrored as `task.output` under the task span; the
-terminal task event carries `ProcessOutputSummary` with optional log artifact
-ids. This path intentionally does not emit `extension.process.*` lifecycle
-events.
+running process instead of restarting it. The promotion path emits
+`task.created` before the task span opens with `task.started`. Stdout/stderr
+remain durable in `TaskStore`; trace output is mirrored as `task.output` under
+the task span; the terminal task event carries `ProcessOutputSummary` with
+optional log artifact ids. This path intentionally does not emit
+`extension.process.*` lifecycle events.
 
 ## Store And Sink Responsibilities
 

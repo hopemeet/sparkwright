@@ -49,6 +49,45 @@ describe("renderTranscript", () => {
     expect(md).toContain("_Run completed: **natural**_");
   });
 
+  it("renders the user goal from run.created when run.started omits it", () => {
+    const events: RunEvent[] = [
+      {
+        type: "run.created",
+        sequence: 1,
+        payload: {
+          runId: "r1",
+          goal: "Inspect README.md and answer in one short sentence.",
+        },
+      },
+      {
+        type: "run.started",
+        sequence: 2,
+        payload: { runId: "r1", resolvedModel: "deterministic" },
+      },
+      {
+        type: "model.requested",
+        sequence: 3,
+        payload: {
+          runId: "r1",
+          goal: "Inspect README.md and answer in one short sentence.",
+        },
+      },
+    ];
+
+    const md = renderTranscript(
+      {
+        sessionId: "s1",
+        workspaceRoot: "/tmp/x",
+        exportedAt: new Date("2026-01-01T00:00:00Z"),
+      },
+      events,
+    );
+
+    expect(md).toContain("Inspect README.md and answer in one short sentence.");
+    expect(md).not.toContain("_(no goal text)_");
+    expect(md.match(/## User/g)).toHaveLength(1);
+  });
+
   it("renders tool call args and result as concise tool display text", () => {
     const events: RunEvent[] = [
       {
@@ -168,7 +207,7 @@ describe("renderTranscript", () => {
 
     expect(md).toContain("list_dir . → 2 entries");
     expect(md).toContain("src/ · package.json");
-    expect(md).toContain("read_file README.md");
+    expect(md).toContain("read README.md");
     expect(md).toContain("2 lines");
     expect(md).toContain("11 bytes");
     expect(md).not.toContain('"entries"');

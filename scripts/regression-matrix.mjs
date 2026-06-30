@@ -504,9 +504,9 @@ async function delegateCwdCase() {
             id: "runner",
             name: "Runner",
             mode: "child",
-            prompt: "Run the requested shell command.",
-            use: ["shell"],
-            allowedTools: ["shell"],
+            prompt: "Run the requested Bash command.",
+            use: ["bash"],
+            allowedTools: ["bash"],
           },
         ],
         delegateTools: [{ profileId: "runner", toolName: "delegate_runner" }],
@@ -533,17 +533,25 @@ async function delegateCwdCase() {
           {
             toolCalls: [
               {
+                toolName: "tool_search",
+                arguments: { query: "select:delegate_agent" },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              {
                 toolName: "delegate_agent",
                 arguments: {
                   agentId: "runner",
-                  goal: "Print the child shell cwd.",
+                  goal: "Print the child Bash cwd.",
                 },
               },
             ],
           },
           {
             toolCalls: [
-              { toolName: "shell", arguments: { command: "pwd", cwd: "." } },
+              { toolName: "bash", arguments: { command: "pwd", cwd: "." } },
             ],
           },
           { message: "child cwd checked" },
@@ -557,15 +565,15 @@ async function delegateCwdCase() {
   const expectedCwd = await realpath(workspace);
   record({
     id: "DELEGATE_CWD",
-    name: "configured delegate shell cwd",
+    name: "configured delegate Bash cwd",
     command: commandString(result.command),
     prompt,
     workspace,
     write: "no",
     expectedTrace:
-      "delegate_agent(runner) -> child shell pwd with cwd='.' resolves inside workspace; subagent.completed",
+      "tool_search -> delegate_agent(runner) -> child bash pwd with cwd='.' resolves inside workspace; subagent.completed",
     failureRule:
-      "Fails if configured delegate child shell false-denies cwd='.', resolves outside the workspace, or loses subagent finality.",
+      "Fails if configured delegate child bash false-denies cwd='.', resolves outside the workspace, or loses subagent finality.",
     harness: true,
     ok:
       result.exitCode === 0 &&
@@ -577,7 +585,7 @@ async function delegateCwdCase() {
       !eventWith(
         childTrace,
         "tool.failed",
-        (event) => event.payload?.toolName === "shell",
+        (event) => event.payload?.toolName === "bash",
       ) &&
       JSON.stringify(childTrace).includes(expectedCwd),
   });
@@ -589,7 +597,7 @@ async function shellPromotionCase() {
     shell: { foregroundTimeoutMs: 20, sandbox: { mode: "off" } },
     maxSteps: 20,
   });
-  const prompt = "Promote a long shell command and inspect tasks.";
+  const prompt = "Promote a long Bash command and inspect tasks.";
   const result = await runCli(
     [
       "run",
@@ -609,11 +617,19 @@ async function shellPromotionCase() {
           {
             toolCalls: [
               {
-                toolName: "shell",
+                toolName: "bash",
                 arguments: {
                   command:
                     "node -e \"setTimeout(() => console.log('matrix promoted'), 80)\"",
                 },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              {
+                toolName: "tool_search",
+                arguments: { query: "select:task" },
               },
             ],
           },
@@ -633,13 +649,13 @@ async function shellPromotionCase() {
   const trace = await traceFromOutput(result.stdout);
   record({
     id: "PROMOTE",
-    name: "shell foreground promotion",
+    name: "bash foreground promotion",
     command: commandString(result.command),
     prompt,
     workspace,
-    write: "yes, auto-approved shell",
+    write: "yes, auto-approved bash",
     expectedTrace:
-      "shell result has promoted=true/taskId; task(action=list, kind=shell.promoted) returns a parent task",
+      "bash result has promoted=true/taskId; tool_search -> task(action=list, kind=shell.promoted) returns a parent task",
     failureRule:
       "Fails if the foreground timeout kills instead of promoting, or if promoted tasks are not visible to the main agent.",
     harness: true,
@@ -649,7 +665,7 @@ async function shellPromotionCase() {
         trace.events,
         "tool.completed",
         (event) =>
-          event.payload?.toolName === "shell" &&
+          event.payload?.toolName === "bash" &&
           event.payload?.output?.promoted === true &&
           typeof event.payload?.output?.taskId === "string",
       ) &&
@@ -678,16 +694,16 @@ async function delegateNoTaskManagerTimeoutCase() {
             id: "runner",
             name: "Runner",
             mode: "child",
-            prompt: "Run the requested shell command.",
-            use: ["shell"],
-            allowedTools: ["shell"],
+            prompt: "Run the requested Bash command.",
+            use: ["bash"],
+            allowedTools: ["bash"],
           },
         ],
         delegateTools: [{ profileId: "runner", toolName: "delegate_runner" }],
       },
     },
   });
-  const prompt = "Delegate a no-task-manager shell timeout.";
+  const prompt = "Delegate a no-task-manager Bash timeout.";
   const result = await runCli(
     [
       "run",
@@ -709,10 +725,18 @@ async function delegateNoTaskManagerTimeoutCase() {
           {
             toolCalls: [
               {
+                toolName: "tool_search",
+                arguments: { query: "select:delegate_agent" },
+              },
+            ],
+          },
+          {
+            toolCalls: [
+              {
                 toolName: "delegate_agent",
                 arguments: {
                   agentId: "runner",
-                  goal: "Run a long child shell command.",
+                  goal: "Run a long child Bash command.",
                 },
               },
             ],
@@ -720,7 +744,7 @@ async function delegateNoTaskManagerTimeoutCase() {
           {
             toolCalls: [
               {
-                toolName: "shell",
+                toolName: "bash",
                 arguments: {
                   command:
                     "node -e \"setTimeout(() => console.log('late'), 80)\"",
@@ -728,7 +752,7 @@ async function delegateNoTaskManagerTimeoutCase() {
               },
             ],
           },
-          { message: "child observed shell timeout" },
+          { message: "child observed bash timeout" },
           { message: "parent observed delegate timeout" },
         ]),
       },
@@ -738,15 +762,15 @@ async function delegateNoTaskManagerTimeoutCase() {
   const childTraceText = JSON.stringify(childTrace);
   record({
     id: "NO_TASKMGR",
-    name: "delegate shell foreground kill without task manager",
+    name: "delegate bash foreground kill without task manager",
     command: commandString(result.command),
     prompt,
     workspace,
-    write: "yes, auto-approved shell",
+    write: "yes, auto-approved bash",
     expectedTrace:
-      "child shell output reports foregroundTimeoutMs, promotionAvailable=false, timedOut=true, and clear kill reason",
+      "child bash output reports foregroundTimeoutMs, promotionAvailable=false, timedOut=true, and clear kill reason",
     failureRule:
-      "Fails if no-taskManager shell silently promotes, hides alias/promotion metadata, or omits the kill reason.",
+      "Fails if no-taskManager bash silently promotes, hides alias/promotion metadata, or omits the kill reason.",
     harness: true,
     ok:
       result.exitCode === 0 &&
@@ -780,20 +804,26 @@ async function spawnFinalityCase() {
           {
             toolCalls: [
               {
-                toolName: "spawn_agent",
-                arguments: {
-                  goal: "Read README.md.",
-                  role: "reader",
-                  prompt: "Read README.md and summarize it.",
-                  allowedTools: ["read_file"],
-                },
+                toolName: "tool_search",
+                arguments: { query: "select:spawn_agent" },
               },
             ],
           },
           {
             toolCalls: [
-              { toolName: "read_file", arguments: { path: "README.md" } },
+              {
+                toolName: "spawn_agent",
+                arguments: {
+                  goal: "Read README.md.",
+                  role: "reader",
+                  prompt: "Read README.md and summarize it.",
+                  allowedTools: ["read"],
+                },
+              },
             ],
+          },
+          {
+            toolCalls: [{ toolName: "read", arguments: { path: "README.md" } }],
           },
           { message: "child read README.md" },
           { message: "parent observed complete child" },
@@ -811,9 +841,9 @@ async function spawnFinalityCase() {
     workspace,
     write: "no",
     expectedTrace:
-      "spawn_agent output finality=complete, inherited maxSteps visible in promotionHint, child uses read_file only",
+      "tool_search -> spawn_agent output finality=complete, inherited maxSteps visible in promotionHint, child uses read only",
     failureRule:
-      "Fails if dynamic spawn exposes shell/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
+      "Fails if dynamic spawn exposes bash/write tools, marks a complete child partial, or falls back to the old maxSteps default.",
     harness: true,
     ok:
       result.exitCode === 0 &&
@@ -827,9 +857,13 @@ async function spawnFinalityCase() {
           event.payload?.output?.promotionHint?.suggestedProfile?.maxSteps ===
             20,
       ) &&
+      !traceText.includes('"toolName":"read_file"') &&
       !traceText.includes('"toolName":"shell"') &&
+      !traceText.includes('"toolName":"bash"') &&
       !traceText.includes('"toolName":"write_file"') &&
-      !traceText.includes('"toolName":"apply_patch"'),
+      !traceText.includes('"toolName":"write"') &&
+      !traceText.includes('"toolName":"apply_patch"') &&
+      !traceText.includes('"toolName":"edit"'),
   });
 }
 

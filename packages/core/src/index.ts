@@ -90,6 +90,7 @@ export type {
   ToolRateLimit,
   ToolAuditPolicy,
   ToolCostEstimate,
+  ToolExposureTier,
   ToolInterruptBehavior,
   ToolAvailableProbe,
   ToolResultSizePolicy,

@@ -296,8 +296,9 @@ Stable consumption guidance:
 - Keep approval and question UI keyed by request identity so reconnects restore
   pending prompts without duplicates.
 
-Promoted shell tasks keep the task lifecycle as the user-visible row: stdout
-and stderr are buffered in `TaskStore`, mirrored as `task.output` events under
-the task span, and the terminal `task.completed` / `task.failed` /
+Promoted shell tasks keep the task lifecycle as the user-visible row:
+`task.created` is emitted before the task span opens with `task.started`;
+stdout and stderr are buffered in `TaskStore`, mirrored as `task.output` events
+under the task span, and the terminal `task.completed` / `task.failed` /
 `task.cancelled` event carries a `ProcessOutputSummary`. They do not emit a
 second `extension.process.*` lifecycle.

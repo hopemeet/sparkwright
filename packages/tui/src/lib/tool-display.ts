@@ -41,15 +41,19 @@ export function summarizeToolResultForDisplay(input: {
   const resultKind = classifyToolResult(input.result);
   const r = rec(input.result);
 
+  if (isTaskToolName(input.toolName)) {
+    return summarizeTaskToolResult(input.toolName ?? "task", r);
+  }
+
   if (resultKind === "file_read") {
     if (input.mode === "live") return { kind: "hidden", reason: "file_read" };
-    const path = str(r.path) || input.toolName || "read_file";
+    const path = str(r.path) || input.toolName || "read";
     const lines =
       typeof r.totalLines === "number"
         ? `${r.totalLines} line${r.totalLines === 1 ? "" : "s"}`
         : "";
     const bytes = typeof r.bytes === "number" ? `${r.bytes} bytes` : "";
-    return summary(`read_file ${path}`, [lines, bytes], "muted");
+    return summary(`read ${path}`, [lines, bytes], "muted");
   }
 
   if (resultKind === "anchored_read") {
@@ -179,6 +183,90 @@ function summarizeSkillLoad(r: Record<string, unknown>): ToolResultDisplay {
   );
 }
 
+function summarizeTaskToolResult(
+  toolName: string,
+  r: Record<string, unknown>,
+): ToolResultDisplay {
+  if (Array.isArray(r.tasks)) {
+    const tasks = r.tasks.filter(isRecord);
+    const total = tasks.length;
+    const detail = tasks
+      .slice(0, 6)
+      .map((task) =>
+        [
+          shortId(str(task.id)),
+          str(task.status),
+          str(task.kind),
+          str(task.title),
+        ]
+          .filter(Boolean)
+          .join(" "),
+      )
+      .filter(Boolean)
+      .join(" · ");
+    const more = total > 6 ? ` · +${total - 6} more` : "";
+    return summary(
+      `task list -> ${total} task${total === 1 ? "" : "s"}`,
+      [detail ? `${detail}${more}` : ""],
+      "muted",
+    );
+  }
+
+  if (Array.isArray(r.chunks)) {
+    const chunks = r.chunks.filter(isRecord);
+    const taskId = shortId(str(r.taskId) || str(chunks[0]?.taskId));
+    const status = str(r.status);
+    const complete = r.complete === true ? "complete" : "open";
+    const lines = chunks
+      .slice(-4)
+      .map((chunk) => {
+        const channel = str(chunk.channel);
+        const data = sanitizeAnsiForRender(str(chunk.data)).trim();
+        return [channel === "stderr" ? "stderr:" : "", data]
+          .filter(Boolean)
+          .join(" ");
+      })
+      .filter(Boolean);
+    return summary(
+      `task output ${taskId || ""}`.trim(),
+      [
+        `${chunks.length} chunk${chunks.length === 1 ? "" : "s"} · ${status || complete}`,
+        ...lines,
+      ],
+      status === "failed" ? "error" : "muted",
+    );
+  }
+
+  if (str(r.id) && str(r.status)) {
+    const result = rec(r.result);
+    const exit =
+      typeof result.exitCode === "number" ? `exit ${result.exitCode}` : "";
+    const chunks =
+      typeof r.outputChunks === "number"
+        ? `${r.outputChunks} chunk${r.outputChunks === 1 ? "" : "s"}`
+        : "";
+    return summary(
+      `task ${shortId(str(r.id))} -> ${str(r.status)}`,
+      [str(r.kind), exit, chunks, str(r.title)],
+      str(r.status) === "failed" ? "error" : "muted",
+    );
+  }
+
+  if (typeof r.cancelled === "boolean") {
+    return summary(
+      `${toolName} -> ${r.cancelled ? "cancelled" : "not cancelled"}`,
+      [],
+      r.cancelled ? "warning" : "muted",
+    );
+  }
+
+  if (str(r.taskId)) {
+    return summary(`task ${shortId(str(r.taskId))}`, [], "muted");
+  }
+
+  return summary(`${toolName} completed`, [], "muted");
+}
+
 function summary(
   head: string,
   details: Array<string | undefined>,
@@ -215,4 +303,16 @@ function str(value: unknown): string {
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
+}
+
+function isTaskToolName(name: string | undefined): boolean {
+  return Boolean(name && (name === "task" || name.startsWith("task_")));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function shortId(id: string): string {
+  return id.length > 18 ? `${id.slice(0, 9)}...${id.slice(-6)}` : id;
 }

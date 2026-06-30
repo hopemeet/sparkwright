@@ -39,6 +39,10 @@
             "session.inspect",
             "session.fork",
             "session.compact",
+            "task.list",
+            "task.get",
+            "task.output",
+            "task.stop",
             "capability.inspect"
           ]
         },
@@ -126,6 +130,38 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/SessionCompactRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.list" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskListRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.get" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskGetRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.output" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskOutputRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.stop" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskStopRequestPayload" }
             }
           }
         },
@@ -268,6 +304,7 @@
             "run_not_found",
             "approval_not_found",
             "session_not_found",
+            "task_not_found",
             "internal_error"
           ]
         },
@@ -530,6 +567,98 @@
       },
       "additionalProperties": false
     },
+    "TaskStatus": {
+      "type": "string",
+      "enum": ["pending", "running", "completed", "failed", "cancelled"]
+    },
+    "TaskError": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "TaskRecordSnapshot": {
+      "type": "object",
+      "required": [
+        "id",
+        "parentRunId",
+        "kind",
+        "status",
+        "createdAt",
+        "metadata"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "parentRunId": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "status": { "$ref": "#/$defs/TaskStatus" },
+        "createdAt": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "lastOutputAt": { "type": "string" },
+        "lastProgressAt": { "type": "string" },
+        "lastHealthCheckAt": { "type": "string" },
+        "outputChunks": { "type": "integer", "minimum": 0 },
+        "outputBytes": { "type": "integer", "minimum": 0 },
+        "completedAt": { "type": "string" },
+        "result": {},
+        "error": { "$ref": "#/$defs/TaskError" },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "TaskOutputChunkSnapshot": {
+      "type": "object",
+      "required": ["taskId", "sequence", "timestamp", "channel", "data"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "string" },
+        "channel": { "type": "string", "enum": ["stdout", "stderr", "event"] },
+        "data": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "TaskListRequestPayload": {
+      "type": "object",
+      "properties": {
+        "status": { "$ref": "#/$defs/TaskStatus" },
+        "kind": { "type": "string", "minLength": 1 },
+        "parentRunId": { "type": "string", "minLength": 1 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      },
+      "additionalProperties": false
+    },
+    "TaskGetRequestPayload": {
+      "type": "object",
+      "required": ["taskId"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "TaskOutputRequestPayload": {
+      "type": "object",
+      "required": ["taskId"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 },
+        "fromSequence": { "type": "integer", "minimum": 0 },
+        "maxChunks": { "type": "integer", "minimum": 1, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "TaskStopRequestPayload": {
+      "type": "object",
+      "required": ["taskId"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
     "CapabilityInspectRequestPayload": {
       "type": "object",
       "properties": {
@@ -759,9 +888,33 @@
       "required": ["name"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
+        "canonicalName": { "type": "string", "minLength": 1 },
+        "legacyNames": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "defaultExposureTier": {
+          "type": "string",
+          "enum": ["public", "advanced", "infrastructure", "internal", "legacy"]
+        },
+        "source": { "type": "string" },
         "origin": { "type": "string" },
         "risk": { "type": "string" },
-        "deferred": { "type": "boolean" }
+        "governance": { "type": "object", "additionalProperties": true },
+        "effectiveLoading": {
+          "type": "string",
+          "enum": ["eager", "deferred"]
+        },
+        "deferred": { "type": "boolean" },
+        "disabled": { "type": "boolean" },
+        "relatedTools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "requiresTool": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
       },
       "additionalProperties": false
     },

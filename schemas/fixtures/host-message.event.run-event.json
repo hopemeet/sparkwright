@@ -10,7 +10,7 @@
       "type": "tool.requested",
       "sequence": 5,
       "occurredAt": "2026-05-24T12:00:03.000Z",
-      "payload": { "toolName": "read_file" }
+      "payload": { "toolName": "read" }
     }
   }
 }

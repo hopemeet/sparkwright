@@ -202,7 +202,7 @@ function ToolArgs(props: {
       />
     );
   }
-  if (args && props.toolName === "shell") {
+  if (args && isShellToolName(props.toolName)) {
     return (
       <ShellToolArgs
         args={args}
@@ -218,6 +218,10 @@ function ToolArgs(props: {
       <Text>{truncateJson(props.args, props.viewportCols)}</Text>
     </Text>
   );
+}
+
+function isShellToolName(name: string | undefined): boolean {
+  return name === "bash" || name === "shell";
 }
 
 function ShellToolArgs(props: {

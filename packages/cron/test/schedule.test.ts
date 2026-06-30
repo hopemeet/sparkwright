@@ -432,10 +432,67 @@ describe("CronStore", () => {
     expect(result).toMatchObject({
       attempted: 2,
       completed: 2,
+      failed: 0,
       skippedBecauseLocked: false,
     });
     expect(modelAdapters).toBe(2);
     expect(readFileCalls).toBe(2);
+  });
+
+  it("counts only successful tick jobs as completed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-mixed-"));
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-cron-ws-"));
+    const store = new CronStore({ rootDir: root });
+    const createdAt = new Date("2026-01-01T00:00:00.000Z");
+    const okJob = await store.createJob(
+      {
+        name: "ok-read",
+        prompt: "ok",
+        schedule: "every 1m",
+        workspace,
+      },
+      createdAt,
+    );
+    const badJob = await store.createJob(
+      {
+        name: "bad-read",
+        prompt: "bad",
+        schedule: "every 1m",
+        workspace,
+      },
+      createdAt,
+    );
+
+    const result = await tickCron({
+      rootDir: root,
+      store,
+      modelFactory(job) {
+        return {
+          async complete() {
+            if (job.id === badJob.id) {
+              throw new Error("synthetic bad read");
+            }
+            return { message: "ok" };
+          },
+        };
+      },
+      now: new Date("2026-01-01T00:01:00.000Z"),
+    });
+
+    expect(result).toMatchObject({
+      attempted: 2,
+      completed: 1,
+      failed: 1,
+      skippedBecauseLocked: false,
+      skippedBecauseJobLocked: 0,
+    });
+    await expect(store.getJob(okJob.id)).resolves.toMatchObject({
+      lastStatus: "ok",
+    });
+    await expect(store.getJob(badJob.id)).resolves.toMatchObject({
+      lastStatus: "error",
+      lastError: expect.stringContaining("synthetic bad read"),
+    });
   });
 
   it("locks manual runs per job and does not double-mark the job", async () => {

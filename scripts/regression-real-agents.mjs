@@ -72,7 +72,7 @@ async function createFixture() {
 
 async function realCreateAgentCase() {
   const prompt =
-    "Use tool_search to find the create_agent tool, then call create_agent exactly once. Create a child agent with id mini_reviewer, name Mini Reviewer, prompt 'Review README.md and report one concrete project risk.', use ['workspace.read'], allowedTools ['read_file'], maxSteps 4, and delegateToolName delegate_mini_reviewer. After the first create_agent result, stop and answer only: created mini_reviewer. Do not call create_agent more than once. Do not use shell. Do not edit files directly.";
+    "Use tool_search to find the create_agent tool, then call create_agent exactly once. Create a child agent with id mini_reviewer, name Mini Reviewer, prompt 'Review README.md and report one concrete project risk.', use ['workspace.read'], allowedTools ['read'], maxSteps 4, and delegateToolName delegate_mini_reviewer. After the first create_agent result, stop and answer only: created mini_reviewer. Do not call create_agent more than once. Do not use bash. Do not edit files directly.";
   const result = await runCli([
     "run",
     prompt,
@@ -91,6 +91,7 @@ async function realCreateAgentCase() {
   const config = await readProjectConfig();
   const verify = await verifyTrace(trace.path);
   const createAgentCalls = requests.filter((name) => name === "create_agent");
+  const bashCalls = requests.filter((name) => name === "bash");
   const shellCalls = requests.filter((name) => name === "shell");
   const toolSearchIndex = requests.indexOf("tool_search");
   const createAgentIndex = requests.indexOf("create_agent");
@@ -103,6 +104,7 @@ async function realCreateAgentCase() {
     createAgentIndex >= 0 &&
     toolSearchIndex < createAgentIndex &&
     createAgentCalls.length === 1 &&
+    bashCalls.length === 0 &&
     shellCalls.length === 0 &&
     failures.length === 0 &&
     count(trace.events, "workspace.write.completed") === 1 &&
@@ -148,7 +150,7 @@ async function realCreateAgentCase() {
 
 async function realDelegateAgentCase() {
   const prompt =
-    "Call delegate_agent exactly once with agentId mini_reviewer to inspect README.md and report one concrete project risk. Do not call create_agent. Do not use shell. After the delegate returns, summarize the risk in one sentence.";
+    "Use tool_search to find the delegate_agent tool, then call delegate_agent exactly once with agentId mini_reviewer to inspect README.md and report one concrete project risk. Do not call create_agent. Do not use bash. After the delegate returns, summarize the risk in one sentence.";
   const result = await runCli([
     "run",
     prompt,
@@ -184,12 +186,18 @@ async function realDelegateAgentCase() {
       event.payload?.toolName === "delegate_agent",
   );
   const delegateAgentTarget = delegateAgentCalls[0]?.payload?.arguments;
+  const toolSearchIndex = requests.indexOf("tool_search");
+  const delegateAgentIndex = requests.indexOf("delegate_agent");
   const metadata = subagent?.metadata ?? {};
   const ok =
     result.exitCode === 0 &&
+    toolSearchIndex >= 0 &&
+    delegateAgentIndex >= 0 &&
+    toolSearchIndex < delegateAgentIndex &&
     delegateAgentCalls.length === 1 &&
     delegateAgentTarget?.agentId === "mini_reviewer" &&
     !requests.includes("create_agent") &&
+    !requests.includes("bash") &&
     !requests.includes("shell") &&
     failures.length === 0 &&
     count(trace.events, "workspace.write.completed") === 0 &&
@@ -219,6 +227,8 @@ async function realDelegateAgentCase() {
       : failureDetails({
           exitCode: result.exitCode,
           requests,
+          toolSearchIndex,
+          delegateAgentIndex,
           delegateAgentCalls: delegateAgentCalls.length,
           delegateAgentTarget,
           failures,

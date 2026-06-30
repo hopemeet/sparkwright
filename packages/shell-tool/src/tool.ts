@@ -691,10 +691,11 @@ async function runWithPromotion(
       startedAt,
       foregroundTimeoutMs: ctx.foregroundTimeoutMs,
     });
-    // Release our iterators so the host becomes the sole consumer of the
-    // handle. Without this, two consumers race the same stream and bytes
-    // are lost to whichever side wins each chunk.
-    await Promise.allSettled([
+    // Ask our iterators to stop, but do not wait for their return hooks. Some
+    // async iterator implementations cannot finish return() until the process
+    // exits; waiting here would make "background" promotion block until the
+    // task is already complete.
+    void Promise.allSettled([
       stdoutIter.return?.(undefined as never) ?? Promise.resolve(),
       stderrIter.return?.(undefined as never) ?? Promise.resolve(),
     ]);

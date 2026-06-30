@@ -49,7 +49,7 @@ describe("entry parity smoke", () => {
 
     for (const summary of [cli, tui, acp]) {
       expect(summary.resolvedAdapterIds).toEqual(["deterministic"]);
-      expect(summary.toolRequests).toEqual(["read_file"]);
+      expect(summary.toolRequests).toEqual(["read"]);
       expect(summary.approvalRequests).toBe(0);
       expect(summary.workspaceWrites).toBe(0);
       expect(summary.failedTools).toBe(0);
