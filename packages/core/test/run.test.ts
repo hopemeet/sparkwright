@@ -131,6 +131,91 @@ describe("SparkwrightRun", () => {
     ).toHaveLength(1);
   });
 
+  it("runs semantic input validation before policy and execution", async () => {
+    let executed = false;
+    let modelCalls = 0;
+    const checked = defineTool({
+      name: "semantic_checked",
+      description: "Exercise semantic input validation.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      policy: { risk: "risky" },
+      validateInput(args) {
+        const path = (args as { path: string }).path;
+        if (path.endsWith("/")) {
+          return {
+            ok: false,
+            code: "PATH_NOT_FILE",
+            message: "path must point to a file",
+            metadata: { reason: "trailing_slash" },
+          };
+        }
+        return { ok: true };
+      },
+      policyForArgs() {
+        throw new Error("policyForArgs should not run");
+      },
+      execute() {
+        executed = true;
+      },
+    });
+
+    const run = createRun({
+      goal: "semantic validation",
+      tools: [checked],
+      approvalResolver(request) {
+        throw new Error(
+          `Approval should not be requested for ${request.action}`,
+        );
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "semantic_checked",
+                    arguments: { path: "src/" },
+                  },
+                ],
+              }
+            : { message: "observed semantic failure" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const result = await run.start();
+    const events = run.events.all();
+    const failed = events.find((event) => event.type === "tool.failed");
+
+    expect(result.signal).toBe("completed");
+    expect(executed).toBe(false);
+    expect(events.map((event) => event.type)).not.toContain(
+      "approval.requested",
+    );
+    expect(failed?.payload).toMatchObject({
+      toolName: "semantic_checked",
+      error: {
+        code: "PATH_NOT_FILE",
+        message: "path must point to a file",
+        metadata: {
+          toolName: "semantic_checked",
+          phase: "validateInput",
+          reason: "trailing_slash",
+        },
+      },
+    });
+    expect(failed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+      inputValidationMs: expect.any(Number),
+    });
+  });
+
   it("loops model-tool-observation until a final answer", async () => {
     let modelCalls = 0;
     const events: SparkwrightEvent[] = [];
@@ -192,6 +277,15 @@ describe("SparkwrightRun", () => {
     });
     expect(modelCalls).toBe(2);
     expect(events.map((event) => event.type)).toContain("tool.completed");
+    expect(
+      events.find((event) => event.type === "tool.completed")?.metadata,
+    ).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+      policyForArgsMs: expect.any(Number),
+      policyDecisionMs: expect.any(Number),
+      executionMs: expect.any(Number),
+      resultValidationMs: expect.any(Number),
+    });
     expect(events.map((event) => event.type)).toContain("context.assembled");
     expect(events.map((event) => event.type)).toContain("prompt.built");
     expect(
@@ -387,6 +481,278 @@ describe("SparkwrightRun", () => {
       message: "done",
     });
     expect(modelCalls).toBe(3);
+  });
+
+  it("adds recovery metadata when an unloaded deferred tool fails schema validation", async () => {
+    let modelCalls = 0;
+    let observedToolResults: ContextItem[] = [];
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "recover deferred schema",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 3,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "deferred_echo",
+                  arguments: {},
+                },
+              ],
+            };
+          }
+          observedToolResults = input.context.filter(
+            (item) => item.type === "tool_result",
+          );
+          return { message: "will load schema next" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    const requested = run.events
+      .all()
+      .find((event) => event.type === "tool.requested");
+
+    expect(result.signal).toBe("completed");
+    expect(failed?.payload).toMatchObject({
+      toolName: "deferred_echo",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: {
+          toolName: "deferred_echo",
+          reason: "schema_not_loaded",
+          recoveryTool: "tool_search",
+          recoveryQuery: "select:deferred_echo",
+          deferred: true,
+          schemaLoaded: false,
+        },
+      },
+    });
+    expect(failed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+    });
+    expect(failed?.spanId).toBe(requested?.spanId);
+    const observation = JSON.parse(observedToolResults[0]?.content ?? "{}") as {
+      error?: { message?: string; metadata?: unknown };
+    };
+    expect(observation.error?.message).toContain(
+      "First call `tool_search` with query `select:deferred_echo`",
+    );
+    expect(observation.error?.metadata).toMatchObject({
+      reason: "schema_not_loaded",
+      recoveryTool: "tool_search",
+      recoveryQuery: "select:deferred_echo",
+    });
+  });
+
+  it("does not mark loaded deferred schema failures as schema-not-loaded", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "loaded deferred invalid args",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 4,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "tool_search",
+                  arguments: { query: "select:deferred_echo" },
+                },
+              ],
+            };
+          }
+          return modelCalls === 2
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "deferred_echo",
+                    arguments: {},
+                  },
+                ],
+              }
+            : { message: "saw loaded invalid args" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    const metadata = (
+      failed?.payload as { error?: { metadata?: Record<string, unknown> } }
+    ).error?.metadata;
+
+    expect(result.signal).toBe("completed");
+    expect(failed?.payload).toMatchObject({
+      toolName: "deferred_echo",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: { toolName: "deferred_echo" },
+      },
+    });
+    expect(metadata?.reason).not.toBe("schema_not_loaded");
+    expect(metadata?.schemaLoaded).toBeUndefined();
+    expect(failed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+    });
+  });
+
+  it("keeps deferred schema recovery tied to the model-turn snapshot", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      governance: { sideEffects: ["read"], idempotency: "idempotent" },
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "same-turn deferred schema recovery",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 3,
+      maxToolConcurrency: 2,
+      hooks: [
+        {
+          async beforeToolCall(input) {
+            if (input.toolName === "deferred_echo") {
+              await sleep(20);
+            }
+          },
+        },
+      ],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "tool_search",
+                    arguments: { query: "select:deferred_echo" },
+                  },
+                  {
+                    toolName: "deferred_echo",
+                    arguments: {},
+                  },
+                ],
+              }
+            : { message: "saw recovery guidance" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const events = run.events.all();
+    const toolSearchCompletedIndex = events.findIndex(
+      (event) =>
+        event.type === "tool.completed" &&
+        (event.payload as { toolName?: string }).toolName === "tool_search",
+    );
+    const deferredFailedIndex = events.findIndex(
+      (event) =>
+        event.type === "tool.failed" &&
+        (event.payload as { toolName?: string }).toolName === "deferred_echo",
+    );
+    const failed = events[deferredFailedIndex];
+
+    expect(result.signal).toBe("completed");
+    expect(toolSearchCompletedIndex).toBeGreaterThanOrEqual(0);
+    expect(deferredFailedIndex).toBeGreaterThan(toolSearchCompletedIndex);
+    expect(failed?.payload).toMatchObject({
+      toolName: "deferred_echo",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: {
+          reason: "schema_not_loaded",
+          recoveryTool: "tool_search",
+          recoveryQuery: "select:deferred_echo",
+          deferred: true,
+          schemaLoaded: false,
+        },
+      },
+    });
   });
 
   it("persists a command-outcome verdict on run.completed", async () => {
@@ -2197,6 +2563,13 @@ describe("SparkwrightRun", () => {
     expect(run.events.all().map((event) => event.type)).toContain(
       "approval.requested",
     );
+    expect(
+      run.events.all().find((event) => event.type === "tool.completed")
+        ?.metadata,
+    ).toMatchObject({
+      approvalWaitMs: expect.any(Number),
+      executionMs: expect.any(Number),
+    });
     expect(run.record.state).toBe("completed");
   });
 
@@ -2657,6 +3030,9 @@ describe("SparkwrightRun", () => {
     const toolFailed = run.events
       .all()
       .find((event) => event.type === "tool.failed");
+    const failedMetadata = (
+      toolFailed?.payload as { error?: { metadata?: Record<string, unknown> } }
+    ).error?.metadata;
     expect(executed).toBe(false);
     expect(eventTypes).not.toContain("approval.requested");
     expect(eventTypes).not.toContain("tool.started");
@@ -2666,6 +3042,10 @@ describe("SparkwrightRun", () => {
         code: "TOOL_ARGUMENTS_INVALID",
         metadata: { toolName: "risky" },
       },
+    });
+    expect(failedMetadata?.reason).not.toBe("schema_not_loaded");
+    expect(toolFailed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
     });
   });
 
@@ -4327,6 +4707,59 @@ describe("SparkwrightRun", () => {
       mode: "serial",
       toolCallCount: 1,
     });
+  });
+
+  it("keeps concurrent tool observations in request order while trace follows completion order", async () => {
+    let modelCalls = 0;
+    let secondTurnToolResultOrder: string[] = [];
+
+    const readTool = (name: string, delayMs: number) =>
+      defineTool({
+        name,
+        description: "Read-only test tool.",
+        inputSchema: { type: "object" },
+        governance: { sideEffects: ["read"], idempotency: "idempotent" },
+        async execute() {
+          await sleep(delayMs);
+          return { ok: true, name };
+        },
+      });
+
+    const run = createRun({
+      goal: "stable concurrent observations",
+      tools: [readTool("slow_read", 30), readTool("fast_read", 0)],
+      maxToolConcurrency: 2,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "slow_read", arguments: {} },
+                { toolName: "fast_read", arguments: {} },
+              ],
+            };
+          }
+          secondTurnToolResultOrder = input.context
+            .filter((item) => item.type === "tool_result")
+            .map((item) => {
+              const parsed = JSON.parse(item.content) as { toolName?: string };
+              return parsed.toolName ?? "";
+            });
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const completionOrder = run.events
+      .all()
+      .filter((event) => event.type === "tool.completed")
+      .map((event) => (event.payload as { toolName?: string }).toolName);
+
+    expect(result.signal).toBe("completed");
+    expect(completionOrder).toEqual(["fast_read", "slow_read"]);
+    expect(secondTurnToolResultOrder).toEqual(["slow_read", "fast_read"]);
   });
 
   it("marks duplicate same-batch calls as in-flight duplicates", async () => {

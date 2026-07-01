@@ -156,6 +156,13 @@ export class TaskManager {
     return this.registry.get(kind);
   }
 
+  /** List currently registered runner kinds for model-facing diagnostics. */
+  registeredKinds(): string[] {
+    return [...this.registry.keys()].sort((left, right) =>
+      left.localeCompare(right),
+    );
+  }
+
   /** Spawn a task. Returns a handle with cancel/wait/output helpers. */
   spawn(input: SpawnTaskInput): TaskHandle {
     const runner = input.runner ?? this.registry.get(input.kind);

@@ -635,7 +635,8 @@ function minRunBudget(
 // "Sub-agents". Distilled to the minimum portable shape:
 //
 //   - parent linkage (parentRunId, spanId in child metadata)
-//   - abort propagation (child wired with parent.abortSignal)
+//   - abort propagation (child wired with input.abortSignal ?? parent.abortSignal;
+//     a task-owned signal decouples a background child from the parent turn)
 //   - policy inheritance (createLayeredPolicy + child profile policy)
 //   - channel sharing (child inherits parent InteractionChannel)
 //   - usage rollup (subscribe to child tool/model events, fan into parent
@@ -723,6 +724,14 @@ export interface SpawnSubAgentInput {
    * transcript under its own directory.
    */
   runStore?: CreateRunOptions["runStore"];
+  /**
+   * External abort signal that owns the child's lifecycle. Defaults to
+   * `parent.abortSignal`, which ties the child to the parent turn. Pass a
+   * task-owned signal (e.g. a background-task controller) to decouple the
+   * child from the parent turn so stopping the task stops the child and a
+   * parent-turn interrupt does not kill a background child.
+   */
+  abortSignal?: AbortSignal;
   /** Override for testing. Defaults to the core `createRun`. */
   createRun?: typeof defaultCreateRun;
 }
@@ -746,6 +755,7 @@ export interface SpawnedSubAgent {
 export type SubAgentEntrypoint =
   | "run"
   | "spawn_agent"
+  | "agent_task"
   | "delegate"
   | "delegate_parallel"
   | "delegates_run"
@@ -846,7 +856,7 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,
     runBudget: input.runBudget,
-    abortSignal: parent.abortSignal,
+    abortSignal: input.abortSignal ?? parent.abortSignal,
     metadata: childRunMetadata,
     runStore: input.runStore,
   };
@@ -987,6 +997,7 @@ function isSubAgentEntrypoint(value: unknown): value is SubAgentEntrypoint {
   return (
     value === "run" ||
     value === "spawn_agent" ||
+    value === "agent_task" ||
     value === "delegate" ||
     value === "delegate_parallel" ||
     value === "delegates_run" ||

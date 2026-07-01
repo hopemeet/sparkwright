@@ -6,6 +6,7 @@ import {
   type AnchoredEditOperation,
   type RuntimeContext,
   type ToolDefinition,
+  type ToolInputValidationResult,
 } from "@sparkwright/core";
 
 const DEFAULT_MAX_READ_CHARS = 200_000;
@@ -175,6 +176,8 @@ export interface ListDirResult {
   path: string;
   entries: DirectoryEntry[];
   truncated: boolean;
+  entriesReturned: number;
+  entryLimitHit: boolean;
 }
 
 export interface DirectoryEntry {
@@ -203,6 +206,32 @@ export interface GrepTextResult {
   /** @reserved Public tool-output field consumed by coding UIs. */
   matches: TextMatch[];
   truncated: boolean;
+  truncationReason?: GrepTextTruncationReason;
+  filesScanned: number;
+  filesMatched: number;
+  matchesReturned: number;
+  fileLimitHit: boolean;
+  matchLimitHit: boolean;
+  scope: GrepTextScope;
+  effectiveInclude: string[];
+}
+
+export type GrepTextTruncationReason =
+  | "file_limit"
+  | "match_limit"
+  | "file_and_match_limit";
+
+export interface GrepTextScope {
+  path: string;
+  include: string[];
+  exclude: string[];
+  includeHidden: boolean;
+  includeBuildOutput: boolean;
+  regex: boolean;
+  caseSensitive: boolean;
+  maxMatches: number;
+  maxLineChars: number;
+  maxPaths: number;
 }
 
 export interface TextMatch {
@@ -262,8 +291,25 @@ export function createReadTextTool(
     inputSchema: readTextInputSchema,
     policy: { risk: "safe" },
     governance: readGovernance(),
+    resultPresentation: {
+      kind: "file_read",
+      preserveFields: [
+        "path",
+        "content",
+        "startLine",
+        "endLine",
+        "lineCount",
+        "truncated",
+      ],
+      paginationFields: ["startLine", "endLine"],
+      artifactPolicy: "when_large",
+    },
     previewArgs(args) {
       return previewPathWindow(args, "startLine", "endLine");
+    },
+    async validateInput(args, ctx) {
+      const input = normalizeReadTextInput(args, options);
+      return validateExistingFileInput("read_text", input.path, ctx, options);
     },
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
@@ -292,8 +338,31 @@ export function createReadAnchoredTextTool(
     inputSchema: readTextInputSchema,
     policy: { risk: "safe" },
     governance: readGovernance(),
+    resultPresentation: {
+      kind: "file_read",
+      preserveFields: [
+        "path",
+        "anchorSetId",
+        "lineCount",
+        "content",
+        "lines",
+        "metadata",
+        "truncated",
+      ],
+      paginationFields: ["startLine", "endLine"],
+      artifactPolicy: "when_large",
+    },
     previewArgs(args) {
       return previewPathWindow(args, "startLine", "endLine");
+    },
+    async validateInput(args, ctx) {
+      const input = normalizeReadTextInput(args, options);
+      return validateExistingFileInput(
+        "read_anchored_text",
+        input.path,
+        ctx,
+        options,
+      );
     },
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
@@ -364,6 +433,10 @@ export function createWriteFileTool(): ToolDefinition<
     },
     previewArgs(args) {
       return previewString(previewRecord(args).path);
+    },
+    validateInput(args) {
+      const input = normalizeWriteFileInput(args);
+      return validateWritablePathInput("write_file", input.path);
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
@@ -458,6 +531,15 @@ export function createEditAnchoredTextTool(): ToolDefinition<
         : "";
       return path ? `${path}${editCount}` : undefined;
     },
+    async validateInput(args, ctx) {
+      const input = normalizeEditAnchoredTextInput(args);
+      return validateExistingFileInput(
+        "edit_anchored_text",
+        input.path,
+        ctx,
+        {},
+      );
+    },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
@@ -509,6 +591,10 @@ export function createApplyPatchTool(): ToolDefinition<
     },
     previewArgs(args) {
       return previewString(previewRecord(args).path);
+    },
+    async validateInput(args, ctx) {
+      const input = normalizeApplyPatchInput(args);
+      return validateExistingFileInput("apply_patch", input.path, ctx, {});
     },
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
@@ -743,6 +829,17 @@ export function createListDirTool(
     },
     policy: { risk: "safe" },
     governance: readGovernance(),
+    resultPresentation: {
+      kind: "file_discovery",
+      preserveFields: [
+        "path",
+        "entries",
+        "truncated",
+        "entriesReturned",
+        "entryLimitHit",
+      ],
+      artifactPolicy: "never",
+    },
     previewArgs(args) {
       const r = previewRecord(args);
       const path = previewString(r.path) || ".";
@@ -758,6 +855,8 @@ export function createListDirTool(
         path: input.path,
         entries: entries.items,
         truncated: entries.truncated,
+        entriesReturned: entries.items.length,
+        entryLimitHit: entries.truncated,
       };
     },
   });
@@ -797,6 +896,23 @@ export function createGrepTextTool(
     },
     policy: { risk: "safe" },
     governance: readGovernance(),
+    resultPresentation: {
+      kind: "text_search",
+      preserveFields: [
+        "pattern",
+        "matches",
+        "truncated",
+        "truncationReason",
+        "filesScanned",
+        "filesMatched",
+        "matchesReturned",
+        "fileLimitHit",
+        "matchLimitHit",
+        "scope",
+        "effectiveInclude",
+      ],
+      artifactPolicy: "never",
+    },
     previewArgs(args) {
       const r = previewRecord(args);
       const pattern = previewString(r.pattern);
@@ -805,24 +921,60 @@ export function createGrepTextTool(
         .filter((part): part is string => Boolean(part))
         .join(" ");
     },
+    async validateInput(args, ctx) {
+      const input = normalizeGrepTextInput(args, options, undefined);
+      if (input.regex) {
+        try {
+          new RegExp(input.pattern);
+        } catch (cause) {
+          return {
+            ok: false,
+            code: "TOOL_ARGUMENTS_INVALID",
+            message:
+              cause instanceof Error
+                ? `Invalid grep regex pattern: ${cause.message}`
+                : "Invalid grep regex pattern.",
+            metadata: { reason: "invalid_regex", pattern: input.pattern },
+          };
+        }
+      }
+      if (ctx.workspace || options.workspaceRoot) {
+        const root = await resolveWorkspaceRoot(ctx, options).catch(
+          () => undefined,
+        );
+        if (root) {
+          try {
+            normalizeGrepTextInput(args, options, root);
+          } catch (cause) {
+            return validationFailureFromCause(cause, "grep");
+          }
+        }
+      }
+      return { ok: true };
+    },
     async execute(args, ctx) {
       const workspace = requireWorkspace(ctx);
       const root = await resolveWorkspaceRoot(ctx, options);
       const input = normalizeGrepTextInput(args, options, root);
+      const maxPaths = options.maxPaths ?? DEFAULT_MAX_PATHS;
+      const scope = grepTextScope(input, maxPaths);
       const walker = new WorkspaceWalker(root, ctx);
       const files = await walker.files({
         path: input.path,
         includeHidden: input.includeHidden,
         include: input.include,
         exclude: input.exclude,
-        maxPaths: options.maxPaths ?? DEFAULT_MAX_PATHS,
+        maxPaths,
       });
       const matcher = createTextMatcher(input);
       const matches: TextMatch[] = [];
-      let truncated = files.truncated;
+      const matchedFiles = new Set<string>();
+      const fileLimitHit = files.truncated;
+      let filesScanned = 0;
 
       for (const path of files.paths) {
         checkAbort(ctx);
+        filesScanned += 1;
         let content: string;
         try {
           content = await workspace.readText(path);
@@ -831,14 +983,30 @@ export function createGrepTextTool(
         }
         for (const match of searchContent(path, content, matcher, input)) {
           matches.push(match);
+          matchedFiles.add(path);
           if (matches.length >= input.maxMatches) {
-            truncated = true;
-            return { pattern: input.pattern, matches, truncated };
+            return grepTextResult({
+              input,
+              matches,
+              scope,
+              filesScanned,
+              filesMatched: matchedFiles.size,
+              fileLimitHit,
+              matchLimitHit: true,
+            });
           }
         }
       }
 
-      return { pattern: input.pattern, matches, truncated };
+      return grepTextResult({
+        input,
+        matches,
+        scope,
+        filesScanned,
+        filesMatched: matchedFiles.size,
+        fileLimitHit,
+        matchLimitHit: false,
+      });
     },
   });
 }
@@ -886,6 +1054,33 @@ export function createGlobPathsTool(
       const r = previewRecord(args);
       const patterns = previewStringArray(r.patterns);
       return patterns.length > 0 ? patterns.slice(0, 3).join(", ") : undefined;
+    },
+    async validateInput(args, ctx) {
+      const input = normalizeGlobPathsInput(args, options, undefined);
+      const emptyPattern = input.patterns.find(
+        (pattern) => pattern.trim().length === 0,
+      );
+      if (emptyPattern !== undefined) {
+        return {
+          ok: false,
+          code: "TOOL_ARGUMENTS_INVALID",
+          message: "glob patterns must not be empty strings.",
+          metadata: { reason: "empty_pattern" },
+        };
+      }
+      if (ctx.workspace || options.workspaceRoot) {
+        const root = await resolveWorkspaceRoot(ctx, options).catch(
+          () => undefined,
+        );
+        if (root) {
+          try {
+            normalizeGlobPathsInput(args, options, root);
+          } catch (cause) {
+            return validationFailureFromCause(cause, "glob");
+          }
+        }
+      }
+      return { ok: true };
     },
     async execute(args, ctx) {
       const root = await resolveWorkspaceRoot(ctx, options);
@@ -973,6 +1168,114 @@ function readGovernance() {
 function requireWorkspace(ctx: RuntimeContext) {
   if (!ctx.workspace) throw new Error("Workspace is not configured.");
   return ctx.workspace;
+}
+
+function grepTextScope(
+  input: Required<GrepTextInput>,
+  maxPaths: number,
+): GrepTextScope {
+  return {
+    path: input.path,
+    include: [...input.include],
+    exclude: [...input.exclude],
+    includeHidden: input.includeHidden,
+    includeBuildOutput: input.includeBuildOutput,
+    regex: input.regex,
+    caseSensitive: input.caseSensitive,
+    maxMatches: input.maxMatches,
+    maxLineChars: input.maxLineChars,
+    maxPaths,
+  };
+}
+
+function grepTextResult(args: {
+  input: Required<GrepTextInput>;
+  matches: TextMatch[];
+  scope: GrepTextScope;
+  filesScanned: number;
+  filesMatched: number;
+  fileLimitHit: boolean;
+  matchLimitHit: boolean;
+}): GrepTextResult {
+  const truncated = args.fileLimitHit || args.matchLimitHit;
+  return {
+    pattern: args.input.pattern,
+    matches: args.matches,
+    truncated,
+    truncationReason: grepTextTruncationReason(
+      args.fileLimitHit,
+      args.matchLimitHit,
+    ),
+    filesScanned: args.filesScanned,
+    filesMatched: args.filesMatched,
+    matchesReturned: args.matches.length,
+    fileLimitHit: args.fileLimitHit,
+    matchLimitHit: args.matchLimitHit,
+    scope: args.scope,
+    effectiveInclude: [...args.input.include],
+  };
+}
+
+function grepTextTruncationReason(
+  fileLimitHit: boolean,
+  matchLimitHit: boolean,
+): GrepTextTruncationReason | undefined {
+  if (fileLimitHit && matchLimitHit) return "file_and_match_limit";
+  if (fileLimitHit) return "file_limit";
+  if (matchLimitHit) return "match_limit";
+  return undefined;
+}
+
+function validationFailureFromCause(
+  cause: unknown,
+  toolName: string,
+): ToolInputValidationResult {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const code =
+    typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    typeof (cause as { code?: unknown }).code === "string"
+      ? (cause as { code: string }).code
+      : "TOOL_ARGUMENTS_INVALID";
+  return {
+    ok: false,
+    code,
+    message,
+    metadata: { toolName },
+  };
+}
+
+async function validateExistingFileInput(
+  toolName: string,
+  path: string,
+  ctx: RuntimeContext,
+  options: CodingToolsOptions,
+): Promise<ToolInputValidationResult> {
+  const root = await resolveWorkspaceRoot(ctx, options).catch(() => undefined);
+  if (!root) return { ok: true };
+  try {
+    normalizeWorkspacePath(path, root);
+  } catch (cause) {
+    return validationFailureFromCause(cause, toolName);
+  }
+
+  return { ok: true };
+}
+
+function validateWritablePathInput(
+  toolName: string,
+  path: string,
+): ToolInputValidationResult {
+  if (path === "." || path.endsWith("/")) {
+    return {
+      ok: false,
+      code: "TOOL_ARGUMENTS_INVALID",
+      message: `${toolName} target must be a file path, not a directory path: ${path}.`,
+      metadata: { reason: "directory_path", path },
+    };
+  }
+  return { ok: true };
 }
 
 async function canonicalOutputPath(
@@ -1661,9 +1964,9 @@ function readOptionalNonNegativeInteger(
   return value;
 }
 
-// Treat `undefined` and an explicit empty array identically: both mean "no
-// constraint", so fall back to the default rather than collapsing to a
-// match-nothing filter.
+// Treat `undefined`, an explicit empty array, and model-produced blank entries
+// identically: all mean "no constraint", so fall back to the default rather
+// than collapsing to a match-nothing filter.
 function emptyToDefault(
   value: string[] | undefined,
   fallback: string[],
@@ -1683,7 +1986,7 @@ function readOptionalStringArray(
   ) {
     throw toolArgumentsInvalid(`${key} must be an array of strings.`);
   }
-  return value;
+  return value.filter((item) => item.trim().length > 0);
 }
 
 function checkAbort(ctx: RuntimeContext) {

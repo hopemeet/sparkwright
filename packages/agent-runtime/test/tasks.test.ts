@@ -249,6 +249,41 @@ describe("task tools", () => {
     ).rejects.toMatchObject({ code: "TASK_KIND_UNREGISTERED" });
   });
 
+  it("task_create can describe registered kinds and kind-specific payloads", () => {
+    const manager = makeManager();
+    manager.registerKind("hello", async () => "hi");
+    const tools = createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      taskCreateKinds: [
+        {
+          kind: "hello",
+          description: "greet in the background",
+          payloadDescription: "requires a name",
+          payloadSchema: {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            additionalProperties: false,
+          },
+          requiresPayload: true,
+        },
+      ],
+    });
+
+    expect(tools.taskCreate.description).toContain("hello");
+    const schema = tools.taskCreate.inputSchema as {
+      properties: {
+        kind: { enum?: string[] };
+        payload: { required?: string[] };
+      };
+      required?: string[];
+    };
+    expect(schema.properties.kind.enum).toEqual(["hello"]);
+    expect(schema.required).toEqual(["kind", "payload"]);
+    expect(schema.properties.payload.required).toEqual(["name"]);
+  });
+
   it("task_create + task_list returns the created task", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");

@@ -483,6 +483,38 @@ describe("spawnSubAgent", () => {
     expect(spawned.run.abortSignal.aborted).toBe(true);
   });
 
+  it("binds the child to an explicit abortSignal and decouples it from the parent turn", () => {
+    const parent = createRun({
+      goal: "parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const childModel: ModelAdapter = {
+      async complete() {
+        return { message: "child done" };
+      },
+    };
+    const taskController = new AbortController();
+    const spawned = spawnSubAgent({
+      parent,
+      goal: "child task",
+      model: childModel,
+      abortSignal: taskController.signal,
+    });
+
+    // A parent-turn interrupt must NOT reach a task-owned child.
+    expect(spawned.run.abortSignal.aborted).toBe(false);
+    parent.cancel({ reason: "parent cancelled" });
+    expect(spawned.run.abortSignal.aborted).toBe(false);
+    // The task controller owns the child lifecycle instead.
+    taskController.abort();
+    expect(spawned.run.abortSignal.aborted).toBe(true);
+  });
+
   it("forwards workflow hooks to the child run create options", () => {
     const parent = createRun({
       goal: "parent",

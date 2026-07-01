@@ -117,8 +117,7 @@ export function SessionListDialog(props: {
   });
 
   if (props.sessions.length === 0) {
-    const sessionRootLabel =
-      props.sessionRootLabel ?? ".sparkwright/sessions";
+    const sessionRootLabel = props.sessionRootLabel ?? ".sparkwright/sessions";
     return (
       <DialogFrame borderColor="cyan">
         <Text color="cyan" bold>

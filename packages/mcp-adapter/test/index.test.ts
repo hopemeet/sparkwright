@@ -704,6 +704,24 @@ describe("mcp-adapter", () => {
       const callTool = prepared.tools.find(
         (tool) => tool.name === "mcp_lazy_call_tool",
       );
+      await expect(
+        callTool!.execute(
+          { toolName: "missing", arguments: { text: "nope" } },
+          {} as never,
+        ),
+      ).rejects.toMatchObject({
+        code: "MCP_TOOL_NOT_FOUND",
+        metadata: {
+          serverName: "lazy",
+          requestedToolName: "missing",
+          phase: "call_tool",
+          category: "tool_not_found",
+          nextAction: expect.stringContaining("mcp_lazy_list_tools"),
+          retryable: false,
+          availableToolCount: 1,
+          availableTools: [{ toolName: "mcp_lazy_echo", mcpToolName: "echo" }],
+        },
+      });
       const called = await callTool!.execute(
         { toolName: "echo", arguments: { text: "hello lazy" } },
         {} as never,
@@ -908,19 +926,61 @@ describe("mcp-adapter", () => {
     const failureCode = expect.stringMatching(
       /^MCP_SERVER_(COMMAND_NOT_FOUND|CONNECT_FAILED)$/,
     );
+    const failureCategory = expect.stringMatching(
+      /^(command_not_found|connect_failed)$/,
+    );
     expect(captured[0]?.payload).toMatchObject({
       name: "missing",
       status: "failed",
       errorCode: failureCode,
       errorPhase: "connect",
+      errorCategory: failureCategory,
+      nextAction: expect.any(String),
+      retryable: expect.any(Boolean),
       error: {
         code: failureCode,
+        category: failureCategory,
         phase: "connect",
+        serverName: "missing",
+        nextAction: expect.any(String),
+        retryable: expect.any(Boolean),
       },
     });
     expect(captured[0]?.metadata).toMatchObject({
       errorCode: failureCode,
       errorPhase: "connect",
+      errorCategory: failureCategory,
+      nextAction: expect.any(String),
+      retryable: expect.any(Boolean),
+    });
+  });
+
+  it("classifies list tools failures with actionable diagnostics", async () => {
+    const require = createRequire(import.meta.url);
+    const typesUrl = pathToFileURL(
+      require.resolve("@modelcontextprotocol/sdk/types.js"),
+    ).href;
+    const prepared = await prepareMcpServer(
+      mcpEchoServerConfig("broken-list", {
+        toolRegistrations: [
+          [
+            `const { ListToolsRequestSchema } = await import(${JSON.stringify(typesUrl)});`,
+            "server.server.setRequestHandler(ListToolsRequestSchema, async () => {",
+            "  throw new Error('list tools unavailable');",
+            "});",
+          ].join("\n"),
+        ],
+      }),
+    );
+
+    expect(prepared.status).toMatchObject({
+      status: "failed",
+      errorCode: "MCP_SERVER_LIST_TOOLS_FAILED",
+      category: "list_tools_failed",
+      phase: "list_tools",
+      serverName: "broken-list",
+      nextAction: expect.any(String),
+      retryable: true,
     });
   });
 

@@ -396,9 +396,7 @@ function groupTools(tools: CapabilitySnapshot["tools"]): {
   sourceCounts: Array<{ source: string; count: number }>;
 } {
   const publicTools = tools.filter(
-    (tool) =>
-      exposureTier(tool) === "public" &&
-      !isDeferredTool(tool),
+    (tool) => exposureTier(tool) === "public" && !isDeferredTool(tool),
   );
   const deferred = tools.filter(
     (tool) => isDeferredTool(tool) && exposureTier(tool) !== "infrastructure",

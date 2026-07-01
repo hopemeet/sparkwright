@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  createTaskCreate,
   createTaskControl,
   createTodoTools,
   InMemoryTaskStore,
@@ -45,6 +46,46 @@ import {
 } from "./tool-identities.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
+const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
+  type: "object",
+  description:
+    "Payload for kind 'agent'. It matches spawn_agent input: provide a concrete goal, role, and focused prompt for the background child agent.",
+  properties: {
+    goal: {
+      type: "string",
+      description: "Concrete background child-agent goal.",
+    },
+    role: {
+      type: "string",
+      description: "Short role name for the background child agent.",
+    },
+    prompt: {
+      type: "string",
+      description:
+        "Focused child-agent instructions that define scope and output.",
+    },
+    allowedTools: {
+      type: "array",
+      description:
+        "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir.",
+      items: {
+        type: "string",
+        enum: ["read", "glob", "grep", "list_dir"],
+      },
+    },
+    maxSteps: {
+      type: "integer",
+      minimum: 1,
+      description: "Optional child model-turn limit.",
+    },
+    metadata: {
+      type: "object",
+      description: "Optional structured metadata for the child run.",
+    },
+  },
+  required: ["goal", "role", "prompt"],
+  additionalProperties: false,
+};
 
 export type HostToolCatalogSource =
   | "coding"
@@ -258,6 +299,24 @@ function createMainHostToolCatalogList(input: {
         getRunEvents: input.getRunEvents,
       }),
       "shell",
+    ),
+    catalogEntry(
+      createTaskCreate({
+        manager: input.taskManager,
+        getParentRunId: input.getParentRunId,
+        taskCreateKinds: [
+          {
+            kind: "agent",
+            description:
+              "start a read-only background child agent owned by the task lifecycle",
+            payloadDescription:
+              "required object with goal, role, and prompt; optional allowedTools, maxSteps, and metadata",
+            payloadSchema: AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
+            requiresPayload: true,
+          },
+        ],
+      }),
+      "task",
     ),
     catalogEntry(
       createTaskControl({

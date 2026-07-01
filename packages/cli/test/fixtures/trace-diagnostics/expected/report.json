@@ -28,7 +28,7 @@
       "evidence": [
         "top duplicate reads: README.md:10"
       ],
-      "recommendation": "Surface prior reads to the model or return cached-read hints for duplicate targets."
+      "recommendation": "Check whether duplicates come from scan tools or explicit file reads before adding read-cache hints; surface prior explicit reads when the same targets repeat."
     },
     {
       "severity": "medium",

@@ -163,6 +163,31 @@ async function readFileWhenReady(
   }
 }
 
+async function waitForAgentTaskTerminal(
+  runtime: HostRuntime,
+  timeoutMs = 12000,
+): Promise<ReturnType<HostRuntime["listTasks"]>["tasks"][number]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const listed = runtime.listTasks({ kind: "agent", limit: 10 });
+    const task = listed.tasks.find((candidate) => candidate.kind === "agent");
+    if (
+      task &&
+      (task.status === "completed" ||
+        task.status === "failed" ||
+        task.status === "cancelled")
+    ) {
+      return task;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for agent task terminal state`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 describe("host protocol", () => {
   it("rejects requests before handshake", async () => {
     const pair = createConnectionPair();
@@ -1026,7 +1051,7 @@ describe("host protocol", () => {
         risk: "safe",
       });
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      await rmWhenReady(workspace);
     }
   });
 
@@ -1084,7 +1109,7 @@ describe("host protocol", () => {
         ]),
       );
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      await rmWhenReady(workspace);
     }
   });
 
@@ -3195,6 +3220,148 @@ describe("host protocol", () => {
       .clientMessages()
       .filter((m) => m.envelope === "event" && m.kind === "run.event");
     expect(runEvents.length).toBeGreaterThan(0);
+  });
+
+  it("starts a background agent through the real task_create tool", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-agent-task-create-"),
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "task_create",
+            arguments: {
+              kind: "agent",
+              title: "background repo inspection",
+              payload: {
+                goal: "Inspect the repository in the background.",
+                role: "background-inspector",
+                prompt: "Return one concise sentence.",
+                allowedTools: ["glob"],
+                maxSteps: 1,
+              },
+            },
+          },
+        ],
+      },
+      { message: "scripted background agent completed." },
+      { message: "parent launched the background agent." },
+      { message: "scripted fallback completed." },
+    ]);
+
+    let resolveTerminal!: (event: HostMessage) => void;
+    const terminal = new Promise<HostMessage>((resolve) => {
+      resolveTerminal = resolve;
+    });
+    let resolveApprovalRequest!: (approvalId: string) => void;
+    const approvalRequest = new Promise<string>((resolve) => {
+      resolveApprovalRequest = resolve;
+    });
+    const emitted: HostMessage[] = [];
+    let runtime: HostRuntime | undefined;
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+        emit: (event) => {
+          emitted.push(event);
+          if (
+            event.kind === "approval.requested" &&
+            typeof event.payload.approvalId === "string"
+          ) {
+            resolveApprovalRequest(event.payload.approvalId);
+          }
+          if (event.kind === "run.completed" || event.kind === "run.failed") {
+            resolveTerminal(event);
+          }
+        },
+      });
+
+      const started = await runtime.startRun({
+        goal: "launch a background agent task",
+        model: "scripted",
+        accessMode: "bypass",
+      });
+      expect(started).toMatchObject({ ok: true });
+      if (!started.ok) throw new Error(started.error.message);
+
+      const approvalId = await approvalRequest;
+      expect(
+        runtime.resolveApproval(
+          approvalId,
+          "approved",
+          "Approved task_create for background agent test.",
+          true,
+        ),
+      ).toMatchObject({ ok: true });
+
+      const completed = await terminal;
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: { state: "completed" },
+      });
+
+      const task = await waitForAgentTaskTerminal(runtime);
+      expect(task).toMatchObject({
+        kind: "agent",
+        status: "completed",
+        title: "background repo inspection",
+      });
+      const output = await runtime.readTaskOutput({
+        taskId: task.id,
+        maxChunks: 10,
+      });
+      expect(output).toMatchObject({
+        ok: true,
+        status: "completed",
+        complete: true,
+      });
+      if (!output.ok) throw new Error(output.error.message);
+      const summary = JSON.parse(output.chunks[0]?.data ?? "{}") as {
+        type?: string;
+        childRunId?: string;
+        agentId?: string;
+        finality?: string;
+      };
+      expect(summary).toMatchObject({
+        type: "agent.completed",
+        agentId: "dynamic_background-inspector",
+      });
+      expect(summary.childRunId).toMatch(/^run_/);
+      expect(["complete", "partial"]).toContain(summary.finality);
+
+      const runEvents = emitted
+        .filter(
+          (event) => event.envelope === "event" && event.kind === "run.event",
+        )
+        .map((event) => event.payload.event as SparkwrightEvent);
+      expect(
+        runEvents.some(
+          (event) =>
+            event.type === "tool.completed" &&
+            (event.payload as { toolName?: string }).toolName === "task_create",
+        ),
+      ).toBe(true);
+      expect(
+        runEvents.some(
+          (event) =>
+            event.type === "subagent.completed" &&
+            (event.metadata as { entrypoint?: string }).entrypoint ===
+              "agent_task",
+        ),
+      ).toBe(true);
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("runs required verification after workspace writes before final answer", async () => {

@@ -66,6 +66,7 @@ export interface ToolResultSizePolicy {
 export type ToolResultPresentationKind =
   | "file_discovery"
   | "file_read"
+  | "text_search"
   | "shell_output"
   | "diagnostic"
   | "generic";
@@ -106,6 +107,15 @@ export type ToolRequestPreviewFormatter<TArgs = unknown> = (
   args: TArgs,
   options: ToolRequestPreviewOptions,
 ) => string | undefined;
+
+export type ToolInputValidationResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code?: string;
+      message: string;
+      metadata?: Record<string, unknown>;
+    };
 
 export interface ToolProgressUpdate {
   /** @reserved Public progress payload field consumed by streaming UIs. */
@@ -259,6 +269,16 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
     policy?: ToolDefinition<TArgs, TResult>["policy"];
     governance?: ToolGovernance;
   };
+  /**
+   * Optional semantic input validation that runs after JSON schema validation
+   * and before policy/approval. It must not mutate args, write the workspace,
+   * create artifacts, or call external networks; use it for "can this input
+   * make sense for this tool?" checks, not risk classification.
+   */
+  validateInput?(
+    args: TArgs,
+    ctx: RuntimeContext,
+  ): ToolInputValidationResult | Promise<ToolInputValidationResult>;
   /**
    * Optional runtime availability probe. When provided and it resolves false,
    * the tool is withheld from model-facing descriptors (it never appears in the

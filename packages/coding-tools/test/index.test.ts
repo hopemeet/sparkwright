@@ -52,6 +52,35 @@ describe("coding tools", () => {
     ]);
   });
 
+  it("declares result presentation hints for read and discovery tools", () => {
+    const tools = new Map(createCodingTools().map((tool) => [tool.name, tool]));
+
+    expect(tools.get("read_text")?.resultPresentation).toMatchObject({
+      kind: "file_read",
+      preserveFields: expect.arrayContaining(["path", "content", "truncated"]),
+    });
+    expect(tools.get("list_dir")?.resultPresentation).toMatchObject({
+      kind: "file_discovery",
+      preserveFields: expect.arrayContaining([
+        "entries",
+        "entriesReturned",
+        "entryLimitHit",
+      ]),
+    });
+    expect(tools.get("grep")?.resultPresentation).toMatchObject({
+      kind: "text_search",
+      preserveFields: expect.arrayContaining([
+        "matches",
+        "filesScanned",
+        "matchesReturned",
+        "scope",
+      ]),
+    });
+    expect(tools.get("glob")?.resultPresentation).toMatchObject({
+      kind: "file_discovery",
+    });
+  });
+
   it("reads bounded text through the runtime workspace", async () => {
     const { ctx } = await createWorkspace({
       "README.md": "# Title\nfirst\nsecond\nthird\n",
@@ -117,6 +146,77 @@ describe("coding tools", () => {
     await expect(
       globPaths.execute({ patterns: [] }, ctx),
     ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+  });
+
+  it("declares semantic validateInput checks on coding tools", async () => {
+    const { root, ctx } = await createWorkspace({
+      "app/[slug]/page.tsx": "export default function Page() {}\n",
+      "docs/README.md": "# Docs\n",
+      "src/index.ts": "export const value = 1;\n",
+    });
+    const tools = createCodingTools({ workspaceRoot: root });
+    const readText = getTool<ReadTextInput, ReadTextResult>(tools, "read_text");
+    const writeFile = getTool<WriteFileInput, WriteFileResult>(
+      tools,
+      "write_file",
+    );
+    const grep = getTool<GrepTextInput, GrepTextResult>(tools, "grep");
+    const glob = getTool<GlobPathsInput, GlobPathsResult>(tools, "glob");
+
+    expect(readText.validateInput).toBeDefined();
+    expect(writeFile.validateInput).toBeDefined();
+    expect(grep.validateInput).toBeDefined();
+    expect(glob.validateInput).toBeDefined();
+    const readValidation = await Promise.resolve(
+      readText.validateInput!({ path: "app/[slug]/page.tsx" }, ctx),
+    );
+    const writeValidation = await Promise.resolve(
+      writeFile.validateInput!(
+        { path: "docs/", content: "replacement\n" },
+        ctx,
+      ),
+    );
+    const literalWildcardWriteValidation = await Promise.resolve(
+      writeFile.validateInput!(
+        { path: "src/literal*?.txt", content: "literal\n" },
+        ctx,
+      ),
+    );
+    const grepValidation = await Promise.resolve(
+      grep.validateInput!({ pattern: "(", regex: true }, ctx),
+    );
+    const globValidation = await Promise.resolve(
+      glob.validateInput!({ patterns: [""], path: "src" }, ctx),
+    );
+    const bracketPathGlobValidation = await Promise.resolve(
+      glob.validateInput!({ patterns: ["*.tsx"], path: "app/[slug]" }, ctx),
+    );
+    const bracketRead = await readText.execute(
+      { path: "app/[slug]/page.tsx" },
+      ctx,
+    );
+
+    expect(readValidation).toMatchObject({
+      ok: true,
+    });
+    expect(writeValidation).toMatchObject({
+      ok: false,
+      code: "TOOL_ARGUMENTS_INVALID",
+      metadata: { reason: "directory_path", path: "docs/" },
+    });
+    expect(literalWildcardWriteValidation).toMatchObject({ ok: true });
+    expect(grepValidation).toMatchObject({
+      ok: false,
+      code: "TOOL_ARGUMENTS_INVALID",
+      metadata: { reason: "invalid_regex", pattern: "(" },
+    });
+    expect(globValidation).toMatchObject({
+      ok: false,
+      code: "TOOL_ARGUMENTS_INVALID",
+      metadata: { reason: "empty_pattern" },
+    });
+    expect(bracketPathGlobValidation).toMatchObject({ ok: true });
+    expect(bracketRead.content).toContain("Page");
   });
 
   it("reads anchors and applies anchored edits through the workspace", async () => {
@@ -331,6 +431,10 @@ describe("coding tools", () => {
       { path: "README.md", type: "file" },
       { path: "src/index.ts", type: "file" },
     ]);
+    expect(result).toMatchObject({
+      entriesReturned: 3,
+      entryLimitHit: false,
+    });
   });
 
   it("greps text files using workspace reads", async () => {
@@ -368,7 +472,26 @@ describe("coding tools", () => {
         text: "const label = 'Answer';",
       },
     ]);
-    expect(result.truncated).toBe(false);
+    expect(result).toMatchObject({
+      truncated: false,
+      filesScanned: 2,
+      filesMatched: 2,
+      matchesReturned: 2,
+      fileLimitHit: false,
+      matchLimitHit: false,
+      effectiveInclude: ["**/*.ts"],
+      scope: {
+        path: "src",
+        include: ["**/*.ts"],
+        includeHidden: false,
+        includeBuildOutput: false,
+        regex: false,
+        caseSensitive: false,
+        maxMatches: 200,
+        maxLineChars: 500,
+        maxPaths: 500,
+      },
+    });
   });
 
   it("treats an empty include array as no filter, not match-nothing", async () => {
@@ -387,6 +510,58 @@ describe("coding tools", () => {
       "README.md",
       "src/index.ts",
     ]);
+  });
+
+  it("treats blank grep include entries as no filter", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/index.ts": "export const answer = 42;\n",
+      "README.md": "answer in docs\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep",
+    );
+
+    const result = await tool.execute(
+      { pattern: "answer", include: [""] },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      effectiveInclude: ["**/*"],
+      filesScanned: 2,
+      matchesReturned: 2,
+    });
+    expect(result.matches.map((match) => match.path).sort()).toEqual([
+      "README.md",
+      "src/index.ts",
+    ]);
+  });
+
+  it("reports grep match-limit truncation metadata", async () => {
+    const { root, ctx } = await createWorkspace({
+      "src/a.ts": "needle one\nneedle two\n",
+      "src/b.ts": "needle three\n",
+    });
+    const tool = getTool<GrepTextInput, GrepTextResult>(
+      createCodingTools({ workspaceRoot: root }),
+      "grep",
+    );
+
+    const result = await tool.execute(
+      { pattern: "needle", path: "src", maxMatches: 1 },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      truncated: true,
+      truncationReason: "match_limit",
+      filesScanned: 1,
+      filesMatched: 1,
+      matchesReturned: 1,
+      fileLimitHit: false,
+      matchLimitHit: true,
+    });
   });
 
   it("searches a concrete grep file path", async () => {

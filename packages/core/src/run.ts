@@ -170,6 +170,32 @@ const DEFAULT_MODEL_RETRY_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
 const FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS = 2_000;
+
+interface ToolStageTimings {
+  schemaValidationMs?: number;
+  inputValidationMs?: number;
+  policyForArgsMs?: number;
+  policyDecisionMs?: number;
+  approvalWaitMs?: number;
+  executionMs?: number;
+  resultValidationMs?: number;
+}
+
+interface DeferredToolObservation {
+  originalIndex: number;
+  sequence: number;
+  toolName: string;
+  result: ToolResult;
+}
+
+interface ToolResultRecordingOptions {
+  appendContext?: boolean;
+  batchResults?: ToolResult[];
+  deferredObservations?: DeferredToolObservation[];
+  loadedDeferredToolsAtTurnStart?: ReadonlySet<string>;
+  originalIndex?: number;
+}
+
 export interface CreateRunOptions {
   goal: string;
   /**
@@ -1437,6 +1463,7 @@ export class SparkwrightRun implements RunHandle {
       }
 
       // --- Phase 7: tool batches ------------------------------------------
+      const loadedDeferredToolsAtTurnStart = new Set(this.loadedDeferredTools);
       const batches = partitionToolCalls(this.tools, toolCalls);
       const batchResults: ToolResult[] = [];
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
@@ -1457,6 +1484,11 @@ export class SparkwrightRun implements RunHandle {
           batch,
           this.maxToolConcurrency,
         );
+        const deferredObservations: DeferredToolObservation[] = [];
+        const batchCallIndexes = new Map(
+          batch.calls.map((call, index) => [call, index] as const),
+        );
+        const appendContext = batch.mode !== "concurrent";
         const results = await withSpan(
           this.events,
           {
@@ -1471,15 +1503,28 @@ export class SparkwrightRun implements RunHandle {
                 this.processToolCall(
                   requestedCall,
                   state,
-                  batchResults,
                   diagnoseToolExecution(
                     toolExecutionDiagnostics,
                     requestedCall,
                   ),
+                  {
+                    appendContext,
+                    batchResults,
+                    deferredObservations,
+                    loadedDeferredToolsAtTurnStart,
+                    originalIndex: batchCallIndexes.get(requestedCall) ?? 0,
+                  },
                 ),
               { maxConcurrency: this.maxToolConcurrency },
             ),
         );
+        if (!appendContext) {
+          this.flushDeferredToolObservations(
+            state.context,
+            batchResults,
+            deferredObservations,
+          );
+        }
         const terminal = results.find(
           (result): result is RunResult => result !== undefined,
         );
@@ -2277,11 +2322,42 @@ export class SparkwrightRun implements RunHandle {
     };
   }
 
+  private createValidationRuntimeContext(input?: {
+    toolCallId?: ToolResult["toolCallId"];
+    toolName?: string;
+  }): RuntimeContext {
+    const workspace = this.runtimeWorkspace;
+    return {
+      run: this.record,
+      abortSignal: this.abortController.signal,
+      ...(workspace
+        ? {
+            workspace: {
+              readText: workspace.readText.bind(workspace),
+              canonicalPath: workspace.canonicalPath?.bind(workspace),
+              readAnchoredText: workspace.readAnchoredText.bind(workspace),
+              editAnchoredText: async () => {
+                throw new Error(
+                  `validateInput for ${input?.toolName ?? "tool"} cannot edit the workspace.`,
+                );
+              },
+              writeText: async () => {
+                throw new Error(
+                  `validateInput for ${input?.toolName ?? "tool"} cannot write the workspace.`,
+                );
+              },
+              diffText: workspace.diffText.bind(workspace),
+            },
+          }
+        : {}),
+    };
+  }
+
   private async processToolCall(
     requestedCall: RequestedToolCall,
     state: RunLoopState,
-    batchResults?: ToolResult[],
     executionDiagnostic?: ToolExecutionDiagnostic,
+    recordingOptions: ToolResultRecordingOptions = {},
   ): Promise<RunResult | undefined> {
     const preToolHooks = await this.runWorkflowHookPhase(
       "PreToolUse",
@@ -2325,13 +2401,13 @@ export class SparkwrightRun implements RunHandle {
         toolName: requestedCall.toolName,
         status: blocked.status,
       });
-      this.appendToolResultContext(
+      this.recordToolResult(
         state.context,
         requestedCall.toolName,
         blocked,
+        recordingOptions,
       );
       await this.runAfterToolCallHook(state, requestedCall, blocked);
-      batchResults?.push(blocked);
       return undefined;
     }
     for (const rewrite of preToolHooks.rewrites) {
@@ -2473,7 +2549,7 @@ export class SparkwrightRun implements RunHandle {
           call,
           requestedCall,
           state,
-          batchResults,
+          recordingOptions,
           span,
         ),
       );
@@ -2497,7 +2573,7 @@ export class SparkwrightRun implements RunHandle {
           call,
           requestedCall,
           state,
-          batchResults,
+          recordingOptions,
           span,
           priorFailure,
           priorNoop,
@@ -2506,7 +2582,13 @@ export class SparkwrightRun implements RunHandle {
     }
 
     return runWithSpan(span.frame, () =>
-      this.runToolCallInSpan(call, requestedCall, state, batchResults, span),
+      this.runToolCallInSpan(
+        call,
+        requestedCall,
+        state,
+        recordingOptions,
+        span,
+      ),
     );
   }
 
@@ -2535,7 +2617,7 @@ export class SparkwrightRun implements RunHandle {
     call: ReturnType<typeof createToolCall>,
     requestedCall: RequestedToolCall,
     state: RunLoopState,
-    batchResults: ToolResult[] | undefined,
+    recordingOptions: ToolResultRecordingOptions,
     span: ReturnType<typeof openSpan>,
   ): Promise<RunResult | undefined> {
     const skipped: ToolResult = {
@@ -2562,13 +2644,13 @@ export class SparkwrightRun implements RunHandle {
       toolName: requestedCall.toolName,
       status: skipped.status,
     });
-    this.appendToolResultContext(
+    this.recordToolResult(
       state.context,
       requestedCall.toolName,
       skipped,
+      recordingOptions,
     );
     await this.runAfterToolCallHook(state, requestedCall, skipped);
-    batchResults?.push(skipped);
     return undefined;
   }
 
@@ -2585,7 +2667,7 @@ export class SparkwrightRun implements RunHandle {
     call: ReturnType<typeof createToolCall>,
     requestedCall: RequestedToolCall,
     state: RunLoopState,
-    batchResults: ToolResult[] | undefined,
+    recordingOptions: ToolResultRecordingOptions,
     span: ReturnType<typeof openSpan>,
     priorFailure?: RunLoopState["lastFailedToolTarget"],
     priorNoop?: RunLoopState["lastNoopToolTarget"],
@@ -2617,13 +2699,13 @@ export class SparkwrightRun implements RunHandle {
         toolName: requestedCall.toolName,
         status: nudged.status,
       });
-      this.appendToolResultContext(
+      this.recordToolResult(
         state.context,
         requestedCall.toolName,
         nudged,
+        recordingOptions,
       );
       await this.runAfterToolCallHook(state, requestedCall, nudged);
-      batchResults?.push(nudged);
       return undefined;
     }
 
@@ -2654,9 +2736,13 @@ export class SparkwrightRun implements RunHandle {
       toolName: requestedCall.toolName,
       status: nudged.status,
     });
-    this.appendToolResultContext(state.context, requestedCall.toolName, nudged);
+    this.recordToolResult(
+      state.context,
+      requestedCall.toolName,
+      nudged,
+      recordingOptions,
+    );
     await this.runAfterToolCallHook(state, requestedCall, nudged);
-    batchResults?.push(nudged);
     return undefined;
   }
 
@@ -2670,9 +2756,10 @@ export class SparkwrightRun implements RunHandle {
     call: ReturnType<typeof createToolCall>,
     requestedCall: RequestedToolCall,
     state: RunLoopState,
-    batchResults: ToolResult[] | undefined,
+    recordingOptions: ToolResultRecordingOptions,
     span: ReturnType<typeof openSpan>,
   ): Promise<RunResult | undefined> {
+    const timings: ToolStageTimings = {};
     // beforeToolCall hook: may return { skip } to synthesize a failed result.
     let hookDecision: ToolCallHookDecision | undefined;
     try {
@@ -2701,21 +2788,25 @@ export class SparkwrightRun implements RunHandle {
         },
         artifacts: [],
       };
-      span.close("tool.failed", {
-        ...skipped,
-        toolName: requestedCall.toolName,
-      });
+      span.close(
+        "tool.failed",
+        {
+          ...skipped,
+          toolName: requestedCall.toolName,
+        },
+        this.toolTimingMetadata(timings),
+      );
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: skipped.status,
       });
-      this.appendToolResultContext(
+      this.recordToolResult(
         state.context,
         requestedCall.toolName,
         skipped,
+        recordingOptions,
       );
       await this.runAfterToolCallHook(state, requestedCall, skipped);
-      batchResults?.push(skipped);
       return undefined;
     }
 
@@ -2723,23 +2814,62 @@ export class SparkwrightRun implements RunHandle {
       call.id,
       requestedCall.toolName,
       requestedCall.arguments,
+      timings,
+      recordingOptions.loadedDeferredToolsAtTurnStart,
     );
     if (validationResult) {
-      span.close("tool.failed", {
-        ...validationResult,
-        toolName: requestedCall.toolName,
-      });
+      span.close(
+        "tool.failed",
+        {
+          ...validationResult,
+          toolName: requestedCall.toolName,
+        },
+        this.toolTimingMetadata(timings),
+      );
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: validationResult.status,
       });
-      this.appendToolResultContext(
+      this.recordToolResult(
         state.context,
         requestedCall.toolName,
         validationResult,
+        recordingOptions,
       );
       await this.runAfterToolCallHook(state, requestedCall, validationResult);
-      batchResults?.push(validationResult);
+      return undefined;
+    }
+
+    const inputValidationResult = await this.validateToolInput(
+      call.id,
+      requestedCall.toolName,
+      requestedCall.arguments,
+      timings,
+    );
+    if (inputValidationResult) {
+      span.close(
+        "tool.failed",
+        {
+          ...inputValidationResult,
+          toolName: requestedCall.toolName,
+        },
+        this.toolTimingMetadata(timings),
+      );
+      this.usageTracker.recordToolUsage({
+        toolName: requestedCall.toolName,
+        status: inputValidationResult.status,
+      });
+      this.recordToolResult(
+        state.context,
+        requestedCall.toolName,
+        inputValidationResult,
+        recordingOptions,
+      );
+      await this.runAfterToolCallHook(
+        state,
+        requestedCall,
+        inputValidationResult,
+      );
       return undefined;
     }
 
@@ -2747,23 +2877,28 @@ export class SparkwrightRun implements RunHandle {
       call.id,
       requestedCall.toolName,
       requestedCall.arguments,
+      timings,
     );
     if (gatedResult) {
-      span.close("tool.failed", {
-        ...gatedResult,
-        toolName: requestedCall.toolName,
-      });
+      span.close(
+        "tool.failed",
+        {
+          ...gatedResult,
+          toolName: requestedCall.toolName,
+        },
+        this.toolTimingMetadata(timings),
+      );
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: gatedResult.status,
       });
-      this.appendToolResultContext(
+      this.recordToolResult(
         state.context,
         requestedCall.toolName,
         gatedResult,
+        recordingOptions,
       );
       await this.runAfterToolCallHook(state, requestedCall, gatedResult);
-      batchResults?.push(gatedResult);
       return undefined;
     }
 
@@ -2777,21 +2912,25 @@ export class SparkwrightRun implements RunHandle {
         },
         artifacts: [],
       };
-      span.close("tool.failed", {
-        ...aborted,
-        toolName: requestedCall.toolName,
-      });
+      span.close(
+        "tool.failed",
+        {
+          ...aborted,
+          toolName: requestedCall.toolName,
+        },
+        this.toolTimingMetadata(timings),
+      );
       this.usageTracker.recordToolUsage({
         toolName: requestedCall.toolName,
         status: aborted.status,
       });
-      this.appendToolResultContext(
+      this.recordToolResult(
         state.context,
         requestedCall.toolName,
         aborted,
+        recordingOptions,
       );
       await this.runAfterToolCallHook(state, requestedCall, aborted);
-      batchResults?.push(aborted);
       return undefined;
     }
 
@@ -2799,6 +2938,7 @@ export class SparkwrightRun implements RunHandle {
       toolCallId: call.id,
       toolName: call.toolName,
     });
+    const executionStartedAt = Date.now();
     const result = await executeTool(
       this.tools,
       call,
@@ -2811,12 +2951,14 @@ export class SparkwrightRun implements RunHandle {
         abortSignal: this.abortController.signal,
       },
     );
+    timings.executionMs = elapsedMs(executionStartedAt);
     const checkedResult = await this.applyToolResultValidation(
       requestedCall.toolName,
       result,
       {
         step: state.step,
       },
+      timings,
     );
     const normalizedResult =
       requestedCall.toolName === "skill_load"
@@ -2829,6 +2971,7 @@ export class SparkwrightRun implements RunHandle {
     span.close(
       annotatedResult.status === "completed" ? "tool.completed" : "tool.failed",
       { ...annotatedResult, toolName: requestedCall.toolName },
+      this.toolTimingMetadata(timings),
     );
     if (requestedCall.toolName === "skill_load") {
       this.emitSkillEventFromToolResult(annotatedResult);
@@ -2840,13 +2983,13 @@ export class SparkwrightRun implements RunHandle {
       toolName: requestedCall.toolName,
       status: annotatedResult.status,
     });
-    this.appendToolResultContext(
+    this.recordToolResult(
       state.context,
       requestedCall.toolName,
       annotatedResult,
+      recordingOptions,
     );
     await this.runAfterToolCallHook(state, requestedCall, annotatedResult);
-    batchResults?.push(annotatedResult);
     return undefined;
   }
 
@@ -3145,43 +3288,127 @@ export class SparkwrightRun implements RunHandle {
     toolCallId: ToolResult["toolCallId"],
     toolName: string,
     args: unknown,
+    timings?: ToolStageTimings,
+    loadedDeferredToolsForModelTurn: ReadonlySet<string> = this
+      .loadedDeferredTools,
   ): ToolResult | undefined {
+    const startedAt = Date.now();
     const tool = this.tools.get(toolName);
 
-    if (!tool) {
+    try {
+      if (!tool) {
+        return {
+          toolCallId,
+          status: "failed",
+          error: {
+            code: "TOOL_NOT_FOUND",
+            message: `Tool not found: ${toolName}`,
+            metadata: { toolName },
+          },
+          artifacts: [],
+        };
+      }
+
+      const validationError = validateToolArguments(tool.inputSchema, args);
+      if (!validationError) return undefined;
+
+      const schemaNotLoaded =
+        tool.deferLoading === true &&
+        tool.alwaysLoad !== true &&
+        !loadedDeferredToolsForModelTurn.has(tool.name);
+      const recoveryMetadata = schemaNotLoaded
+        ? {
+            reason: "schema_not_loaded",
+            recoveryTool: "tool_search",
+            recoveryQuery: `select:${toolName}`,
+            deferred: true,
+            schemaLoaded: false,
+          }
+        : {};
+      const recoveryMessage = schemaNotLoaded
+        ? ` The schema for deferred tool \`${toolName}\` has not been loaded in this run. First call \`tool_search\` with query \`select:${toolName}\` to load the schema, then retry the tool call.`
+        : "";
+
       return {
         toolCallId,
         status: "failed",
         error: {
-          code: "TOOL_NOT_FOUND",
-          message: `Tool not found: ${toolName}`,
-          metadata: { toolName },
+          ...validationError,
+          message: `${validationError.message}${recoveryMessage}`,
+          metadata: {
+            ...(validationError.metadata ?? {}),
+            toolName,
+            ...recoveryMetadata,
+          },
         },
         artifacts: [],
       };
+    } finally {
+      if (timings) timings.schemaValidationMs = elapsedMs(startedAt);
     }
+  }
 
-    const validationError = validateToolArguments(tool.inputSchema, args);
-    if (!validationError) return undefined;
+  private async validateToolInput(
+    toolCallId: ToolResult["toolCallId"],
+    toolName: string,
+    args: unknown,
+    timings?: ToolStageTimings,
+  ): Promise<ToolResult | undefined> {
+    const tool = this.tools.get(toolName);
+    if (!tool?.validateInput) return undefined;
 
-    return {
-      toolCallId,
-      status: "failed",
-      error: {
-        ...validationError,
-        metadata: {
-          ...(validationError.metadata ?? {}),
+    const startedAt = Date.now();
+    try {
+      const validation = await tool.validateInput(
+        args as never,
+        this.createValidationRuntimeContext({
+          toolCallId,
           toolName,
+        }) as never,
+      );
+      if (validation.ok) return undefined;
+      return {
+        toolCallId,
+        status: "failed",
+        error: {
+          code: validation.code ?? "TOOL_ARGUMENTS_INVALID",
+          message: validation.message,
+          metadata: {
+            ...(validation.metadata ?? {}),
+            toolName,
+            phase: "validateInput",
+          },
         },
-      },
-      artifacts: [],
-    };
+        artifacts: [],
+      };
+    } catch (cause) {
+      const error = normalizeToolError(cause, {
+        code: "TOOL_ARGUMENTS_INVALID",
+        message: "Tool input validation failed.",
+      });
+      return {
+        toolCallId,
+        status: "failed",
+        error: {
+          ...error,
+          metadata: {
+            ...(error.metadata ?? {}),
+            toolName,
+            phase: "validateInput",
+          },
+        },
+        artifacts: [],
+      };
+    } finally {
+      if (timings) timings.inputValidationMs = elapsedMs(startedAt);
+    }
   }
 
   private async checkToolGate(
     toolCallId: ToolResult["toolCallId"],
     toolName: string,
     args: unknown,
+    timings?: ToolStageTimings,
   ): Promise<ToolResult | undefined> {
     const tool = this.tools.get(toolName);
 
@@ -3190,9 +3417,11 @@ export class SparkwrightRun implements RunHandle {
     let argPolicy:
       | ReturnType<NonNullable<typeof tool.policyForArgs>>
       | undefined;
+    const policyForArgsStartedAt = Date.now();
     try {
       argPolicy = tool.policyForArgs?.(args as never);
     } catch (cause) {
+      if (timings) timings.policyForArgsMs = elapsedMs(policyForArgsStartedAt);
       const error = normalizeToolError(cause, {
         code: "TOOL_ARGUMENTS_INVALID",
         message: "Tool argument policy failed.",
@@ -3211,6 +3440,7 @@ export class SparkwrightRun implements RunHandle {
         artifacts: [],
       };
     }
+    if (timings) timings.policyForArgsMs = elapsedMs(policyForArgsStartedAt);
     const effectivePolicy = argPolicy?.policy ?? tool.policy;
     const effectiveGovernance = argPolicy?.governance ?? tool.governance;
     const risk = effectivePolicy?.risk ?? "safe";
@@ -3234,6 +3464,7 @@ export class SparkwrightRun implements RunHandle {
       };
     }
 
+    const policyDecisionStartedAt = Date.now();
     const decision = await this.policy.decide({
       action: "tool.execute",
       resource: {
@@ -3247,6 +3478,7 @@ export class SparkwrightRun implements RunHandle {
       },
       metadata,
     });
+    if (timings) timings.policyDecisionMs = elapsedMs(policyDecisionStartedAt);
 
     if (decision.decision === "deny") {
       return {
@@ -3268,6 +3500,7 @@ export class SparkwrightRun implements RunHandle {
     ) {
       let approved = false;
 
+      const approvalStartedAt = Date.now();
       try {
         approved = await this.requestApproval({
           action: "tool.execute",
@@ -3278,7 +3511,9 @@ export class SparkwrightRun implements RunHandle {
             policy: decision,
           },
         });
+        if (timings) timings.approvalWaitMs = elapsedMs(approvalStartedAt);
       } catch (cause) {
+        if (timings) timings.approvalWaitMs = elapsedMs(approvalStartedAt);
         return {
           toolCallId,
           status: "failed",
@@ -3322,6 +3557,62 @@ export class SparkwrightRun implements RunHandle {
         run: this.record,
       }),
     );
+  }
+
+  private recordToolResult(
+    context: ContextItem[],
+    toolName: string,
+    result: ToolResult,
+    options: ToolResultRecordingOptions,
+  ): void {
+    if (options.appendContext === false) {
+      options.deferredObservations?.push({
+        originalIndex: options.originalIndex ?? 0,
+        sequence: options.deferredObservations.length,
+        toolName,
+        result,
+      });
+      return;
+    }
+    this.appendToolResultContext(context, toolName, result);
+    options.batchResults?.push(result);
+  }
+
+  private flushDeferredToolObservations(
+    context: ContextItem[],
+    batchResults: ToolResult[],
+    observations: DeferredToolObservation[],
+  ): void {
+    observations
+      .slice()
+      .sort(
+        (left, right) =>
+          left.originalIndex - right.originalIndex ||
+          left.sequence - right.sequence,
+      )
+      .forEach((observation) => {
+        this.appendToolResultContext(
+          context,
+          observation.toolName,
+          observation.result,
+        );
+        batchResults.push(observation.result);
+      });
+  }
+
+  private toolTimingMetadata(
+    timings: ToolStageTimings,
+  ): Record<string, unknown> | undefined {
+    const metadata = omitUndefined({
+      schemaValidationMs: timings.schemaValidationMs,
+      inputValidationMs: timings.inputValidationMs,
+      policyForArgsMs: timings.policyForArgsMs,
+      policyDecisionMs: timings.policyDecisionMs,
+      approvalWaitMs: timings.approvalWaitMs,
+      executionMs: timings.executionMs,
+      resultValidationMs: timings.resultValidationMs,
+    });
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
   }
 
   private formatValidationFailureContext(
@@ -3389,13 +3680,16 @@ export class SparkwrightRun implements RunHandle {
     toolName: string,
     result: ToolResult,
     metadata: Record<string, unknown>,
+    timings?: ToolStageTimings,
   ): Promise<ToolResult> {
+    const startedAt = Date.now();
     const validationFailure = await this.runValidation("tool_result", result, {
       ...metadata,
       toolName,
       toolCallId: result.toolCallId,
       status: result.status,
     });
+    if (timings) timings.resultValidationMs = elapsedMs(startedAt);
     if (!validationFailure) return result;
 
     return {
@@ -4140,6 +4434,10 @@ function canTransition(from: RunState, to: RunState): boolean {
 
 function isTerminalState(state: RunState): boolean {
   return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
 }
 
 interface ToolExecutionDiagnostics {

@@ -112,7 +112,8 @@ describe("run outcome evidence", () => {
         id: "call_probe",
         toolName: "shell",
         arguments: {
-          command: 'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+          command:
+            'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
         },
       }),
       log.emit("tool.completed", {

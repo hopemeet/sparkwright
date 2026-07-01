@@ -19,6 +19,16 @@ import type {
   TaskStatus,
 } from "./types.js";
 
+type JsonSchemaObject = Record<string, unknown>;
+
+export interface TaskCreateKindDescriptor {
+  kind: string;
+  description?: string;
+  payloadDescription?: string;
+  payloadSchema?: JsonSchemaObject;
+  requiresPayload?: boolean;
+}
+
 /**
  * Options for {@link createTaskTools}.
  *
@@ -36,6 +46,11 @@ export interface CreateTaskToolsOptions {
    * Default cap on chunks returned by `task_output`. Default 200.
    */
   defaultMaxOutputChunks?: number;
+  /**
+   * Optional model-facing hints for registered task_create kinds.
+   * Execution still dispatches through TaskManager's live registry.
+   */
+  taskCreateKinds?: readonly TaskCreateKindDescriptor[];
 }
 
 const DEFAULT_MAX_OUTPUT_CHUNKS = 200;
@@ -76,19 +91,11 @@ export function createTaskTools(options: CreateTaskToolsOptions): {
 export function createTaskCreate(
   options: CreateTaskToolsOptions,
 ): ToolDefinition {
+  const kinds = taskCreateKindDescriptors(options);
   return defineTool({
     name: "task_create",
-    description:
-      "Spawn a long-running background task by kind. Returns the task id; use task(action=get) / task(action=output) to monitor.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        kind: { type: "string" },
-        title: { type: "string" },
-        payload: { type: "object" },
-      },
-      required: ["kind"],
-    },
+    description: taskCreateDescription(kinds),
+    inputSchema: taskCreateInputSchema(kinds),
     deferLoading: false,
     policy: { risk: "risky", requiresApproval: false },
     governance: { sideEffects: ["external"] },
@@ -96,9 +103,14 @@ export function createTaskCreate(
       const parsed = parseCreateArgs(args);
       const runner = options.manager.getRunner(parsed.kind);
       if (!runner) {
+        const available = options.manager.registeredKinds();
+        const availableText =
+          available.length > 0
+            ? ` Available kinds: ${available.join(", ")}.`
+            : "";
         throw makeToolError(
           "TASK_KIND_UNREGISTERED",
-          `No runner registered for task kind: ${parsed.kind}`,
+          `No runner registered for task kind: ${parsed.kind}.${availableText}`,
         );
       }
       const handle = options.manager.spawn({
@@ -110,6 +122,76 @@ export function createTaskCreate(
       return { taskId: handle.record.id };
     },
   });
+}
+
+function taskCreateKindDescriptors(
+  options: CreateTaskToolsOptions,
+): TaskCreateKindDescriptor[] {
+  const descriptors =
+    options.taskCreateKinds ??
+    options.manager.registeredKinds().map((kind) => ({ kind }));
+  return descriptors
+    .filter((descriptor) => descriptor.kind.trim().length > 0)
+    .map((descriptor) => ({ ...descriptor, kind: descriptor.kind.trim() }))
+    .sort((left, right) => left.kind.localeCompare(right.kind));
+}
+
+function taskCreateDescription(
+  kinds: readonly TaskCreateKindDescriptor[],
+): string {
+  const base =
+    "Spawn a long-running background task by registered kind. Returns the task id; use task(action=get) / task(action=output) to monitor.";
+  if (kinds.length === 0) return base;
+  const kindText = kinds
+    .map((kind) =>
+      kind.description ? `${kind.kind}: ${kind.description}` : kind.kind,
+    )
+    .join("; ");
+  return `${base} Registered kinds: ${kindText}.`;
+}
+
+function taskCreateInputSchema(
+  kinds: readonly TaskCreateKindDescriptor[],
+): JsonSchemaObject {
+  const knownKindNames = kinds.map((kind) => kind.kind);
+  const singlePayloadKind =
+    kinds.length === 1 && kinds[0]?.payloadSchema ? kinds[0] : undefined;
+  const payloadDescriptions = kinds
+    .filter(
+      (kind) =>
+        kind.payloadDescription !== undefined ||
+        kind.payloadSchema !== undefined,
+    )
+    .map((kind) =>
+      kind.payloadDescription
+        ? `${kind.kind}: ${kind.payloadDescription}`
+        : `${kind.kind}: kind-specific payload.`,
+    );
+  const required = ["kind"];
+  if (singlePayloadKind?.requiresPayload === true) required.push("payload");
+  return {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        ...(knownKindNames.length > 0 ? { enum: knownKindNames } : {}),
+        description:
+          knownKindNames.length > 0
+            ? `Registered task kind. Available: ${knownKindNames.join(", ")}.`
+            : "Registered task kind.",
+      },
+      title: { type: "string" },
+      payload:
+        singlePayloadKind?.payloadSchema ??
+        ({
+          type: "object",
+          ...(payloadDescriptions.length > 0
+            ? { description: payloadDescriptions.join(" ") }
+            : {}),
+        } satisfies JsonSchemaObject),
+    },
+    required,
+  };
 }
 
 /** @public @stability experimental v0.1 */

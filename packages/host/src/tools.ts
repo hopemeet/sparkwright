@@ -117,15 +117,23 @@ export function createReadFileTool() {
           : "";
       return `${path}${offset}${limit}`;
     },
+    async validateInput(args: unknown, ctx) {
+      if (!ctx.workspace) {
+        return {
+          ok: false,
+          code: "TOOL_ARGUMENTS_INVALID",
+          message: "Workspace is not configured.",
+          metadata: { reason: "missing_workspace" },
+        };
+      }
+      const { path: rawPath } = readFileToolInput(args);
+      await normalizeWorkspacePathArg(rawPath, ctx.workspace);
+      return { ok: true };
+    },
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const { path: rawPath, offset, limit } = readFileToolInput(args);
       const path = await normalizeWorkspacePathArg(rawPath, ctx.workspace);
-      if (containsGlobPattern(path)) {
-        throw toolArgumentsInvalid(
-          `read does not support glob patterns: ${rawPath}. Use glob to find matching files, then call read with a concrete path.`,
-        );
-      }
       const content = await ctx.workspace.readText(path).catch((error) => {
         if (isNodeErrorCode(error, "EISDIR")) {
           throw toolArgumentsInvalid(
@@ -940,10 +948,6 @@ function shouldDeferTool(
   if (tool.deferLoading === true) return true;
   if (isToolNameListed(tool.name, names)) return true;
   return useDefaultTier && shouldDeferToolByDefault(tool);
-}
-
-function containsGlobPattern(path: string): boolean {
-  return /[*?[]/.test(path);
 }
 
 function isToolNameListed(

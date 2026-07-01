@@ -82,18 +82,33 @@ describe("host tools", () => {
     ]);
   });
 
-  it("rejects read glob paths with tool guidance", async () => {
+  it("treats path metacharacters as literal read paths", async () => {
     const ctx = await createWorkspace({
-      "packages/tui/package.json": "{}\n",
+      "app/[slug]/page.tsx": "export default function Page() {}\n",
+      "packages/*/package.json": '{"name":"literal-star"}\n',
     });
     const tool = createReadFileTool();
 
     await expect(
-      tool.execute({ path: "packages/*/package.json" }, ctx),
-    ).rejects.toThrow(/read does not support glob patterns.*glob/);
+      tool.validateInput!({ path: "app/[slug]/page.tsx" }, ctx),
+    ).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(
+      tool.execute({ path: "app/[slug]/page.tsx" }, ctx),
+    ).resolves.toMatchObject({
+      path: "app/[slug]/page.tsx",
+      content: "export default function Page() {}\n",
+    });
+    await expect(
+      tool.validateInput!({ path: "packages/*/package.json" }, ctx),
+    ).resolves.toMatchObject({ ok: true });
     await expect(
       tool.execute({ path: "packages/*/package.json" }, ctx),
-    ).rejects.toMatchObject({ code: "TOOL_ARGUMENTS_INVALID" });
+    ).resolves.toMatchObject({
+      path: "packages/*/package.json",
+      content: '{"name":"literal-star"}\n',
+    });
   });
 
   it("rejects read directory paths with tool guidance", async () => {
@@ -178,6 +193,10 @@ describe("host tools", () => {
     });
     expect(result.content.length).toBeLessThanOrEqual(6000);
     expect(result.endLine).toBeGreaterThan(1);
+    expect("nextOffset" in result).toBe(true);
+    if (!("nextOffset" in result)) {
+      throw new Error("expected capped read result to expose nextOffset");
+    }
     expect(result.nextOffset).toBe(result.endLine + 1);
     expect(result.note).toContain("capped at 6000 chars");
   });
@@ -417,6 +436,19 @@ describe("host tools", () => {
     expect(byName.get("bash")).toMatchObject({ source: "shell" });
     expect(byName.get("cron")).toMatchObject({ source: "cron" });
     expect(byName.get("create_skill")).toMatchObject({ source: "skill" });
+    expect(byName.get("task_create")).toMatchObject({ source: "task" });
+    expect(byName.get("task_create")?.definition.description).toContain(
+      "Registered kinds: agent",
+    );
+    expect(byName.get("task_create")?.definition.inputSchema).toMatchObject({
+      properties: {
+        kind: { enum: ["agent"] },
+        payload: {
+          required: ["goal", "role", "prompt"],
+        },
+      },
+      required: ["kind", "payload"],
+    });
     expect(byName.get("task")).toMatchObject({ source: "task" });
     expect(byName.get("todo_write")).toMatchObject({ source: "todo" });
     expect(byName.get("spawn_agent")).toMatchObject({ source: "agent" });

@@ -126,6 +126,21 @@ rendering and fall back to their legacy argument formatter when it is absent;
 policy, approval, validation, and execution must continue to use the structured
 arguments.
 
+`tool.completed` and `tool.failed` are the terminal tool events. Their metadata
+may include diagnostic stage timings such as `schemaValidationMs`,
+`inputValidationMs`, `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`,
+`executionMs`, and `resultValidationMs`. Treat these as optional observability
+fields; do not infer success/failure from their presence.
+
+When a deferred tool call fails argument schema validation before its schema has
+been loaded into the model request, the `tool.failed` error metadata may include
+`reason: "schema_not_loaded"`, `recoveryTool: "tool_search"`,
+`recoveryQuery: "select:<toolName>"`, `deferred: true`, and
+`schemaLoaded: false`. This is evaluated against the schema set visible at the
+start of the model turn, so a same-turn `tool_search` result does not suppress
+the recovery hint for sibling tool calls. Render this as recovery guidance, not
+as a policy denial.
+
 ## Tool Progress
 
 `tool.progress` is an instant event for long-running tools. It does not change
@@ -266,6 +281,11 @@ Skill events explain capability/context changes at the edge of the run.
   a governed loader tool.
 - Related edge events such as `mcp.server.prepared` and
   `agent.profile.derived` explain tool availability and agent policy shaping.
+- `mcp.server.prepared` is emitted as an audit fact after server preparation.
+  Failure payloads keep `errorCode` / `errorPhase` and may include
+  `errorCategory`, `nextAction`, `retryable`, and nested `error.serverName` /
+  `error.category` fields. Render these as actionable diagnostics; do not
+  expose raw command paths, headers, or tokens beyond the sanitized error text.
 
 Stable consumption guidance:
 

@@ -359,6 +359,10 @@ export function createShellTool(
     },
     policy: { risk: "risky", requiresApproval: true },
     governance: RISKY_SHELL_GOVERNANCE,
+    validateInput(args) {
+      normalizeShellInput(args, options.foregroundTimeoutMs);
+      return { ok: true };
+    },
     policyForArgs(args) {
       return shellPolicyForArgs(args, options.safety);
     },

@@ -100,6 +100,7 @@ export type {
   ToolOrigin,
   ToolGovernance,
   ToolInputSchema,
+  ToolInputValidationResult,
   ToolDescriptor,
   ToolDefinition,
   ToolRegistryOptions,

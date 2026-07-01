@@ -40,7 +40,10 @@ export {
   notificationFromRecord,
 } from "./notifications.js";
 
-export type { CreateTaskToolsOptions } from "./tools.js";
+export type {
+  CreateTaskToolsOptions,
+  TaskCreateKindDescriptor,
+} from "./tools.js";
 export {
   createTaskTools,
   createTaskCreate,

@@ -224,6 +224,7 @@ interface TraceReportFacts {
   toolCalls: number;
   workspaceReadTotal: number;
   workspaceReadRatio: number;
+  workspaceReadAttribution: WorkspaceReadAttribution;
   topDuplicateReads: Record<string, number>;
   topRepeatedReadWindows: Record<string, number>;
   topTools: Record<string, number>;
@@ -264,6 +265,13 @@ interface TerminalRunAnomaly {
   terminalCount: number;
 }
 
+interface WorkspaceReadAttribution {
+  byTool: Record<string, number>;
+  scanByTool: Record<string, number>;
+  explicitReadByTool: Record<string, number>;
+  unattributed: number;
+}
+
 type TraceReportAnalyzer = (
   context: TraceReportContext,
 ) => TraceReportFinding[];
@@ -294,6 +302,7 @@ function collectTraceReportFacts(
   const workspaceReadTotal = summary.workspaceReads.total;
   const workspaceReadRatio =
     summary.eventCount > 0 ? workspaceReadTotal / summary.eventCount : 0;
+  const workspaceReadAttribution = collectWorkspaceReadAttribution(events);
   const topDuplicateReads = firstEntries(
     summary.workspaceReads.duplicatePaths,
     8,
@@ -324,6 +333,7 @@ function collectTraceReportFacts(
     toolCalls,
     workspaceReadTotal,
     workspaceReadRatio,
+    workspaceReadAttribution,
     topDuplicateReads,
     topRepeatedReadWindows,
     topTools,
@@ -575,6 +585,7 @@ function analyzeEfficiency({
     toolCalls,
     workspaceReadTotal,
     workspaceReadRatio,
+    workspaceReadAttribution,
     topDuplicateReads,
     topRepeatedReadWindows,
     topTools,
@@ -620,22 +631,25 @@ function analyzeEfficiency({
       evidence: [
         `${workspaceReadTotal} workspace.read event(s)`,
         `${Math.round(workspaceReadRatio * 100)}% of trace events`,
+        ...formatWorkspaceReadAttributionEvidence(workspaceReadAttribution),
       ],
       recommendation:
-        "Consider aggregating scan-level reads separately from explicit file reads in standard traces.",
+        "Separate scan-level reads from explicit file reads when reviewing trace volume, then tune search scope or read reuse based on the attributed tool.",
     });
   }
 
   if (largestDuplicateRead >= 10) {
+    const scanEvidence = formatCountRecord(workspaceReadAttribution.scanByTool);
     findings.push({
       severity: "medium",
       code: "DUPLICATE_WORKSPACE_READS",
       title: "The same files were read repeatedly",
       evidence: [
         `top duplicate reads: ${formatCountRecord(topDuplicateReads)}`,
+        ...(scanEvidence ? [`scan reads by tool: ${scanEvidence}`] : []),
       ],
       recommendation:
-        "Surface prior reads to the model or return cached-read hints for duplicate targets.",
+        "Check whether duplicates come from scan tools or explicit file reads before adding read-cache hints; surface prior explicit reads when the same targets repeat.",
     });
   }
 
@@ -1802,7 +1816,9 @@ function everyShellCompletionHasCommandEvidence(
       const toolName = stringValue(event.payload.toolName);
       if (!isShellToolName(toolName)) continue;
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
-      const command = stringValue(recordValue(event.payload.arguments)?.command);
+      const command = stringValue(
+        recordValue(event.payload.arguments)?.command,
+      );
       if (callId && command) commandByCallId.set(callId, command);
       continue;
     }
@@ -2004,6 +2020,84 @@ function collectWorkspaceRead(
   workspaceReadPaths[path] = (workspaceReadPaths[path] ?? 0) + 1;
 }
 
+function collectWorkspaceReadAttribution(
+  events: readonly SparkwrightEvent[],
+): WorkspaceReadAttribution {
+  const toolBySpanId = new Map<string, string>();
+  for (const event of events) {
+    if (!isToolLifecycleEvent(event)) continue;
+    const toolName = traceToolName(event);
+    if (toolName && event.spanId) toolBySpanId.set(event.spanId, toolName);
+  }
+
+  const byTool: Record<string, number> = {};
+  const scanByTool: Record<string, number> = {};
+  const explicitReadByTool: Record<string, number> = {};
+  let unattributed = 0;
+
+  for (const event of events) {
+    if (event.type !== "workspace.read") continue;
+    const toolName =
+      (event.spanId ? toolBySpanId.get(event.spanId) : undefined) ??
+      (event.parentSpanId ? toolBySpanId.get(event.parentSpanId) : undefined);
+    if (!toolName) {
+      unattributed += 1;
+      continue;
+    }
+
+    incrementCount(byTool, toolName);
+    if (isSearchScanTraceTool(toolName)) incrementCount(scanByTool, toolName);
+    if (isFileReadLikeTraceTool(toolName)) {
+      incrementCount(explicitReadByTool, toolName);
+    }
+  }
+
+  return {
+    byTool: firstEntries(byTool, 8),
+    scanByTool: firstEntries(scanByTool, 8),
+    explicitReadByTool: firstEntries(explicitReadByTool, 8),
+    unattributed,
+  };
+}
+
+function isToolLifecycleEvent(event: SparkwrightEvent): boolean {
+  return (
+    event.type === "tool.requested" ||
+    event.type === "tool.started" ||
+    event.type === "tool.completed" ||
+    event.type === "tool.failed"
+  );
+}
+
+function traceToolName(event: SparkwrightEvent): string | undefined {
+  if (!isRecord(event.payload)) return undefined;
+  return stringValue(event.payload.toolName, event.payload.name);
+}
+
+function incrementCount(counts: Record<string, number>, key: string): void {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function formatWorkspaceReadAttributionEvidence(
+  attribution: WorkspaceReadAttribution,
+): string[] {
+  const evidence: string[] = [];
+  const byTool = formatCountRecord(attribution.byTool);
+  if (byTool) evidence.push(`workspace reads by tool: ${byTool}`);
+  const scanByTool = formatCountRecord(attribution.scanByTool);
+  if (scanByTool) evidence.push(`scan reads by tool: ${scanByTool}`);
+  const explicitReadByTool = formatCountRecord(attribution.explicitReadByTool);
+  if (explicitReadByTool) {
+    evidence.push(`explicit file reads by tool: ${explicitReadByTool}`);
+  }
+  if (attribution.unattributed > 0) {
+    evidence.push(
+      `${attribution.unattributed} unattributed workspace.read event(s)`,
+    );
+  }
+  return evidence.slice(0, 4);
+}
+
 function collectRepeatedReadWindows(
   events: readonly SparkwrightEvent[],
 ): Record<string, number> {
@@ -2041,7 +2135,18 @@ function isFileReadLikeTraceTool(toolName: string): boolean {
   return (
     toolName === "read" ||
     toolName === "read_file" ||
+    toolName === "read_text" ||
     toolName === "read_anchored_text"
+  );
+}
+
+function isSearchScanTraceTool(toolName: string): boolean {
+  return (
+    toolName === "grep" ||
+    toolName === "grep_text" ||
+    toolName === "rg" ||
+    toolName === "ripgrep" ||
+    toolName === "search"
   );
 }
 

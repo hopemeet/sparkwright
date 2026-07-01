@@ -43,6 +43,7 @@ import {
   type RunBudget,
   type RunRecord,
   type RunResult,
+  type RuntimeContext,
   type RunAccessMode,
   type ContextUsageHint,
   type SessionCompactArtifact,
@@ -88,6 +89,7 @@ import {
   type TaskId,
   type TaskOutputChunk,
   type TaskRecord,
+  type TaskRunnerController,
   type TaskStatus,
   type TodoSupervisedRunInput,
 } from "@sparkwright/agent-runtime";
@@ -671,8 +673,87 @@ type SessionCompactResult =
  * (`run_already_active`); promoting to multiple parallel runs per
  * connection would be a v1.1 addition.
  */
+/**
+ * @internal Per-run spawn dependencies the registered `agent` task kind needs
+ * to drive a read-only background child run. Published by {@link HostRuntime}
+ * during run preparation; the registered runner snapshots it at the top of
+ * execution while the foreground run is still active, then the started child is
+ * self-sustaining. Mirrors the inputs of {@link createDynamicSpawnAgentTool}.
+ */
+export interface HostAgentTaskRunnerDeps {
+  getParent: () => ReturnType<typeof createRun> | undefined;
+  model: ModelAdapter;
+  modelForSpawn: () => Promise<ModelAdapter>;
+  childTools: ToolDefinition[];
+  parentRunPolicy: Policy;
+  childRunStoreFactory: (
+    childAgentId: string,
+  ) => ReturnType<typeof createSessionRunStoreFactory>;
+  maxDepth?: number;
+  sessionId?: string;
+}
+
+/**
+ * @internal Shared implementation for the background `agent` task kind. Kept
+ * outside HostRuntime so tests can cover task-owned abort and completion
+ * behavior without duplicating the private runner wiring.
+ */
+export async function runHostAgentTask(
+  controller: TaskRunnerController,
+  payload: unknown,
+  deps: HostAgentTaskRunnerDeps,
+): Promise<unknown> {
+  const parent = deps.getParent();
+  if (!parent) {
+    throw Object.assign(
+      new Error("Agent task runner requires an active parent run."),
+      { code: "AGENT_TASK_PARENT_UNAVAILABLE" },
+    );
+  }
+  if (controller.signal.aborted) {
+    throw Object.assign(new Error("Agent task aborted before start."), {
+      name: "AbortError",
+    });
+  }
+
+  controller.report({
+    label: "agent_task",
+    message: "Starting child agent.",
+  });
+  const tool = createDynamicSpawnAgentTool({
+    getParent: () => parent,
+    model: deps.model,
+    modelForSpawn: deps.modelForSpawn,
+    childTools: deps.childTools,
+    parentRunPolicy: deps.parentRunPolicy,
+    childRunStoreFactory: deps.childRunStoreFactory,
+    maxDepth: deps.maxDepth,
+    abortSignal: controller.signal,
+    entrypoint: "agent_task",
+    delegateToolName: "task_create",
+  });
+  const ctx: RuntimeContext = {
+    run: parent.record,
+    abortSignal: controller.signal,
+    workspace: parent.getWorkspace?.(),
+  };
+  const output = await tool.execute(payload, ctx);
+  controller.report({
+    label: "agent_task",
+    message: "Child agent completed.",
+  });
+  controller.emitOutput({
+    channel: "event",
+    data: JSON.stringify(summarizeAgentTaskOutput(output)),
+  });
+  return output;
+}
+
 export class HostRuntime {
   private opts: RuntimeOptions;
+  // Latest per-run spawn deps for the registered `agent` background task kind.
+  // Overwritten each run; the runner reads it once at execution start.
+  private agentSpawnDeps: HostAgentTaskRunnerDeps | null = null;
   private readonly taskManager: TaskManager;
   private active: ActiveRun | null = null;
   // Synchronously-set reservation so two concurrent startRun() calls cannot
@@ -701,6 +782,12 @@ export class HostRuntime {
         createRoot: false,
       }),
     });
+    // Background agent jobs are a task `kind` whose runner drives a read-only
+    // child run. Registered once; the runner reads the latest per-run spawn
+    // deps published by prepareRun. See runAgentTask.
+    this.taskManager.registerKind("agent", (controller, payload) =>
+      this.runAgentTask(controller, payload),
+    );
   }
 
   hasActiveRun(): boolean {
@@ -709,6 +796,22 @@ export class HostRuntime {
 
   private taskRootDir(): string {
     return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+  }
+
+  private async runAgentTask(
+    controller: TaskRunnerController,
+    payload: unknown,
+  ): Promise<unknown> {
+    const deps = this.agentSpawnDeps;
+    if (!deps) {
+      throw Object.assign(
+        new Error(
+          "Agent task runner is not available until a run has prepared agent dependencies.",
+        ),
+        { code: "AGENT_TASK_UNAVAILABLE" },
+      );
+    }
+    return runHostAgentTask(controller, payload, deps);
   }
 
   listTasks(input: {
@@ -765,9 +868,8 @@ export class HostRuntime {
     const fromSequence = input.fromSequence ?? 0;
     const maxChunks = input.maxChunks ?? 200;
     const chunks: TaskOutputChunk[] = [];
-    const iterator = this.taskManager.store
-      .loadOutput(id, fromSequence)
-      [Symbol.asyncIterator]();
+    const outputStream = this.taskManager.store.loadOutput(id, fromSequence);
+    const iterator = outputStream[Symbol.asyncIterator]();
     try {
       while (chunks.length < maxChunks) {
         const next = await raceWithImmediate(iterator);
@@ -1205,6 +1307,19 @@ export class HostRuntime {
       childRunStoreFactory,
       maxDepth: agentConfig?.maxDepth,
     });
+    // Publish spawn deps for the registered `agent` background task kind so a
+    // `task_create(kind:"agent")` call can drive a read-only child run that the
+    // task — not the foreground turn — owns the lifecycle of.
+    this.agentSpawnDeps = {
+      getParent: () => parentRunRef.current,
+      model: model.adapter,
+      modelForSpawn: dynamicSpawnModel,
+      childTools: readOnlyChildTools,
+      parentRunPolicy,
+      childRunStoreFactory,
+      maxDepth: agentConfig?.maxDepth,
+      sessionId: input.sessionId,
+    };
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
       skillRoots,
@@ -5044,6 +5159,9 @@ export function createDynamicSpawnAgentTool(input: {
   childTools: ToolDefinition[];
   parentRunPolicy: Policy;
   maxDepth?: number;
+  abortSignal?: AbortSignal;
+  entrypoint?: "spawn_agent" | "agent_task";
+  delegateToolName?: string;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -5216,6 +5334,7 @@ export function createDynamicSpawnAgentTool(input: {
           createAgentProfilePolicy(profile),
         ]),
         maxSteps: childMaxSteps,
+        abortSignal: input.abortSignal,
         interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
@@ -5232,8 +5351,8 @@ export function createDynamicSpawnAgentTool(input: {
           agentId,
           agentProfileId: agentId,
           agentName: parsed.role,
-          delegateTool: "spawn_agent",
-          entrypoint: "spawn_agent",
+          delegateTool: input.delegateToolName ?? "spawn_agent",
+          entrypoint: input.entrypoint ?? "spawn_agent",
           allowedTools: childTools.map((tool) => tool.name),
         },
       });
@@ -5610,6 +5729,35 @@ function cachedDynamicSpawnOutput(hit: DelegationLedgerHit): unknown {
     };
   }
   return result;
+}
+
+function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
+  if (!isPlainRecord(output)) {
+    return { type: "agent.completed" };
+  }
+  const message =
+    typeof output.message === "string"
+      ? output.message.slice(0, 4_000)
+      : undefined;
+  return {
+    type: "agent.completed",
+    ...(typeof output.childRunId === "string"
+      ? { childRunId: output.childRunId }
+      : {}),
+    ...(typeof output.agentId === "string" ? { agentId: output.agentId } : {}),
+    ...(typeof output.role === "string" ? { role: output.role } : {}),
+    ...(typeof output.signal === "string" ? { signal: output.signal } : {}),
+    ...(typeof output.stopReason === "string"
+      ? { stopReason: output.stopReason }
+      : {}),
+    ...(typeof output.finality === "string"
+      ? { finality: output.finality }
+      : {}),
+    ...(typeof output.truncated === "boolean"
+      ? { truncated: output.truncated }
+      : {}),
+    ...(message ? { message } : {}),
+  };
 }
 
 function parseDynamicSpawnAgentArgs(args: unknown): {

@@ -1612,7 +1612,9 @@ function formatCapabilityDelta(tools: ToolDescriptor[]): string {
       ? [`Deferred categories this turn: ${categories.join(", ")}.`]
       : []),
     "Deferred tools this turn (name + summary; fetch the full schema via tool_search before calling):",
-    ...tools.map((tool) => `- ${tool.name}: ${formatDeferredToolSummary(tool)}`),
+    ...tools.map(
+      (tool) => `- ${tool.name}: ${formatDeferredToolSummary(tool)}`,
+    ),
   ].join("\n");
 }
 

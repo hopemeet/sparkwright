@@ -384,8 +384,8 @@ function TasksTab(props: {
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        {props.loading ? "refreshing · " : ""}session tasks · r refresh · s
-        stop · f follow · H head · T tail
+        {props.loading ? "refreshing · " : ""}session tasks · r refresh · s stop
+        · f follow · H head · T tail
       </Text>
       {shown.map((task, index) => {
         const absoluteIndex = start + index;

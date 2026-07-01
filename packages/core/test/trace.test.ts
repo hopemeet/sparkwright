@@ -1351,6 +1351,82 @@ describe("trace", () => {
     });
   });
 
+  it("attributes workspace read noise to enclosing tool spans", () => {
+    const runId = createRunId();
+    const log = new EventLog(runId);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "span attribution" }),
+      withTestSpan(
+        log.emit("tool.requested", {
+          id: "call_grep",
+          toolName: "grep",
+          arguments: { pattern: "needle" },
+        }),
+        "span_grep",
+      ),
+    ];
+
+    for (let i = 0; i < 6; i += 1) {
+      events.push(
+        withTestSpan(
+          log.emit("workspace.read", { path: `src/file-${i}.ts` }),
+          "span_grep",
+        ),
+      );
+    }
+
+    events.push(
+      withTestSpan(
+        log.emit("tool.completed", {
+          id: "call_grep",
+          toolName: "grep",
+          output: { matches: [] },
+        }),
+        "span_grep",
+      ),
+      withTestSpan(
+        log.emit("tool.requested", {
+          id: "call_read",
+          toolName: "read_text",
+          arguments: { path: "src/index.ts" },
+        }),
+        "span_read",
+      ),
+      withTestSpan(
+        log.emit("workspace.read", { path: "src/index.ts" }),
+        "span_read",
+      ),
+      withTestSpan(
+        log.emit("workspace.read", { path: "src/other.ts" }),
+        "span_read",
+      ),
+      withTestSpan(
+        log.emit("tool.completed", {
+          id: "call_read",
+          toolName: "read_text",
+          output: { path: "src/index.ts" },
+        }),
+        "span_read",
+      ),
+      log.emit("run.completed", { state: "completed" }),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+    const finding = report.findings.find(
+      (item) => item.code === "WORKSPACE_READ_NOISE",
+    );
+
+    expect(finding?.evidence).toEqual(
+      expect.arrayContaining([
+        "workspace reads by tool: grep:6, read_text:2",
+        "scan reads by tool: grep:6",
+        "explicit file reads by tool: read_text:2",
+      ]),
+    );
+  });
+
   it("reports traces that are missing a terminal run event", () => {
     const runId = createRunId();
     const log = new EventLog(runId);
@@ -2262,7 +2338,8 @@ describe("trace", () => {
         id: "probe",
         toolName: "shell",
         arguments: {
-          command: 'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+          command:
+            'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
         },
       }),
       log.emit("tool.completed", {
@@ -4753,6 +4830,18 @@ describe("trace", () => {
     );
   });
 });
+
+function withTestSpan<TPayload>(
+  event: SparkwrightEvent<TPayload>,
+  spanId: string,
+  parentSpanId?: string,
+): SparkwrightEvent<TPayload> {
+  return {
+    ...event,
+    spanId: spanId as SparkwrightEvent["spanId"],
+    parentSpanId: parentSpanId as SparkwrightEvent["parentSpanId"],
+  };
+}
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];

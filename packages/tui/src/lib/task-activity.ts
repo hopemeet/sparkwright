@@ -37,6 +37,7 @@ export interface TaskActivityItem {
 export interface TaskActivitySummary {
   tasks: TaskActivityItem[];
   total: number;
+  /** @reserved Public task-activity count consumed by Activity Drawer summaries. */
   running: number;
   completed: number;
   failed: number;
