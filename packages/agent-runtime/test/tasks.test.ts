@@ -1,9 +1,11 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RunId, RuntimeContext, ToolDefinition } from "@sparkwright/core";
 import {
+  ActorNotificationCapacityError,
+  ActorNotificationValidationError,
   FileTaskNotificationOutbox,
   FileTaskStore,
   InMemoryTaskNotificationQueue,
@@ -14,8 +16,13 @@ import {
   notificationFromRecord,
   pidTaskHealthProbe,
   recoverRunningTasks,
+  type ActorInbox,
+  type AnyActorNotification,
+  type TaskId,
+  type TaskCompletedNotificationInput,
   type TaskNotification,
   type TaskOutputChunk,
+  type WorkflowProgressNotificationInput,
 } from "../src/index.js";
 
 const PARENT_RUN_ID = "run_test_parent" as unknown as RunId;
@@ -48,6 +55,80 @@ async function tempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "sparkwright-tasks-"));
   tempDirs.push(dir);
   return dir;
+}
+
+async function peekActorInbox(
+  inbox: ActorInbox,
+): Promise<readonly AnyActorNotification[]> {
+  return Promise.resolve(inbox.peek());
+}
+
+async function drainActorInbox(
+  inbox: ActorInbox,
+): Promise<AnyActorNotification[]> {
+  return Promise.resolve(inbox.drain());
+}
+
+function legacyTaskNotification(
+  taskId: string,
+  overrides: Partial<TaskNotification> = {},
+): TaskNotification {
+  return {
+    taskId: taskId as unknown as TaskNotification["taskId"],
+    parentRunId: PARENT_RUN_ID,
+    status: "completed",
+    kind: "agent",
+    summary: `${taskId} completed.`,
+    deliveredAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function taskCompletedActorInput(
+  taskId: string,
+  overrides: Partial<TaskCompletedNotificationInput> = {},
+): TaskCompletedNotificationInput {
+  const deliveredAt = "2026-01-01T00:00:00.000Z";
+  return {
+    source: {
+      kind: "task",
+      id: taskId,
+      runId: PARENT_RUN_ID,
+    },
+    type: "completed",
+    payload: {
+      taskId: taskId as unknown as TaskId,
+      parentRunId: PARENT_RUN_ID,
+      status: "completed",
+      kind: "agent",
+      summary: `${taskId} completed.`,
+      deliveredAt,
+      result: "ok",
+    },
+    ...overrides,
+  };
+}
+
+function workflowProgressInput(
+  workflowId: string,
+  overrides: Partial<WorkflowProgressNotificationInput> = {},
+): WorkflowProgressNotificationInput {
+  return {
+    source: {
+      kind: "workflow",
+      id: workflowId,
+      runId: PARENT_RUN_ID,
+      sessionId: "session_actor_test",
+    },
+    type: "progress",
+    payload: {
+      workflowId,
+      summary: `${workflowId} progressed.`,
+      progress: { message: "halfway" },
+    },
+    correlationId: "same-correlation",
+    ...overrides,
+  };
 }
 
 describe("TaskManager", () => {
@@ -237,6 +318,262 @@ describe("FileTaskNotificationOutbox", () => {
       status: "failed",
     });
     expect(reopened.list()).toHaveLength(0);
+  });
+});
+
+describe("ActorNotificationSink and ActorInbox adapters", () => {
+  it("accepts task actor notifications with normalized routes and legacy task compatibility", async () => {
+    const queue = new InMemoryTaskNotificationQueue();
+    const deliveredAt = "2026-01-01T00:00:00.000Z";
+
+    const result = queue.asActorSink().deliver({
+      ...taskCompletedActorInput("task_actor", {
+        source: {
+          kind: "task",
+          id: "task_actor",
+          runId: PARENT_RUN_ID,
+          sessionId: "session_actor_test",
+        },
+        payload: {
+          taskId: "task_actor" as unknown as TaskId,
+          parentRunId: PARENT_RUN_ID,
+          status: "completed",
+          kind: "agent",
+          summary: "actor task completed.",
+          deliveredAt,
+          result: "done",
+        },
+      }),
+      qos: "lossy",
+    } as TaskCompletedNotificationInput & { qos: "lossy" });
+
+    expect(result).toEqual({ status: "accepted", acceptedCount: 1 });
+    expect("sequence" in result).toBe(false);
+    const [actor] = await peekActorInbox(queue.asActorInbox());
+    expect(actor).toMatchObject({
+      source: {
+        kind: "task",
+        id: "task_actor",
+        runId: PARENT_RUN_ID,
+        sessionId: "session_actor_test",
+      },
+      routeHint: {
+        parentRunId: PARENT_RUN_ID,
+        sessionId: "session_actor_test",
+      },
+      type: "completed",
+      qos: "reliable",
+      sequence: 1,
+      payload: {
+        deliveredAt,
+        result: "done",
+      },
+    });
+    expect(actor?.createdAt).not.toBe(deliveredAt);
+    expect(queue.peek()).toMatchObject([
+      {
+        taskId: "task_actor",
+        parentRunId: PARENT_RUN_ID,
+        status: "completed",
+        deliveredAt,
+      },
+    ]);
+  });
+
+  it("uses workflow notification inputs as the extraction probe", async () => {
+    const queue = new InMemoryTaskNotificationQueue();
+
+    const first = queue
+      .asActorSink()
+      .deliver(workflowProgressInput("workflow_probe"));
+    const second = queue
+      .asActorSink()
+      .deliver(workflowProgressInput("workflow_probe"));
+
+    expect(first).toEqual({ status: "accepted", acceptedCount: 1 });
+    expect(second).toEqual({ status: "accepted", acceptedCount: 1 });
+    const actors = await peekActorInbox(queue.asActorInbox());
+    expect(actors).toHaveLength(2);
+    expect(new Set(actors.map((actor) => actor.id)).size).toBe(2);
+    expect(actors[0]).toMatchObject({
+      source: {
+        kind: "workflow",
+        id: "workflow_probe",
+        runId: PARENT_RUN_ID,
+        sessionId: "session_actor_test",
+      },
+      routeHint: {
+        parentRunId: PARENT_RUN_ID,
+        sessionId: "session_actor_test",
+      },
+      type: "progress",
+      qos: "lossy",
+      correlationId: "same-correlation",
+    });
+    expect(queue.peek()).toHaveLength(0);
+  });
+
+  it("rejects invalid source routes but allows targetRunId to differ", async () => {
+    const queue = new InMemoryTaskNotificationQueue();
+
+    expect(() =>
+      queue.asActorSink().deliver(
+        taskCompletedActorInput("task_bad_route", {
+          routeHint: {
+            parentRunId: "run_other",
+          },
+        }),
+      ),
+    ).toThrow(ActorNotificationValidationError);
+
+    expect(() =>
+      queue.asActorSink().deliver(
+        taskCompletedActorInput("task_empty_route", {
+          routeHint: {
+            parentRunId: "",
+          },
+        }),
+      ),
+    ).toThrow(ActorNotificationValidationError);
+
+    const result = queue.asActorSink().deliver(
+      taskCompletedActorInput("task_targeted", {
+        routeHint: {
+          targetRunId: "run_child_target",
+        },
+      }),
+    );
+    expect(result).toEqual({ status: "accepted", acceptedCount: 1 });
+    expect((await peekActorInbox(queue.asActorInbox()))[0]).toMatchObject({
+      routeHint: {
+        parentRunId: PARENT_RUN_ID,
+        targetRunId: "run_child_target",
+      },
+    });
+  });
+
+  it("keeps reliable notifications out of drop-oldest capacity loss", async () => {
+    const reliable = new InMemoryTaskNotificationQueue({
+      maxBufferedNotifications: 1,
+    });
+    reliable.deliver(legacyTaskNotification("task_reliable_one"));
+
+    expect(() =>
+      reliable.deliver(legacyTaskNotification("task_reliable_two")),
+    ).toThrow(ActorNotificationCapacityError);
+    expect(reliable.drain()).toMatchObject([{ taskId: "task_reliable_one" }]);
+
+    const lossy = new InMemoryTaskNotificationQueue({
+      maxBufferedNotifications: 1,
+    });
+    expect(
+      lossy.asActorSink().deliver(workflowProgressInput("workflow_lossy_one")),
+    ).toEqual({ status: "accepted", acceptedCount: 1 });
+    expect(
+      lossy.asActorSink().deliver(workflowProgressInput("workflow_lossy_two")),
+    ).toEqual({
+      status: "accepted",
+      acceptedCount: 1,
+      droppedCount: 1,
+    });
+    expect(await peekActorInbox(lossy.asActorInbox())).toMatchObject([
+      { source: { id: "workflow_lossy_two" } },
+    ]);
+
+    const mixed = new InMemoryTaskNotificationQueue({
+      maxBufferedNotifications: 1,
+    });
+    mixed.deliver(legacyTaskNotification("task_kept"));
+    expect(
+      mixed.asActorSink().deliver(workflowProgressInput("workflow_dropped")),
+    ).toEqual({
+      status: "dropped",
+      reason: "capacity",
+      droppedCount: 1,
+    });
+    expect(await peekActorInbox(mixed.asActorInbox())).toMatchObject([
+      { source: { id: "task_kept" } },
+    ]);
+
+    const lossyThenReliable = new InMemoryTaskNotificationQueue({
+      maxBufferedNotifications: 1,
+    });
+    lossyThenReliable
+      .asActorSink()
+      .deliver(workflowProgressInput("workflow_replaceable"));
+    lossyThenReliable.deliver(legacyTaskNotification("task_reliable_wins"));
+    expect(
+      await peekActorInbox(lossyThenReliable.asActorInbox()),
+    ).toMatchObject([
+      { source: { id: "task_reliable_wins" }, qos: "reliable" },
+    ]);
+    expect(lossyThenReliable.drain()).toMatchObject([
+      { taskId: "task_reliable_wins" },
+    ]);
+  });
+
+  it("derives file-backed actor sequence without changing notification file format", async () => {
+    const root = await tempDir();
+    const outbox = new FileTaskNotificationOutbox({ rootDir: root });
+    outbox.deliver(
+      legacyTaskNotification("task_later", {
+        deliveredAt: "2026-01-02T00:00:00.000Z",
+      }),
+    );
+
+    const firstPeek = await peekActorInbox(outbox.asActorInbox());
+    expect(firstPeek).toMatchObject([{ sequence: 1 }]);
+
+    outbox.deliver(
+      legacyTaskNotification("task_earlier", {
+        deliveredAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    const secondPeek = await peekActorInbox(outbox.asActorInbox());
+    expect(secondPeek.map((notification) => notification.sequence)).toEqual([
+      1, 2,
+    ]);
+    expect(secondPeek.map((notification) => notification.source.id)).toEqual([
+      "task_later",
+      "task_earlier",
+    ]);
+    expect(secondPeek[0]?.createdAt).toBeDefined();
+    expect(secondPeek[0]?.payload).toMatchObject({
+      deliveredAt: "2026-01-02T00:00:00.000Z",
+    });
+
+    const files = await readdir(join(root, "task-notifications"));
+    const raw = JSON.parse(
+      await readFile(join(root, "task-notifications", files[0]!), "utf8"),
+    ) as {
+      sequence?: unknown;
+      createdAt?: unknown;
+      qos?: unknown;
+      notification?: Record<string, unknown>;
+    };
+    expect(raw.sequence).toBeUndefined();
+    expect(raw.createdAt).toBeUndefined();
+    expect(raw.qos).toBeUndefined();
+    expect(raw.notification?.sequence).toBeUndefined();
+    expect(raw.notification?.createdAt).toBeUndefined();
+    expect(raw.notification?.qos).toBeUndefined();
+  });
+
+  it("waits for actor notifications without consuming file-backed entries", async () => {
+    const root = await tempDir();
+    const outbox = new FileTaskNotificationOutbox({ rootDir: root });
+    const inbox = outbox.asActorInbox();
+    const ready = inbox.waitUntilAvailable({
+      predicate: (notification) =>
+        notification.routeHint?.parentRunId === PARENT_RUN_ID,
+    });
+
+    outbox.deliver(legacyTaskNotification("task_ready"));
+    await ready;
+
+    expect(await peekActorInbox(inbox)).toHaveLength(1);
+    expect(await drainActorInbox(inbox)).toHaveLength(1);
+    expect(await peekActorInbox(inbox)).toHaveLength(0);
   });
 });
 
@@ -668,6 +1005,35 @@ describe("TaskNotificationSink", () => {
     expect(errors).toHaveLength(1);
     expect((errors[0]?.cause as Error).message).toBe("sink unavailable");
     expect(manager.pendingNotifications()).toHaveLength(1);
+  });
+
+  it("does not enqueue typed non-retryable sink validation errors", async () => {
+    const errors: Array<{ taskId: string; cause: unknown }> = [];
+    const manager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: {
+        deliver: () => {
+          throw new ActorNotificationValidationError(
+            "routeHint.parentRunId must match source.runId when both are set.",
+          );
+        },
+      },
+      onSinkError: (taskId, cause) => errors.push({ taskId, cause }),
+    });
+    const handle = manager.spawn({
+      parentRunId: PARENT_RUN_ID,
+      kind: "ok",
+      runner: async () => 1,
+    });
+    const record = await handle.wait();
+
+    expect(record.status).toBe("completed");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.cause).toMatchObject({
+      code: "INVALID_ROUTE",
+      retryable: false,
+    });
+    expect(manager.pendingNotifications()).toHaveLength(0);
   });
 
   it("retries pending notifications after sink failures", async () => {

@@ -12,6 +12,7 @@
 
 import type { RunId } from "@sparkwright/core";
 import {
+  isNonRetryableActorNotificationError,
   notificationFromRecord,
   type TaskNotification,
   type TaskNotificationSink,
@@ -243,7 +244,9 @@ export class TaskManager {
         await this.notificationSink.deliver(notification);
         delivered += 1;
       } catch (cause) {
-        this.notificationOutbox.push(notification);
+        if (!isNonRetryableActorNotificationError(cause)) {
+          this.notificationOutbox.push(notification);
+        }
         this.onSinkError?.(notification.taskId, cause);
       }
     }
@@ -359,7 +362,9 @@ export class TaskManager {
     try {
       await this.notificationSink.deliver(notification);
     } catch (cause) {
-      this.notificationOutbox.push(notification);
+      if (!isNonRetryableActorNotificationError(cause)) {
+        this.notificationOutbox.push(notification);
+      }
       this.onSinkError?.(record.id, cause);
     }
   }
