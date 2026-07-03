@@ -801,7 +801,10 @@ Review only the requested change.
       status: "resource_not_found",
       availableResources: ["references/rules.md"],
     });
-    expect(String(missing.message)).toContain("Available reference files");
+    expect(missing).toHaveProperty(
+      "message",
+      expect.stringContaining("Available reference files"),
+    );
   });
 
   it("short-circuits a repeated skill load as already_loaded", async () => {
