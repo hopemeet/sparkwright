@@ -6,9 +6,11 @@
 // XML-tag injection in a CLI-style frontend).
 //
 // Lifecycle: TaskManager calls sink.deliver(...) exactly once per task, AFTER
-// the record has been moved to a terminal status. Deliveries are best-effort;
-// if the sink throws, TaskManager logs to its `onSinkError` hook (if set) and
-// continues — task state is the source of truth, the sink is just a hint.
+// the record has been moved to a terminal status. Deliveries are best-effort at
+// the manager boundary; sinks may still throw validation, capacity, or
+// transport/storage errors. TaskManager classifies typed permanent actor errors
+// as non-retryable, logs to `onSinkError` when supplied, and continues — task
+// state is the source of truth, the sink is just a hint.
 
 import type {
   TaskError,
@@ -305,6 +307,26 @@ export class ActorNotificationValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ActorNotificationValidationError";
+  }
+}
+
+export class ActorNotificationInvalidError extends Error {
+  readonly code = "INVALID_ACTOR_NOTIFICATION";
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ActorNotificationInvalidError";
+  }
+}
+
+export class ActorNotificationUnsupportedError extends Error {
+  readonly code = "UNSUPPORTED_ACTOR_NOTIFICATION";
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ActorNotificationUnsupportedError";
   }
 }
 
@@ -760,10 +782,12 @@ export function qosForActorNotificationType(
 }
 
 export function isNonRetryableActorNotificationError(cause: unknown): boolean {
+  if (!isRecord(cause) || cause.retryable !== false) return false;
+  const code = cause.code;
   return (
-    isRecord(cause) &&
-    cause.code === "INVALID_ROUTE" &&
-    cause.retryable === false
+    code === "INVALID_ROUTE" ||
+    code === "INVALID_ACTOR_NOTIFICATION" ||
+    code === "UNSUPPORTED_ACTOR_NOTIFICATION"
   );
 }
 
@@ -772,6 +796,7 @@ export function acceptActorNotificationInput(
   options: { id: string; sequence: number; createdAt?: string },
 ): AnyActorNotification {
   const routeHint = normalizeActorRoute(input);
+  validateActorNotificationInput(input, routeHint);
   const accepted = {
     source: { ...input.source },
     ...(routeHint ? { routeHint } : {}),
@@ -790,6 +815,111 @@ export function acceptActorNotificationInput(
     createdAt: options.createdAt ?? new Date().toISOString(),
   };
   return accepted as AnyActorNotification;
+}
+
+function validateActorNotificationInput(
+  input: AnyActorNotificationInput,
+  routeHint?: ActorRouteHint,
+): void {
+  const source = input.source as ActorRef;
+  assertActorFieldId(source.id, "source.id");
+  if (source.kind === "task") {
+    validateTaskActorNotificationInput(
+      input as TaskActorNotificationInput,
+      routeHint,
+    );
+    return;
+  }
+  if (source.kind === "workflow") {
+    validateWorkflowActorNotificationInput(
+      input as WorkflowActorNotificationInput,
+      routeHint,
+    );
+    return;
+  }
+  throw new ActorNotificationInvalidError(
+    `Actor notification source kind ${String(source.kind)} is not supported by the current actor notification input union.`,
+  );
+}
+
+function validateTaskActorNotificationInput(
+  input: TaskActorNotificationInput,
+  routeHint?: ActorRouteHint,
+): void {
+  const payload = input.payload;
+  if (!isRecord(payload)) {
+    throw new ActorNotificationInvalidError(
+      "Task notification payload must be an object.",
+    );
+  }
+  assertActorPayloadIdMatchesSource(
+    input.source,
+    payload.taskId,
+    "payload.taskId",
+  );
+  const parentRunId = assertActorFieldId(
+    payload.parentRunId,
+    "payload.parentRunId",
+  );
+  if (routeHint?.parentRunId === undefined) {
+    throw new ActorNotificationInvalidError(
+      "Task actor notifications require source.runId or routeHint.parentRunId.",
+    );
+  }
+  if (routeHint.parentRunId !== parentRunId) {
+    throw new ActorNotificationInvalidError(
+      "payload.parentRunId must match the normalized actor route parentRunId.",
+    );
+  }
+  if (
+    (input.type === "completed" ||
+      input.type === "failed" ||
+      input.type === "cancelled") &&
+    payload.status !== input.type
+  ) {
+    throw new ActorNotificationInvalidError(
+      "Task terminal payload status must match the actor notification type.",
+    );
+  }
+}
+
+function validateWorkflowActorNotificationInput(
+  input: WorkflowActorNotificationInput,
+  _routeHint?: ActorRouteHint,
+): void {
+  const payload = input.payload;
+  if (!isRecord(payload)) {
+    throw new ActorNotificationInvalidError(
+      "Workflow notification payload must be an object.",
+    );
+  }
+  assertActorPayloadIdMatchesSource(
+    input.source,
+    payload.workflowId,
+    "payload.workflowId",
+  );
+}
+
+function assertActorPayloadIdMatchesSource(
+  source: ActorRef,
+  payloadId: unknown,
+  field: string,
+): void {
+  const id = assertActorFieldId(payloadId, field);
+  if (id !== source.id) {
+    throw new ActorNotificationInvalidError(
+      `${field} must match source.id for ${source.kind} actor notifications.`,
+    );
+  }
+}
+
+function assertActorFieldId(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new ActorNotificationInvalidError(
+      `${field} must be a non-empty string.`,
+    );
+  }
+  return value;
 }
 
 export function actorNotificationInputFromTaskNotification(

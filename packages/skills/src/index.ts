@@ -599,7 +599,10 @@ export function createSkillLoaderTool(
         resource: {
           type: "string",
           description:
-            "Optional skill-relative path of a reference file to read (as listed in the loaded skill's <skill_files>). Returns that file's content.",
+            "Optional skill-relative path of a reference file to read. Only " +
+            "pass a value after the skill body has been loaded and the exact " +
+            "path appeared in its <skill_files>; do not guess README.md or " +
+            "workspace paths. Returns that file's content.",
         },
       },
       required: ["name"],
@@ -630,7 +633,7 @@ export function createSkillLoaderTool(
       const resource =
         typeof args.resource === "string" ? args.resource.trim() : undefined;
       if (resource) {
-        return await readSkillResource(skill, resource);
+        return await readSkillResource(skill, resource, resourceFileLimit);
       }
 
       if (loadedNames.has(skill.name)) {
@@ -902,6 +905,7 @@ function skillVersion(
 async function readSkillResource(
   skill: SkillDefinition,
   resource: string,
+  resourceFileLimit: number,
 ): Promise<Record<string, unknown>> {
   if (skill.sourcePath === "<built-in>") {
     return {
@@ -928,11 +932,23 @@ async function readSkillResource(
   try {
     content = await readFile(requested, "utf8");
   } catch {
+    const availableResources = await listSkillResourceFiles(
+      skill,
+      resourceFileLimit,
+    );
+    const available =
+      availableResources.length > 0
+        ? ` Available reference files: ${availableResources.join(", ")}.`
+        : " This skill has no listed reference files.";
     return {
       status: "resource_not_found",
       name: skill.name,
       resource,
-      message: `Reference file not found in skill \`${skill.name}\`: ${resource}`,
+      message:
+        `Reference file not found in skill \`${skill.name}\`: ${resource}.` +
+        available +
+        " Load the skill body without `resource` first, then use an exact path from <skill_files>.",
+      availableResources,
     };
   }
   return {
@@ -1043,6 +1059,7 @@ export {
   InMemorySkillUsageRecorder,
   recencyBoost,
   type SkillUsageRecord,
+  type SkillUsageLoadMode,
   type SkillUsageRecorder,
   type SkillUsageState,
 } from "./usage.js";

@@ -36,6 +36,7 @@ import {
   clampAccessMode,
   isRunAccessMode,
   ACCESS_MODES,
+  type BackgroundTaskPolicy,
   type RunAccessMode,
   type RunRecord,
   type ContextItem,
@@ -76,6 +77,7 @@ import { type SkillGuardFinding, type SkillRoot } from "@sparkwright/skills";
 import {
   loadLayeredSkillReport,
   applySkillProposal,
+  collectSkillReviewDigest,
   collectSkillStats,
   createSkillCreateProposal,
   createSkillUpdateProposal,
@@ -85,6 +87,7 @@ import {
   readSkillHistoryDetail,
   readSkillProposal,
   rejectSkillProposal,
+  recordSkillPatch,
   restoreSkillFromHistory,
   runSkillDoctor,
   supersedeSkillProposal,
@@ -135,6 +138,7 @@ import {
   type PruneSkillProposalsResult,
   type RestoreSkillFromHistoryResult,
   type SkillReport,
+  type SkillReviewDigest,
   type SkillStatsReport,
 } from "@sparkwright/host";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
@@ -181,6 +185,7 @@ interface ParsedArgs {
   confidentialPaths: string[];
   imagePaths: string[];
   accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
   shouldWrite: boolean;
   approveAll: boolean;
   approveEdits: boolean;
@@ -259,6 +264,8 @@ export async function runCli(
     model: cfg.config.model,
     accessMode: cfg.config.accessMode,
     accessModeCeiling: cfg.config.accessModeCeiling,
+    backgroundTasks: cfg.config.backgroundTasks,
+    backgroundTasksCeiling: cfg.config.backgroundTasksCeiling,
     permissionMode:
       argv[0] === "cron"
         ? (cfg.config.approvals?.cronMode ?? cfg.config.permissionMode)
@@ -682,6 +689,8 @@ interface ConfigDefaults {
   model?: string;
   accessMode?: RunAccessMode;
   accessModeCeiling?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
+  backgroundTasksCeiling?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   workspace?: string;
   confidentialPaths?: string[];
@@ -755,6 +764,7 @@ function parseArgs(
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
   const imagePaths: string[] = [];
   let accessMode = defaults.accessMode;
+  const backgroundTasks = defaults.backgroundTasks;
   // accessMode is the autonomy knob: read-only implies no writes, the others
   // imply writes. Deprecated --write maps to an ask-level request whenever a
   // project/config access boundary is already in play.
@@ -1268,6 +1278,7 @@ function parseArgs(
     subcommand !== "list" &&
     subcommand !== "create" &&
     subcommand !== "validate" &&
+    subcommand !== "review" &&
     subcommand !== "stats" &&
     subcommand !== "doctor" &&
     subcommand !== "proposals" &&
@@ -1277,7 +1288,7 @@ function parseArgs(
     return {
       ok: false,
       message:
-        "Usage: sparkwright skills <list|create|validate|stats|doctor|proposals|history|restore> [name] [--description text]",
+        "Usage: sparkwright skills <list|create|validate|review|stats|doctor|proposals|history|restore> [name] [--description text]",
     };
   }
 
@@ -1371,6 +1382,7 @@ function parseArgs(
       confidentialPaths,
       imagePaths,
       accessMode,
+      backgroundTasks,
       shouldWrite,
       approveAll,
       approveEdits,
@@ -2789,6 +2801,7 @@ async function handleSkillsCommand(
     subcommand !== "list" &&
     subcommand !== "create" &&
     subcommand !== "validate" &&
+    subcommand !== "review" &&
     subcommand !== "stats" &&
     subcommand !== "doctor" &&
     subcommand !== "proposals" &&
@@ -2817,6 +2830,24 @@ async function handleSkillsCommand(
     }
 
     const roots = await resolveSkillRootsForCli(parsed.workspaceRoot, env);
+    if (subcommand === "review") {
+      const digest = await collectSkillReviewDigest({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        skillRoots: roots,
+        limit: parsed.limit,
+        skillName: parsed.skillName,
+        skillKey: parsed.skillKey,
+        packageHash: parsed.packageHash,
+      });
+      if (parsed.format === "json") {
+        writeLine(io.stdout, JSON.stringify(digest, null, 2));
+      } else {
+        writeLine(io.stdout, formatSkillReviewDigest(digest));
+      }
+      return { exitCode: 0 };
+    }
+
     if (subcommand === "stats") {
       const stats = await collectSkillStats({
         workspaceRoot: parsed.workspaceRoot,
@@ -3158,6 +3189,9 @@ async function handleSkillsCreate(
     renderSkillTemplate(input.value.name, input.value.description),
     "utf8",
   );
+  if (resolve(root) === resolve(projectSkillRoot(parsed.workspaceRoot))) {
+    recordSkillPatch(parsed.workspaceRoot, input.value.name);
+  }
   // Display with forward slashes so output is stable across platforms
   // (Windows would otherwise print backslashes).
   writeLine(io.stdout, `Created ${skillPath.split(sep).join("/")}`);
@@ -3565,6 +3599,60 @@ function formatSkillReport(report: SkillReport): string {
   return lines.join("\n");
 }
 
+function formatSkillReviewDigest(digest: SkillReviewDigest): string {
+  const lines = [
+    `review items: ${digest.items.length}`,
+    `freshness: computed=${digest.generatedAt}, latest evidence=${digest.freshness.latestEvidenceAt ?? "none"}`,
+    `stats: sessions=${digest.stats.sessionsScanned}/${digest.sessionLimit}, traces=${digest.stats.tracesScanned}, findings=${digest.stats.findingsScanned}`,
+    `proposals: drafts=${digest.proposals.drafts}/${digest.proposals.scanned}, intent stubs=${digest.proposals.intentStubs}, templates=${digest.proposals.templates}`,
+  ];
+  if (digest.items.length === 0) {
+    lines.push("(none)");
+  }
+  for (const item of digest.items) {
+    lines.push(
+      `- ${item.severity} ${item.kind} ${item.skillName}: ${item.message}`,
+    );
+    if (item.proposalId && item.proposalKind) {
+      lines.push(
+        `  proposal: ${item.proposalId} (${item.proposalKind}, ${formatSkillProposalContentMode(
+          {
+            kind: item.proposalKind,
+            contentMode: item.contentMode,
+          },
+        )})`,
+      );
+    }
+    if (item.findingCode) {
+      lines.push(
+        `  finding: ${item.findingCode} (${item.relation ?? "observed"})`,
+      );
+    }
+    if (item.evidence) {
+      lines.push(
+        `  evidence: runs=${item.evidence.runIds.length}, sessions=${item.evidence.sessionIds.length}, metrics=${formatReviewMetricPairs(item.evidence.metrics)}`,
+      );
+    }
+    lines.push(`  action: ${item.action}`);
+  }
+  lines.push(
+    "note: review digest combines trace-based skill stats with draft proposals; usage sidecar data is not required.",
+  );
+  lines.push(
+    "note: associated tool failures are correlation, not causal claims.",
+  );
+  return lines.join("\n");
+}
+
+function formatReviewMetricPairs(
+  metrics: Record<string, number | string>,
+): string {
+  const entries = Object.entries(metrics);
+  return entries.length > 0
+    ? entries.map(([key, value]) => `${key}=${value}`).join(", ")
+    : "none";
+}
+
 function formatSkillStatsReport(report: SkillStatsReport): string {
   const lines = [
     `sessions scanned: ${report.sessionsScanned}/${report.sessionLimit}`,
@@ -3747,6 +3835,7 @@ function formatSkillProposalList(proposals: SkillProposalSummary[]): string {
       lines.push(`  base package: ${proposal.basePackageHash}`);
     }
     lines.push(`  after package: ${proposal.afterPackageHash}`);
+    lines.push(`  content: ${formatSkillProposalContentMode(proposal)}`);
     if (proposal.closedAt) lines.push(`  closed: ${proposal.closedAt}`);
     if (proposal.supersededBy) {
       lines.push(`  superseded by: ${proposal.supersededBy}`);
@@ -3766,6 +3855,7 @@ function formatSkillProposalDetail(proposal: SkillProposalDetail): string {
     `target: ${proposal.targetPath}`,
     `base package: ${proposal.basePackageHash ?? "none"}`,
     `after package: ${proposal.afterPackageHash}`,
+    `content: ${formatSkillProposalContentMode(proposal)}`,
     `closed: ${proposal.closedAt ?? "none"}`,
     `superseded by: ${proposal.supersededBy ?? "none"}`,
     `reason: ${proposal.statusReason ?? "none"}`,
@@ -3777,6 +3867,23 @@ function formatSkillProposalDetail(proposal: SkillProposalDetail): string {
     "patch:",
     proposal.patchDiff.trimEnd(),
   ].join("\n");
+}
+
+function formatSkillProposalContentMode(
+  proposal: Pick<SkillProposalSummary, "kind" | "contentMode">,
+): string {
+  switch (proposal.contentMode) {
+    case "authored":
+      return "authored";
+    case "intent_stub":
+      return "intent-only update stub";
+    case "template":
+      return "generated create template";
+    default:
+      return proposal.kind === "update"
+        ? "unknown update content"
+        : "unknown create content";
+  }
 }
 
 function formatSkillProposalApplyResult(
@@ -4680,6 +4787,12 @@ function describeConfigFields(
   add("model", sources.model, config.model);
   add("accessMode", sources.accessMode, config.accessMode);
   add("accessModeCeiling", sources.accessModeCeiling, config.accessModeCeiling);
+  add("backgroundTasks", sources.backgroundTasks, config.backgroundTasks);
+  add(
+    "backgroundTasksCeiling",
+    sources.backgroundTasksCeiling,
+    config.backgroundTasksCeiling,
+  );
   add("workspace", sources.workspace, config.workspace);
   add("confidentialPaths", sources.confidentialPaths, config.confidentialPaths);
   add("write", sources.write, config.write);
@@ -6969,7 +7082,8 @@ function usage(): string {
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
-    "       sparkwright skills list|validate|restore [--workspace path] [--format json|text]",
+    "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
+    "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list|show|create|update|apply|reject|supersede|prune [--workspace path] [--format json|text]",
@@ -7020,6 +7134,7 @@ function skillsUsage(): string {
   return [
     "Usage: sparkwright skills list [--workspace path] [--format json|text]",
     "       sparkwright skills validate [--workspace path] [--format json|text]",
+    "       sparkwright skills review [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills stats [--workspace path] [--session-root path] [--last n] [--skill name] [--skill-key key] [--package-hash hash] [--format json|text]",
     "       sparkwright skills doctor [--workspace path] [--format json|text]",
     "       sparkwright skills proposals list [--run <run-id>] [--session <session-id>] [--workspace path] [--format json|text]",

@@ -18,6 +18,14 @@ export const ACCESS_MODES = [
 
 export type RunAccessMode = (typeof ACCESS_MODES)[number];
 
+export const BACKGROUND_TASK_POLICIES = [
+  "disabled",
+  "foreground-only",
+  "enabled",
+] as const;
+
+export type BackgroundTaskPolicy = (typeof BACKGROUND_TASK_POLICIES)[number];
+
 export function isRunAccessMode(value: unknown): value is RunAccessMode {
   return (
     typeof value === "string" &&
@@ -41,6 +49,7 @@ export const ACCESS_MODE_RANK: Record<RunAccessMode, number> = {
 export interface CompiledAccessMode {
   permissionMode: PermissionMode;
   shouldWrite: boolean;
+  backgroundTasks: BackgroundTaskPolicy;
 }
 
 /**
@@ -51,13 +60,29 @@ export interface CompiledAccessMode {
 export function compileRunAccessMode(mode: RunAccessMode): CompiledAccessMode {
   switch (mode) {
     case "read-only":
-      return { permissionMode: "plan", shouldWrite: false };
+      return {
+        permissionMode: "plan",
+        shouldWrite: false,
+        backgroundTasks: "enabled",
+      };
     case "ask":
-      return { permissionMode: "default", shouldWrite: true };
+      return {
+        permissionMode: "default",
+        shouldWrite: true,
+        backgroundTasks: "enabled",
+      };
     case "accept-edits":
-      return { permissionMode: "accept_edits", shouldWrite: true };
+      return {
+        permissionMode: "accept_edits",
+        shouldWrite: true,
+        backgroundTasks: "enabled",
+      };
     case "bypass":
-      return { permissionMode: "bypass_permissions", shouldWrite: true };
+      return {
+        permissionMode: "bypass_permissions",
+        shouldWrite: true,
+        backgroundTasks: "enabled",
+      };
   }
 }
 
@@ -73,6 +98,34 @@ export function clampAccessMode(
   if (ceiling === undefined) return requested;
   if (requested === undefined) return ceiling;
   return ACCESS_MODE_RANK[requested] <= ACCESS_MODE_RANK[ceiling]
+    ? requested
+    : ceiling;
+}
+
+export const BACKGROUND_TASK_POLICY_RANK: Record<BackgroundTaskPolicy, number> =
+  {
+    disabled: 0,
+    "foreground-only": 1,
+    enabled: 2,
+  };
+
+export function isBackgroundTaskPolicy(
+  value: unknown,
+): value is BackgroundTaskPolicy {
+  return (
+    typeof value === "string" &&
+    (BACKGROUND_TASK_POLICIES as readonly string[]).includes(value)
+  );
+}
+
+export function clampBackgroundTaskPolicy(
+  ceiling: BackgroundTaskPolicy | undefined,
+  requested: BackgroundTaskPolicy | undefined,
+): BackgroundTaskPolicy | undefined {
+  if (ceiling === undefined) return requested;
+  if (requested === undefined) return ceiling;
+  return BACKGROUND_TASK_POLICY_RANK[requested] <=
+    BACKGROUND_TASK_POLICY_RANK[ceiling]
     ? requested
     : ceiling;
 }

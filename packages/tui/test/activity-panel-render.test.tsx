@@ -73,7 +73,13 @@ describe("ActivityPanel", () => {
     ];
 
     const text = await renderToText(
-      <ActivityPanel events={events} initialTab="tasks" onClose={() => {}} />,
+      <ActivityPanel
+        events={events}
+        initialTab="tasks"
+        onClose={() => {}}
+        onJoinTask={() => {}}
+        onPromoteTask={() => {}}
+      />,
     );
 
     expect(text).toContain("activity");
@@ -81,6 +87,9 @@ describe("ActivityPanel", () => {
     expect(text).toContain("session tasks");
     expect(text).toContain("task_mqzd...yc24hj");
     expect(text).toContain("running");
+    expect(text).toContain("awaited");
+    expect(text).toContain("w join");
+    expect(text).toContain("p promote");
     expect(text).toContain("node bg-task.js");
     expect(text).toContain("bg-task-tick 1");
     expect(text).not.toContain('"taskId"');
@@ -93,6 +102,7 @@ describe("ActivityPanel", () => {
         parentRunId: "run_1",
         kind: "shell.promoted",
         status: "completed",
+        awaited: false,
         createdAt: "2026-06-30T00:00:00.000Z",
         outputChunks: 12,
         outputBytes: 111,
@@ -122,6 +132,7 @@ describe("ActivityPanel", () => {
 
     expect(text).toContain("task_dura...456789");
     expect(text).toContain("completed");
+    expect(text).toContain("detached");
     expect(text).toContain("node durable.js");
     expect(text).toContain("durable-row-12");
     expect(text).not.toContain("durable-row-01");

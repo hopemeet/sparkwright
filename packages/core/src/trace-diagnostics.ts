@@ -7,6 +7,7 @@ import { evaluateTrajectory } from "./eval.js";
 import {
   analyzeLowNetProgress,
   collectRepeatedToolRequests,
+  type LowNetProgressInput,
   type RepeatedToolRequest,
 } from "./run-health.js";
 import {
@@ -228,7 +229,8 @@ interface TraceReportFacts {
   topDuplicateReads: Record<string, number>;
   topRepeatedReadWindows: Record<string, number>;
   topTools: Record<string, number>;
-  repeatedToolRequests: RepeatedToolRequest[];
+  repeatedToolRequestRuns: RepeatedToolRequestRunFacts[];
+  lowNetProgressRuns: LowNetProgressRunFacts[];
   repeatedCommandFailures: Array<{ label: string; count: number }>;
   trajectory: ReturnType<typeof evaluateTrajectory>;
   uniqueWritePaths: string[];
@@ -242,6 +244,23 @@ interface TraceReportFacts {
   largestDuplicateRead: number;
   workspaceWrites: number;
   approvalsRequested: number;
+}
+
+interface LowNetProgressRunFacts {
+  runId?: string;
+  agentId?: string;
+  input: LowNetProgressInput;
+}
+
+interface RepeatedToolRequestRunFacts {
+  runId?: string;
+  agentId?: string;
+  repeatedToolRequests: RepeatedToolRequest[];
+}
+
+interface RunEventGroup {
+  runId?: string;
+  events: SparkwrightEvent[];
 }
 
 interface TraceReportContext {
@@ -312,7 +331,8 @@ function collectTraceReportFacts(
     8,
   );
   const topTools = firstEntries(summary.toolCalls, 8);
-  const repeatedToolRequests = collectRepeatedToolRequests(events);
+  const repeatedToolRequestRuns = collectRepeatedToolRequestRunFacts(events);
+  const lowNetProgressRuns = collectLowNetProgressRunFacts(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
   const trajectory = evaluateTrajectory([...events]);
   const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
@@ -337,7 +357,8 @@ function collectTraceReportFacts(
     topDuplicateReads,
     topRepeatedReadWindows,
     topTools,
-    repeatedToolRequests,
+    repeatedToolRequestRuns,
+    lowNetProgressRuns,
     repeatedCommandFailures,
     trajectory,
     uniqueWritePaths,
@@ -587,14 +608,10 @@ function analyzeEfficiency({
     workspaceReadRatio,
     workspaceReadAttribution,
     topDuplicateReads,
-    topRepeatedReadWindows,
     topTools,
-    repeatedToolRequests,
-    trajectory,
-    uniqueWritePaths,
-    verificationLag,
+    repeatedToolRequestRuns,
+    lowNetProgressRuns,
     largestDuplicateRead,
-    workspaceWrites,
   } = facts;
   const findings: TraceReportFinding[] = [];
 
@@ -653,41 +670,138 @@ function analyzeEfficiency({
     });
   }
 
-  if (repeatedToolRequests.length > 0) {
+  for (const runFacts of repeatedToolRequestRuns) {
+    if (runFacts.repeatedToolRequests.length === 0) continue;
     findings.push({
       severity: "medium",
       code: "REPEATED_TOOL_REQUESTS",
       title: "Identical tool requests repeated",
-      evidence: repeatedToolRequests
-        .slice(0, 5)
-        .map((item) => `${item.count}x ${item.label}`),
+      evidence: [
+        ...runScopeEvidence(runFacts, repeatedToolRequestRuns.length),
+        ...runFacts.repeatedToolRequests
+          .slice(0, 5)
+          .map((item) => `${item.count}x ${item.label}`),
+      ],
       recommendation:
         "Feed duplicate-call evidence back to the model or add cached-result hints before lowering maxSteps.",
     });
   }
 
-  const lowNetProgress = analyzeLowNetProgress({
-    modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
-    toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
-    budgetCheckCount: trajectory.metrics.budgetCheckCount,
-    workspaceWrites,
-    uniqueWritePaths: uniqueWritePaths.length,
-    topDuplicateReads: topRepeatedReadWindows,
-    repeatedToolRequests,
-    verificationLag,
-  });
-  if (lowNetProgress) {
+  for (const runFacts of lowNetProgressRuns) {
+    const lowNetProgress = analyzeLowNetProgress(runFacts.input);
+    if (!lowNetProgress) continue;
     findings.push({
       severity: "medium",
       code: "LOW_NET_PROGRESS",
       title: "Run spent many cycles for little file progress",
-      evidence: lowNetProgress.evidence,
+      evidence: [
+        ...runScopeEvidence(runFacts, lowNetProgressRuns.length),
+        ...lowNetProgress.evidence,
+      ],
       recommendation:
         "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
     });
   }
 
   return findings;
+}
+
+function collectRepeatedToolRequestRunFacts(
+  events: readonly SparkwrightEvent[],
+): RepeatedToolRequestRunFacts[] {
+  return collectRunEventGroups(events).map((group) => {
+    const agentId = dominantAgentId(group.events);
+    return {
+      ...(group.runId ? { runId: group.runId } : {}),
+      ...(agentId ? { agentId } : {}),
+      repeatedToolRequests: collectRepeatedToolRequests(group.events),
+    };
+  });
+}
+
+function collectLowNetProgressRunFacts(
+  events: readonly SparkwrightEvent[],
+): LowNetProgressRunFacts[] {
+  return collectRunEventGroups(events).map((group) => {
+    const runEvents = group.events;
+    const trajectory = evaluateTrajectory([...runEvents]);
+    const modelCalls = runEvents.filter(
+      (event) => event.type === "model.completed",
+    ).length;
+    const toolCalls = runEvents.filter(
+      (event) => event.type === "tool.completed",
+    ).length;
+    const uniqueWritePaths = collectUniqueCompletedWritePaths(runEvents);
+    const workspaceWrites = runEvents.filter(
+      (event) => event.type === "workspace.write.completed",
+    ).length;
+    const agentId = dominantAgentId(runEvents);
+
+    return {
+      ...(group.runId ? { runId: group.runId } : {}),
+      ...(agentId ? { agentId } : {}),
+      input: {
+        modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
+        toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
+        budgetCheckCount: trajectory.metrics.budgetCheckCount,
+        workspaceWrites,
+        uniqueWritePaths: uniqueWritePaths.length,
+        topDuplicateReads: firstEntries(
+          collectRepeatedReadWindows(runEvents),
+          8,
+        ),
+        repeatedToolRequests: collectRepeatedToolRequests(runEvents),
+        verificationLag: collectVerificationLagAfterLastWrite(runEvents),
+      },
+    };
+  });
+}
+
+function collectRunEventGroups(
+  events: readonly SparkwrightEvent[],
+): RunEventGroup[] {
+  const eventsByRun = new Map<string, SparkwrightEvent[]>();
+  const unscopedEvents: SparkwrightEvent[] = [];
+  for (const event of events) {
+    if (typeof event.runId !== "string" || event.runId.length === 0) {
+      unscopedEvents.push(event);
+      continue;
+    }
+    const runEvents = eventsByRun.get(event.runId);
+    if (runEvents) runEvents.push(event);
+    else eventsByRun.set(event.runId, [event]);
+  }
+
+  const groups: RunEventGroup[] = [...eventsByRun.entries()].map(
+    ([runId, runEvents]) => ({ runId, events: runEvents }),
+  );
+  if (unscopedEvents.length > 0) groups.push({ events: unscopedEvents });
+  return groups;
+}
+
+function runScopeEvidence(
+  facts: { runId?: string; agentId?: string },
+  runCount: number,
+): string[] {
+  if (runCount <= 1) return [];
+  return [
+    facts.runId ? `run ${facts.runId}` : "run (unscoped)",
+    facts.agentId ? `agent ${facts.agentId}` : undefined,
+  ].filter((value): value is string => typeof value === "string");
+}
+
+function dominantAgentId(
+  events: readonly SparkwrightEvent[],
+): string | undefined {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    const agentId = stringValue(event.metadata.agentId);
+    if (!agentId) continue;
+    counts.set(agentId, (counts.get(agentId) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  )[0]?.[0];
 }
 
 function analyzeToolRecovery({
@@ -1348,6 +1462,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   );
   collectClassifiedToolFailures(summary, events);
+  collectClassifiedExpectedDenials(summary, events);
   collectCommandFailures(summary, events);
   collectSafetySummary(summary, events);
   return summary;
@@ -1699,6 +1814,22 @@ function collectClassifiedToolFailures(
   for (const [code, count] of Object.entries(snapshot.unresolved.byCode)) {
     summary.errorCount += count;
     summary.errorCodes[code] = (summary.errorCodes[code] ?? 0) + count;
+  }
+}
+
+function collectClassifiedExpectedDenials(
+  summary: TraceSummary,
+  events: readonly SparkwrightEvent[],
+): void {
+  for (const failure of analyzeToolOutcomes(events).policyDenials) {
+    const code = failure.code;
+    // Raw policy/approval failures were counted during event collection. This
+    // catches classifier-derived expected denials whose raw code is diagnostic
+    // scaffolding, such as a skipped repeated call after an expected denial.
+    if (!code || isPolicyOrApprovalFailure(code)) continue;
+    summary.expectedDenialCount += 1;
+    summary.expectedDenialCodes[code] =
+      (summary.expectedDenialCodes[code] ?? 0) + 1;
   }
 }
 

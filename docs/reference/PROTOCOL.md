@@ -192,7 +192,7 @@ Current event types:
 - `run.command.enqueued`
 - `run.command.applied`
 - `run.notification.injected`: a `NotificationSource` returned items that were appended as user-role context items at the start of a step; metadata: `{ step, sourceIndex, count }`
-- `run.notification.source_failed`: a `NotificationSource.drain()` threw; the runtime swallowed the error and continued; metadata: `{ step, sourceIndex, message }`
+- `run.notification.source_failed`: a notification source `drain()` or task-revival readiness check threw; the runtime swallowed the error and continued; metadata: `{ step, sourceIndex, message, phase? }`
 - `run.state_transition.rejected`
 - `run.budget.checked`: per-step budget evaluation; metadata carries usage snapshot
 - `plan.created`: a structured plan was produced by the planner surface
@@ -278,7 +278,8 @@ Current event types:
   `PreToolUse`, `PostToolUse`, `Stop`, `RunEnd`, and `RuntimeSignal`.
   Payloads carry `{ hookName, hookId?, hook, step?, metadata }`; `hook` is the
   canonical lifecycle value used by the run loop. Completion includes the hook
-  result. Blocked events include reason/findings, and failed events include
+  result, including non-blocking `advance` continuations for `ModelOutput` and
+  `Stop`. Blocked events include reason/findings, and failed events include
   `{ error: { code, message } }`.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled

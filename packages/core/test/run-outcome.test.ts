@@ -207,6 +207,215 @@ describe("run outcome evidence", () => {
     ]);
   });
 
+  it("treats empty task monitor placeholders as recovered after concrete task monitoring succeeds", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Monitor a background task" }),
+      log.emit("tool.requested", {
+        id: "call_create",
+        toolName: "task_create",
+        arguments: { kind: "agent", mode: "awaited" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_create",
+        toolName: "task_create",
+        status: "completed",
+        output: {
+          taskId: "task_123",
+          mode: "awaited",
+          awaited: true,
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_wait_empty",
+        toolName: "task",
+        arguments: {
+          action: "wait",
+          taskId: "",
+          ids: [],
+          mode: "all",
+        },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_wait_empty",
+        toolName: "task",
+        status: "failed",
+        error: {
+          code: "TASK_ARGUMENTS_INVALID",
+          message: "task wait requires at least one task id.",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_output_empty",
+        toolName: "task",
+        arguments: {
+          action: "output",
+          taskId: "",
+        },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_output_empty",
+        toolName: "task",
+        status: "failed",
+        error: {
+          code: "TASK_ARGUMENTS_INVALID",
+          message: "taskId must be a non-empty string.",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_wait_ok",
+        toolName: "task",
+        arguments: {
+          action: "wait",
+          taskId: "task_123",
+          ids: ["task_123"],
+          mode: "all",
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_wait_ok",
+        toolName: "task",
+        status: "completed",
+        output: {
+          mode: "all",
+          complete: true,
+          taskIds: ["task_123"],
+          terminalTaskIds: ["task_123"],
+          tasks: [{ id: "task_123", status: "completed" }],
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_output_ok",
+        toolName: "task",
+        arguments: {
+          action: "output",
+          taskId: "task_123",
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_output_ok",
+        toolName: "task",
+        status: "completed",
+        output: {
+          chunks: [],
+          complete: true,
+          status: "completed",
+        },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+
+    expect(summary.unresolvedFailures).toEqual([]);
+    expect(summary.recoveredFailures.map((failure) => failure.code)).toEqual([
+      "TASK_ARGUMENTS_INVALID",
+      "TASK_ARGUMENTS_INVALID",
+    ]);
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_recovered_tool_failures",
+      failing: false,
+      toolFailures: {
+        count: 2,
+        codes: ["TASK_ARGUMENTS_INVALID"],
+      },
+    });
+    expect(toolOutcomeSnapshot(events)).toEqual({
+      unresolved: { total: 0, byCode: {} },
+      recovered: { total: 2, byCode: { TASK_ARGUMENTS_INVALID: 2 } },
+    });
+  });
+
+  it("treats repeated expected denials as expected denials", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Try denied shell twice" }),
+      log.emit("tool.requested", {
+        id: "call_denied",
+        toolName: "bash",
+        arguments: { command: "pwd && node -v" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_denied",
+        toolName: "bash",
+        status: "failed",
+        error: {
+          code: "TOOL_DENIED",
+          message:
+            "Tools with write side effects require an explicit write-enabled run.",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_repeated",
+        toolName: "bash",
+        arguments: { command: "pwd && node -v" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_repeated",
+        toolName: "bash",
+        status: "failed",
+        error: {
+          code: "REPEATED_TOOL_CALL_SKIPPED",
+          message: "Skipped repeated denied action.",
+        },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+
+    expect(summary.unresolvedFailures).toEqual([]);
+    expect(summary.recoveredFailures).toEqual([]);
+    expect(summary.policyDenials.map((failure) => failure.code)).toEqual([
+      "TOOL_DENIED",
+      "REPEATED_TOOL_CALL_SKIPPED",
+    ]);
+    expect(completedRunOutcomeFromEvents(events)).toBeUndefined();
+    expect(toolOutcomeSnapshot(events)).toBeUndefined();
+  });
+
+  it("does not recover empty task placeholders without later concrete task success", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.created", { goal: "Monitor a background task" }),
+      log.emit("tool.requested", {
+        id: "call_wait_empty",
+        toolName: "task",
+        arguments: {
+          action: "wait",
+          taskId: "",
+          ids: [],
+          mode: "all",
+        },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_wait_empty",
+        toolName: "task",
+        status: "failed",
+        error: {
+          code: "TASK_ARGUMENTS_INVALID",
+          message: "task wait requires at least one task id.",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_list_ok",
+        toolName: "task",
+        arguments: { action: "list" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_list_ok",
+        toolName: "task",
+        status: "completed",
+        output: { tasks: [{ id: "task_123", status: "completed" }] },
+      }),
+    ];
+
+    const summary = analyzeToolOutcomes(events);
+
+    expect(summary.recoveredFailures).toEqual([]);
+    expect(summary.unresolvedFailures.map((failure) => failure.code)).toEqual([
+      "TASK_ARGUMENTS_INVALID",
+    ]);
+  });
+
   it("does not treat a workspace path-escape failure as recovered", () => {
     const log = new EventLog(createRunId());
     const events = [

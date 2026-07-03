@@ -13,6 +13,7 @@
  * @stability experimental v0.1
  */
 export type SkillUsageState = "active" | "stale" | "archived";
+export type SkillUsageLoadMode = "on_demand_tool" | "resident_context";
 
 /**
  * Telemetry snapshot for a single skill. Timestamps are ISO 8601 strings.
@@ -23,6 +24,8 @@ export type SkillUsageState = "active" | "stale" | "archived";
 export interface SkillUsageRecord {
   name: string;
   useCount: number;
+  explicitLoadCount?: number;
+  residentLoadCount?: number;
   patchCount: number;
   lastUsedAt?: string;
   lastPatchedAt?: string;
@@ -39,7 +42,7 @@ export interface SkillUsageRecord {
  */
 export interface SkillUsageRecorder {
   /** Bump useCount + lastUsedAt for the named skill. */
-  recordUse(name: string, at?: Date): void;
+  recordUse(name: string, at?: Date, mode?: SkillUsageLoadMode): void;
   /** Bump patchCount + lastPatchedAt (called on edit / patch / write_file). */
   recordPatch(name: string, at?: Date): void;
   /** Drop the record entirely (e.g. on archive). */
@@ -62,10 +65,15 @@ export interface SkillUsageRecorder {
 export class InMemorySkillUsageRecorder implements SkillUsageRecorder {
   private readonly byName = new Map<string, SkillUsageRecord>();
 
-  recordUse(name: string, at: Date = new Date()): void {
+  recordUse(
+    name: string,
+    at: Date = new Date(),
+    mode?: SkillUsageLoadMode,
+  ): void {
     const r = this.ensure(name);
     r.useCount += 1;
     r.lastUsedAt = at.toISOString();
+    recordLoadMode(r, mode);
     // Touching a stale skill reactivates it; archived stays archived until
     // an explicit setState.
     if (r.state === "stale") r.state = "active";
@@ -102,12 +110,25 @@ export class InMemorySkillUsageRecorder implements SkillUsageRecorder {
       r = {
         name,
         useCount: 0,
+        explicitLoadCount: 0,
+        residentLoadCount: 0,
         patchCount: 0,
         state: "active",
       };
       this.byName.set(name, r);
     }
     return r;
+  }
+}
+
+export function recordLoadMode(
+  record: SkillUsageRecord,
+  mode: SkillUsageLoadMode | undefined,
+): void {
+  if (mode === "on_demand_tool") {
+    record.explicitLoadCount = (record.explicitLoadCount ?? 0) + 1;
+  } else if (mode === "resident_context") {
+    record.residentLoadCount = (record.residentLoadCount ?? 0) + 1;
   }
 }
 

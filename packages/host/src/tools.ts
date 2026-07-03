@@ -453,6 +453,16 @@ export function createSkillManagerTool(
           type: "string",
           description: "Skill description for create.",
         },
+        body: {
+          type: "string",
+          description:
+            "Authored content for the proposed Skill. Prefer full SKILL.md " +
+            "content with YAML frontmatter including `name` and `description`; " +
+            "if you provide only instructions, the host wraps them with " +
+            "`name` and `description`. Any frontmatter name must match `name`. " +
+            "When omitted, create_skill drafts a minimal template from " +
+            "`description`.",
+        },
         root: {
           type: "string",
           description:
@@ -486,14 +496,18 @@ export function createSkillManagerTool(
       if (!input.description || input.description.trim().length === 0) {
         throw new Error("create_skill create requires description.");
       }
+      const name = input.name;
+      const description = input.description;
+      const content = normalizeCreateSkillBody({
+        name,
+        description,
+        ...(input.body ? { body: input.body } : {}),
+      });
       resolveSkillCreateRoot(workspaceRoot, input.root);
-      const provenance = skillProposalProvenanceFromContext(
-        ctx,
-        input.description,
-      );
+      const provenance = skillProposalProvenanceFromContext(ctx, description);
       const existing = await findExistingRunSkillDraft(
         workspaceRoot,
-        input.name,
+        name,
         provenance.runId,
         "create",
       );
@@ -502,8 +516,9 @@ export function createSkillManagerTool(
       }
       const proposal = await createSkillCreateProposal({
         workspaceRoot,
-        name: input.name,
-        description: input.description,
+        name,
+        description,
+        ...(content ? { content } : {}),
         provenance,
         mutationReporter: ctx,
       });
@@ -1024,6 +1039,7 @@ function parseSkillManagerArgs(args: unknown): {
   action: "create";
   name?: string;
   description?: string;
+  body?: string;
   root?: string;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
@@ -1045,8 +1061,100 @@ function parseSkillManagerArgs(args: unknown): {
     ...(typeof record.description === "string"
       ? { description: record.description.trim() }
       : {}),
+    ...(typeof record.body === "string" && record.body.trim().length > 0
+      ? { body: record.body }
+      : {}),
     ...(typeof record.root === "string" ? { root: record.root } : {}),
   };
+}
+
+function normalizeCreateSkillBody(input: {
+  name: string;
+  description: string;
+  body?: string;
+}): string | undefined {
+  const body = input.body?.trim();
+  if (!body) return undefined;
+  const frontmatter = parseLeadingFrontmatter(body);
+  if (!frontmatter) {
+    return [
+      "---",
+      `name: ${input.name}`,
+      `description: ${frontmatterString(input.description)}`,
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n");
+  }
+
+  const headerLines = frontmatter.header
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0);
+  const nameIndex = headerLines.findIndex((line) => /^\s*name\s*:/u.test(line));
+  if (nameIndex >= 0) {
+    const parsedName = unquoteFrontmatterValue(
+      headerLines[nameIndex]!.replace(/^\s*name\s*:\s*/u, "").trim(),
+    );
+    if (parsedName !== input.name) {
+      throw new Error(
+        `create_skill body frontmatter name must match requested name: ${input.name}`,
+      );
+    }
+  } else {
+    headerLines.unshift(`name: ${input.name}`);
+  }
+
+  const hasDescription = headerLines.some((line) =>
+    /^\s*description\s*:/u.test(line),
+  );
+  if (!hasDescription) {
+    const afterName = Math.max(
+      1,
+      headerLines.findIndex((line) => /^\s*name\s*:/u.test(line)) + 1,
+    );
+    headerLines.splice(
+      afterName,
+      0,
+      `description: ${frontmatterString(input.description)}`,
+    );
+  }
+
+  return ["---", ...headerLines, "---", "", frontmatter.rest.trim(), ""].join(
+    "\n",
+  );
+}
+
+function parseLeadingFrontmatter(
+  content: string,
+): { header: string; rest: string } | undefined {
+  if (!content.startsWith("---")) return undefined;
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u.exec(
+    content,
+  );
+  if (!match) {
+    throw new Error(
+      "create_skill body frontmatter must be closed with a second --- line.",
+    );
+  }
+  return { header: match[1] ?? "", rest: match[2] ?? "" };
+}
+
+function unquoteFrontmatterValue(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function frontmatterString(value: string): string {
+  return /^[a-zA-Z0-9][a-zA-Z0-9 _.,:/+-]*$/u.test(value)
+    ? value
+    : JSON.stringify(value);
 }
 
 function skillProposalProvenanceFromContext(
@@ -1098,6 +1206,7 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    contentMode: proposal.contentMode,
     ...(proposal.guardFindings
       ? { guardFindings: proposal.guardFindings }
       : {}),

@@ -22,7 +22,9 @@ export type {
 export { InMemoryTaskStore } from "./store.js";
 
 export type {
+  AdoptRunningTaskInput,
   TaskManagerOptions,
+  TaskRetentionOptions,
   TaskRunner,
   TaskRunnerController,
   SpawnTaskInput,
@@ -79,6 +81,8 @@ export type {
 } from "./notifications.js";
 export {
   ActorNotificationCapacityError,
+  ActorNotificationInvalidError,
+  ActorNotificationUnsupportedError,
   ActorNotificationValidationError,
   InMemoryTaskNotificationQueue,
   acceptActorNotificationInput,
@@ -92,6 +96,9 @@ export {
 export type {
   CreateTaskToolsOptions,
   TaskCreateKindDescriptor,
+  TaskCreateMode,
+  TaskCreateResult,
+  TaskConcurrencyLimits,
 } from "./tools.js";
 export {
   createTaskTools,
@@ -122,6 +129,7 @@ export { FileTaskStore } from "./file-store.js";
 
 export type {
   FileTaskNotificationEntry,
+  FileTaskNotificationInvalidActorEntry,
   FileTaskNotificationOutboxOptions,
 } from "./file-notifications.js";
 export { FileTaskNotificationOutbox } from "./file-notifications.js";

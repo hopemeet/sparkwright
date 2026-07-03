@@ -290,6 +290,58 @@ describe("createConfiguredWorkflowHooks", () => {
     }
   });
 
+  it("can use command stdout JSON to advance a workflow hook", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        hooks: [
+          {
+            name: "json-advance",
+            hook: "Stop",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'advance', reason:'node passed', metadata:{nodeId:'reproduce'}}));",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(result.status).toBe("advanced");
+      if (result.status !== "advanced") {
+        throw new Error("expected advanced workflow hook result");
+      }
+      expect(result.advance.reason).toBe("node passed");
+      expect(result.advance.metadata).toMatchObject({
+        nodeId: "reproduce",
+        actionResult: { exitCode: 0 },
+      });
+      expect(events.all().map((event) => event.type)).toContain(
+        "workflow_hook.completed",
+      );
+      expect(events.all().map((event) => event.type)).not.toContain(
+        "workflow_hook.blocked",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("can use HTTP response JSON as a WorkflowHookResult", async () => {
     const seenBodies: unknown[] = [];
     const server = createServer((req, res) => {

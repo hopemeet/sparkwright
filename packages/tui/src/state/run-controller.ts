@@ -481,6 +481,28 @@ export class RunController {
     }
   }
 
+  async joinTask(taskId: string): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.joinTask({ taskId });
+      return result.awaited;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
+    }
+  }
+
+  async promoteTask(taskId: string): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.promoteTask({ taskId });
+      return result.promoted;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
+    }
+  }
+
   /**
    * Write a markdown transcript of the current session's in-memory events to
    * `<workspace>/.sparkwright/exports/session-<id>-<ts>.md`. Returns the path.

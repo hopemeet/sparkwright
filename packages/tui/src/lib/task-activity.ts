@@ -17,6 +17,7 @@ export interface TaskActivityItem {
   id: string;
   kind: string;
   title: string;
+  awaited: boolean;
   command: string;
   cwd: string;
   status: TaskActivityStatus;
@@ -165,6 +166,7 @@ function ensureTask(
     id,
     kind: "",
     title: "",
+    awaited: true,
     command: "",
     cwd: "",
     status: "created",
@@ -189,6 +191,7 @@ function updateTaskFromPayload(
   const error = rec(payload.error);
   task.kind = str(payload.kind) || task.kind;
   task.title = str(payload.title) || task.title;
+  if (typeof payload.awaited === "boolean") task.awaited = payload.awaited;
   task.command =
     str(payload.command) ||
     str(metadata.command) ||

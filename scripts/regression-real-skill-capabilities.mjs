@@ -278,7 +278,7 @@ async function realUpdateSkillProposalCase() {
     join(workspace, ".sparkwright", "skills", "repo-reviewer", "SKILL.md"),
   );
   const prompt =
-    "Evolve the existing repo-reviewer skill to also check missing test coverage. Use tool_search to find list_skills/update_skill as needed, call update_skill exactly once to create one draft proposal, then stop immediately and answer with the proposal id. Do not apply it. Do not use bash.";
+    "Evolve the existing repo-reviewer skill to also check missing test coverage. Use tool_search to find the managed Skill tools, call list_skills exactly once to inspect the existing project skills, call update_skill exactly once to create one draft proposal, then stop immediately and answer with the proposal id. Do not apply it. Do not use bash.";
   const result = await runCli([
     "run",
     prompt,

@@ -1,10 +1,19 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RunId, RuntimeContext, ToolDefinition } from "@sparkwright/core";
 import {
   ActorNotificationCapacityError,
+  ActorNotificationInvalidError,
+  ActorNotificationUnsupportedError,
   ActorNotificationValidationError,
   FileTaskNotificationOutbox,
   FileTaskStore,
@@ -13,6 +22,7 @@ import {
   TaskManager,
   TaskWatchdog,
   createTaskTools,
+  isNonRetryableActorNotificationError,
   notificationFromRecord,
   pidTaskHealthProbe,
   recoverRunningTasks,
@@ -55,6 +65,18 @@ async function tempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "sparkwright-tasks-"));
   tempDirs.push(dir);
   return dir;
+}
+
+async function waitForTaskRecord(manager: TaskManager): Promise<TaskId> {
+  const deadline = Date.now() + 1000;
+  for (;;) {
+    const task = manager.store.list()[0];
+    if (task) return task.id;
+    if (Date.now() >= deadline) {
+      throw new Error("timed out waiting for task record");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 async function peekActorInbox(
@@ -139,10 +161,12 @@ describe("TaskManager", () => {
       kind: "echo",
       runner: async () => "ok",
     });
+    expect(manager.hasLiveRunner(handle.record.id)).toBe(true);
     const record = await handle.wait();
     expect(record.status).toBe("completed");
     expect(record.result).toBe("ok");
     expect(record.completedAt).toBeDefined();
+    expect(manager.hasLiveRunner(handle.record.id)).toBe(false);
   });
 
   it("spawn -> cancel transitions to cancelled", async () => {
@@ -208,6 +232,78 @@ describe("TaskManager", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(manager.store.get(handle.record.id)?.status).toBe("failed");
+    expect(sink.drain()).toHaveLength(1);
+  });
+
+  it("adopts externally started tasks with cancellation and terminal notification", async () => {
+    const sink = new InMemoryTaskNotificationQueue();
+    const controller = new AbortController();
+    const manager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: sink,
+    });
+    const handle = manager.adoptRunning({
+      parentRunId: PARENT_RUN_ID,
+      kind: "external",
+      title: "adopted child",
+      awaited: true,
+      controller,
+      metadata: { source: "test" },
+    });
+
+    expect(handle.record.status).toBe("running");
+    expect(handle.record.awaited).toBe(true);
+
+    const cancel = handle.cancel();
+    expect(controller.signal.aborted).toBe(true);
+    await manager.cancelled(handle.record.id);
+    await cancel;
+
+    expect(handle.record.status).toBe("cancelled");
+    expect(sink.drain()).toMatchObject([
+      { taskId: handle.record.id, status: "cancelled", title: "adopted child" },
+    ]);
+  });
+
+  it("waits until notifications are available without consuming them", async () => {
+    const sink = new InMemoryTaskNotificationQueue();
+    const manager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: sink,
+    });
+    const ready = sink.waitUntilAvailable();
+    const handle = manager.spawn({
+      parentRunId: PARENT_RUN_ID,
+      kind: "notify",
+      runner: async () => "done",
+    });
+
+    await handle.wait();
+    await ready;
+
+    expect(sink.peek()).toHaveLength(1);
+    expect(sink.drain()).toHaveLength(1);
+    expect(sink.peek()).toHaveLength(0);
+  });
+
+  it("aborts notification readiness waits without consuming later notifications", async () => {
+    const sink = new InMemoryTaskNotificationQueue();
+    const controller = new AbortController();
+    const ready = sink.waitUntilAvailable({ signal: controller.signal });
+
+    controller.abort();
+
+    await expect(ready).rejects.toMatchObject({ name: "AbortError" });
+    const manager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: sink,
+    });
+    const handle = manager.spawn({
+      parentRunId: PARENT_RUN_ID,
+      kind: "notify",
+      runner: async () => "done",
+    });
+    await handle.wait();
     expect(sink.drain()).toHaveLength(1);
   });
 });
@@ -282,6 +378,7 @@ describe("FileTaskStore", () => {
       id: "task_deleted" as unknown as TaskNotification["taskId"],
       parentRunId: PARENT_RUN_ID,
       kind: "external",
+      awaited: true,
       status: "running",
       createdAt: new Date(0).toISOString(),
       startedAt: new Date(0).toISOString(),
@@ -318,6 +415,45 @@ describe("FileTaskNotificationOutbox", () => {
       status: "failed",
     });
     expect(reopened.list()).toHaveLength(0);
+  });
+
+  it("drains matching notifications and waits without consuming", async () => {
+    const root = await tempDir();
+    const outbox = new FileTaskNotificationOutbox({ rootDir: root });
+    const first: TaskNotification = {
+      taskId: "task_first" as unknown as TaskNotification["taskId"],
+      parentRunId: PARENT_RUN_ID,
+      status: "completed",
+      kind: "agent",
+      summary: "First done.",
+      deliveredAt: new Date(1).toISOString(),
+    };
+    const second: TaskNotification = {
+      taskId: "task_second" as unknown as TaskNotification["taskId"],
+      parentRunId: "run_other" as typeof PARENT_RUN_ID,
+      status: "failed",
+      kind: "agent",
+      summary: "Second failed.",
+      error: { code: "TASK_FAILED", message: "failed" },
+      deliveredAt: new Date(2).toISOString(),
+    };
+
+    const ready = outbox.waitUntilAvailable({
+      predicate: (notification) => notification.parentRunId === PARENT_RUN_ID,
+    });
+    outbox.deliver(second);
+    await Promise.resolve();
+    expect(outbox.peek()).toHaveLength(1);
+    outbox.deliver(first);
+    await ready;
+
+    expect(outbox.peek()).toHaveLength(2);
+    expect(
+      outbox.drain(
+        (notification) => notification.parentRunId === PARENT_RUN_ID,
+      ),
+    ).toMatchObject([{ taskId: first.taskId }]);
+    expect(outbox.peek()).toMatchObject([{ taskId: second.taskId }]);
   });
 });
 
@@ -452,6 +588,43 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     });
   });
 
+  it("rejects task actor notifications whose source and payload identities split", async () => {
+    const queue = new InMemoryTaskNotificationQueue();
+
+    expect(() =>
+      queue.asActorSink().deliver(
+        taskCompletedActorInput("task_source", {
+          payload: {
+            taskId: "task_payload" as unknown as TaskId,
+            parentRunId: PARENT_RUN_ID,
+            status: "completed",
+            kind: "agent",
+            summary: "split task completed.",
+            deliveredAt: "2026-01-01T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toThrow(ActorNotificationInvalidError);
+
+    expect(() =>
+      queue.asActorSink().deliver(
+        taskCompletedActorInput("task_bad_parent", {
+          payload: {
+            taskId: "task_bad_parent" as unknown as TaskId,
+            parentRunId: "run_payload_parent" as unknown as RunId,
+            status: "completed",
+            kind: "agent",
+            summary: "bad parent completed.",
+            deliveredAt: "2026-01-01T00:00:00.000Z",
+          },
+        }),
+      ),
+    ).toThrow(ActorNotificationInvalidError);
+
+    expect(await peekActorInbox(queue.asActorInbox())).toHaveLength(0);
+    expect(queue.peek()).toHaveLength(0);
+  });
+
   it("keeps reliable notifications out of drop-oldest capacity loss", async () => {
     const reliable = new InMemoryTaskNotificationQueue({
       maxBufferedNotifications: 1,
@@ -559,6 +732,84 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     expect(raw.notification?.qos).toBeUndefined();
   });
 
+  it("accepts only legacy-persistable terminal task actor notifications in the file-backed sink", async () => {
+    const root = await tempDir();
+    const outbox = new FileTaskNotificationOutbox({ rootDir: root });
+
+    expect(
+      outbox.asActorSink().deliver(
+        taskCompletedActorInput("task_file_actor", {
+          routeHint: {
+            targetRunId: "run_child_target",
+          },
+          outputRef: "task-output://task_file_actor",
+        }),
+      ),
+    ).toEqual({ status: "accepted", acceptedCount: 1 });
+
+    const [actor] = await peekActorInbox(outbox.asActorInbox());
+    expect(actor).toMatchObject({
+      source: {
+        kind: "task",
+        id: "task_file_actor",
+        runId: PARENT_RUN_ID,
+      },
+      routeHint: {
+        parentRunId: PARENT_RUN_ID,
+        targetRunId: "run_child_target",
+      },
+      type: "completed",
+      outputRef: "task-output://task_file_actor",
+      payload: {
+        taskId: "task_file_actor",
+        parentRunId: PARENT_RUN_ID,
+        deliveredAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(outbox.peek()).toMatchObject([
+      {
+        taskId: "task_file_actor",
+        parentRunId: PARENT_RUN_ID,
+        targetRunId: "run_child_target",
+        outputRef: "task-output://task_file_actor",
+      },
+    ]);
+  });
+
+  it("rejects non-persistable actor sink inputs with non-retryable file-backed errors", async () => {
+    const root = await tempDir();
+    const outbox = new FileTaskNotificationOutbox({ rootDir: root });
+
+    expect(() =>
+      outbox.asActorSink().deliver(workflowProgressInput("workflow_file")),
+    ).toThrow(ActorNotificationUnsupportedError);
+
+    try {
+      outbox.asActorSink().deliver(
+        taskCompletedActorInput("task_actor_only", {
+          source: {
+            kind: "task",
+            id: "task_actor_only",
+            runId: PARENT_RUN_ID,
+            sessionId: "session_actor_test",
+          },
+          correlationId: "correlation_actor_only",
+          suggestedContext: true,
+        }),
+      );
+      throw new Error("expected actor-only field rejection");
+    } catch (cause) {
+      expect(cause).toBeInstanceOf(ActorNotificationUnsupportedError);
+      expect(cause).toMatchObject({
+        code: "UNSUPPORTED_ACTOR_NOTIFICATION",
+        retryable: false,
+      });
+      expect(isNonRetryableActorNotificationError(cause)).toBe(true);
+    }
+    expect(outbox.peek()).toHaveLength(0);
+    expect(await peekActorInbox(outbox.asActorInbox())).toHaveLength(0);
+  });
+
   it("waits for actor notifications without consuming file-backed entries", async () => {
     const root = await tempDir();
     const outbox = new FileTaskNotificationOutbox({ rootDir: root });
@@ -574,6 +825,99 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
     expect(await peekActorInbox(inbox)).toHaveLength(1);
     expect(await drainActorInbox(inbox)).toHaveLength(1);
     expect(await peekActorInbox(inbox)).toHaveLength(0);
+  });
+
+  it("skips invalid file-backed actor entries without wedging the actor inbox", async () => {
+    const root = await tempDir();
+    const outbox = new FileTaskNotificationOutbox({ rootDir: root });
+    outbox.deliver(legacyTaskNotification("task_valid_actor_file"));
+
+    const outboxDir = join(root, "task-notifications");
+    await mkdir(outboxDir, { recursive: true });
+    await writeFile(
+      join(outboxDir, "bad-empty-parent.json"),
+      `${JSON.stringify(
+        {
+          id: "bad-empty-parent",
+          notification: {
+            taskId: "task_bad_empty_parent",
+            parentRunId: "",
+            status: "completed",
+            kind: "agent",
+            summary: "Bad actor notification.",
+            deliveredAt: "2026-01-01T00:00:00.000Z",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(join(outboxDir, "bad-json.json"), "{", "utf8");
+
+    const actors = await peekActorInbox(outbox.asActorInbox());
+    expect(actors).toMatchObject([
+      {
+        source: { id: "task_valid_actor_file" },
+        routeHint: { parentRunId: PARENT_RUN_ID },
+      },
+    ]);
+    expect(outbox.invalidActorEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "bad-empty-parent",
+          path: expect.stringContaining("bad-empty-parent.json"),
+        }),
+        expect.objectContaining({
+          path: expect.stringContaining("bad-json.json"),
+        }),
+      ]),
+    );
+    expect(outbox.invalidActorEntries()).toHaveLength(2);
+
+    expect(await drainActorInbox(outbox.asActorInbox())).toMatchObject([
+      { source: { id: "task_valid_actor_file" } },
+    ]);
+    expect(await peekActorInbox(outbox.asActorInbox())).toHaveLength(0);
+
+    // Parse-stage failures are skipped by the legacy view too (host revival
+    // walks legacy peek/drain today), while actor-acceptance failures stay
+    // legacy-visible: their files are still well-formed task notifications.
+    expect(outbox.list().map((entry) => entry.id)).toEqual([
+      "bad-empty-parent",
+    ]);
+    expect(outbox.peek()).toMatchObject([{ taskId: "task_bad_empty_parent" }]);
+    expect(outbox.drain()).toMatchObject([{ taskId: "task_bad_empty_parent" }]);
+    expect(outbox.invalidActorEntries()).toMatchObject([
+      { path: expect.stringContaining("bad-json.json") },
+    ]);
+  });
+
+  it("derives resumed file-backed actor sequence from stable id order, not readdir order", async () => {
+    const root = await tempDir();
+    const seed = new FileTaskNotificationOutbox({ rootDir: root });
+    // Persist the later entry first so directory insertion order disagrees
+    // with entry-id (timestamp) order.
+    seed.deliver(
+      legacyTaskNotification("task_b_later", {
+        deliveredAt: "2026-01-02T00:00:00.000Z",
+      }),
+    );
+    seed.deliver(
+      legacyTaskNotification("task_a_earlier", {
+        deliveredAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    // A fresh instance (resume replay) has no cached sequences; lazy
+    // derivation must follow sorted storage ids.
+    const resumed = new FileTaskNotificationOutbox({ rootDir: root });
+    const actors = await peekActorInbox(resumed.asActorInbox());
+    expect(actors.map((notification) => notification.source.id)).toEqual([
+      "task_a_earlier",
+      "task_b_later",
+    ]);
+    expect(actors.map((notification) => notification.sequence)).toEqual([1, 2]);
   });
 });
 
@@ -612,24 +956,42 @@ describe("task tools", () => {
     const schema = tools.taskCreate.inputSchema as {
       properties: {
         kind: { enum?: string[] };
+        mode: { enum?: string[] };
         payload: { required?: string[] };
       };
       required?: string[];
     };
     expect(schema.properties.kind.enum).toEqual(["hello"]);
+    expect(schema.properties.mode.enum).toEqual([
+      "foreground",
+      "awaited",
+      "background",
+    ]);
     expect(schema.required).toEqual(["kind", "payload"]);
     expect(schema.properties.payload.required).toEqual(["name"]);
   });
 
-  it("task_create + task_list returns the created task", async () => {
+  it("task_create defaults to foreground and returns inline results", async () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
     const tools = makeTools(manager);
-    const created = await exec<{ taskId: string }>(tools.taskCreate, {
+    const created = await exec<{
+      taskId: string;
+      mode: string;
+      promoted: boolean;
+      status: string;
+      result: string;
+    }>(tools.taskCreate, {
       kind: "hello",
       title: "greet",
     });
     expect(created.taskId).toMatch(/^task_/);
+    expect(created).toMatchObject({
+      mode: "foreground",
+      promoted: false,
+      status: "completed",
+      result: "hi",
+    });
     const listed = await exec<{ tasks: Array<{ id: string; kind: string }> }>(
       tools.taskList,
       { kind: "hello" },
@@ -637,6 +999,249 @@ describe("task tools", () => {
     expect(listed.tasks).toHaveLength(1);
     expect(listed.tasks[0]!.id).toBe(created.taskId);
     expect(listed.tasks[0]!.kind).toBe("hello");
+    expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(false);
+  });
+
+  it("task_create can detach fire-and-forget tasks with awaited=false", async () => {
+    const manager = makeManager();
+    manager.registerKind("hello", async () => "hi");
+    const tools = makeTools(manager);
+    const created = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "hello",
+      awaited: false,
+    });
+    await manager.handle(created.taskId as TaskId)?.wait();
+    expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(false);
+  });
+
+  it("task_create mode=awaited starts detached and awaited", async () => {
+    const manager = makeManager();
+    manager.registerKind("hello", async () => "hi");
+    const tools = makeTools(manager);
+    const created = await exec<{
+      taskId: string;
+      mode: string;
+      awaited: boolean;
+    }>(tools.taskCreate, {
+      kind: "hello",
+      mode: "awaited",
+    });
+    expect(created).toMatchObject({ mode: "awaited", awaited: true });
+    await manager.handle(created.taskId as TaskId)?.wait();
+    expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(true);
+  });
+
+  it("task_create rejects explicit mode and awaited conflicts", async () => {
+    const manager = makeManager();
+    manager.registerKind("hello", async () => "hi");
+    const tools = makeTools(manager);
+
+    await expect(
+      exec(tools.taskCreate, {
+        kind: "hello",
+        mode: "background",
+        awaited: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: expect.stringContaining("mode=background conflicts"),
+    });
+    await expect(
+      exec(tools.taskCreate, {
+        kind: "hello",
+        mode: "awaited",
+        awaited: false,
+      }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: expect.stringContaining("mode=awaited conflicts"),
+    });
+  });
+
+  it("task_create promotes foreground tasks when the budget elapses", async () => {
+    const manager = makeManager();
+    manager.registerKind(
+      "slow",
+      () => new Promise((resolve) => setTimeout(() => resolve("done"), 20)),
+    );
+    const tools = createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      foregroundTimeoutMs: 1,
+    });
+    const created = await exec<{
+      taskId: string;
+      mode: string;
+      promoted: boolean;
+      awaited: boolean;
+    }>(tools.taskCreate, { kind: "slow" });
+    expect(created).toMatchObject({
+      mode: "foreground",
+      promoted: true,
+      awaited: true,
+    });
+    const terminal = await manager.handle(created.taskId as TaskId)?.wait();
+    expect(terminal?.status).toBe("completed");
+    expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(true);
+  });
+
+  it("task_create foreground wait can be manually promoted", async () => {
+    const manager = makeManager();
+    let finish!: (value: string) => void;
+    manager.registerKind(
+      "slow",
+      () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const tools = createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      foregroundTimeoutMs: 1000,
+    });
+
+    const createdPromise = exec<{
+      taskId: string;
+      promoted: boolean;
+      awaited: boolean;
+    }>(tools.taskCreate, { kind: "slow" });
+    const taskId = await waitForTaskRecord(manager);
+
+    const promotion = manager.requestPromotion(taskId);
+    expect(promotion.interruptedForegroundWait).toBe(true);
+
+    const created = await createdPromise;
+    expect(created).toMatchObject({
+      taskId,
+      promoted: true,
+      awaited: true,
+    });
+    finish("done");
+    await manager.handle(taskId)?.wait();
+  });
+
+  it("task_create rejects new work when background tasks are disabled", async () => {
+    const manager = makeManager();
+    manager.registerKind("slow", async () => "done");
+    const tools = createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      backgroundTasks: "disabled",
+    });
+
+    await expect(
+      exec(tools.taskCreate, { kind: "slow", mode: "foreground" }),
+    ).rejects.toMatchObject({ code: "BACKGROUND_TASKS_DISABLED" });
+  });
+
+  it("task_create foreground-only policy waits inline instead of promoting", async () => {
+    const manager = makeManager();
+    manager.registerKind("slow", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return "done";
+    });
+    const tools = createTaskTools({
+      manager,
+      getParentRunId: () => PARENT_RUN_ID,
+      foregroundTimeoutMs: 1,
+      backgroundTasks: "foreground-only",
+    });
+
+    const result = await exec<{
+      promoted: boolean;
+      awaited: boolean;
+      result: string;
+    }>(tools.taskCreate, { kind: "slow", mode: "background" });
+
+    expect(result).toMatchObject({
+      promoted: false,
+      awaited: false,
+      result: "done",
+    });
+  });
+
+  it("rejects concurrent agent tasks over the default agent=1 cap", async () => {
+    const manager = makeManager();
+    manager.registerKind(
+      "agent",
+      (controller) =>
+        new Promise((resolve) => {
+          controller.signal.addEventListener(
+            "abort",
+            () => resolve("cancelled"),
+            { once: true },
+          );
+        }),
+    );
+    const tools = makeTools(manager);
+    expect(tools.taskCreate.description).toContain(
+      "Active task concurrency limit",
+    );
+    expect(tools.taskCreate.description).toContain("per-kind agent=1");
+    const created = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "agent",
+      mode: "awaited",
+    });
+
+    await expect(
+      exec(tools.taskCreate, { kind: "agent", mode: "awaited" }),
+    ).rejects.toMatchObject({
+      code: "TASK_CONCURRENCY_LIMIT",
+    });
+
+    await manager.handle(created.taskId as TaskId)?.cancel();
+  });
+
+  it("task list defaults to current run and can list all durable tasks", async () => {
+    const manager = makeManager();
+    manager.registerKind("hello", async () => "hi");
+    const currentTools = makeTools(manager);
+    const otherTools = createTaskTools({
+      manager,
+      getParentRunId: () => "run_other" as unknown as RunId,
+    });
+
+    const current = await exec<{ taskId: string }>(currentTools.taskCreate, {
+      kind: "hello",
+    });
+    const other = await exec<{ taskId: string }>(otherTools.taskCreate, {
+      kind: "hello",
+    });
+
+    const runOnly = await exec<{ tasks: Array<{ id: string }> }>(
+      currentTools.task,
+      {
+        action: "list",
+        kind: "hello",
+      },
+    );
+    const all = await exec<{ tasks: Array<{ id: string }> }>(
+      currentTools.task,
+      {
+        action: "list",
+        kind: "hello",
+        scope: "all",
+      },
+    );
+    const legacyAll = await exec<{ tasks: Array<{ id: string }> }>(
+      currentTools.taskList,
+      { kind: "hello", scope: "all" },
+    );
+
+    expect(runOnly.tasks.map((task) => task.id)).toEqual([current.taskId]);
+    expect(all.tasks.map((task) => task.id).sort()).toEqual(
+      [current.taskId, other.taskId].sort(),
+    );
+    expect(legacyAll.tasks.map((task) => task.id).sort()).toEqual(
+      [current.taskId, other.taskId].sort(),
+    );
+    await expect(
+      exec(currentTools.task, { action: "list", scope: "session" }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task list scope must be run or all.",
+    });
   });
 
   it("task action wrapper delegates list/get/output/stop", async () => {
@@ -674,6 +1279,120 @@ describe("task tools", () => {
     expect(stopped.cancelled).toBe(false);
   });
 
+  it("task action wrapper exposes action-specific id schema", () => {
+    const manager = makeManager();
+    const tools = makeTools(manager);
+    const schema = tools.task.inputSchema as {
+      properties: Record<string, unknown>;
+      oneOf?: unknown[];
+    };
+
+    expect(schema.properties.taskId).toMatchObject({
+      type: "string",
+      minLength: 1,
+    });
+    expect(schema.properties.ids).toMatchObject({
+      type: "array",
+      minItems: 1,
+      items: { type: "string", minLength: 1 },
+    });
+    expect(schema.properties.scope).toMatchObject({
+      type: "string",
+      enum: ["run", "all"],
+    });
+    expect(schema.oneOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          properties: { action: { enum: ["get", "output", "stop"] } },
+          required: ["action", "taskId"],
+        }),
+        expect.objectContaining({
+          properties: { action: { enum: ["wait"] } },
+          anyOf: [{ required: ["taskId"] }, { required: ["ids"] }],
+        }),
+      ]),
+    );
+  });
+
+  it("task action wrapper rejects empty placeholder task ids", async () => {
+    const manager = makeManager();
+    manager.registerKind("emitter", async (controller) => {
+      controller.emitOutput({ channel: "stdout", data: "ready" });
+      return "ok";
+    });
+    const tools = makeTools(manager);
+    const { taskId } = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "emitter",
+    });
+    await manager.handle(taskId as TaskId)?.wait();
+
+    await expect(
+      exec(tools.task, { action: "wait", taskId: "" }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task wait taskId must be a non-empty string when provided.",
+    });
+    await expect(
+      exec(tools.task, { action: "wait", taskId: "", ids: [taskId] }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task wait taskId must be a non-empty string when provided.",
+    });
+    await expect(
+      exec(tools.task, { action: "wait", ids: [] }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task wait requires at least one task id.",
+    });
+    await expect(
+      exec(tools.task, { action: "output", taskId: "" }),
+    ).rejects.toMatchObject({
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "taskId must be a non-empty string.",
+    });
+  });
+
+  it("task action semantic validation rejects placeholders before policy", async () => {
+    const manager = makeManager();
+    const tools = makeTools(manager);
+
+    await expect(
+      Promise.resolve(
+        tools.task.validateInput?.({ action: "wait", taskId: "" }, fakeCtx),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task wait taskId must be a non-empty string when provided.",
+    });
+    await expect(
+      Promise.resolve(
+        tools.task.validateInput?.({ action: "wait", ids: [] }, fakeCtx),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task wait requires at least one task id.",
+    });
+    await expect(
+      Promise.resolve(
+        tools.task.validateInput?.({ action: "output", taskId: "" }, fakeCtx),
+      ),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "taskId must be a non-empty string.",
+    });
+    await expect(
+      Promise.resolve(
+        tools.task.validateInput?.(
+          { action: "wait", ids: ["task_valid"] },
+          fakeCtx,
+        ),
+      ),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it("task_get returns the record; task_stop cancels", async () => {
     const manager = makeManager();
     manager.registerKind(
@@ -694,6 +1413,7 @@ describe("task tools", () => {
     const tools = makeTools(manager);
     const { taskId } = await exec<{ taskId: string }>(tools.taskCreate, {
       kind: "long",
+      mode: "awaited",
     });
     const got = await exec<{ id: string; status: string }>(tools.taskGet, {
       taskId,
@@ -711,6 +1431,91 @@ describe("task tools", () => {
       taskId,
     });
     expect(stoppedAgain.cancelled).toBe(false);
+  });
+
+  it("task action wait mode=all joins every task and clears awaited after partial failure", async () => {
+    const manager = makeManager();
+    manager.registerKind(
+      "ok",
+      () => new Promise((resolve) => setTimeout(() => resolve("ok"), 5)),
+    );
+    manager.registerKind("fail", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      throw new Error("boom");
+    });
+    const tools = makeTools(manager);
+    const ok = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "ok",
+      mode: "awaited",
+    });
+    const fail = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "fail",
+      mode: "awaited",
+    });
+
+    const waited = await exec<{
+      mode: string;
+      complete: boolean;
+      terminalTaskIds: string[];
+      completed: number;
+      failed: number;
+      tasks: Array<{ status: string }>;
+    }>(tools.task, {
+      action: "wait",
+      ids: [ok.taskId, fail.taskId],
+      mode: "all",
+    });
+
+    expect(waited).toMatchObject({
+      mode: "all",
+      complete: true,
+      completed: 1,
+      failed: 1,
+    });
+    expect(waited.terminalTaskIds).toHaveLength(2);
+    expect(waited.tasks.map((task) => task.status).sort()).toEqual([
+      "completed",
+      "failed",
+    ]);
+    expect(manager.store.get(ok.taskId as TaskId)?.awaited).toBe(false);
+    expect(manager.store.get(fail.taskId as TaskId)?.awaited).toBe(false);
+  });
+
+  it("task action wait mode=any returns after the first terminal task", async () => {
+    const manager = makeManager();
+    manager.registerKind("first", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return "first";
+    });
+    manager.registerKind("second", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return "second";
+    });
+    const tools = makeTools(manager);
+    const first = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "first",
+      mode: "awaited",
+    });
+    const second = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "second",
+      mode: "awaited",
+    });
+
+    const waited = await exec<{
+      mode: string;
+      complete: boolean;
+      terminalTaskIds: string[];
+    }>(tools.task, {
+      action: "wait",
+      ids: [first.taskId, second.taskId],
+      mode: "any",
+    });
+
+    expect(waited).toMatchObject({ mode: "any", complete: false });
+    expect(waited.terminalTaskIds).toEqual([first.taskId]);
+    expect(manager.store.get(first.taskId as TaskId)?.awaited).toBe(false);
+    expect(manager.store.get(second.taskId as TaskId)?.awaited).toBe(true);
+    await manager.handle(second.taskId as TaskId)?.wait();
   });
 
   it("task_output drains buffered chunks", async () => {
@@ -736,6 +1541,25 @@ describe("task tools", () => {
     expect(drained.nextSequence).toBe(2);
     expect(drained.complete).toBe(true);
     expect(drained.status).toBe("completed");
+  });
+});
+
+describe("TaskManager retention", () => {
+  it("prunes old terminal tasks by count", async () => {
+    const manager = makeManager();
+    for (const label of ["one", "two", "three"]) {
+      const handle = manager.spawn({
+        parentRunId: PARENT_RUN_ID,
+        kind: label,
+        runner: async () => label,
+      });
+      await handle.wait();
+    }
+
+    const result = manager.pruneTerminalTasks({ maxTerminalTasks: 1 });
+
+    expect(result.pruned).toBe(2);
+    expect(manager.store.list()).toHaveLength(1);
   });
 });
 
@@ -902,6 +1726,7 @@ describe("TaskWatchdog", () => {
         parentRunId: PARENT_RUN_ID,
         kind: "pid",
         status: "running",
+        awaited: false,
         createdAt: new Date().toISOString(),
         metadata: { pid: process.pid },
       }),
@@ -912,6 +1737,7 @@ describe("TaskWatchdog", () => {
         parentRunId: PARENT_RUN_ID,
         kind: "pid",
         status: "running",
+        awaited: false,
         createdAt: new Date().toISOString(),
         metadata: {},
       }),
@@ -1036,6 +1862,35 @@ describe("TaskNotificationSink", () => {
     expect(manager.pendingNotifications()).toHaveLength(0);
   });
 
+  it("does not enqueue typed non-retryable unsupported actor notification errors", async () => {
+    const errors: Array<{ taskId: string; cause: unknown }> = [];
+    const manager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: {
+        deliver: () => {
+          throw new ActorNotificationUnsupportedError(
+            "FileTaskNotificationOutbox only supports terminal task actor notifications.",
+          );
+        },
+      },
+      onSinkError: (taskId, cause) => errors.push({ taskId, cause }),
+    });
+    const handle = manager.spawn({
+      parentRunId: PARENT_RUN_ID,
+      kind: "ok",
+      runner: async () => 1,
+    });
+    const record = await handle.wait();
+
+    expect(record.status).toBe("completed");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.cause).toMatchObject({
+      code: "UNSUPPORTED_ACTOR_NOTIFICATION",
+      retryable: false,
+    });
+    expect(manager.pendingNotifications()).toHaveLength(0);
+  });
+
   it("retries pending notifications after sink failures", async () => {
     let fail = true;
     const delivered: TaskNotification[] = [];
@@ -1111,6 +1966,7 @@ describe("TaskNotificationSink", () => {
         parentRunId: PARENT_RUN_ID,
         kind: "k",
         status: "running",
+        awaited: false,
         createdAt: new Date().toISOString(),
         metadata: {},
       }),

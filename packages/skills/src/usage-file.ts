@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
+  recordLoadMode,
+  type SkillUsageLoadMode,
   type SkillUsageRecord,
   type SkillUsageRecorder,
   type SkillUsageState,
@@ -36,11 +38,12 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
     this.load();
   }
 
-  recordUse(name: string, at?: Date): void {
+  recordUse(name: string, at?: Date, mode?: SkillUsageLoadMode): void {
     this.reload();
     const r = this.ensure(name);
     r.useCount += 1;
     r.lastUsedAt = (at ?? new Date()).toISOString();
+    recordLoadMode(r, mode);
     if (r.state === "stale") r.state = "active";
     this.flush();
   }
@@ -114,6 +117,8 @@ export class FileSkillUsageRecorder implements SkillUsageRecorder {
       r = {
         name,
         useCount: 0,
+        explicitLoadCount: 0,
+        residentLoadCount: 0,
         patchCount: 0,
         state: "active",
       };

@@ -60,6 +60,8 @@ export function LayerRenderer(props: {
   onActivityTabChange?: (tab: ActivityTab) => void;
   onRefreshTasks?: () => void;
   onStopTask?: (taskId: string) => void;
+  onJoinTask?: (taskId: string) => void;
+  onPromoteTask?: (taskId: string) => void;
   onInspectSession: (id: string) => void;
   onPickSession: (id: string) => void;
   onRequestRename: (id: string) => void;
@@ -129,6 +131,8 @@ export function LayerRenderer(props: {
           onTabChange={props.onActivityTabChange}
           onRefreshTasks={props.onRefreshTasks}
           onStopTask={props.onStopTask}
+          onJoinTask={props.onJoinTask}
+          onPromoteTask={props.onPromoteTask}
         />
       );
     case "model":

@@ -50,6 +50,23 @@ export function isRunAccessMode(value: unknown): value is RunAccessMode {
   );
 }
 
+export const BACKGROUND_TASK_POLICIES = [
+  "disabled",
+  "foreground-only",
+  "enabled",
+] as const;
+
+export type BackgroundTaskPolicy = (typeof BACKGROUND_TASK_POLICIES)[number];
+
+export function isBackgroundTaskPolicy(
+  value: unknown,
+): value is BackgroundTaskPolicy {
+  return (
+    typeof value === "string" &&
+    (BACKGROUND_TASK_POLICIES as readonly string[]).includes(value)
+  );
+}
+
 export const TRACE_LEVELS = ["standard", "debug"] as const;
 
 export type TraceLevel = (typeof TRACE_LEVELS)[number];
@@ -230,6 +247,8 @@ export type RequestKind =
   | "task.get"
   | "task.output"
   | "task.stop"
+  | "task.join"
+  | "task.promote"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -292,6 +311,8 @@ export interface RunStartRequestPayload {
    * is ignored (with a diagnostic). Preferred over `permissionMode`.
    */
   accessMode?: RunAccessMode;
+  /** Session-level foreground/background task policy. Defaults to enabled. */
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -320,6 +341,8 @@ export interface RunResumeRequestPayload {
    * is ignored (with a diagnostic). Preferred over `permissionMode`.
    */
   accessMode?: RunAccessMode;
+  /** Session-level foreground/background task policy. Defaults to enabled. */
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -463,6 +486,7 @@ export interface TaskRecordSnapshot {
   parentRunId: string;
   kind: string;
   title?: string;
+  awaited: boolean;
   status: TaskStatus;
   createdAt: string;
   startedAt?: string;
@@ -506,6 +530,14 @@ export interface TaskStopRequestPayload {
   taskId: string;
 }
 
+export interface TaskJoinRequestPayload {
+  taskId: string;
+}
+
+export interface TaskPromoteRequestPayload {
+  taskId: string;
+}
+
 export interface CapabilityInspectRequestPayload {
   /**
    * Reserved for future scoped inspection. Omit to inspect the host/session
@@ -531,6 +563,8 @@ export type HostRequest =
   | HostRequestBase<"task.get", TaskGetRequestPayload>
   | HostRequestBase<"task.output", TaskOutputRequestPayload>
   | HostRequestBase<"task.stop", TaskStopRequestPayload>
+  | HostRequestBase<"task.join", TaskJoinRequestPayload>
+  | HostRequestBase<"task.promote", TaskPromoteRequestPayload>
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -611,6 +645,17 @@ export interface ResponseResults {
   "task.stop": {
     cancelled: boolean;
     status?: TaskStatus;
+  };
+  "task.join": {
+    taskId: string;
+    awaited: boolean;
+    status: TaskStatus;
+  };
+  "task.promote": {
+    taskId: string;
+    promoted: boolean;
+    awaited: boolean;
+    status: TaskStatus;
   };
   "capability.inspect": CapabilitySnapshot;
 }
@@ -755,6 +800,7 @@ export interface CapabilityTaskSummary {
   kind: string;
   status: string;
   title?: string;
+  awaited: boolean;
   parentRunId: string;
   createdAt: string;
   completedAt?: string;

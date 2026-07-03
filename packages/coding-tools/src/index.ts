@@ -176,7 +176,9 @@ export interface ListDirResult {
   path: string;
   entries: DirectoryEntry[];
   truncated: boolean;
+  /** @reserved Public tool-output count consumed by coding UIs. */
   entriesReturned: number;
+  /** @reserved Public tool-output limit flag consumed by coding UIs. */
   entryLimitHit: boolean;
 }
 
@@ -206,13 +208,16 @@ export interface GrepTextResult {
   /** @reserved Public tool-output field consumed by coding UIs. */
   matches: TextMatch[];
   truncated: boolean;
+  /** @reserved Public tool-output truncation detail consumed by coding UIs. */
   truncationReason?: GrepTextTruncationReason;
   filesScanned: number;
   filesMatched: number;
+  /** @reserved Public tool-output count consumed by coding UIs. */
   matchesReturned: number;
   fileLimitHit: boolean;
   matchLimitHit: boolean;
   scope: GrepTextScope;
+  /** @reserved Public tool-output resolved filter consumed by coding UIs. */
   effectiveInclude: string[];
 }
 

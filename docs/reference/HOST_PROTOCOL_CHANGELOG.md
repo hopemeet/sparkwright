@@ -34,6 +34,9 @@ major; breaking changes bump the major.
 - Add canonical `failure` to `run.failed` while keeping deprecated `error` for
   compatibility; clients should use the shared failure shape across terminal
   failure events.
+- Add host task control requests: `task.join` marks a task awaited for
+  on-demand revival, and `task.promote` signals an in-flight foreground wait to
+  resolve as a promoted task ticket.
 - Add host task snapshot requests: `task.list`, `task.get`, `task.output`, and
   `task.stop`, plus `task_not_found` for missing durable background task ids.
 

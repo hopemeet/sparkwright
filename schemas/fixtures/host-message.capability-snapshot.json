@@ -161,6 +161,7 @@
           "kind": "maintenance-check",
           "status": "failed",
           "title": "README maintenance",
+          "awaited": true,
           "parentRunId": "run_automation_snapshot",
           "createdAt": "2026-06-27T00:00:00.000Z",
           "completedAt": "2026-06-27T00:00:01.000Z",

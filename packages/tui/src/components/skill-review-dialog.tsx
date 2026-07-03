@@ -154,6 +154,9 @@ function ProposalRow(props: {
     <Text color={props.selected ? theme.success : undefined}>
       {props.selected ? "> " : "  "}
       <Text color={stateColor(p.state)}>{p.state}</Text> {p.kind} {p.skillName}
+      {contentModeLabel(p) ? (
+        <Text color={theme.warning}> {contentModeLabel(p)}</Text>
+      ) : null}
       <Text color={theme.muted}> {p.id}</Text>
     </Text>
   );
@@ -217,6 +220,7 @@ function detailText(
           targetPath: displayProposalPath(proposal.targetPath, workspaceRoot),
           basePackageHash: proposal.basePackageHash,
           afterPackageHash: proposal.afterPackageHash,
+          contentMode: proposal.contentMode,
           sourceLayer: proposal.sourceLayer,
           sourcePath: displayProposalPath(proposal.sourcePath, workspaceRoot),
           createdAt: proposal.createdAt,
@@ -230,7 +234,34 @@ function detailText(
       );
     case "proposal":
     default:
-      return proposal.proposalMarkdown || "(empty proposal)";
+      return [
+        proposalContentNotice(proposal),
+        proposal.proposalMarkdown || "(empty proposal)",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+  }
+}
+
+function proposalContentNotice(proposal: TuiSkillReviewItem): string {
+  switch (proposal.contentMode) {
+    case "intent_stub":
+      return "content: intent-only update stub; review needs real authored SKILL.md before apply";
+    case "template":
+      return "content: generated create template; review needs real authored SKILL.md before apply";
+    default:
+      return "";
+  }
+}
+
+function contentModeLabel(proposal: TuiSkillReviewItem): string {
+  switch (proposal.contentMode) {
+    case "intent_stub":
+      return "[intent-only]";
+    case "template":
+      return "[template]";
+    default:
+      return "";
   }
 }
 

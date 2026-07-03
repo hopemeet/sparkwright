@@ -14,7 +14,9 @@ import {
 } from "@sparkwright/core";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
+import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import type { Connection } from "../src/connection.js";
+import { skillUsagePath } from "../src/index.js";
 import { serveConnection } from "../src/server.js";
 import { HostRuntime } from "../src/runtime.js";
 
@@ -375,6 +377,8 @@ describe("host protocol", () => {
             "task.get",
             "task.output",
             "task.stop",
+            "task.join",
+            "task.promote",
           ]),
         },
       });
@@ -447,6 +451,47 @@ describe("host protocol", () => {
           ],
           nextSequence: 1,
           complete: false,
+          status: "running",
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_join",
+        kind: "task.join",
+        timestamp: TIMESTAMP,
+        payload: { taskId },
+      });
+      const joinResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_join",
+      );
+      expect(joinResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          taskId,
+          awaited: true,
+          status: "running",
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_promote",
+        kind: "task.promote",
+        timestamp: TIMESTAMP,
+        payload: { taskId },
+      });
+      const promoteResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_promote",
+      );
+      expect(promoteResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          taskId,
+          promoted: false,
+          awaited: true,
           status: "running",
         },
       });
@@ -1792,6 +1837,86 @@ describe("host protocol", () => {
     }
   });
 
+  it("fails orphaned in-process awaited tasks before resuming a run", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-resume-orphan-"),
+    );
+    const sessionId = "sess_resume_orphan_test";
+    const runId = "run_resume_orphan_test";
+    const runDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "agents",
+      "main",
+      "runs",
+      runId,
+    );
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "checkpoint.json"),
+      checkpointJson({ runId, goal: "resume with orphaned task" }),
+      "utf8",
+    );
+    const taskRoot = join(workspace, ".sparkwright", "tasks");
+    const taskStore = new FileTaskStore({ rootDir: taskRoot });
+    const taskId = createTaskId();
+    taskStore.create({
+      id: taskId,
+      parentRunId: runId as RunId,
+      kind: "agent",
+      title: "orphaned awaited agent",
+      awaited: true,
+      metadata: { source: "previous-host-process" },
+    });
+    taskStore.update(taskId, {
+      status: "running",
+      startedAt: "2026-06-30T00:00:00.000Z",
+    });
+
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    });
+    try {
+      const resumed = await runtime.resumeRun({ runId, sessionId });
+      expect(resumed).toMatchObject({
+        ok: true,
+        runId,
+        resumedFromRunId: runId,
+        sessionId,
+      });
+
+      const reopened = new FileTaskStore({ rootDir: taskRoot });
+      expect(reopened.get(taskId)).toMatchObject({
+        status: "failed",
+        error: {
+          code: "TASK_ORPHANED_IN_PROCESS",
+          message: expect.stringContaining("cannot survive host exit"),
+        },
+      });
+      const traceText = await readFileWhenReady(
+        join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+        "run.notification.injected",
+      );
+      const traceEvents = traceText
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      expect(
+        traceEvents.some(
+          (event) =>
+            event.runId === runId && event.type === "run.notification.injected",
+        ),
+      ).toBe(true);
+    } finally {
+      runtime.cleanup();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("resumes a legacy run directory into a new host-owned session", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-resume-legacy-"),
@@ -2157,6 +2282,14 @@ describe("host protocol", () => {
       expect(events.some((event) => event.type === "mcp.server.prepared")).toBe(
         true,
       );
+      expect(
+        new FileSkillUsageRecorder({ path: skillUsagePath(workspace) }).get(
+          "reviewer",
+        ),
+      ).toMatchObject({
+        useCount: 1,
+        residentLoadCount: 1,
+      });
       expect(
         events.some(
           (event) =>

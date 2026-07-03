@@ -1555,6 +1555,28 @@ function AppReady(
     });
   }
 
+  function joinActivityTask(taskId: string): void {
+    void controller.joinTask(taskId).then((joined) => {
+      toasts.push({
+        variant: joined ? "success" : "warning",
+        title: joined ? "task joined" : "task not joined",
+        message: taskId,
+      });
+      void refreshTaskSnapshots();
+    });
+  }
+
+  function promoteActivityTask(taskId: string): void {
+    void controller.promoteTask(taskId).then((promoted) => {
+      toasts.push({
+        variant: promoted ? "success" : "info",
+        title: promoted ? "task promoted" : "task marked awaited",
+        message: taskId,
+      });
+      void refreshTaskSnapshots();
+    });
+  }
+
   function openActivity(tab?: ActivityTab): void {
     if (layers.has("activity") && !tab) {
       layers.pop("activity");
@@ -1645,6 +1667,8 @@ function AppReady(
             onActivityTabChange={handleActivityTabChange}
             onRefreshTasks={() => void refreshTaskSnapshots()}
             onStopTask={stopActivityTask}
+            onJoinTask={joinActivityTask}
+            onPromoteTask={promoteActivityTask}
             onCommitModel={commitModelSelection}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;
@@ -1842,6 +1866,8 @@ function AppReady(
             onActivityTabChange={handleActivityTabChange}
             onRefreshTasks={() => void refreshTaskSnapshots()}
             onStopTask={stopActivityTask}
+            onJoinTask={joinActivityTask}
+            onPromoteTask={promoteActivityTask}
             onCommitModel={commitModelSelection}
             onFork={(seq, label, edit) => {
               const src = state.sessionId;

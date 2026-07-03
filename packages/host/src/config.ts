@@ -24,8 +24,10 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
+  clampBackgroundTaskPolicy,
   clampAccessMode,
   compileRunAccessMode,
+  type BackgroundTaskPolicy,
   type RunAccessMode,
   type RunBudget,
   type WorkflowHookMatcher,
@@ -138,6 +140,7 @@ import {
   WRITE_GUARDRAILS_CONFIG_KEYS,
   maxStepsSchema,
   ACCESS_MODE_CONFIG_VALUES,
+  BACKGROUND_TASK_POLICY_CONFIG_VALUES,
   PERMISSION_MODE_CONFIG_VALUES,
   workspaceSchema,
 } from "./config-zod-schema.js";
@@ -260,6 +263,13 @@ export interface SharedConfig {
    */
   accessModeCeiling?: RunAccessMode;
   /**
+   * Session-level foreground/background task policy. Like accessMode, project
+   * config acts as the ceiling and lower layers can only tighten it.
+   */
+  backgroundTasks?: BackgroundTaskPolicy;
+  /** Project-layer maximum foreground/background task capability. */
+  backgroundTasksCeiling?: BackgroundTaskPolicy;
+  /**
    * Internal compile target derived from `accessMode`. Not a user-facing config
    * field; downstream runtime/CLI consumers read this. Do not parse it from
    * user config.
@@ -324,6 +334,8 @@ export interface CapabilityAgentsConfig {
   enableParallelDelegates?: boolean;
   /** Maximum allowed sub-agent depth. 0 disables spawning; absent keeps legacy defaults. */
   maxDepth?: number;
+  /** Allow sub-agents to create background agent tasks, bounded by maxDepth. */
+  allowNestedBackgroundTasks?: boolean;
 }
 
 export type CapabilityMcpServerConfig =
@@ -369,6 +381,8 @@ export interface SharedConfigSourceMap {
   model?: string;
   accessMode?: string;
   accessModeCeiling?: string;
+  backgroundTasks?: string;
+  backgroundTasksCeiling?: string;
   permissionMode?: string;
   workspace?: string;
   confidentialPaths?: string;
@@ -4388,6 +4402,20 @@ function validateShared(
       });
     }
   }
+  if (obj.backgroundTasks !== undefined) {
+    if (
+      isStringOption(obj.backgroundTasks, BACKGROUND_TASK_POLICY_CONFIG_VALUES)
+    ) {
+      config.backgroundTasks = obj.backgroundTasks;
+      sources.backgroundTasks = origin;
+    } else {
+      errors.push({
+        file: filePath,
+        field: "backgroundTasks",
+        message: `must be one of ${BACKGROUND_TASK_POLICY_CONFIG_VALUES.join(" | ")}`,
+      });
+    }
+  }
   if (obj.workspace !== undefined) {
     const workspace = validateZodValue(
       workspaceSchema,
@@ -4601,6 +4629,7 @@ export async function loadHostConfig(
       shell: layerShell,
       tools: layerTools,
       accessMode: layerAccessMode,
+      backgroundTasks: layerBackgroundTasks,
       // permissionMode is derived from accessMode; never merged from a layer.
       permissionMode: _layerPermissionMode,
       confidentialPaths: layerConfidentialPaths,
@@ -4663,6 +4692,42 @@ export async function loadHostConfig(
         sources.permissionMode = sources.accessMode;
       }
     }
+    if (layerBackgroundTasks !== undefined) {
+      if (label === "project") {
+        merged.backgroundTasksCeiling = layerBackgroundTasks;
+        sources.backgroundTasksCeiling = v.sources.backgroundTasks;
+      }
+      const requested =
+        label === "project"
+          ? (merged.backgroundTasks ?? layerBackgroundTasks)
+          : layerBackgroundTasks;
+      const effective =
+        clampBackgroundTaskPolicy(merged.backgroundTasksCeiling, requested) ??
+        requested;
+      if (
+        effective !== requested &&
+        merged.backgroundTasksCeiling !== undefined
+      ) {
+        warnings.push({
+          file: path,
+          field: "backgroundTasks",
+          message: `requested ${requested} was clamped to project ceiling ${merged.backgroundTasksCeiling}`,
+        });
+      }
+      const previous = merged.backgroundTasks;
+      merged.backgroundTasks = effective;
+      if (
+        merged.backgroundTasks !== previous ||
+        sources.backgroundTasks === undefined
+      ) {
+        sources.backgroundTasks =
+          effective === requested
+            ? label === "project" && previous !== undefined
+              ? sources.backgroundTasks
+              : v.sources.backgroundTasks
+            : sources.backgroundTasksCeiling;
+      }
+    }
     if (layerConfidentialPaths !== undefined) {
       merged.confidentialPaths = mergeUniqueStrings(
         merged.confidentialPaths,
@@ -4679,6 +4744,8 @@ export async function loadHostConfig(
     // that actually won the conservative merge, not just the last to set them.
     delete fieldSources.accessMode;
     delete fieldSources.accessModeCeiling;
+    delete fieldSources.backgroundTasks;
+    delete fieldSources.backgroundTasksCeiling;
     delete fieldSources.permissionMode;
     delete fieldSources.confidentialPaths;
     delete fieldSources.write;

@@ -198,13 +198,21 @@ export {
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
 } from "./policy.js";
-export type { RunAccessMode, CompiledAccessMode } from "./access-mode.js";
+export type {
+  BackgroundTaskPolicy,
+  RunAccessMode,
+  CompiledAccessMode,
+} from "./access-mode.js";
 export {
   ACCESS_MODES,
   ACCESS_MODE_RANK,
+  BACKGROUND_TASK_POLICIES,
+  BACKGROUND_TASK_POLICY_RANK,
   isRunAccessMode,
+  isBackgroundTaskPolicy,
   compileRunAccessMode,
   clampAccessMode,
+  clampBackgroundTaskPolicy,
 } from "./access-mode.js";
 
 // Execution environment boundary
@@ -634,6 +642,7 @@ export type {
   WorkflowHook,
   RunWorkflowHooksInput,
   WorkflowHookBlock,
+  WorkflowHookAdvance,
   WorkflowHookExecution,
 } from "./workflow-hooks.js";
 export { runWorkflowHooks } from "./workflow-hooks.js";

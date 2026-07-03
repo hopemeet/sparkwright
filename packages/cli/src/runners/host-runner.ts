@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
 import type {
+  BackgroundTaskPolicy,
   PermissionMode,
   RunInputPayload,
   RunAccessMode,
@@ -50,6 +51,7 @@ export interface HostRunInput {
   approveEdits?: boolean;
   approveShellSafe?: boolean;
   accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId: string;
@@ -69,6 +71,7 @@ export interface HostResumeInput {
   approveEdits?: boolean;
   approveShellSafe?: boolean;
   accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode: PermissionMode;
   modelName?: string;
   sessionId?: string;
@@ -117,6 +120,7 @@ async function runHostLifecycle(
     approveEdits,
     approveShellSafe,
     accessMode,
+    backgroundTasks,
     permissionMode,
     modelName,
     targetPath,
@@ -274,6 +278,7 @@ async function runHostLifecycle(
             targetPath,
             shouldWrite,
             accessMode,
+            backgroundTasks,
             traceLevel,
           }),
           ...inputMetadataSummary(input.input),
@@ -283,6 +288,7 @@ async function runHostLifecycle(
             goal: input.goal,
             sessionId,
             accessMode,
+            backgroundTasks,
             permissionMode,
             targetPath,
             traceLevel,
@@ -301,6 +307,7 @@ async function runHostLifecycle(
           targetPath,
           shouldWrite,
           accessMode,
+          backgroundTasks,
           traceLevel,
         });
         const resumed = await client.resumeRun(
@@ -310,6 +317,7 @@ async function runHostLifecycle(
             fromTrace: input.fromTrace,
             force: input.force,
             accessMode,
+            backgroundTasks,
             permissionMode,
             targetPath,
             traceLevel,

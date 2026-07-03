@@ -50,6 +50,7 @@ import {
 import {
   runWorkflowHooks,
   type WorkflowHook,
+  type WorkflowHookAdvance,
   type WorkflowHookBlock,
   type WorkflowHookExecution,
   type WorkflowHookName,
@@ -93,10 +94,12 @@ import {
   type RequestedToolCall,
 } from "./tool-orchestration.js";
 import {
+  classifyToolFailure,
   commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
   stableRefTarget,
   toolOutcomeSnapshot,
+  type ToolFailureCategory,
 } from "./run-outcome.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
@@ -124,6 +127,8 @@ import type {
   ModelOutput,
   ModelRecoveryHint,
   ModelRetryPolicy,
+  NotificationSource,
+  PendingNotification,
   RunBudget,
   RunBudgetUsage,
   RunCheckpointV1,
@@ -137,6 +142,7 @@ import type {
   RunState,
   RunStopReason,
   RuntimeContext,
+  TaskRevivalSource,
   ToolResult,
   ModelErrorEnvelope,
 } from "./types.js";
@@ -169,6 +175,7 @@ const DEFAULT_MODEL_RETRY_MAX_DELAY_MS = 30_000;
 const DEFAULT_MODEL_RETRY_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
+const DEFAULT_MAX_REVIVAL_TURNS = 5;
 const FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS = 2_000;
 
 interface ToolStageTimings {
@@ -299,6 +306,23 @@ export interface CreateRunOptions {
    * run. Default 3.
    */
   maxOutputRecoveries?: number;
+  /**
+   * Maximum number of awaited-task revival turns. These turns are budgeted
+   * separately from maxSteps so a legitimate slow task completion can still be
+   * injected after the normal step budget is otherwise spent. Default 5.
+   */
+  maxRevivalTurns?: number;
+  /**
+   * Out-of-band notifications drained at the start of each model step and
+   * injected into working context through `run.notification.injected`.
+   */
+  notificationSources?: NotificationSource[];
+  /**
+   * Non-consuming awaited-task readiness source. When supplied, the loop can
+   * stay inside the same run while awaited background work is pending, then
+   * re-enter a normal step where `notificationSources` performs the sole drain.
+   */
+  taskRevivalSource?: TaskRevivalSource;
   /**
    * Optional externally owned abort signal. When it fires the run cancels
    * with `manual_cancelled`. Independent of internal `cancel()` plumbing.
@@ -570,7 +594,11 @@ export class SparkwrightRun implements RunHandle {
   private readonly finalOutputValidation: "fail" | "continue";
   private readonly maxOutputRecoveries: number;
   private outputRecoveriesUsed = 0;
+  private readonly maxRevivalTurns: number;
+  private revivalTurnsUsed = 0;
   private readonly commandQueue: RunCommand[] = [];
+  private readonly notificationSources: NotificationSource[];
+  private readonly taskRevivalSource?: TaskRevivalSource;
   private readonly loadedDeferredTools = new Set<string>();
   private startedAtMs?: number;
   private readonly budgetUsage: Omit<RunBudgetUsage, "elapsedMs"> = {
@@ -716,6 +744,9 @@ export class SparkwrightRun implements RunHandle {
       options.doomLoopRepeatLimit ?? DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT;
     this.finalOutputValidation = options.finalOutputValidation ?? "fail";
     this.maxOutputRecoveries = options.maxOutputRecoveries ?? 3;
+    this.maxRevivalTurns = options.maxRevivalTurns ?? DEFAULT_MAX_REVIVAL_TURNS;
+    this.notificationSources = [...(options.notificationSources ?? [])];
+    this.taskRevivalSource = options.taskRevivalSource;
     this.credentialResolver = options.credentialResolver;
     const autoEvery = options.autoCheckpointEveryNSteps;
     if (autoEvery !== undefined && autoEvery !== 0) {
@@ -741,6 +772,10 @@ export class SparkwrightRun implements RunHandle {
 
     if (!Number.isInteger(this.maxSteps) || this.maxSteps < 1) {
       throw new Error("maxSteps must be a positive integer.");
+    }
+
+    if (!Number.isInteger(this.maxRevivalTurns) || this.maxRevivalTurns < 0) {
+      throw new Error("maxRevivalTurns must be a non-negative integer.");
     }
 
     if (
@@ -1074,9 +1109,10 @@ export class SparkwrightRun implements RunHandle {
       });
     }
 
-    while (state.step <= this.maxSteps) {
+    while (this.canEnterLoopStep(state)) {
       this.lastLoopState = cloneLoopState(state);
       this.maybeAutoCheckpoint(state.step);
+      await this.drainNotificationSources(state.step, state.context);
       // --- Phase 1: commands ------------------------------------------------
       const commandResult = this.consumePendingCommands(state);
       if (commandResult) return commandResult;
@@ -1320,6 +1356,32 @@ export class SparkwrightRun implements RunHandle {
         this.lastLoopState = cloneLoopState(state);
         continue;
       }
+      if (modelOutputHooks.status === "advanced") {
+        state = {
+          ...state,
+          context: [
+            ...state.context,
+            this.formatWorkflowHookAdvanceContinuation(
+              "ModelOutput",
+              modelOutputHooks.advance,
+              state.step,
+            ),
+            ...modelOutputHooks.context,
+          ],
+          step: state.step + 1,
+          turnCount: state.turnCount + 1,
+          transition: {
+            reason: "workflow_hook_advanced",
+            metadata: {
+              hookName: modelOutputHooks.advance.hookName,
+              hookId: modelOutputHooks.advance.hookId,
+              hook: "ModelOutput",
+            },
+          },
+        };
+        this.lastLoopState = cloneLoopState(state);
+        continue;
+      }
       if (modelOutputHooks.context.length > 0) {
         state = {
           ...state,
@@ -1448,17 +1510,53 @@ export class SparkwrightRun implements RunHandle {
           this.lastLoopState = cloneLoopState(state);
           continue;
         }
+        if (stopHooks.status === "advanced") {
+          state = {
+            ...state,
+            context: [
+              ...state.context,
+              this.formatWorkflowHookAdvanceContinuation(
+                "Stop",
+                stopHooks.advance,
+                state.step,
+              ),
+              ...stopHooks.context,
+            ],
+            step: state.step + 1,
+            turnCount: state.turnCount + 1,
+            transition: {
+              reason: "workflow_hook_advanced",
+              metadata: {
+                hookName: stopHooks.advance.hookName,
+                hookId: stopHooks.advance.hookId,
+                hook: "Stop",
+              },
+            },
+          };
+          this.lastLoopState = cloneLoopState(state);
+          continue;
+        }
 
         // Surface step-budget context on a natural finish. A model can answer
         // on its *last* allowed step, which is a `final_answer` indistinguishable
         // from a roomy finish unless we say so — callers (e.g. a parent agent
         // summarizing a sub-agent) otherwise can't tell "done" from "ran out of
         // room and wrapped up", and may over-trust a possibly-truncated answer.
+        const waitedState = await this.waitForAwaitedTasksBeforeTerminal(state);
+        if (waitedState) {
+          state = waitedState;
+          this.lastLoopState = cloneLoopState(state);
+          continue;
+        }
         return this.complete("final_answer", {
           message: output.message,
           stepsUsed: state.step,
           maxSteps: this.maxSteps,
-          stepLimitReached: state.step >= this.maxSteps,
+          stepLimitReached:
+            state.step >= this.maxSteps && !isWaitingTasksWake(state),
+          ...(this.revivalTurnsUsed > 0
+            ? { revivalTurnsUsed: this.revivalTurnsUsed }
+            : {}),
         });
       }
 
@@ -1896,6 +1994,161 @@ export class SparkwrightRun implements RunHandle {
     );
   }
 
+  private async drainNotificationSources(
+    step: number,
+    context: ContextItem[],
+  ): Promise<void> {
+    if (this.notificationSources.length === 0) return;
+    for (let i = 0; i < this.notificationSources.length; i += 1) {
+      const source = this.notificationSources[i]!;
+      let items: PendingNotification[];
+      try {
+        items = await source.drain();
+      } catch (cause) {
+        this.events.emit("run.notification.source_failed", {
+          step,
+          sourceIndex: i,
+          message: notificationErrorMessage(cause),
+        });
+        continue;
+      }
+      if (items.length === 0) continue;
+      for (const item of items) {
+        context.push({
+          id: (this.loopServices.createContextItemId ?? createContextItemId)(),
+          type: "user",
+          source: item.source ?? { kind: "notification" },
+          content: item.content,
+          metadata: {
+            layer: "working",
+            stability: "turn",
+            step,
+            origin: "notification-source",
+            sourceIndex: i,
+            ...(item.metadata ?? {}),
+          },
+        });
+      }
+      this.events.emit("run.notification.injected", {
+        step,
+        sourceIndex: i,
+        count: items.length,
+      });
+    }
+  }
+
+  private canEnterLoopStep(state: RunLoopState): boolean {
+    if (state.step <= this.maxSteps) return true;
+    return isWaitingTasksWake(state);
+  }
+
+  private async waitForAwaitedTasksBeforeTerminal(
+    state: RunLoopState,
+  ): Promise<RunLoopState | undefined> {
+    const source = this.taskRevivalSource;
+    if (!source) return undefined;
+    if (this.revivalTurnsUsed >= this.maxRevivalTurns) return undefined;
+    let hasAwaitedPending: boolean;
+    try {
+      hasAwaitedPending = await source.hasAwaitedPending();
+    } catch (cause) {
+      this.events.emit("run.notification.source_failed", {
+        step: state.step,
+        sourceIndex: -1,
+        message: notificationErrorMessage(cause),
+        phase: "hasAwaitedPending",
+      });
+      return undefined;
+    }
+    if (!hasAwaitedPending) return undefined;
+
+    const previousState = this.record.state;
+    this.setState("waiting_tasks");
+    const waitStartedAfterSequence = this.events.all().at(-1)?.sequence ?? 0;
+    const waitAbortController = new AbortController();
+    const abortTaskWait = () => waitAbortController.abort();
+    this.abortController.signal.addEventListener("abort", abortTaskWait, {
+      once: true,
+    });
+    try {
+      await Promise.race([
+        source
+          .waitUntilAvailable({ signal: waitAbortController.signal })
+          .catch((cause) => {
+            if (waitAbortController.signal.aborted) return;
+            throw cause;
+          }),
+        this.waitForCommandEnqueuedAfter(
+          waitStartedAfterSequence,
+          waitAbortController.signal,
+        ),
+        this.waitForAbort(waitAbortController.signal),
+      ]);
+    } catch (cause) {
+      this.events.emit("run.notification.source_failed", {
+        step: state.step,
+        sourceIndex: -1,
+        message: notificationErrorMessage(cause),
+        phase: "waiting_tasks",
+      });
+      return undefined;
+    } finally {
+      this.abortController.signal.removeEventListener("abort", abortTaskWait);
+      abortTaskWait();
+      if (this.record.state === "waiting_tasks") {
+        this.setState(previousState === "running" ? "running" : previousState);
+      }
+    }
+
+    this.revivalTurnsUsed += 1;
+    return {
+      ...state,
+      step: state.step + 1,
+      turnCount: state.turnCount + 1,
+      transition: {
+        reason: "next_turn",
+        metadata: { wake: "waiting_tasks" },
+      },
+    };
+  }
+
+  private waitForCommandEnqueuedAfter(
+    sequence: number,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const alreadyQueued = this.events
+      .all()
+      .some(
+        (event) =>
+          event.sequence > sequence && event.type === "run.command.enqueued",
+      );
+    if (alreadyQueued || signal.aborted) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      let resolved = false;
+      const unsubscribe: { current?: () => void } = {};
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        unsubscribe.current?.();
+        signal.removeEventListener("abort", cleanup);
+        resolve();
+      };
+      unsubscribe.current = this.events.subscribe((event) => {
+        if (event.sequence <= sequence) return;
+        if (event.type === "run.command.enqueued") cleanup();
+      });
+      signal.addEventListener("abort", cleanup, { once: true });
+    });
+  }
+
+  private waitForAbort(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
+
   private formatStopHookContinuation(
     failure: ValidationFailure,
     step: number,
@@ -1950,6 +2203,37 @@ export class SparkwrightRun implements RunHandle {
         workflowHook: hook,
         hookName: block.hookName,
         hookId: block.hookId,
+      },
+    };
+  }
+
+  private formatWorkflowHookAdvanceContinuation(
+    hook: WorkflowHookName,
+    advance: WorkflowHookAdvance,
+    step: number,
+  ): ContextItem {
+    return {
+      id: (this.loopServices.createContextItemId ?? createContextItemId)(),
+      type: "summary",
+      source: { kind: "extension", uri: advance.hookName },
+      content: JSON.stringify({
+        stage: hook,
+        status: "advanced",
+        hookName: advance.hookName,
+        hookId: advance.hookId,
+        reason: advance.reason,
+        metadata: advance.metadata,
+        guidance:
+          "A workflow hook advanced this run to the next turn. Continue from the supplied workflow context.",
+      }),
+      metadata: {
+        layer: "working",
+        stability: "turn",
+        step,
+        workflowHookAdvanceContinuation: true,
+        workflowHook: hook,
+        hookName: advance.hookName,
+        hookId: advance.hookId,
       },
     };
   }
@@ -2093,6 +2377,8 @@ export class SparkwrightRun implements RunHandle {
     if (this.pendingSummary) reasons.push("pending_summary_not_serialized");
     if (this.commandQueue.length > 0)
       reasons.push("command_queue_not_serialized");
+    if (this.record.state === "waiting_tasks")
+      reasons.push("waiting_tasks_not_serialized");
 
     return {
       schemaVersion: "run-checkpoint.v1",
@@ -2714,18 +3000,13 @@ export class SparkwrightRun implements RunHandle {
       status: "failed",
       error: {
         code: "REPEATED_TOOL_CALL_SKIPPED",
-        message: priorFailure
-          ? `Skipped: \`${requestedCall.toolName}\` already failed on this ` +
-            `target (${priorFailure.code}: ${priorFailure.message}). Retrying ` +
-            `it with different arguments (e.g. a new offset/limit) cannot ` +
-            `succeed — the target may be a directory or otherwise invalid. Use ` +
-            `a listing tool (e.g. glob) or choose a different path. Repeating ` +
-            `this will end the run.`
-          : `Skipped: \`${requestedCall.toolName}\` was already called with ` +
-            `identical arguments and returned the same result. Repeating it ` +
-            `cannot produce new information. Choose a different action or set ` +
-            `of arguments, or stop calling tools and answer the user directly. ` +
-            `Repeating this exact call again will end the run.`,
+        message: repeatedToolCallNudgeMessage(
+          requestedCall.toolName,
+          priorFailure,
+        ),
+        ...(priorFailure
+          ? { metadata: repeatedToolCallNudgeMetadata(priorFailure) }
+          : {}),
       },
       artifacts: [],
     };
@@ -3209,6 +3490,7 @@ export class SparkwrightRun implements RunHandle {
         ),
         code: result.error?.code ?? "TOOL_FAILED",
         message: result.error?.message ?? "Tool call failed.",
+        ...toolFailureContext(result),
       };
       state.lastNoopToolTarget = undefined;
     } else if (
@@ -4417,6 +4699,7 @@ function canTransition(from: RunState, to: RunState): boolean {
       return (
         to === "waiting_approval" ||
         to === "waiting_credentials" ||
+        to === "waiting_tasks" ||
         to === "completed" ||
         to === "failed" ||
         to === "cancelled"
@@ -4424,6 +4707,8 @@ function canTransition(from: RunState, to: RunState): boolean {
     case "waiting_approval":
       return to === "running" || to === "failed" || to === "cancelled";
     case "waiting_credentials":
+      return to === "running" || to === "failed" || to === "cancelled";
+    case "waiting_tasks":
       return to === "running" || to === "failed" || to === "cancelled";
     case "completed":
     case "failed":
@@ -4434,6 +4719,14 @@ function canTransition(from: RunState, to: RunState): boolean {
 
 function isTerminalState(state: RunState): boolean {
   return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+function isWaitingTasksWake(state: RunLoopState): boolean {
+  return state.transition.metadata?.wake === "waiting_tasks";
+}
+
+function notificationErrorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function elapsedMs(startedAt: number): number {
@@ -4527,6 +4820,103 @@ function semanticToolTarget(toolName: string, args: unknown): string {
     serialized = String(args);
   }
   return `${toolName}::args::${serialized}`;
+}
+
+function toolFailureContext(result: ToolResult): {
+  category: ToolFailureCategory;
+  expectedDenial?: boolean;
+} {
+  const metadata = isRecord(result.error?.metadata)
+    ? result.error.metadata
+    : undefined;
+  const repeatedCategory = parseToolFailureCategory(
+    metadata?.repeatedPriorFailureCategory,
+  );
+  const category =
+    repeatedCategory ??
+    classifyToolFailure(result.error?.code ?? "TOOL_FAILED");
+  const expectedDenial =
+    metadata?.repeatedPriorFailureExpectedDenial === true ||
+    isExpectedDenialCategory(category);
+  return {
+    category,
+    ...(expectedDenial ? { expectedDenial: true } : {}),
+  };
+}
+
+function repeatedToolCallNudgeMessage(
+  toolName: string,
+  priorFailure: RunLoopState["lastFailedToolTarget"] | undefined,
+): string {
+  if (!priorFailure) {
+    return (
+      `Skipped: \`${toolName}\` was already called with identical arguments ` +
+      `and returned the same result. Repeating it cannot produce new ` +
+      `information. Choose a different action or set of arguments, or stop ` +
+      `calling tools and answer the user directly. Repeating this exact call ` +
+      `again will end the run.`
+    );
+  }
+
+  const failureSummary = `${priorFailure.code}: ${priorFailure.message}`;
+  if (priorFailure.expectedDenial) {
+    const denialKind =
+      priorFailure.category === "approval_denial" ? "approval" : "policy";
+    return (
+      `Skipped: \`${toolName}\` already hit an expected ${denialKind} ` +
+      `denial on this target (${failureSummary}). Repeating the same denied ` +
+      `action in the same run cannot change the permission boundary. Choose a ` +
+      `permitted alternative, change the run access/approval posture, or answer ` +
+      `the user with the denial. Repeating this will end the run.`
+    );
+  }
+
+  if (isPathLikeSemanticTarget(priorFailure.key)) {
+    return (
+      `Skipped: \`${toolName}\` already failed on this target ` +
+      `(${failureSummary}). Retrying it with different arguments (e.g. a new ` +
+      `offset/limit) cannot succeed - the target may be a directory or ` +
+      `otherwise invalid. Use a listing tool (e.g. glob) or choose a different ` +
+      `path. Repeating this will end the run.`
+    );
+  }
+
+  return (
+    `Skipped: \`${toolName}\` already failed on this target ` +
+    `(${failureSummary}). Retrying the same failing target with cosmetic ` +
+    `argument changes cannot succeed. Choose a different concrete action, fix ` +
+    `the cause of the failure, or answer the user directly if the failure is ` +
+    `the result. Repeating this will end the run.`
+  );
+}
+
+function repeatedToolCallNudgeMetadata(
+  priorFailure: NonNullable<RunLoopState["lastFailedToolTarget"]>,
+): Record<string, unknown> {
+  return {
+    repeatedPriorFailureCode: priorFailure.code,
+    repeatedPriorFailureCategory: priorFailure.category ?? "tool_runtime_error",
+    repeatedPriorFailureExpectedDenial: priorFailure.expectedDenial === true,
+  };
+}
+
+function parseToolFailureCategory(
+  value: unknown,
+): ToolFailureCategory | undefined {
+  return value === "policy_denial" ||
+    value === "approval_denial" ||
+    value === "model_arg_error" ||
+    value === "tool_runtime_error"
+    ? value
+    : undefined;
+}
+
+function isExpectedDenialCategory(category: ToolFailureCategory): boolean {
+  return category === "policy_denial" || category === "approval_denial";
+}
+
+function isPathLikeSemanticTarget(key: string): boolean {
+  return key.includes("::path::");
 }
 
 function isShellToolName(toolName: string): boolean {
@@ -4895,6 +5285,8 @@ export interface ResumeRunOptions extends Omit<
  * What's NOT carried across (by design — listed in checkpoint.resumability.reasons):
  *   - in-flight async prefetch and observation summarization (re-derived)
  *   - command queue (caller should re-enqueue if needed)
+ *   - waiting_tasks idle state (v1 blocks live; durable detach/resume needs a
+ *     later checkpoint reconstruction design)
  *   - in-flight model stream (always re-issued)
  *   - tool calls that were mid-execution when the process died (caller must
  *     reconcile; tools should declare `isReplaySafe` so the model can decide)

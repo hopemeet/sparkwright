@@ -63,6 +63,12 @@ export type WorkflowHookResult =
       metadata?: Record<string, unknown>;
     }
   | {
+      status: "advance";
+      reason: string;
+      context?: ContextItem[];
+      metadata?: Record<string, unknown>;
+    }
+  | {
       status: "rewrite";
       patch: WorkflowHookRewritePatch;
       reason?: string;
@@ -114,6 +120,13 @@ export interface WorkflowHookBlock {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowHookAdvance {
+  hookName: string;
+  hookId?: string;
+  reason: string;
+  metadata?: Record<string, unknown>;
+}
+
 export type WorkflowHookExecution =
   | {
       status: "continued";
@@ -125,6 +138,12 @@ export type WorkflowHookExecution =
       context: ContextItem[];
       rewrites: WorkflowHookRewritePatch[];
       block: WorkflowHookBlock;
+    }
+  | {
+      status: "advanced";
+      context: ContextItem[];
+      rewrites: WorkflowHookRewritePatch[];
+      advance: WorkflowHookAdvance;
     };
 
 export async function runWorkflowHooks(
@@ -177,6 +196,28 @@ export async function runWorkflowHooks(
         return { status: "blocked", context, rewrites, block };
       }
 
+      if (result.status === "advance") {
+        if (!workflowHookAllowsAdvance(input.hook)) {
+          throw new Error(
+            `Workflow hook "${hook.name}" returned advance for ${input.hook}, but this lifecycle cannot advance the run.`,
+          );
+        }
+        if (result.context) {
+          context.push(...result.context);
+        }
+        const advance: WorkflowHookAdvance = {
+          hookName: hook.name,
+          hookId: hook.id,
+          reason: result.reason,
+          metadata: result.metadata,
+        };
+        input.events.emit("workflow_hook.completed", {
+          ...basePayload,
+          result,
+        });
+        return { status: "advanced", context, rewrites, advance };
+      }
+
       if (result.status === "rewrite") {
         rewrites.push(result.patch);
       }
@@ -216,6 +257,10 @@ export async function runWorkflowHooks(
   }
 
   return { status: "continued", context, rewrites };
+}
+
+function workflowHookAllowsAdvance(hook: WorkflowHookName): boolean {
+  return hook === "ModelOutput" || hook === "Stop";
 }
 
 function normalizeWorkflowHookResult(

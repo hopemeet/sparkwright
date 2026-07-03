@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createContextItemId,
   createRun,
   defineTool,
   EventLog,
@@ -174,6 +175,47 @@ describe("runWorkflowHooks", () => {
       "workflow_hook.failed",
     ]);
   });
+
+  it("records advance as a completed hook result instead of a block", async () => {
+    const run = {
+      id: createRunId(),
+      goal: "g",
+      state: "running" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: {},
+    };
+    const events = new EventLog(run.id);
+
+    const result = await runWorkflowHooks({
+      hooks: [
+        {
+          name: "next-node",
+          hook: "Stop",
+          handle: () => ({
+            status: "advance",
+            reason: "node passed; continue with the next node",
+          }),
+        },
+      ],
+      hook: "Stop",
+      run,
+      payload: {},
+      events,
+    });
+
+    expect(result.status).toBe("advanced");
+    expect(events.all().map((event) => event.type)).toEqual([
+      "workflow_hook.started",
+      "workflow_hook.completed",
+    ]);
+    expect(events.all().at(1)?.payload).toMatchObject({
+      result: {
+        status: "advance",
+        reason: "node passed; continue with the next node",
+      },
+    });
+  });
 });
 
 describe("workflowHooks in createRun", () => {
@@ -269,6 +311,69 @@ describe("workflowHooks in createRun", () => {
     expect(result.signal).toBe("completed");
     expect(result.message).toBe("done, tests passed");
     expect(calls).toBe(2);
+  });
+
+  it("lets Stop hooks advance termination without blocked trace events", async () => {
+    let calls = 0;
+    const model: ModelAdapter = {
+      async complete(input) {
+        calls += 1;
+        if (calls === 1) return { message: "reproduce node passed" };
+        expect(input.context.map((item) => item.content).join("\n")).toContain(
+          "next node: patch",
+        );
+        return { message: "patch node complete" };
+      },
+    };
+    let advanced = false;
+
+    const run = createRun({
+      goal: "g",
+      model,
+      maxSteps: 3,
+      workflowHooks: [
+        {
+          name: "workflow-node-advance",
+          hook: "Stop",
+          handle() {
+            if (advanced) return;
+            advanced = true;
+            return {
+              status: "advance",
+              reason: "reproduce verifier passed",
+              context: [
+                {
+                  id: createContextItemId(),
+                  type: "summary",
+                  source: { kind: "workflow", uri: "workflow:test" },
+                  content: "next node: patch",
+                  metadata: { layer: "working", stability: "turn" },
+                },
+              ],
+            };
+          },
+        },
+      ],
+    });
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    expect(result.message).toBe("patch node complete");
+    expect(calls).toBe(2);
+    expect(run.events.all().map((event) => event.type)).not.toContain(
+      "workflow_hook.blocked",
+    );
+    expect(
+      run.events
+        .all()
+        .some(
+          (event) =>
+            event.type === "workflow_hook.completed" &&
+            (event.payload as { result?: { status?: string } }).result
+              ?.status === "advance",
+        ),
+    ).toBe(true);
   });
 
   it("allows RuntimeSignal hooks to stop repeated tool calls before doom-loop failure", async () => {

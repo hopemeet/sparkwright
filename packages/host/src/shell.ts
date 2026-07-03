@@ -18,6 +18,7 @@ import {
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
 import type {
+  BackgroundTaskPolicy,
   EventEmitter,
   ExecutionEnvironment,
   LiveShellHandle,
@@ -288,6 +289,7 @@ export interface HostShellToolOptions {
   skillRoots?: readonly string[];
   extraForcedDenyWrite?: readonly string[];
   getRunEvents?: () => EventEmitter | undefined;
+  backgroundTasks?: BackgroundTaskPolicy;
 }
 
 /**
@@ -325,7 +327,9 @@ export function createHostShellTool(
     environment,
     workspaceRoot,
     foregroundTimeoutMs,
-    promotionAvailable: Boolean(options.taskManager),
+    promotionAvailable:
+      Boolean(options.taskManager) &&
+      (options.backgroundTasks ?? "enabled") === "enabled",
     onPromote: createUnavailablePromotionHandler(),
   });
 
@@ -345,16 +349,20 @@ export function createHostShellTool(
         environment,
         workspaceRoot,
         foregroundTimeoutMs,
-        promotionAvailable: Boolean(options.taskManager),
-        onPromote: options.taskManager
-          ? createTaskPromotionHandler({
-              manager: options.taskManager,
-              parentRunId: ctx.run.id,
-              sandboxConfig,
-              sandboxRuntime,
-              getRunEvents: options.getRunEvents,
-            })
-          : createUnavailablePromotionHandler(),
+        promotionAvailable:
+          Boolean(options.taskManager) &&
+          (options.backgroundTasks ?? "enabled") === "enabled",
+        onPromote:
+          options.taskManager &&
+          (options.backgroundTasks ?? "enabled") === "enabled"
+            ? createTaskPromotionHandler({
+                manager: options.taskManager,
+                parentRunId: ctx.run.id,
+                sandboxConfig,
+                sandboxRuntime,
+                getRunEvents: options.getRunEvents,
+              })
+            : createUnavailablePromotionHandler(),
       });
       const output = await shell.execute(args, ctx);
       if (output.promoted || readOnlyFastPath) return output;

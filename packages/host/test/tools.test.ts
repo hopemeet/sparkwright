@@ -445,11 +445,50 @@ describe("host tools", () => {
         kind: { enum: ["agent"] },
         payload: {
           required: ["goal", "role", "prompt"],
+          description: expect.stringContaining("Omit maxSteps"),
+          properties: {
+            maxSteps: {
+              description: expect.stringContaining(
+                "Defaults to the parent run's effective maxSteps",
+              ),
+            },
+          },
         },
       },
       required: ["kind", "payload"],
     });
+    expect(
+      (
+        byName.get("task_create")?.definition.inputSchema as {
+          properties?: {
+            payload?: {
+              properties?: { maxSteps?: { description?: string } };
+            };
+          };
+        }
+      ).properties?.payload?.properties?.maxSteps?.description,
+    ).toContain("read-and-answer task usually needs 4+");
     expect(byName.get("task")).toMatchObject({ source: "task" });
+    expect(byName.get("task")?.definition.inputSchema).toMatchObject({
+      properties: {
+        taskId: { type: "string", minLength: 1 },
+        ids: {
+          type: "array",
+          minItems: 1,
+          items: { type: "string", minLength: 1 },
+        },
+      },
+      oneOf: expect.arrayContaining([
+        expect.objectContaining({
+          properties: { action: { enum: ["get", "output", "stop"] } },
+          required: ["action", "taskId"],
+        }),
+        expect.objectContaining({
+          properties: { action: { enum: ["wait"] } },
+          anyOf: [{ required: ["taskId"] }, { required: ["ids"] }],
+        }),
+      ]),
+    });
     expect(byName.get("todo_write")).toMatchObject({ source: "todo" });
     expect(byName.get("spawn_agent")).toMatchObject({ source: "agent" });
     expect(byName.get("create_skill")?.definition.deferLoading).toBe(true);
@@ -2390,6 +2429,147 @@ describe("host tools", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("drafts create_skill proposals with model-authored SKILL.md bodies", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+    const body = [
+      "---",
+      "name: repo-review",
+      "description: review repository changes",
+      'version: "1.2.3"',
+      "---",
+      "",
+      "# Repo Review",
+      "",
+      "Always inspect the diff and mention verification.",
+      "",
+    ].join("\n");
+
+    const drafted = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        body,
+      },
+      ctx,
+    );
+
+    expect(drafted).toMatchObject({
+      action: "draft",
+      kind: "create",
+      changed: true,
+      skillName: "repo-review",
+      contentMode: "authored",
+    });
+    const proposal = drafted as { proposalPath: string };
+    await expect(
+      readFile(
+        join(proposal.proposalPath, "after", "repo-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toBe(body);
+  });
+
+  it("wraps create_skill instruction bodies with required frontmatter", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    const drafted = await tool.execute(
+      {
+        action: "create",
+        name: "repo-review",
+        description: "review repository changes",
+        body: "Always inspect the diff and mention verification.",
+      },
+      ctx,
+    );
+
+    expect(drafted).toMatchObject({
+      action: "draft",
+      kind: "create",
+      changed: true,
+      skillName: "repo-review",
+      contentMode: "authored",
+    });
+    const proposal = drafted as { proposalPath: string };
+    await expect(
+      readFile(
+        join(proposal.proposalPath, "after", "repo-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toBe(
+      [
+        "---",
+        "name: repo-review",
+        "description: review repository changes",
+        "---",
+        "",
+        "Always inspect the diff and mention verification.",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("fills missing create_skill body description from the tool description", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    const drafted = await tool.execute(
+      {
+        action: "create",
+        name: "release-reviewer",
+        description: "Release readiness checks.",
+        body: [
+          "---",
+          "name: release-reviewer",
+          "---",
+          "",
+          "Review release readiness and report blockers.",
+        ].join("\n"),
+      },
+      ctx,
+    );
+
+    const proposal = drafted as { proposalPath: string };
+    await expect(
+      readFile(
+        join(proposal.proposalPath, "after", "release-reviewer", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("description: Release readiness checks.");
+  });
+
+  it("rejects create_skill bodies whose frontmatter names do not match", async () => {
+    const ctx = await createWorkspace({});
+    const tool = createSkillManagerTool(ctx.workspaceRoot, undefined);
+
+    await expect(
+      tool.execute(
+        {
+          action: "create",
+          name: "repo-review",
+          description: "review repository changes",
+          body: [
+            "---",
+            "name: other-skill",
+            "description: wrong name",
+            "---",
+            "",
+            "Body.",
+            "",
+          ].join("\n"),
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/frontmatter name must match/);
+    await expect(
+      readdir(
+        join(ctx.workspaceRoot, ".sparkwright", "skill-evolution", "proposals"),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects create_skill when the project skill already exists", async () => {
     const ctx = await createWorkspace({
       ".sparkwright/skills/repo-review/SKILL.md": [
@@ -2552,6 +2732,7 @@ describe("host tools", () => {
       state: "draft",
       kind: "update",
       skillName: "repo-review",
+      contentMode: "intent_stub",
       sourceLayer: "project",
       targetPath: join(
         ctx.workspaceRoot,

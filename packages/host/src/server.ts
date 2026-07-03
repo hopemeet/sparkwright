@@ -7,6 +7,7 @@ import type {
 } from "@sparkwright/protocol";
 import {
   ACCESS_MODES,
+  BACKGROUND_TASK_POLICIES,
   PERMISSION_MODES,
   PROTOCOL_VERSION,
   TASK_STATUSES,
@@ -23,6 +24,8 @@ export interface ServeConnectionOptions {
   defaultModel?: string;
   defaultAccessMode?: RuntimeOptions["defaultAccessMode"];
   accessModeCeiling?: RuntimeOptions["accessModeCeiling"];
+  defaultBackgroundTasks?: RuntimeOptions["defaultBackgroundTasks"];
+  backgroundTasksCeiling?: RuntimeOptions["backgroundTasksCeiling"];
   defaultPermissionMode?: RuntimeOptions["defaultPermissionMode"];
   defaultTraceLevel?: RuntimeOptions["defaultTraceLevel"];
   defaultShouldWrite?: RuntimeOptions["defaultShouldWrite"];
@@ -47,6 +50,8 @@ export function serveConnection(
     defaultModel: opts.defaultModel,
     defaultAccessMode: opts.defaultAccessMode,
     accessModeCeiling: opts.accessModeCeiling,
+    defaultBackgroundTasks: opts.defaultBackgroundTasks,
+    backgroundTasksCeiling: opts.backgroundTasksCeiling,
     defaultPermissionMode: opts.defaultPermissionMode,
     defaultTraceLevel: opts.defaultTraceLevel,
     defaultShouldWrite: opts.defaultShouldWrite,
@@ -141,6 +146,8 @@ async function handleRequest(
             "task.get",
             "task.output",
             "task.stop",
+            "task.join",
+            "task.promote",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -302,6 +309,33 @@ async function handleRequest(
       }
       return false;
     }
+    case "task.join": {
+      const r = await runtime.joinTask(req.payload.taskId);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          taskId: r.taskId,
+          awaited: r.awaited,
+          status: r.status,
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "task.promote": {
+      const r = await runtime.promoteTask(req.payload.taskId);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          taskId: r.taskId,
+          promoted: r.promoted,
+          awaited: r.awaited,
+          status: r.status,
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
     case "capability.inspect": {
       const r = await runtime.inspectCapabilities({
         modelRef: req.payload.model,
@@ -354,6 +388,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "shouldWrite",
           "model",
           "accessMode",
+          "backgroundTasks",
           "permissionMode",
           "traceLevel",
           "metadata",
@@ -365,6 +400,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
+        optionalEnum(req.payload, "backgroundTasks", [
+          ...BACKGROUND_TASK_POLICIES,
+        ]) ??
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalRecord(req.payload, "metadata")
@@ -381,6 +419,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "force",
           "model",
           "accessMode",
+          "backgroundTasks",
           "permissionMode",
           "traceLevel",
           "metadata",
@@ -394,6 +433,9 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalBoolean(req.payload, "force") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
+        optionalEnum(req.payload, "backgroundTasks", [
+          ...BACKGROUND_TASK_POLICIES,
+        ]) ??
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
         optionalRecord(req.payload, "metadata")
@@ -478,6 +520,8 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalPositiveInteger(req.payload, "maxChunks", 1000)
       );
     case "task.stop":
+    case "task.join":
+    case "task.promote":
       return (
         requireOnly(req.payload, ["taskId"]) ??
         requireString(req.payload, "taskId")

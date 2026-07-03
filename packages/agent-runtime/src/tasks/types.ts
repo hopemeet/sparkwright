@@ -56,6 +56,8 @@ export interface TaskRecord {
   parentRunId: RunId;
   kind: string;
   title?: string;
+  /** Whether this task should keep the parent run alive until its terminal notification is injected. */
+  awaited: boolean;
   status: TaskStatus;
   /** ISO-8601 timestamp. */
   createdAt: string;

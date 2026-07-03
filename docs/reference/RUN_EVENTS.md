@@ -45,7 +45,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Host-controlled process           | `extension.process.started`, `extension.process.progress`, `extension.process.completed`, `extension.process.failed`                                                          | Show external process invocation, bounded output summary, and progress            |
 | Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`, `agent.routing.evaluated`                         | Show capability changes as environment/context evidence                           |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                                                                 | Show as host automation, not model-authored work                                  |
-| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation and blocking decisions                    |
+| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation, healthy advances, and blocking decisions |
 
 Host-controlled process progress is accepted from line-start anchored stderr
 token lines such as

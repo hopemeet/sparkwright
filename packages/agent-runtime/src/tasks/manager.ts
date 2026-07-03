@@ -75,11 +75,30 @@ export interface SpawnTaskInput {
   parentRunId: RunId;
   kind: string;
   title?: string;
+  awaited?: boolean;
   metadata?: Record<string, unknown>;
   /** Inline runner. When omitted, a runner registered under `kind` is used. */
   runner?: TaskRunner;
   /** Opaque payload forwarded to the runner. */
   payload?: unknown;
+}
+
+/**
+ * Input accepted by {@link TaskManager.adoptRunning}. Hosts use this when a
+ * runtime they already started elsewhere needs a task ticket for status,
+ * cancellation, and terminal notification delivery.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface AdoptRunningTaskInput {
+  parentRunId: RunId;
+  kind: string;
+  title?: string;
+  awaited?: boolean;
+  metadata?: Record<string, unknown>;
+  /** Abort controller already wired into the adopted runtime, if any. */
+  controller?: AbortController;
 }
 
 /**
@@ -107,6 +126,12 @@ export interface TaskManagerOptions {
   onSinkError?(taskId: TaskId, cause: unknown): void;
 }
 
+export interface TaskRetentionOptions {
+  olderThanMs?: number;
+  maxTerminalTasks?: number;
+  now?: Date;
+}
+
 interface RunnerEntry {
   controller: AbortController;
   promise: Promise<TaskRecord>;
@@ -132,6 +157,7 @@ export class TaskManager {
     TaskId,
     (record: TaskRecord) => void
   >();
+  private readonly promotionWaiters = new Map<TaskId, Set<() => void>>();
   private readonly notificationOutbox: TaskNotification[] = [];
 
   constructor(options: TaskManagerOptions = {}) {
@@ -176,6 +202,7 @@ export class TaskManager {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
+      awaited: input.awaited,
       metadata: input.metadata,
     });
     const controller = new AbortController();
@@ -188,6 +215,34 @@ export class TaskManager {
     });
 
     return this.makeHandle(id, record, controller, promise);
+  }
+
+  /**
+   * Adopt work that has already been started outside the manager. The manager
+   * creates a running task record and owns cancellation/notification from this
+   * point forward, while the external runtime remains responsible for calling
+   * {@link complete}, {@link fail}, or {@link cancelled}.
+   */
+  adoptRunning(input: AdoptRunningTaskInput): TaskHandle {
+    const id = createTaskId();
+    this.store.create({
+      id,
+      parentRunId: input.parentRunId,
+      kind: input.kind,
+      title: input.title,
+      awaited: input.awaited,
+      metadata: input.metadata,
+    });
+    const controller = input.controller ?? new AbortController();
+    const promise = new Promise<TaskRecord>((resolve) => {
+      this.terminalResolvers.set(id, resolve);
+    });
+    this.runners.set(id, { controller, promise });
+    const running = this.store.update(id, {
+      status: "running",
+      startedAt: new Date().toISOString(),
+    });
+    return this.makeHandle(id, running, controller, promise);
   }
 
   /** Mark a task completed from an external adapter or watchdog. */
@@ -253,6 +308,43 @@ export class TaskManager {
     return { delivered, pending: this.notificationOutbox.length };
   }
 
+  pruneTerminalTasks(options: TaskRetentionOptions = {}): {
+    pruned: number;
+    retained: number;
+  } {
+    if (!this.store.remove) {
+      return { pruned: 0, retained: this.store.list().length };
+    }
+    const nowMs = (options.now ?? new Date()).getTime();
+    const terminal = this.store
+      .list()
+      .filter((task) => isTerminal(task.status))
+      .sort((left, right) => terminalTimeMs(right) - terminalTimeMs(left));
+    const toRemove = new Set<TaskId>();
+    if (options.olderThanMs !== undefined) {
+      for (const task of terminal) {
+        if (nowMs - terminalTimeMs(task) > options.olderThanMs) {
+          toRemove.add(task.id);
+        }
+      }
+    }
+    if (
+      options.maxTerminalTasks !== undefined &&
+      terminal.length > options.maxTerminalTasks
+    ) {
+      for (const task of terminal.slice(options.maxTerminalTasks)) {
+        toRemove.add(task.id);
+      }
+    }
+    for (const taskId of toRemove) {
+      this.store.remove(taskId);
+    }
+    return {
+      pruned: toRemove.size,
+      retained: this.store.list().length,
+    };
+  }
+
   /** Convenience for hosts that already hold a TaskId. */
   handle(id: TaskId): TaskHandle | undefined {
     const record = this.store.get(id);
@@ -261,6 +353,88 @@ export class TaskManager {
     const controller = entry?.controller ?? new AbortController();
     const promise = entry?.promise ?? Promise.resolve(record);
     return this.makeHandle(id, record, controller, promise);
+  }
+
+  /**
+   * Whether this manager owns live execution for the task in the current
+   * process. Durable stores can contain `pending`/`running` records reopened
+   * after a host restart; those records are not live unless they have a runner
+   * here.
+   */
+  hasLiveRunner(id: TaskId): boolean {
+    return this.runners.has(id);
+  }
+
+  /**
+   * Request that an in-flight foreground wait detach into an awaited background
+   * task. Hosts/TUIs call this out-of-band; `task_create` foreground waits race
+   * this signal alongside their timeout.
+   */
+  requestPromotion(id: TaskId): {
+    record: TaskRecord;
+    interruptedForegroundWait: boolean;
+  } {
+    const current = this.store.get(id);
+    if (!current) {
+      throw new Error(`Task not found: ${id}`);
+    }
+    if (isTerminal(current.status)) {
+      return { record: current, interruptedForegroundWait: false };
+    }
+    const updated = this.store.update(id, {
+      awaited: true,
+      metadata: { manualPromotionRequested: true },
+    });
+    const waiters = this.promotionWaiters.get(id);
+    const interruptedForegroundWait = (waiters?.size ?? 0) > 0;
+    if (waiters) {
+      this.promotionWaiters.delete(id);
+      for (const resolve of waiters) resolve();
+    }
+    return { record: updated, interruptedForegroundWait };
+  }
+
+  waitForPromotion(
+    id: TaskId,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const current = this.store.get(id);
+    if (!current) {
+      return Promise.reject(new Error(`Task not found: ${id}`));
+    }
+    if (current.metadata.manualPromotionRequested === true) {
+      return Promise.resolve();
+    }
+    if (options.signal?.aborted) return Promise.reject(makeAbortError());
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        resolve();
+      };
+      const abort = () => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        reject(makeAbortError());
+      };
+      const cleanup = () => {
+        options.signal?.removeEventListener("abort", abort);
+        const waiters = this.promotionWaiters.get(id);
+        if (!waiters) return;
+        waiters.delete(finish);
+        if (waiters.size === 0) this.promotionWaiters.delete(id);
+      };
+      let waiters = this.promotionWaiters.get(id);
+      if (!waiters) {
+        waiters = new Set();
+        this.promotionWaiters.set(id, waiters);
+      }
+      waiters.add(finish);
+      options.signal?.addEventListener("abort", abort, { once: true });
+    });
   }
 
   private makeHandle(
@@ -347,6 +521,7 @@ export class TaskManager {
       completedAt: new Date().toISOString(),
     });
     this.runners.delete(id);
+    this.promotionWaiters.delete(id);
     const resolve = this.terminalResolvers.get(id);
     if (resolve) {
       this.terminalResolvers.delete(id);
@@ -374,6 +549,22 @@ function isTerminal(status: TaskRecord["status"]): boolean {
   return (
     status === "completed" || status === "failed" || status === "cancelled"
   );
+}
+
+function terminalTimeMs(task: TaskRecord): number {
+  return Date.parse(
+    task.completedAt ??
+      task.lastOutputAt ??
+      task.lastProgressAt ??
+      task.startedAt ??
+      task.createdAt,
+  );
+}
+
+function makeAbortError(): Error {
+  const error = new Error("Task promotion wait aborted.");
+  error.name = "AbortError";
+  return error;
 }
 
 function normalizeError(cause: unknown): TaskError {

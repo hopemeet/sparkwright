@@ -529,6 +529,37 @@ still owns a live handle.
 **Response result:** `{ "cancelled": boolean, "status"?: string }`. Unknown ids
 return `task_not_found`.
 
+### `task.join`
+
+Mark a task as awaited from the host/client side. This is the TUI/on-demand
+join control surface; it does not use model-facing `task(...)` JSON.
+
+**Payload**
+
+| Field    | Type   | Required |
+| -------- | ------ | -------- |
+| `taskId` | string | yes      |
+
+**Response result:** `{ "taskId": string, "awaited": true, "status": string }`.
+Unknown ids return `task_not_found`.
+
+### `task.promote`
+
+Request manual promotion of an in-flight foreground task. If the task is
+currently blocked inside a foreground `task_create` wait, the wait resolves as a
+promoted ticket; otherwise the task is marked awaited and the response reports
+`promoted: false`.
+
+**Payload**
+
+| Field    | Type   | Required |
+| -------- | ------ | -------- |
+| `taskId` | string | yes      |
+
+**Response result:**
+`{ "taskId": string, "promoted": boolean, "awaited": boolean, "status": string }`.
+Unknown ids return `task_not_found`.
+
 ### `capability.inspect`
 
 Return the host-authored capability snapshot known to this connection. This is

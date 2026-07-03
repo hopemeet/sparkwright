@@ -725,6 +725,40 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("uses project backgroundTasks as a ceiling for lower-layer requests", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { run: { backgroundTasks: "enabled" } });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      const projectConfig = join(cwd, ".sparkwright", "config.json");
+      await writeFile(
+        projectConfig,
+        JSON.stringify({ run: { backgroundTasks: "foreground-only" } }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.backgroundTasks).toBe("foreground-only");
+      expect(loaded.config.backgroundTasksCeiling).toBe("foreground-only");
+      expect(loaded.sources.backgroundTasks).toContain("project");
+      expect(loaded.sources.backgroundTasksCeiling).toContain("project");
+      expect(loaded.warnings).toEqual([
+        expect.objectContaining({
+          file: projectConfig,
+          field: "backgroundTasks",
+          message:
+            "requested enabled was clamped to project ceiling foreground-only",
+        }),
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("unions confidentialPaths so project config cannot drop user entries", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();

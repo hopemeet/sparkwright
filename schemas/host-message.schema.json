@@ -43,6 +43,8 @@
             "task.get",
             "task.output",
             "task.stop",
+            "task.join",
+            "task.promote",
             "capability.inspect"
           ]
         },
@@ -162,6 +164,22 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/TaskStopRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.join" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskJoinRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "task.promote" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/TaskPromoteRequestPayload" }
             }
           }
         },
@@ -373,6 +391,11 @@
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
           "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
         },
+        "backgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"],
+          "description": "Session-level foreground/background task policy."
+        },
         "permissionMode": {
           "type": "string",
           "enum": [
@@ -436,6 +459,11 @@
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
           "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+        },
+        "backgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"],
+          "description": "Session-level foreground/background task policy."
         },
         "permissionMode": {
           "type": "string",
@@ -587,6 +615,7 @@
         "id",
         "parentRunId",
         "kind",
+        "awaited",
         "status",
         "createdAt",
         "metadata"
@@ -596,6 +625,7 @@
         "parentRunId": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "minLength": 1 },
         "title": { "type": "string" },
+        "awaited": { "type": "boolean" },
         "status": { "$ref": "#/$defs/TaskStatus" },
         "createdAt": { "type": "string" },
         "startedAt": { "type": "string" },
@@ -652,6 +682,22 @@
       "additionalProperties": false
     },
     "TaskStopRequestPayload": {
+      "type": "object",
+      "required": ["taskId"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "TaskJoinRequestPayload": {
+      "type": "object",
+      "required": ["taskId"],
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "TaskPromoteRequestPayload": {
       "type": "object",
       "required": ["taskId"],
       "properties": {
@@ -1112,12 +1158,20 @@
     },
     "CapabilityTaskSummary": {
       "type": "object",
-      "required": ["id", "kind", "status", "parentRunId", "createdAt"],
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "awaited",
+        "parentRunId",
+        "createdAt"
+      ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "kind": { "type": "string" },
         "status": { "type": "string" },
         "title": { "type": "string" },
+        "awaited": { "type": "boolean" },
         "parentRunId": { "type": "string", "minLength": 1 },
         "createdAt": { "type": "string" },
         "completedAt": { "type": "string" },

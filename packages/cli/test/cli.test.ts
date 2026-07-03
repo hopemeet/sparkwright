@@ -20,7 +20,12 @@ import {
   SESSION_COMPACT_SCHEMA_VERSION,
   type RunId,
 } from "@sparkwright/core";
-import { createSkillCreateProposal, loadHostConfig } from "@sparkwright/host";
+import {
+  createSkillCreateProposal,
+  loadHostConfig,
+  skillUsagePath,
+} from "@sparkwright/host";
+import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
@@ -2614,6 +2619,11 @@ describe("runCli", () => {
     await expect(readFile(skillPath, "utf8")).resolves.toContain(
       "name: code-reviewer",
     );
+    expect(
+      new FileSkillUsageRecorder({ path: skillUsagePath(workspace) }).get(
+        "code-reviewer",
+      ),
+    ).toMatchObject({ patchCount: 1 });
 
     const listOutput = createOutputCapture();
     const listed = await runCli(
@@ -3347,6 +3357,195 @@ describe("runCli", () => {
     expect(textOutput.stdoutText()).toContain("not causal claims");
   });
 
+  it("summarizes draft proposals and stats findings in the skill review digest", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      [
+        "---",
+        "name: code-reviewer",
+        "description: Reviews code changes.",
+        "---",
+        "Review carefully.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const proposal = await createSkillCreateProposal({
+      workspaceRoot: workspace,
+      name: "session-learnings",
+      description: "Captured session learning notes.",
+    });
+
+    const sessionRoot = join(workspace, ".sparkwright", "sessions");
+    const sessionId = "session_skill_review";
+    const runId = "run_skill_review";
+    const sessionDir = join(sessionRoot, sessionId);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "session.json"),
+      JSON.stringify(
+        {
+          id: sessionId,
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:06.000Z",
+          runIds: [runId],
+          agents: ["main"],
+          eventCount: 0,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(join(sessionDir, "events.jsonl"), "", "utf8");
+    await writeFile(
+      join(sessionDir, "trace.jsonl"),
+      [
+        traceEvent(
+          1,
+          runId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "code-reviewer",
+                layer: "project",
+                sourcePath: skillPath,
+                contentHash: "sha256:review-content",
+                packageHash: "sha256:review-package",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          2,
+          runId,
+          "skill.loaded",
+          { name: "code-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(3, runId, "tool.failed", {
+          toolName: "read",
+          error: { code: "ENOENT", message: "missing" },
+        }),
+        traceEvent(
+          4,
+          runId,
+          "skill.failed",
+          {
+            name: "code-reviewer",
+            status: "resource_denied",
+            message: "Denied resource.",
+          },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(5, runId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 1, byCode: { ENOENT: 1 } },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+      ].join(""),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "skills",
+        "review",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const digest = JSON.parse(output.stdoutText()) as {
+      proposals: { drafts: number; templates: number };
+      stats: { sessionsScanned: number; tracesScanned: number };
+      items: Array<{
+        kind: string;
+        severity: string;
+        skillName: string;
+        proposalId?: string;
+        contentMode?: string;
+        findingCode?: string;
+        relation?: string;
+        action: string;
+      }>;
+    };
+    expect(digest.proposals).toEqual(
+      expect.objectContaining({ drafts: 1, templates: 1 }),
+    );
+    expect(digest.stats).toEqual(
+      expect.objectContaining({ sessionsScanned: 1, tracesScanned: 1 }),
+    );
+    expect(digest.items[0]).toEqual(
+      expect.objectContaining({
+        kind: "proposal",
+        severity: "warning",
+        skillName: "session-learnings",
+        proposalId: proposal.id,
+        contentMode: "template",
+      }),
+    );
+    expect(digest.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "stats_finding",
+          severity: "warning",
+          skillName: "code-reviewer",
+          findingCode: "SKILL_LOAD_FAILURES",
+        }),
+        expect.objectContaining({
+          kind: "stats_finding",
+          relation: "associated",
+          skillName: "code-reviewer",
+          findingCode: "ASSOCIATED_TOOL_FAILURES",
+        }),
+      ]),
+    );
+
+    const textOutput = createOutputCapture();
+    const textResult = await runCli(
+      [
+        "skills",
+        "review",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "text",
+      ],
+      { io: { stdout: textOutput.stdout, stderr: textOutput.stderr } },
+    );
+    expect(textResult.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain("review items: 3");
+    expect(textOutput.stdoutText()).toContain("generated create template");
+    expect(textOutput.stdoutText()).toContain("SKILL_LOAD_FAILURES");
+    expect(textOutput.stdoutText()).toContain("ASSOCIATED_TOOL_FAILURES");
+    expect(textOutput.stdoutText()).toContain(
+      "usage sidecar data is not required",
+    );
+    expect(textOutput.stdoutText()).toContain("correlation, not causal");
+  });
+
   it("uses the skill stats catalog for targeted stats queries", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const skillRoot = join(workspace, ".sparkwright", "skills");
@@ -3752,6 +3951,7 @@ describe("runCli", () => {
       state: string;
       kind: string;
       skillName: string;
+      contentMode: string;
       path: string;
       afterPackageHash: string;
     };
@@ -3759,6 +3959,7 @@ describe("runCli", () => {
       state: "draft",
       kind: "create",
       skillName: "code-reviewer",
+      contentMode: "template",
     });
     expect(proposal.id).toMatch(/^skillprop_/);
     expect(proposal.afterPackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -3818,6 +4019,9 @@ describe("runCli", () => {
     );
     expect(shown.exitCode).toBe(0);
     expect(showOutput.stdoutText()).toContain(`id: ${proposal.id}`);
+    expect(showOutput.stdoutText()).toContain(
+      "content: generated create template",
+    );
     expect(showOutput.stdoutText()).toContain("Skill: code-reviewer");
     expect(showOutput.stdoutText()).toContain("patch:");
 
@@ -4310,6 +4514,7 @@ describe("runCli", () => {
     const proposal = JSON.parse(createOutput.stdoutText()) as {
       id: string;
       kind: string;
+      contentMode: string;
       sourceLayer: string;
       basePackageHash: string;
       afterPackageHash: string;
@@ -4317,6 +4522,7 @@ describe("runCli", () => {
     };
     expect(proposal).toMatchObject({
       kind: "update",
+      contentMode: "intent_stub",
       sourceLayer: "project",
     });
     expect(proposal.basePackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);

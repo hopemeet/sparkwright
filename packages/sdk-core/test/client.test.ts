@@ -324,6 +324,52 @@ describe("@sparkwright/sdk-core Client", () => {
       cancelled: true,
       status: "cancelled",
     });
+
+    const joined = client.joinTask({ taskId: "task_1" });
+    request = transport.sent[4];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "task.join",
+      payload: { taskId: "task_1" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: { taskId: "task_1", awaited: true, status: "running" },
+    });
+    await expect(joined).resolves.toEqual({
+      taskId: "task_1",
+      awaited: true,
+      status: "running",
+    });
+
+    const promoted = client.promoteTask({ taskId: "task_1" });
+    request = transport.sent[5];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "task.promote",
+      payload: { taskId: "task_1" },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-05-24T00:00:00.000Z",
+      ok: true,
+      result: {
+        taskId: "task_1",
+        promoted: true,
+        awaited: true,
+        status: "running",
+      },
+    });
+    await expect(promoted).resolves.toEqual({
+      taskId: "task_1",
+      promoted: true,
+      awaited: true,
+      status: "running",
+    });
   });
 
   it("starts a run and collects stable lifecycle evidence", async () => {

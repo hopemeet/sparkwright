@@ -30,6 +30,7 @@ export type RunState =
   | "running"
   | "waiting_approval"
   | "waiting_credentials"
+  | "waiting_tasks"
   | "completed"
   | "failed"
   | "cancelled";
@@ -103,6 +104,9 @@ export interface RunResult {
  *                              `finalOutputValidation: "continue"`.
  * - `stop_hook_blocked`   — a `pre_terminal` stop hook prevented termination
  *                           and the loop must do another turn.
+ * - `workflow_hook_advanced` — a workflow hook deliberately advanced the loop
+ *                              to another model turn without reporting a
+ *                              policy/verification violation.
  * - `model_recovery`      — recoverable model error (e.g. context too long,
  *                           output truncated) triggered a recovery step.
  * - `compaction_applied`  — one or more compactors materially shrank context.
@@ -119,6 +123,7 @@ export type RunLoopTransitionReason =
   | "command_injected"
   | "validation_continuation"
   | "stop_hook_blocked"
+  | "workflow_hook_advanced"
   | "model_recovery"
   | "compaction_applied"
   | "fallback_model"
@@ -155,6 +160,12 @@ export interface RunLoopState {
     key: string;
     code: string;
     message: string;
+    category?:
+      | "policy_denial"
+      | "approval_denial"
+      | "model_arg_error"
+      | "tool_runtime_error";
+    expectedDenial?: boolean;
   };
   /**
    * Semantic target of the most recent idempotent tool call that completed
@@ -305,6 +316,48 @@ export interface ToolResult {
   output?: unknown;
   error?: SparkwrightError;
   artifacts: Artifact[];
+}
+
+/**
+ * Free-form payload injected into the next model turn as a user-role context
+ * item. Sources can carry metadata for trace/debug surfaces without changing
+ * the prompt-visible `content`.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface PendingNotification {
+  content: string;
+  source?: { kind: string; uri?: string };
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Pluggable source of out-of-band signals the run loop should see between
+ * turns. `drain()` is the single consumer: it returns and consumes queued
+ * notifications, which the core loop injects through `run.notification.injected`.
+ *
+ * Sources MUST be safe to call repeatedly and SHOULD return quickly when empty.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface NotificationSource {
+  drain(): PendingNotification[] | Promise<PendingNotification[]>;
+}
+
+/**
+ * Non-consuming wait source used by the core loop when awaited background work
+ * should keep the same run alive. It is separate from `NotificationSource` so
+ * readiness waits cannot accidentally consume notifications before step-start
+ * injection drains them.
+ *
+ * @public
+ * @stability experimental v0.1
+ */
+export interface TaskRevivalSource {
+  hasAwaitedPending(): boolean | Promise<boolean>;
+  waitUntilAvailable(options: { signal?: AbortSignal }): Promise<void>;
 }
 
 export interface SparkwrightError {

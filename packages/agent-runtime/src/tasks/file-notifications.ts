@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
+  ActorNotificationUnsupportedError,
   acceptActorNotificationInput,
   actorNotificationInputFromTaskNotification,
   taskNotificationFromActorNotification,
@@ -54,6 +55,15 @@ export interface FileTaskNotificationEntry {
   notification: TaskNotification;
 }
 
+export interface FileTaskNotificationInvalidActorEntry {
+  /** Entry id when the JSON envelope could be parsed far enough to read it. */
+  id?: string;
+  /** Absolute path to the invalid notification file. */
+  path: string;
+  /** Human-readable parse or actor-acceptance failure reason. */
+  reason: string;
+}
+
 /**
  * Durable {@link TaskNotificationSink} that stores one JSON file per pending
  * notification.
@@ -66,6 +76,10 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
   private nextActorSequence = 1;
   private readonly actorSequenceByEntryId = new Map<string, number>();
   private readonly actorCreatedAtByEntryId = new Map<string, string>();
+  private readonly invalidActorEntryByPath = new Map<
+    string,
+    FileTaskNotificationInvalidActorEntry
+  >();
   private readonly readyWaiters: Array<{
     predicate?: (notification: TaskNotification) => boolean;
     resolve: () => void;
@@ -102,6 +116,18 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
 
   asActorInbox(): ActorInbox {
     return this.actorInbox;
+  }
+
+  /**
+   * Diagnostics from the most recent outbox scan. Parse-stage failures
+   * (unreadable/unparsable JSON, unsafe entry id) are skipped by BOTH the
+   * legacy and actor views; actor-acceptance failures remain visible to the
+   * legacy view and are skipped by the actor view only.
+   */
+  invalidActorEntries(): readonly FileTaskNotificationInvalidActorEntry[] {
+    return [...this.invalidActorEntryByPath.values()].map((entry) => ({
+      ...entry,
+    }));
   }
 
   deliver(notification: TaskNotification): void {
@@ -163,6 +189,7 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     rmSync(this.entryPath(id), { force: true });
     this.actorSequenceByEntryId.delete(id);
     this.actorCreatedAtByEntryId.delete(id);
+    this.invalidActorEntryByPath.delete(this.entryPath(id));
   }
 
   /**
@@ -217,10 +244,11 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     });
     const taskNotification = taskNotificationFromActorNotification(accepted);
     if (!taskNotification) {
-      throw new Error(
+      throw new ActorNotificationUnsupportedError(
         "FileTaskNotificationOutbox only supports terminal task actor notifications.",
       );
     }
+    assertPersistableLegacyTaskActorNotification(accepted);
     this.writeNotification(taskNotification, accepted.createdAt);
     return { status: "accepted", acceptedCount: 1 };
   }
@@ -331,32 +359,68 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     entry: FileTaskNotificationEntry;
     path: string;
   }> {
-    if (!existsSync(this.outboxDir())) return [];
-    return readdirSync(this.outboxDir(), { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => {
-        const path = join(this.outboxDir(), entry.name);
-        return {
-          entry: parseJson<FileTaskNotificationEntry>(
-            readFileSync(path, "utf8"),
-            path,
-          ),
-          path,
-        };
-      })
-      .sort((a, b) => a.entry.id.localeCompare(b.entry.id));
+    const paths = this.listEntryPaths();
+    this.pruneInvalidActorEntryDiagnostics(paths);
+    return this.parseEntries(paths);
   }
 
   private listActorEntries(): Array<{
     id: string;
     notification: AnyActorNotification;
   }> {
-    return this.listWithPaths()
-      .map(({ entry, path }) => ({
-        id: entry.id,
-        notification: this.actorNotificationForEntry(entry, path),
-      }))
-      .sort((a, b) => a.notification.sequence - b.notification.sequence);
+    const paths = this.listEntryPaths();
+    this.pruneInvalidActorEntryDiagnostics(paths);
+    const entries: Array<{
+      id: string;
+      notification: AnyActorNotification;
+    }> = [];
+    for (const { entry, path } of this.parseEntries(paths)) {
+      try {
+        entries.push({
+          id: entry.id,
+          notification: this.actorNotificationForEntry(entry, path),
+        });
+        this.invalidActorEntryByPath.delete(path);
+      } catch (cause) {
+        this.rememberInvalidActorEntry({ id: entry.id, path, cause });
+      }
+    }
+    return entries.sort(
+      (a, b) => a.notification.sequence - b.notification.sequence,
+    );
+  }
+
+  /**
+   * Parse and id-sort entry files, skipping (and remembering) unreadable,
+   * unparsable, or id-less files instead of wedging every consumer view.
+   * Sorting by entry id BEFORE lazy sequence assignment keeps derived actor
+   * sequences aligned with stable storage order rather than readdir order.
+   */
+  private parseEntries(
+    paths: readonly string[],
+  ): Array<{ entry: FileTaskNotificationEntry; path: string }> {
+    const parsed: Array<{ entry: FileTaskNotificationEntry; path: string }> =
+      [];
+    for (const path of paths) {
+      try {
+        const entry = parseJson<FileTaskNotificationEntry>(
+          readFileSync(path, "utf8"),
+          path,
+        );
+        if (typeof entry.id !== "string" || !isSafeEntryId(entry.id)) {
+          throw new Error(
+            `Invalid task notification entry id at ${path}: expected a safe non-empty string.`,
+          );
+        }
+        parsed.push({ entry, path });
+        if (this.invalidActorEntryByPath.get(path)?.id === undefined) {
+          this.invalidActorEntryByPath.delete(path);
+        }
+      } catch (cause) {
+        this.rememberInvalidActorEntry({ path, cause });
+      }
+    }
+    return parsed.sort((a, b) => a.entry.id.localeCompare(b.entry.id));
   }
 
   private actorNotificationForEntry(
@@ -374,6 +438,8 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
   }
 
   private sequenceForEntryId(id: string): number {
+    // File-backed actor peek/drain assign sequence lazily. The map is the
+    // high-water mark that prevents later older filenames from going backwards.
     const existing = this.actorSequenceByEntryId.get(id);
     if (existing !== undefined) return existing;
     const sequence = this.nextActorSequence;
@@ -392,11 +458,66 @@ export class FileTaskNotificationOutbox implements TaskNotificationSink {
     this.actorCreatedAtByEntryId.set(id, createdAt);
     return createdAt;
   }
+
+  private listEntryPaths(): string[] {
+    if (!existsSync(this.outboxDir())) return [];
+    return readdirSync(this.outboxDir(), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => join(this.outboxDir(), entry.name));
+  }
+
+  private rememberInvalidActorEntry(input: {
+    id?: string;
+    path: string;
+    cause: unknown;
+  }): void {
+    const reason =
+      input.cause instanceof Error ? input.cause.message : String(input.cause);
+    const diagnostic: FileTaskNotificationInvalidActorEntry = {
+      path: input.path,
+      reason,
+    };
+    if (input.id !== undefined) diagnostic.id = input.id;
+    this.invalidActorEntryByPath.set(input.path, diagnostic);
+  }
+
+  private pruneInvalidActorEntryDiagnostics(paths: readonly string[]): void {
+    const currentPaths = new Set(paths);
+    for (const path of this.invalidActorEntryByPath.keys()) {
+      if (!currentPaths.has(path)) {
+        this.invalidActorEntryByPath.delete(path);
+      }
+    }
+  }
 }
 
 function createNotificationEntryId(notification: TaskNotification): string {
   const stamp = notification.deliveredAt.replace(/[^0-9A-Za-z]/g, "");
   return `${stamp}-${notification.taskId}-${Math.random().toString(36).slice(2)}`;
+}
+
+function assertPersistableLegacyTaskActorNotification(
+  notification: AnyActorNotification,
+): void {
+  const unsupportedFields: string[] = [];
+  if (notification.source.sessionId !== undefined) {
+    unsupportedFields.push("source.sessionId");
+  }
+  if (notification.routeHint?.sessionId !== undefined) {
+    unsupportedFields.push("routeHint.sessionId");
+  }
+  if (notification.correlationId !== undefined) {
+    unsupportedFields.push("correlationId");
+  }
+  if (notification.suggestedContext !== undefined) {
+    unsupportedFields.push("suggestedContext");
+  }
+  if (unsupportedFields.length === 0) return;
+  throw new ActorNotificationUnsupportedError(
+    `FileTaskNotificationOutbox cannot persist actor-only fields without changing the task notification file format: ${unsupportedFields.join(
+      ", ",
+    )}.`,
+  );
 }
 
 function atomicWriteTextSync(path: string, content: string): void {
@@ -424,8 +545,12 @@ function parseJson<T>(text: string, path: string): T {
   }
 }
 
+function isSafeEntryId(id: string): boolean {
+  return /^[A-Za-z0-9_-]+$/.test(id);
+}
+
 function assertSafeEntryId(id: string): void {
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+  if (!isSafeEntryId(id)) {
     throw new Error(`Unsafe notification entry id: ${id}`);
   }
 }

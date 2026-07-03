@@ -12,7 +12,10 @@ import {
   defineTool,
   type ContextItem,
   type ModelAdapter,
+  type NotificationSource,
+  type PendingNotification,
   type SparkwrightEvent,
+  type TaskRevivalSource,
 } from "../src/index.js";
 import { LocalWorkspace } from "../src/workspace.js";
 
@@ -695,6 +698,7 @@ describe("SparkwrightRun", () => {
       maxToolConcurrency: 2,
       hooks: [
         {
+          name: "delay-deferred-echo",
           async beforeToolCall(input) {
             if (input.toolName === "deferred_echo") {
               await sleep(20);
@@ -2003,6 +2007,72 @@ describe("SparkwrightRun", () => {
       status: "failed",
       error: { code: "TOOL_DENIED" },
     });
+  });
+
+  it("keeps repeated expected denials non-failing and policy-specific", async () => {
+    let executed = false;
+    let modelCalls = 0;
+
+    const denied = defineTool({
+      name: "danger",
+      description: "Dangerous tool.",
+      inputSchema: { type: "object" },
+      policy: { risk: "denied" },
+      execute() {
+        executed = true;
+      },
+    });
+
+    const run = createRun({
+      goal: "try denied twice",
+      tools: [denied],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return { toolCalls: [{ toolName: "danger", arguments: {} }] };
+          }
+          return { message: "saw denial" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failures = run.events
+      .all()
+      .filter((event) => event.type === "tool.failed");
+    const repeat = failures.find(
+      (event) =>
+        (event.payload as { error?: { code?: string } }).error?.code ===
+        "REPEATED_TOOL_CALL_SKIPPED",
+    );
+    const repeatError = (
+      repeat?.payload as {
+        error?: { message?: string; metadata?: Record<string, unknown> };
+      }
+    ).error;
+
+    expect(executed).toBe(false);
+    expect(result).toMatchObject({
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+    });
+    expect(result.metadata.outcome).toBeUndefined();
+    expect(
+      failures.map(
+        (event) => (event.payload as { error?: { code?: string } }).error?.code,
+      ),
+    ).toEqual(["TOOL_DENIED", "REPEATED_TOOL_CALL_SKIPPED"]);
+    expect(repeatError?.metadata).toMatchObject({
+      repeatedPriorFailureCode: "TOOL_DENIED",
+      repeatedPriorFailureCategory: "policy_denial",
+      repeatedPriorFailureExpectedDenial: true,
+    });
+    expect(repeatError?.message).toContain("expected policy denial");
+    expect(repeatError?.message).not.toContain("offset/limit");
+    expect(repeatError?.message).not.toContain("listing tool");
   });
 
   it("reports unknown tools before emitting tool.started", async () => {
@@ -5159,10 +5229,297 @@ describe("SparkwrightRun", () => {
       contextWindowPressure: 0.8,
     });
   });
+
+  it("waits for an awaited task notification and injects it on the canonical path", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const seenContexts: string[][] = [];
+    const run = createRun({
+      goal: "wait for task",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          seenContexts.push(input.context.map((item) => item.content));
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_1 completed.",
+      metadata: { taskId: "task_1" },
+    });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(seenContexts[1]).toEqual(
+      expect.arrayContaining(["Task task_1 completed."]),
+    );
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.notification.injected"),
+    ).toHaveLength(1);
+    expect(source.drainCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("revives awaited task completions after maxSteps is otherwise spent", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const seenContexts: string[][] = [];
+    const run = createRun({
+      goal: "wait past max steps",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          seenContexts.push(input.context.map((item) => item.content));
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 1,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_after_budget completed.",
+      metadata: { taskId: "task_after_budget" },
+    });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(seenContexts[1]).toEqual(
+      expect.arrayContaining(["Task task_after_budget completed."]),
+    );
+    expect(result.metadata).toMatchObject({
+      maxSteps: 1,
+      stepLimitReached: false,
+      revivalTurnsUsed: 1,
+    });
+  });
+
+  it("bounds awaited task revival with maxRevivalTurns", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "bounded revival",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 2) {
+            source.pending = true;
+          }
+          return { message: "done for now" };
+        },
+      },
+      maxSteps: 1,
+      maxRevivalTurns: 1,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_one completed.",
+      metadata: { taskId: "task_one" },
+    });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(source.waitCalls).toBe(1);
+    expect(result.metadata).toMatchObject({ revivalTurnsUsed: 1 });
+  });
+
+  it("wakes waiting_tasks from run.command.enqueued without polling the command queue", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "wait for command",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 2) {
+            expect(input.context.map((item) => item.content)).toContain(
+              "continue now",
+            );
+          }
+          return { message: "done" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+    source.pending = false;
+    run.injectUserMessage({ content: "continue now" });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(run.events.all().map((event) => event.type)).toEqual(
+      expect.arrayContaining(["run.command.enqueued", "run.command.applied"]),
+    );
+  });
+
+  it("wakes waiting_tasks when the run abort signal fires", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    const controller = new AbortController();
+    const run = createRun({
+      goal: "wait then abort",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      abortSignal: controller.signal,
+      model: {
+        async complete() {
+          return { message: "waiting" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result.state).toBe("failed");
+    expect(result.stopReason).toBe("manual_cancelled");
+  });
+
+  it("does not block terminal completion when no awaited tasks are pending", async () => {
+    const source = new ManualTaskRevivalSource();
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "detached task does not block",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(1);
+    expect(source.waitCalls).toBe(0);
+  });
+
+  it("reports revival pending-check failures without throwing out of the run", async () => {
+    const source: NotificationSource & TaskRevivalSource = {
+      drain: () => [],
+      hasAwaitedPending: () => {
+        throw new Error("pending check failed");
+      },
+      waitUntilAvailable: () => Promise.resolve(),
+    };
+    const run = createRun({
+      goal: "pending check failure",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(
+      run.events
+        .all()
+        .find((event) => event.type === "run.notification.source_failed")
+        ?.payload,
+    ).toMatchObject({
+      sourceIndex: -1,
+      message: "pending check failed",
+      phase: "hasAwaitedPending",
+    });
+  });
 });
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("timed out waiting for condition");
+    }
+    await sleep(5);
+  }
+}
+
+class ManualTaskRevivalSource implements NotificationSource, TaskRevivalSource {
+  pending = false;
+  waitCalls = 0;
+  drainCalls = 0;
+  private readonly queue: PendingNotification[] = [];
+  private readonly waiters = new Set<() => void>();
+
+  hasAwaitedPending(): boolean {
+    return this.pending || this.queue.length > 0;
+  }
+
+  drain(): PendingNotification[] {
+    this.drainCalls += 1;
+    const items = [...this.queue];
+    this.queue.length = 0;
+    return items;
+  }
+
+  waitUntilAvailable(options: { signal?: AbortSignal }): Promise<void> {
+    this.waitCalls += 1;
+    if (this.queue.length > 0) return Promise.resolve();
+    if (options.signal?.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        this.waiters.delete(finish);
+        options.signal?.removeEventListener("abort", finish);
+        resolve();
+      };
+      this.waiters.add(finish);
+      options.signal?.addEventListener("abort", finish, { once: true });
+    });
+  }
+
+  deliver(notification: PendingNotification): void {
+    this.pending = false;
+    this.queue.push(notification);
+    for (const waiter of [...this.waiters]) waiter();
+  }
 }
 
 describe("RunHandle.addHook / removeHook", () => {

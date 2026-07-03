@@ -105,6 +105,11 @@
       "enum": ["read-only", "ask", "accept-edits", "bypass"],
       "description": "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve."
     },
+    "backgroundTasks": {
+      "type": "string",
+      "enum": ["disabled", "foreground-only", "enabled"],
+      "description": "Session-level foreground/background task policy. enabled allows task promotion and detached tasks; foreground-only forces task_create to wait inline; disabled rejects new task_create work."
+    },
     "workspace": {
       "type": "string",
       "minLength": 1,
@@ -1314,6 +1319,10 @@
               "minimum": 0,
               "maximum": 9007199254740991,
               "description": "Global sub-agent depth ceiling. 0 disables sub-agent spawning."
+            },
+            "allowNestedBackgroundTasks": {
+              "type": "boolean",
+              "description": "Opt-in: allow sub-agents to create awaited/background agent tasks, bounded by maxDepth."
             }
           },
           "additionalProperties": false,
@@ -1561,6 +1570,11 @@
           "enum": ["read-only", "ask", "accept-edits", "bypass"],
           "description": "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve."
         },
+        "backgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"],
+          "description": "Session-level foreground/background task policy. enabled allows task promotion and detached tasks; foreground-only forces task_create to wait inline; disabled rejects new task_create work."
+        },
         "budget": {
           "type": "object",
           "properties": {
@@ -1635,7 +1649,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for run-shaping defaults. Flattens to accessMode/runBudget/maxSteps/traceLevel/approvals."
+      "description": "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel/approvals."
     },
     "ui": {
       "type": "object",

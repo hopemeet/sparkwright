@@ -61,6 +61,8 @@ export function ActivityPanel(props: {
   onTabChange?: (tab: ActivityTab) => void;
   onRefreshTasks?: () => void;
   onStopTask?: (taskId: string) => void;
+  onJoinTask?: (taskId: string) => void;
+  onPromoteTask?: (taskId: string) => void;
 }): React.ReactElement {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -210,6 +212,22 @@ export function ActivityPanel(props: {
         }
         return;
       }
+      if (input === "w") {
+        const selected =
+          summary.tasks[Math.min(cursor, summary.tasks.length - 1)];
+        if (selected && selected.status === "running") {
+          props.onJoinTask?.(selected.id);
+        }
+        return;
+      }
+      if (input === "p") {
+        const selected =
+          summary.tasks[Math.min(cursor, summary.tasks.length - 1)];
+        if (selected && selected.status === "running") {
+          props.onPromoteTask?.(selected.id);
+        }
+        return;
+      }
       if (input === "f") {
         setOutputMode("follow");
         resetDetailScroll();
@@ -321,6 +339,8 @@ export function ActivityPanel(props: {
             detailScroll={detailScroll}
             loading={props.loadingTasks ?? false}
             onStopTask={props.onStopTask}
+            onJoinTask={props.onJoinTask}
+            onPromoteTask={props.onPromoteTask}
           />
         ) : tab === "events" ? (
           <EventsTab
@@ -361,6 +381,8 @@ function TasksTab(props: {
   detailScroll: number;
   loading: boolean;
   onStopTask?: (taskId: string) => void;
+  onJoinTask?: (taskId: string) => void;
+  onPromoteTask?: (taskId: string) => void;
 }): React.ReactElement {
   const theme = useTheme();
   if (props.tasks.length === 0) {
@@ -385,7 +407,8 @@ function TasksTab(props: {
     <Box flexDirection="column">
       <Text dimColor>
         {props.loading ? "refreshing · " : ""}session tasks · r refresh · s stop
-        · f follow · H head · T tail
+        {props.onJoinTask ? " · w join" : ""}
+        {props.onPromoteTask ? " · p promote" : ""} · f follow · H head · T tail
       </Text>
       {shown.map((task, index) => {
         const absoluteIndex = start + index;
@@ -401,6 +424,7 @@ function TasksTab(props: {
           active ? ">" : " ",
           shortTaskId(task.id),
           taskStatusLabel(task),
+          task.awaited ? "awaited" : "detached",
           task.kind,
           task.error ? `error: ${task.error}` : last,
         ]
@@ -420,6 +444,10 @@ function TasksTab(props: {
           outputMode={props.outputMode}
           detailScroll={props.detailScroll}
           canStop={Boolean(props.onStopTask && selected.status === "running")}
+          canJoin={Boolean(props.onJoinTask && selected.status === "running")}
+          canPromote={Boolean(
+            props.onPromoteTask && selected.status === "running",
+          )}
         />
       </Box>
     </Box>
@@ -432,6 +460,8 @@ function TaskDetails(props: {
   outputMode: OutputMode;
   detailScroll: number;
   canStop: boolean;
+  canJoin: boolean;
+  canPromote: boolean;
 }): React.ReactElement {
   const duration = taskDurationLabel(props.task);
   const outputModeLabel =
@@ -443,6 +473,7 @@ function TaskDetails(props: {
   const lines = [
     `id ${props.task.id}`,
     `status ${taskStatusLabel(props.task)}${duration ? ` · ${duration}` : ""}`,
+    `mode ${props.task.awaited ? "awaited" : "detached"}`,
     props.task.kind ? `kind ${props.task.kind}` : "",
     props.task.cwd ? `cwd ${props.task.cwd}` : "",
     props.task.command || props.task.title
@@ -463,6 +494,13 @@ function TaskDetails(props: {
   const output = sourceOutput.slice(start, start + MAX_OUTPUT_LINES);
   const scrollLabel =
     maxScroll > 0 ? ` · PgUp/PgDn ${scroll}/${maxScroll}` : "";
+  const actionHint = [
+    props.canJoin ? "w join" : "",
+    props.canPromote ? "p promote" : "",
+    props.canStop ? "s stop" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <Box flexDirection="column">
       {lines.map((line, index) => (
@@ -474,11 +512,11 @@ function TaskDetails(props: {
         <Text dimColor>
           {outputModeLabel} · f follow · H head · T tail
           {scrollLabel}
-          {props.canStop ? " · s stop" : ""}
+          {actionHint ? ` · ${actionHint}` : ""}
         </Text>
       ) : (
         <Text dimColor>
-          f follow · H head · T tail{props.canStop ? " · s stop" : ""}
+          f follow · H head · T tail{actionHint ? ` · ${actionHint}` : ""}
         </Text>
       )}
       {output.map((line, index) => (

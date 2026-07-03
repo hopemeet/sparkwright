@@ -9,6 +9,7 @@ import {
 import {
   createRunId,
   createToolSearchTool,
+  type BackgroundTaskPolicy,
   type EventEmitter,
   type RunId,
   type ToolDefinition,
@@ -46,10 +47,14 @@ import {
 } from "./tool-identities.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
-const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
+export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
+  "required object with goal, role, and prompt; optional allowedTools, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
+export const AGENT_TASK_MAX_STEPS_DESCRIPTION =
+  "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A read-and-answer task usually needs 4+; a multi-step search (glob, read, refine, conclude) typically needs 6+.";
+export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
   type: "object",
   description:
-    "Payload for kind 'agent'. It matches spawn_agent input: provide a concrete goal, role, and focused prompt for the background child agent.",
+    "Payload for kind 'agent'. It matches spawn_agent input: provide a concrete goal, role, and focused prompt for the background child agent. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.",
   properties: {
     goal: {
       type: "string",
@@ -76,7 +81,7 @@ const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
     maxSteps: {
       type: "integer",
       minimum: 1,
-      description: "Optional child model-turn limit.",
+      description: AGENT_TASK_MAX_STEPS_DESCRIPTION,
     },
     metadata: {
       type: "object",
@@ -181,6 +186,7 @@ export function createMainHostToolCatalog(input: {
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   shell?: ShellConfig;
+  backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
   const entries = applyToolConfigToCatalog(
@@ -270,6 +276,7 @@ function createMainHostToolCatalogList(input: {
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   shell?: ShellConfig;
+  backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
   return [
@@ -297,6 +304,7 @@ function createMainHostToolCatalogList(input: {
         skillRoots: input.skillRoots.map((root) => root.root),
         extraForcedDenyWrite: input.configPaths,
         getRunEvents: input.getRunEvents,
+        backgroundTasks: input.backgroundTasks,
       }),
       "shell",
     ),
@@ -304,13 +312,14 @@ function createMainHostToolCatalogList(input: {
       createTaskCreate({
         manager: input.taskManager,
         getParentRunId: input.getParentRunId,
+        foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
+        backgroundTasks: input.backgroundTasks,
         taskCreateKinds: [
           {
             kind: "agent",
             description:
               "start a read-only background child agent owned by the task lifecycle",
-            payloadDescription:
-              "required object with goal, role, and prompt; optional allowedTools, maxSteps, and metadata",
+            payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
             payloadSchema: AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
             requiresPayload: true,
           },

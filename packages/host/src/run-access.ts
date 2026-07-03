@@ -1,6 +1,8 @@
 import {
+  clampBackgroundTaskPolicy,
   clampAccessMode,
   compileRunAccessMode,
+  type BackgroundTaskPolicy,
   type PermissionMode,
   type RunAccessMode,
 } from "@sparkwright/core";
@@ -15,6 +17,9 @@ export interface ResolvedRunAccess {
   accessMode?: RunAccessMode;
   requestedAccessMode?: RunAccessMode;
   accessModeCeiling?: RunAccessMode;
+  backgroundTasks: BackgroundTaskPolicy;
+  requestedBackgroundTasks?: BackgroundTaskPolicy;
+  backgroundTasksCeiling?: BackgroundTaskPolicy;
   /** Legacy fields that `accessMode` overrode because they conflicted. */
   overriddenLegacyFields: string[];
 }
@@ -49,10 +54,27 @@ export function resolveRunAccessFields(
   opts: {
     defaultAccessMode?: RunAccessMode;
     accessModeCeiling?: RunAccessMode;
+    defaultBackgroundTasks?: BackgroundTaskPolicy;
+    backgroundTasksCeiling?: BackgroundTaskPolicy;
     defaultPermissionMode?: PermissionMode;
     defaultShouldWrite?: boolean;
   },
 ): ResolvedRunAccess {
+  const backgroundTasks =
+    clampBackgroundTaskPolicy(
+      opts.backgroundTasksCeiling,
+      payload.backgroundTasks ?? opts.defaultBackgroundTasks,
+    ) ?? "enabled";
+  const backgroundTaskFields = {
+    backgroundTasks,
+    ...(payload.backgroundTasks !== undefined &&
+    payload.backgroundTasks !== backgroundTasks
+      ? { requestedBackgroundTasks: payload.backgroundTasks }
+      : {}),
+    ...(opts.backgroundTasksCeiling !== undefined
+      ? { backgroundTasksCeiling: opts.backgroundTasksCeiling }
+      : {}),
+  };
   const requestedAccessMode = payload.accessMode ?? opts.defaultAccessMode;
   if (requestedAccessMode !== undefined) {
     const accessMode =
@@ -74,6 +96,7 @@ export function resolveRunAccessFields(
     }
     return {
       ...compiled,
+      ...backgroundTaskFields,
       accessMode,
       ...(requestedAccessMode !== accessMode ? { requestedAccessMode } : {}),
       ...(opts.accessModeCeiling !== undefined
@@ -96,6 +119,7 @@ export function resolveRunAccessFields(
     if (accessMode !== requestedFromLegacy) {
       return {
         ...compiled,
+        ...backgroundTaskFields,
         accessMode,
         requestedAccessMode: requestedFromLegacy,
         accessModeCeiling: opts.accessModeCeiling,
@@ -108,7 +132,12 @@ export function resolveRunAccessFields(
     permissionMode,
     opts.defaultShouldWrite,
   );
-  return { permissionMode, shouldWrite, overriddenLegacyFields: [] };
+  return {
+    permissionMode,
+    shouldWrite,
+    ...backgroundTaskFields,
+    overriddenLegacyFields: [],
+  };
 }
 
 function accessModeFromPermissionMode(
@@ -136,7 +165,22 @@ function accessModeFromPermissionMode(
 export function buildAccessMetadata(
   resolved: ResolvedRunAccess,
 ): Record<string, unknown> {
-  if (resolved.accessMode === undefined) return {};
+  const backgroundMetadata =
+    resolved.backgroundTasks !== "enabled" ||
+    resolved.requestedBackgroundTasks !== undefined ||
+    resolved.backgroundTasksCeiling !== undefined
+      ? {
+          backgroundTasks: resolved.backgroundTasks,
+          ...(resolved.requestedBackgroundTasks !== undefined &&
+          resolved.requestedBackgroundTasks !== resolved.backgroundTasks
+            ? { requestedBackgroundTasks: resolved.requestedBackgroundTasks }
+            : {}),
+          ...(resolved.backgroundTasksCeiling !== undefined
+            ? { backgroundTasksCeiling: resolved.backgroundTasksCeiling }
+            : {}),
+        }
+      : {};
+  if (resolved.accessMode === undefined) return backgroundMetadata;
   return {
     accessMode: resolved.accessMode,
     ...(resolved.requestedAccessMode !== undefined &&
@@ -149,5 +193,6 @@ export function buildAccessMetadata(
     ...(resolved.overriddenLegacyFields.length > 0
       ? { accessModeOverrodeLegacyFields: resolved.overriddenLegacyFields }
       : {}),
+    ...backgroundMetadata,
   };
 }

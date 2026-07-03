@@ -78,6 +78,7 @@ describe("tui skill evolution commands", () => {
     const review = await reviewTuiSkillProposals(workspace, "draft");
     expect(review.total).toBe(1);
     expect(formatTuiSkillReviewSummary(review)).toContain("code-reviewer");
+    expect(formatTuiSkillReviewSummary(review)).toContain("[template]");
 
     const detail = await loadTuiSkillReview(workspace, "draft");
     expect(detail.total).toBe(1);
