@@ -61,6 +61,39 @@ describe("trace", () => {
     });
   });
 
+  it("normalizes legacy trace events that omit metadata", () => {
+    const jsonl =
+      [
+        {
+          id: "evt_legacy_1",
+          runId: "run_legacy",
+          type: "run.created",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          sequence: 1,
+          payload: { goal: "legacy" },
+        },
+        {
+          id: "evt_legacy_2",
+          runId: "run_legacy",
+          type: "run.completed",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          sequence: 2,
+          payload: { state: "completed" },
+        },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n") + "\n";
+
+    const events = loadTraceEventsJsonl(jsonl);
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(events.map((event) => event.metadata)).toEqual([{}, {}]);
+    expect(report).toMatchObject({
+      verdict: "ok",
+      summary: { eventCount: 2 },
+    });
+  });
+
   it("preserves append order in memory", () => {
     const log = new EventLog(createRunId());
     const trace = new MemoryTrace();

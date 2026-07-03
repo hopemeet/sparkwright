@@ -1509,7 +1509,11 @@ export function parseTraceJsonl(
     .filter((line) => line.trim() !== "")
     .map((line, index) => {
       try {
-        return JSON.parse(line) as SparkwrightEvent;
+        const event = JSON.parse(line) as SparkwrightEvent;
+        return {
+          ...event,
+          metadata: isRecord(event.metadata) ? event.metadata : {},
+        };
       } catch (cause) {
         throw new Error(
           `Invalid trace event JSON in ${path} at line ${index + 1}`,

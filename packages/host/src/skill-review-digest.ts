@@ -42,6 +42,7 @@ export interface SkillReviewDigestItem {
   action: string;
   proposalId?: string;
   proposalKind?: SkillProposalKind;
+  /** @reserved Public review-digest field consumed by CLI/TUI and downstream reviewers. */
   proposalState?: SkillProposalState;
   contentMode?: SkillProposalContentMode;
   findingCode?: SkillStatsFindingCode;

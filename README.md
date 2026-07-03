@@ -127,6 +127,7 @@ Goal -> Surface -> Host -> Runtime kernel -> Evidence
 - **Run the CLI/TUI and basic runs** — [User Manual](./docs/guides/USER_MANUAL.md)
 - **Configure providers, models, paths, and preferences** — [Configuration](./docs/guides/CONFIGURATION.md)
 - **Define agent profiles and delegate tools** — [Agent Profiles](./docs/guides/AGENTS.md)
+- **Run long work and scheduled jobs** — [Automation and Background Tasks](./docs/guides/AUTOMATION_AND_BACKGROUND_TASKS.md)
 - **ACP server and external delegates** — [User Manual](./docs/guides/USER_MANUAL.md) and [Agent Profiles](./docs/guides/AGENTS.md)
 - **Decide between skills, tools, MCP, and agents** — [Capability Design Guide](./docs/guides/CAPABILITY_DESIGN_GUIDE.md)
 - **Add a custom tool** — [Custom Tool Example](./docs/guides/CUSTOM_TOOL_EXAMPLE.md)
