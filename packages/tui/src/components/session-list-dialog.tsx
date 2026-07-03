@@ -23,6 +23,7 @@ import {
  */
 export function SessionListDialog(props: {
   sessions: SessionSummary[];
+  sessionRootLabel?: string;
   diagnostics: SessionDiagnostics | null;
   loadingDiagnosticsFor: string | null;
   labels: Record<string, string>;
@@ -116,13 +117,14 @@ export function SessionListDialog(props: {
   });
 
   if (props.sessions.length === 0) {
+    const sessionRootLabel = props.sessionRootLabel ?? ".sparkwright/sessions";
     return (
       <DialogFrame borderColor="cyan">
         <Text color="cyan" bold>
           sessions
         </Text>
         <Text dimColor>
-          (none found in .sparkwright/sessions — press esc to close)
+          (none found in {sessionRootLabel} — press esc to close)
         </Text>
       </DialogFrame>
     );

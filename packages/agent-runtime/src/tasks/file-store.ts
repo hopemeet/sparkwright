@@ -71,6 +71,7 @@ export class FileTaskStore implements TaskStore {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
+      awaited: input.awaited ?? true,
       status: "pending",
       createdAt: new Date().toISOString(),
       metadata: { ...(input.metadata ?? {}) },
@@ -95,6 +96,8 @@ export class FileTaskStore implements TaskStore {
       .filter((record) => {
         if (filter.status && record.status !== filter.status) return false;
         if (filter.kind && record.kind !== filter.kind) return false;
+        if (filter.awaited !== undefined && record.awaited !== filter.awaited)
+          return false;
         if (filter.parentRunId && record.parentRunId !== filter.parentRunId) {
           return false;
         }
@@ -113,6 +116,9 @@ export class FileTaskStore implements TaskStore {
       ...existing,
       ...("status" in patch && patch.status !== undefined
         ? { status: patch.status }
+        : {}),
+      ...("awaited" in patch && patch.awaited !== undefined
+        ? { awaited: patch.awaited }
         : {}),
       ...("startedAt" in patch && patch.startedAt !== undefined
         ? { startedAt: patch.startedAt }
@@ -226,7 +232,7 @@ export class FileTaskStore implements TaskStore {
       const path = this.recordPath(id);
       if (!existsSync(path)) continue;
       const record = parseJson<TaskRecord>(readFileSync(path, "utf8"), path);
-      this.records.set(id, record);
+      this.records.set(id, { ...record, awaited: record.awaited ?? true });
     }
   }
 

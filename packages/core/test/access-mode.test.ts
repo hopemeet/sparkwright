@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   ACCESS_MODES,
   ACCESS_MODE_RANK,
+  BACKGROUND_TASK_POLICY_RANK,
   isRunAccessMode,
+  isBackgroundTaskPolicy,
   compileRunAccessMode,
   clampAccessMode,
+  clampBackgroundTaskPolicy,
 } from "../src/access-mode.js";
 
 describe("run access mode", () => {
@@ -12,18 +15,22 @@ describe("run access mode", () => {
     expect(compileRunAccessMode("read-only")).toEqual({
       permissionMode: "plan",
       shouldWrite: false,
+      backgroundTasks: "enabled",
     });
     expect(compileRunAccessMode("ask")).toEqual({
       permissionMode: "default",
       shouldWrite: true,
+      backgroundTasks: "enabled",
     });
     expect(compileRunAccessMode("accept-edits")).toEqual({
       permissionMode: "accept_edits",
       shouldWrite: true,
+      backgroundTasks: "enabled",
     });
     expect(compileRunAccessMode("bypass")).toEqual({
       permissionMode: "bypass_permissions",
       shouldWrite: true,
+      backgroundTasks: "enabled",
     });
   });
 
@@ -63,5 +70,22 @@ describe("run access mode", () => {
     expect(isRunAccessMode("dont_ask")).toBe(false);
     expect(isRunAccessMode("plan")).toBe(false);
     expect(isRunAccessMode(undefined)).toBe(false);
+  });
+
+  it("clamps background task policy down to the ceiling", () => {
+    expect(BACKGROUND_TASK_POLICY_RANK.disabled).toBeLessThan(
+      BACKGROUND_TASK_POLICY_RANK["foreground-only"],
+    );
+    expect(BACKGROUND_TASK_POLICY_RANK["foreground-only"]).toBeLessThan(
+      BACKGROUND_TASK_POLICY_RANK.enabled,
+    );
+    expect(clampBackgroundTaskPolicy("foreground-only", "enabled")).toBe(
+      "foreground-only",
+    );
+    expect(clampBackgroundTaskPolicy("enabled", "disabled")).toBe("disabled");
+    expect(clampBackgroundTaskPolicy(undefined, "enabled")).toBe("enabled");
+    expect(clampBackgroundTaskPolicy("disabled", undefined)).toBe("disabled");
+    expect(isBackgroundTaskPolicy("foreground-only")).toBe(true);
+    expect(isBackgroundTaskPolicy("background")).toBe(false);
   });
 });

@@ -29,9 +29,22 @@ describe("InMemorySkillUsageRecorder", () => {
     const r = new InMemorySkillUsageRecorder();
     const at = new Date("2026-01-01T00:00:00Z");
     r.recordUse("a", at);
-    r.recordUse("a", new Date("2026-01-02T00:00:00Z"));
-    expect(r.get("a")?.useCount).toBe(2);
-    expect(r.get("a")?.lastUsedAt).toBe("2026-01-02T00:00:00.000Z");
+    r.recordUse("a", new Date("2026-01-02T00:00:00Z"), "on_demand_tool");
+    r.recordUse("a", new Date("2026-01-03T00:00:00Z"), "resident_context");
+    expect(r.get("a")).toMatchObject({
+      useCount: 3,
+      explicitLoadCount: 1,
+      residentLoadCount: 1,
+    });
+    expect(r.get("a")?.lastUsedAt).toBe("2026-01-03T00:00:00.000Z");
+  });
+
+  it("keeps generic uses separate from load-mode counters", () => {
+    const r = new InMemorySkillUsageRecorder();
+    r.recordUse("a", new Date("2026-01-01T00:00:00Z"));
+    expect(r.get("a")?.useCount).toBe(1);
+    expect(r.get("a")?.explicitLoadCount).toBe(0);
+    expect(r.get("a")?.residentLoadCount).toBe(0);
   });
 
   it("reactivates a stale skill on use", () => {
@@ -88,13 +101,14 @@ describe("FileSkillUsageRecorder", () => {
     const dir = await mkdtemp(join(tmpdir(), "sparkwright-skill-usage-"));
     const path = join(dir, ".usage.json");
     const first = new FileSkillUsageRecorder({ path });
-    first.recordUse("a", new Date("2026-01-01T00:00:00Z"));
+    first.recordUse("a", new Date("2026-01-01T00:00:00Z"), "on_demand_tool");
     first.recordPatch("a", new Date("2026-01-02T00:00:00Z"));
     first.setState("a", "stale");
 
     const second = new FileSkillUsageRecorder({ path });
     expect(second.get("a")).toMatchObject({
       useCount: 1,
+      explicitLoadCount: 1,
       patchCount: 1,
       state: "stale",
     });
@@ -107,19 +121,21 @@ describe("FileSkillUsageRecorder", () => {
     const first = new FileSkillUsageRecorder({ path });
     const second = new FileSkillUsageRecorder({ path });
 
-    first.recordUse("a", new Date("2026-01-01T00:00:00Z"));
-    second.recordUse("b", new Date("2026-01-02T00:00:00Z"));
+    first.recordUse("a", new Date("2026-01-01T00:00:00Z"), "on_demand_tool");
+    second.recordUse("b", new Date("2026-01-02T00:00:00Z"), "resident_context");
     first.recordPatch("b", new Date("2026-01-03T00:00:00Z"));
-    second.recordUse("a", new Date("2026-01-04T00:00:00Z"));
+    second.recordUse("a", new Date("2026-01-04T00:00:00Z"), "on_demand_tool");
 
     const third = new FileSkillUsageRecorder({ path });
     expect(third.get("a")).toMatchObject({
       useCount: 2,
+      explicitLoadCount: 2,
       patchCount: 0,
       lastUsedAt: "2026-01-04T00:00:00.000Z",
     });
     expect(third.get("b")).toMatchObject({
       useCount: 1,
+      residentLoadCount: 1,
       patchCount: 1,
       lastUsedAt: "2026-01-02T00:00:00.000Z",
       lastPatchedAt: "2026-01-03T00:00:00.000Z",

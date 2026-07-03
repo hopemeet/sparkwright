@@ -10,7 +10,24 @@
       "costUnavailableReason": "missing_pricing"
     }
   },
-  "tools": [{ "name": "read_file", "risk": "safe", "deferred": false }],
+  "tools": [
+    {
+      "name": "read",
+      "canonicalName": "read",
+      "legacyNames": ["read_file"],
+      "defaultExposureTier": "public",
+      "source": "coding",
+      "governance": {
+        "origin": "local:@sparkwright/coding-tools",
+        "risk": "safe",
+        "requiresApproval": false,
+        "sideEffects": ["read"]
+      },
+      "effectiveLoading": "eager",
+      "risk": "safe",
+      "deferred": false
+    }
+  ],
   "skills": {
     "indexed": [],
     "loaded": []
@@ -68,7 +85,7 @@
         "name": "guard-shell",
         "source": "config",
         "lifecycle": "PreToolUse",
-        "matcher": "toolName=shell",
+        "matcher": "toolName=bash",
         "action": "block: Shell disabled for this project",
         "blockingPotential": true,
         "enabled": true,
@@ -82,7 +99,7 @@
         "name": "verification:fast:test",
         "source": "verification",
         "lifecycle": "PostToolUse",
-        "matcher": "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+        "matcher": "toolName=write|edit_anchored_text|edit; status=completed",
         "action": "command: npm test; injectOutput=onFailure",
         "blockingPotential": false,
         "enabled": true,
@@ -106,7 +123,7 @@
         "name": "record-tool",
         "source": "config",
         "trigger": "tool.completed",
-        "matcher": "toolName=shell",
+        "matcher": "toolName=bash",
         "action": "command: node; injectOutput=always",
         "blockingPotential": false,
         "enabled": true,
@@ -144,6 +161,7 @@
           "kind": "maintenance-check",
           "status": "failed",
           "title": "README maintenance",
+          "awaited": true,
           "parentRunId": "run_automation_snapshot",
           "createdAt": "2026-06-27T00:00:00.000Z",
           "completedAt": "2026-06-27T00:00:01.000Z",

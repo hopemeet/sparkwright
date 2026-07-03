@@ -31,7 +31,9 @@ import {
   type ModelInput,
   type ModelOutput,
   type ModelOutputChunk,
+  type NotificationSource,
   type ObservationFormatter,
+  type PendingNotification,
   type Policy,
   type PolicyDecision,
   type PolicyResource,
@@ -51,41 +53,6 @@ import {
   type ToolResult,
 } from "@sparkwright/core";
 import { EventLog as CoreEventLog } from "@sparkwright/core/internal";
-
-/**
- * Free-form payload injected into the next turn as a user-role context item.
- *
- * `content` is the visible text. `source` and `metadata` populate the trace
- * so notifications are debuggable without leaking into the prompt body.
- *
- * @public
- * @stability experimental v0.1
- */
-export interface PendingNotification {
-  content: string;
-  source?: { kind: string; uri?: string };
-  metadata?: Record<string, unknown>;
-}
-
-/**
- * Pluggable source of out-of-band signals the agent loop should see between
- * turns. The streaming runtime calls `drain()` at the start of every step;
- * returned items become user-role context items before the model runs.
- *
- * The source is expected to consume what it returns — the runtime will not
- * re-deliver the same items. Typical implementations: a TaskManager's
- * `InMemoryTaskNotificationQueue.drain()` mapped to {@link PendingNotification},
- * a Slack inbox poller, a webhook fan-in.
- *
- * Sources MUST be safe to call repeatedly and SHOULD return synchronously
- * when nothing is queued (`drain()` is in the hot path of every turn).
- *
- * @public
- * @stability experimental v0.1
- */
-export interface NotificationSource {
-  drain(): PendingNotification[] | Promise<PendingNotification[]>;
-}
 
 export interface CreateStreamingRunOptions {
   goal: string;

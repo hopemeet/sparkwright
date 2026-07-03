@@ -14,7 +14,9 @@ import {
 } from "@sparkwright/core";
 import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
+import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import type { Connection } from "../src/connection.js";
+import { skillUsagePath } from "../src/index.js";
 import { serveConnection } from "../src/server.js";
 import { HostRuntime } from "../src/runtime.js";
 
@@ -163,6 +165,31 @@ async function readFileWhenReady(
   }
 }
 
+async function waitForAgentTaskTerminal(
+  runtime: HostRuntime,
+  timeoutMs = 12000,
+): Promise<ReturnType<HostRuntime["listTasks"]>["tasks"][number]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const listed = runtime.listTasks({ kind: "agent", limit: 10 });
+    const task = listed.tasks.find((candidate) => candidate.kind === "agent");
+    if (
+      task &&
+      (task.status === "completed" ||
+        task.status === "failed" ||
+        task.status === "cancelled")
+    ) {
+      return task;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `timed out after ${timeoutMs}ms waiting for agent task terminal state`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 describe("host protocol", () => {
   it("rejects requests before handshake", async () => {
     const pair = createConnectionPair();
@@ -297,6 +324,213 @@ describe("host protocol", () => {
       ok: false,
       error: { code: "invalid_payload" },
     });
+  });
+
+  it("serves durable task list/get/output requests", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-host-tasks-"));
+    const pair = createConnectionPair();
+    try {
+      const taskStore = new FileTaskStore({
+        rootDir: join(workspace, ".sparkwright", "tasks"),
+      });
+      const taskId = createTaskId();
+      taskStore.create({
+        id: taskId,
+        parentRunId: "run_task_parent" as RunId,
+        kind: "shell.promoted",
+        title: "background shell",
+        metadata: { command: "node bg.js" },
+      });
+      taskStore.update(taskId, {
+        status: "running",
+        startedAt: "2026-06-30T00:00:00.000Z",
+      });
+      taskStore.appendOutput(taskId, {
+        taskId,
+        timestamp: "2026-06-30T00:00:01.000Z",
+        channel: "stdout",
+        data: "tick 1\n",
+      });
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+      const ready = await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "host.ready",
+      );
+      expect(ready).toMatchObject({
+        payload: {
+          capabilities: expect.arrayContaining([
+            "task.list",
+            "task.get",
+            "task.output",
+            "task.stop",
+            "task.join",
+            "task.promote",
+          ]),
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_list",
+        kind: "task.list",
+        timestamp: TIMESTAMP,
+        payload: { status: "running", limit: 10 },
+      });
+      const listResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_list",
+      );
+      expect(listResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          tasks: [
+            expect.objectContaining({
+              id: taskId,
+              kind: "shell.promoted",
+              status: "running",
+            }),
+          ],
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_get",
+        kind: "task.get",
+        timestamp: TIMESTAMP,
+        payload: { taskId },
+      });
+      const getResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_get",
+      );
+      expect(getResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          id: taskId,
+          parentRunId: "run_task_parent",
+          metadata: { command: "node bg.js" },
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_output",
+        kind: "task.output",
+        timestamp: TIMESTAMP,
+        payload: { taskId, fromSequence: 0, maxChunks: 1 },
+      });
+      const outputResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_output",
+      );
+      expect(outputResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          taskId,
+          chunks: [
+            expect.objectContaining({
+              sequence: 0,
+              channel: "stdout",
+              data: "tick 1\n",
+            }),
+          ],
+          nextSequence: 1,
+          complete: false,
+          status: "running",
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_join",
+        kind: "task.join",
+        timestamp: TIMESTAMP,
+        payload: { taskId },
+      });
+      const joinResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_join",
+      );
+      expect(joinResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          taskId,
+          awaited: true,
+          status: "running",
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_promote",
+        kind: "task.promote",
+        timestamp: TIMESTAMP,
+        payload: { taskId },
+      });
+      const promoteResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_promote",
+      );
+      expect(promoteResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          taskId,
+          promoted: false,
+          awaited: true,
+          status: "running",
+        },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_missing",
+        kind: "task.get",
+        timestamp: TIMESTAMP,
+        payload: { taskId: "task_missing" },
+      });
+      const missingResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_missing",
+      );
+      expect(missingResp).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "task_not_found" },
+      });
+
+      pair.clientSend({
+        envelope: "request",
+        id: "task_bad_output",
+        kind: "task.output",
+        timestamp: TIMESTAMP,
+        payload: { taskId, fromSequence: -1 },
+      } as unknown as HostMessage);
+      const badOutputResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "task_bad_output",
+      );
+      expect(badOutputResp).toMatchObject({
+        envelope: "response",
+        ok: false,
+        error: { code: "invalid_payload" },
+      });
+    } finally {
+      pair.close();
+      await rmWhenReady(workspace);
+    }
   });
 
   it("accepts run.start accessMode and runs to completion", async () => {
@@ -862,7 +1096,7 @@ describe("host protocol", () => {
         risk: "safe",
       });
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      await rmWhenReady(workspace);
     }
   });
 
@@ -920,7 +1154,7 @@ describe("host protocol", () => {
         ]),
       );
     } finally {
-      await rm(workspace, { recursive: true, force: true });
+      await rmWhenReady(workspace);
     }
   });
 
@@ -1010,8 +1244,7 @@ describe("host protocol", () => {
             name: "verification:fast:test",
             source: "verification",
             lifecycle: "PostToolUse",
-            matcher:
-              "toolName=write_file|edit_anchored_text|apply_patch; status=completed",
+            matcher: "toolName=write|edit_anchored_text|edit; status=completed",
             action: "command: npm test; injectOutput=onFailure",
             blockingPotential: false,
             enabled: true,
@@ -1604,6 +1837,86 @@ describe("host protocol", () => {
     }
   });
 
+  it("fails orphaned in-process awaited tasks before resuming a run", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-resume-orphan-"),
+    );
+    const sessionId = "sess_resume_orphan_test";
+    const runId = "run_resume_orphan_test";
+    const runDir = join(
+      workspace,
+      ".sparkwright",
+      "sessions",
+      sessionId,
+      "agents",
+      "main",
+      "runs",
+      runId,
+    );
+    await mkdir(runDir, { recursive: true });
+    await writeFile(
+      join(runDir, "checkpoint.json"),
+      checkpointJson({ runId, goal: "resume with orphaned task" }),
+      "utf8",
+    );
+    const taskRoot = join(workspace, ".sparkwright", "tasks");
+    const taskStore = new FileTaskStore({ rootDir: taskRoot });
+    const taskId = createTaskId();
+    taskStore.create({
+      id: taskId,
+      parentRunId: runId as RunId,
+      kind: "agent",
+      title: "orphaned awaited agent",
+      awaited: true,
+      metadata: { source: "previous-host-process" },
+    });
+    taskStore.update(taskId, {
+      status: "running",
+      startedAt: "2026-06-30T00:00:00.000Z",
+    });
+
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    });
+    try {
+      const resumed = await runtime.resumeRun({ runId, sessionId });
+      expect(resumed).toMatchObject({
+        ok: true,
+        runId,
+        resumedFromRunId: runId,
+        sessionId,
+      });
+
+      const reopened = new FileTaskStore({ rootDir: taskRoot });
+      expect(reopened.get(taskId)).toMatchObject({
+        status: "failed",
+        error: {
+          code: "TASK_ORPHANED_IN_PROCESS",
+          message: expect.stringContaining("cannot survive host exit"),
+        },
+      });
+      const traceText = await readFileWhenReady(
+        join(workspace, ".sparkwright", "sessions", sessionId, "trace.jsonl"),
+        "run.notification.injected",
+      );
+      const traceEvents = traceText
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as SparkwrightEvent);
+      expect(
+        traceEvents.some(
+          (event) =>
+            event.runId === runId && event.type === "run.notification.injected",
+        ),
+      ).toBe(true);
+    } finally {
+      runtime.cleanup();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("resumes a legacy run directory into a new host-owned session", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-resume-legacy-"),
@@ -1891,13 +2204,13 @@ describe("host protocol", () => {
                 {
                   id: "main",
                   mode: "primary",
-                  allowedTools: ["read_file"],
+                  allowedTools: ["read"],
                 },
                 {
                   id: "reviewer",
                   name: "Reviewer",
                   mode: "child",
-                  allowedTools: ["read_file"],
+                  allowedTools: ["read"],
                 },
               ],
               delegateTools: [
@@ -1969,6 +2282,14 @@ describe("host protocol", () => {
       expect(events.some((event) => event.type === "mcp.server.prepared")).toBe(
         true,
       );
+      expect(
+        new FileSkillUsageRecorder({ path: skillUsagePath(workspace) }).get(
+          "reviewer",
+        ),
+      ).toMatchObject({
+        useCount: 1,
+        residentLoadCount: 1,
+      });
       expect(
         events.some(
           (event) =>
@@ -2227,10 +2548,10 @@ describe("host protocol", () => {
             resp.result as { skills: { indexed: Array<{ name: string }> } }
           ).skills.indexed.some((skill) => skill.name === "reviewer"),
         ).toBe(true);
-        expect(tools.find((tool) => tool.name === "read_file")).toMatchObject({
+        expect(tools.find((tool) => tool.name === "read")).toMatchObject({
           origin: "local:@sparkwright/coding-tools",
         });
-        expect(tools.some((tool) => tool.name === "read_file")).toBe(true);
+        expect(tools.some((tool) => tool.name === "read")).toBe(true);
         expect(tools.some((tool) => tool.name === "delegate_agent")).toBe(true);
         expect(tools.some((tool) => tool.name === "delegate_reviewer")).toBe(
           false,
@@ -2447,7 +2768,7 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               reason: "exercise approval trace",
@@ -2572,7 +2893,7 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               reason: "delegate write regression",
@@ -2609,7 +2930,7 @@ describe("host protocol", () => {
                   mode: "child",
                   prompt: "Apply the requested workspace patch.",
                   use: ["workspace.write"],
-                  allowedTools: ["apply_patch"],
+                  allowedTools: ["edit"],
                   maxSteps: 3,
                 },
               ],
@@ -2729,12 +3050,20 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
+            toolName: "tool_search",
+            arguments: { query: "select:spawn_agent" },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
             toolName: "spawn_agent",
             arguments: {
               goal: "Read README.md.",
               role: "reader",
               prompt: "Read only.",
-              allowedTools: ["read_file"],
+              allowedTools: ["read"],
               maxSteps: 2,
             },
           },
@@ -2828,7 +3157,7 @@ describe("host protocol", () => {
       {
         toolCalls: [
           {
-            toolName: "shell",
+            toolName: "bash",
             arguments: { command: "printf child-shell" },
           },
         ],
@@ -2853,7 +3182,7 @@ describe("host protocol", () => {
                   mode: "child",
                   prompt: "Run the requested shell command.",
                   use: ["shell"],
-                  allowedTools: ["shell"],
+                  allowedTools: ["bash"],
                   maxSteps: 4,
                 },
               ],
@@ -2909,7 +3238,7 @@ describe("host protocol", () => {
       }
       expect(approval.payload).toMatchObject({
         details: {
-          toolName: "shell",
+          toolName: "bash",
           arguments: { command: "printf child-shell" },
         },
       });
@@ -2944,7 +3273,7 @@ describe("host protocol", () => {
         ),
         "child-shell",
       );
-      expect(childTrace).toContain('"toolName":"shell"');
+      expect(childTrace).toContain('"toolName":"bash"');
       expect(childTrace).toContain("child-shell");
     } finally {
       pair.close();
@@ -3026,6 +3355,148 @@ describe("host protocol", () => {
     expect(runEvents.length).toBeGreaterThan(0);
   });
 
+  it("starts a background agent through the real task_create tool", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-agent-task-create-"),
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "task_create",
+            arguments: {
+              kind: "agent",
+              title: "background repo inspection",
+              payload: {
+                goal: "Inspect the repository in the background.",
+                role: "background-inspector",
+                prompt: "Return one concise sentence.",
+                allowedTools: ["glob"],
+                maxSteps: 1,
+              },
+            },
+          },
+        ],
+      },
+      { message: "scripted background agent completed." },
+      { message: "parent launched the background agent." },
+      { message: "scripted fallback completed." },
+    ]);
+
+    let resolveTerminal!: (event: HostMessage) => void;
+    const terminal = new Promise<HostMessage>((resolve) => {
+      resolveTerminal = resolve;
+    });
+    let resolveApprovalRequest!: (approvalId: string) => void;
+    const approvalRequest = new Promise<string>((resolve) => {
+      resolveApprovalRequest = resolve;
+    });
+    const emitted: HostMessage[] = [];
+    let runtime: HostRuntime | undefined;
+    try {
+      await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+      runtime = new HostRuntime({
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+        emit: (event) => {
+          emitted.push(event);
+          if (
+            event.kind === "approval.requested" &&
+            typeof event.payload.approvalId === "string"
+          ) {
+            resolveApprovalRequest(event.payload.approvalId);
+          }
+          if (event.kind === "run.completed" || event.kind === "run.failed") {
+            resolveTerminal(event);
+          }
+        },
+      });
+
+      const started = await runtime.startRun({
+        goal: "launch a background agent task",
+        model: "scripted",
+        accessMode: "bypass",
+      });
+      expect(started).toMatchObject({ ok: true });
+      if (!started.ok) throw new Error(started.error.message);
+
+      const approvalId = await approvalRequest;
+      expect(
+        runtime.resolveApproval(
+          approvalId,
+          "approved",
+          "Approved task_create for background agent test.",
+          true,
+        ),
+      ).toMatchObject({ ok: true });
+
+      const completed = await terminal;
+      expect(completed).toMatchObject({
+        envelope: "event",
+        kind: "run.completed",
+        payload: { state: "completed" },
+      });
+
+      const task = await waitForAgentTaskTerminal(runtime);
+      expect(task).toMatchObject({
+        kind: "agent",
+        status: "completed",
+        title: "background repo inspection",
+      });
+      const output = await runtime.readTaskOutput({
+        taskId: task.id,
+        maxChunks: 10,
+      });
+      expect(output).toMatchObject({
+        ok: true,
+        status: "completed",
+        complete: true,
+      });
+      if (!output.ok) throw new Error(output.error.message);
+      const summary = JSON.parse(output.chunks[0]?.data ?? "{}") as {
+        type?: string;
+        childRunId?: string;
+        agentId?: string;
+        finality?: string;
+      };
+      expect(summary).toMatchObject({
+        type: "agent.completed",
+        agentId: "dynamic_background-inspector",
+      });
+      expect(summary.childRunId).toMatch(/^run_/);
+      expect(["complete", "partial"]).toContain(summary.finality);
+
+      const runEvents = emitted
+        .filter(
+          (event) => event.envelope === "event" && event.kind === "run.event",
+        )
+        .map((event) => event.payload.event as SparkwrightEvent);
+      expect(
+        runEvents.some(
+          (event) =>
+            event.type === "tool.completed" &&
+            (event.payload as { toolName?: string }).toolName === "task_create",
+        ),
+      ).toBe(true);
+      expect(
+        runEvents.some(
+          (event) =>
+            event.type === "subagent.completed" &&
+            (event.metadata as { entrypoint?: string }).entrypoint ===
+              "agent_task",
+        ),
+      ).toBe(true);
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("runs required verification after workspace writes before final answer", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-verification-"),
@@ -3039,7 +3510,7 @@ describe("host protocol", () => {
         message: "write then verify",
         toolCalls: [
           {
-            toolName: "apply_patch",
+            toolName: "edit",
             arguments: {
               path: "README.md",
               reason: "Add verified section",

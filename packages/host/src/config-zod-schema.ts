@@ -1,5 +1,6 @@
 import {
   ACCESS_MODES,
+  BACKGROUND_TASK_POLICIES,
   PERMISSION_MODES,
   TRACE_LEVELS,
 } from "@sparkwright/protocol";
@@ -44,6 +45,13 @@ const accessModeSchema = z
     "High-level run autonomy preset. The single user-facing access knob; compiles internally to permissionMode + write capability. read-only=plan/no-write, ask=approve writes, accept-edits=auto-accept edits, bypass=auto-approve.",
   );
 export const ACCESS_MODE_CONFIG_VALUES = accessModeSchema.options;
+const backgroundTasksSchema = z
+  .enum(BACKGROUND_TASK_POLICIES)
+  .describe(
+    "Session-level foreground/background task policy. enabled allows task promotion and detached tasks; foreground-only forces task_create to wait inline; disabled rejects new task_create work.",
+  );
+export const BACKGROUND_TASK_POLICY_CONFIG_VALUES =
+  backgroundTasksSchema.options;
 const traceLevelSchema = z
   .enum(TRACE_LEVELS)
   .describe(
@@ -921,6 +929,12 @@ export const agentsConfigSchema = z
         "Global sub-agent depth ceiling. 0 disables sub-agent spawning.",
       )
       .optional(),
+    allowNestedBackgroundTasks: z
+      .boolean()
+      .describe(
+        "Opt-in: allow sub-agents to create awaited/background agent tasks, bounded by maxDepth.",
+      )
+      .optional(),
   })
   .strict()
   .describe("Agent profile run templates for host-created runs.");
@@ -992,6 +1006,7 @@ export const POLICY_GROUP_CONFIG_KEYS = policyGroupSchema.keyof().options;
 export const runGroupSchema = z
   .object({
     accessMode: accessModeSchema.optional(),
+    backgroundTasks: backgroundTasksSchema.optional(),
     budget: runBudgetSchema.optional(),
     maxSteps: maxStepsSchema.optional(),
     traceLevel: traceLevelSchema.optional(),
@@ -999,7 +1014,7 @@ export const runGroupSchema = z
   })
   .strict()
   .describe(
-    "Preferred grouping for run-shaping defaults. Flattens to accessMode/runBudget/maxSteps/traceLevel/approvals.",
+    "Preferred grouping for run-shaping defaults. Flattens to accessMode/backgroundTasks/runBudget/maxSteps/traceLevel/approvals.",
   );
 export const RUN_GROUP_CONFIG_KEYS = runGroupSchema.keyof().options;
 
@@ -1031,6 +1046,7 @@ export const CONFIG_GROUP_FIELD_MAP = {
   },
   run: {
     accessMode: "accessMode",
+    backgroundTasks: "backgroundTasks",
     budget: "runBudget",
     maxSteps: "maxSteps",
     traceLevel: "traceLevel",
@@ -1054,6 +1070,7 @@ export const sparkwrightConfigZodSchema = z
     model: modelSchema.optional(),
     providers: providersSchema.optional(),
     accessMode: accessModeSchema.optional(),
+    backgroundTasks: backgroundTasksSchema.optional(),
     workspace: workspaceSchema.optional(),
     confidentialPaths: confidentialPathsSchema.optional(),
     write: writeGuardrailsSchema.optional(),

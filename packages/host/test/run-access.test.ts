@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ACCESS_MODES as CORE_ACCESS_MODES } from "@sparkwright/core";
+import {
+  ACCESS_MODES as CORE_ACCESS_MODES,
+  BACKGROUND_TASK_POLICIES as CORE_BACKGROUND_TASK_POLICIES,
+} from "@sparkwright/core";
 import {
   ACCESS_MODES as PROTOCOL_ACCESS_MODES,
+  BACKGROUND_TASK_POLICIES as PROTOCOL_BACKGROUND_TASK_POLICIES,
   isRunAccessMode,
   type RunStartRequestPayload,
 } from "@sparkwright/protocol";
@@ -13,6 +17,9 @@ import {
 describe("run access resolution", () => {
   it("keeps the protocol wire mirror in sync with core", () => {
     expect([...PROTOCOL_ACCESS_MODES]).toEqual([...CORE_ACCESS_MODES]);
+    expect([...PROTOCOL_BACKGROUND_TASK_POLICIES]).toEqual([
+      ...CORE_BACKGROUND_TASK_POLICIES,
+    ]);
     for (const mode of CORE_ACCESS_MODES) {
       expect(isRunAccessMode(mode)).toBe(true);
     }
@@ -30,6 +37,7 @@ describe("run access resolution", () => {
     expect(resolved).toEqual({
       permissionMode: "plan",
       shouldWrite: false,
+      backgroundTasks: "enabled",
       accessMode: "read-only",
       overriddenLegacyFields: ["permissionMode", "shouldWrite"],
     });
@@ -46,12 +54,14 @@ describe("run access resolution", () => {
     expect(resolved.overriddenLegacyFields).toEqual([]);
     expect(resolved.permissionMode).toBe("default");
     expect(resolved.shouldWrite).toBe(true);
+    expect(resolved.backgroundTasks).toBe("enabled");
   });
 
   it("falls back to legacy permissionMode/shouldWrite resolution when accessMode is absent", () => {
     expect(resolveRunAccessFields({ goal: "g" }, {})).toEqual({
       permissionMode: "default",
       shouldWrite: true,
+      backgroundTasks: "enabled",
       overriddenLegacyFields: [],
     });
     // plan with no explicit shouldWrite stays read-only (legacy behavior).
@@ -60,6 +70,7 @@ describe("run access resolution", () => {
     ).toEqual({
       permissionMode: "plan",
       shouldWrite: false,
+      backgroundTasks: "enabled",
       overriddenLegacyFields: [],
     });
     // host default permission/write still apply.
@@ -71,6 +82,7 @@ describe("run access resolution", () => {
     ).toEqual({
       permissionMode: "accept_edits",
       shouldWrite: false,
+      backgroundTasks: "enabled",
       overriddenLegacyFields: [],
     });
   });
@@ -84,6 +96,7 @@ describe("run access resolution", () => {
     expect(resolved).toEqual({
       permissionMode: "default",
       shouldWrite: true,
+      backgroundTasks: "enabled",
       accessMode: "ask",
       requestedAccessMode: "bypass",
       accessModeCeiling: "ask",
@@ -105,6 +118,7 @@ describe("run access resolution", () => {
     ).toEqual({
       permissionMode: "plan",
       shouldWrite: false,
+      backgroundTasks: "enabled",
       accessMode: "read-only",
       requestedAccessMode: "bypass",
       accessModeCeiling: "read-only",
@@ -117,6 +131,7 @@ describe("run access resolution", () => {
       buildAccessMetadata({
         permissionMode: "default",
         shouldWrite: true,
+        backgroundTasks: "enabled",
         overriddenLegacyFields: [],
       }),
     ).toEqual({});
@@ -124,6 +139,7 @@ describe("run access resolution", () => {
       buildAccessMetadata({
         permissionMode: "default",
         shouldWrite: true,
+        backgroundTasks: "enabled",
         accessMode: "ask",
         overriddenLegacyFields: [],
       }),
@@ -132,12 +148,34 @@ describe("run access resolution", () => {
       buildAccessMetadata({
         permissionMode: "plan",
         shouldWrite: false,
+        backgroundTasks: "enabled",
         accessMode: "read-only",
         overriddenLegacyFields: ["shouldWrite"],
       }),
     ).toEqual({
       accessMode: "read-only",
       accessModeOverrodeLegacyFields: ["shouldWrite"],
+    });
+  });
+
+  it("resolves and records background task policy clamps", () => {
+    const resolved = resolveRunAccessFields(
+      { goal: "g", backgroundTasks: "enabled" },
+      { backgroundTasksCeiling: "foreground-only" },
+    );
+
+    expect(resolved).toEqual({
+      permissionMode: "default",
+      shouldWrite: true,
+      backgroundTasks: "foreground-only",
+      requestedBackgroundTasks: "enabled",
+      backgroundTasksCeiling: "foreground-only",
+      overriddenLegacyFields: [],
+    });
+    expect(buildAccessMetadata(resolved)).toEqual({
+      backgroundTasks: "foreground-only",
+      requestedBackgroundTasks: "enabled",
+      backgroundTasksCeiling: "foreground-only",
     });
   });
 });

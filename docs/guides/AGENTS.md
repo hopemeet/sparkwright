@@ -186,7 +186,7 @@ alias for `deniedTools`.
 ---
 name: Narrow reader
 use: [workspace.read]
-allowedTools: [read_file, glob]
+allowedTools: [read, glob]
 ---
 ```
 
@@ -203,10 +203,10 @@ in-process child run:
 name: DB Reader
 description: Execute read-only database queries.
 model: openai/gpt-5.4-mini
-use: [workspace.read, shell]
+use: [workspace.read, bash]
 hooks:
   PreToolUse:
-    - matcher: shell
+    - matcher: bash
       action:
         type: command
         command: ./scripts/validate-readonly-query.sh
@@ -218,7 +218,7 @@ hooks:
 Answer database questions with read-only commands.
 ```
 
-`matcher: shell` is shorthand for `{ toolName: "shell" }`; object matchers use
+`matcher: bash` is shorthand for `{ toolName: "bash" }`; object matchers use
 the same workflow matcher fields as project workflow hooks. Canonical lifecycle
 names are `RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`, `PostToolUse`,
 `Stop`, `RunEnd`, and `RuntimeSignal`.

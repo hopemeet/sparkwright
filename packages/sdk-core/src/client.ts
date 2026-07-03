@@ -16,6 +16,12 @@ import {
   type SessionCompactRequestPayload,
   type SessionInspectRequestPayload,
   type CapabilityInspectRequestPayload,
+  type TaskGetRequestPayload,
+  type TaskJoinRequestPayload,
+  type TaskListRequestPayload,
+  type TaskOutputRequestPayload,
+  type TaskPromoteRequestPayload,
+  type TaskStopRequestPayload,
 } from "@sparkwright/protocol";
 import { TypedEmitter } from "./emitter.js";
 import type { ClientTransport } from "./transport.js";
@@ -359,6 +365,60 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "session.compact",
       payload as unknown as Record<string, unknown>,
     ) as Promise<ResponseResults["session.compact"]>;
+  }
+
+  listTasks(
+    payload: TaskListRequestPayload = {},
+  ): Promise<ResponseResults["task.list"]> {
+    return this.request(
+      "task.list",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["task.list"]>;
+  }
+
+  getTask(
+    payload: TaskGetRequestPayload,
+  ): Promise<ResponseResults["task.get"]> {
+    return this.request(
+      "task.get",
+      payload as unknown as Record<string, unknown>,
+    ) as unknown as Promise<ResponseResults["task.get"]>;
+  }
+
+  outputTask(
+    payload: TaskOutputRequestPayload,
+  ): Promise<ResponseResults["task.output"]> {
+    return this.request(
+      "task.output",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["task.output"]>;
+  }
+
+  stopTask(
+    payload: TaskStopRequestPayload,
+  ): Promise<ResponseResults["task.stop"]> {
+    return this.request(
+      "task.stop",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["task.stop"]>;
+  }
+
+  joinTask(
+    payload: TaskJoinRequestPayload,
+  ): Promise<ResponseResults["task.join"]> {
+    return this.request(
+      "task.join",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["task.join"]>;
+  }
+
+  promoteTask(
+    payload: TaskPromoteRequestPayload,
+  ): Promise<ResponseResults["task.promote"]> {
+    return this.request(
+      "task.promote",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["task.promote"]>;
   }
 
   inspectCapabilities(

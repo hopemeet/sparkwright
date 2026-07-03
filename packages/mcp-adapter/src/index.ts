@@ -116,12 +116,27 @@ export type McpStatus =
       status: "failed";
       error: string;
       errorCode?: McpPrepareErrorCode;
+      category?: McpDiagnosticCategory;
       phase?: McpPreparePhase;
+      serverName?: string;
+      nextAction?: string;
+      retryable?: boolean;
       timeoutMs?: number;
       durationMs?: number;
     };
 
 export type McpPreparePhase = "policy" | "connect" | "list_tools";
+
+export type McpDiagnosticPhase = McpPreparePhase | "call_tool";
+
+export type McpDiagnosticCategory =
+  | "command_not_found"
+  | "connect_failed"
+  | "list_tools_failed"
+  | "timeout"
+  | "sandbox_unavailable"
+  | "tool_not_found"
+  | "prepare_denied";
 
 export type McpPrepareErrorCode =
   | "MCP_SERVER_PREPARE_DENIED"
@@ -131,6 +146,16 @@ export type McpPrepareErrorCode =
   | "MCP_SERVER_CONNECT_FAILED"
   | "MCP_SERVER_LIST_TOOLS_FAILED"
   | "MCP_SERVER_PREPARE_FAILED";
+
+type McpFailedStatus = Extract<McpStatus, { status: "failed" }>;
+
+interface McpDiagnostic {
+  category: McpDiagnosticCategory;
+  phase: McpDiagnosticPhase;
+  serverName: string;
+  nextAction: string;
+  retryable: boolean;
+}
 
 export interface McpToolNameMapping {
   toolName: string;
@@ -448,18 +473,26 @@ export function createLazyMcpToolsForRun(
               candidate.toolName === parsed.toolName,
           );
           if (!mapping) {
+            const diagnostic = mcpToolNotFoundDiagnostic({
+              serverName: name,
+              listToolName,
+            });
             throw {
               code: "MCP_TOOL_NOT_FOUND",
               message:
                 `MCP server "${name}" does not expose tool "${parsed.toolName}". ` +
-                `Call ${listToolName} to inspect available tools.`,
+                diagnostic.nextAction,
               metadata: {
                 serverName: name,
                 requestedToolName: parsed.toolName,
-                availableTools: prepared.toolNameMap.map((tool) => ({
-                  toolName: tool.toolName,
-                  mcpToolName: tool.mcpToolName,
-                })),
+                phase: diagnostic.phase,
+                category: diagnostic.category,
+                nextAction: diagnostic.nextAction,
+                retryable: diagnostic.retryable,
+                availableToolCount: prepared.toolNameMap.length,
+                availableTools: summarizeAvailableMcpTools(
+                  prepared.toolNameMap,
+                ),
               },
             };
           }
@@ -566,7 +599,11 @@ function lazyListToolsResult(
           error: {
             code: prepared.status.errorCode,
             message: prepared.status.error,
+            category: prepared.status.category,
             phase: prepared.status.phase,
+            serverName: prepared.name,
+            nextAction: prepared.status.nextAction,
+            retryable: prepared.status.retryable,
           },
         }
       : {}),
@@ -644,10 +681,17 @@ function emitMcpServerPreparedEvents(
           ? {
               errorCode: failure.errorCode,
               errorPhase: failure.phase,
+              errorCategory: failure.category,
+              nextAction: failure.nextAction,
+              retryable: failure.retryable,
               error: {
                 code: failure.errorCode,
                 message: failure.error,
+                category: failure.category,
                 phase: failure.phase,
+                serverName: server.name,
+                nextAction: failure.nextAction,
+                retryable: failure.retryable,
               },
             }
           : {}),
@@ -663,6 +707,9 @@ function emitMcpServerPreparedEvents(
               error: server.status.error,
               errorCode: server.status.errorCode,
               errorPhase: server.status.phase,
+              errorCategory: server.status.category,
+              nextAction: server.status.nextAction,
+              retryable: server.status.retryable,
               timeoutMs: server.status.timeoutMs,
               durationMs: server.status.durationMs,
             }
@@ -709,14 +756,14 @@ export async function prepareMcpServer(
     if (serverDecision.decision !== "allow") {
       return {
         name,
-        status: {
-          status: "failed",
+        status: createMcpFailedStatus({
+          serverName: name,
           error: `MCP server preparation ${serverDecision.decision}: ${serverDecision.reason}`,
           errorCode: "MCP_SERVER_PREPARE_DENIED",
           phase,
           timeoutMs,
           durationMs: Date.now() - startedAt,
-        },
+        }),
         tools: [],
         toolNameMap: [],
         sandbox,
@@ -831,8 +878,8 @@ export async function prepareMcpServer(
       cause instanceof McpSandboxUnavailableError ? cause.sandbox : undefined;
     return {
       name,
-      status: {
-        status: "failed",
+      status: createMcpFailedStatus({
+        serverName: name,
         // Connection failures can echo back auth headers / tokens; strip them
         // before the message reaches logs, traces, or the model.
         error: error.message,
@@ -840,7 +887,7 @@ export async function prepareMcpServer(
         phase,
         timeoutMs,
         durationMs: Date.now() - startedAt,
-      },
+      }),
       tools: [],
       toolNameMap: [],
       sandbox: sandbox ?? causeSandbox,
@@ -964,6 +1011,137 @@ export function mcpToolToToolDefinition(input: {
       }
     },
   });
+}
+
+function createMcpFailedStatus(input: {
+  serverName: string;
+  error: string;
+  errorCode: McpPrepareErrorCode;
+  phase: McpPreparePhase;
+  timeoutMs?: number;
+  durationMs?: number;
+}): McpFailedStatus {
+  const diagnostic = mcpDiagnosticForPrepareFailure({
+    serverName: input.serverName,
+    errorCode: input.errorCode,
+    phase: input.phase,
+  });
+  return {
+    status: "failed",
+    error: input.error,
+    errorCode: input.errorCode,
+    category: diagnostic.category,
+    phase: input.phase,
+    serverName: input.serverName,
+    nextAction: diagnostic.nextAction,
+    retryable: diagnostic.retryable,
+    timeoutMs: input.timeoutMs,
+    durationMs: input.durationMs,
+  };
+}
+
+function mcpDiagnosticForPrepareFailure(input: {
+  serverName: string;
+  errorCode?: McpPrepareErrorCode;
+  phase: McpPreparePhase;
+}): McpDiagnostic {
+  switch (input.errorCode) {
+    case "MCP_SERVER_COMMAND_NOT_FOUND":
+      return {
+        category: "command_not_found",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: false,
+        nextAction:
+          "Install the configured command or update the server command path.",
+      };
+    case "MCP_SERVER_CONNECT_FAILED":
+      return {
+        category: "connect_failed",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: true,
+        nextAction:
+          "Check server startup, transport settings, and stderr, then retry.",
+      };
+    case "MCP_SERVER_LIST_TOOLS_FAILED":
+      return {
+        category: "list_tools_failed",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: true,
+        nextAction:
+          "Prepare the server again and inspect list-tools support if it repeats.",
+      };
+    case "MCP_SERVER_PREPARE_TIMEOUT":
+      return {
+        category: "timeout",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: true,
+        nextAction:
+          "Increase the server timeout or inspect startup/list-tools latency, then retry.",
+      };
+    case "MCP_SERVER_SANDBOX_UNAVAILABLE":
+      return {
+        category: "sandbox_unavailable",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: false,
+        nextAction:
+          "Adjust sandbox settings or run on a host with the requested sandbox runtime.",
+      };
+    case "MCP_SERVER_PREPARE_DENIED":
+      return {
+        category: "prepare_denied",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: false,
+        nextAction:
+          "Update the server policy or configuration before preparing this server.",
+      };
+    case "MCP_SERVER_PREPARE_FAILED":
+    default:
+      return {
+        category:
+          input.phase === "list_tools"
+            ? "list_tools_failed"
+            : input.phase === "policy"
+              ? "prepare_denied"
+              : "connect_failed",
+        phase: input.phase,
+        serverName: input.serverName,
+        retryable: input.phase !== "policy",
+        nextAction:
+          input.phase === "list_tools"
+            ? "Prepare the server again and inspect list-tools support if it repeats."
+            : input.phase === "policy"
+              ? "Inspect server policy evaluation and configuration."
+              : "Check server startup, transport settings, and stderr, then retry.",
+      };
+  }
+}
+
+function mcpToolNotFoundDiagnostic(input: {
+  serverName: string;
+  listToolName: string;
+}): McpDiagnostic {
+  return {
+    category: "tool_not_found",
+    phase: "call_tool",
+    serverName: input.serverName,
+    retryable: false,
+    nextAction: `Call ${input.listToolName} to inspect available tools, then retry with one of those tool names.`,
+  };
+}
+
+function summarizeAvailableMcpTools(
+  tools: readonly McpToolNameMapping[],
+): Array<{ toolName: string; mcpToolName: string }> {
+  return tools.slice(0, 20).map((tool) => ({
+    toolName: tool.toolName,
+    mcpToolName: tool.mcpToolName,
+  }));
 }
 
 function classifyMcpPrepareFailure(

@@ -52,6 +52,7 @@ export {
   resolveSelectorAllowlist,
   shouldAppendDiscoveryTool,
 } from "./tool-selectors.js";
+export { canonicalToolName, normalizeToolNameList } from "./tool-identities.js";
 export type { ToolSelectorCatalogEntry } from "./tool-selectors.js";
 export {
   bindConfiguredEventHooks,
@@ -124,6 +125,20 @@ export type {
   SkillStatsReport,
   SkillStatsWindow,
 } from "./skill-stats.js";
+export { collectSkillReviewDigest } from "./skill-review-digest.js";
+export type {
+  SkillReviewDigest,
+  SkillReviewDigestItem,
+  SkillReviewDigestItemKind,
+  SkillReviewDigestOptions,
+  SkillReviewDigestSeverity,
+} from "./skill-review-digest.js";
+export {
+  createSkillUsageRecorder,
+  observeSkillUsageEvent,
+  recordSkillPatch,
+  skillUsagePath,
+} from "./skill-usage.js";
 export { createFileCapabilityPackageWriter } from "./capability-package-mutation.js";
 export type {
   CapabilityPackageMutationAction,

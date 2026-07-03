@@ -38,6 +38,12 @@ import {
   isToolUseSelector,
 } from "./tool-selectors.js";
 import {
+  DEFAULT_ADVANCED_TOOL_NAMES,
+  canonicalToolName,
+  normalizeToolNameList,
+  shouldDeferToolByDefault,
+} from "./tool-identities.js";
+import {
   createSkillCreateProposal,
   createSkillUpdateProposal,
   listSkillProposals,
@@ -57,23 +63,25 @@ import { loadLayeredSkillReport } from "./skill-report.js";
  */
 // read_file paging defaults. The old tool returned a fixed 400-char preview,
 // which made the model loop (it never saw past the stub, so it re-read the same
-// file). We now return real content, but a naive "return the whole file" is the
-// opposite failure: a large file dumps everything into the context budget. So
-// the tool pages by line — default window, explicit "hasMore", and a per-call
-// character ceiling as a hard backstop against pathologically long lines.
+// file). We now return real content, but the returned window must still fit the
+// model-visible observation budget in core. So the tool pages by line — default
+// window, explicit "hasMore", and a per-call character ceiling that keeps each
+// normal page fully visible after observation formatting.
 const READ_DEFAULT_LINES = 2000;
-const READ_MAX_CHARS = 60_000;
+const READ_MAX_CHARS = 6_000;
 
 export function createReadFileTool() {
   return defineTool({
     name: "read_file",
     description:
       "Read a UTF-8 text file from the workspace. Returns up to `limit` lines " +
-      "(default 2000) starting at 1-based line `offset` (default 1). For large " +
-      "files, read successive windows by passing `offset`; the result reports " +
-      "`totalLines` and `hasMore` plus the next offset to use. `path` must be " +
-      "a concrete file path; glob patterns are not expanded. Use `glob` " +
-      "first when you need to discover files from a pattern.",
+      "(default 2000), bounded by an internal character budget, starting at " +
+      "1-based line `offset` (default 1). For large files, read successive " +
+      "windows by passing `offset`; the result reports `totalLines`, " +
+      "`hasMore`, and the exact `nextOffset` to use. `path` must be a " +
+      "concrete file path; glob patterns are not expanded. Use `glob` first " +
+      "when you need to discover files from a pattern, and `grep` when you " +
+      "need to find text inside large files.",
     inputSchema: {
       type: "object",
       properties: {
@@ -109,19 +117,27 @@ export function createReadFileTool() {
           : "";
       return `${path}${offset}${limit}`;
     },
+    async validateInput(args: unknown, ctx) {
+      if (!ctx.workspace) {
+        return {
+          ok: false,
+          code: "TOOL_ARGUMENTS_INVALID",
+          message: "Workspace is not configured.",
+          metadata: { reason: "missing_workspace" },
+        };
+      }
+      const { path: rawPath } = readFileToolInput(args);
+      await normalizeWorkspacePathArg(rawPath, ctx.workspace);
+      return { ok: true };
+    },
     async execute(args: unknown, ctx) {
       if (!ctx.workspace) throw new Error("Workspace is not configured.");
       const { path: rawPath, offset, limit } = readFileToolInput(args);
       const path = await normalizeWorkspacePathArg(rawPath, ctx.workspace);
-      if (containsGlobPattern(path)) {
-        throw toolArgumentsInvalid(
-          `read_file does not support glob patterns: ${rawPath}. Use glob to find matching files, then call read_file with a concrete path.`,
-        );
-      }
       const content = await ctx.workspace.readText(path).catch((error) => {
         if (isNodeErrorCode(error, "EISDIR")) {
           throw toolArgumentsInvalid(
-            `read_file expected a file path but ${path} is a directory. Use glob to list files inside it, then call read_file with a concrete file path.`,
+            `read expected a file path but ${path} is a directory. Use glob to list files inside it, then call read with a concrete file path.`,
           );
         }
         throw error;
@@ -195,6 +211,7 @@ export function createReadFileTool() {
         endLine,
         content: slice,
         hasMore,
+        ...(hasMore && !midLineCut ? { nextOffset: endLine + 1 } : {}),
         truncated: charCapped,
         ...(note ? { note } : {}),
       };
@@ -221,11 +238,11 @@ function readFileToolInput(args: unknown): {
   limit?: number;
 } {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
-    throw toolArgumentsInvalid("read_file input must be an object.");
+    throw toolArgumentsInvalid("read input must be an object.");
   }
   const record = args as Record<string, unknown>;
   if (typeof record.path !== "string" || record.path.trim().length === 0) {
-    throw toolArgumentsInvalid("read_file requires a non-empty string path.");
+    throw toolArgumentsInvalid("read requires a non-empty string path.");
   }
   return {
     path: record.path.trim(),
@@ -436,6 +453,16 @@ export function createSkillManagerTool(
           type: "string",
           description: "Skill description for create.",
         },
+        body: {
+          type: "string",
+          description:
+            "Authored content for the proposed Skill. Prefer full SKILL.md " +
+            "content with YAML frontmatter including `name` and `description`; " +
+            "if you provide only instructions, the host wraps them with " +
+            "`name` and `description`. Any frontmatter name must match `name`. " +
+            "When omitted, create_skill drafts a minimal template from " +
+            "`description`.",
+        },
         root: {
           type: "string",
           description:
@@ -469,14 +496,18 @@ export function createSkillManagerTool(
       if (!input.description || input.description.trim().length === 0) {
         throw new Error("create_skill create requires description.");
       }
+      const name = input.name;
+      const description = input.description;
+      const content = normalizeCreateSkillBody({
+        name,
+        description,
+        ...(input.body ? { body: input.body } : {}),
+      });
       resolveSkillCreateRoot(workspaceRoot, input.root);
-      const provenance = skillProposalProvenanceFromContext(
-        ctx,
-        input.description,
-      );
+      const provenance = skillProposalProvenanceFromContext(ctx, description);
       const existing = await findExistingRunSkillDraft(
         workspaceRoot,
-        input.name,
+        name,
         provenance.runId,
         "create",
       );
@@ -485,8 +516,9 @@ export function createSkillManagerTool(
       }
       const proposal = await createSkillCreateProposal({
         workspaceRoot,
-        name: input.name,
-        description: input.description,
+        name,
+        description,
+        ...(content ? { content } : {}),
         provenance,
         mutationReporter: ctx,
       });
@@ -883,52 +915,63 @@ export function applyToolConfig<T extends ToolDefinition>(
   tools: T[],
   config: CapabilityToolsConfig | undefined,
 ): T[] {
-  const deferPatterns = config?.defer ?? DEFAULT_DEFERRED_TOOLS;
-  if (!config) {
-    return tools.map((tool) => applyDefaultDefer(tool, deferPatterns)) as T[];
+  const normalizedConfig = config
+    ? {
+        ...config,
+        allowed: normalizeToolNameList(config.allowed),
+        disabled: normalizeToolNameList(config.disabled),
+        defer: normalizeToolNameList(config.defer),
+      }
+    : undefined;
+  const useDefaultDefer = normalizedConfig?.defer === undefined;
+  const deferPatterns = normalizedConfig?.defer ?? DEFAULT_DEFERRED_TOOLS;
+  if (!normalizedConfig) {
+    return tools.map((tool) =>
+      applyDefaultDefer(tool, deferPatterns, true),
+    ) as T[];
   }
   return tools
-    .filter((tool) => isToolNameAllowed(tool.name, config.allowed))
-    .filter((tool) => !isToolNameListed(tool.name, config.disabled))
+    .filter((tool) => isToolNameAllowed(tool.name, normalizedConfig.allowed))
+    .filter((tool) => !isToolNameListed(tool.name, normalizedConfig.disabled))
     .map((tool) => {
-      if (
-        tool.alwaysLoad === true ||
-        !isToolNameListed(tool.name, deferPatterns)
-      ) {
+      if (!shouldDeferTool(tool, deferPatterns, useDefaultDefer)) {
         return tool;
       }
       return { ...tool, deferLoading: true };
     }) as T[];
 }
 
-export const DEFAULT_DEFERRED_TOOLS = [
-  "todo_write",
-  "read_anchored_text",
-  "edit_anchored_text",
-  "create_skill",
-  "create_agent",
-  "cron",
-];
+export const DEFAULT_DEFERRED_TOOLS = [...DEFAULT_ADVANCED_TOOL_NAMES];
 
 function applyDefaultDefer<T extends ToolDefinition>(
   tool: T,
   names: readonly string[],
+  useDefaultTier: boolean,
 ): T {
-  if (tool.alwaysLoad === true || !isToolNameListed(tool.name, names)) {
+  if (!shouldDeferTool(tool, names, useDefaultTier)) {
     return tool;
   }
   return { ...tool, deferLoading: true };
 }
 
-function containsGlobPattern(path: string): boolean {
-  return /[*?[]/.test(path);
+function shouldDeferTool(
+  tool: ToolDefinition,
+  names: readonly string[],
+  useDefaultTier: boolean,
+): boolean {
+  if (tool.alwaysLoad === true) return false;
+  if (tool.deferLoading === true) return true;
+  if (isToolNameListed(tool.name, names)) return true;
+  return useDefaultTier && shouldDeferToolByDefault(tool);
 }
 
 function isToolNameListed(
   toolName: string,
   names: readonly string[] | undefined,
 ): boolean {
-  return Boolean(names?.includes(toolName));
+  if (!names) return false;
+  const canonical = canonicalToolName(toolName);
+  return names.some((name) => canonicalToolName(name) === canonical);
 }
 
 function isToolNameAllowed(
@@ -996,6 +1039,7 @@ function parseSkillManagerArgs(args: unknown): {
   action: "create";
   name?: string;
   description?: string;
+  body?: string;
   root?: string;
 } {
   if (!args || typeof args !== "object" || Array.isArray(args)) {
@@ -1017,8 +1061,100 @@ function parseSkillManagerArgs(args: unknown): {
     ...(typeof record.description === "string"
       ? { description: record.description.trim() }
       : {}),
+    ...(typeof record.body === "string" && record.body.trim().length > 0
+      ? { body: record.body }
+      : {}),
     ...(typeof record.root === "string" ? { root: record.root } : {}),
   };
+}
+
+function normalizeCreateSkillBody(input: {
+  name: string;
+  description: string;
+  body?: string;
+}): string | undefined {
+  const body = input.body?.trim();
+  if (!body) return undefined;
+  const frontmatter = parseLeadingFrontmatter(body);
+  if (!frontmatter) {
+    return [
+      "---",
+      `name: ${input.name}`,
+      `description: ${frontmatterString(input.description)}`,
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n");
+  }
+
+  const headerLines = frontmatter.header
+    .split(/\r?\n/u)
+    .filter((line) => line.trim().length > 0);
+  const nameIndex = headerLines.findIndex((line) => /^\s*name\s*:/u.test(line));
+  if (nameIndex >= 0) {
+    const parsedName = unquoteFrontmatterValue(
+      headerLines[nameIndex]!.replace(/^\s*name\s*:\s*/u, "").trim(),
+    );
+    if (parsedName !== input.name) {
+      throw new Error(
+        `create_skill body frontmatter name must match requested name: ${input.name}`,
+      );
+    }
+  } else {
+    headerLines.unshift(`name: ${input.name}`);
+  }
+
+  const hasDescription = headerLines.some((line) =>
+    /^\s*description\s*:/u.test(line),
+  );
+  if (!hasDescription) {
+    const afterName = Math.max(
+      1,
+      headerLines.findIndex((line) => /^\s*name\s*:/u.test(line)) + 1,
+    );
+    headerLines.splice(
+      afterName,
+      0,
+      `description: ${frontmatterString(input.description)}`,
+    );
+  }
+
+  return ["---", ...headerLines, "---", "", frontmatter.rest.trim(), ""].join(
+    "\n",
+  );
+}
+
+function parseLeadingFrontmatter(
+  content: string,
+): { header: string; rest: string } | undefined {
+  if (!content.startsWith("---")) return undefined;
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u.exec(
+    content,
+  );
+  if (!match) {
+    throw new Error(
+      "create_skill body frontmatter must be closed with a second --- line.",
+    );
+  }
+  return { header: match[1] ?? "", rest: match[2] ?? "" };
+}
+
+function unquoteFrontmatterValue(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function frontmatterString(value: string): string {
+  return /^[a-zA-Z0-9][a-zA-Z0-9 _.,:/+-]*$/u.test(value)
+    ? value
+    : JSON.stringify(value);
 }
 
 function skillProposalProvenanceFromContext(
@@ -1070,6 +1206,7 @@ function skillDraftToolOutput(
     targetPath: proposal.targetPath,
     basePackageHash: proposal.basePackageHash,
     afterPackageHash: proposal.afterPackageHash,
+    contentMode: proposal.contentMode,
     ...(proposal.guardFindings
       ? { guardFindings: proposal.guardFindings }
       : {}),

@@ -207,7 +207,7 @@ Tool calls come back as:
 {
   toolCalls: [
     {
-      toolName: "read_file",
+      toolName: "read",
       arguments: { path: "README.md" },
     },
   ];

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  createTaskCreate,
   createTaskControl,
   createTodoTools,
   InMemoryTaskStore,
@@ -8,6 +9,7 @@ import {
 import {
   createRunId,
   createToolSearchTool,
+  type BackgroundTaskPolicy,
   type EventEmitter,
   type RunId,
   type ToolDefinition,
@@ -39,8 +41,56 @@ import {
   shouldAppendDiscoveryTool,
   type ToolSelectorCatalogEntry,
 } from "./tool-selectors.js";
+import {
+  applyBuiltinToolIdentity,
+  normalizeToolNameList,
+} from "./tool-identities.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
+export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
+  "required object with goal, role, and prompt; optional allowedTools, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
+export const AGENT_TASK_MAX_STEPS_DESCRIPTION =
+  "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A read-and-answer task usually needs 4+; a multi-step search (glob, read, refine, conclude) typically needs 6+.";
+export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
+  type: "object",
+  description:
+    "Payload for kind 'agent'. It matches spawn_agent input: provide a concrete goal, role, and focused prompt for the background child agent. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.",
+  properties: {
+    goal: {
+      type: "string",
+      description: "Concrete background child-agent goal.",
+    },
+    role: {
+      type: "string",
+      description: "Short role name for the background child agent.",
+    },
+    prompt: {
+      type: "string",
+      description:
+        "Focused child-agent instructions that define scope and output.",
+    },
+    allowedTools: {
+      type: "array",
+      description:
+        "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir.",
+      items: {
+        type: "string",
+        enum: ["read", "glob", "grep", "list_dir"],
+      },
+    },
+    maxSteps: {
+      type: "integer",
+      minimum: 1,
+      description: AGENT_TASK_MAX_STEPS_DESCRIPTION,
+    },
+    metadata: {
+      type: "object",
+      description: "Optional structured metadata for the child run.",
+    },
+  },
+  required: ["goal", "role", "prompt"],
+  additionalProperties: false,
+};
 
 export type HostToolCatalogSource =
   | "coding"
@@ -67,13 +117,16 @@ export function createReadOnlyChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
 }): HostToolCatalogEntry[] {
-  return applyToolConfigToCatalog(
-    [
-      catalogEntry(createReadFileTool(), "coding"),
-      catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
-      catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
-      catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
-    ],
+  return withDeferredToolSearch(
+    applyToolConfigToCatalog(
+      [
+        catalogEntry(createReadFileTool(), "coding"),
+        catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
+        catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
+        catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
+      ],
+      input.toolConfig,
+    ),
     input.toolConfig,
   );
 }
@@ -133,6 +186,7 @@ export function createMainHostToolCatalog(input: {
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   shell?: ShellConfig;
+  backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
   const entries = applyToolConfigToCatalog(
@@ -222,6 +276,7 @@ function createMainHostToolCatalogList(input: {
   delegateParallelTool?: ToolDefinition;
   dynamicSpawnTool?: ToolDefinition;
   shell?: ShellConfig;
+  backgroundTasks?: BackgroundTaskPolicy;
   configPaths?: readonly string[];
 }): HostToolCatalogEntry[] {
   return [
@@ -249,8 +304,28 @@ function createMainHostToolCatalogList(input: {
         skillRoots: input.skillRoots.map((root) => root.root),
         extraForcedDenyWrite: input.configPaths,
         getRunEvents: input.getRunEvents,
+        backgroundTasks: input.backgroundTasks,
       }),
       "shell",
+    ),
+    catalogEntry(
+      createTaskCreate({
+        manager: input.taskManager,
+        getParentRunId: input.getParentRunId,
+        foregroundTimeoutMs: input.shell?.foregroundTimeoutMs,
+        backgroundTasks: input.backgroundTasks,
+        taskCreateKinds: [
+          {
+            kind: "agent",
+            description:
+              "start a read-only background child agent owned by the task lifecycle",
+            payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
+            payloadSchema: AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
+            requiresPayload: true,
+          },
+        ],
+      }),
+      "task",
     ),
     catalogEntry(
       createTaskControl({
@@ -310,7 +385,7 @@ function applyToolConfigToCatalog(
   );
   const selectorAllowed = resolveSelectorAllowlist(entries, config?.use);
   const effectiveAllowed = intersectAllowlists(
-    config?.allowed,
+    normalizeToolNameList(config?.allowed),
     selectorAllowed,
   );
   return applyToolConfig(
@@ -381,14 +456,17 @@ export function resolveConfiguredToolAllowlist(input: {
     selectorEntries,
     config?.use,
   );
-  return intersectAllowlists(config?.allowed, selectorAllowed);
+  return intersectAllowlists(
+    normalizeToolNameList(config?.allowed),
+    selectorAllowed,
+  );
 }
 
 function catalogEntry(
   definition: ToolDefinition,
   source: HostToolCatalogSource,
 ): HostToolCatalogEntry {
-  return { definition, source };
+  return { definition: applyBuiltinToolIdentity(definition, source), source };
 }
 
 function toolToDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -397,6 +475,11 @@ function toolToDescriptor(tool: ToolDefinition): ToolDescriptor {
     description: tool.description,
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
+    canonicalName: tool.canonicalName,
+    legacyNames: tool.legacyNames,
+    defaultExposureTier: tool.defaultExposureTier,
+    relatedTools: tool.relatedTools,
+    requiresTool: tool.requiresTool,
     timeoutMs: tool.timeoutMs,
     loading: {
       defer: tool.deferLoading,

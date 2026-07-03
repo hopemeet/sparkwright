@@ -2,8 +2,7 @@
  * Render an event stream as a human-readable markdown transcript.
  *
  * We walk events chronologically and group them into sections by intent:
- *   - run.started               → header
- *   - user goal (from run.started.payload.goal)
+ *   - run.created/model.requested/run.started payload.goal → user goal
  *   - model.stream.chunk(text)  → assembled into one "Assistant" block per
  *                                 stream lifecycle
  *   - tool.requested/completed  → ### Tool sections with args + result
@@ -55,22 +54,23 @@ export function renderTranscript(
     string,
     { toolName?: string; arguments?: unknown }
   >();
+  const renderedUserRuns = new Set<string>();
+  const goalsByRun = collectUserGoals(events);
 
   const tail: RunEvent[] = []; // events we didn't render as a section
 
   for (const ev of events) {
     const p = (ev.payload ?? {}) as Record<string, unknown>;
-    const eventRunId = (ev as unknown as { runId?: unknown }).runId;
-    const runId =
-      typeof p.runId === "string"
-        ? p.runId
-        : typeof eventRunId === "string"
-          ? eventRunId
-          : "main";
+    const runId = runIdForEvent(ev);
 
     switch (ev.type) {
+      case "run.created":
+      case "model.requested":
       case "run.started": {
-        const goal = typeof p.goal === "string" ? p.goal : "";
+        if (renderedUserRuns.has(runId)) break;
+        const goal = goalsByRun.get(runId) ?? "";
+        if (!goal && ev.type !== "run.started") break;
+        renderedUserRuns.add(runId);
         out.push(`## User`);
         out.push("");
         out.push(goal || "_(no goal text)_");
@@ -281,6 +281,37 @@ export function renderTranscript(
   }
 
   return out.join("\n") + "\n";
+}
+
+function collectUserGoals(events: RunEvent[]): Map<string, string> {
+  const goals = new Map<string, string>();
+  for (const eventType of ["run.created", "model.requested", "run.started"]) {
+    for (const ev of events) {
+      if (ev.type !== eventType) continue;
+      const goal = goalForEvent(ev);
+      if (!goal) continue;
+      const runId = runIdForEvent(ev);
+      if (!goals.has(runId)) goals.set(runId, goal);
+    }
+  }
+  return goals;
+}
+
+function goalForEvent(ev: RunEvent): string | null {
+  const payload = (ev.payload ?? {}) as { goal?: unknown };
+  return typeof payload.goal === "string" && payload.goal.trim()
+    ? payload.goal
+    : null;
+}
+
+function runIdForEvent(ev: RunEvent): string {
+  const payload = (ev.payload ?? {}) as { runId?: unknown };
+  const eventRunId = (ev as unknown as { runId?: unknown }).runId;
+  return typeof payload.runId === "string"
+    ? payload.runId
+    : typeof eventRunId === "string"
+      ? eventRunId
+      : "main";
 }
 
 function safeJson(value: unknown): string {

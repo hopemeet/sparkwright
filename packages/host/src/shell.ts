@@ -18,6 +18,7 @@ import {
   type ShellSandboxRuntime,
 } from "@sparkwright/shell-sandbox";
 import type {
+  BackgroundTaskPolicy,
   EventEmitter,
   ExecutionEnvironment,
   LiveShellHandle,
@@ -288,6 +289,7 @@ export interface HostShellToolOptions {
   skillRoots?: readonly string[];
   extraForcedDenyWrite?: readonly string[];
   getRunEvents?: () => EventEmitter | undefined;
+  backgroundTasks?: BackgroundTaskPolicy;
 }
 
 /**
@@ -325,7 +327,9 @@ export function createHostShellTool(
     environment,
     workspaceRoot,
     foregroundTimeoutMs,
-    promotionAvailable: Boolean(options.taskManager),
+    promotionAvailable:
+      Boolean(options.taskManager) &&
+      (options.backgroundTasks ?? "enabled") === "enabled",
     onPromote: createUnavailablePromotionHandler(),
   });
 
@@ -345,16 +349,20 @@ export function createHostShellTool(
         environment,
         workspaceRoot,
         foregroundTimeoutMs,
-        promotionAvailable: Boolean(options.taskManager),
-        onPromote: options.taskManager
-          ? createTaskPromotionHandler({
-              manager: options.taskManager,
-              parentRunId: ctx.run.id,
-              sandboxConfig,
-              sandboxRuntime,
-              getRunEvents: options.getRunEvents,
-            })
-          : createUnavailablePromotionHandler(),
+        promotionAvailable:
+          Boolean(options.taskManager) &&
+          (options.backgroundTasks ?? "enabled") === "enabled",
+        onPromote:
+          options.taskManager &&
+          (options.backgroundTasks ?? "enabled") === "enabled"
+            ? createTaskPromotionHandler({
+                manager: options.taskManager,
+                parentRunId: ctx.run.id,
+                sandboxConfig,
+                sandboxRuntime,
+                getRunEvents: options.getRunEvents,
+              })
+            : createUnavailablePromotionHandler(),
       });
       const output = await shell.execute(args, ctx);
       if (output.promoted || readOnlyFastPath) return output;
@@ -458,7 +466,7 @@ async function emitPromotedShellUntrackedMarker(input: {
     input.emitter.emit("workspace.write.untracked_access_granted", {
       taskId: input.taskId,
       parentRunId: input.parentRunId,
-      toolName: "shell",
+      toolName: "bash",
       protocol: "promoted_shell",
       marker: "untracked-write-capable",
       access: "granted",
@@ -505,12 +513,14 @@ function createTaskPromotionHandler(input: {
         const emitter = input.getRunEvents?.() ?? createBufferedEmitter();
         const taskPayload = {
           taskId: ctrl.taskId,
+          parentRunId: input.parentRunId,
           kind: PROMOTED_SHELL_KIND,
           title: `shell: ${rawCommand}`,
           command: rawCommand,
           cwd: request.cwd,
           timeoutMs: request.timeoutMs,
         };
+        emitter.emit("task.created", taskPayload);
         const taskSpan = openSpan(emitter, {
           startType: "task.started",
           payload: taskPayload,

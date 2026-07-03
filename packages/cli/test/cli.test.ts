@@ -20,7 +20,12 @@ import {
   SESSION_COMPACT_SCHEMA_VERSION,
   type RunId,
 } from "@sparkwright/core";
-import { createSkillCreateProposal, loadHostConfig } from "@sparkwright/host";
+import {
+  createSkillCreateProposal,
+  loadHostConfig,
+  skillUsagePath,
+} from "@sparkwright/host";
+import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { createConfiguredCliTools } from "../src/runners/direct-core-runner.js";
@@ -152,6 +157,36 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
+  });
+
+  it("prints run resume help without starting a resume run", async () => {
+    const output = createOutputCapture();
+    const workspace = await createWorkspace("# Demo\n");
+    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-help-"));
+    tempDirs.push(configDir);
+    const badConfig = join(configDir, "config.yaml");
+    await writeFile(badConfig, "model: [\n");
+
+    const result = await runCli(
+      ["run", "resume", "--help", "--workspace", workspace],
+      {
+        env: { ...process.env, SPARKWRIGHT_CONFIG: badConfig },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "Usage: sparkwright run resume <run-id>",
+    );
+    expect(output.stdoutText()).not.toContain("Run failed");
+    expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+    expect(existsSync(join(workspace, ".sparkwright", "sessions"))).toBe(false);
   });
 
   it("prints nested command help without executing the subcommand", async () => {
@@ -386,6 +421,103 @@ describe("runCli", () => {
     expect(parsed.name).toBe("readme-daily 2");
   });
 
+  it("returns a failed exit code when cron tick has a failed job", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-cron-cli-"));
+    tempDirs.push(root);
+    const okWorkspace = await createWorkspace("# Demo\n");
+    const badWorkspace = await createWorkspace("# Demo\n");
+    await rm(join(badWorkspace, "README.md"));
+    await mkdir(join(badWorkspace, "README.md"));
+    const dueAt = new Date().toISOString();
+
+    for (const [name, workspace] of [
+      ["ok-read", okWorkspace],
+      ["bad-read", badWorkspace],
+    ] as const) {
+      const output = createOutputCapture();
+      const result = await runCli(
+        [
+          "cron",
+          "create",
+          "--root-dir",
+          root,
+          "--schedule",
+          dueAt,
+          "--prompt",
+          "summarize README.md",
+          "--name",
+          name,
+          "--job-workspace",
+          workspace,
+        ],
+        {
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+      expect(result.exitCode).toBe(0);
+    }
+
+    const tickOutput = createOutputCapture();
+    const tick = await runCli(
+      [
+        "cron",
+        "tick",
+        "--root-dir",
+        root,
+        "--workspace",
+        okWorkspace,
+        "--model",
+        "deterministic",
+        "--yes-edits",
+      ],
+      {
+        io: {
+          stdout: tickOutput.stdout,
+          stderr: tickOutput.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(tick.exitCode).toBe(1);
+    expect(JSON.parse(tickOutput.stdoutText())).toMatchObject({
+      attempted: 2,
+      completed: 1,
+      failed: 1,
+      skippedBecauseLocked: false,
+      skippedBecauseJobLocked: 0,
+    });
+
+    const okStatusOutput = createOutputCapture();
+    await runCli(["cron", "status", "ok-read", "--root-dir", root], {
+      io: {
+        stdout: okStatusOutput.stdout,
+        stderr: okStatusOutput.stderr,
+        stdinIsTTY: false,
+      },
+    });
+    expect(JSON.parse(okStatusOutput.stdoutText())).toMatchObject({
+      lastStatus: "ok",
+    });
+
+    const badStatusOutput = createOutputCapture();
+    await runCli(["cron", "status", "bad-read", "--root-dir", root], {
+      io: {
+        stdout: badStatusOutput.stdout,
+        stderr: badStatusOutput.stderr,
+        stdinIsTTY: false,
+      },
+    });
+    expect(JSON.parse(badStatusOutput.stdoutText())).toMatchObject({
+      lastStatus: "error",
+      lastError: expect.stringContaining("failing outcome"),
+    });
+  });
+
   it("inspects durable background tasks without starting tasks", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-task-cli-"));
     tempDirs.push(root);
@@ -572,7 +704,7 @@ describe("runCli", () => {
                 model: "deterministic",
                 prompt: "Review files.",
                 triggers: ["review", "diff"],
-                allowedTools: ["read_file"],
+                allowedTools: ["read"],
                 maxSteps: 3,
               },
               {
@@ -582,7 +714,7 @@ describe("runCli", () => {
                 prompt: "Patch files.",
                 triggers: ["write", "patch"],
                 use: ["workspace.write"],
-                allowedTools: ["apply_patch"],
+                allowedTools: ["edit"],
                 maxSteps: 3,
               },
             ],
@@ -1161,7 +1293,7 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "README.md", offset: 1, limit: 20 },
                 },
                 {
@@ -1194,7 +1326,7 @@ describe("runCli", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "tool.completed",
-          payload: expect.objectContaining({ toolName: "read_file" }),
+          payload: expect.objectContaining({ toolName: "read" }),
         }),
         expect.objectContaining({
           type: "tool.completed",
@@ -1244,7 +1376,7 @@ describe("runCli", () => {
 
   it("denies non-interactive writes and leaves the workspace unchanged", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
+    await enableWorkspaceTools(workspace, ["read", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1306,7 +1438,7 @@ describe("runCli", () => {
 
   it("auto-approves writes with --yes and records the write path", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
+    await enableWorkspaceTools(workspace, ["read", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1353,7 +1485,7 @@ describe("runCli", () => {
 
   it("allows workspace writes without approval in accept_edits mode", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "edit_anchored_text"]);
+    await enableWorkspaceTools(workspace, ["read", "edit_anchored_text"]);
     const output = createOutputCapture();
 
     const result = await runCli(
@@ -1542,19 +1674,27 @@ describe("runCli", () => {
     expect(loaded.config.tools?.use).toEqual([
       "workspace.read",
       "workspace.write",
-      "shell",
+      "bash",
       "planning",
       "skills",
     ]);
     expect(loaded.config.tools?.allowed).toBeUndefined();
     expect(loaded.config.tools?.disabled).toBeUndefined();
     expect(loaded.config.tools?.defer).toEqual([
-      "todo_write",
+      "list_dir",
       "read_anchored_text",
       "edit_anchored_text",
+      "list_skills",
       "create_skill",
+      "update_skill",
+      "list_agents",
       "create_agent",
+      "spawn_agent",
+      "delegate_agent",
+      "delegate_parallel",
       "cron",
+      "task",
+      "todo_write",
     ]);
     expect(loaded.config.capabilities?.skills?.includeLoaderTool).toBe(true);
     expect(loaded.config.capabilities?.skills?.loadSelectedSkills).toBe(false);
@@ -1788,14 +1928,14 @@ describe("runCli", () => {
     const tools = await createConfiguredCliTools(workspace, process.env);
 
     expect(tools.map((tool) => tool.name)).toEqual([
-      "read_file",
+      "read",
       "glob",
       "grep",
       "list_dir",
       "read_anchored_text",
-      "write_file",
+      "write",
       "edit_anchored_text",
-      "apply_patch",
+      "edit",
       "tool_search",
     ]);
   });
@@ -1807,7 +1947,7 @@ describe("runCli", () => {
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
         tools: {
-          allowed: ["read_file", "grep", "apply_patch"],
+          allowed: ["read", "grep", "edit"],
           disabled: ["grep"],
         },
       }),
@@ -1816,10 +1956,7 @@ describe("runCli", () => {
 
     const tools = await createConfiguredCliTools(workspace, process.env);
 
-    expect(tools.map((tool) => tool.name)).toEqual([
-      "read_file",
-      "apply_patch",
-    ]);
+    expect(tools.map((tool) => tool.name)).toEqual(["read", "edit"]);
   });
 
   it("inspects configured capability layers", async () => {
@@ -1863,7 +2000,7 @@ describe("runCli", () => {
       join(workspace, ".sparkwright", "config.json"),
       JSON.stringify({
         tools: {
-          allowed: ["read_file", "read_anchored_text"],
+          allowed: ["read", "read_anchored_text"],
           disabled: ["shell"],
           defer: ["read_anchored_text"],
         },
@@ -1900,7 +2037,7 @@ describe("runCli", () => {
 
     expect(text.exitCode).toBe(0);
     expect(textOutput.stdoutText()).toContain(
-      "tools: use=(all); allowed=read_file, read_anchored_text; disabled=shell; defer=read_anchored_text",
+      "tools: use=(all); allowed=read, read_anchored_text; disabled=bash; defer=read_anchored_text",
     );
     expect(textOutput.stdoutText()).toContain(
       "shell foreground: timeoutMs=123000; promotionAvailable=true",
@@ -1975,14 +2112,14 @@ describe("runCli", () => {
       ),
       effective: expect.stringMatching(/^(on|fallback)$/),
     });
-    expect(report.tools.allowed).toEqual(["read_file", "read_anchored_text"]);
-    expect(report.tools.disabled).toEqual(["shell"]);
+    expect(report.tools.allowed).toEqual(["read", "read_anchored_text"]);
+    expect(report.tools.disabled).toEqual(["bash"]);
     expect(report.tools.defer).toEqual(["read_anchored_text"]);
     expect(report.tools.available.map((tool) => tool.name)).not.toContain(
       "shell",
     );
     expect(
-      report.tools.available.find((tool) => tool.name === "read_file"),
+      report.tools.available.find((tool) => tool.name === "read"),
     ).toMatchObject({
       origin: "local:@sparkwright/coding-tools",
     });
@@ -2039,8 +2176,8 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("runtime tools:");
     expect(output.stdoutText()).toContain("tool: list_dir");
     expect(output.stdoutText()).toContain("diagnostic tools:");
-    expect(output.stdoutText()).toContain("tool: shell");
-    expect(output.stdoutText()).toContain("tool: read_file");
+    expect(output.stdoutText()).toContain("tool: bash");
+    expect(output.stdoutText()).toContain("tool: read");
     expect(output.stdoutText()).toContain("tool: list_skills");
     // append_file was retired in favor of edit_anchored_text / apply_patch.
     expect(output.stdoutText()).not.toContain("tool: append_file");
@@ -2215,7 +2352,7 @@ describe("runCli", () => {
     };
     expect(staticReport.tools.available).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "shell", risk: "risky" }),
+        expect.objectContaining({ name: "bash", risk: "risky" }),
         expect.objectContaining({ name: "spawn_agent", risk: "safe" }),
         expect.objectContaining({ name: "todo_write", risk: "safe" }),
         expect.objectContaining({ name: "read_anchored_text", risk: "safe" }),
@@ -2292,7 +2429,7 @@ describe("runCli", () => {
         },
         tools: {
           use: ["workspace.read"],
-          allowed: ["read_file"],
+          allowed: ["read"],
           disabled: ["shell"],
         },
       }),
@@ -2300,8 +2437,8 @@ describe("runCli", () => {
     );
 
     for (const argv of [
-      ["tools", "allow", "apply_patch"],
-      ["tools", "disable", "read_file"],
+      ["tools", "allow", "edit"],
+      ["tools", "disable", "read"],
       ["tools", "defer", "todo_write"],
     ]) {
       const output = createOutputCapture();
@@ -2327,8 +2464,8 @@ describe("runCli", () => {
     expect(parsed.capabilities?.skills?.roots).toEqual(["./skills"]);
     expect(parsed.tools).toEqual({
       use: ["workspace.read"],
-      allowed: ["read_file", "apply_patch"],
-      disabled: ["shell", "read_file"],
+      allowed: ["read", "edit"],
+      disabled: ["shell", "read"],
       defer: ["todo_write"],
     });
     if (process.platform !== "win32") {
@@ -2347,14 +2484,14 @@ describe("runCli", () => {
         "model: deterministic/demo",
         "tools:",
         "  use: [workspace.read]",
-        "  allowed: [read_file]",
+        "  allowed: [read]",
         "",
       ].join("\n"),
       "utf8",
     );
 
     const output = createOutputCapture();
-    const result = await runCli(["tools", "allow", "apply_patch"], {
+    const result = await runCli(["tools", "allow", "edit"], {
       io: { stdout: output.stdout, stderr: output.stderr },
     });
 
@@ -2363,7 +2500,7 @@ describe("runCli", () => {
       configPath,
     );
     const contents = await readFile(configPath, "utf8");
-    expect(contents).toContain("apply_patch");
+    expect(contents).toContain("edit");
     await expect(
       readFile(join(xdg, "sparkwright", "config.json"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
@@ -2389,15 +2526,7 @@ describe("runCli", () => {
 
     const output = createOutputCapture();
     const result = await runCli(
-      [
-        "tools",
-        "allow",
-        "read_file",
-        "--workspace",
-        workspace,
-        "--format",
-        "text",
-      ],
+      ["tools", "allow", "read", "--workspace", workspace, "--format", "text"],
       {
         io: { stdout: output.stdout, stderr: output.stderr },
       },
@@ -2422,7 +2551,7 @@ describe("runCli", () => {
     expect(parsed.capabilities?.skills?.roots).toEqual(["skills"]);
     expect(parsed.tools).toEqual({
       use: [],
-      allowed: ["read_file"],
+      allowed: ["read"],
       disabled: ["shell"],
       defer: [],
     });
@@ -2490,6 +2619,11 @@ describe("runCli", () => {
     await expect(readFile(skillPath, "utf8")).resolves.toContain(
       "name: code-reviewer",
     );
+    expect(
+      new FileSkillUsageRecorder({ path: skillUsagePath(workspace) }).get(
+        "code-reviewer",
+      ),
+    ).toMatchObject({ patchCount: 1 });
 
     const listOutput = createOutputCapture();
     const listed = await runCli(
@@ -2598,7 +2732,7 @@ describe("runCli", () => {
           { mode: "on_demand_tool" },
         ),
         traceEvent(4, runId, "tool.failed", {
-          toolName: "read_file",
+          toolName: "read",
           error: { code: "ENOENT", message: "missing" },
         }),
         traceEvent(
@@ -3032,7 +3166,7 @@ describe("runCli", () => {
           associatedToolFailures: {
             total: 2,
             unresolved: 2,
-            byTool: { glob: 1, read_file: 1 },
+            byTool: { glob: 1, read: 1 },
             byCode: { EACCES: 1, ENOENT: 1 },
             beforeFirstLoad: 1,
             afterFirstLoad: 1,
@@ -3210,9 +3344,7 @@ describe("runCli", () => {
       "load failure detail: modes=on_demand_tool=1, statuses=resource_denied=1",
     );
     expect(textOutput.stdoutText()).toContain("before load=1, after load=1");
-    expect(textOutput.stdoutText()).toContain(
-      "failed tools: glob=1, read_file=1",
-    );
+    expect(textOutput.stdoutText()).toContain("failed tools: glob=1, read=1");
     expect(textOutput.stdoutText()).toContain(
       "failure codes: EACCES=1, ENOENT=1",
     );
@@ -3223,6 +3355,195 @@ describe("runCli", () => {
       "history: 1 total, before=1, after=0, kinds=update=1",
     );
     expect(textOutput.stdoutText()).toContain("not causal claims");
+  });
+
+  it("summarizes draft proposals and stats findings in the skill review digest", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const skillDir = join(workspace, ".sparkwright", "skills", "code-reviewer");
+    await mkdir(skillDir, { recursive: true });
+    const skillPath = join(skillDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      [
+        "---",
+        "name: code-reviewer",
+        "description: Reviews code changes.",
+        "---",
+        "Review carefully.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const proposal = await createSkillCreateProposal({
+      workspaceRoot: workspace,
+      name: "session-learnings",
+      description: "Captured session learning notes.",
+    });
+
+    const sessionRoot = join(workspace, ".sparkwright", "sessions");
+    const sessionId = "session_skill_review";
+    const runId = "run_skill_review";
+    const sessionDir = join(sessionRoot, sessionId);
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      join(sessionDir, "session.json"),
+      JSON.stringify(
+        {
+          id: sessionId,
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:06.000Z",
+          runIds: [runId],
+          agents: ["main"],
+          eventCount: 0,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(join(sessionDir, "events.jsonl"), "", "utf8");
+    await writeFile(
+      join(sessionDir, "trace.jsonl"),
+      [
+        traceEvent(
+          1,
+          runId,
+          "skill.indexed",
+          { count: 1 },
+          {
+            skills: [
+              {
+                name: "code-reviewer",
+                layer: "project",
+                sourcePath: skillPath,
+                contentHash: "sha256:review-content",
+                packageHash: "sha256:review-package",
+              },
+            ],
+          },
+        ),
+        traceEvent(
+          2,
+          runId,
+          "skill.loaded",
+          { name: "code-reviewer" },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(3, runId, "tool.failed", {
+          toolName: "read",
+          error: { code: "ENOENT", message: "missing" },
+        }),
+        traceEvent(
+          4,
+          runId,
+          "skill.failed",
+          {
+            name: "code-reviewer",
+            status: "resource_denied",
+            message: "Denied resource.",
+          },
+          { mode: "on_demand_tool" },
+        ),
+        traceEvent(5, runId, "run.completed", {
+          status: "completed",
+          toolOutcome: {
+            unresolved: { total: 1, byCode: { ENOENT: 1 } },
+            recovered: { total: 0, byCode: {} },
+          },
+        }),
+      ].join(""),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "skills",
+        "review",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "json",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const digest = JSON.parse(output.stdoutText()) as {
+      proposals: { drafts: number; templates: number };
+      stats: { sessionsScanned: number; tracesScanned: number };
+      items: Array<{
+        kind: string;
+        severity: string;
+        skillName: string;
+        proposalId?: string;
+        contentMode?: string;
+        findingCode?: string;
+        relation?: string;
+        action: string;
+      }>;
+    };
+    expect(digest.proposals).toEqual(
+      expect.objectContaining({ drafts: 1, templates: 1 }),
+    );
+    expect(digest.stats).toEqual(
+      expect.objectContaining({ sessionsScanned: 1, tracesScanned: 1 }),
+    );
+    expect(digest.items[0]).toEqual(
+      expect.objectContaining({
+        kind: "proposal",
+        severity: "warning",
+        skillName: "session-learnings",
+        proposalId: proposal.id,
+        contentMode: "template",
+      }),
+    );
+    expect(digest.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "stats_finding",
+          severity: "warning",
+          skillName: "code-reviewer",
+          findingCode: "SKILL_LOAD_FAILURES",
+        }),
+        expect.objectContaining({
+          kind: "stats_finding",
+          relation: "associated",
+          skillName: "code-reviewer",
+          findingCode: "ASSOCIATED_TOOL_FAILURES",
+        }),
+      ]),
+    );
+
+    const textOutput = createOutputCapture();
+    const textResult = await runCli(
+      [
+        "skills",
+        "review",
+        "--workspace",
+        workspace,
+        "--session-root",
+        sessionRoot,
+        "--last",
+        "5",
+        "--format",
+        "text",
+      ],
+      { io: { stdout: textOutput.stdout, stderr: textOutput.stderr } },
+    );
+    expect(textResult.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain("review items: 3");
+    expect(textOutput.stdoutText()).toContain("generated create template");
+    expect(textOutput.stdoutText()).toContain("SKILL_LOAD_FAILURES");
+    expect(textOutput.stdoutText()).toContain("ASSOCIATED_TOOL_FAILURES");
+    expect(textOutput.stdoutText()).toContain(
+      "usage sidecar data is not required",
+    );
+    expect(textOutput.stdoutText()).toContain("correlation, not causal");
   });
 
   it("uses the skill stats catalog for targeted stats queries", async () => {
@@ -3630,6 +3951,7 @@ describe("runCli", () => {
       state: string;
       kind: string;
       skillName: string;
+      contentMode: string;
       path: string;
       afterPackageHash: string;
     };
@@ -3637,6 +3959,7 @@ describe("runCli", () => {
       state: "draft",
       kind: "create",
       skillName: "code-reviewer",
+      contentMode: "template",
     });
     expect(proposal.id).toMatch(/^skillprop_/);
     expect(proposal.afterPackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -3696,6 +4019,9 @@ describe("runCli", () => {
     );
     expect(shown.exitCode).toBe(0);
     expect(showOutput.stdoutText()).toContain(`id: ${proposal.id}`);
+    expect(showOutput.stdoutText()).toContain(
+      "content: generated create template",
+    );
     expect(showOutput.stdoutText()).toContain("Skill: code-reviewer");
     expect(showOutput.stdoutText()).toContain("patch:");
 
@@ -4188,6 +4514,7 @@ describe("runCli", () => {
     const proposal = JSON.parse(createOutput.stdoutText()) as {
       id: string;
       kind: string;
+      contentMode: string;
       sourceLayer: string;
       basePackageHash: string;
       afterPackageHash: string;
@@ -4195,6 +4522,7 @@ describe("runCli", () => {
     };
     expect(proposal).toMatchObject({
       kind: "update",
+      contentMode: "intent_stub",
       sourceLayer: "project",
     });
     expect(proposal.basePackageHash).toMatch(/^sha256:[a-f0-9]{64}$/);
@@ -5048,7 +5376,7 @@ describe("runCli", () => {
         "--prompt",
         "Inspect changes for correctness and risk.",
         "--allow",
-        "read_file",
+        "read",
         "--allow",
         "glob",
         "--max-steps",
@@ -5102,7 +5430,7 @@ describe("runCli", () => {
         name: "Reviewer",
         model: "anthropic/opus",
         prompt: "Inspect changes for correctness and risk.",
-        allowedTools: ["read_file", "glob"],
+        allowedTools: ["read", "glob"],
         maxSteps: 4,
       }),
     ]);
@@ -5467,7 +5795,7 @@ describe("runCli", () => {
     expect(
       events.find((event) => event.type === "tool.requested")?.payload,
     ).toMatchObject({
-      toolName: "read_file",
+      toolName: "read",
       arguments: { path: "NOTES.md" },
     });
     expect(
@@ -5792,7 +6120,7 @@ describe("runCli", () => {
         sequence: index + 2,
         payload: {
           id: `call_${index}`,
-          toolName: index % 2 === 0 ? "read_file" : "grep",
+          toolName: index % 2 === 0 ? "read" : "grep",
           arguments: { path: "README.md" },
         },
       })),
@@ -6887,7 +7215,7 @@ describe("runCli", () => {
                 mode: "child",
                 prompt: "Patch files as requested.",
                 use: ["workspace.read", "workspace.write"],
-                allowedTools: ["read_file", "apply_patch"],
+                allowedTools: ["read", "edit"],
                 maxSteps: 3,
               },
             ],
@@ -6932,7 +7260,7 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "README.md",
                     reason: "delegate summary regression",
@@ -7007,7 +7335,7 @@ describe("runCli", () => {
                 name: "block-readme-edit",
                 hook: "PreToolUse",
                 matcher: {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   pathGlob: "README.md",
                 },
                 action: {
@@ -7043,7 +7371,7 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "README.md",
                     patch:
@@ -7137,7 +7465,7 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "README.md",
                     reason: "Add verified section",
@@ -7206,7 +7534,7 @@ describe("runCli", () => {
             {
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: join(workspace, "README.md") },
                 },
               ],
@@ -7238,7 +7566,7 @@ describe("runCli", () => {
 
   it("denies scripted host writes when --write is not enabled", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["apply_patch"]);
+    await enableWorkspaceTools(workspace, ["edit"]);
     const output = createOutputCapture();
 
     const run = await runCli(
@@ -7261,7 +7589,7 @@ describe("runCli", () => {
               message: "attempt write without write flag",
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "README.md",
                     patch: "@@ -1,1 +1,2 @@\n # Demo\n+No write flag.\n",
@@ -7300,7 +7628,7 @@ describe("runCli", () => {
 
   it("rejects scripted model tool calls with invalid args before execution or approval", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["read_file", "apply_patch"]);
+    await enableWorkspaceTools(workspace, ["read", "edit"]);
     const output = createOutputCapture();
 
     const run = await runCli(
@@ -7323,15 +7651,15 @@ describe("runCli", () => {
               message: "invalid tool args",
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: { nested: "README.md" } },
                 },
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: {},
                 },
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "README.md",
                   },
@@ -7350,8 +7678,8 @@ describe("runCli", () => {
     );
 
     expect(run.exitCode).toBe(1);
-    expect(output.stdoutText()).toContain("tool.failed read_file");
-    expect(output.stdoutText()).toContain("tool.failed apply_patch");
+    expect(output.stdoutText()).toContain("tool.failed read");
+    expect(output.stdoutText()).toContain("tool.failed edit");
     expect(await readFile(join(workspace, "README.md"), "utf8")).toBe(
       "# Demo\n",
     );
@@ -7374,7 +7702,7 @@ describe("runCli", () => {
     );
     expect(
       invalidFailures.map((event) => event.payload?.toolName).sort(),
-    ).toEqual(["apply_patch", "read_file", "read_file"]);
+    ).toEqual(["edit", "read", "read"]);
     expect(
       invalidFailures.map(
         (event) =>
@@ -7384,7 +7712,7 @@ describe("runCli", () => {
               | undefined
           )?.metadata?.toolName,
       ),
-    ).toEqual(["read_file", "read_file", "apply_patch"]);
+    ).toEqual(["read", "read", "edit"]);
     expect(
       invalidFailures.map(
         (event) => (event.payload?.error as { message?: string }).message,
@@ -7419,7 +7747,7 @@ describe("runCli", () => {
               message: "invalid read args first",
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: { nested: "README.md" } },
                 },
               ],
@@ -7428,7 +7756,7 @@ describe("runCli", () => {
               message: "recover with valid read",
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "README.md" },
                 },
               ],
@@ -7486,7 +7814,7 @@ describe("runCli", () => {
               message: "read once",
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "README.md" },
                 },
               ],
@@ -7495,7 +7823,7 @@ describe("runCli", () => {
               message: "repeat the same read",
               toolCalls: [
                 {
-                  toolName: "read_file",
+                  toolName: "read",
                   arguments: { path: "README.md" },
                 },
               ],
@@ -7599,7 +7927,7 @@ describe("runCli", () => {
               message: "attempt deletion",
               toolCalls: [
                 {
-                  toolName: "shell",
+                  toolName: "bash",
                   arguments: { command: "rm -rf ./*" },
                 },
               ],
@@ -7656,7 +7984,7 @@ describe("runCli", () => {
               message: "inspect cwd",
               toolCalls: [
                 {
-                  toolName: "shell",
+                  toolName: "bash",
                   arguments: { command: "pwd" },
                 },
               ],
@@ -7677,8 +8005,7 @@ describe("runCli", () => {
     expect(
       traceEvents.some(
         (event) =>
-          event.type === "tool.completed" &&
-          event.payload?.toolName === "shell",
+          event.type === "tool.completed" && event.payload?.toolName === "bash",
       ),
     ).toBe(true);
     expect(
@@ -7687,14 +8014,14 @@ describe("runCli", () => {
     expect(
       traceEvents.some(
         (event) =>
-          event.type === "tool.failed" && event.payload?.toolName === "shell",
+          event.type === "tool.failed" && event.payload?.toolName === "bash",
       ),
     ).toBe(false);
   });
 
   it("denies host writes outside the requested target scope", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["apply_patch"]);
+    await enableWorkspaceTools(workspace, ["edit"]);
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
     const output = createOutputCapture();
 
@@ -7721,7 +8048,7 @@ describe("runCli", () => {
               message: "attempt out of scope write",
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "package.json",
                     patch: [
@@ -7766,7 +8093,7 @@ describe("runCli", () => {
 
   it("does not scope host writes to README.md unless --target is explicit", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["apply_patch"]);
+    await enableWorkspaceTools(workspace, ["edit"]);
     await writeFile(join(workspace, "package.json"), '{"name":"demo"}\n');
     const output = createOutputCapture();
 
@@ -7791,7 +8118,7 @@ describe("runCli", () => {
               message: "attempt package write",
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "package.json",
                     patch: [
@@ -7833,7 +8160,7 @@ describe("runCli", () => {
 
   it("allows a small multi-file write budget when no target is explicit", async () => {
     const workspace = await createWorkspace("# Demo\n");
-    await enableWorkspaceTools(workspace, ["apply_patch"]);
+    await enableWorkspaceTools(workspace, ["edit"]);
     await writeFile(join(workspace, "test.js"), "console.log('test')\n");
     const output = createOutputCapture();
 
@@ -7858,7 +8185,7 @@ describe("runCli", () => {
               message: "attempt two writes",
               toolCalls: [
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "README.md",
                     patch: [
@@ -7872,7 +8199,7 @@ describe("runCli", () => {
                   },
                 },
                 {
-                  toolName: "apply_patch",
+                  toolName: "edit",
                   arguments: {
                     path: "test.js",
                     patch: [
@@ -7936,7 +8263,7 @@ describe("runCli", () => {
               message: "attempt shell write",
               toolCalls: [
                 {
-                  toolName: "shell",
+                  toolName: "bash",
                   arguments: {
                     command:
                       "node -e \"require('fs').writeFileSync('README.md','hacked\\\\n')\"",

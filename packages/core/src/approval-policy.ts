@@ -130,7 +130,10 @@ function isWorkspaceWriteApproval(request: ApprovalRequest): boolean {
 
 function isSafeShellApproval(request: ApprovalRequest): boolean {
   if (request.action !== "tool.execute") return false;
-  if (!isRecord(request.details) || request.details.toolName !== "shell") {
+  if (
+    !isRecord(request.details) ||
+    !isShellToolName(request.details.toolName)
+  ) {
     return false;
   }
   const args = isRecord(request.details.arguments)
@@ -160,7 +163,7 @@ function isExternalApproval(request: ApprovalRequest): boolean {
   if (request.action !== "tool.execute") return false;
   if (!isRecord(request.details)) return false;
   if (isSafeShellApproval(request)) return false;
-  if (request.details.toolName === "shell") return true;
+  if (isShellToolName(request.details.toolName)) return true;
 
   const sideEffects =
     isRecord(request.details.governance) &&
@@ -172,6 +175,10 @@ function isExternalApproval(request: ApprovalRequest): boolean {
       (effect) => effect === "external" || effect === "network",
     ) ?? false
   );
+}
+
+function isShellToolName(value: unknown): boolean {
+  return value === "bash" || value === "shell";
 }
 
 function isSafeShellCommand(command: string | undefined): boolean {

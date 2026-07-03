@@ -249,7 +249,7 @@ project config cannot loosen a stricter personal setting.
 
 ### Shell Sandbox
 
-The built-in `shell` tool still goes through command classification, policy,
+The built-in `bash` tool still goes through command classification, policy,
 approval, and workspace mutation audit. `shell.sandbox` adds an experimental
 OS-level process boundary underneath that flow. The same setting is also used
 for configured workflow-hook commands, external-command delegates, and local
@@ -338,7 +338,7 @@ Block generated files before a write tool runs:
           "description": "Generated files are produced by build tooling.",
           "hook": "PreToolUse",
           "matcher": {
-            "toolName": ["edit_anchored_text", "apply_patch"],
+            "toolName": ["edit_anchored_text", "edit"],
             "pathGlob": "src/generated/**",
             "excludePathGlob": "src/generated/fixtures/**"
           },
@@ -391,7 +391,7 @@ Run a command after workspace writes and feed the result back into the run:
           "hook": "PostToolUse",
           "frequency": "oncePerTurn",
           "matcher": {
-            "toolName": ["edit_anchored_text", "apply_patch"]
+            "toolName": ["edit_anchored_text", "edit"]
           },
           "action": {
             "type": "command",
@@ -420,7 +420,7 @@ Observe a tool event without blocking the run:
           "trigger": "tool.completed",
           "matcher": {
             "eventType": "tool.completed",
-            "toolName": ["edit_anchored_text", "apply_patch"]
+            "toolName": ["edit_anchored_text", "edit"]
           },
           "action": {
             "type": "command",
@@ -862,14 +862,14 @@ Top-level `tools` is the preferred tool configuration surface.
 - `defer`: concrete built-in tool names kept available but omitted from the
   initial provider tool schema until discovered through `tool_search`.
 
-Selectors are: `workspace.read`, `workspace.write`, `shell`, `planning`,
+Selectors are: `workspace.read`, `workspace.write`, `bash`, `planning`,
 `skills`, `agents`, `tasks`, `cron`, `mcp`, and `mcp:<server>`. Multiple
 selectors in one file are a union; multiple config layers intersect, so a
 project can narrow a user setting. For example, user `use: ["mcp"]` plus project
 `use: ["mcp:demo"]` yields only the `demo` MCP server tools.
 Model-backed implementation delegates should usually select both
 `workspace.read` and `workspace.write`; write-only delegates often cannot find
-safe patch anchors. Delegates that select `shell` still require a write-enabled
+safe patch anchors. Delegates that select `bash` still require a write-enabled
 run, because shell is policy-gated as a side-effecting capability even when a
 particular command appears read-only.
 
@@ -930,7 +930,7 @@ The CLI can manage user-level tool settings in the first existing user config
 file, preserving JSON or YAML formatting:
 
 ```bash
-sparkwright tools disable shell
+sparkwright tools disable bash
 sparkwright tools allow mcp_demo_list_tools mcp_demo_call_tool
 sparkwright tools defer todo_write
 ```
@@ -939,7 +939,7 @@ Add `--workspace <path>` to manage project defaults in
 `<workspace>/.sparkwright/config.{json,yaml,yml}` instead:
 
 ```bash
-sparkwright tools disable shell --workspace .
+sparkwright tools disable bash --workspace .
 sparkwright tools allow mcp_demo_list_tools mcp_demo_call_tool --workspace .
 sparkwright tools defer todo_write --workspace .
 ```
@@ -1058,7 +1058,7 @@ metadata.
   "theme": "dark",
   "mouse": true,
   "keybindings": {
-    "palette.open": "ctrl+p",
+    "activity.open": "ctrl+o",
     "help.open": "?",
     "cancel.run": "esc",
     "quit.app": "ctrl+c"

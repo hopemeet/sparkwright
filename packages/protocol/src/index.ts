@@ -50,6 +50,23 @@ export function isRunAccessMode(value: unknown): value is RunAccessMode {
   );
 }
 
+export const BACKGROUND_TASK_POLICIES = [
+  "disabled",
+  "foreground-only",
+  "enabled",
+] as const;
+
+export type BackgroundTaskPolicy = (typeof BACKGROUND_TASK_POLICIES)[number];
+
+export function isBackgroundTaskPolicy(
+  value: unknown,
+): value is BackgroundTaskPolicy {
+  return (
+    typeof value === "string" &&
+    (BACKGROUND_TASK_POLICIES as readonly string[]).includes(value)
+  );
+}
+
 export const TRACE_LEVELS = ["standard", "debug"] as const;
 
 export type TraceLevel = (typeof TRACE_LEVELS)[number];
@@ -137,6 +154,7 @@ export type ProtocolErrorCode =
   | "run_not_found"
   | "approval_not_found"
   | "session_not_found"
+  | "task_not_found"
   | "internal_error";
 
 const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
@@ -146,6 +164,7 @@ const PROTOCOL_ERROR_CODES: readonly ProtocolErrorCode[] = [
   "run_not_found",
   "approval_not_found",
   "session_not_found",
+  "task_not_found",
   "internal_error",
 ];
 
@@ -224,6 +243,12 @@ export type RequestKind =
   | "session.inspect"
   | "session.fork"
   | "session.compact"
+  | "task.list"
+  | "task.get"
+  | "task.output"
+  | "task.stop"
+  | "task.join"
+  | "task.promote"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -286,6 +311,8 @@ export interface RunStartRequestPayload {
    * is ignored (with a diagnostic). Preferred over `permissionMode`.
    */
   accessMode?: RunAccessMode;
+  /** Session-level foreground/background task policy. Defaults to enabled. */
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -314,6 +341,8 @@ export interface RunResumeRequestPayload {
    * is ignored (with a diagnostic). Preferred over `permissionMode`.
    */
   accessMode?: RunAccessMode;
+  /** Session-level foreground/background task policy. Defaults to enabled. */
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
   metadata?: Record<string, unknown>;
@@ -431,6 +460,84 @@ export interface SessionCompactRequestPayload {
   llm?: boolean;
 }
 
+export type TaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export const TASK_STATUSES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+
+export interface TaskError {
+  code: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskRecordSnapshot {
+  id: string;
+  parentRunId: string;
+  kind: string;
+  title?: string;
+  awaited: boolean;
+  status: TaskStatus;
+  createdAt: string;
+  startedAt?: string;
+  lastOutputAt?: string;
+  lastProgressAt?: string;
+  lastHealthCheckAt?: string;
+  outputChunks?: number;
+  outputBytes?: number;
+  completedAt?: string;
+  result?: unknown;
+  error?: TaskError;
+  metadata: Record<string, unknown>;
+}
+
+export interface TaskOutputChunkSnapshot {
+  taskId: string;
+  sequence: number;
+  timestamp: string;
+  channel: "stdout" | "stderr" | "event";
+  data: string;
+}
+
+export interface TaskListRequestPayload {
+  status?: TaskStatus;
+  kind?: string;
+  parentRunId?: string;
+  limit?: number;
+}
+
+export interface TaskGetRequestPayload {
+  taskId: string;
+}
+
+export interface TaskOutputRequestPayload {
+  taskId: string;
+  fromSequence?: number;
+  maxChunks?: number;
+}
+
+export interface TaskStopRequestPayload {
+  taskId: string;
+}
+
+export interface TaskJoinRequestPayload {
+  taskId: string;
+}
+
+export interface TaskPromoteRequestPayload {
+  taskId: string;
+}
+
 export interface CapabilityInspectRequestPayload {
   /**
    * Reserved for future scoped inspection. Omit to inspect the host/session
@@ -452,6 +559,12 @@ export type HostRequest =
   | HostRequestBase<"session.inspect", SessionInspectRequestPayload>
   | HostRequestBase<"session.fork", SessionForkRequestPayload>
   | HostRequestBase<"session.compact", SessionCompactRequestPayload>
+  | HostRequestBase<"task.list", TaskListRequestPayload>
+  | HostRequestBase<"task.get", TaskGetRequestPayload>
+  | HostRequestBase<"task.output", TaskOutputRequestPayload>
+  | HostRequestBase<"task.stop", TaskStopRequestPayload>
+  | HostRequestBase<"task.join", TaskJoinRequestPayload>
+  | HostRequestBase<"task.promote", TaskPromoteRequestPayload>
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -515,15 +628,58 @@ export interface ResponseResults {
     warnings?: CompactionWarning[];
     artifactPath: string | null;
   };
+  "task.list": {
+    tasks: TaskRecordSnapshot[];
+  };
+  "task.get": TaskRecordSnapshot;
+  "task.output": {
+    taskId: string;
+    chunks: TaskOutputChunkSnapshot[];
+    nextSequence: number;
+    complete: boolean;
+    status: TaskStatus;
+    error?: TaskError;
+    lastOutputAt?: string;
+    stalled: boolean;
+  };
+  "task.stop": {
+    cancelled: boolean;
+    status?: TaskStatus;
+  };
+  "task.join": {
+    taskId: string;
+    awaited: boolean;
+    status: TaskStatus;
+  };
+  "task.promote": {
+    taskId: string;
+    promoted: boolean;
+    awaited: boolean;
+    status: TaskStatus;
+  };
   "capability.inspect": CapabilitySnapshot;
 }
 
 export interface CapabilityToolSummary {
   name: string;
+  canonicalName?: string;
+  legacyNames?: string[];
+  defaultExposureTier?:
+    | "public"
+    | "advanced"
+    | "infrastructure"
+    | "internal"
+    | "legacy";
+  source?: string;
   origin?: string;
   risk?: string;
+  governance?: unknown;
+  effectiveLoading?: "eager" | "deferred";
   /** True when the full tool schema is loaded through tool_search on demand. */
   deferred?: boolean;
+  disabled?: boolean;
+  relatedTools?: string[];
+  requiresTool?: string[];
 }
 
 export interface CapabilityModelPricingSummary {
@@ -644,6 +800,7 @@ export interface CapabilityTaskSummary {
   kind: string;
   status: string;
   title?: string;
+  awaited: boolean;
   parentRunId: string;
   createdAt: string;
   completedAt?: string;

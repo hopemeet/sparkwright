@@ -18,6 +18,7 @@ import {
   type ToolResultDisplay,
 } from "../lib/tool-display.js";
 import { middleEllipsisPath } from "../lib/path-display.js";
+import { shortTaskId } from "../lib/task-activity.js";
 
 export { oneLine } from "../lib/tool-display.js";
 
@@ -240,7 +241,7 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
   switch (event.type) {
     case "tool.requested": {
       facts.toolCalls += 1;
-      if (str(p.toolName) === "shell") {
+      if (isShellToolName(str(p.toolName))) {
         const args = rec(p.arguments ?? p.input ?? p.args);
         const command = str(args.command);
         if (command) facts.shellRequests.push(command);
@@ -275,6 +276,10 @@ function recordRunFact(facts: RunFacts, event: RunEvent): void {
       return;
     }
   }
+}
+
+function isShellToolName(name: string): boolean {
+  return name === "bash" || name === "shell";
 }
 
 function snapshotRunFacts(
@@ -589,6 +594,23 @@ function EventCard(props: {
       );
     }
 
+    case "task.created":
+    case "task.started":
+    case "task.completed":
+    case "task.failed":
+    case "task.cancelled": {
+      return (
+        <TaskLifecycleLine
+          event={ev}
+          paddingLeft={childPad}
+          inBatch={inBatch}
+        />
+      );
+    }
+
+    case "task.output":
+      return null;
+
     case "workspace.write.applied":
     case "workspace.write.completed": {
       const path = str(p.path) || "?";
@@ -612,6 +634,26 @@ function EventCard(props: {
           <Text color={theme.error}>🚫 write denied </Text>
           <Text bold>{path}</Text>
           {reason ? <Text dimColor>{"  " + reason}</Text> : null}
+        </Box>
+      );
+    }
+
+    case "workspace.write.untracked_access_granted": {
+      const taskId = str(p.taskId);
+      const protocol = str(p.protocol);
+      const command = str(p.command);
+      if (protocol !== "promoted_shell" && !taskId) return null;
+      return (
+        <Box paddingLeft={childPad} paddingRight={1}>
+          <Text color={theme.warning}>untracked writes possible</Text>
+          {taskId ? (
+            <Text
+              dimColor
+            >{` · ${shortTaskId(taskId)} · ctrl+o activity`}</Text>
+          ) : null}
+          {command ? (
+            <Text dimColor>{` · ${truncatePlain(command, 80)}`}</Text>
+          ) : null}
         </Box>
       );
     }
@@ -839,6 +881,94 @@ function EventCard(props: {
       );
     }
   }
+}
+
+function TaskLifecycleLine(props: {
+  event: RunEvent;
+  paddingLeft: number;
+  inBatch: boolean;
+}): React.ReactElement | null {
+  const theme = useTheme();
+  const ev = props.event;
+  const p = rec(ev.payload);
+  const taskId = str(p.taskId) || str(p.id);
+  if (!taskId) return null;
+  const phase = ev.type.slice("task.".length);
+  const result = rec(p.result);
+  const meta = rec(ev.metadata);
+  const kind = str(p.kind);
+  const command = str(p.command) || str(result.command);
+  const title = str(p.title);
+  const exitCode =
+    typeof result.exitCode === "number"
+      ? result.exitCode
+      : typeof p.exitCode === "number"
+        ? p.exitCode
+        : undefined;
+  const chunks =
+    typeof p.progressCount === "number"
+      ? p.progressCount
+      : typeof p.outputChunks === "number"
+        ? p.outputChunks
+        : undefined;
+  const duration =
+    typeof meta.durationMs === "number"
+      ? formatShortDuration(meta.durationMs)
+      : "";
+  const status =
+    phase === "started"
+      ? "started"
+      : phase === "created"
+        ? "queued"
+        : phase === "completed"
+          ? "completed"
+          : phase;
+  const color =
+    phase === "failed" || phase === "cancelled"
+      ? theme.error
+      : phase === "completed"
+        ? theme.success
+        : theme.accent;
+  const details = [
+    shortTaskId(taskId),
+    kind,
+    typeof exitCode === "number" ? `exit ${exitCode}` : undefined,
+    chunks !== undefined
+      ? `${chunks} chunk${chunks === 1 ? "" : "s"}`
+      : undefined,
+    duration,
+    phase === "started" || phase === "created" ? "ctrl+o activity" : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const label =
+    phase === "started" || phase === "created" ? "background task" : "task";
+  const summary = command || title;
+  return (
+    <Box
+      flexDirection="column"
+      paddingLeft={props.paddingLeft}
+      paddingRight={1}
+      marginTop={props.inBatch ? 0 : 1}
+    >
+      <Text color={color}>
+        {label} {status}
+        {details.length > 0 ? (
+          <Text dimColor> · {details.join(" · ")}</Text>
+        ) : null}
+      </Text>
+      {summary ? (
+        <Text dimColor>{"  " + truncatePlain(summary, 120)}</Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function formatShortDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h${m % 60}m`;
 }
 
 /** Compact, non-scrolling diff for committed scrollback (capped rows). */

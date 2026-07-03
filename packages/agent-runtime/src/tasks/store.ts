@@ -22,6 +22,7 @@ export interface TaskListFilter {
   status?: TaskStatus;
   kind?: string;
   parentRunId?: string;
+  awaited?: boolean;
 }
 
 /**
@@ -31,6 +32,7 @@ export interface TaskListFilter {
  * @stability experimental v0.1
  */
 export interface TaskUpdatePatch {
+  awaited?: boolean;
   status?: TaskStatus;
   startedAt?: string;
   lastOutputAt?: string;
@@ -56,6 +58,7 @@ export interface CreateTaskInput {
   parentRunId: TaskRecord["parentRunId"];
   kind: string;
   title?: string;
+  awaited?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -71,6 +74,7 @@ export interface TaskStore {
   get(id: TaskId): TaskRecord | undefined;
   list(filter?: TaskListFilter): TaskRecord[];
   update(id: TaskId, patch: TaskUpdatePatch): TaskRecord;
+  remove?(id: TaskId): void;
   appendOutput(
     id: TaskId,
     chunk: Omit<TaskOutputChunk, "sequence">,
@@ -108,6 +112,7 @@ export class InMemoryTaskStore implements TaskStore {
       parentRunId: input.parentRunId,
       kind: input.kind,
       title: input.title,
+      awaited: input.awaited ?? true,
       status: "pending",
       createdAt: new Date().toISOString(),
       metadata: { ...(input.metadata ?? {}) },
@@ -126,6 +131,8 @@ export class InMemoryTaskStore implements TaskStore {
     return all.filter((record) => {
       if (filter.status && record.status !== filter.status) return false;
       if (filter.kind && record.kind !== filter.kind) return false;
+      if (filter.awaited !== undefined && record.awaited !== filter.awaited)
+        return false;
       if (filter.parentRunId && record.parentRunId !== filter.parentRunId)
         return false;
       return true;
@@ -141,6 +148,9 @@ export class InMemoryTaskStore implements TaskStore {
       ...existing,
       ...("status" in patch && patch.status !== undefined
         ? { status: patch.status }
+        : {}),
+      ...("awaited" in patch && patch.awaited !== undefined
+        ? { awaited: patch.awaited }
         : {}),
       ...("startedAt" in patch && patch.startedAt !== undefined
         ? { startedAt: patch.startedAt }
@@ -183,6 +193,13 @@ export class InMemoryTaskStore implements TaskStore {
       }
     }
     return updated;
+  }
+
+  remove(id: TaskId): void {
+    this.records.delete(id);
+    this.outputs.delete(id);
+    this.subscribers.delete(id);
+    this.terminalWaiters.delete(id);
   }
 
   appendOutput(

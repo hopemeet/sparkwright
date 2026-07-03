@@ -9,7 +9,7 @@ describe("inputFooterLines", () => {
     expect(lines.every((line) => line.length <= 58)).toBe(true);
     expect(lines.join("\n")).toContain("shift+tab mode");
     expect(lines.join("\n")).toContain("ctrl+r search");
-    expect(lines.join("\n")).toContain("ctrl+o inspector");
+    expect(lines.join("\n")).toContain("ctrl+o activity");
   });
 
   it("keeps a single line when there is enough room", () => {

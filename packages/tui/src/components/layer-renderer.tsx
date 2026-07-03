@@ -1,5 +1,14 @@
 import React from "react";
-import type { CapabilitySnapshot } from "@sparkwright/protocol";
+import type {
+  CapabilitySnapshot,
+  TaskOutputChunkSnapshot,
+  TaskRecordSnapshot,
+} from "@sparkwright/protocol";
+import {
+  ActivityPanel,
+  activityTabFromPayload,
+  type ActivityTab,
+} from "./activity-panel.js";
 import { ApprovalPrompt } from "./approval-prompt.js";
 import { CapabilitiesPanel } from "./capabilities-panel.js";
 import { ConfigPanel, type ConfigPanelResolved } from "./config-panel.js";
@@ -32,7 +41,11 @@ export function LayerRenderer(props: {
   registry: CommandRegistry;
   resolved: ConfigPanelResolved;
   sessionList: SessionSummary[];
+  sessionRootLabel?: string;
   events: RunEvent[];
+  taskRecords?: readonly TaskRecordSnapshot[];
+  taskOutputs?: Readonly<Record<string, readonly TaskOutputChunkSnapshot[]>>;
+  loadingTasks?: boolean;
   labels: Record<string, string>;
   renameTarget: string | null;
   effModel?: string;
@@ -44,6 +57,11 @@ export function LayerRenderer(props: {
   skillReviewSnapshot: TuiSkillReviewDetail | null;
   loadingSkillReview: boolean;
   onCloseTop: () => void;
+  onActivityTabChange?: (tab: ActivityTab) => void;
+  onRefreshTasks?: () => void;
+  onStopTask?: (taskId: string) => void;
+  onJoinTask?: (taskId: string) => void;
+  onPromoteTask?: (taskId: string) => void;
   onInspectSession: (id: string) => void;
   onPickSession: (id: string) => void;
   onRequestRename: (id: string) => void;
@@ -77,6 +95,7 @@ export function LayerRenderer(props: {
       return (
         <SessionListDialog
           sessions={props.sessionList}
+          sessionRootLabel={props.sessionRootLabel}
           labels={props.labels}
           diagnostics={props.sessionDiagnostics}
           loadingDiagnosticsFor={props.loadingDiagnosticsFor}
@@ -99,6 +118,22 @@ export function LayerRenderer(props: {
     case "events":
       return (
         <EventDetailPanel events={props.events} onClose={props.onCloseTop} />
+      );
+    case "activity":
+      return (
+        <ActivityPanel
+          events={props.events}
+          taskRecords={props.taskRecords}
+          taskOutputs={props.taskOutputs}
+          loadingTasks={props.loadingTasks}
+          initialTab={activityTabFromPayload(props.entry.payload)}
+          onClose={props.onCloseTop}
+          onTabChange={props.onActivityTabChange}
+          onRefreshTasks={props.onRefreshTasks}
+          onStopTask={props.onStopTask}
+          onJoinTask={props.onJoinTask}
+          onPromoteTask={props.onPromoteTask}
+        />
       );
     case "model":
       return (

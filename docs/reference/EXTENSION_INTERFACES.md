@@ -288,7 +288,7 @@ Guidelines for new tools:
   code, and failing sections before successful noise.
 - Put large raw stdout, logs, diffs, screenshots, and generated content in
   artifacts when possible, and return the artifact reference in the result.
-- If a tool cannot support a common input shape (for example, `read_file` with a
+- If a tool cannot support a common input shape (for example, `read` with a
   glob path), reject it with a targeted error and name the correct discovery
   tool instead of returning a generic missing-file error.
 
@@ -560,16 +560,16 @@ configuration, inspection, and trace payloads.
 
 Lifecycle effects:
 
-| Lifecycle       | `block` effect                                                                                                                      | `rewrite` effect                                                                            |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `RunStart`      | Fails the run with `hook_stopped` / `WORKFLOW_HOOK_BLOCKED`.                                                                        | No current effect.                                                                          |
-| `TurnStart`     | Fails the run with `hook_stopped` / `WORKFLOW_HOOK_BLOCKED`.                                                                        | No current effect.                                                                          |
-| `ModelOutput`   | Adds continuation context and advances to another model turn.                                                                       | No current effect.                                                                          |
-| `PreToolUse`    | Synthesizes a failed `ToolResult` (`TOOL_BLOCKED_BY_WORKFLOW_HOOK`) and lets the run continue.                                      | Rewrites requested tool arguments before budget, repeat, policy, and tool execution checks. |
-| `PostToolUse`   | Adds continuation context after the completed or failed tool result; it does not undo the tool result.                              | No current effect.                                                                          |
-| `Stop`          | Adds continuation context and advances to another model turn instead of completing.                                                 | No current effect.                                                                          |
-| `RunEnd`        | Current call sites are fire-and-forget; a block can emit hook lifecycle events but does not change the already-terminal run result. | No current effect.                                                                          |
-| `RuntimeSignal` | Can fail or stop the run when called from an awaited runtime-signal gate.                                                           | No current effect.                                                                          |
+| Lifecycle       | `block` effect                                                                                                                      | `advance` effect                                                                                     | `rewrite` effect                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `RunStart`      | Fails the run with `hook_stopped` / `WORKFLOW_HOOK_BLOCKED`.                                                                        | Unsupported.                                                                                         | No current effect.                                                                          |
+| `TurnStart`     | Fails the run with `hook_stopped` / `WORKFLOW_HOOK_BLOCKED`.                                                                        | Unsupported.                                                                                         | No current effect.                                                                          |
+| `ModelOutput`   | Adds blocked-continuation context and advances to another model turn.                                                               | Adds advance-continuation context and advances to another model turn without emitting a blocked hook. | No current effect.                                                                          |
+| `PreToolUse`    | Synthesizes a failed `ToolResult` (`TOOL_BLOCKED_BY_WORKFLOW_HOOK`) and lets the run continue.                                      | Unsupported.                                                                                         | Rewrites requested tool arguments before budget, repeat, policy, and tool execution checks. |
+| `PostToolUse`   | Adds continuation context after the completed or failed tool result; it does not undo the tool result.                              | Unsupported.                                                                                         | No current effect.                                                                          |
+| `Stop`          | Adds blocked-continuation context and advances to another model turn instead of completing.                                         | Adds advance-continuation context and advances to another model turn instead of completing.           | No current effect.                                                                          |
+| `RunEnd`        | Current call sites are fire-and-forget; a block can emit hook lifecycle events but does not change the already-terminal run result. | Unsupported.                                                                                         | No current effect.                                                                          |
+| `RuntimeSignal` | Can fail or stop the run when called from an awaited runtime-signal gate.                                                           | Unsupported.                                                                                         | No current effect.                                                                          |
 
 Hooks are wired with `createRun({ workflowHooks: [...] })`. Each hook can
 carry a matcher so broad lifecycle names remain usable without adding many
@@ -581,7 +581,7 @@ const blockGenerated: WorkflowHook = {
   description: "Prevent direct edits to generated files.",
   hook: "PreToolUse",
   matcher: {
-    toolName: "write_file",
+    toolName: "write",
     pathGlob: "src/generated/**",
     excludePathGlob: "src/generated/fixtures/**",
   },
@@ -604,6 +604,8 @@ Handlers return one of:
 - `continue` — optionally injects `ContextItem[]`.
 - `block` — prevents the current lifecycle path from continuing; the concrete
   effect depends on the lifecycle table above.
+- `advance` — a successful, non-violation continuation for `ModelOutput` and
+  `Stop`; it emits `workflow_hook.completed`, not `workflow_hook.blocked`.
 - `rewrite` — currently supported for `PreToolUse` tool arguments.
 - `skipped` — records that a hook intentionally did nothing.
 
@@ -630,10 +632,10 @@ artifacts, live output callbacks, and task output.
 
 Command actions can set `resultMode: "stdoutJson"` to parse successful stdout
 as a `WorkflowHookResult`. This lets a sandboxed command produce `block`,
-`rewrite`, `skipped`, or `continue` dynamically while preserving the same core
-result protocol. Omit it, or use `exitCode`, to keep the legacy exit-code
-behavior. When `stdoutJson` is enabled, stdout is reserved for the final control
-JSON; progress belongs on stderr through the helper/wire protocol.
+`advance`, `rewrite`, `skipped`, or `continue` dynamically while preserving the
+same core result protocol. Omit it, or use `exitCode`, to keep the legacy
+exit-code behavior. When `stdoutJson` is enabled, stdout is reserved for the
+final control JSON; progress belongs on stderr through the helper/wire protocol.
 
 Workflow hook actions can also call `http(s)` endpoints (`type: "http"`) or
 configured delegate agents (`type: "agent"`). HTTP actions can parse

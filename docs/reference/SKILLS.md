@@ -75,7 +75,7 @@ The first implementation supports a small YAML frontmatter subset:
 ---
 name: dingtalk-notifier
 description: Send DingTalk webhook notifications when users mention dingtalk, webhook, group messages, or notifications.
-allowed-tools: shell http
+allowed-tools: bash http
 metadata:
   version: 1.0.0
 ---

@@ -25,6 +25,7 @@ import {
   loadLayeredSkillReport,
   type SkillReportEntry,
 } from "./skill-report.js";
+import { recordSkillPatch } from "./skill-usage.js";
 
 export type SkillProposalState =
   | "draft"
@@ -35,6 +36,7 @@ export type SkillProposalState =
   | "failed";
 
 export type SkillProposalKind = "create" | "update";
+export type SkillProposalContentMode = "authored" | "intent_stub" | "template";
 export type SkillHistoryKind = SkillProposalKind | "restore";
 
 const PRUNABLE_PROPOSAL_STATES: readonly SkillProposalState[] = [
@@ -68,6 +70,7 @@ export interface SkillProposalMetadata {
   basePackageHash: string | null;
   afterPackageHash: string;
   summary: string;
+  contentMode?: SkillProposalContentMode;
   sourceLayer?: SkillRoot["layer"];
   sourcePath?: string;
   closedAt?: string;
@@ -261,6 +264,7 @@ export async function createSkillCreateProposal(
       basePackageHash: null,
       afterPackageHash: afterHash.packageHash,
       summary: `Create project Skill ${input.name}`,
+      contentMode: input.content ? "authored" : "template",
       ...(guardFindings.length > 0 ? { guardFindings } : {}),
       ...(normalizeProvenance(input.provenance)
         ? { provenance: normalizeProvenance(input.provenance) }
@@ -368,6 +372,7 @@ export async function createSkillUpdateProposal(
         skill.layer === "project"
           ? `Update project Skill ${input.name}`
           : `Fork ${skill.layer ?? "unknown"} Skill ${input.name} into project layer`,
+      contentMode: input.applyEdit ? "authored" : "intent_stub",
       sourceLayer: skill.layer,
       sourcePath: skill.source,
       ...(guardFindings.length > 0 ? { guardFindings } : {}),
@@ -588,6 +593,7 @@ export async function applySkillProposal(
       now,
       {},
     );
+    recordSkillPatch(workspaceRoot, proposal.skillName, now);
 
     return {
       proposal: applied,
@@ -825,6 +831,7 @@ export async function restoreSkillFromHistory(
       createdAt: restoredAt,
       mutations,
     });
+    recordSkillPatch(input.workspaceRoot, input.skillName, restoredAt);
 
     return {
       applied: true,
@@ -966,6 +973,7 @@ async function updateProposalState(
     closedAt: extra.closedAt ?? proposal.closedAt,
     statusReason: extra.statusReason ?? proposal.statusReason,
     supersededBy: extra.supersededBy ?? proposal.supersededBy,
+    contentMode: proposal.contentMode,
     guardFindings: proposal.guardFindings,
     provenance: proposal.provenance,
   };

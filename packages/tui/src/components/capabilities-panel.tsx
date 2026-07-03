@@ -240,8 +240,9 @@ function addOverviewRows(
         ]
       : []),
     <Text key="overview-tool-map" color={props.theme.muted}>
-      Tool map: {toolGroups.ready.length} ready, {toolGroups.deferred.length}{" "}
-      via tool_search, {toolGroups.highRiskTotal} approval/high-risk.
+      Tool map: {toolGroups.publicTools.length} public,{" "}
+      {toolGroups.deferred.length} on demand, {toolGroups.infrastructure.length}{" "}
+      infrastructure, {toolGroups.highRiskTotal} approval/high-risk.
     </Text>,
     <Text key="overview-skills" color={props.theme.muted}>
       Indexed Skills are discoverable examples; loaded Skills were selected for
@@ -282,8 +283,8 @@ function addToolsRows(
   theme: CapabilityRowTheme,
 ): void {
   const groups = groupTools(tools);
-  addToolGroupRows(rows, "ready tools", groups.ready, theme, {
-    empty: "no ready tools reported",
+  addToolGroupRows(rows, "public tools", groups.publicTools, theme, {
+    empty: "no public tools reported",
     limit: 16,
   });
   addToolGroupRows(rows, "deferred via tool_search", groups.deferred, theme, {
@@ -296,6 +297,16 @@ function addToolsRows(
     limit: 16,
     prefix: "check ",
   });
+  addToolGroupRows(
+    rows,
+    "discovery infrastructure",
+    groups.infrastructure,
+    theme,
+    {
+      empty: "no discovery infrastructure reported",
+      limit: 8,
+    },
+  );
   addToolSourceRows(rows, groups.sourceCounts, theme);
 }
 
@@ -322,8 +333,17 @@ function addToolGroupRows(
         ) : null}
         {tool.name}
         {tool.risk ? <Text color={theme.muted}> · {tool.risk}</Text> : null}
-        {tool.deferred ? (
+        {tool.defaultExposureTier ? (
+          <Text color={theme.muted}> · {tool.defaultExposureTier}</Text>
+        ) : null}
+        {isDeferredTool(tool) ? (
           <Text color={theme.muted}> · load on demand</Text>
+        ) : null}
+        {tool.legacyNames && tool.legacyNames.length > 0 ? (
+          <Text color={theme.muted}>
+            {" "}
+            · legacy {tool.legacyNames.join(",")}
+          </Text>
         ) : null}
         {tool.origin ? <Text color={theme.muted}> · {tool.origin}</Text> : null}
       </Text>,
@@ -368,34 +388,55 @@ function addToolSourceRows(
 }
 
 function groupTools(tools: CapabilitySnapshot["tools"]): {
-  ready: CapabilitySnapshot["tools"];
+  publicTools: CapabilitySnapshot["tools"];
   deferred: CapabilitySnapshot["tools"];
   risky: CapabilitySnapshot["tools"];
+  infrastructure: CapabilitySnapshot["tools"];
   highRiskTotal: number;
   sourceCounts: Array<{ source: string; count: number }>;
 } {
-  const ready = tools.filter(
-    (tool) => tool.deferred !== true && tool.risk !== "risky",
+  const publicTools = tools.filter(
+    (tool) => exposureTier(tool) === "public" && !isDeferredTool(tool),
   );
-  const deferred = tools.filter((tool) => tool.deferred === true);
+  const deferred = tools.filter(
+    (tool) => isDeferredTool(tool) && exposureTier(tool) !== "infrastructure",
+  );
   const risky = tools.filter(
-    (tool) => tool.risk === "risky" && tool.deferred !== true,
+    (tool) => tool.risk === "risky" && !isDeferredTool(tool),
+  );
+  const infrastructure = tools.filter(
+    (tool) => exposureTier(tool) === "infrastructure",
   );
   const highRiskTotal = tools.filter((tool) => tool.risk === "risky").length;
   const sourceCounts = new Map<string, number>();
   for (const tool of tools) {
-    const source = toolSourceLabel(tool.origin);
+    const source = tool.source ?? toolSourceLabel(tool.origin);
     sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
   }
   return {
-    ready,
+    publicTools,
     deferred,
     risky,
+    infrastructure,
     highRiskTotal,
     sourceCounts: [...sourceCounts]
       .map(([source, count]) => ({ source, count }))
       .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source)),
   };
+}
+
+function isDeferredTool(tool: CapabilitySnapshot["tools"][number]): boolean {
+  return tool.effectiveLoading === "deferred" || tool.deferred === true;
+}
+
+function exposureTier(
+  tool: CapabilitySnapshot["tools"][number],
+): NonNullable<CapabilitySnapshot["tools"][number]["defaultExposureTier"]> {
+  if (tool.defaultExposureTier) return tool.defaultExposureTier;
+  if (tool.name === "tool_search" || tool.name === "skill_load") {
+    return "infrastructure";
+  }
+  return isDeferredTool(tool) ? "advanced" : "public";
 }
 
 function toolSourceLabel(origin: string | undefined): string {

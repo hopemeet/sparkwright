@@ -797,7 +797,11 @@ Review only the requested change.
       { name: "code-reviewer", resource: "references/missing.md" },
       ctx,
     );
-    expect(missing).toMatchObject({ status: "resource_not_found" });
+    expect(missing).toMatchObject({
+      status: "resource_not_found",
+      availableResources: ["references/rules.md"],
+    });
+    expect(String(missing.message)).toContain("Available reference files");
   });
 
   it("short-circuits a repeated skill load as already_loaded", async () => {

@@ -112,4 +112,55 @@ describe("StatusBar", () => {
     expect(text).toContain("openai/gpt-5.4-mini");
     expect(text).toContain("accept-edits");
   });
+
+  it("surfaces running background tasks with the activity shortcut", async () => {
+    const text = await renderToText(
+      <StatusBar
+        state={state({
+          status: "done",
+          events: [
+            {
+              type: "task.started",
+              sequence: 1,
+              payload: {
+                taskId: "task_mqzd1c1b30yc24hj",
+                kind: "shell.promoted",
+              },
+            },
+            {
+              type: "workspace.write.untracked_access_granted",
+              sequence: 2,
+              payload: {
+                taskId: "task_mqzd1c1b30yc24hj",
+                protocol: "promoted_shell",
+              },
+            },
+          ],
+        })}
+        modelLabel="openai/gpt-5.4-mini"
+        permissionMode="ask"
+        focused={true}
+      />,
+    );
+
+    expect(text).toContain("tasks: 1 running");
+    expect(text).toContain("untracked writes possible");
+    expect(text).toContain("ctrl+o");
+  });
+
+  it("surfaces unread completed and failed task notifications", async () => {
+    const text = await renderToText(
+      <StatusBar
+        state={state({ status: "done" })}
+        modelLabel="openai/gpt-5.4-mini"
+        permissionMode="ask"
+        focused={true}
+        unreadCompletedTasks={2}
+        unreadFailedTasks={1}
+      />,
+    );
+
+    expect(text).toContain("tasks: 1 failed unread, 2 completed unread");
+    expect(text).toContain("ctrl+o");
+  });
 });

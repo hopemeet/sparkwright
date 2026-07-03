@@ -192,9 +192,22 @@ export function formatTuiSkillReviewSummary(
     header,
     ...summary.shown.map(
       (proposal) =>
-        `${proposal.id}: ${proposal.state} ${proposal.kind} ${proposal.skillName}`,
+        `${proposal.id}: ${proposal.state} ${proposal.kind} ${proposal.skillName}${formatProposalContentSuffix(proposal)}`,
     ),
   ].join("\n");
+}
+
+function formatProposalContentSuffix(
+  proposal: Pick<SkillProposalSummary, "contentMode">,
+): string {
+  switch (proposal.contentMode) {
+    case "intent_stub":
+      return " [intent-only]";
+    case "template":
+      return " [template]";
+    default:
+      return "";
+  }
 }
 
 export async function applyTuiSkillReviewProposal(

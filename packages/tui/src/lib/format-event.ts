@@ -33,6 +33,8 @@ export function formatEvent(event: RunEvent): FormattedEvent {
   else if (isWorkflowHook(t)) color = workflowHookColor(t, p);
   else if (t.startsWith("approval.")) color = "yellow";
   else if (t.startsWith("tool.")) color = "cyan";
+  else if (t.startsWith("task."))
+    color = t.endsWith(".failed") ? "red" : "cyan";
   else if (t.startsWith("skill.")) color = "blue";
   else if (t.startsWith("capability.")) color = "red";
   else if (t.startsWith("mcp.")) color = "cyan";
@@ -52,7 +54,11 @@ export function formatEvent(event: RunEvent): FormattedEvent {
     )
       detail = str(p.toolName);
     else if (t === "approval.requested") detail = str(p.summary);
-    else if (t === "workspace.write.requested") detail = str(p.path);
+    else if (t.startsWith("task.")) {
+      detail = [str(p.taskId) || str(p.id), str(p.status), str(p.kind)]
+        .filter(Boolean)
+        .join(" ");
+    } else if (t === "workspace.write.requested") detail = str(p.path);
     else if (t === "run.completed" || t === "run.failed")
       detail = str(p.reason ?? p.stopReason);
     else if (t === "capability.mutation.completed") {

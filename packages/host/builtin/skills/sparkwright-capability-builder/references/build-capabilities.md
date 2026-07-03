@@ -183,11 +183,9 @@ directly:
 
 ```json
 {
-  "capabilities": {
-    "tools": {
-      "disabled": ["shell"],
-      "defer": ["mcp_*"]
-    }
+  "tools": {
+    "disabled": ["bash"],
+    "defer": ["mcp_*"]
   }
 }
 ```

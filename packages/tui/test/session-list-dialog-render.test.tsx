@@ -79,6 +79,25 @@ describe("SessionListDialog rendering", () => {
     expect(text).toContain("second task");
   });
 
+  it("renders the effective session root in the empty state", async () => {
+    const text = await renderToText(
+      <SessionListDialog
+        sessions={[]}
+        sessionRootLabel="/tmp/sparkwright-tui-sessions"
+        labels={{}}
+        diagnostics={null}
+        loadingDiagnosticsFor={null}
+        onCancel={() => {}}
+        onInspect={() => {}}
+        onPick={() => {}}
+        onRename={() => {}}
+      />,
+    );
+
+    expect(text).toContain("none found in /tmp/sparkwright-tui-sessions");
+    expect(text).not.toContain(".sparkwright/sessions");
+  });
+
   it("renders compaction diagnostics when inspection includes them", async () => {
     const diagnostics: SessionDiagnostics = {
       sessionId: "session_a",

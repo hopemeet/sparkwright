@@ -7,6 +7,7 @@ import { evaluateTrajectory } from "./eval.js";
 import {
   analyzeLowNetProgress,
   collectRepeatedToolRequests,
+  type LowNetProgressInput,
   type RepeatedToolRequest,
 } from "./run-health.js";
 import {
@@ -224,9 +225,12 @@ interface TraceReportFacts {
   toolCalls: number;
   workspaceReadTotal: number;
   workspaceReadRatio: number;
+  workspaceReadAttribution: WorkspaceReadAttribution;
   topDuplicateReads: Record<string, number>;
+  topRepeatedReadWindows: Record<string, number>;
   topTools: Record<string, number>;
-  repeatedToolRequests: RepeatedToolRequest[];
+  repeatedToolRequestRuns: RepeatedToolRequestRunFacts[];
+  lowNetProgressRuns: LowNetProgressRunFacts[];
   repeatedCommandFailures: Array<{ label: string; count: number }>;
   trajectory: ReturnType<typeof evaluateTrajectory>;
   uniqueWritePaths: string[];
@@ -240,6 +244,23 @@ interface TraceReportFacts {
   largestDuplicateRead: number;
   workspaceWrites: number;
   approvalsRequested: number;
+}
+
+interface LowNetProgressRunFacts {
+  runId?: string;
+  agentId?: string;
+  input: LowNetProgressInput;
+}
+
+interface RepeatedToolRequestRunFacts {
+  runId?: string;
+  agentId?: string;
+  repeatedToolRequests: RepeatedToolRequest[];
+}
+
+interface RunEventGroup {
+  runId?: string;
+  events: SparkwrightEvent[];
 }
 
 interface TraceReportContext {
@@ -261,6 +282,13 @@ interface ReportableFailureLedger {
 interface TerminalRunAnomaly {
   runId: string;
   terminalCount: number;
+}
+
+interface WorkspaceReadAttribution {
+  byTool: Record<string, number>;
+  scanByTool: Record<string, number>;
+  explicitReadByTool: Record<string, number>;
+  unattributed: number;
 }
 
 type TraceReportAnalyzer = (
@@ -293,12 +321,18 @@ function collectTraceReportFacts(
   const workspaceReadTotal = summary.workspaceReads.total;
   const workspaceReadRatio =
     summary.eventCount > 0 ? workspaceReadTotal / summary.eventCount : 0;
+  const workspaceReadAttribution = collectWorkspaceReadAttribution(events);
   const topDuplicateReads = firstEntries(
     summary.workspaceReads.duplicatePaths,
     8,
   );
+  const topRepeatedReadWindows = firstEntries(
+    collectRepeatedReadWindows(events),
+    8,
+  );
   const topTools = firstEntries(summary.toolCalls, 8);
-  const repeatedToolRequests = collectRepeatedToolRequests(events);
+  const repeatedToolRequestRuns = collectRepeatedToolRequestRunFacts(events);
+  const lowNetProgressRuns = collectLowNetProgressRunFacts(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
   const trajectory = evaluateTrajectory([...events]);
   const uniqueWritePaths = collectUniqueCompletedWritePaths(events);
@@ -319,9 +353,12 @@ function collectTraceReportFacts(
     toolCalls,
     workspaceReadTotal,
     workspaceReadRatio,
+    workspaceReadAttribution,
     topDuplicateReads,
+    topRepeatedReadWindows,
     topTools,
-    repeatedToolRequests,
+    repeatedToolRequestRuns,
+    lowNetProgressRuns,
     repeatedCommandFailures,
     trajectory,
     uniqueWritePaths,
@@ -420,7 +457,10 @@ function analyzeCommandFailures({
       recommendation:
         "Do not trust final answers until the verification command passes or the failure is explicitly resolved.",
     });
-  } else if (summary.commandFailures.total > 0) {
+  } else if (
+    summary.commandFailures.total > 0 &&
+    !allCommandFailuresAreRecoveredVerification(summary)
+  ) {
     findings.push({
       severity: "medium",
       code: "COMMAND_FAILURES",
@@ -454,6 +494,19 @@ function analyzeCommandFailures({
   }
 
   return findings;
+}
+
+function allCommandFailuresAreRecoveredVerification(
+  summary: TraceSummary,
+): boolean {
+  const verification = summary.commandFailures.verification;
+  return (
+    summary.commandFailures.total > 0 &&
+    verification.total === summary.commandFailures.total &&
+    verification.unresolved === 0 &&
+    typeof verification.lastSuccessfulVerificationCommand === "string" &&
+    verification.lastSuccessfulVerificationCommand.length > 0
+  );
 }
 
 function analyzeMultiAgentAuditability({
@@ -553,14 +606,12 @@ function analyzeEfficiency({
     toolCalls,
     workspaceReadTotal,
     workspaceReadRatio,
+    workspaceReadAttribution,
     topDuplicateReads,
     topTools,
-    repeatedToolRequests,
-    trajectory,
-    uniqueWritePaths,
-    verificationLag,
+    repeatedToolRequestRuns,
+    lowNetProgressRuns,
     largestDuplicateRead,
-    workspaceWrites,
   } = facts;
   const findings: TraceReportFinding[] = [];
 
@@ -597,60 +648,160 @@ function analyzeEfficiency({
       evidence: [
         `${workspaceReadTotal} workspace.read event(s)`,
         `${Math.round(workspaceReadRatio * 100)}% of trace events`,
+        ...formatWorkspaceReadAttributionEvidence(workspaceReadAttribution),
       ],
       recommendation:
-        "Consider aggregating scan-level reads separately from explicit file reads in standard traces.",
+        "Separate scan-level reads from explicit file reads when reviewing trace volume, then tune search scope or read reuse based on the attributed tool.",
     });
   }
 
   if (largestDuplicateRead >= 10) {
+    const scanEvidence = formatCountRecord(workspaceReadAttribution.scanByTool);
     findings.push({
       severity: "medium",
       code: "DUPLICATE_WORKSPACE_READS",
       title: "The same files were read repeatedly",
       evidence: [
         `top duplicate reads: ${formatCountRecord(topDuplicateReads)}`,
+        ...(scanEvidence ? [`scan reads by tool: ${scanEvidence}`] : []),
       ],
       recommendation:
-        "Surface prior reads to the model or return cached-read hints for duplicate targets.",
+        "Check whether duplicates come from scan tools or explicit file reads before adding read-cache hints; surface prior explicit reads when the same targets repeat.",
     });
   }
 
-  if (repeatedToolRequests.length > 0) {
+  for (const runFacts of repeatedToolRequestRuns) {
+    if (runFacts.repeatedToolRequests.length === 0) continue;
     findings.push({
       severity: "medium",
       code: "REPEATED_TOOL_REQUESTS",
       title: "Identical tool requests repeated",
-      evidence: repeatedToolRequests
-        .slice(0, 5)
-        .map((item) => `${item.count}x ${item.label}`),
+      evidence: [
+        ...runScopeEvidence(runFacts, repeatedToolRequestRuns.length),
+        ...runFacts.repeatedToolRequests
+          .slice(0, 5)
+          .map((item) => `${item.count}x ${item.label}`),
+      ],
       recommendation:
         "Feed duplicate-call evidence back to the model or add cached-result hints before lowering maxSteps.",
     });
   }
 
-  const lowNetProgress = analyzeLowNetProgress({
-    modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
-    toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
-    budgetCheckCount: trajectory.metrics.budgetCheckCount,
-    workspaceWrites,
-    uniqueWritePaths: uniqueWritePaths.length,
-    topDuplicateReads,
-    repeatedToolRequests,
-    verificationLag,
-  });
-  if (lowNetProgress) {
+  for (const runFacts of lowNetProgressRuns) {
+    const lowNetProgress = analyzeLowNetProgress(runFacts.input);
+    if (!lowNetProgress) continue;
     findings.push({
       severity: "medium",
       code: "LOW_NET_PROGRESS",
       title: "Run spent many cycles for little file progress",
-      evidence: lowNetProgress.evidence,
+      evidence: [
+        ...runScopeEvidence(runFacts, lowNetProgressRuns.length),
+        ...lowNetProgress.evidence,
+      ],
       recommendation:
         "After a focused edit, run the relevant verification or conclude instead of re-reading unchanged files or repeating equivalent tool calls.",
     });
   }
 
   return findings;
+}
+
+function collectRepeatedToolRequestRunFacts(
+  events: readonly SparkwrightEvent[],
+): RepeatedToolRequestRunFacts[] {
+  return collectRunEventGroups(events).map((group) => {
+    const agentId = dominantAgentId(group.events);
+    return {
+      ...(group.runId ? { runId: group.runId } : {}),
+      ...(agentId ? { agentId } : {}),
+      repeatedToolRequests: collectRepeatedToolRequests(group.events),
+    };
+  });
+}
+
+function collectLowNetProgressRunFacts(
+  events: readonly SparkwrightEvent[],
+): LowNetProgressRunFacts[] {
+  return collectRunEventGroups(events).map((group) => {
+    const runEvents = group.events;
+    const trajectory = evaluateTrajectory([...runEvents]);
+    const modelCalls = runEvents.filter(
+      (event) => event.type === "model.completed",
+    ).length;
+    const toolCalls = runEvents.filter(
+      (event) => event.type === "tool.completed",
+    ).length;
+    const uniqueWritePaths = collectUniqueCompletedWritePaths(runEvents);
+    const workspaceWrites = runEvents.filter(
+      (event) => event.type === "workspace.write.completed",
+    ).length;
+    const agentId = dominantAgentId(runEvents);
+
+    return {
+      ...(group.runId ? { runId: group.runId } : {}),
+      ...(agentId ? { agentId } : {}),
+      input: {
+        modelCalls: Math.max(modelCalls, trajectory.metrics.modelCalls),
+        toolCalls: Math.max(toolCalls, trajectory.metrics.toolCalls),
+        budgetCheckCount: trajectory.metrics.budgetCheckCount,
+        workspaceWrites,
+        uniqueWritePaths: uniqueWritePaths.length,
+        topDuplicateReads: firstEntries(
+          collectRepeatedReadWindows(runEvents),
+          8,
+        ),
+        repeatedToolRequests: collectRepeatedToolRequests(runEvents),
+        verificationLag: collectVerificationLagAfterLastWrite(runEvents),
+      },
+    };
+  });
+}
+
+function collectRunEventGroups(
+  events: readonly SparkwrightEvent[],
+): RunEventGroup[] {
+  const eventsByRun = new Map<string, SparkwrightEvent[]>();
+  const unscopedEvents: SparkwrightEvent[] = [];
+  for (const event of events) {
+    if (typeof event.runId !== "string" || event.runId.length === 0) {
+      unscopedEvents.push(event);
+      continue;
+    }
+    const runEvents = eventsByRun.get(event.runId);
+    if (runEvents) runEvents.push(event);
+    else eventsByRun.set(event.runId, [event]);
+  }
+
+  const groups: RunEventGroup[] = [...eventsByRun.entries()].map(
+    ([runId, runEvents]) => ({ runId, events: runEvents }),
+  );
+  if (unscopedEvents.length > 0) groups.push({ events: unscopedEvents });
+  return groups;
+}
+
+function runScopeEvidence(
+  facts: { runId?: string; agentId?: string },
+  runCount: number,
+): string[] {
+  if (runCount <= 1) return [];
+  return [
+    facts.runId ? `run ${facts.runId}` : "run (unscoped)",
+    facts.agentId ? `agent ${facts.agentId}` : undefined,
+  ].filter((value): value is string => typeof value === "string");
+}
+
+function dominantAgentId(
+  events: readonly SparkwrightEvent[],
+): string | undefined {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    const agentId = stringValue(event.metadata.agentId);
+    if (!agentId) continue;
+    counts.set(agentId, (counts.get(agentId) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  )[0]?.[0];
 }
 
 function analyzeToolRecovery({
@@ -1311,6 +1462,7 @@ export function summarizeTraceJsonl(jsonl: string): TraceSummary {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
   );
   collectClassifiedToolFailures(summary, events);
+  collectClassifiedExpectedDenials(summary, events);
   collectCommandFailures(summary, events);
   collectSafetySummary(summary, events);
   return summary;
@@ -1665,6 +1817,22 @@ function collectClassifiedToolFailures(
   }
 }
 
+function collectClassifiedExpectedDenials(
+  summary: TraceSummary,
+  events: readonly SparkwrightEvent[],
+): void {
+  for (const failure of analyzeToolOutcomes(events).policyDenials) {
+    const code = failure.code;
+    // Raw policy/approval failures were counted during event collection. This
+    // catches classifier-derived expected denials whose raw code is diagnostic
+    // scaffolding, such as a skipped repeated call after an expected denial.
+    if (!code || isPolicyOrApprovalFailure(code)) continue;
+    summary.expectedDenialCount += 1;
+    summary.expectedDenialCodes[code] =
+      (summary.expectedDenialCodes[code] ?? 0) + 1;
+  }
+}
+
 /**
  * True when the trace has at least one tool failure AND every failed tool call
  * has a matching `tool.requested` that still carries its `arguments`. That is
@@ -1751,15 +1919,52 @@ function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
-  // Prefer the snapshot the run persisted (computed over the full event
-  // stream). This preserves legacy trace compatibility for older traces that
-  // may not retain command exit evidence in tool.completed output.
+  const recomputed = everyShellCompletionHasCommandEvidence(events)
+    ? commandOutcomeSnapshot(events)
+    : undefined;
+  // Prefer recomputing when raw debug events still carry shell command
+  // evidence. Otherwise, use the run-persisted snapshot for standard/legacy
+  // traces that may not retain command args in tool.completed output.
   const snapshot =
-    persistedCommandOutcome(events) ?? commandOutcomeSnapshot(events);
+    recomputed ??
+    persistedCommandOutcome(events) ??
+    commandOutcomeSnapshot(events);
   if (!snapshot) return;
   summary.commandFailures.total = snapshot.total;
   summary.commandFailures.byExitCode = snapshot.byExitCode;
   summary.commandFailures.verification = snapshot.verification;
+}
+
+function everyShellCompletionHasCommandEvidence(
+  events: readonly SparkwrightEvent[],
+): boolean {
+  const commandByCallId = new Map<string, string>();
+  let shellCompletions = 0;
+
+  for (const event of events) {
+    if (!isRecord(event.payload)) continue;
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      if (!isShellToolName(toolName)) continue;
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const command = stringValue(
+        recordValue(event.payload.arguments)?.command,
+      );
+      if (callId && command) commandByCallId.set(callId, command);
+      continue;
+    }
+
+    if (event.type !== "tool.completed") continue;
+    const toolName = stringValue(event.payload.toolName);
+    if (!isShellToolName(toolName)) continue;
+    shellCompletions += 1;
+    const output = recordValue(event.payload.output);
+    if (stringValue(output?.command)) continue;
+    const callId = stringValue(event.payload.toolCallId, event.payload.id);
+    if (!callId || !commandByCallId.has(callId)) return false;
+  }
+
+  return shellCompletions > 0;
 }
 
 /** The command-outcome snapshot persisted on `run.completed`, if present. */
@@ -1848,7 +2053,7 @@ function collectSafetySummary(
       if (action === "workspace.write") {
         summary.safety.approvals.workspaceWrite += 1;
       }
-      if (toolName === "shell") {
+      if (isShellToolName(toolName)) {
         summary.safety.approvals.shell += 1;
         summary.safety.shell.approvals += 1;
       }
@@ -1916,7 +2121,7 @@ function collectSafetySummary(
       continue;
     }
     if (event.type === "tool.requested") {
-      if (event.payload.toolName === "shell") {
+      if (isShellToolName(event.payload.toolName)) {
         summary.safety.shell.requested += 1;
       }
       continue;
@@ -1944,6 +2149,136 @@ function collectWorkspaceRead(
   const path = stringValue(event.payload.path);
   if (!path) return;
   workspaceReadPaths[path] = (workspaceReadPaths[path] ?? 0) + 1;
+}
+
+function collectWorkspaceReadAttribution(
+  events: readonly SparkwrightEvent[],
+): WorkspaceReadAttribution {
+  const toolBySpanId = new Map<string, string>();
+  for (const event of events) {
+    if (!isToolLifecycleEvent(event)) continue;
+    const toolName = traceToolName(event);
+    if (toolName && event.spanId) toolBySpanId.set(event.spanId, toolName);
+  }
+
+  const byTool: Record<string, number> = {};
+  const scanByTool: Record<string, number> = {};
+  const explicitReadByTool: Record<string, number> = {};
+  let unattributed = 0;
+
+  for (const event of events) {
+    if (event.type !== "workspace.read") continue;
+    const toolName =
+      (event.spanId ? toolBySpanId.get(event.spanId) : undefined) ??
+      (event.parentSpanId ? toolBySpanId.get(event.parentSpanId) : undefined);
+    if (!toolName) {
+      unattributed += 1;
+      continue;
+    }
+
+    incrementCount(byTool, toolName);
+    if (isSearchScanTraceTool(toolName)) incrementCount(scanByTool, toolName);
+    if (isFileReadLikeTraceTool(toolName)) {
+      incrementCount(explicitReadByTool, toolName);
+    }
+  }
+
+  return {
+    byTool: firstEntries(byTool, 8),
+    scanByTool: firstEntries(scanByTool, 8),
+    explicitReadByTool: firstEntries(explicitReadByTool, 8),
+    unattributed,
+  };
+}
+
+function isToolLifecycleEvent(event: SparkwrightEvent): boolean {
+  return (
+    event.type === "tool.requested" ||
+    event.type === "tool.started" ||
+    event.type === "tool.completed" ||
+    event.type === "tool.failed"
+  );
+}
+
+function traceToolName(event: SparkwrightEvent): string | undefined {
+  if (!isRecord(event.payload)) return undefined;
+  return stringValue(event.payload.toolName, event.payload.name);
+}
+
+function incrementCount(counts: Record<string, number>, key: string): void {
+  counts[key] = (counts[key] ?? 0) + 1;
+}
+
+function formatWorkspaceReadAttributionEvidence(
+  attribution: WorkspaceReadAttribution,
+): string[] {
+  const evidence: string[] = [];
+  const byTool = formatCountRecord(attribution.byTool);
+  if (byTool) evidence.push(`workspace reads by tool: ${byTool}`);
+  const scanByTool = formatCountRecord(attribution.scanByTool);
+  if (scanByTool) evidence.push(`scan reads by tool: ${scanByTool}`);
+  const explicitReadByTool = formatCountRecord(attribution.explicitReadByTool);
+  if (explicitReadByTool) {
+    evidence.push(`explicit file reads by tool: ${explicitReadByTool}`);
+  }
+  if (attribution.unattributed > 0) {
+    evidence.push(
+      `${attribution.unattributed} unattributed workspace.read event(s)`,
+    );
+  }
+  return evidence.slice(0, 4);
+}
+
+function collectRepeatedReadWindows(
+  events: readonly SparkwrightEvent[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const event of events) {
+    if (event.type !== "tool.completed") continue;
+    if (!isRecord(event.payload)) continue;
+    const toolName = stringValue(event.payload.toolName);
+    if (!toolName || !isFileReadLikeTraceTool(toolName)) continue;
+    const output = recordValue(event.payload.output);
+    if (!output) continue;
+    const path = stringValue(output.path, output.filePath);
+    if (!path) continue;
+    const key = readWindowDiagnosticKey(path, output);
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return Object.fromEntries(
+    Object.entries(counts).filter(([, count]) => count > 1),
+  );
+}
+
+function readWindowDiagnosticKey(
+  path: string,
+  output: Record<string, unknown>,
+): string {
+  const startLine = optionalNumberValue(output.startLine);
+  const endLine = optionalNumberValue(output.endLine);
+  if (startLine !== undefined && endLine !== undefined) {
+    return `${path}:lines ${startLine}-${endLine}`;
+  }
+  return path;
+}
+
+function isFileReadLikeTraceTool(toolName: string): boolean {
+  return (
+    toolName === "read" ||
+    toolName === "read_file" ||
+    toolName === "read_text" ||
+    toolName === "read_anchored_text"
+  );
+}
+
+function isSearchScanTraceTool(toolName: string): boolean {
+  return (
+    toolName === "grep" ||
+    toolName === "grep_text" ||
+    toolName === "rg" ||
+    toolName === "ripgrep" ||
+    toolName === "search"
+  );
 }
 
 function traceReportHeadline(
@@ -1991,7 +2326,7 @@ function collectVerificationLagAfterLastWrite(
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
       const args = recordValue(event.payload.arguments);
       const command = stringValue(args?.command);
-      if (toolName === "shell" && callId && command) {
+      if (isShellToolName(toolName) && callId && command) {
         commandByCallId.set(callId, command);
       }
       continue;
@@ -2006,7 +2341,7 @@ function collectVerificationLagAfterLastWrite(
     if (event.type !== "tool.completed") continue;
     const toolName = stringValue(event.payload.toolName);
     const callId = stringValue(event.payload.toolCallId, event.payload.id);
-    if (toolName !== "shell" || !callId) continue;
+    if (!isShellToolName(toolName) || !callId) continue;
     const command =
       commandByCallId.get(callId) ??
       stringValue(recordValue(event.payload.output)?.command);
@@ -2051,7 +2386,7 @@ function collectRepeatedCommandFailures(
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
       const args = recordValue(event.payload.arguments);
       const command = stringValue(args?.command);
-      if (toolName === "shell" && callId && command) {
+      if (isShellToolName(toolName) && callId && command) {
         commandByCallId.set(callId, command);
       }
       continue;
@@ -2060,7 +2395,7 @@ function collectRepeatedCommandFailures(
     if (event.type !== "tool.completed") continue;
     const toolName = stringValue(event.payload.toolName);
     const callId = stringValue(event.payload.toolCallId, event.payload.id);
-    if (toolName !== "shell" || !callId) continue;
+    if (!isShellToolName(toolName) || !callId) continue;
     const command = commandByCallId.get(callId);
     if (!command) continue;
     const output = recordValue(event.payload.output);
@@ -2263,7 +2598,7 @@ function collectSuccessfulVerificationEvents(
       const callId = stringValue(event.payload.id, event.payload.toolCallId);
       const args = recordValue(event.payload.arguments);
       const command = stringValue(args?.command);
-      if (toolName === "shell" && callId && command) {
+      if (isShellToolName(toolName) && callId && command) {
         commandByCallId.set(callId, command);
       }
       continue;
@@ -2272,7 +2607,7 @@ function collectSuccessfulVerificationEvents(
     if (event.type === "tool.completed") {
       const toolName = stringValue(event.payload.toolName);
       const callId = stringValue(event.payload.toolCallId, event.payload.id);
-      if (toolName !== "shell" || !callId) continue;
+      if (!isShellToolName(toolName) || !callId) continue;
       const command =
         commandByCallId.get(callId) ??
         stringValue(recordValue(event.payload.output)?.command);
@@ -2965,4 +3300,8 @@ function subagentIdentity(event: SparkwrightEvent): string | undefined {
   return isRecord(event.payload)
     ? stringValue(event.payload.agentProfileId, event.payload.childRunId)
     : undefined;
+}
+
+function isShellToolName(value: unknown): boolean {
+  return value === "bash" || value === "shell";
 }

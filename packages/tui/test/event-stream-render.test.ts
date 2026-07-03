@@ -364,6 +364,106 @@ describe("EventStream committed rendering", () => {
     expect(text).not.toContain('"exitCode"');
   });
 
+  it("renders promoted shell results as background task handoff summaries", async () => {
+    const events = [
+      ev("tool.completed", 1, {
+        toolName: "bash",
+        output: {
+          stdout: "bg-task-tick 1\n",
+          stderr: "",
+          exitCode: null,
+          timedOut: false,
+          promoted: true,
+          taskId: "task_mqzd1c1b30yc24hj",
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("shell promoted -> task_mqzd1c1b30yc24hj");
+    expect(text).toContain("bg-task-tick 1");
+    expect(text).not.toContain("shell exit null");
+  });
+
+  it("summarizes background task lifecycle without printing every output event", async () => {
+    const events = [
+      ev("task.started", 1, {
+        taskId: "task_mqzd1c1b30yc24hj",
+        kind: "shell.promoted",
+        command: "node bg-task.js",
+      }),
+      ev("task.output", 2, {
+        taskId: "task_mqzd1c1b30yc24hj",
+        channel: "stdout",
+        data: "bg-task-tick 1\n",
+      }),
+      ev("task.output", 3, {
+        taskId: "task_mqzd1c1b30yc24hj",
+        channel: "stdout",
+        data: "bg-task-tick 2\n",
+      }),
+      ev(
+        "task.completed",
+        4,
+        {
+          taskId: "task_mqzd1c1b30yc24hj",
+          kind: "shell.promoted",
+          command: "node bg-task.js",
+          result: { exitCode: 0 },
+          progressCount: 2,
+        },
+        { durationMs: 2100 },
+      ),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("background task started");
+    expect(text).toContain("task_mqzd...yc24hj");
+    expect(text).toContain("ctrl+o activity");
+    expect(text).toContain("task completed");
+    expect(text).toContain("exit 0");
+    expect(text).toContain("2 chunks");
+    expect(text).not.toContain("[  2] task.output");
+    expect(text).not.toContain("bg-task-tick 1");
+    expect(text).not.toContain("bg-task-tick 2");
+  });
+
+  it("summarizes task tool requests and results instead of raw JSON", async () => {
+    const events = [
+      ev("tool.requested", 1, {
+        toolName: "task",
+        arguments: {
+          action: "output",
+          taskId: "task_mqzd1c1b30yc24hj",
+          fromSequence: 0,
+          maxChunks: 10,
+        },
+      }),
+      ev("tool.completed", 2, {
+        toolName: "task",
+        output: {
+          chunks: [
+            {
+              taskId: "task_mqzd1c1b30yc24hj",
+              sequence: 0,
+              channel: "stdout",
+              data: "bg-task-done\n",
+            },
+          ],
+          nextSequence: 1,
+          complete: true,
+          status: "completed",
+          stalled: false,
+        },
+      }),
+    ];
+    const text = await renderToText(stream(events));
+    expect(text).toContain("⚙ task  output task_mqzd...yc24hj");
+    expect(text).toContain("task output task_mqzd...yc24hj");
+    expect(text).toContain("1 chunk · completed");
+    expect(text).toContain("bg-task-done");
+    expect(text).not.toContain('"chunks"');
+    expect(text).not.toContain('"fromSequence"');
+  });
+
   it("renders run facts from committed events after run completion", async () => {
     const events = [
       ev("run.started", 1, {}),

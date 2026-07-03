@@ -8,11 +8,11 @@
 //
 // Three primitives:
 //
-// - createFileReadDedupStage: when the same file is read multiple times via
-//   tools, keep only the most recent body and replace earlier reads with a
-//   short reference marker pointing at the kept item id. This collapses
-//   the common "agent re-reads the same file each turn" pattern without
-//   losing the timeline of accesses.
+// - createFileReadDedupStage: when the same file window is read multiple times
+//   via tools, keep only the most recent body and replace earlier reads with a
+//   short reference marker pointing at the kept item id. This collapses the
+//   common "agent re-reads the same file each turn" pattern without losing
+//   distinct paginated windows or the timeline of accesses.
 //
 // - createObservationOneLineStage: replace tool_result items older than a
 //   recency threshold with a one-line semantic summary derived from their
@@ -111,7 +111,7 @@ export interface FileReadDedupOptions {
 }
 
 /**
- * Stage that collapses repeated reads of the same file to a single
+ * Stage that collapses repeated reads of the same file window to a single
  * authoritative copy (the latest one). Earlier reads are replaced with a
  * one-line marker pointing at the kept item id, preserving the timeline
  * without paying for the bytes more than once.
@@ -197,8 +197,22 @@ function defaultFileKey(item: ContextItem): string | undefined {
     typeof meta?.["filePath"] === "string"
       ? (meta["filePath"] as string)
       : undefined;
-  if (fromMeta) return fromMeta;
-  return item.source?.path;
+  const filePath = fromMeta ?? item.source?.path;
+  if (!filePath) return undefined;
+
+  const startLine = finiteNumber(meta?.["startLine"]);
+  const endLine = finiteNumber(meta?.["endLine"]);
+  if (startLine !== undefined && endLine !== undefined) {
+    return `${filePath}#lines:${startLine}-${endLine}`;
+  }
+
+  return filePath;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function defaultMarker(info: {

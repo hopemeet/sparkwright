@@ -33,16 +33,20 @@ import {
   validateSessionTraceConsistency,
   writeSessionCompactArtifact,
   type ApprovalResolver,
+  type BackgroundTaskPolicy,
   type CompactionWarning,
   type ContentPart,
   type ContextItem,
   type EventEmitter,
   type ModelAdapter,
+  type NotificationSource,
+  type PendingNotification,
   type Policy,
   type RunId,
   type RunBudget,
   type RunRecord,
   type RunResult,
+  type RuntimeContext,
   type RunAccessMode,
   type ContextUsageHint,
   type SessionCompactArtifact,
@@ -50,6 +54,7 @@ import {
   type SessionCompactionOptions,
   type SessionEvent,
   type SparkwrightEvent,
+  type TaskRevivalSource,
   type SessionTraceFacts,
   type ToolDefinition,
   type ToolOrigin,
@@ -60,6 +65,7 @@ import {
   type LoadedSkill,
   type SkillIndexEntry,
   type SkillPreprocessOptions,
+  type SkillUsageRecorder,
 } from "@sparkwright/skills";
 import {
   createLazyMcpToolsForRun,
@@ -69,12 +75,15 @@ import {
   type McpToolNameMapping,
 } from "@sparkwright/mcp-adapter";
 import {
+  FileTaskNotificationOutbox,
   FileTaskStore,
   TaskManager,
   createAgentTool,
   createAgentProfilePolicy,
+  createTaskCreate,
   deriveChildAgentProfile,
   findSimilarSuccessfulDelegation,
+  notificationFromRecord,
   rememberSuccessfulDelegation,
   runTodoSupervised,
   spawnSubAgent,
@@ -85,7 +94,14 @@ import {
   type DelegationLedgerHit,
   type DelegationLedgerKey,
   type DerivedChildAgentProfile,
+  type TaskId,
+  type TaskNotification,
+  type TaskOutputChunk,
+  type TaskRecord,
+  type TaskRunnerController,
+  type TaskStatus,
   type TodoSupervisedRunInput,
+  type SpawnedSubAgent,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { RECOMMENDED_FOREGROUND_TIMEOUT_MS } from "@sparkwright/shell-tool";
@@ -125,6 +141,8 @@ import {
   type SessionCompactionInspectArtifact,
   type SessionCompactionInspectEvent,
   type SessionCompactionInspectReport,
+  type TaskOutputChunkSnapshot,
+  type TaskRecordSnapshot,
   type CapabilitySnapshot,
   type CapabilityAutomationSummary,
   type CapabilityModelSummary,
@@ -156,6 +174,8 @@ import {
 } from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
+  AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
+  AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
   catalogEntryOrigin,
   catalogToolDefinitions,
   createConfiguredDelegateChildToolCatalog,
@@ -163,6 +183,7 @@ import {
   createReadOnlyChildToolCatalog,
   type HostToolCatalogEntry,
 } from "./tool-catalog.js";
+import { canonicalToolName } from "./tool-identities.js";
 import {
   acpConfigFromAgentProfile,
   createAcpDelegateTool,
@@ -172,6 +193,10 @@ import {
   externalCommandConfigFromAgentProfile,
 } from "./external-command-agent.js";
 import { createSkillInlineShellRunner } from "./skill-inline-shell.js";
+import {
+  createSkillUsageRecorder,
+  observeSkillUsageEvent,
+} from "./skill-usage.js";
 import {
   assertSubagentDepthAllowed,
   describeDelegateCapability,
@@ -359,6 +384,10 @@ export interface RuntimeOptions {
   defaultAccessMode?: RunAccessMode;
   /** Project/runtime ceiling for requested high-level access modes. */
   accessModeCeiling?: RunAccessMode;
+  /** Default session foreground/background task policy. */
+  defaultBackgroundTasks?: BackgroundTaskPolicy;
+  /** Project/runtime ceiling for foreground/background task policy. */
+  backgroundTasksCeiling?: BackgroundTaskPolicy;
   /** Default permission mode when run.start does not specify one. */
   defaultPermissionMode?: PermissionMode;
   /** Default trace level when run.start does not specify one. */
@@ -405,6 +434,7 @@ interface PreparedHostRunEnvironment {
   sessionRootDir: string;
   trace: MemoryTrace;
   pendingExtensionEvents: ReturnType<typeof createBufferedEmitter>;
+  skillUsageRecorder: SkillUsageRecorder | null;
   runIdHolder: { value: string | null };
   approvalResolver: ApprovalResolver;
   model: ModelAdapter;
@@ -664,8 +694,107 @@ type SessionCompactResult =
  * (`run_already_active`); promoting to multiple parallel runs per
  * connection would be a v1.1 addition.
  */
+/**
+ * @internal Per-run spawn dependencies the registered `agent` task kind needs
+ * to drive a read-only background child run. Published by {@link HostRuntime}
+ * during run preparation; the registered runner snapshots it at the top of
+ * execution while the foreground run is still active, then the started child is
+ * self-sustaining. Mirrors the inputs of {@link createDynamicSpawnAgentTool}.
+ */
+export interface HostAgentTaskRunnerDeps {
+  getParent: () => ReturnType<typeof createRun> | undefined;
+  model: ModelAdapter;
+  modelForSpawn: () => Promise<ModelAdapter>;
+  childTools: ToolDefinition[];
+  parentRunPolicy: Policy;
+  taskManager?: TaskManager;
+  backgroundTasks?: BackgroundTaskPolicy;
+  foregroundTimeoutMs?: number;
+  allowNestedBackgroundTasks?: boolean;
+  createTaskRevivalBridge?: (getRunId: () => RunId | undefined) => {
+    notificationSource: NotificationSource;
+    taskRevivalSource: TaskRevivalSource;
+  };
+  registerSubagentRun?: (run: ReturnType<typeof createRun>) => () => void;
+  childRunStoreFactory: (
+    childAgentId: string,
+  ) => ReturnType<typeof createSessionRunStoreFactory>;
+  maxDepth?: number;
+  sessionId?: string;
+}
+
+/**
+ * @internal Shared implementation for the background `agent` task kind. Kept
+ * outside HostRuntime so tests can cover task-owned abort and completion
+ * behavior without duplicating the private runner wiring.
+ */
+export async function runHostAgentTask(
+  controller: TaskRunnerController,
+  payload: unknown,
+  deps: HostAgentTaskRunnerDeps,
+): Promise<unknown> {
+  const parent = deps.getParent();
+  if (!parent) {
+    throw Object.assign(
+      new Error("Agent task runner requires an active parent run."),
+      { code: "AGENT_TASK_PARENT_UNAVAILABLE" },
+    );
+  }
+  if (controller.signal.aborted) {
+    throw Object.assign(new Error("Agent task aborted before start."), {
+      name: "AbortError",
+    });
+  }
+
+  controller.report({
+    label: "agent_task",
+    message: "Starting child agent.",
+  });
+  const tool = createDynamicSpawnAgentTool({
+    getParent: () => parent,
+    model: deps.model,
+    modelForSpawn: deps.modelForSpawn,
+    childTools: deps.childTools,
+    parentRunPolicy: deps.parentRunPolicy,
+    childRunStoreFactory: deps.childRunStoreFactory,
+    maxDepth: deps.maxDepth,
+    abortSignal: controller.signal,
+    entrypoint: "agent_task",
+    delegateToolName: "task_create",
+    taskManager: deps.taskManager,
+    backgroundTasks: deps.backgroundTasks,
+    foregroundTimeoutMs: deps.foregroundTimeoutMs,
+    allowNestedBackgroundTasks: deps.allowNestedBackgroundTasks,
+    createTaskRevivalBridge: deps.createTaskRevivalBridge,
+    registerSubagentRun: deps.registerSubagentRun,
+  });
+  const ctx: RuntimeContext = {
+    run: parent.record,
+    abortSignal: controller.signal,
+    workspace: parent.getWorkspace?.(),
+  };
+  const output = await tool.execute(payload, ctx);
+  controller.report({
+    label: "agent_task",
+    message: "Child agent completed.",
+  });
+  controller.emitOutput({
+    channel: "event",
+    data: JSON.stringify(summarizeAgentTaskOutput(output)),
+  });
+  return output;
+}
+
 export class HostRuntime {
   private opts: RuntimeOptions;
+  // Latest per-run spawn deps for the registered `agent` background task kind.
+  // Overwritten each run; the runner reads it once at execution start.
+  private agentSpawnDeps: HostAgentTaskRunnerDeps | null = null;
+  private readonly subagentRuns = new Map<
+    RunId,
+    ReturnType<typeof createRun>
+  >();
+  private readonly taskNotifications: FileTaskNotificationOutbox;
   private readonly taskManager: TaskManager;
   private active: ActiveRun | null = null;
   // Synchronously-set reservation so two concurrent startRun() calls cannot
@@ -688,12 +817,23 @@ export class HostRuntime {
         ? { sessionRootDir: resolve(opts.sessionRootDir) }
         : {}),
     };
+    this.taskNotifications = new FileTaskNotificationOutbox({
+      rootDir: this.taskRootDir(),
+      createRoot: false,
+    });
     this.taskManager = new TaskManager({
       store: new FileTaskStore({
         rootDir: this.taskRootDir(),
         createRoot: false,
       }),
+      notificationSink: this.taskNotifications,
     });
+    // Background agent jobs are a task `kind` whose runner drives a read-only
+    // child run. Registered once; the runner reads the latest per-run spawn
+    // deps published by prepareRun. See runAgentTask.
+    this.taskManager.registerKind("agent", (controller, payload) =>
+      this.runAgentTask(controller, payload),
+    );
   }
 
   hasActiveRun(): boolean {
@@ -702,6 +842,252 @@ export class HostRuntime {
 
   private taskRootDir(): string {
     return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+  }
+
+  private async runAgentTask(
+    controller: TaskRunnerController,
+    payload: unknown,
+  ): Promise<unknown> {
+    const deps = this.agentSpawnDeps;
+    if (!deps) {
+      throw Object.assign(
+        new Error(
+          "Agent task runner is not available until a run has prepared agent dependencies.",
+        ),
+        { code: "AGENT_TASK_UNAVAILABLE" },
+      );
+    }
+    const task = this.taskManager.store.get(controller.taskId);
+    const parentRun =
+      task !== undefined ? this.subagentRuns.get(task.parentRunId) : undefined;
+    return runHostAgentTask(
+      controller,
+      payload,
+      parentRun ? { ...deps, getParent: () => parentRun } : deps,
+    );
+  }
+
+  private createTaskRevivalBridge(getRunId: () => RunId | undefined): {
+    notificationSource: NotificationSource;
+    taskRevivalSource: TaskRevivalSource;
+  } {
+    const matchesRun = (notification: TaskNotification): boolean => {
+      const runId = getRunId();
+      return runId !== undefined && notification.parentRunId === runId;
+    };
+    const matchesAwaitedRun = (notification: TaskNotification): boolean => {
+      if (!matchesRun(notification)) return false;
+      const record = this.taskManager.store.get(notification.taskId);
+      return record?.awaited !== false;
+    };
+    const hasAwaitedPending = (): boolean => {
+      const runId = getRunId();
+      if (!runId) return false;
+      const hasActiveAwaited = this.taskManager.store
+        .list({ parentRunId: runId, awaited: true })
+        .some((task) => !isTerminalTaskStatus(task.status));
+      if (hasActiveAwaited) return true;
+      return this.taskNotifications.peek().some(matchesAwaitedRun);
+    };
+
+    const notificationSource: NotificationSource = {
+      drain: () =>
+        this.taskNotifications
+          .drain(matchesRun)
+          .map((notification) => pendingNotificationFromTask(notification)),
+    };
+    const taskRevivalSource: TaskRevivalSource = {
+      hasAwaitedPending,
+      waitUntilAvailable: ({ signal }) =>
+        this.taskNotifications.waitUntilAvailable({
+          signal,
+          predicate: matchesAwaitedRun,
+        }),
+    };
+    return { notificationSource, taskRevivalSource };
+  }
+
+  private async failOrphanedInProcessTasksForRun(
+    parentRunId: RunId,
+  ): Promise<void> {
+    const orphanable = this.taskManager.store
+      .list({ parentRunId })
+      .filter(
+        (task) =>
+          (task.status === "pending" || task.status === "running") &&
+          !this.taskManager.hasLiveRunner(task.id),
+      );
+    for (const task of orphanable) {
+      await this.taskManager.fail(task.id, {
+        code: "TASK_ORPHANED_IN_PROCESS",
+        message:
+          "Task was still pending or running when the host resumed this run, " +
+          "but in-process task execution cannot survive host exit.",
+        metadata: {
+          previousStatus: task.status,
+          parentRunId,
+        },
+      });
+    }
+  }
+
+  listTasks(input: {
+    status?: TaskStatus;
+    kind?: string;
+    parentRunId?: string;
+    limit?: number;
+  }): { ok: true; tasks: TaskRecordSnapshot[] } {
+    const tasks = this.taskManager.store
+      .list({
+        status: input.status,
+        kind: input.kind,
+        parentRunId: input.parentRunId as RunId | undefined,
+      })
+      .sort(compareTaskRecordsNewestFirst)
+      .slice(0, input.limit ?? 50)
+      .map(taskRecordSnapshot);
+    return { ok: true, tasks };
+  }
+
+  getTask(
+    taskId: string,
+  ):
+    | { ok: true; task: TaskRecordSnapshot }
+    | { ok: false; error: ProtocolError } {
+    const id = taskId as unknown as TaskId;
+    const task = this.taskManager.store.get(id);
+    if (!task) return { ok: false, error: taskNotFoundError(taskId) };
+    return { ok: true, task: taskRecordSnapshot(task) };
+  }
+
+  async readTaskOutput(input: {
+    taskId: string;
+    fromSequence?: number;
+    maxChunks?: number;
+  }): Promise<
+    | {
+        ok: true;
+        taskId: string;
+        chunks: TaskOutputChunkSnapshot[];
+        nextSequence: number;
+        complete: boolean;
+        status: TaskStatus;
+        error?: TaskRecord["error"];
+        lastOutputAt?: string;
+        stalled: boolean;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    const id = input.taskId as unknown as TaskId;
+    const initial = this.taskManager.store.get(id);
+    if (!initial) return { ok: false, error: taskNotFoundError(input.taskId) };
+
+    const fromSequence = input.fromSequence ?? 0;
+    const maxChunks = input.maxChunks ?? 200;
+    const chunks: TaskOutputChunk[] = [];
+    const outputStream = this.taskManager.store.loadOutput(id, fromSequence);
+    const iterator = outputStream[Symbol.asyncIterator]();
+    try {
+      while (chunks.length < maxChunks) {
+        const next = await raceWithImmediate(iterator);
+        if (next === IMMEDIATE_NONE || next.done) break;
+        chunks.push(next.value);
+      }
+    } finally {
+      await iterator.return?.();
+    }
+
+    const latest = this.taskManager.store.get(id) ?? initial;
+    const lastSequence =
+      chunks.length > 0
+        ? chunks[chunks.length - 1]!.sequence
+        : fromSequence - 1;
+    return {
+      ok: true,
+      taskId: input.taskId,
+      chunks: chunks.map(taskOutputChunkSnapshot),
+      nextSequence: lastSequence + 1,
+      complete: isTerminalTaskStatus(latest.status),
+      status: latest.status,
+      ...(latest.error ? { error: latest.error } : {}),
+      ...(latest.lastOutputAt ? { lastOutputAt: latest.lastOutputAt } : {}),
+      stalled: latest.status === "running" && chunks.length === 0,
+    };
+  }
+
+  async stopTask(
+    taskId: string,
+  ): Promise<
+    | { ok: true; cancelled: boolean; status?: TaskStatus }
+    | { ok: false; error: ProtocolError }
+  > {
+    const id = taskId as unknown as TaskId;
+    const before = this.taskManager.store.get(id);
+    if (!before) return { ok: false, error: taskNotFoundError(taskId) };
+    if (isTerminalTaskStatus(before.status)) {
+      return { ok: true, cancelled: false, status: before.status };
+    }
+    const handle = this.taskManager.handle(id);
+    if (!handle) return { ok: true, cancelled: false, status: before.status };
+    await handle.cancel();
+    const after = this.taskManager.store.get(id);
+    return {
+      ok: true,
+      cancelled: after?.status === "cancelled",
+      ...(after?.status ? { status: after.status } : {}),
+    };
+  }
+
+  async joinTask(
+    taskId: string,
+  ): Promise<
+    | { ok: true; taskId: string; awaited: boolean; status: TaskStatus }
+    | { ok: false; error: ProtocolError }
+  > {
+    const id = taskId as unknown as TaskId;
+    const before = this.taskManager.store.get(id);
+    if (!before) return { ok: false, error: taskNotFoundError(taskId) };
+    const joined = isTerminalTaskStatus(before.status)
+      ? this.taskManager.store.update(id, { awaited: true })
+      : this.taskManager.store.update(id, { awaited: true });
+    if (
+      isTerminalTaskStatus(joined.status) &&
+      !this.taskNotifications
+        .peek((notification) => notification.taskId === joined.id)
+        .some(Boolean)
+    ) {
+      this.taskNotifications.deliver(notificationFromRecord(joined));
+    }
+    return {
+      ok: true,
+      taskId,
+      awaited: joined.awaited,
+      status: joined.status,
+    };
+  }
+
+  async promoteTask(taskId: string): Promise<
+    | {
+        ok: true;
+        taskId: string;
+        promoted: boolean;
+        awaited: boolean;
+        status: TaskStatus;
+      }
+    | { ok: false; error: ProtocolError }
+  > {
+    const id = taskId as unknown as TaskId;
+    if (!this.taskManager.store.get(id)) {
+      return { ok: false, error: taskNotFoundError(taskId) };
+    }
+    const promoted = this.taskManager.requestPromotion(id);
+    return {
+      ok: true,
+      taskId,
+      promoted: promoted.interruptedForegroundWait,
+      awaited: promoted.record.awaited,
+      status: promoted.record.status,
+    };
   }
 
   async inspectCapabilities(
@@ -784,6 +1170,7 @@ export class HostRuntime {
     modelRef?: string;
     permissionMode: PermissionMode;
     shouldWrite: boolean;
+    backgroundTasks: BackgroundTaskPolicy;
     sessionId: string;
     targetPath?: string;
     confidentialPaths?: readonly string[];
@@ -813,6 +1200,7 @@ export class HostRuntime {
       this.opts.sessionRootDir ?? defaultSessionRootDir(workspaceRoot);
     const trace = new MemoryTrace();
     const pendingExtensionEvents = createBufferedEmitter();
+    const skillUsageRecorder = createSkillUsageRecorder(workspaceRoot);
     const runIdHolder: { value: string | null } = { value: null };
     const approvalResolver = this.createApprovalResolver(runIdHolder);
     const loadedConfig = await loadHostConfig(workspaceRoot);
@@ -1081,6 +1469,12 @@ export class HostRuntime {
       allowReadWriteWorkspaceAccess: input.shouldWrite,
       routingByProfileId: delegateRouting.routingByProfileId,
     });
+    const allowNestedBackgroundTasks =
+      agentConfig?.allowNestedBackgroundTasks === true;
+    const subagentMaxDepth =
+      allowNestedBackgroundTasks && agentConfig?.maxDepth === undefined
+        ? 2
+        : agentConfig?.maxDepth;
     const dynamicSpawnTool = createDynamicSpawnAgentTool({
       getParent: () => parentRunRef.current,
       model: model.adapter,
@@ -1088,8 +1482,43 @@ export class HostRuntime {
       childTools: readOnlyChildTools,
       parentRunPolicy,
       childRunStoreFactory,
-      maxDepth: agentConfig?.maxDepth,
+      maxDepth: subagentMaxDepth,
+      foregroundTimeoutMs:
+        shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      taskManager: this.taskManager,
+      backgroundTasks: input.backgroundTasks,
+      allowNestedBackgroundTasks,
+      createTaskRevivalBridge: (getRunId) =>
+        this.createTaskRevivalBridge(getRunId),
+      registerSubagentRun: (run) => {
+        this.subagentRuns.set(run.record.id, run);
+        return () => this.subagentRuns.delete(run.record.id);
+      },
     });
+    // Publish spawn deps for the registered `agent` background task kind so a
+    // `task_create(kind:"agent")` call can drive a read-only child run that the
+    // task — not the foreground turn — owns the lifecycle of.
+    this.agentSpawnDeps = {
+      getParent: () => parentRunRef.current,
+      model: model.adapter,
+      modelForSpawn: dynamicSpawnModel,
+      childTools: readOnlyChildTools,
+      parentRunPolicy,
+      childRunStoreFactory,
+      maxDepth: subagentMaxDepth,
+      sessionId: input.sessionId,
+      taskManager: this.taskManager,
+      backgroundTasks: input.backgroundTasks,
+      foregroundTimeoutMs:
+        shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
+      allowNestedBackgroundTasks,
+      createTaskRevivalBridge: (getRunId) =>
+        this.createTaskRevivalBridge(getRunId),
+      registerSubagentRun: (run) => {
+        this.subagentRuns.set(run.record.id, run);
+        return () => this.subagentRuns.delete(run.record.id);
+      },
+    };
     const toolCatalog = createMainHostToolCatalog({
       workspaceRoot,
       skillRoots,
@@ -1105,6 +1534,7 @@ export class HostRuntime {
       delegateParallelTool,
       dynamicSpawnTool,
       shell: shellConfig,
+      backgroundTasks: input.backgroundTasks,
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     const tools = catalogToolDefinitions(toolCatalog);
@@ -1162,7 +1592,7 @@ export class HostRuntime {
       shellSandbox,
       shellForegroundTimeoutMs:
         shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-      shellPromotionAvailable: true,
+      shellPromotionAvailable: input.backgroundTasks === "enabled",
       workflowRules,
       eventRules,
     });
@@ -1219,6 +1649,7 @@ export class HostRuntime {
         sessionRootDir,
         trace,
         pendingExtensionEvents,
+        skillUsageRecorder,
         runIdHolder,
         approvalResolver,
         model: model.adapter,
@@ -1435,6 +1866,9 @@ export class HostRuntime {
           payload: { runId, event },
         });
       });
+      run.events.subscribe((event: SparkwrightEvent) => {
+        observeSkillUsageEvent(env.skillUsageRecorder, event);
+      });
       env.pendingExtensionEvents.flush(run.events);
       return collected;
     };
@@ -1614,11 +2048,14 @@ export class HostRuntime {
         },
       };
     }
+    await this.failOrphanedInProcessTasksForRun(payload.runId as RunId);
 
     const modelRef = payload.model ?? this.opts.defaultModel;
     const access = resolveRunAccessFields(payload, {
       defaultAccessMode: this.opts.defaultAccessMode,
       accessModeCeiling: this.opts.accessModeCeiling,
+      defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
+      backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
       defaultPermissionMode: this.opts.defaultPermissionMode,
       defaultShouldWrite: this.opts.defaultShouldWrite,
     });
@@ -1630,6 +2067,7 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       shouldWrite,
+      backgroundTasks: access.backgroundTasks,
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -1654,8 +2092,15 @@ export class HostRuntime {
     if (!prepared.ok) return prepared;
     const env = prepared.env;
 
-    const buildContinuationRun = (goal: string, extraContext: ContextItem[]) =>
-      createRun({
+    const buildContinuationRun = (
+      goal: string,
+      extraContext: ContextItem[],
+    ) => {
+      const runRef: { current?: ReturnType<typeof createRun> } = {};
+      const taskBridge = this.createTaskRevivalBridge(
+        () => runRef.current?.record.id,
+      );
+      const run = createRun({
         goal,
         context: [...(env.preparedSkills?.context ?? []), ...extraContext],
         workspace: env.workspace,
@@ -1677,6 +2122,8 @@ export class HostRuntime {
         maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
         runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
         metadata: env.runMetadata,
+        notificationSources: [taskBridge.notificationSource],
+        taskRevivalSource: taskBridge.taskRevivalSource,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
           sessionId: resumeSessionId,
@@ -1689,6 +2136,9 @@ export class HostRuntime {
           metadata: env.runStoreMetadata,
         }),
       });
+      runRef.current = run;
+      return run;
+    };
 
     const chainTurns: ContextItem[] = [];
     const chainTurn = (
@@ -1712,40 +2162,52 @@ export class HostRuntime {
               ...chainTurns,
               supervisedInput.continuation.context,
             ])
-          : resumeRunFromCheckpoint(checkpoint, {
-              force: payload.force,
-              workspace: env.workspace,
-              approvalResolver: env.approvalResolver,
-              policy: createHostRunPolicy({
-                permissionMode,
-                shouldWrite,
-                targetPath: payload.targetPath,
-                confidentialPaths: payload.confidentialPaths,
-                writeGuardrails: env.writeGuardrails,
-              }),
-              promptBuilder: buildAgentPromptBuilder({
-                cwd: env.workspaceRoot,
-                sessionId: resumeSessionId,
-              }),
-              tools: env.tools,
-              model: env.model,
-              maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-              ...(env.mainAgent.runBudget !== undefined
-                ? { runBudget: env.mainAgent.runBudget }
-                : {}),
-              metadata: env.runMetadata,
-              runStore: createSessionRunStoreFactory({
-                sessionStore: env.sessionStore,
-                sessionId: resumeSessionId,
-                runStoreFactory: createSessionFileRunStoreFactory({
-                  sessionRootDir: env.sessionRootDir,
-                  sessionId: resumeSessionId,
-                  agentId: located.agentId,
-                  traceLevel: env.traceLevel,
+          : (() => {
+              const runRef: {
+                current?: ReturnType<typeof resumeRunFromCheckpoint>;
+              } = {};
+              const taskBridge = this.createTaskRevivalBridge(
+                () => runRef.current?.record.id,
+              );
+              const run = resumeRunFromCheckpoint(checkpoint, {
+                force: payload.force,
+                workspace: env.workspace,
+                approvalResolver: env.approvalResolver,
+                policy: createHostRunPolicy({
+                  permissionMode,
+                  shouldWrite,
+                  targetPath: payload.targetPath,
+                  confidentialPaths: payload.confidentialPaths,
+                  writeGuardrails: env.writeGuardrails,
                 }),
-                metadata: env.runStoreMetadata,
-              }),
-            }),
+                promptBuilder: buildAgentPromptBuilder({
+                  cwd: env.workspaceRoot,
+                  sessionId: resumeSessionId,
+                }),
+                tools: env.tools,
+                model: env.model,
+                maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
+                ...(env.mainAgent.runBudget !== undefined
+                  ? { runBudget: env.mainAgent.runBudget }
+                  : {}),
+                metadata: env.runMetadata,
+                notificationSources: [taskBridge.notificationSource],
+                taskRevivalSource: taskBridge.taskRevivalSource,
+                runStore: createSessionRunStoreFactory({
+                  sessionStore: env.sessionStore,
+                  sessionId: resumeSessionId,
+                  runStoreFactory: createSessionFileRunStoreFactory({
+                    sessionRootDir: env.sessionRootDir,
+                    sessionId: resumeSessionId,
+                    agentId: located.agentId,
+                    traceLevel: env.traceLevel,
+                  }),
+                  metadata: env.runStoreMetadata,
+                }),
+              });
+              runRef.current = run;
+              return run;
+            })(),
       afterRun: (_supervisedInput, run, result) => {
         const runId = run.record.id;
         if (chainTurns.length === 0) {
@@ -1779,6 +2241,8 @@ export class HostRuntime {
     const access = resolveRunAccessFields(payload, {
       defaultAccessMode: this.opts.defaultAccessMode,
       accessModeCeiling: this.opts.accessModeCeiling,
+      defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
+      backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
       defaultPermissionMode: this.opts.defaultPermissionMode,
       defaultShouldWrite: this.opts.defaultShouldWrite,
     });
@@ -1803,6 +2267,7 @@ export class HostRuntime {
       modelRef,
       permissionMode,
       shouldWrite,
+      backgroundTasks: access.backgroundTasks,
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
@@ -1851,8 +2316,12 @@ export class HostRuntime {
       goal: string,
       extraContext: ContextItem[],
       overrides: { maxSteps?: number; runBudget?: RunBudget } = {},
-    ) =>
-      createRun({
+    ) => {
+      const runRef: { current?: ReturnType<typeof createRun> } = {};
+      const taskBridge = this.createTaskRevivalBridge(
+        () => runRef.current?.record.id,
+      );
+      const run = createRun({
         goal,
         context: [
           ...priorContext,
@@ -1884,6 +2353,8 @@ export class HostRuntime {
             ? { runBudget: env.mainAgent.runBudget }
             : {}),
         metadata: env.runMetadata,
+        notificationSources: [taskBridge.notificationSource],
+        taskRevivalSource: taskBridge.taskRevivalSource,
         runStore: createSessionRunStoreFactory({
           sessionStore: env.sessionStore,
           sessionId,
@@ -1896,6 +2367,9 @@ export class HostRuntime {
           metadata: env.runStoreMetadata,
         }),
       });
+      runRef.current = run;
+      return run;
+    };
 
     // Conversation turns accumulated across this supervised chain. A
     // continuation is an in-context *resume*, not a cold restart: every turn so
@@ -3176,11 +3650,33 @@ function buildCapabilitySnapshot(input: {
     ...(input.model ? { model: input.model } : {}),
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
+      canonicalName: entry.definition.canonicalName ?? entry.definition.name,
+      ...(entry.definition.legacyNames &&
+      entry.definition.legacyNames.length > 0
+        ? { legacyNames: entry.definition.legacyNames }
+        : {}),
+      ...(entry.definition.defaultExposureTier
+        ? { defaultExposureTier: entry.definition.defaultExposureTier }
+        : {}),
+      source: entry.source,
       origin:
         formatToolOrigin(entry.definition.governance?.origin) ??
         catalogEntryOrigin(entry),
       risk: entry.definition.policy?.risk,
+      ...(entry.definition.governance
+        ? { governance: entry.definition.governance }
+        : {}),
+      effectiveLoading:
+        entry.definition.deferLoading === true ? "deferred" : "eager",
       ...(entry.definition.deferLoading === true ? { deferred: true } : {}),
+      ...(entry.definition.relatedTools &&
+      entry.definition.relatedTools.length > 0
+        ? { relatedTools: entry.definition.relatedTools }
+        : {}),
+      ...(entry.definition.requiresTool &&
+      entry.definition.requiresTool.length > 0
+        ? { requiresTool: entry.definition.requiresTool }
+        : {}),
     })),
     skills: {
       indexed: input.indexedSkills.map((skill) => ({
@@ -3369,6 +3865,150 @@ async function readCronJobsForSnapshot(
   }
 }
 
+function taskRecordSnapshot(record: TaskRecord): TaskRecordSnapshot {
+  return {
+    id: record.id,
+    parentRunId: record.parentRunId,
+    kind: record.kind,
+    ...(record.title ? { title: record.title } : {}),
+    awaited: record.awaited,
+    status: record.status,
+    createdAt: record.createdAt,
+    ...(record.startedAt ? { startedAt: record.startedAt } : {}),
+    ...(record.lastOutputAt ? { lastOutputAt: record.lastOutputAt } : {}),
+    ...(record.lastProgressAt ? { lastProgressAt: record.lastProgressAt } : {}),
+    ...(record.lastHealthCheckAt
+      ? { lastHealthCheckAt: record.lastHealthCheckAt }
+      : {}),
+    ...(record.outputChunks !== undefined
+      ? { outputChunks: record.outputChunks }
+      : {}),
+    ...(record.outputBytes !== undefined
+      ? { outputBytes: record.outputBytes }
+      : {}),
+    ...(record.completedAt ? { completedAt: record.completedAt } : {}),
+    ...(record.result !== undefined ? { result: record.result } : {}),
+    ...(record.error ? { error: record.error } : {}),
+    metadata:
+      typeof record.metadata === "object" &&
+      record.metadata !== null &&
+      !Array.isArray(record.metadata)
+        ? record.metadata
+        : {},
+  };
+}
+
+function taskOutputChunkSnapshot(
+  chunk: TaskOutputChunk,
+): TaskOutputChunkSnapshot {
+  return {
+    taskId: chunk.taskId,
+    sequence: chunk.sequence,
+    timestamp: chunk.timestamp,
+    channel: chunk.channel,
+    data: chunk.data,
+  };
+}
+
+function compareTaskRecordsNewestFirst(a: TaskRecord, b: TaskRecord): number {
+  return taskSortTime(b).localeCompare(taskSortTime(a));
+}
+
+function taskSortTime(task: TaskRecord): string {
+  return (
+    task.completedAt ?? task.lastOutputAt ?? task.startedAt ?? task.createdAt
+  );
+}
+
+function isTerminalTaskStatus(status: TaskStatus): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
+
+function pendingNotificationFromTask(
+  notification: TaskNotification,
+): PendingNotification {
+  const title = notification.title ?? notification.kind;
+  return {
+    content: [
+      `Task ${notification.taskId} (${title}) ${notification.status}.`,
+      notification.summary,
+      notification.error ? `Error: ${notification.error.message}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    source: { kind: "task", uri: `task:${notification.taskId}` },
+    metadata: {
+      taskId: notification.taskId,
+      parentRunId: notification.parentRunId,
+      status: notification.status,
+      kind: notification.kind,
+      ...(notification.title ? { title: notification.title } : {}),
+      ...(notification.targetRunId
+        ? { targetRunId: notification.targetRunId }
+        : {}),
+      deliveredAt: notification.deliveredAt,
+      ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
+      ...(notification.result !== undefined
+        ? { resultSummary: summarizeNotificationValue(notification.result) }
+        : {}),
+      ...(notification.error
+        ? {
+            errorCode: notification.error.code,
+            errorMessage: notification.error.message,
+            ...(notification.error.metadata
+              ? {
+                  errorSummary: summarizeNotificationValue(
+                    notification.error.metadata,
+                  ),
+                }
+              : {}),
+          }
+        : {}),
+    },
+  };
+}
+
+function summarizeNotificationValue(value: unknown): string {
+  let serialized: string;
+  try {
+    serialized =
+      typeof value === "string"
+        ? value
+        : (JSON.stringify(value) ?? String(value));
+  } catch {
+    serialized = String(value);
+  }
+  return serialized.length > 500
+    ? `${serialized.slice(0, 500)}...`
+    : serialized;
+}
+
+function taskNotFoundError(taskId: string): ProtocolError {
+  return {
+    code: "task_not_found",
+    message: `Task not found: ${taskId}`,
+  };
+}
+
+const IMMEDIATE_NONE = Symbol("IMMEDIATE_NONE");
+type ImmediateNone = typeof IMMEDIATE_NONE;
+
+async function raceWithImmediate<T>(
+  iterator: AsyncIterator<T>,
+): Promise<IteratorResult<T> | ImmediateNone> {
+  let settled = false;
+  const next = iterator.next().then((result) => {
+    settled = true;
+    return result;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  if (settled) return next;
+  return IMMEDIATE_NONE;
+}
+
 function readTasksForSnapshot(
   rootDir: string,
 ): CapabilityAutomationSummary["tasks"]["tasks"] {
@@ -3386,6 +4026,7 @@ function readTasksForSnapshot(
         kind: task.kind,
         status: task.status,
         title: task.title,
+        awaited: task.awaited,
         parentRunId: task.parentRunId,
         createdAt: task.createdAt,
         completedAt: task.completedAt,
@@ -3896,9 +4537,16 @@ function intersectToolNameAllowlists(
   right: readonly string[] | undefined,
 ): string[] | undefined {
   if (left === undefined) return right ? [...right] : undefined;
-  if (right === undefined) return [...left];
-  const rightSet = new Set(right);
-  return left.filter((name) => rightSet.has(name));
+  if (right === undefined) return left.map(canonicalToolName);
+  const rightByCanonical = new Map(
+    right.map((name) => [canonicalToolName(name), name]),
+  );
+  const out: string[] = [];
+  for (const name of left) {
+    const matched = rightByCanonical.get(canonicalToolName(name));
+    if (matched && !out.includes(matched)) out.push(matched);
+  }
+  return out;
 }
 
 /**
@@ -4726,7 +5374,7 @@ function inProcessDelegateCapabilityFacts(input: {
   const shellAccess = inProcessDelegateHasTool(
     input.profile,
     input.delegateChildTools,
-    "shell",
+    "bash",
   );
   return {
     workspaceAccess,
@@ -4778,7 +5426,8 @@ function inProcessDelegateHasTool(
 ): boolean {
   return delegateChildTools.some(
     (tool) =>
-      tool.name === toolName && inProcessDelegateCanUseTool(profile, tool),
+      canonicalToolName(tool.name) === canonicalToolName(toolName) &&
+      inProcessDelegateCanUseTool(profile, tool),
   );
 }
 
@@ -4788,7 +5437,9 @@ function inProcessDelegateCanUseTool(
 ): boolean {
   return (
     profile.allowedTools === undefined ||
-    profile.allowedTools.includes(tool.name)
+    profile.allowedTools.some(
+      (name) => canonicalToolName(name) === canonicalToolName(tool.name),
+    )
   );
 }
 
@@ -4797,8 +5448,8 @@ function childToolsForAgentProfile(
   profile: AgentProfile,
 ): ToolDefinition[] {
   if (profile.allowedTools === undefined) return [...childTools];
-  const allowed = new Set(profile.allowedTools);
-  return childTools.filter((tool) => allowed.has(tool.name));
+  const allowed = new Set(profile.allowedTools.map(canonicalToolName));
+  return childTools.filter((tool) => allowed.has(canonicalToolName(tool.name)));
 }
 
 /**
@@ -4813,6 +5464,22 @@ export function createDynamicSpawnAgentTool(input: {
   childTools: ToolDefinition[];
   parentRunPolicy: Policy;
   maxDepth?: number;
+  abortSignal?: AbortSignal;
+  entrypoint?: "spawn_agent" | "agent_task";
+  delegateToolName?: string;
+  /**
+   * When set with `taskManager`, inline spawn_agent runs in foreground up to
+   * this budget and then promotes the same child run into an awaited task.
+   */
+  foregroundTimeoutMs?: number;
+  taskManager?: TaskManager;
+  backgroundTasks?: BackgroundTaskPolicy;
+  allowNestedBackgroundTasks?: boolean;
+  createTaskRevivalBridge?: (getRunId: () => RunId | undefined) => {
+    notificationSource: NotificationSource;
+    taskRevivalSource: TaskRevivalSource;
+  };
+  registerSubagentRun?: (run: ReturnType<typeof createRun>) => () => void;
   /** Builds a session-scoped run store for the child, keyed by its agent id. */
   childRunStoreFactory: (
     childAgentId: string,
@@ -4820,8 +5487,9 @@ export function createDynamicSpawnAgentTool(input: {
 }): ToolDefinition {
   return defineTool({
     name: "spawn_agent",
-    description:
-      "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files but cannot write, run shell commands, or spawn further agents. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
+    description: input.allowNestedBackgroundTasks
+      ? "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files and, when explicitly granted task_create, may create depth-bounded background agent tasks; it cannot write or run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool."
+      : "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files but cannot write, run shell commands, or spawn further agents. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -4841,10 +5509,16 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Supported: read_file, glob, grep, list_dir. Defaults to all four. Use grep to find a symbol by name (glob only matches paths, not contents).",
+            "Optional subset of read-only tools to expose. Supported: read, glob, grep, list_dir. Defaults to read, glob, and grep. Use grep to find a symbol by name (glob only matches paths, not contents).",
           items: {
             type: "string",
-            enum: ["read_file", "glob", "grep", "list_dir"],
+            enum: [
+              "read",
+              "glob",
+              "grep",
+              "list_dir",
+              ...(input.allowNestedBackgroundTasks ? ["task_create"] : []),
+            ],
           },
         },
         maxSteps: {
@@ -4888,21 +5562,38 @@ export function createDynamicSpawnAgentTool(input: {
           'Tool "spawn_agent" was invoked but no parent RunHandle is available.',
         );
       }
-      if (typeof parent.record.metadata?.parentRunId === "string") {
+      if (
+        typeof parent.record.metadata?.parentRunId === "string" &&
+        input.allowNestedBackgroundTasks !== true
+      ) {
         throw new Error(
           'Tool "spawn_agent" refused to nest: parent run is itself a sub-agent.',
         );
       }
       const parsed = parseDynamicSpawnAgentArgs(args);
-      const supportedTools = new Set(["read_file", "glob", "grep", "list_dir"]);
-      const requestedTools = parsed.allowedTools ?? [
-        "read_file",
+      const nestedTaskCreateTool =
+        input.allowNestedBackgroundTasks === true && input.taskManager
+          ? createNestedAgentTaskCreateTool({
+              manager: input.taskManager,
+              foregroundTimeoutMs: input.foregroundTimeoutMs,
+              backgroundTasks: input.backgroundTasks,
+            })
+          : undefined;
+      const supportedTools = new Set([
+        "read",
         "glob",
         "grep",
         "list_dir",
-      ];
+        ...(nestedTaskCreateTool ? ["task_create"] : []),
+      ]);
+      const requestedTools = (
+        parsed.allowedTools ?? ["read", "glob", "grep"]
+      ).map(canonicalToolName);
       const availableTools = new Map(
-        input.childTools.map((tool) => [tool.name, tool]),
+        [
+          ...input.childTools,
+          ...(nestedTaskCreateTool ? [nestedTaskCreateTool] : []),
+        ].map((tool) => [canonicalToolName(tool.name), tool]),
       );
       const invalidTools = requestedTools.filter(
         (name) => !supportedTools.has(name) || !availableTools.has(name),
@@ -4917,6 +5608,20 @@ export function createDynamicSpawnAgentTool(input: {
       const childTools = requestedTools
         .map((name) => availableTools.get(name))
         .filter((tool): tool is ToolDefinition => tool !== undefined);
+      if (
+        childTools.some(
+          (tool) =>
+            tool.name !== DISCOVERY_TOOL_NAME && tool.deferLoading === true,
+        )
+      ) {
+        const discovery = availableTools.get(DISCOVERY_TOOL_NAME);
+        if (
+          discovery &&
+          !childTools.some((tool) => tool.name === discovery.name)
+        ) {
+          childTools.push(discovery);
+        }
+      }
       if (childTools.length === 0) {
         throw new Error(
           "spawn_agent requires at least one enabled child tool.",
@@ -4963,6 +5668,12 @@ export function createDynamicSpawnAgentTool(input: {
         ? await input.modelForSpawn()
         : input.model;
 
+      const childAbort = createLinkedAbortController(input.abortSignal);
+      const childRunRef: { id?: RunId } = {};
+      const childBridge =
+        input.allowNestedBackgroundTasks === true
+          ? input.createTaskRevivalBridge?.(() => childRunRef.id)
+          : undefined;
       const spawned = spawnSubAgent({
         parent,
         goal: parsed.goal,
@@ -4974,11 +5685,16 @@ export function createDynamicSpawnAgentTool(input: {
           createAgentProfilePolicy(profile),
         ]),
         maxSteps: childMaxSteps,
+        abortSignal: childAbort.controller.signal,
         interactionChannel: null,
         // Persist the child's own trace/transcript under
         // `sessions/<id>/agents/<agentId>/` and register it in session.json,
         // instead of letting its steps disappear once the tool returns.
         runStore: input.childRunStoreFactory(agentId),
+        notificationSources: childBridge
+          ? [childBridge.notificationSource]
+          : [],
+        taskRevivalSource: childBridge?.taskRevivalSource,
         // Fold the child's tool/model usage into the parent run's tracker so
         // session usage totals (and the live `usage.updated` stream) reflect
         // sub-agent spend rather than under-reporting it.
@@ -4990,125 +5706,371 @@ export function createDynamicSpawnAgentTool(input: {
           agentId,
           agentProfileId: agentId,
           agentName: parsed.role,
-          delegateTool: "spawn_agent",
-          entrypoint: "spawn_agent",
+          delegateTool: input.delegateToolName ?? "spawn_agent",
+          entrypoint: input.entrypoint ?? "spawn_agent",
           allowedTools: childTools.map((tool) => tool.name),
         },
       });
-      const result = await spawned.run.start();
-      const usage = spawned.run.usage();
-      // A child that answered on its last allowed step may have wrapped up early
-      // under the step budget; tell the parent so it can caveat rather than
-      // present a possibly-truncated child answer as exhaustive.
-      const stepLimitReached =
-        (result.metadata as { stepLimitReached?: unknown } | undefined)
-          ?.stepLimitReached === true;
-      const childTruncated =
-        (result.metadata as { truncated?: unknown } | undefined)?.truncated ===
-          true || stepLimitReached;
-      const finality =
-        result.signal !== "completed" || childTruncated
-          ? "partial"
-          : "complete";
-      const resultMessage =
-        typeof result.message === "string" ? result.message : undefined;
-      const message =
-        stepLimitReached && resultMessage
-          ? [
-              "Warning: this child hit its step budget and wrapped up early; its answer may be incomplete. Do not re-spawn the same scope unless you raise maxSteps or need a different concrete scope; summarize from the partial result when possible.",
-              "",
-              resultMessage,
-            ].join("\n")
-          : result.message;
-      // A child that failed (doom-loop, step-limit, error) never emitted a final
-      // answer, so salvage its most recent successful tool results — otherwise
-      // the parent only sees an error string and must re-spawn to rediscover the
-      // same data. Success carries the answer in `message`, so skip it there.
-      const partialObservations =
-        result.signal === "completed"
-          ? undefined
-          : extractPartialObservations(spawned.run.events.all(), 3);
-      const output = {
-        childRunId: spawned.childRunId,
-        spanId: spawned.spanId,
-        agentId,
+      childRunRef.id = spawned.childRunId as RunId;
+      const unregisterSubagentRun =
+        input.allowNestedBackgroundTasks === true
+          ? input.registerSubagentRun?.(spawned.run)
+          : undefined;
+      const completion = completeDynamicSpawnAgent({
+        spawned,
+        parent,
+        ledgerKey,
+        goal: parsed.goal,
         role: parsed.role,
-        signal: result.signal,
-        stopReason: result.stopReason,
-        stepLimitReached,
-        truncated: childTruncated,
-        finality,
-        message,
-        ...(partialObservations && partialObservations.length > 0
-          ? { partialObservations }
-          : {}),
-        usage,
-        promotionHint: {
-          action: "create_agent.create",
-          reason:
-            "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
-          suggestedProfile: {
-            id: sanitizeToolSegment(parsed.role.toLowerCase()),
-            name: parsed.role,
-            mode: "child",
-            prompt: parsed.prompt,
-            allowedTools: childTools.map((tool) => tool.name),
-            maxSteps: childMaxSteps,
-            delegateToolName: `delegate_${sanitizeToolSegment(parsed.role.toLowerCase())}`,
-          },
-        },
-      };
-      rememberSuccessfulDelegation(parent, ledgerKey, parsed.goal, {
-        ...summarizeDelegationResult({
-          childRunId: spawned.childRunId,
-          spanId: spawned.spanId,
-          result,
-          usage,
-        }),
-        output,
+        prompt: parsed.prompt,
+        agentId,
+        childTools,
+        childMaxSteps,
+      }).finally(() => {
+        childAbort.dispose();
+        unregisterSubagentRun?.();
       });
-      if (result.signal !== "completed") {
-        // Surface the failure as a *structured* tool error. The observation
-        // formatter truncates `error.message` to 500 chars but passes
-        // `error.metadata` through untruncated, so the salvaged data
-        // (partialObservations + why it stopped) must live in metadata — a
-        // JSON blob stuffed into the message would be cut off before the parent
-        // ever saw it. `normalizeExecutionError` preserves an attached
-        // `.code`/`.metadata` on the thrown error.
-        const childMessage =
-          typeof result.message === "string" ? result.message : undefined;
-        const failure = Object.assign(
-          new Error(
-            `spawn_agent child "${parsed.role}" did not complete (${
-              result.stopReason ?? result.signal
-            }).` +
-              (partialObservations && partialObservations.length > 0
-                ? ` ${partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
-                : ""),
-          ),
-          {
-            code: "SPAWN_AGENT_CHILD_INCOMPLETE",
-            metadata: {
-              childRunId: spawned.childRunId,
-              agentId,
-              role: parsed.role,
-              signal: result.signal,
-              stopReason: result.stopReason,
-              stepLimitReached,
-              truncated: childTruncated,
-              finality,
-              ...(childMessage ? { childMessage } : {}),
-              ...(partialObservations && partialObservations.length > 0
-                ? { partialObservations }
-                : {}),
-            },
-          },
+      if (
+        input.taskManager &&
+        (input.backgroundTasks ?? "enabled") === "enabled" &&
+        input.foregroundTimeoutMs !== undefined &&
+        input.foregroundTimeoutMs >= 0
+      ) {
+        const settled = await settleWithin(
+          completion,
+          input.foregroundTimeoutMs,
         );
-        throw failure;
+        if (settled.settled) {
+          if (settled.ok) return settled.value;
+          throw settled.cause;
+        }
+        return promoteDynamicSpawnAgent({
+          taskManager: input.taskManager,
+          parentRunId: parent.record.id,
+          spawned,
+          completion,
+          abortController: childAbort.controller,
+          foregroundTimeoutMs: input.foregroundTimeoutMs,
+          role: parsed.role,
+          goal: parsed.goal,
+          agentId,
+        });
       }
-      return output;
+      return completion;
     },
   });
+}
+
+interface CompleteDynamicSpawnAgentInput {
+  spawned: SpawnedSubAgent;
+  parent: ReturnType<typeof createRun>;
+  ledgerKey: DelegationLedgerKey;
+  goal: string;
+  role: string;
+  prompt: string;
+  agentId: string;
+  childTools: ToolDefinition[];
+  childMaxSteps: number;
+}
+
+async function completeDynamicSpawnAgent(
+  input: CompleteDynamicSpawnAgentInput,
+): Promise<Record<string, unknown>> {
+  const {
+    spawned,
+    parent,
+    ledgerKey,
+    goal,
+    role,
+    prompt,
+    agentId,
+    childTools,
+    childMaxSteps,
+  } = input;
+  const result = await spawned.run.start();
+  const usage = spawned.run.usage();
+  // A child that answered on its last allowed step may have wrapped up early
+  // under the step budget; tell the parent so it can caveat rather than
+  // present a possibly-truncated child answer as exhaustive.
+  const stepLimitReached =
+    (result.metadata as { stepLimitReached?: unknown } | undefined)
+      ?.stepLimitReached === true;
+  const childTruncated =
+    (result.metadata as { truncated?: unknown } | undefined)?.truncated ===
+      true || stepLimitReached;
+  const finality =
+    result.signal !== "completed" || childTruncated ? "partial" : "complete";
+  const resultMessage =
+    typeof result.message === "string" ? result.message : undefined;
+  const message =
+    stepLimitReached && resultMessage
+      ? [
+          "Warning: this child hit its step budget and wrapped up early; its answer may be incomplete. Do not re-spawn the same scope unless you raise maxSteps or need a different concrete scope; summarize from the partial result when possible.",
+          "",
+          resultMessage,
+        ].join("\n")
+      : result.message;
+  // A child that failed (doom-loop, step-limit, error) never emitted a final
+  // answer, so salvage its most recent successful tool results — otherwise
+  // the parent only sees an error string and must re-spawn to rediscover the
+  // same data. Success carries the answer in `message`, so skip it there.
+  const partialObservations =
+    result.signal === "completed"
+      ? undefined
+      : extractPartialObservations(spawned.run.events.all(), 3);
+  const output = {
+    childRunId: spawned.childRunId,
+    spanId: spawned.spanId,
+    agentId,
+    role,
+    signal: result.signal,
+    stopReason: result.stopReason,
+    stepLimitReached,
+    truncated: childTruncated,
+    finality,
+    message,
+    ...(partialObservations && partialObservations.length > 0
+      ? { partialObservations }
+      : {}),
+    usage,
+    promotionHint: {
+      action: "create_agent.create",
+      reason:
+        "If this temporary role is useful repeatedly, create a stable agent profile and delegate tool instead of continuing to spawn it ad hoc.",
+      suggestedProfile: {
+        id: sanitizeToolSegment(role.toLowerCase()),
+        name: role,
+        mode: "child",
+        prompt,
+        allowedTools: childTools.map((tool) => tool.name),
+        maxSteps: childMaxSteps,
+        delegateToolName: `delegate_${sanitizeToolSegment(role.toLowerCase())}`,
+      },
+    },
+  };
+  rememberSuccessfulDelegation(parent, ledgerKey, goal, {
+    ...summarizeDelegationResult({
+      childRunId: spawned.childRunId,
+      spanId: spawned.spanId,
+      result,
+      usage,
+    }),
+    output,
+  });
+  if (result.signal !== "completed") {
+    // Surface the failure as a *structured* tool error. The observation
+    // formatter truncates `error.message` to 500 chars but passes
+    // `error.metadata` through untruncated, so the salvaged data
+    // (partialObservations + why it stopped) must live in metadata — a
+    // JSON blob stuffed into the message would be cut off before the parent
+    // ever saw it. `normalizeExecutionError` preserves an attached
+    // `.code`/`.metadata` on the thrown error.
+    const childMessage =
+      typeof result.message === "string" ? result.message : undefined;
+    const failure = Object.assign(
+      new Error(
+        `spawn_agent child "${role}" did not complete (${
+          result.stopReason ?? result.signal
+        }).` +
+          (partialObservations && partialObservations.length > 0
+            ? ` ${partialObservations.length} partial observation(s) salvaged in error.metadata.partialObservations.`
+            : ""),
+      ),
+      {
+        code: "SPAWN_AGENT_CHILD_INCOMPLETE",
+        metadata: {
+          childRunId: spawned.childRunId,
+          agentId,
+          role,
+          signal: result.signal,
+          stopReason: result.stopReason,
+          stepLimitReached,
+          truncated: childTruncated,
+          finality,
+          ...(childMessage ? { childMessage } : {}),
+          ...(partialObservations && partialObservations.length > 0
+            ? { partialObservations }
+            : {}),
+        },
+      },
+    );
+    throw failure;
+  }
+  return output;
+}
+
+type SettledWithin<T> =
+  | { settled: false }
+  | { settled: true; ok: true; value: T }
+  | { settled: true; ok: false; cause: unknown };
+
+function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<SettledWithin<T>> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ settled: false }), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve({ settled: true, ok: true, value });
+      },
+      (cause) => {
+        clearTimeout(timer);
+        resolve({ settled: true, ok: false, cause });
+      },
+    );
+  });
+}
+
+function promoteDynamicSpawnAgent(input: {
+  taskManager: TaskManager;
+  parentRunId: RunId;
+  spawned: SpawnedSubAgent;
+  completion: Promise<Record<string, unknown>>;
+  abortController: AbortController;
+  foregroundTimeoutMs: number;
+  role: string;
+  goal: string;
+  agentId: string;
+}): Record<string, unknown> {
+  const handle = input.taskManager.adoptRunning({
+    parentRunId: input.parentRunId,
+    kind: "agent",
+    title: `spawn_agent: ${input.role}`,
+    awaited: true,
+    controller: input.abortController,
+    metadata: {
+      source: "spawn_agent",
+      promoted: true,
+      childRunId: input.spawned.childRunId,
+      spanId: input.spawned.spanId,
+      agentId: input.agentId,
+      role: input.role,
+      goal: input.goal,
+      foregroundTimeoutMs: input.foregroundTimeoutMs,
+    },
+  });
+  input.completion.then(
+    (output) => {
+      input.taskManager.complete(handle.record.id, output).catch(() => {});
+    },
+    (cause) => {
+      if (input.abortController.signal.aborted) {
+        input.taskManager.cancelled(handle.record.id).catch(() => {});
+      } else {
+        input.taskManager
+          .fail(handle.record.id, taskErrorFromCause(cause))
+          .catch(() => {});
+      }
+    },
+  );
+  return {
+    taskId: handle.record.id,
+    kind: "agent",
+    mode: "foreground",
+    promoted: true,
+    awaited: true,
+    childRunId: input.spawned.childRunId,
+    spanId: input.spawned.spanId,
+    agentId: input.agentId,
+    role: input.role,
+    foregroundTimeoutMs: input.foregroundTimeoutMs,
+    message:
+      "spawn_agent exceeded the foreground budget and is continuing as an awaited background task.",
+  };
+}
+
+function createLinkedAbortController(parentSignal?: AbortSignal): {
+  controller: AbortController;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  if (!parentSignal) return { controller, dispose: () => {} };
+  if (parentSignal.aborted) {
+    controller.abort();
+    return { controller, dispose: () => {} };
+  }
+  const onAbort = () => controller.abort();
+  parentSignal.addEventListener("abort", onAbort, { once: true });
+  return {
+    controller,
+    dispose: () => parentSignal.removeEventListener("abort", onAbort),
+  };
+}
+
+function taskErrorFromCause(cause: unknown): {
+  code: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+} {
+  if (cause && typeof cause === "object") {
+    const record = cause as Record<string, unknown>;
+    const code = typeof record.code === "string" ? record.code : undefined;
+    const message =
+      cause instanceof Error
+        ? cause.message
+        : typeof record.message === "string"
+          ? record.message
+          : String(cause);
+    const metadata =
+      record.metadata && typeof record.metadata === "object"
+        ? (record.metadata as Record<string, unknown>)
+        : undefined;
+    return {
+      code: code ?? "TASK_FAILED",
+      message,
+      ...(metadata ? { metadata } : {}),
+    };
+  }
+  return { code: "TASK_FAILED", message: String(cause) };
+}
+
+function createNestedAgentTaskCreateTool(input: {
+  manager: TaskManager;
+  foregroundTimeoutMs?: number;
+  backgroundTasks?: BackgroundTaskPolicy;
+}): ToolDefinition {
+  const tool = createTaskCreate({
+    manager: input.manager,
+    getParentRunId: (ctx) => {
+      if (!ctx) {
+        throw new Error("nested task_create requires runtime context.");
+      }
+      return ctx.run.id as RunId;
+    },
+    foregroundTimeoutMs: input.foregroundTimeoutMs,
+    backgroundTasks: input.backgroundTasks,
+    taskCreateKinds: [
+      {
+        kind: "agent",
+        description:
+          "start a bounded background child agent from this sub-agent",
+        payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
+        payloadSchema: {
+          ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
+          properties: {
+            ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties,
+            allowedTools: {
+              ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties.allowedTools,
+              type: "array",
+              description:
+                "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir, task_create.",
+              items: {
+                type: "string",
+                enum: ["read", "glob", "grep", "list_dir", "task_create"],
+              },
+            },
+          },
+        },
+        requiresPayload: true,
+      },
+    ],
+  });
+  return {
+    ...tool,
+    policy: { risk: "safe", requiresApproval: false },
+  };
 }
 
 function parseDelegateParallelArgs(args: unknown): DelegateParallelTask[] {
@@ -5370,6 +6332,35 @@ function cachedDynamicSpawnOutput(hit: DelegationLedgerHit): unknown {
   return result;
 }
 
+function summarizeAgentTaskOutput(output: unknown): Record<string, unknown> {
+  if (!isPlainRecord(output)) {
+    return { type: "agent.completed" };
+  }
+  const message =
+    typeof output.message === "string"
+      ? output.message.slice(0, 4_000)
+      : undefined;
+  return {
+    type: "agent.completed",
+    ...(typeof output.childRunId === "string"
+      ? { childRunId: output.childRunId }
+      : {}),
+    ...(typeof output.agentId === "string" ? { agentId: output.agentId } : {}),
+    ...(typeof output.role === "string" ? { role: output.role } : {}),
+    ...(typeof output.signal === "string" ? { signal: output.signal } : {}),
+    ...(typeof output.stopReason === "string"
+      ? { stopReason: output.stopReason }
+      : {}),
+    ...(typeof output.finality === "string"
+      ? { finality: output.finality }
+      : {}),
+    ...(typeof output.truncated === "boolean"
+      ? { truncated: output.truncated }
+      : {}),
+    ...(message ? { message } : {}),
+  };
+}
+
 function parseDynamicSpawnAgentArgs(args: unknown): {
   goal: string;
   role: string;
@@ -5390,7 +6381,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
         if (typeof value !== "string" || !value.trim()) {
           throw new Error("spawn_agent allowedTools must contain strings.");
         }
-        return value.trim();
+        return canonicalToolName(value.trim());
       })
     : undefined;
   if (allowedTools && new Set(allowedTools).size !== allowedTools.length) {

@@ -22,7 +22,9 @@ export type {
 export { InMemoryTaskStore } from "./store.js";
 
 export type {
+  AdoptRunningTaskInput,
   TaskManagerOptions,
+  TaskRetentionOptions,
   TaskRunner,
   TaskRunnerController,
   SpawnTaskInput,
@@ -30,17 +32,74 @@ export type {
 export { TaskManager } from "./manager.js";
 
 export type {
+  ActorInbox,
+  ActorNotificationBase,
+  ActorNotificationInputBase,
+  ActorNotificationPredicate,
+  ActorNotificationQos,
+  ActorNotificationSink,
+  ActorNotificationType,
+  ActorRef,
+  ActorRouteHint,
+  AnyActorNotification,
+  AnyActorNotificationInput,
+  DeliveryResult,
+  InternalActorKind,
   TaskNotification,
+  TaskNotificationReadyWaitOptions,
   TaskNotificationSink,
   TaskTerminalStatus,
   InMemoryTaskNotificationQueueOptions,
+  TaskActorNotification,
+  TaskActorNotificationInput,
+  TaskCancelledActorNotification,
+  TaskCancelledNotificationInput,
+  TaskCancelledNotificationPayload,
+  TaskCompletedActorNotification,
+  TaskCompletedNotificationInput,
+  TaskCompletedNotificationPayload,
+  TaskFailedActorNotification,
+  TaskFailedNotificationInput,
+  TaskFailedNotificationPayload,
+  TaskOutputActorNotification,
+  TaskOutputNotificationInput,
+  TaskOutputNotificationPayload,
+  TaskProgressActorNotification,
+  TaskProgressNotificationInput,
+  TaskProgressNotificationPayload,
+  WorkflowActorNotification,
+  WorkflowActorNotificationInput,
+  WorkflowCompletedActorNotification,
+  WorkflowCompletedNotificationInput,
+  WorkflowCompletedNotificationPayload,
+  WorkflowFailedActorNotification,
+  WorkflowFailedNotificationInput,
+  WorkflowFailedNotificationPayload,
+  WorkflowProgressActorNotification,
+  WorkflowProgressNotificationInput,
+  WorkflowProgressNotificationPayload,
 } from "./notifications.js";
 export {
+  ActorNotificationCapacityError,
+  ActorNotificationInvalidError,
+  ActorNotificationUnsupportedError,
+  ActorNotificationValidationError,
   InMemoryTaskNotificationQueue,
+  acceptActorNotificationInput,
+  actorNotificationInputFromTaskNotification,
+  isNonRetryableActorNotificationError,
   notificationFromRecord,
+  qosForActorNotificationType,
+  taskNotificationFromActorNotification,
 } from "./notifications.js";
 
-export type { CreateTaskToolsOptions } from "./tools.js";
+export type {
+  CreateTaskToolsOptions,
+  TaskCreateKindDescriptor,
+  TaskCreateMode,
+  TaskCreateResult,
+  TaskConcurrencyLimits,
+} from "./tools.js";
 export {
   createTaskTools,
   createTaskCreate,
@@ -70,6 +129,7 @@ export { FileTaskStore } from "./file-store.js";
 
 export type {
   FileTaskNotificationEntry,
+  FileTaskNotificationInvalidActorEntry,
   FileTaskNotificationOutboxOptions,
 } from "./file-notifications.js";
 export { FileTaskNotificationOutbox } from "./file-notifications.js";

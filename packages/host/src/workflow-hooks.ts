@@ -505,6 +505,11 @@ function enforceWorkflowHookEffect(
       `${label} returned rewrite for ${hook}, but rewrite is only supported for PreToolUse.`,
     );
   }
+  if (result.status === "advance" && !workflowHookAllowsAdvance(hook)) {
+    throw new Error(
+      `${label} returned advance for ${hook}, but advance is only supported for ModelOutput and Stop.`,
+    );
+  }
   if (
     result.status === "continue" &&
     result.context !== undefined &&
@@ -524,6 +529,10 @@ function workflowHookAllowsBlock(hook: WorkflowHookName): boolean {
 
 function workflowHookAllowsRewrite(hook: WorkflowHookName): boolean {
   return hook === "PreToolUse";
+}
+
+function workflowHookAllowsAdvance(hook: WorkflowHookName): boolean {
+  return hook === "ModelOutput" || hook === "Stop";
 }
 
 function workflowHookAllowsContext(hook: WorkflowHookName): boolean {
@@ -572,11 +581,12 @@ function parseUnknownWorkflowHookResult(
   if (
     status !== "continue" &&
     status !== "block" &&
+    status !== "advance" &&
     status !== "rewrite" &&
     status !== "skipped"
   ) {
     throw new Error(
-      `${label} status must be continue, block, rewrite, or skipped.`,
+      `${label} status must be continue, block, advance, rewrite, or skipped.`,
     );
   }
   const metadata = mergeActionResultMetadata(parsed.metadata, actionMetadata);
@@ -590,6 +600,16 @@ function parseUnknownWorkflowHookResult(
       ...(Array.isArray(parsed.findings)
         ? { findings: parsed.findings as ValidationFinding[] }
         : {}),
+      metadata,
+    };
+  }
+  if (status === "advance") {
+    if (typeof parsed.reason !== "string" || parsed.reason.length === 0) {
+      throw new Error(`${label} advance result requires reason.`);
+    }
+    return {
+      status: "advance",
+      reason: parsed.reason,
       metadata,
     };
   }

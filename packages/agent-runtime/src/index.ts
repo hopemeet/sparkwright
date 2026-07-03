@@ -18,6 +18,7 @@ import type {
   CreateRunOptions,
   EventEmitter,
   ModelAdapter,
+  NotificationSource,
   Policy,
   PolicyDecision,
   PolicyDecisionKind,
@@ -29,6 +30,7 @@ import type {
   RunHook,
   RunResult,
   RuntimeContext,
+  TaskRevivalSource,
   InteractionChannel,
   ToolCall,
   ToolDefinition,
@@ -635,7 +637,8 @@ function minRunBudget(
 // "Sub-agents". Distilled to the minimum portable shape:
 //
 //   - parent linkage (parentRunId, spanId in child metadata)
-//   - abort propagation (child wired with parent.abortSignal)
+//   - abort propagation (child wired with input.abortSignal ?? parent.abortSignal;
+//     a task-owned signal decouples a background child from the parent turn)
 //   - policy inheritance (createLayeredPolicy + child profile policy)
 //   - channel sharing (child inherits parent InteractionChannel)
 //   - usage rollup (subscribe to child tool/model events, fan into parent
@@ -723,6 +726,18 @@ export interface SpawnSubAgentInput {
    * transcript under its own directory.
    */
   runStore?: CreateRunOptions["runStore"];
+  /** Notification sources drained at child run step-start. */
+  notificationSources?: NotificationSource[];
+  /** Awaited-task readiness source for child run revival. */
+  taskRevivalSource?: TaskRevivalSource;
+  /**
+   * External abort signal that owns the child's lifecycle. Defaults to
+   * `parent.abortSignal`, which ties the child to the parent turn. Pass a
+   * task-owned signal (e.g. a background-task controller) to decouple the
+   * child from the parent turn so stopping the task stops the child and a
+   * parent-turn interrupt does not kill a background child.
+   */
+  abortSignal?: AbortSignal;
   /** Override for testing. Defaults to the core `createRun`. */
   createRun?: typeof defaultCreateRun;
 }
@@ -746,6 +761,7 @@ export interface SpawnedSubAgent {
 export type SubAgentEntrypoint =
   | "run"
   | "spawn_agent"
+  | "agent_task"
   | "delegate"
   | "delegate_parallel"
   | "delegates_run"
@@ -846,9 +862,11 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
     workflowHooks: input.workflowHooks,
     maxSteps: input.maxSteps ?? parent.maxSteps,
     runBudget: input.runBudget,
-    abortSignal: parent.abortSignal,
+    abortSignal: input.abortSignal ?? parent.abortSignal,
     metadata: childRunMetadata,
     runStore: input.runStore,
+    notificationSources: input.notificationSources,
+    taskRevivalSource: input.taskRevivalSource,
   };
 
   const child = createRunFn(createOptions);
@@ -930,7 +948,8 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
         "subagent.failed",
         {
           ...subagentBase,
-          reason: event.type === "run.cancelled" ? "cancelled" : "failed",
+          reason:
+            terminal.terminalState === "cancelled" ? "cancelled" : "failed",
           error: (event.payload as { error?: unknown } | undefined)?.error,
           ...terminal,
           ...(childWorkspaceWrites > 0
@@ -987,6 +1006,7 @@ function isSubAgentEntrypoint(value: unknown): value is SubAgentEntrypoint {
   return (
     value === "run" ||
     value === "spawn_agent" ||
+    value === "agent_task" ||
     value === "delegate" ||
     value === "delegate_parallel" ||
     value === "delegates_run" ||
@@ -1000,6 +1020,7 @@ function subagentTerminalProjection(
   event: { payload?: unknown },
 ): {
   terminalState: SubAgentTerminalState;
+  finality: "complete" | "partial";
   stepLimitReached?: boolean;
   truncated?: boolean;
 } {
@@ -1009,13 +1030,26 @@ function subagentTerminalProjection(
     payload.stepLimitReached === true || metadata?.stepLimitReached === true;
   const truncated = payload.truncated === true || metadata?.truncated === true;
   if (truncated) {
-    return { terminalState: "truncated", stepLimitReached, truncated: true };
+    return {
+      terminalState: "truncated",
+      finality: "partial",
+      stepLimitReached,
+      truncated: true,
+    };
   }
   if (stepLimitReached) {
-    return { terminalState: "step_limit", stepLimitReached: true };
+    return {
+      terminalState: "step_limit",
+      finality: "partial",
+      stepLimitReached: true,
+    };
   }
-  if (eventType === "run.cancelled") return { terminalState: "cancelled" };
+  if (eventType === "run.cancelled")
+    return { terminalState: "cancelled", finality: "partial" };
   if (eventType === "run.failed") {
+    if (runFailureWasAbort(payload)) {
+      return { terminalState: "cancelled", finality: "partial" };
+    }
     const stopReason =
       typeof payload.reason === "string"
         ? payload.reason
@@ -1024,9 +1058,42 @@ function subagentTerminalProjection(
           : undefined;
     return {
       terminalState: stopReason === "blocking_limit" ? "blocked" : "failed",
+      finality: "partial",
     };
   }
-  return { terminalState: "completed" };
+  return { terminalState: "completed", finality: "complete" };
+}
+
+function runFailureWasAbort(payload: Record<string, unknown>): boolean {
+  const metadata = isRecord(payload.metadata) ? payload.metadata : undefined;
+  const failure = isRecord(payload.failure) ? payload.failure : undefined;
+  const failureMetadata = isRecord(failure?.metadata)
+    ? failure.metadata
+    : undefined;
+  const modelError = isRecord(metadata?.modelError)
+    ? metadata.modelError
+    : isRecord(failureMetadata?.modelError)
+      ? failureMetadata.modelError
+      : undefined;
+  return (
+    recordErrorName(metadata?.cause) === "AbortError" ||
+    recordErrorName(failureMetadata?.cause) === "AbortError" ||
+    abortishString(payload.code) ||
+    abortishString(payload.message) ||
+    abortishString(failure?.code) ||
+    abortishString(failure?.message) ||
+    abortishString(modelError?.code) ||
+    abortishString(modelError?.message)
+  );
+}
+
+function recordErrorName(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  return typeof value.name === "string" ? value.name : undefined;
+}
+
+function abortishString(value: unknown): boolean {
+  return typeof value === "string" && /\babort(?:ed|error)?\b/i.test(value);
 }
 
 /**

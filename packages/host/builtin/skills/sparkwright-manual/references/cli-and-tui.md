@@ -66,7 +66,7 @@ OPENAI_API_KEY=... npm exec sparkwright -- run "inspect this repo" \
 Scripted host run for deterministic tool-call diagnostics:
 
 ```bash
-SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read_file","arguments":{"path":"README.md"}}]},{"message":"done"}]' \
+SPARKWRIGHT_SCRIPTED_MODEL_JSON='[{"toolCalls":[{"toolName":"read","arguments":{"path":"README.md"}}]},{"message":"done"}]' \
   npm exec sparkwright -- run "call scripted tools" \
   --workspace examples/repo-pilot \
   --model scripted \
@@ -141,8 +141,8 @@ Use `--apply` only when intentionally applying a session repair.
 
 ```bash
 npm exec sparkwright -- capabilities inspect --workspace . --format text
-npm exec sparkwright -- tools allow read_file
-npm exec sparkwright -- tools disable shell
+npm exec sparkwright -- tools allow read
+npm exec sparkwright -- tools disable bash
 npm exec sparkwright -- tools defer read_anchored_text
 ```
 

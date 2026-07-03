@@ -113,6 +113,39 @@ describe("CapabilitiesPanel rendering", () => {
     expect(text).toContain("pricing unavailable (missing_pricing)");
   });
 
+  it("counts risky public tools as public with a high-risk overlay", async () => {
+    const text = await renderToText(
+      <CapabilitiesPanel
+        snapshot={{
+          tools: [
+            {
+              name: "read",
+              origin: "local:@sparkwright/coding-tools",
+              risk: "safe",
+              defaultExposureTier: "public",
+            },
+            {
+              name: "bash",
+              origin: "local:@sparkwright/shell-tool",
+              risk: "risky",
+              defaultExposureTier: "public",
+            },
+          ],
+          skills: { indexed: [], loaded: [] },
+          mcp: { statuses: [] },
+          agents: { profiles: [], delegateTools: [] },
+        }}
+        loading={false}
+        view="all"
+        onClose={() => {}}
+      />,
+      20,
+    );
+
+    expect(text).toContain("Tool map: 2 public");
+    expect(text).toContain("1 approval/high-risk");
+  });
+
   it("explains managed skill mutation tools", async () => {
     const text = await renderToText(
       <CapabilitiesPanel
@@ -148,7 +181,7 @@ describe("CapabilitiesPanel rendering", () => {
       34,
     );
 
-    expect(text).toContain("ready tools");
+    expect(text).toContain("public tools");
     expect(text).toContain("deferred via tool_search");
     expect(text).toContain("approval / high risk");
     expect(text).toContain("tool sources");

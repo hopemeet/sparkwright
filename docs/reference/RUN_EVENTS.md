@@ -45,7 +45,7 @@ A timeline should be built from event families rather than exact payload shapes.
 | Host-controlled process           | `extension.process.started`, `extension.process.progress`, `extension.process.completed`, `extension.process.failed`                                                          | Show external process invocation, bounded output summary, and progress            |
 | Skill and edge lifecycle          | `capability.index.failed`, `skill.indexed`, `skill.failed`, `skill.loaded`, `mcp.server.prepared`, `agent.profile.derived`, `agent.routing.evaluated`                         | Show capability changes as environment/context evidence                           |
 | User hooks                        | `user_hook.invoked`, `user_hook.completed`, `user_hook.failed`, `hook.failed`                                                                                                 | Show as host automation, not model-authored work                                  |
-| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation and blocking decisions                    |
+| Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation, healthy advances, and blocking decisions |
 
 Host-controlled process progress is accepted from line-start anchored stderr
 token lines such as
@@ -125,6 +125,21 @@ call. The payload carries the call id, tool name, raw arguments, and may include
 rendering and fall back to their legacy argument formatter when it is absent;
 policy, approval, validation, and execution must continue to use the structured
 arguments.
+
+`tool.completed` and `tool.failed` are the terminal tool events. Their metadata
+may include diagnostic stage timings such as `schemaValidationMs`,
+`inputValidationMs`, `policyForArgsMs`, `policyDecisionMs`, `approvalWaitMs`,
+`executionMs`, and `resultValidationMs`. Treat these as optional observability
+fields; do not infer success/failure from their presence.
+
+When a deferred tool call fails argument schema validation before its schema has
+been loaded into the model request, the `tool.failed` error metadata may include
+`reason: "schema_not_loaded"`, `recoveryTool: "tool_search"`,
+`recoveryQuery: "select:<toolName>"`, `deferred: true`, and
+`schemaLoaded: false`. This is evaluated against the schema set visible at the
+start of the model turn, so a same-turn `tool_search` result does not suppress
+the recovery hint for sibling tool calls. Render this as recovery guidance, not
+as a policy denial.
 
 ## Tool Progress
 
@@ -266,6 +281,11 @@ Skill events explain capability/context changes at the edge of the run.
   a governed loader tool.
 - Related edge events such as `mcp.server.prepared` and
   `agent.profile.derived` explain tool availability and agent policy shaping.
+- `mcp.server.prepared` is emitted as an audit fact after server preparation.
+  Failure payloads keep `errorCode` / `errorPhase` and may include
+  `errorCategory`, `nextAction`, `retryable`, and nested `error.serverName` /
+  `error.category` fields. Render these as actionable diagnostics; do not
+  expose raw command paths, headers, or tokens beyond the sanitized error text.
 
 Stable consumption guidance:
 
@@ -296,8 +316,9 @@ Stable consumption guidance:
 - Keep approval and question UI keyed by request identity so reconnects restore
   pending prompts without duplicates.
 
-Promoted shell tasks keep the task lifecycle as the user-visible row: stdout
-and stderr are buffered in `TaskStore`, mirrored as `task.output` events under
-the task span, and the terminal `task.completed` / `task.failed` /
+Promoted shell tasks keep the task lifecycle as the user-visible row:
+`task.created` is emitted before the task span opens with `task.started`;
+stdout and stderr are buffered in `TaskStore`, mirrored as `task.output` events
+under the task span, and the terminal `task.completed` / `task.failed` /
 `task.cancelled` event carries a `ProcessOutputSummary`. They do not emit a
 second `extension.process.*` lifecycle.

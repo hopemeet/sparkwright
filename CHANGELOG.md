@@ -111,6 +111,16 @@ All notable changes to Sparkwright will be documented in this file.
 
 ### Changed
 
+- `@sparkwright/agent-runtime` `InMemoryTaskNotificationQueue` bounded
+  capacity semantics changed for reliable task notifications. When
+  `maxBufferedNotifications` is set, lossy actor notifications may still be
+  dropped under capacity pressure, but reliable terminal task notifications are
+  no longer evicted by drop-oldest behavior. If the queue cannot make room, it
+  throws retryable `ACTOR_INBOX_CAPACITY` instead. Migration: embedders that
+  relied on drop-oldest for terminal task notifications should either leave the
+  queue unbounded, increase the capacity, drain terminal notifications more
+  aggressively, or handle the retryable capacity error through their
+  `TaskManager` sink error/retry path.
 - External ACP and external-command delegates no longer receive direct project
   workspace access by default. Delegates run from an isolated temporary cwd and
   `{{workspaceRoot}}` / configured `cwd` are rejected unless the profile

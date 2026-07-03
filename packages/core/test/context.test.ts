@@ -733,6 +733,11 @@ describe("DefaultPromptBuilder", () => {
         toolDescriptor(),
         {
           ...toolDescriptor(),
+          name: "tool_search",
+          description: "Discover deferred tools.",
+        },
+        {
+          ...toolDescriptor(),
           name: "deferred_search",
           description: "Search a large external catalog.",
           loading: { defer: true },
@@ -760,7 +765,37 @@ describe("DefaultPromptBuilder", () => {
       },
     });
     expect(capabilityDelta?.content).toContain("deferred_search");
+    expect(capabilityDelta?.content).toContain(
+      "Search a large external catalog",
+    );
+    expect(capabilityDelta?.content).toContain("Advanced and infrastructure");
     expect(capabilityDelta?.content).toContain("tool_search");
+  });
+
+  it("omits capability delta when discovery is disabled", async () => {
+    const builder = new DefaultPromptBuilder({
+      residentInstructions: "Stable rules.",
+    });
+    const messages = await builder.build({
+      run: createRunRecord(),
+      step: 1,
+      tools: [
+        toolDescriptor(),
+        {
+          ...toolDescriptor(),
+          name: "deferred_search",
+          description: "Search a large external catalog.",
+          loading: { defer: true },
+        },
+      ],
+      context: [],
+    });
+
+    expect(
+      messages.find(
+        (message) => message.metadata?.sectionName === "capability_delta",
+      ),
+    ).toBeUndefined();
   });
 
   it("compiles prompt messages into cache-policy blocks", async () => {
@@ -1196,6 +1231,36 @@ describe("DefaultObservationFormatter", () => {
     });
   });
 
+  it("keeps file-read window content visible under the read observation budget", () => {
+    const formatter = new DefaultObservationFormatter({
+      maxOutputChars: 20,
+      maxFileReadContentChars: 100,
+    });
+    const content = `${"x".repeat(40)}NEEDLE${"y".repeat(40)}`;
+
+    const item = formatter.format({
+      toolName: "read_file",
+      run: createRunRecord(),
+      result: {
+        toolCallId: "call_test" as never,
+        status: "completed",
+        output: {
+          path: "PROJECT_NOTES.md",
+          content,
+          startLine: 1,
+          endLine: 3,
+          totalLines: 3,
+          hasMore: false,
+        },
+        artifacts: [],
+      },
+    });
+
+    const parsed = JSON.parse(item.content);
+    expect(parsed.output.content).toBe(content);
+    expect(parsed.output.content).toContain("NEEDLE");
+  });
+
   it("summarizes scalar arrays that exceed the output budget", () => {
     const formatter = new DefaultObservationFormatter({
       maxOutputChars: 20,
@@ -1254,6 +1319,8 @@ describe("DefaultObservationFormatter", () => {
       status: "completed",
       path: "packages/core/src/context.ts",
       filePath: "packages/core/src/context.ts",
+      startLine: 1,
+      endLine: 1,
       truncated: false,
     });
   });

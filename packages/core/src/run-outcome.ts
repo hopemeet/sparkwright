@@ -125,7 +125,7 @@ export function analyzeCommandOutcomes(
     if (event.type === "tool.requested" && isRecord(event.payload)) {
       const id = stringValue(event.payload.id);
       const toolName = stringValue(event.payload.toolName);
-      if (!id || toolName !== "shell") continue;
+      if (!id || !isShellToolName(toolName)) continue;
       const args = isRecord(event.payload.arguments)
         ? event.payload.arguments
         : undefined;
@@ -137,7 +137,7 @@ export function analyzeCommandOutcomes(
     const toolCallId = stringValue(event.payload.toolCallId);
     const call = toolCallId ? shellCalls.get(toolCallId) : undefined;
     const toolName = stringValue(event.payload.toolName);
-    if (!call && toolName !== "shell") continue;
+    if (!call && !isShellToolName(toolName)) continue;
     const output = isRecord(event.payload.output)
       ? event.payload.output
       : undefined;
@@ -212,15 +212,29 @@ export function analyzeCommandOutcomes(
   };
 }
 
+function isShellToolName(value: unknown): boolean {
+  return value === "bash" || value === "shell";
+}
+
 export function analyzeToolOutcomes(
   events: readonly SparkwrightEvent[],
 ): ToolOutcomeSummary {
   const requested = new Map<
     string,
-    { toolName?: string; targetKey?: string; targetPath?: string }
+    {
+      toolName?: string;
+      targetKey?: string;
+      targetPath?: string;
+      args?: unknown;
+    }
   >();
   const completedByTarget = new Map<string, number[]>();
   const completedWritesByPath = new Map<string, number[]>();
+  const completedTaskMonitorCalls: Array<{
+    index: number;
+    action: string;
+    ids: string[];
+  }> = [];
   // Indexes of successful read/discovery completions, used to recognize that a
   // model recovered from a not-found probe by reading a *different* file.
   const completedReadIndexes: number[] = [];
@@ -239,6 +253,7 @@ export function analyzeToolOutcomes(
         const target = targetValue(event.payload.arguments);
         requested.set(id, {
           toolName,
+          args: event.payload.arguments,
           targetKey: toolName
             ? target
               ? `${toolName}::${target.kind}::${target.value}`
@@ -254,6 +269,13 @@ export function analyzeToolOutcomes(
         toolNameForCall(requested, toolCallId);
       if (isReadFamilyTool(completedToolName)) {
         completedReadIndexes.push(index);
+      }
+      const taskMonitor = completedTaskMonitorCall(
+        completedToolName,
+        argsForCall(requested, toolCallId),
+      );
+      if (taskMonitor) {
+        completedTaskMonitorCalls.push({ index, ...taskMonitor });
       }
       const targetKey = targetKeyForCall(requested, toolCallId);
       if (!targetKey) continue;
@@ -281,7 +303,14 @@ export function analyzeToolOutcomes(
   }
 
   const failures: ClassifiedToolFailure[] = [];
+  const priorFailureByTarget = new Map<string, ClassifiedToolFailure>();
   for (const [index, event] of events.entries()) {
+    if (event.type === "tool.completed" && isRecord(event.payload)) {
+      const toolCallId = stringValue(event.payload.toolCallId);
+      const targetKey = targetKeyForCall(requested, toolCallId);
+      if (targetKey) priorFailureByTarget.delete(targetKey);
+      continue;
+    }
     if (event.type !== "tool.failed" || !isRecord(event.payload)) continue;
     const toolCallId = stringValue(event.payload.toolCallId);
     const code = toolFailureCodeFromPayload(event.payload);
@@ -290,7 +319,15 @@ export function analyzeToolOutcomes(
       toolNameForCall(requested, toolCallId);
     const targetKey = targetKeyForCall(requested, toolCallId);
     const targetPath = targetPathForCall(requested, toolCallId);
-    const category = classifyToolFailure(code);
+    const args = argsForCall(requested, toolCallId);
+    const priorFailure = targetKey
+      ? priorFailureByTarget.get(targetKey)
+      : undefined;
+    const category = classifyToolFailureFromPayload(
+      code,
+      event.payload,
+      priorFailure,
+    );
     const completedIndexes = targetKey
       ? (completedByTarget.get(targetKey) ?? [])
       : [];
@@ -324,7 +361,15 @@ export function analyzeToolOutcomes(
       (mutatedByTarget.get(targetKey as string) ?? []).some(
         (mutationIndex) => mutationIndex < index,
       );
-    failures.push({
+    const recoveredByTaskPlaceholder =
+      isRecoverableTaskPlaceholderFailure(toolName, code, args) &&
+      completedTaskMonitorCalls.some(
+        (call) =>
+          call.index > index &&
+          call.action === taskMonitorAction(args) &&
+          call.ids.length > 0,
+      );
+    const failure: ClassifiedToolFailure = {
       toolCallId,
       toolName,
       targetKey,
@@ -335,9 +380,12 @@ export function analyzeToolOutcomes(
         category !== "approval_denial" &&
         (recoveredBySameTarget ||
           recoveredByLaterRead ||
-          recoveredByPriorMutation),
+          recoveredByPriorMutation ||
+          recoveredByTaskPlaceholder),
       ...(recoveredByPriorMutation ? { recoveredByPriorMutation: true } : {}),
-    });
+    };
+    failures.push(failure);
+    if (targetKey) priorFailureByTarget.set(targetKey, failure);
   }
 
   const unresolvedFailures = failures.filter(
@@ -690,6 +738,34 @@ export function classifyToolFailure(
   return "tool_runtime_error";
 }
 
+function classifyToolFailureFromPayload(
+  code: string | undefined,
+  payload: Record<string, unknown>,
+  priorFailure?: ClassifiedToolFailure,
+): ToolFailureCategory {
+  const metadata = isRecord(payload.error)
+    ? isRecord(payload.error.metadata)
+      ? payload.error.metadata
+      : undefined
+    : undefined;
+  if (
+    code === "REPEATED_TOOL_CALL_SKIPPED" &&
+    metadata?.repeatedPriorFailureExpectedDenial === true
+  ) {
+    return metadata.repeatedPriorFailureCategory === "approval_denial"
+      ? "approval_denial"
+      : "policy_denial";
+  }
+  if (
+    code === "REPEATED_TOOL_CALL_SKIPPED" &&
+    priorFailure &&
+    isExpectedDenialCategory(priorFailure.category)
+  ) {
+    return priorFailure.category;
+  }
+  return classifyToolFailure(code);
+}
+
 /**
  * Read/discovery tools whose later success signals that the model worked around
  * an earlier not-found probe (for example: `read_file` of a guessed path fails,
@@ -729,6 +805,10 @@ function isToolArgumentFailure(code: string | undefined): boolean {
         code.endsWith("_INPUT_INVALID")),
     )
   );
+}
+
+function isExpectedDenialCategory(category: ToolFailureCategory): boolean {
+  return category === "policy_denial" || category === "approval_denial";
 }
 
 export function toolTargetFingerprint(toolName: string, args: unknown): string {
@@ -777,6 +857,56 @@ function targetPathForCall(
   toolCallId: string | undefined,
 ): string | undefined {
   return toolCallId ? requested.get(toolCallId)?.targetPath : undefined;
+}
+
+function argsForCall(
+  requested: Map<string, { args?: unknown }>,
+  toolCallId: string | undefined,
+): unknown {
+  return toolCallId ? requested.get(toolCallId)?.args : undefined;
+}
+
+function taskMonitorAction(args: unknown): string | undefined {
+  if (!isRecord(args)) return undefined;
+  const action = stringValue(args.action);
+  return action === "wait" || action === "get" || action === "output"
+    ? action
+    : undefined;
+}
+
+function concreteTaskIds(args: unknown): string[] {
+  if (!isRecord(args)) return [];
+  const ids: string[] = [];
+  const taskId = stringValue(args.taskId);
+  if (taskId) ids.push(taskId);
+  if (Array.isArray(args.ids)) {
+    for (const id of args.ids) {
+      const value = stringValue(id);
+      if (value) ids.push(value);
+    }
+  }
+  return [...new Set(ids)];
+}
+
+function completedTaskMonitorCall(
+  toolName: string | undefined,
+  args: unknown,
+): { action: string; ids: string[] } | undefined {
+  if (toolName !== "task") return undefined;
+  const action = taskMonitorAction(args);
+  if (!action) return undefined;
+  const ids = concreteTaskIds(args);
+  return ids.length > 0 ? { action, ids } : undefined;
+}
+
+function isRecoverableTaskPlaceholderFailure(
+  toolName: string | undefined,
+  code: string | undefined,
+  args: unknown,
+): boolean {
+  if (toolName !== "task" || !isToolArgumentFailure(code)) return false;
+  if (!taskMonitorAction(args)) return false;
+  return concreteTaskIds(args).length === 0;
 }
 
 function uniqueCodes(failures: readonly ClassifiedToolFailure[]): string[] {
@@ -1014,6 +1144,7 @@ function isProbeCommand(command: string): boolean {
   return (
     /^(pwd|ls|find|rg|grep|cat|sed|head|tail|wc|stat)\b/.test(command) ||
     /^(which|command\s+-v)\b/.test(command) ||
+    /^node(?:\s+\S+)*\s+-e\b/.test(command) ||
     /\b(--version|-v)\b/.test(command) ||
     /\bpython(?:\d+(?:\.\d+)*)?\s+--version\b/.test(command)
   );
@@ -1046,6 +1177,8 @@ function targetValue(
     "file",
     "uri",
     "url",
+    "taskId",
+    "ids",
     "id",
     "name",
     "command",

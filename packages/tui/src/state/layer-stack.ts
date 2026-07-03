@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 export type LayerName =
   | "approval"
   | "sessions"
+  | "activity"
   | "events"
   | "model"
   | "fork"
@@ -39,6 +40,7 @@ const PRIORITY: Record<LayerName, number> = {
   // Approval is the most important — it blocks the run; it MUST be on top.
   approval: 100,
   "session-rename": 70, // above sessions so it can stack
+  activity: 65,
   events: 65,
   sessions: 60,
   model: 58,

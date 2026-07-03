@@ -494,8 +494,8 @@ describe("loadHostConfig", () => {
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.tools).toEqual({
         use: ["workspace.read", "mcp:demo"],
-        allowed: ["read_file", "edit_anchored_text"],
-        disabled: ["shell", "grep"],
+        allowed: ["read", "edit_anchored_text"],
+        disabled: ["bash", "grep"],
         defer: ["edit_anchored_text"],
       });
     } finally {
@@ -717,6 +717,40 @@ describe("loadHostConfig", () => {
           file: projectConfig,
           field: "accessMode",
           message: "requested bypass was clamped to project ceiling ask",
+        }),
+      ]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("uses project backgroundTasks as a ceiling for lower-layer requests", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { run: { backgroundTasks: "enabled" } });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      const projectConfig = join(cwd, ".sparkwright", "config.json");
+      await writeFile(
+        projectConfig,
+        JSON.stringify({ run: { backgroundTasks: "foreground-only" } }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.backgroundTasks).toBe("foreground-only");
+      expect(loaded.config.backgroundTasksCeiling).toBe("foreground-only");
+      expect(loaded.sources.backgroundTasks).toContain("project");
+      expect(loaded.sources.backgroundTasksCeiling).toContain("project");
+      expect(loaded.warnings).toEqual([
+        expect.objectContaining({
+          file: projectConfig,
+          field: "backgroundTasks",
+          message:
+            "requested enabled was clamped to project ceiling foreground-only",
         }),
       ]);
     } finally {
@@ -1977,12 +2011,17 @@ describe("loadHostConfig", () => {
       const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
       expect(loaded.errors).toEqual([]);
       expect(loaded.config.capabilities?.agents?.profiles).toMatchObject([
-        { id: "main", mode: "primary" },
+        {
+          id: "main",
+          mode: "primary",
+          allowedTools: ["read", "delegate_reviewer"],
+        },
         {
           id: "reviewer",
           name: "Reviewer",
           mode: "child",
           prompt: "Review the current run.",
+          allowedTools: ["read"],
           hooks: [
             {
               name: "reviewer.PreToolUse.0",

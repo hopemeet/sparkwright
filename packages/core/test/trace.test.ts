@@ -1351,6 +1351,82 @@ describe("trace", () => {
     });
   });
 
+  it("attributes workspace read noise to enclosing tool spans", () => {
+    const runId = createRunId();
+    const log = new EventLog(runId);
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "span attribution" }),
+      withTestSpan(
+        log.emit("tool.requested", {
+          id: "call_grep",
+          toolName: "grep",
+          arguments: { pattern: "needle" },
+        }),
+        "span_grep",
+      ),
+    ];
+
+    for (let i = 0; i < 6; i += 1) {
+      events.push(
+        withTestSpan(
+          log.emit("workspace.read", { path: `src/file-${i}.ts` }),
+          "span_grep",
+        ),
+      );
+    }
+
+    events.push(
+      withTestSpan(
+        log.emit("tool.completed", {
+          id: "call_grep",
+          toolName: "grep",
+          output: { matches: [] },
+        }),
+        "span_grep",
+      ),
+      withTestSpan(
+        log.emit("tool.requested", {
+          id: "call_read",
+          toolName: "read_text",
+          arguments: { path: "src/index.ts" },
+        }),
+        "span_read",
+      ),
+      withTestSpan(
+        log.emit("workspace.read", { path: "src/index.ts" }),
+        "span_read",
+      ),
+      withTestSpan(
+        log.emit("workspace.read", { path: "src/other.ts" }),
+        "span_read",
+      ),
+      withTestSpan(
+        log.emit("tool.completed", {
+          id: "call_read",
+          toolName: "read_text",
+          output: { path: "src/index.ts" },
+        }),
+        "span_read",
+      ),
+      log.emit("run.completed", { state: "completed" }),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+    const finding = report.findings.find(
+      (item) => item.code === "WORKSPACE_READ_NOISE",
+    );
+
+    expect(finding?.evidence).toEqual(
+      expect.arrayContaining([
+        "workspace reads by tool: grep:6, read_text:2",
+        "scan reads by tool: grep:6",
+        "explicit file reads by tool: read_text:2",
+      ]),
+    );
+  });
+
   it("reports traces that are missing a terminal run event", () => {
     const runId = createRunId();
     const log = new EventLog(runId);
@@ -1990,6 +2066,551 @@ describe("trace", () => {
     );
   });
 
+  it("does not add parent and child calls together for low net progress", () => {
+    const parent = createRunRecord();
+    const child = createRunRecord();
+    const parentLog = new EventLog(parent.id);
+    const childLog = new EventLog(child.id);
+    const events: SparkwrightEvent[] = [
+      parentLog.emit(
+        "run.created",
+        { goal: "review with a background child" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      childLog.emit(
+        "run.created",
+        { goal: "independent child review" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+    ];
+
+    for (let i = 0; i < 5; i += 1) {
+      events.push(
+        parentLog.emit(
+          "model.requested",
+          { step: i },
+          {
+            sessionId: "s1",
+            agentId: "main",
+          },
+        ),
+        parentLog.emit(
+          "model.completed",
+          { step: i, message: `parent ${i}` },
+          {
+            sessionId: "s1",
+            agentId: "main",
+          },
+        ),
+        parentLog.emit(
+          "tool.requested",
+          {
+            id: `parent_read_${i}`,
+            toolName: "read_file",
+            arguments: { path: `docs/${i}.md` },
+          },
+          {
+            sessionId: "s1",
+            agentId: "main",
+          },
+        ),
+        parentLog.emit(
+          "tool.completed",
+          {
+            toolCallId: `parent_read_${i}`,
+            toolName: "read_file",
+            status: "completed",
+            output: { path: `docs/${i}.md` },
+          },
+          {
+            sessionId: "s1",
+            agentId: "main",
+          },
+        ),
+      );
+    }
+
+    for (let i = 0; i < 3; i += 1) {
+      events.push(
+        childLog.emit(
+          "model.requested",
+          { step: i },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+        childLog.emit(
+          "model.completed",
+          { step: i, message: `child ${i}` },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+        childLog.emit(
+          "tool.requested",
+          {
+            id: `child_read_${i}`,
+            toolName: "read_file",
+            arguments: { path: `docs/${i}.md` },
+          },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+        childLog.emit(
+          "tool.completed",
+          {
+            toolCallId: `child_read_${i}`,
+            toolName: "read_file",
+            status: "completed",
+            output: { path: `docs/${i}.md` },
+          },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+      );
+    }
+
+    events.push(
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId: child.id,
+          parentRunId: parent.id,
+          terminalState: "completed",
+          finality: "complete",
+        },
+        {
+          sessionId: "s1",
+          agentId: "main",
+          childAgentId: "child_reader",
+        },
+      ),
+      childLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+      parentLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(
+      report.findings.some((finding) => finding.code === "LOW_NET_PROGRESS"),
+    ).toBe(false);
+  });
+
+  it("does not add parent and child calls together for repeated tool requests", () => {
+    const parent = createRunRecord();
+    const child = createRunRecord();
+    const parentLog = new EventLog(parent.id);
+    const childLog = new EventLog(child.id);
+    const readArgs = { path: "README.md" };
+    const events: SparkwrightEvent[] = [
+      parentLog.emit(
+        "run.created",
+        { goal: "review with a background child" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      childLog.emit(
+        "run.created",
+        { goal: "independent child review" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+      parentLog.emit(
+        "tool.requested",
+        {
+          id: "parent_read_1",
+          toolName: "read",
+          arguments: readArgs,
+        },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      childLog.emit(
+        "tool.requested",
+        {
+          id: "child_read_1",
+          toolName: "read",
+          arguments: readArgs,
+        },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+      parentLog.emit(
+        "tool.requested",
+        {
+          id: "parent_read_2",
+          toolName: "read",
+          arguments: readArgs,
+        },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId: child.id,
+          parentRunId: parent.id,
+          terminalState: "completed",
+          finality: "complete",
+        },
+        {
+          sessionId: "s1",
+          agentId: "main",
+          childAgentId: "child_reader",
+        },
+      ),
+      childLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+      parentLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(
+      report.findings.some(
+        (finding) => finding.code === "REPEATED_TOOL_REQUESTS",
+      ),
+    ).toBe(false);
+  });
+
+  it("reports repeated tool requests for the child run that actually repeated them", () => {
+    const parent = createRunRecord();
+    const child = createRunRecord();
+    const parentLog = new EventLog(parent.id);
+    const childLog = new EventLog(child.id);
+    const readArgs = { path: "README.md" };
+    const events: SparkwrightEvent[] = [
+      parentLog.emit(
+        "run.created",
+        { goal: "ask a child to inspect" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      childLog.emit(
+        "run.created",
+        { goal: "child repeats a read" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+    ];
+
+    for (let i = 0; i < 3; i += 1) {
+      events.push(
+        childLog.emit(
+          "tool.requested",
+          {
+            id: `child_read_${i}`,
+            toolName: "read",
+            arguments: readArgs,
+          },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+      );
+    }
+
+    events.push(
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId: child.id,
+          parentRunId: parent.id,
+          terminalState: "completed",
+          finality: "complete",
+        },
+        {
+          sessionId: "s1",
+          agentId: "main",
+          childAgentId: "child_reader",
+        },
+      ),
+      childLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+      parentLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "REPEATED_TOOL_REQUESTS",
+          evidence: expect.arrayContaining([
+            `run ${child.id}`,
+            "agent child_reader",
+            '3x read {"path":"README.md"}',
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("reports low net progress for the child run that actually crossed the threshold", () => {
+    const parent = createRunRecord();
+    const child = createRunRecord();
+    const parentLog = new EventLog(parent.id);
+    const childLog = new EventLog(child.id);
+    const events: SparkwrightEvent[] = [
+      parentLog.emit(
+        "run.created",
+        { goal: "ask a child to inspect" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      parentLog.emit(
+        "model.requested",
+        { step: 0 },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      parentLog.emit(
+        "model.completed",
+        { step: 0, message: "spawn child" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+      childLog.emit(
+        "run.created",
+        { goal: "child loops through reads" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+    ];
+
+    for (let i = 0; i < 8; i += 1) {
+      events.push(
+        childLog.emit(
+          "model.requested",
+          { step: i },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+        childLog.emit(
+          "model.completed",
+          { step: i, message: `child ${i}` },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+        childLog.emit(
+          "tool.requested",
+          {
+            id: `child_read_${i}`,
+            toolName: "read_file",
+            arguments: { path: `src/file-${i}.ts` },
+          },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+        childLog.emit(
+          "tool.completed",
+          {
+            toolCallId: `child_read_${i}`,
+            toolName: "read_file",
+            status: "completed",
+            output: { path: `src/file-${i}.ts` },
+          },
+          {
+            sessionId: "s1",
+            agentId: "child_reader",
+          },
+        ),
+      );
+    }
+
+    events.push(
+      parentLog.emit(
+        "subagent.completed",
+        {
+          childRunId: child.id,
+          parentRunId: parent.id,
+          terminalState: "completed",
+          finality: "complete",
+        },
+        {
+          sessionId: "s1",
+          agentId: "main",
+          childAgentId: "child_reader",
+        },
+      ),
+      childLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "child_reader",
+        },
+      ),
+      parentLog.emit(
+        "run.completed",
+        { state: "completed" },
+        {
+          sessionId: "s1",
+          agentId: "main",
+        },
+      ),
+    );
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "LOW_NET_PROGRESS",
+          evidence: expect.arrayContaining([
+            `run ${child.id}`,
+            "agent child_reader",
+            "8 model call(s)",
+            "8 tool call(s)",
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("does not treat sequential paginated reads as duplicate low progress", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const events: SparkwrightEvent[] = [
+      log.emit(
+        "run.created",
+        { goal: "read a large file sequentially" },
+        { sessionId: "s1" },
+      ),
+    ];
+
+    for (let i = 0; i < 6; i += 1) {
+      events.push(
+        log.emit("model.requested", { step: i + 1 }),
+        log.emit("model.completed", { step: i + 1, message: `step ${i}` }),
+      );
+      if (i >= 5) continue;
+      const startLine = i * 1000 + 1;
+      const endLine = startLine + 999;
+      events.push(
+        log.emit("tool.requested", {
+          id: `read_${i}`,
+          toolName: "read_file",
+          arguments: { path: "PROJECT_NOTES.md", offset: startLine },
+        }),
+        log.emit("tool.completed", {
+          toolCallId: `read_${i}`,
+          toolName: "read_file",
+          status: "completed",
+          output: {
+            path: "PROJECT_NOTES.md",
+            startLine,
+            endLine,
+            hasMore: true,
+            nextOffset: endLine + 1,
+          },
+        }),
+        log.emit("workspace.read", { path: "PROJECT_NOTES.md" }),
+      );
+    }
+    events.push(log.emit("run.completed", { state: "completed" }));
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.topDuplicateReads).toMatchObject({
+      "PROJECT_NOTES.md": 5,
+    });
+    expect(
+      report.findings.some((finding) => finding.code === "LOW_NET_PROGRESS"),
+    ).toBe(false);
+  });
+
   it("does not flag low net progress for a short run that verified late", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -2148,6 +2769,143 @@ describe("trace", () => {
           ]),
         }),
       ]),
+    );
+  });
+
+  it("does not warn for verification command failures that later pass", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("run.created", { goal: "fix and verify" }, { sessionId: "s1" }),
+      log.emit("tool.completed", {
+        toolCallId: "call_fail",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_pass",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false },
+      }),
+      log.emit("run.completed", {
+        state: "completed",
+        reason: "final_answer",
+        commandOutcome: {
+          total: 1,
+          byExitCode: { "1": 1 },
+          verification: {
+            total: 1,
+            unresolved: 0,
+            lastFailureCommand: "npm test",
+            lastFailureExitCode: 1,
+            lastFailureTimedOut: false,
+            lastSuccessfulVerificationCommand: "npm test",
+          },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "COMMAND_FAILURES",
+    );
+  });
+
+  it("reports node -e probe failures separately from recovered verification", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit(
+        "run.created",
+        { goal: "fix and verify with npm test" },
+        { sessionId: "s1" },
+      ),
+      log.emit("tool.requested", {
+        id: "probe",
+        toolName: "shell",
+        arguments: {
+          command:
+            'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "probe",
+        toolName: "shell",
+        status: "completed",
+        output: {
+          exitCode: 7,
+          timedOut: false,
+          stdout: "",
+          stderr: "probe failed\n",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "fail",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "fail",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 1, timedOut: false, stdout: "", stderr: "fail" },
+      }),
+      log.emit("tool.requested", {
+        id: "pass",
+        toolName: "shell",
+        arguments: { command: "npm test" },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "pass",
+        toolName: "shell",
+        status: "completed",
+        output: { exitCode: 0, timedOut: false, stdout: "ok", stderr: "" },
+      }),
+      log.emit("run.completed", {
+        state: "completed",
+        commandOutcome: {
+          total: 2,
+          byExitCode: { "7": 1, "1": 1 },
+          verification: {
+            total: 2,
+            unresolved: 1,
+            lastCommand:
+              'node -e "console.error(\\"probe failed\\"); process.exit(7)"',
+            lastExitCode: 7,
+            lastTimedOut: false,
+            lastFailureCommand: "npm test",
+            lastFailureExitCode: 1,
+            lastFailureTimedOut: false,
+            lastSuccessfulVerificationCommand: "npm test",
+          },
+        },
+      }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "COMMAND_FAILURES",
+          evidence: expect.arrayContaining([
+            "2 command failure(s)",
+            "1:1, 7:1",
+            "last successful verification: npm test",
+            "last verification failure: npm test",
+          ]),
+        }),
+      ]),
+    );
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_VERIFICATION_FAILURES",
     );
   });
 
@@ -2737,6 +3495,55 @@ describe("trace", () => {
     });
   });
 
+  it("counts repeated skipped calls after expected denials as expected denials", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const repeatedArgs = { command: "pwd && node -v" };
+    const jsonl = [
+      log.emit("tool.requested", {
+        id: "call_1",
+        toolName: "bash",
+        arguments: repeatedArgs,
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_1",
+        status: "failed",
+        error: { code: "TOOL_DENIED", message: "tool denied by policy" },
+      }),
+      log.emit("tool.requested", {
+        id: "call_2",
+        toolName: "bash",
+        arguments: repeatedArgs,
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_2",
+        status: "failed",
+        error: {
+          code: "REPEATED_TOOL_CALL_SKIPPED",
+          message: "skipped repeated call",
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(0);
+    expect(summary.errorCodes).toEqual({});
+    expect(summary.expectedDenialCount).toBe(2);
+    expect(summary.expectedDenialCodes).toEqual({
+      TOOL_DENIED: 1,
+      REPEATED_TOOL_CALL_SKIPPED: 1,
+    });
+    expect(summary.toolFailures).toMatchObject({
+      total: 2,
+      unresolved: { total: 0, byCode: {} },
+      recovered: { total: 0, byCode: {} },
+    });
+  });
+
   it("classifies recovered repeated tool calls separately from errors", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
@@ -2779,6 +3586,67 @@ describe("trace", () => {
         byCode: { REPEATED_TOOL_CALL_SKIPPED: 1 },
       },
     });
+  });
+
+  it("classifies empty task monitor placeholders as recovered after concrete monitoring", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const jsonl = [
+      log.emit("tool.requested", {
+        id: "call_wait_empty",
+        toolName: "task",
+        arguments: { action: "wait", taskId: "", ids: [], mode: "all" },
+      }),
+      log.emit("tool.failed", {
+        toolCallId: "call_wait_empty",
+        toolName: "task",
+        status: "failed",
+        error: {
+          code: "TASK_ARGUMENTS_INVALID",
+          message: "task wait requires at least one task id.",
+        },
+      }),
+      log.emit("tool.requested", {
+        id: "call_wait_ok",
+        toolName: "task",
+        arguments: {
+          action: "wait",
+          taskId: "task_123",
+          ids: ["task_123"],
+          mode: "all",
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "call_wait_ok",
+        toolName: "task",
+        status: "completed",
+        output: {
+          mode: "all",
+          complete: true,
+          taskIds: ["task_123"],
+          terminalTaskIds: ["task_123"],
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ]
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(jsonl);
+    const report = buildTraceReportJsonl(jsonl);
+
+    expect(summary.errorCount).toBe(0);
+    expect(summary.toolFailures).toMatchObject({
+      total: 1,
+      unresolved: { total: 0, byCode: {} },
+      recovered: { total: 1, byCode: { TASK_ARGUMENTS_INVALID: 1 } },
+    });
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "UNRESOLVED_TOOL_FAILURES",
+    );
+    expect(report.findings.map((finding) => finding.code)).toContain(
+      "RECOVERED_TOOL_FAILURES",
+    );
   });
 
   it("classifies failed file edits as recovered after a later write to the same path", () => {
@@ -4563,6 +5431,18 @@ describe("trace", () => {
     );
   });
 });
+
+function withTestSpan<TPayload>(
+  event: SparkwrightEvent<TPayload>,
+  spanId: string,
+  parentSpanId?: string,
+): SparkwrightEvent<TPayload> {
+  return {
+    ...event,
+    spanId: spanId as SparkwrightEvent["spanId"],
+    parentSpanId: parentSpanId as SparkwrightEvent["parentSpanId"],
+  };
+}
 
 async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];

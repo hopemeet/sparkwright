@@ -66,6 +66,7 @@ export interface ToolResultSizePolicy {
 export type ToolResultPresentationKind =
   | "file_discovery"
   | "file_read"
+  | "text_search"
   | "shell_output"
   | "diagnostic"
   | "generic";
@@ -107,6 +108,15 @@ export type ToolRequestPreviewFormatter<TArgs = unknown> = (
   options: ToolRequestPreviewOptions,
 ) => string | undefined;
 
+export type ToolInputValidationResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code?: string;
+      message: string;
+      metadata?: Record<string, unknown>;
+    };
+
 export interface ToolProgressUpdate {
   /** @reserved Public progress payload field consumed by streaming UIs. */
   label?: string;
@@ -123,6 +133,13 @@ export interface ToolOrigin {
   name?: string;
   metadata?: Record<string, unknown>;
 }
+
+export type ToolExposureTier =
+  | "public"
+  | "advanced"
+  | "infrastructure"
+  | "internal"
+  | "legacy";
 
 export interface ToolGovernance {
   allowedAgents?: string[];
@@ -157,6 +174,11 @@ export interface ToolDescriptor {
   description: string;
   inputSchema: unknown;
   outputSchema?: unknown;
+  canonicalName?: string;
+  legacyNames?: string[];
+  defaultExposureTier?: ToolExposureTier;
+  relatedTools?: string[];
+  requiresTool?: string[];
   timeoutMs?: number;
   /**
    * @reserved Public descriptor field consumed by tool schedulers and UIs.
@@ -196,6 +218,16 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
   description: string;
   inputSchema: unknown;
   outputSchema?: unknown;
+  /**
+   * Stable product-facing identity. `name` is the callable name currently
+   * offered to the model; `canonicalName` lets display/config/history code
+   * share one identity record while old names remain parseable.
+   */
+  canonicalName?: string;
+  legacyNames?: string[];
+  defaultExposureTier?: ToolExposureTier;
+  relatedTools?: string[];
+  requiresTool?: string[];
   timeoutMs?: number;
   interruptBehavior?: ToolInterruptBehavior | (() => ToolInterruptBehavior);
   /**
@@ -237,6 +269,16 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
     policy?: ToolDefinition<TArgs, TResult>["policy"];
     governance?: ToolGovernance;
   };
+  /**
+   * Optional semantic input validation that runs after JSON schema validation
+   * and before policy/approval. It must not mutate args, write the workspace,
+   * create artifacts, or call external networks; use it for "can this input
+   * make sense for this tool?" checks, not risk classification.
+   */
+  validateInput?(
+    args: TArgs,
+    ctx: RuntimeContext,
+  ): ToolInputValidationResult | Promise<ToolInputValidationResult>;
   /**
    * Optional runtime availability probe. When provided and it resolves false,
    * the tool is withheld from model-facing descriptors (it never appears in the
@@ -288,6 +330,7 @@ export interface ToolRegistryOptions {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  private readonly aliases = new Map<string, string>();
   private generation = 0;
   private readonly availabilityTtlMs: number;
   // Keyed by the probe function reference so identical probes shared across
@@ -309,18 +352,27 @@ export class ToolRegistry {
   }
 
   register(tool: ToolDefinition): void {
-    if (this.tools.has(tool.name)) {
+    if (this.tools.has(tool.name) || this.aliases.has(tool.name)) {
       throw new Error(`Tool already registered: ${tool.name}`);
+    }
+    for (const alias of tool.legacyNames ?? []) {
+      if (alias === tool.name) continue;
+      if (this.tools.has(alias) || this.aliases.has(alias)) {
+        throw new Error(`Tool alias already registered: ${alias}`);
+      }
     }
 
     this.tools.set(tool.name, tool);
+    this.registerAliases(tool);
     this.generation += 1;
   }
 
   unregister(name: string): boolean {
-    const existing = this.tools.get(name);
-    const removed = this.tools.delete(name);
+    const canonicalName = this.aliases.get(name) ?? name;
+    const existing = this.tools.get(canonicalName);
+    const removed = this.tools.delete(canonicalName);
     if (removed) {
+      this.unregisterAliases(canonicalName, existing);
       this.generation += 1;
       this.dropAvailabilityEntry(existing);
     }
@@ -332,7 +384,9 @@ export class ToolRegistry {
     if (existing && existing.available !== tool.available) {
       this.dropAvailabilityEntry(existing);
     }
+    this.unregisterAliases(tool.name, existing);
     this.tools.set(tool.name, tool);
+    this.registerAliases(tool);
     this.generation += 1;
   }
 
@@ -348,7 +402,7 @@ export class ToolRegistry {
   }
 
   get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name);
+    return this.tools.get(name) ?? this.tools.get(this.aliases.get(name) ?? "");
   }
 
   list(): ToolDefinition[] {
@@ -433,6 +487,23 @@ export class ToolRegistry {
   private dropAvailabilityEntry(tool: ToolDefinition | undefined): void {
     if (tool?.available) this.availabilityCache.delete(tool.available);
   }
+
+  private registerAliases(tool: ToolDefinition): void {
+    for (const alias of tool.legacyNames ?? []) {
+      if (alias !== tool.name) this.aliases.set(alias, tool.name);
+    }
+  }
+
+  private unregisterAliases(
+    canonicalName: string,
+    tool: ToolDefinition | undefined,
+  ): void {
+    for (const alias of tool?.legacyNames ?? []) {
+      if (this.aliases.get(alias) === canonicalName) {
+        this.aliases.delete(alias);
+      }
+    }
+  }
 }
 
 function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -441,6 +512,11 @@ function toToolDescriptor(tool: ToolDefinition): ToolDescriptor {
     description: tool.description,
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
+    canonicalName: tool.canonicalName,
+    legacyNames: tool.legacyNames,
+    defaultExposureTier: tool.defaultExposureTier,
+    relatedTools: tool.relatedTools,
+    requiresTool: tool.requiresTool,
     timeoutMs: tool.timeoutMs,
     concurrency: {
       safe: isToolConcurrencySafe(tool),

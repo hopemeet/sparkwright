@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type {
+  BackgroundTaskPolicy,
   CapabilityInspectRequestPayload,
   PermissionMode,
   RunInputPayload,
@@ -21,6 +22,7 @@ export interface HostClientRunMetadataInput {
   workspaceRoot?: string;
   permissionMode?: PermissionMode;
   accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
   modelName?: string;
 }
 
@@ -39,6 +41,9 @@ export function createHostClientRunMetadata(
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
     ...(input.accessMode ? { accessMode: input.accessMode } : {}),
+    ...(input.backgroundTasks
+      ? { backgroundTasks: input.backgroundTasks }
+      : {}),
     ...(!input.accessMode && input.permissionMode
       ? { permissionMode: input.permissionMode }
       : {}),
@@ -55,6 +60,7 @@ export function createHostStartRunRequest(input: {
   modelName?: string;
   modelNameSource?: HostClientModelSource;
   accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
@@ -69,6 +75,7 @@ export function createHostStartRunRequest(input: {
     sessionId: input.sessionId,
     model: resolveHostRequestModel(input),
     accessMode: input.accessMode,
+    backgroundTasks: input.backgroundTasks,
     permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,
@@ -88,6 +95,7 @@ export function createHostResumeRunRequest(input: {
   modelName?: string;
   modelNameSource?: HostClientModelSource;
   accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel: TraceLevel;
   targetPath?: string;
@@ -102,6 +110,7 @@ export function createHostResumeRunRequest(input: {
     force: input.force,
     model: resolveHostRequestModel(input),
     accessMode: input.accessMode,
+    backgroundTasks: input.backgroundTasks,
     permissionMode: input.accessMode ? undefined : input.permissionMode,
     traceLevel: input.traceLevel,
     targetPath: input.targetPath,

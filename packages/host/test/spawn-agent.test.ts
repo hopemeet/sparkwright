@@ -12,9 +12,21 @@ import {
   FileSessionStore,
   LocalWorkspace,
   type ModelAdapter,
+  type PendingNotification,
+  type RunId,
   type ToolDefinition,
 } from "@sparkwright/core";
-import { createDynamicSpawnAgentTool } from "../src/runtime.js";
+import {
+  InMemoryTaskNotificationQueue,
+  InMemoryTaskStore,
+  TaskManager,
+  type TaskId,
+  type TaskNotification,
+} from "@sparkwright/agent-runtime";
+import {
+  createDynamicSpawnAgentTool,
+  runHostAgentTask,
+} from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
 
 /**
@@ -47,6 +59,50 @@ async function readFileWhenReady(
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+function createTestTaskRevivalBridge(input: {
+  queue: InMemoryTaskNotificationQueue;
+  manager: TaskManager;
+  getRunId: () => RunId | undefined;
+}) {
+  const matchesRun = (notification: TaskNotification): boolean =>
+    input.getRunId() === notification.parentRunId;
+  const matchesAwaited = (notification: TaskNotification): boolean => {
+    if (!matchesRun(notification)) return false;
+    return input.manager.store.get(notification.taskId)?.awaited !== false;
+  };
+  const toPending = (notification: TaskNotification): PendingNotification => ({
+    content: `Task ${notification.taskId} ${notification.status}.\n${notification.summary}`,
+    source: { kind: "task", uri: `task:${notification.taskId}` },
+    metadata: {
+      taskId: notification.taskId,
+      parentRunId: notification.parentRunId,
+      status: notification.status,
+      kind: notification.kind,
+    },
+  });
+  return {
+    notificationSource: {
+      drain: () => input.queue.drain(matchesRun).map(toPending),
+    },
+    taskRevivalSource: {
+      hasAwaitedPending: () => {
+        const runId = input.getRunId();
+        if (!runId) return false;
+        return (
+          input.manager.store
+            .list({ parentRunId: runId, awaited: true })
+            .some(
+              (task) =>
+                !["completed", "failed", "cancelled"].includes(task.status),
+            ) || input.queue.peek().some(matchesAwaited)
+        );
+      },
+      waitUntilAvailable: ({ signal }: { signal?: AbortSignal } = {}) =>
+        input.queue.waitUntilAvailable({ signal, predicate: matchesAwaited }),
+    },
+  };
 }
 
 /**
@@ -218,6 +274,413 @@ describe("host spawn_agent wiring", () => {
     // may poll for a while on a loaded CI runner (windows-latest has been seen
     // taking >5s). The test budget must exceed the helper's own 12s deadline.
   }, 20000);
+
+  it("promotes slow dynamic spawn_agent work while preserving projection and ledger", async () => {
+    const sink = new InMemoryTaskNotificationQueue();
+    const taskManager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: sink,
+    });
+    let childCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete() {
+        childCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return { message: "promoted child done" };
+      },
+    };
+    const globTool: ToolDefinition = defineTool({
+      name: "glob",
+      description: "Fake glob for the test.",
+      inputSchema: {
+        type: "object",
+        properties: { pattern: { type: "string" } },
+      },
+      async execute() {
+        return { paths: ["README.md"] };
+      },
+    });
+    const parent = createRun({
+      goal: "ask a slow child",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: childModel,
+      childTools: [globTool],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+      foregroundTimeoutMs: 1,
+      taskManager,
+    });
+    const args = {
+      goal: "answer slowly",
+      role: "slow reader",
+      prompt: "Answer after thinking.",
+      allowedTools: ["glob"],
+      maxSteps: 2,
+    };
+
+    const ticket = (await spawnTool.execute(args, {
+      run: parent.record,
+    } as never)) as {
+      promoted: boolean;
+      taskId: string;
+      childRunId: string;
+      spanId: string;
+      awaited: boolean;
+    };
+
+    expect(ticket).toMatchObject({
+      promoted: true,
+      awaited: true,
+      childRunId: expect.any(String),
+      spanId: expect.any(String),
+    });
+    const terminal = await taskManager
+      .handle(ticket.taskId as unknown as TaskId)
+      ?.wait();
+    expect(terminal).toMatchObject({
+      status: "completed",
+      awaited: true,
+      result: {
+        childRunId: ticket.childRunId,
+        signal: "completed",
+        message: "promoted child done",
+      },
+    });
+    expect(sink.drain()).toMatchObject([
+      {
+        taskId: ticket.taskId,
+        status: "completed",
+        kind: "agent",
+        title: "spawn_agent: slow reader",
+      },
+    ]);
+    const parentEventTypes = parent.events.all().map((event) => event.type);
+    expect(parentEventTypes).toContain("subagent.requested");
+    expect(parentEventTypes).toContain("subagent.started");
+    expect(parentEventTypes).toContain("subagent.completed");
+    const terminalEvent = parent.events
+      .all()
+      .find((event) => event.type === "subagent.completed");
+    expect(terminalEvent?.payload).toMatchObject({
+      childRunId: ticket.childRunId,
+      terminalState: "completed",
+      finality: "complete",
+    });
+    expect(parent.usage().modelCalls).toBeGreaterThanOrEqual(1);
+
+    const cached = (await spawnTool.execute(args, {
+      run: parent.record,
+    } as never)) as { alreadyCompleted?: boolean; message?: string };
+    expect(cached).toMatchObject({
+      alreadyCompleted: true,
+      message: "promoted child done",
+    });
+    expect(childCalls).toBe(1);
+  });
+
+  it("task cancellation stops a promoted dynamic spawn_agent child", async () => {
+    const taskManager = new TaskManager({ store: new InMemoryTaskStore() });
+    const childModel: ModelAdapter = {
+      async complete(input) {
+        await new Promise((_resolve, reject) => {
+          const onAbort = () => {
+            const error = new Error("child aborted");
+            error.name = "AbortError";
+            reject(error);
+          };
+          if (input.abortSignal?.aborted) onAbort();
+          else
+            input.abortSignal?.addEventListener("abort", onAbort, {
+              once: true,
+            });
+        });
+        return { message: "should not complete" };
+      },
+    };
+    const globTool: ToolDefinition = defineTool({
+      name: "glob",
+      description: "Fake glob for the test.",
+      inputSchema: { type: "object", properties: {} },
+      async execute() {
+        return { paths: [] };
+      },
+    });
+    const parent = createRun({
+      goal: "ask a cancellable child",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: childModel,
+      childTools: [globTool],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+      foregroundTimeoutMs: 1,
+      taskManager,
+    });
+
+    const ticket = (await spawnTool.execute(
+      {
+        goal: "wait until cancelled",
+        role: "cancellable",
+        prompt: "Wait.",
+        allowedTools: ["glob"],
+        maxSteps: 2,
+      },
+      { run: parent.record } as never,
+    )) as { taskId: string };
+
+    const handle = taskManager.handle(ticket.taskId as unknown as TaskId);
+    await handle?.cancel();
+
+    expect(handle?.record.status).toBe("cancelled");
+    const failedEvent = parent.events
+      .all()
+      .find((event) => event.type === "subagent.failed");
+    expect(failedEvent?.payload).toMatchObject({
+      reason: "cancelled",
+      terminalState: "cancelled",
+      finality: "partial",
+    });
+  });
+
+  it("foreground-only background policy keeps dynamic spawn_agent inline", async () => {
+    const taskManager = new TaskManager({ store: new InMemoryTaskStore() });
+    const childModel: ModelAdapter = {
+      async complete() {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { message: "inline child done" };
+      },
+    };
+    const globTool: ToolDefinition = defineTool({
+      name: "glob",
+      description: "Fake glob for the test.",
+      inputSchema: { type: "object", properties: {} },
+      async execute() {
+        return { paths: [] };
+      },
+    });
+    const parent = createRun({
+      goal: "ask a foreground-only child",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: childModel,
+      childTools: [globTool],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+      foregroundTimeoutMs: 1,
+      taskManager,
+      backgroundTasks: "foreground-only",
+    });
+
+    const output = (await spawnTool.execute(
+      {
+        goal: "answer slowly inline",
+        role: "inline",
+        prompt: "Wait then answer.",
+        allowedTools: ["glob"],
+        maxSteps: 2,
+      },
+      { run: parent.record } as never,
+    )) as { promoted?: boolean; message?: string };
+
+    expect(output).toMatchObject({ message: "inline child done" });
+    expect(output.promoted).toBeUndefined();
+    expect(taskManager.store.list()).toHaveLength(0);
+  });
+
+  it("allows opt-in depth-bounded sub-agents to create awaited agent tasks", async () => {
+    const queue = new InMemoryTaskNotificationQueue();
+    const taskManager = new TaskManager({
+      store: new InMemoryTaskStore(),
+      notificationSink: queue,
+    });
+    const runById = new Map<RunId, ReturnType<typeof createRun>>();
+    const parentPolicy = createDefaultPolicy();
+    const globTool: ToolDefinition = defineTool({
+      name: "glob",
+      description: "Fake glob for the test.",
+      inputSchema: { type: "object", properties: {} },
+      async execute() {
+        return { paths: [] };
+      },
+    });
+    const grandchildModel: ModelAdapter = {
+      async complete() {
+        return { message: "grandchild nested result" };
+      },
+    };
+    taskManager.registerKind("agent", (controller, payload) => {
+      const task = taskManager.store.get(controller.taskId);
+      const parent = task ? runById.get(task.parentRunId) : undefined;
+      return runHostAgentTask(controller, payload, {
+        getParent: () => parent,
+        model: grandchildModel,
+        modelForSpawn: async () => grandchildModel,
+        childTools: [globTool],
+        parentRunPolicy: parentPolicy,
+        childRunStoreFactory: () => undefined as never,
+        maxDepth: 2,
+        taskManager,
+        backgroundTasks: "enabled",
+        foregroundTimeoutMs: 1,
+        allowNestedBackgroundTasks: true,
+        createTaskRevivalBridge: (getRunId) =>
+          createTestTaskRevivalBridge({
+            queue,
+            manager: taskManager,
+            getRunId,
+          }),
+        registerSubagentRun: (run) => {
+          runById.set(run.record.id, run);
+          return () => runById.delete(run.record.id);
+        },
+      });
+    });
+    let childCalls = 0;
+    const childModel: ModelAdapter = {
+      async complete(input) {
+        const taskNotification = input.context.find((item) =>
+          item.content.includes("Task "),
+        );
+        if (taskNotification) {
+          return { message: "child saw nested completion" };
+        }
+        childCalls += 1;
+        if (childCalls === 1) {
+          return {
+            toolCalls: [
+              {
+                toolName: "task_create",
+                arguments: {
+                  kind: "agent",
+                  mode: "awaited",
+                  payload: {
+                    goal: "answer from nested child",
+                    role: "nested",
+                    prompt: "Return the nested result.",
+                    allowedTools: ["glob"],
+                    maxSteps: 1,
+                  },
+                },
+              },
+            ],
+          };
+        }
+        return { message: "waiting for nested task" };
+      },
+    };
+    const parent = createRun({
+      goal: "ask a child to create a nested background task",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      maxSteps: 1,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: childModel,
+      childTools: [globTool],
+      parentRunPolicy: parentPolicy,
+      childRunStoreFactory: () => undefined as never,
+      taskManager,
+      backgroundTasks: "enabled",
+      foregroundTimeoutMs: 1_000,
+      allowNestedBackgroundTasks: true,
+      createTaskRevivalBridge: (getRunId) =>
+        createTestTaskRevivalBridge({ queue, manager: taskManager, getRunId }),
+      registerSubagentRun: (run) => {
+        runById.set(run.record.id, run);
+        return () => runById.delete(run.record.id);
+      },
+    });
+
+    const output = (await spawnTool.execute(
+      {
+        goal: "create a nested agent task and wait for it",
+        role: "nested coordinator",
+        prompt: "Use task_create and report when the nested task completes.",
+        allowedTools: ["task_create"],
+        maxSteps: 5,
+      },
+      { run: parent.record } as never,
+    )) as { message?: string; signal?: string };
+
+    const nestedTasks = taskManager.store.list({ kind: "agent" });
+    expect(output).toMatchObject({
+      signal: "completed",
+      message: "child saw nested completion",
+    });
+    expect(nestedTasks).toHaveLength(1);
+    expect(nestedTasks[0]).toMatchObject({
+      status: "completed",
+      awaited: true,
+    });
+    expect(nestedTasks[0]?.parentRunId).not.toBe(parent.record.id);
+  });
+
+  it("keeps nested background agent spawning bounded by maxDepth", async () => {
+    const parent = createRun({
+      goal: "nested parent",
+      model: {
+        async complete() {
+          return { message: "parent done" };
+        },
+      },
+      metadata: {
+        parentRunId: "run_top",
+        subagentDepth: 1,
+      },
+      maxSteps: 1,
+    });
+    const spawnTool = createDynamicSpawnAgentTool({
+      getParent: () => parent,
+      model: {
+        async complete() {
+          return { message: "nested done" };
+        },
+      },
+      childTools: [createReadFileTool()],
+      parentRunPolicy: createDefaultPolicy(),
+      childRunStoreFactory: () => undefined as never,
+      maxDepth: 1,
+      allowNestedBackgroundTasks: true,
+    });
+
+    await expect(
+      spawnTool.execute(
+        {
+          goal: "exceed max depth",
+          role: "too deep",
+          prompt: "Return.",
+          allowedTools: ["read"],
+        },
+        { run: parent.record } as never,
+      ),
+    ).rejects.toThrow("capabilities.agents.maxDepth (1)");
+  });
 
   it("enforces maxDepth before spawning a dynamic child", async () => {
     const parent = createRun({

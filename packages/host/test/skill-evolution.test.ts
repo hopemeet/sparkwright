@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { computeSkillPackageHash } from "@sparkwright/skills";
+import {
+  FileSkillUsageRecorder,
+  computeSkillPackageHash,
+} from "@sparkwright/skills";
 import {
   applySkillProposal,
   createSkillCreateProposal,
@@ -10,6 +13,7 @@ import {
   loadLayeredSkillReport,
   resolveSkillRootsForRuntime,
   restoreSkillFromHistory,
+  skillUsagePath,
 } from "../src/index.js";
 
 async function makeWorkspace(): Promise<string> {
@@ -114,6 +118,11 @@ describe("skill proposal application", () => {
           "utf8",
         ),
       ).resolves.toBe("guide\n");
+      expect(
+        new FileSkillUsageRecorder({ path: skillUsagePath(workspace) }).get(
+          "asset-skill",
+        ),
+      ).toMatchObject({ patchCount: 1 });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
@@ -335,6 +344,11 @@ describe("skill proposal application", () => {
       await expect(readFile(skillPath, "utf8")).resolves.toContain(
         "Evolved body.",
       );
+      const usage = () =>
+        new FileSkillUsageRecorder({ path: skillUsagePath(workspace) }).get(
+          "revert-skill",
+        );
+      expect(usage()).toMatchObject({ patchCount: 1 });
 
       // Dry-run defaults to the after side and reports no change is needed.
       const dryRun = await restoreSkillFromHistory({
@@ -361,6 +375,7 @@ describe("skill proposal application", () => {
       await expect(readFile(skillPath, "utf8")).resolves.not.toContain(
         "Evolved body.",
       );
+      expect(usage()).toMatchObject({ patchCount: 2 });
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

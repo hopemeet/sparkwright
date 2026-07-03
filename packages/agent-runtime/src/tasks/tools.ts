@@ -9,7 +9,12 @@
 // The host defaults to the compressed task(action=...) surface and keeps the
 // legacy task_* tools opt-in for compatibility.
 
-import { defineTool, type ToolDefinition } from "@sparkwright/core";
+import {
+  defineTool,
+  type BackgroundTaskPolicy,
+  type RuntimeContext,
+  type ToolDefinition,
+} from "@sparkwright/core";
 import type { RunId } from "@sparkwright/core";
 import type { TaskManager } from "./manager.js";
 import type {
@@ -18,6 +23,16 @@ import type {
   TaskRecord,
   TaskStatus,
 } from "./types.js";
+
+type JsonSchemaObject = Record<string, unknown>;
+
+export interface TaskCreateKindDescriptor {
+  kind: string;
+  description?: string;
+  payloadDescription?: string;
+  payloadSchema?: JsonSchemaObject;
+  requiresPayload?: boolean;
+}
 
 /**
  * Options for {@link createTaskTools}.
@@ -31,14 +46,35 @@ export interface CreateTaskToolsOptions {
    * Resolver for the active run id. Tools call this on every invocation so
    * the same tool bundle can be shared across runs.
    */
-  getParentRunId(): RunId;
+  getParentRunId(ctx?: RuntimeContext): RunId;
   /**
    * Default cap on chunks returned by `task_output`. Default 200.
    */
   defaultMaxOutputChunks?: number;
+  /**
+   * Optional model-facing hints for registered task_create kinds.
+   * Execution still dispatches through TaskManager's live registry.
+   */
+  taskCreateKinds?: readonly TaskCreateKindDescriptor[];
+  concurrencyLimits?: TaskConcurrencyLimits;
+  foregroundTimeoutMs?: number;
+  backgroundTasks?: BackgroundTaskPolicy;
 }
 
+export interface TaskConcurrencyLimits {
+  global?: number;
+  perKind?: Record<string, number>;
+}
+
+type TaskListScope = "run" | "all";
+
+const DEFAULT_CONCURRENCY_LIMITS: TaskConcurrencyLimits = {
+  global: 4,
+  perKind: { agent: 1 },
+};
+
 const DEFAULT_MAX_OUTPUT_CHUNKS = 200;
+const DEFAULT_FOREGROUND_TIMEOUT_MS = 300_000;
 
 /**
  * Build the five long-running-task tools backed by a {@link TaskManager}.
@@ -76,40 +112,211 @@ export function createTaskTools(options: CreateTaskToolsOptions): {
 export function createTaskCreate(
   options: CreateTaskToolsOptions,
 ): ToolDefinition {
+  const kinds = taskCreateKindDescriptors(options);
+  const limits = mergeConcurrencyLimits(
+    DEFAULT_CONCURRENCY_LIMITS,
+    options.concurrencyLimits,
+  );
   return defineTool({
     name: "task_create",
-    description:
-      "Spawn a long-running background task by kind. Returns the task id; use task(action=get) / task(action=output) to monitor.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        kind: { type: "string" },
-        title: { type: "string" },
-        payload: { type: "object" },
-      },
-      required: ["kind"],
-    },
+    description: taskCreateDescription(kinds, limits),
+    inputSchema: taskCreateInputSchema(kinds),
     deferLoading: false,
     policy: { risk: "risky", requiresApproval: false },
     governance: { sideEffects: ["external"] },
-    async execute(args: unknown): Promise<{ taskId: TaskId }> {
+    async execute(args: unknown, ctx): Promise<TaskCreateResult> {
       const parsed = parseCreateArgs(args);
-      const runner = options.manager.getRunner(parsed.kind);
-      if (!runner) {
+      const backgroundTasks = options.backgroundTasks ?? "enabled";
+      if (backgroundTasks === "disabled") {
         throw makeToolError(
-          "TASK_KIND_UNREGISTERED",
-          `No runner registered for task kind: ${parsed.kind}`,
+          "BACKGROUND_TASKS_DISABLED",
+          "Background task creation is disabled by this session's access policy.",
         );
       }
+      const mode =
+        backgroundTasks === "foreground-only" ? "foreground" : parsed.mode;
+      const runner = options.manager.getRunner(parsed.kind);
+      if (!runner) {
+        const available = options.manager.registeredKinds();
+        const availableText =
+          available.length > 0
+            ? ` Available kinds: ${available.join(", ")}.`
+            : "";
+        throw makeToolError(
+          "TASK_KIND_UNREGISTERED",
+          `No runner registered for task kind: ${parsed.kind}.${availableText}`,
+        );
+      }
+      const parentRunId = options.getParentRunId(ctx);
+      enforceConcurrencyLimit(options, parentRunId, parsed.kind);
       const handle = options.manager.spawn({
-        parentRunId: options.getParentRunId(),
+        parentRunId,
         kind: parsed.kind,
         title: parsed.title,
+        awaited: parsed.awaited,
         payload: parsed.payload,
       });
-      return { taskId: handle.record.id };
+      if (mode !== "foreground") {
+        return {
+          taskId: handle.record.id,
+          mode,
+          awaited: parsed.awaited,
+        };
+      }
+
+      const wait = handle.wait();
+      const foreground =
+        backgroundTasks === "foreground-only"
+          ? { kind: "completed" as const, record: await wait }
+          : await waitForForegroundTask(
+              wait,
+              options.foregroundTimeoutMs ?? DEFAULT_FOREGROUND_TIMEOUT_MS,
+              (signal) =>
+                options.manager.waitForPromotion(handle.record.id, { signal }),
+            );
+      if (foreground.kind === "timeout" || foreground.kind === "promote") {
+        options.manager.store.update(handle.record.id, {
+          awaited: true,
+          ...(foreground.kind === "promote"
+            ? { metadata: { manualPromotionDelivered: true } }
+            : {}),
+        });
+        return {
+          taskId: handle.record.id,
+          mode: "foreground",
+          promoted: true,
+          awaited: true,
+        };
+      }
+
+      options.manager.store.update(handle.record.id, {
+        awaited: false,
+        metadata: { foregroundInline: true },
+      });
+      return taskCreateInlineResult(foreground.record);
     },
   });
+}
+
+export type TaskCreateMode = "foreground" | "awaited" | "background";
+
+export type TaskCreateResult =
+  | {
+      taskId: TaskId;
+      mode: "foreground";
+      promoted: true;
+      awaited: true;
+    }
+  | {
+      taskId: TaskId;
+      mode: "awaited" | "background";
+      awaited: boolean;
+    }
+  | {
+      taskId: TaskId;
+      mode: "foreground";
+      promoted: false;
+      awaited: false;
+      status: TaskRecord["status"];
+      result?: unknown;
+      error?: TaskRecord["error"];
+    };
+
+function taskCreateKindDescriptors(
+  options: CreateTaskToolsOptions,
+): TaskCreateKindDescriptor[] {
+  const descriptors =
+    options.taskCreateKinds ??
+    options.manager.registeredKinds().map((kind) => ({ kind }));
+  return descriptors
+    .filter((descriptor) => descriptor.kind.trim().length > 0)
+    .map((descriptor) => ({ ...descriptor, kind: descriptor.kind.trim() }))
+    .sort((left, right) => left.kind.localeCompare(right.kind));
+}
+
+function taskCreateDescription(
+  kinds: readonly TaskCreateKindDescriptor[],
+  limits: TaskConcurrencyLimits,
+): string {
+  const base =
+    "Run a long-running task by registered kind. Defaults to foreground: wait inline for the result, then auto-promote to a background task if the foreground budget is exceeded. Use mode=awaited for detached work that should revive this run, or mode=background for fire-and-forget work.";
+  const limitText = taskConcurrencyLimitDescription(limits);
+  const baseWithLimits = limitText ? `${base} ${limitText}` : base;
+  if (kinds.length === 0) return baseWithLimits;
+  const kindText = kinds
+    .map((kind) =>
+      kind.description ? `${kind.kind}: ${kind.description}` : kind.kind,
+    )
+    .join("; ");
+  return `${baseWithLimits} Registered kinds: ${kindText}.`;
+}
+
+function taskConcurrencyLimitDescription(
+  limits: TaskConcurrencyLimits,
+): string {
+  const parts: string[] = [];
+  if (limits.global !== undefined) parts.push(`global=${limits.global}`);
+  const perKind = Object.entries(limits.perKind ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([kind, limit]) => `${kind}=${limit}`);
+  if (perKind.length > 0) parts.push(`per-kind ${perKind.join(", ")}`);
+  if (parts.length === 0) return "";
+  return `Active task concurrency limit: ${parts.join("; ")}. If the limit is reached, wait for or stop the existing task before starting another.`;
+}
+
+function taskCreateInputSchema(
+  kinds: readonly TaskCreateKindDescriptor[],
+): JsonSchemaObject {
+  const knownKindNames = kinds.map((kind) => kind.kind);
+  const singlePayloadKind =
+    kinds.length === 1 && kinds[0]?.payloadSchema ? kinds[0] : undefined;
+  const payloadDescriptions = kinds
+    .filter(
+      (kind) =>
+        kind.payloadDescription !== undefined ||
+        kind.payloadSchema !== undefined,
+    )
+    .map((kind) =>
+      kind.payloadDescription
+        ? `${kind.kind}: ${kind.payloadDescription}`
+        : `${kind.kind}: kind-specific payload.`,
+    );
+  const required = ["kind"];
+  if (singlePayloadKind?.requiresPayload === true) required.push("payload");
+  return {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        ...(knownKindNames.length > 0 ? { enum: knownKindNames } : {}),
+        description:
+          knownKindNames.length > 0
+            ? `Registered task kind. Available: ${knownKindNames.join(", ")}.`
+            : "Registered task kind.",
+      },
+      title: { type: "string" },
+      mode: {
+        type: "string",
+        enum: ["foreground", "awaited", "background"],
+        description:
+          "foreground waits inline and auto-promotes on budget overrun; awaited starts detached but keeps this run alive; background starts detached fire-and-forget.",
+      },
+      awaited: {
+        type: "boolean",
+        description:
+          "Compatibility flag for detached tasks. mode is preferred. Without mode, awaited=false selects background; otherwise foreground is the default.",
+      },
+      payload:
+        singlePayloadKind?.payloadSchema ??
+        ({
+          type: "object",
+          ...(payloadDescriptions.length > 0
+            ? { description: payloadDescriptions.join(" ") }
+            : {}),
+        } satisfies JsonSchemaObject),
+    },
+    required,
+  };
 }
 
 /** @public @stability experimental v0.1 */
@@ -120,26 +327,12 @@ export function createTaskControl(
   const taskGet = createTaskGet(options);
   const taskStop = createTaskStop(options);
   const taskOutput = createTaskOutput(options);
+  const taskWait = createTaskWait(options);
   return defineTool({
     name: "task",
     description:
-      "Manage background tasks. Use action=list to inspect tasks, get for one task record, output for buffered task output, and stop to request cancellation.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["list", "get", "output", "stop"],
-        },
-        taskId: { type: "string" },
-        status: { type: "string" },
-        kind: { type: "string" },
-        fromSequence: { type: "integer" },
-        maxChunks: { type: "integer" },
-      },
-      required: ["action"],
-      additionalProperties: false,
-    },
+      "Manage background tasks. Use action=list to inspect tasks, get for one task record, output for buffered task output, wait to join one or more tasks, and stop to request cancellation. List defaults to scope=run; after resume, use scope=all if you need durable tasks from earlier runs. For wait/output/get/stop, use a concrete taskId returned by an earlier task_create or task list/get call; do not guess, leave blank, or batch dependent task calls before task_create returns.",
+    inputSchema: taskControlInputSchema(),
     deferLoading: false,
     policy: { risk: "risky", requiresApproval: false },
     governance: { sideEffects: ["read", "write"] },
@@ -156,6 +349,9 @@ export function createTaskControl(
         governance: { sideEffects: ["read"] },
       };
     },
+    validateInput(args: unknown) {
+      return validateTaskControlInput(args);
+    },
     isReadOnly(args: unknown): boolean {
       const record = args && typeof args === "object" ? args : {};
       return (record as Record<string, unknown>).action !== "stop";
@@ -169,16 +365,182 @@ export function createTaskControl(
           return taskGet.execute(args, ctx);
         case "output":
           return taskOutput.execute(args, ctx);
+        case "wait":
+          return taskWait.execute(args, ctx);
         case "stop":
           return taskStop.execute(args, ctx);
         default:
           throw makeToolError(
             "TASK_ARGUMENTS_INVALID",
-            "task: action must be one of list, get, output, or stop.",
+            "task: action must be one of list, get, output, wait, or stop.",
           );
       }
     },
   });
+}
+
+function taskControlInputSchema(): JsonSchemaObject {
+  return {
+    type: "object",
+    properties: {
+      action: {
+        type: "string",
+        enum: ["list", "get", "output", "wait", "stop"],
+      },
+      taskId: {
+        type: "string",
+        minLength: 1,
+        description:
+          "Concrete task id returned by a previous task_create, task list, or task get call. Required for get/output/stop and accepted as a one-id shorthand for wait.",
+      },
+      ids: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string", minLength: 1 },
+        description:
+          "Concrete task ids for action=wait. Use ids only after task_create/list/get has returned real task ids; do not pass an empty array or placeholder strings.",
+      },
+      mode: {
+        type: "string",
+        enum: ["any", "all"],
+        description:
+          "Barrier mode for action=wait. any returns after the first listed task reaches terminal state; all waits for every listed task.",
+      },
+      status: { type: "string" },
+      kind: { type: "string" },
+      scope: {
+        type: "string",
+        enum: ["run", "all"],
+        description:
+          "For action=list only. run lists tasks owned by the current run; all lists every durable task in this task store, useful after resume when older task ids are unknown.",
+      },
+      fromSequence: { type: "integer" },
+      maxChunks: { type: "integer" },
+    },
+    required: ["action"],
+    additionalProperties: false,
+    oneOf: [
+      {
+        properties: { action: { enum: ["list"] } },
+      },
+      {
+        properties: { action: { enum: ["get", "output", "stop"] } },
+        required: ["action", "taskId"],
+      },
+      {
+        properties: { action: { enum: ["wait"] } },
+        required: ["action"],
+        anyOf: [{ required: ["taskId"] }, { required: ["ids"] }],
+      },
+    ],
+  };
+}
+
+function validateTaskControlInput(
+  args: unknown,
+): { ok: true } | { ok: false; code: string; message: string } {
+  if (typeof args !== "object" || args === null) {
+    return {
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task: arguments must be an object.",
+    };
+  }
+  const record = args as Record<string, unknown>;
+  switch (record.action) {
+    case "list":
+      return validateTaskListArgs(record);
+    case "get":
+    case "output":
+    case "stop":
+      return validateTaskControlTaskId(record.taskId);
+    case "wait":
+      return validateTaskControlWaitIds(record);
+    default:
+      return {
+        ok: false,
+        code: "TASK_ARGUMENTS_INVALID",
+        message:
+          "task: action must be one of list, get, output, wait, or stop.",
+      };
+  }
+}
+
+function validateTaskListArgs(
+  record: Record<string, unknown>,
+): { ok: true } | { ok: false; code: string; message: string } {
+  if (
+    record.scope !== undefined &&
+    record.scope !== "run" &&
+    record.scope !== "all"
+  ) {
+    return {
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task list scope must be run or all.",
+    };
+  }
+  return { ok: true };
+}
+
+function validateTaskControlTaskId(
+  taskId: unknown,
+): { ok: true } | { ok: false; code: string; message: string } {
+  if (typeof taskId === "string" && taskId.length > 0) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    code: "TASK_ARGUMENTS_INVALID",
+    message: "taskId must be a non-empty string.",
+  };
+}
+
+function validateTaskControlWaitIds(
+  record: Record<string, unknown>,
+): { ok: true } | { ok: false; code: string; message: string } {
+  const hasTaskId = record.taskId !== undefined;
+  if (
+    hasTaskId &&
+    (typeof record.taskId !== "string" || record.taskId.length === 0)
+  ) {
+    return {
+      ok: false,
+      code: "TASK_ARGUMENTS_INVALID",
+      message: "task wait taskId must be a non-empty string when provided.",
+    };
+  }
+  if (record.ids !== undefined) {
+    if (!Array.isArray(record.ids)) {
+      return {
+        ok: false,
+        code: "TASK_ARGUMENTS_INVALID",
+        message: "task wait ids must be an array of non-empty strings.",
+      };
+    }
+    if (record.ids.length === 0) {
+      return {
+        ok: false,
+        code: "TASK_ARGUMENTS_INVALID",
+        message: "task wait requires at least one task id.",
+      };
+    }
+    if (record.ids.some((id) => typeof id !== "string" || id.length === 0)) {
+      return {
+        ok: false,
+        code: "TASK_ARGUMENTS_INVALID",
+        message: "task wait ids must be non-empty strings.",
+      };
+    }
+  }
+  const hasIds = Array.isArray(record.ids) && record.ids.length > 0;
+  return hasTaskId || hasIds
+    ? { ok: true }
+    : {
+        ok: false,
+        code: "TASK_ARGUMENTS_INVALID",
+        message: "task wait requires at least one task id.",
+      };
 }
 
 /** @public @stability experimental v0.1 */
@@ -188,23 +550,31 @@ export function createTaskList(
   return defineTool({
     name: "task_list",
     description:
-      "List background tasks, optionally filtered by status or kind.",
+      "List background tasks, optionally filtered by status, kind, or scope. Defaults to the current run; use scope=all after resume to find durable tasks from earlier runs.",
     inputSchema: {
       type: "object",
       properties: {
         status: { type: "string" },
         kind: { type: "string" },
+        scope: {
+          type: "string",
+          enum: ["run", "all"],
+          description:
+            "run lists tasks owned by the current run; all lists every durable task in this task store.",
+        },
       },
     },
     deferLoading: false,
     policy: { risk: "safe", requiresApproval: false },
     governance: { sideEffects: ["read"] },
-    async execute(args: unknown): Promise<{ tasks: TaskRecord[] }> {
+    async execute(args: unknown, ctx): Promise<{ tasks: TaskRecord[] }> {
       const parsed = parseListArgs(args);
       const tasks = options.manager.store.list({
         status: parsed.status,
         kind: parsed.kind,
-        parentRunId: options.getParentRunId(),
+        ...(parsed.scope === "run"
+          ? { parentRunId: options.getParentRunId(ctx) }
+          : {}),
       });
       return { tasks };
     },
@@ -346,6 +716,78 @@ export function createTaskOutput(
   });
 }
 
+function createTaskWait(options: CreateTaskToolsOptions): ToolDefinition {
+  return defineTool({
+    name: "task_wait",
+    description:
+      "Wait for one or more background tasks. Prefer task(action=wait); this definition is internal to the task action wrapper.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string" },
+        ids: { type: "array", items: { type: "string" } },
+        mode: { type: "string", enum: ["any", "all"] },
+      },
+    },
+    deferLoading: false,
+    policy: { risk: "safe", requiresApproval: false },
+    governance: { sideEffects: ["read"] },
+    async execute(args: unknown): Promise<TaskWaitResult> {
+      const parsed = parseWaitArgs(args);
+      const records = parsed.ids.map((id) => {
+        const record = options.manager.store.get(id);
+        if (!record) {
+          throw makeToolError("TASK_NOT_FOUND", `Task not found: ${id}`);
+        }
+        return record;
+      });
+      if (records.length === 0) {
+        throw makeToolError(
+          "TASK_ARGUMENTS_INVALID",
+          "task wait requires at least one task id.",
+        );
+      }
+
+      const waitRecord =
+        parsed.mode === "all"
+          ? await waitForAllTasks(options.manager, records)
+          : await waitForAnyTask(options.manager, records);
+
+      const terminalIds = new Set(waitRecord.map((record) => record.id));
+      for (const record of waitRecord) {
+        options.manager.store.update(record.id, { awaited: false });
+      }
+
+      return {
+        mode: parsed.mode,
+        complete: parsed.mode === "all",
+        taskIds: parsed.ids,
+        terminalTaskIds: [...terminalIds],
+        tasks: waitRecord.map(
+          (record) => options.manager.store.get(record.id) ?? record,
+        ),
+        completed: waitRecord.filter((record) => record.status === "completed")
+          .length,
+        failed: waitRecord.filter((record) => record.status === "failed")
+          .length,
+        cancelled: waitRecord.filter((record) => record.status === "cancelled")
+          .length,
+      };
+    },
+  });
+}
+
+interface TaskWaitResult {
+  mode: "any" | "all";
+  complete: boolean;
+  taskIds: TaskId[];
+  terminalTaskIds: TaskId[];
+  tasks: TaskRecord[];
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
 // ----------------------------------------------------------------------------
 // Argument parsers — strict, no `any`.
 // ----------------------------------------------------------------------------
@@ -353,6 +795,8 @@ export function createTaskOutput(
 interface CreateArgs {
   kind: string;
   title?: string;
+  mode: TaskCreateMode;
+  awaited: boolean;
   payload?: Record<string, unknown>;
 }
 
@@ -366,27 +810,164 @@ function parseCreateArgs(args: unknown): CreateArgs {
     );
   }
   const title = typeof record.title === "string" ? record.title : undefined;
+  const mode = parseTaskCreateMode(record.mode, record.awaited);
+  const awaited = parseTaskCreateAwaited(mode, record.awaited);
   const payload =
     record.payload && typeof record.payload === "object"
       ? (record.payload as Record<string, unknown>)
       : undefined;
-  return { kind, title, payload };
+  return { kind, title, mode, awaited, payload };
+}
+
+function parseTaskCreateMode(
+  rawMode: unknown,
+  rawAwaited: unknown,
+): TaskCreateMode {
+  if (
+    rawMode === "foreground" ||
+    rawMode === "awaited" ||
+    rawMode === "background"
+  ) {
+    return rawMode;
+  }
+  if (rawMode !== undefined) {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      "task_create: mode must be foreground, awaited, or background.",
+    );
+  }
+  return rawAwaited === false ? "background" : "foreground";
+}
+
+function parseTaskCreateAwaited(
+  mode: TaskCreateMode,
+  rawAwaited: unknown,
+): boolean {
+  const expected = mode === "background" ? false : true;
+  if (rawAwaited === undefined) return expected;
+  if (typeof rawAwaited !== "boolean") {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      "task_create: awaited must be a boolean when provided.",
+    );
+  }
+  if (rawAwaited !== expected) {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      `task_create: mode=${mode} conflicts with awaited=${rawAwaited}. Omit awaited or choose a matching mode.`,
+    );
+  }
+  return rawAwaited;
+}
+
+function enforceConcurrencyLimit(
+  options: CreateTaskToolsOptions,
+  parentRunId: RunId,
+  kind: string,
+): void {
+  const limits = mergeConcurrencyLimits(
+    DEFAULT_CONCURRENCY_LIMITS,
+    options.concurrencyLimits,
+  );
+  const active = options.manager.store
+    .list({ parentRunId })
+    .filter((task) => !isTerminal(task.status));
+  if (limits.global !== undefined && active.length >= limits.global) {
+    throw makeToolError(
+      "TASK_CONCURRENCY_LIMIT",
+      `Task concurrency limit reached: global=${limits.global}. Wait for an existing task to finish or stop it before starting another.`,
+    );
+  }
+  const kindLimit = limits.perKind?.[kind];
+  if (
+    kindLimit !== undefined &&
+    active.filter((task) => task.kind === kind).length >= kindLimit
+  ) {
+    throw makeToolError(
+      "TASK_CONCURRENCY_LIMIT",
+      `Task concurrency limit reached for kind "${kind}": ${kindLimit}. Wait for the existing task to finish or stop it before starting another.`,
+    );
+  }
+}
+
+function mergeConcurrencyLimits(
+  base: TaskConcurrencyLimits,
+  override: TaskConcurrencyLimits | undefined,
+): TaskConcurrencyLimits {
+  return {
+    global: override?.global ?? base.global,
+    perKind: {
+      ...(base.perKind ?? {}),
+      ...(override?.perKind ?? {}),
+    },
+  };
+}
+
+async function waitForForegroundTask(
+  wait: Promise<TaskRecord>,
+  timeoutMs: number,
+  waitForPromotion: (signal: AbortSignal) => Promise<void>,
+): Promise<
+  | { kind: "completed"; record: TaskRecord }
+  | { kind: "timeout" }
+  | { kind: "promote" }
+> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promotionAbort = new AbortController();
+  try {
+    return await Promise.race([
+      wait.then((record) => ({ kind: "completed" as const, record })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+      }),
+      waitForPromotion(promotionAbort.signal).then(() => ({
+        kind: "promote" as const,
+      })),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    promotionAbort.abort();
+  }
+}
+
+function taskCreateInlineResult(record: TaskRecord): TaskCreateResult {
+  return {
+    taskId: record.id,
+    mode: "foreground",
+    promoted: false,
+    awaited: false,
+    status: record.status,
+    ...(record.result !== undefined ? { result: record.result } : {}),
+    ...(record.error ? { error: record.error } : {}),
+  };
 }
 
 interface ListArgs {
   status?: TaskStatus;
   kind?: string;
+  scope: TaskListScope;
 }
 
 function parseListArgs(args: unknown): ListArgs {
-  if (args === undefined || args === null) return {};
+  if (args === undefined || args === null) return { scope: "run" };
   const record = requireRecord(args, "task_list");
   const status =
     typeof record.status === "string" && isValidStatus(record.status)
       ? (record.status as TaskStatus)
       : undefined;
   const kind = typeof record.kind === "string" ? record.kind : undefined;
-  return { status, kind };
+  if (
+    record.scope !== undefined &&
+    record.scope !== "run" &&
+    record.scope !== "all"
+  ) {
+    throw makeToolError(
+      "TASK_ARGUMENTS_INVALID",
+      "task list scope must be run or all.",
+    );
+  }
+  const scope = record.scope === "all" ? "all" : "run";
+  return { status, kind, scope };
 }
 
 function parseTaskId(args: unknown): TaskId {
@@ -407,6 +988,11 @@ interface OutputArgs {
   maxChunks?: number;
 }
 
+interface WaitArgs {
+  ids: TaskId[];
+  mode: "any" | "all";
+}
+
 function parseOutputArgs(args: unknown): OutputArgs {
   const record = requireRecord(args, "task_output");
   const taskId = parseTaskId(args);
@@ -423,6 +1009,63 @@ function parseOutputArgs(args: unknown): OutputArgs {
       ? record.maxChunks
       : undefined;
   return { taskId, fromSequence, maxChunks };
+}
+
+function parseWaitArgs(args: unknown): WaitArgs {
+  const record = requireRecord(args, "task_wait");
+  const ids: TaskId[] = [];
+  if (record.taskId !== undefined) {
+    if (typeof record.taskId !== "string" || record.taskId.length === 0) {
+      throw makeToolError(
+        "TASK_ARGUMENTS_INVALID",
+        "task wait taskId must be a non-empty string when provided.",
+      );
+    }
+    ids.push(record.taskId as unknown as TaskId);
+  }
+  if (Array.isArray(record.ids)) {
+    for (const id of record.ids) {
+      if (typeof id !== "string" || id.length === 0) {
+        throw makeToolError(
+          "TASK_ARGUMENTS_INVALID",
+          "task wait ids must be non-empty strings.",
+        );
+      }
+      ids.push(id as unknown as TaskId);
+    }
+  }
+  const uniqueIds = [...new Set(ids)];
+  const mode = record.mode === "all" ? "all" : "any";
+  return { ids: uniqueIds, mode };
+}
+
+async function waitForAllTasks(
+  manager: TaskManager,
+  records: TaskRecord[],
+): Promise<TaskRecord[]> {
+  return Promise.all(records.map((record) => waitForTask(manager, record)));
+}
+
+async function waitForAnyTask(
+  manager: TaskManager,
+  records: TaskRecord[],
+): Promise<TaskRecord[]> {
+  const terminal = records.filter((record) => isTerminal(record.status));
+  if (terminal.length > 0) return [terminal[0]!];
+  const record = await Promise.race(
+    records.map((candidate) => waitForTask(manager, candidate)),
+  );
+  return [record];
+}
+
+async function waitForTask(
+  manager: TaskManager,
+  record: TaskRecord,
+): Promise<TaskRecord> {
+  if (isTerminal(record.status)) return record;
+  const handle = manager.handle(record.id);
+  if (!handle) return record;
+  return handle.wait();
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {

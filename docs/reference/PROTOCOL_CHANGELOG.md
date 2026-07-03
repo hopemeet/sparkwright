@@ -12,6 +12,12 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — host requests now include
+  `task.list`, `task.get`, `task.output`, `task.stop`, `task.join`, and
+  `task.promote`; protocol errors may include `task_not_found`. Migration:
+  clients may poll durable background task state and send host-facing
+  join/promote controls without parsing task tool output.
+
 - `config.schema.json`: breaking/pre-adoption — workflow hook lifecycle values
   are canonical-only (`RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`,
   `PostToolUse`, `Stop`, `RunEnd`, `RuntimeSignal`); legacy lifecycle values and
@@ -27,6 +33,11 @@ Conventions:
 - `workflow_hook.*` payloads: breaking/pre-adoption — payloads carry one
   canonical `hook` lifecycle field. Migration: stop reading `configuredHook` or
   workflow hook `mode` from trace payloads.
+
+- `workflow_hook.completed` payloads: additive — `WorkflowHookResult.status`
+  may be `advance` for healthy `ModelOutput` / `Stop` continuations that should
+  not be rendered as blocked hook decisions. Migration: treat it as a completed
+  hook result, not a failure or policy violation.
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.rules.workflow`
   may include active workflow rule summaries for configured hooks,

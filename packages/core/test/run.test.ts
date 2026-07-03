@@ -12,7 +12,10 @@ import {
   defineTool,
   type ContextItem,
   type ModelAdapter,
+  type NotificationSource,
+  type PendingNotification,
   type SparkwrightEvent,
+  type TaskRevivalSource,
 } from "../src/index.js";
 import { LocalWorkspace } from "../src/workspace.js";
 
@@ -131,6 +134,91 @@ describe("SparkwrightRun", () => {
     ).toHaveLength(1);
   });
 
+  it("runs semantic input validation before policy and execution", async () => {
+    let executed = false;
+    let modelCalls = 0;
+    const checked = defineTool({
+      name: "semantic_checked",
+      description: "Exercise semantic input validation.",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      policy: { risk: "risky" },
+      validateInput(args) {
+        const path = (args as { path: string }).path;
+        if (path.endsWith("/")) {
+          return {
+            ok: false,
+            code: "PATH_NOT_FILE",
+            message: "path must point to a file",
+            metadata: { reason: "trailing_slash" },
+          };
+        }
+        return { ok: true };
+      },
+      policyForArgs() {
+        throw new Error("policyForArgs should not run");
+      },
+      execute() {
+        executed = true;
+      },
+    });
+
+    const run = createRun({
+      goal: "semantic validation",
+      tools: [checked],
+      approvalResolver(request) {
+        throw new Error(
+          `Approval should not be requested for ${request.action}`,
+        );
+      },
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "semantic_checked",
+                    arguments: { path: "src/" },
+                  },
+                ],
+              }
+            : { message: "observed semantic failure" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const result = await run.start();
+    const events = run.events.all();
+    const failed = events.find((event) => event.type === "tool.failed");
+
+    expect(result.signal).toBe("completed");
+    expect(executed).toBe(false);
+    expect(events.map((event) => event.type)).not.toContain(
+      "approval.requested",
+    );
+    expect(failed?.payload).toMatchObject({
+      toolName: "semantic_checked",
+      error: {
+        code: "PATH_NOT_FILE",
+        message: "path must point to a file",
+        metadata: {
+          toolName: "semantic_checked",
+          phase: "validateInput",
+          reason: "trailing_slash",
+        },
+      },
+    });
+    expect(failed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+      inputValidationMs: expect.any(Number),
+    });
+  });
+
   it("loops model-tool-observation until a final answer", async () => {
     let modelCalls = 0;
     const events: SparkwrightEvent[] = [];
@@ -192,6 +280,15 @@ describe("SparkwrightRun", () => {
     });
     expect(modelCalls).toBe(2);
     expect(events.map((event) => event.type)).toContain("tool.completed");
+    expect(
+      events.find((event) => event.type === "tool.completed")?.metadata,
+    ).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+      policyForArgsMs: expect.any(Number),
+      policyDecisionMs: expect.any(Number),
+      executionMs: expect.any(Number),
+      resultValidationMs: expect.any(Number),
+    });
     expect(events.map((event) => event.type)).toContain("context.assembled");
     expect(events.map((event) => event.type)).toContain("prompt.built");
     expect(
@@ -387,6 +484,279 @@ describe("SparkwrightRun", () => {
       message: "done",
     });
     expect(modelCalls).toBe(3);
+  });
+
+  it("adds recovery metadata when an unloaded deferred tool fails schema validation", async () => {
+    let modelCalls = 0;
+    let observedToolResults: ContextItem[] = [];
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "recover deferred schema",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 3,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "deferred_echo",
+                  arguments: {},
+                },
+              ],
+            };
+          }
+          observedToolResults = input.context.filter(
+            (item) => item.type === "tool_result",
+          );
+          return { message: "will load schema next" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    const requested = run.events
+      .all()
+      .find((event) => event.type === "tool.requested");
+
+    expect(result.signal).toBe("completed");
+    expect(failed?.payload).toMatchObject({
+      toolName: "deferred_echo",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: {
+          toolName: "deferred_echo",
+          reason: "schema_not_loaded",
+          recoveryTool: "tool_search",
+          recoveryQuery: "select:deferred_echo",
+          deferred: true,
+          schemaLoaded: false,
+        },
+      },
+    });
+    expect(failed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+    });
+    expect(failed?.spanId).toBe(requested?.spanId);
+    const observation = JSON.parse(observedToolResults[0]?.content ?? "{}") as {
+      error?: { message?: string; metadata?: unknown };
+    };
+    expect(observation.error?.message).toContain(
+      "First call `tool_search` with query `select:deferred_echo`",
+    );
+    expect(observation.error?.metadata).toMatchObject({
+      reason: "schema_not_loaded",
+      recoveryTool: "tool_search",
+      recoveryQuery: "select:deferred_echo",
+    });
+  });
+
+  it("does not mark loaded deferred schema failures as schema-not-loaded", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "loaded deferred invalid args",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 4,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "tool_search",
+                  arguments: { query: "select:deferred_echo" },
+                },
+              ],
+            };
+          }
+          return modelCalls === 2
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "deferred_echo",
+                    arguments: {},
+                  },
+                ],
+              }
+            : { message: "saw loaded invalid args" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failed = run.events
+      .all()
+      .find((event) => event.type === "tool.failed");
+    const metadata = (
+      failed?.payload as { error?: { metadata?: Record<string, unknown> } }
+    ).error?.metadata;
+
+    expect(result.signal).toBe("completed");
+    expect(failed?.payload).toMatchObject({
+      toolName: "deferred_echo",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: { toolName: "deferred_echo" },
+      },
+    });
+    expect(metadata?.reason).not.toBe("schema_not_loaded");
+    expect(metadata?.schemaLoaded).toBeUndefined();
+    expect(failed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
+    });
+  });
+
+  it("keeps deferred schema recovery tied to the model-turn snapshot", async () => {
+    let modelCalls = 0;
+    const deferredEcho = defineTool({
+      name: "deferred_echo",
+      description: "Echo text after deferred discovery.",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+      deferLoading: true,
+      governance: { sideEffects: ["read"], idempotency: "idempotent" },
+      execute(args: unknown) {
+        return args;
+      },
+    });
+    const toolSearch = createToolSearchTool({
+      source: {
+        listDescriptors: () => [
+          {
+            name: deferredEcho.name,
+            description: deferredEcho.description,
+            inputSchema: deferredEcho.inputSchema,
+            loading: { defer: true },
+          },
+        ],
+      },
+    });
+
+    const run = createRun({
+      goal: "same-turn deferred schema recovery",
+      tools: [deferredEcho, toolSearch],
+      maxSteps: 3,
+      maxToolConcurrency: 2,
+      hooks: [
+        {
+          name: "delay-deferred-echo",
+          async beforeToolCall(input) {
+            if (input.toolName === "deferred_echo") {
+              await sleep(20);
+            }
+          },
+        },
+      ],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "tool_search",
+                    arguments: { query: "select:deferred_echo" },
+                  },
+                  {
+                    toolName: "deferred_echo",
+                    arguments: {},
+                  },
+                ],
+              }
+            : { message: "saw recovery guidance" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const events = run.events.all();
+    const toolSearchCompletedIndex = events.findIndex(
+      (event) =>
+        event.type === "tool.completed" &&
+        (event.payload as { toolName?: string }).toolName === "tool_search",
+    );
+    const deferredFailedIndex = events.findIndex(
+      (event) =>
+        event.type === "tool.failed" &&
+        (event.payload as { toolName?: string }).toolName === "deferred_echo",
+    );
+    const failed = events[deferredFailedIndex];
+
+    expect(result.signal).toBe("completed");
+    expect(toolSearchCompletedIndex).toBeGreaterThanOrEqual(0);
+    expect(deferredFailedIndex).toBeGreaterThan(toolSearchCompletedIndex);
+    expect(failed?.payload).toMatchObject({
+      toolName: "deferred_echo",
+      error: {
+        code: "TOOL_ARGUMENTS_INVALID",
+        metadata: {
+          reason: "schema_not_loaded",
+          recoveryTool: "tool_search",
+          recoveryQuery: "select:deferred_echo",
+          deferred: true,
+          schemaLoaded: false,
+        },
+      },
+    });
   });
 
   it("persists a command-outcome verdict on run.completed", async () => {
@@ -1213,6 +1583,105 @@ describe("SparkwrightRun", () => {
     ).toEqual(["README.md", "README.md"]);
   });
 
+  it("feeds back the next unread offset when paging backwards", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
+    tempDirs.push(root);
+    await writeFile(
+      join(root, "PROJECT_NOTES.md"),
+      ["one", "two", "three", "four", "five", "six"].join("\n"),
+      "utf8",
+    );
+    let modelCalls = 0;
+    let healthContext: string | undefined;
+
+    const readFileTool = defineTool({
+      name: "read_file",
+      description: "Read a paginated file.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          offset: { type: "number" },
+          limit: { type: "number" },
+        },
+        required: ["path"],
+      },
+      policy: { risk: "safe" },
+      async execute(args, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        const input = args as { path: string; offset?: number; limit?: number };
+        const content = await ctx.workspace.readText(input.path);
+        const lines = content.split("\n");
+        const startLine = input.offset ?? 1;
+        const limit = input.limit ?? 2;
+        const endLine = Math.min(lines.length, startLine + limit - 1);
+        return {
+          path: input.path,
+          content: lines.slice(startLine - 1, endLine).join("\n"),
+          startLine,
+          endLine,
+          totalLines: lines.length,
+          hasMore: endLine < lines.length,
+          ...(endLine < lines.length ? { nextOffset: endLine + 1 } : {}),
+        };
+      },
+    });
+
+    const run = createRun({
+      goal: "read pages without going backwards",
+      workspace: new LocalWorkspace(root),
+      tools: [readFileTool],
+      maxSteps: 6,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 2) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "PROJECT_NOTES.md", offset: 3, limit: 2 },
+                },
+              ],
+            };
+          }
+          if (modelCalls === 3) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "read_file",
+                  arguments: { path: "PROJECT_NOTES.md", offset: 1, limit: 2 },
+                },
+              ],
+            };
+          }
+
+          healthContext = input.context
+            .filter((item) => item.source?.uri === "run.health")
+            .map((item) => item.content)
+            .find((content) => content.includes("continue from offset 5"));
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.stopReason).toBe("final_answer");
+    expect(healthContext).toContain("same unchanged content");
+    expect(healthContext).toContain("continue from offset 5");
+  });
+
   it("does not feed back unchanged reads after the file is written", async () => {
     const root = await mkdtemp(join(tmpdir(), "sparkwright-run-workspace-"));
     tempDirs.push(root);
@@ -1538,6 +2007,72 @@ describe("SparkwrightRun", () => {
       status: "failed",
       error: { code: "TOOL_DENIED" },
     });
+  });
+
+  it("keeps repeated expected denials non-failing and policy-specific", async () => {
+    let executed = false;
+    let modelCalls = 0;
+
+    const denied = defineTool({
+      name: "danger",
+      description: "Dangerous tool.",
+      inputSchema: { type: "object" },
+      policy: { risk: "denied" },
+      execute() {
+        executed = true;
+      },
+    });
+
+    const run = createRun({
+      goal: "try denied twice",
+      tools: [denied],
+      maxSteps: 8,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls <= 2) {
+            return { toolCalls: [{ toolName: "danger", arguments: {} }] };
+          }
+          return { message: "saw denial" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const failures = run.events
+      .all()
+      .filter((event) => event.type === "tool.failed");
+    const repeat = failures.find(
+      (event) =>
+        (event.payload as { error?: { code?: string } }).error?.code ===
+        "REPEATED_TOOL_CALL_SKIPPED",
+    );
+    const repeatError = (
+      repeat?.payload as {
+        error?: { message?: string; metadata?: Record<string, unknown> };
+      }
+    ).error;
+
+    expect(executed).toBe(false);
+    expect(result).toMatchObject({
+      signal: "completed",
+      state: "completed",
+      stopReason: "final_answer",
+    });
+    expect(result.metadata.outcome).toBeUndefined();
+    expect(
+      failures.map(
+        (event) => (event.payload as { error?: { code?: string } }).error?.code,
+      ),
+    ).toEqual(["TOOL_DENIED", "REPEATED_TOOL_CALL_SKIPPED"]);
+    expect(repeatError?.metadata).toMatchObject({
+      repeatedPriorFailureCode: "TOOL_DENIED",
+      repeatedPriorFailureCategory: "policy_denial",
+      repeatedPriorFailureExpectedDenial: true,
+    });
+    expect(repeatError?.message).toContain("expected policy denial");
+    expect(repeatError?.message).not.toContain("offset/limit");
+    expect(repeatError?.message).not.toContain("listing tool");
   });
 
   it("reports unknown tools before emitting tool.started", async () => {
@@ -2098,6 +2633,13 @@ describe("SparkwrightRun", () => {
     expect(run.events.all().map((event) => event.type)).toContain(
       "approval.requested",
     );
+    expect(
+      run.events.all().find((event) => event.type === "tool.completed")
+        ?.metadata,
+    ).toMatchObject({
+      approvalWaitMs: expect.any(Number),
+      executionMs: expect.any(Number),
+    });
     expect(run.record.state).toBe("completed");
   });
 
@@ -2558,6 +3100,9 @@ describe("SparkwrightRun", () => {
     const toolFailed = run.events
       .all()
       .find((event) => event.type === "tool.failed");
+    const failedMetadata = (
+      toolFailed?.payload as { error?: { metadata?: Record<string, unknown> } }
+    ).error?.metadata;
     expect(executed).toBe(false);
     expect(eventTypes).not.toContain("approval.requested");
     expect(eventTypes).not.toContain("tool.started");
@@ -2567,6 +3112,10 @@ describe("SparkwrightRun", () => {
         code: "TOOL_ARGUMENTS_INVALID",
         metadata: { toolName: "risky" },
       },
+    });
+    expect(failedMetadata?.reason).not.toBe("schema_not_loaded");
+    expect(toolFailed?.metadata).toMatchObject({
+      schemaValidationMs: expect.any(Number),
     });
   });
 
@@ -4230,6 +4779,59 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("keeps concurrent tool observations in request order while trace follows completion order", async () => {
+    let modelCalls = 0;
+    let secondTurnToolResultOrder: string[] = [];
+
+    const readTool = (name: string, delayMs: number) =>
+      defineTool({
+        name,
+        description: "Read-only test tool.",
+        inputSchema: { type: "object" },
+        governance: { sideEffects: ["read"], idempotency: "idempotent" },
+        async execute() {
+          await sleep(delayMs);
+          return { ok: true, name };
+        },
+      });
+
+    const run = createRun({
+      goal: "stable concurrent observations",
+      tools: [readTool("slow_read", 30), readTool("fast_read", 0)],
+      maxToolConcurrency: 2,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 1) {
+            return {
+              toolCalls: [
+                { toolName: "slow_read", arguments: {} },
+                { toolName: "fast_read", arguments: {} },
+              ],
+            };
+          }
+          secondTurnToolResultOrder = input.context
+            .filter((item) => item.type === "tool_result")
+            .map((item) => {
+              const parsed = JSON.parse(item.content) as { toolName?: string };
+              return parsed.toolName ?? "";
+            });
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const completionOrder = run.events
+      .all()
+      .filter((event) => event.type === "tool.completed")
+      .map((event) => (event.payload as { toolName?: string }).toolName);
+
+    expect(result.signal).toBe("completed");
+    expect(completionOrder).toEqual(["fast_read", "slow_read"]);
+    expect(secondTurnToolResultOrder).toEqual(["slow_read", "fast_read"]);
+  });
+
   it("marks duplicate same-batch calls as in-flight duplicates", async () => {
     let executed = 0;
     let modelCalls = 0;
@@ -4627,10 +5229,297 @@ describe("SparkwrightRun", () => {
       contextWindowPressure: 0.8,
     });
   });
+
+  it("waits for an awaited task notification and injects it on the canonical path", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const seenContexts: string[][] = [];
+    const run = createRun({
+      goal: "wait for task",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          seenContexts.push(input.context.map((item) => item.content));
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_1 completed.",
+      metadata: { taskId: "task_1" },
+    });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(seenContexts[1]).toEqual(
+      expect.arrayContaining(["Task task_1 completed."]),
+    );
+    expect(
+      run.events
+        .all()
+        .filter((event) => event.type === "run.notification.injected"),
+    ).toHaveLength(1);
+    expect(source.drainCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("revives awaited task completions after maxSteps is otherwise spent", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const seenContexts: string[][] = [];
+    const run = createRun({
+      goal: "wait past max steps",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          seenContexts.push(input.context.map((item) => item.content));
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 1,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_after_budget completed.",
+      metadata: { taskId: "task_after_budget" },
+    });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(seenContexts[1]).toEqual(
+      expect.arrayContaining(["Task task_after_budget completed."]),
+    );
+    expect(result.metadata).toMatchObject({
+      maxSteps: 1,
+      stepLimitReached: false,
+      revivalTurnsUsed: 1,
+    });
+  });
+
+  it("bounds awaited task revival with maxRevivalTurns", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "bounded revival",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          if (modelCalls === 2) {
+            source.pending = true;
+          }
+          return { message: "done for now" };
+        },
+      },
+      maxSteps: 1,
+      maxRevivalTurns: 1,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_one completed.",
+      metadata: { taskId: "task_one" },
+    });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(source.waitCalls).toBe(1);
+    expect(result.metadata).toMatchObject({ revivalTurnsUsed: 1 });
+  });
+
+  it("wakes waiting_tasks from run.command.enqueued without polling the command queue", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "wait for command",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete(input) {
+          modelCalls += 1;
+          if (modelCalls === 2) {
+            expect(input.context.map((item) => item.content)).toContain(
+              "continue now",
+            );
+          }
+          return { message: "done" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+    source.pending = false;
+    run.injectUserMessage({ content: "continue now" });
+
+    const result = await resultPromise;
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(run.events.all().map((event) => event.type)).toEqual(
+      expect.arrayContaining(["run.command.enqueued", "run.command.applied"]),
+    );
+  });
+
+  it("wakes waiting_tasks when the run abort signal fires", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    const controller = new AbortController();
+    const run = createRun({
+      goal: "wait then abort",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      abortSignal: controller.signal,
+      model: {
+        async complete() {
+          return { message: "waiting" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result.state).toBe("failed");
+    expect(result.stopReason).toBe("manual_cancelled");
+  });
+
+  it("does not block terminal completion when no awaited tasks are pending", async () => {
+    const source = new ManualTaskRevivalSource();
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "detached task does not block",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(1);
+    expect(source.waitCalls).toBe(0);
+  });
+
+  it("reports revival pending-check failures without throwing out of the run", async () => {
+    const source: NotificationSource & TaskRevivalSource = {
+      drain: () => [],
+      hasAwaitedPending: () => {
+        throw new Error("pending check failed");
+      },
+      waitUntilAvailable: () => Promise.resolve(),
+    };
+    const run = createRun({
+      goal: "pending check failure",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(
+      run.events
+        .all()
+        .find((event) => event.type === "run.notification.source_failed")
+        ?.payload,
+    ).toMatchObject({
+      sourceIndex: -1,
+      message: "pending check failed",
+      phase: "hasAwaitedPending",
+    });
+  });
 });
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  timeoutMs = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("timed out waiting for condition");
+    }
+    await sleep(5);
+  }
+}
+
+class ManualTaskRevivalSource implements NotificationSource, TaskRevivalSource {
+  pending = false;
+  waitCalls = 0;
+  drainCalls = 0;
+  private readonly queue: PendingNotification[] = [];
+  private readonly waiters = new Set<() => void>();
+
+  hasAwaitedPending(): boolean {
+    return this.pending || this.queue.length > 0;
+  }
+
+  drain(): PendingNotification[] {
+    this.drainCalls += 1;
+    const items = [...this.queue];
+    this.queue.length = 0;
+    return items;
+  }
+
+  waitUntilAvailable(options: { signal?: AbortSignal }): Promise<void> {
+    this.waitCalls += 1;
+    if (this.queue.length > 0) return Promise.resolve();
+    if (options.signal?.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        this.waiters.delete(finish);
+        options.signal?.removeEventListener("abort", finish);
+        resolve();
+      };
+      this.waiters.add(finish);
+      options.signal?.addEventListener("abort", finish, { once: true });
+    });
+  }
+
+  deliver(notification: PendingNotification): void {
+    this.pending = false;
+    this.queue.push(notification);
+    for (const waiter of [...this.waiters]) waiter();
+  }
 }
 
 describe("RunHandle.addHook / removeHook", () => {

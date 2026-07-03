@@ -20,6 +20,9 @@ import type {
   RunInputPayload,
   RunInputPart,
   SessionCompactionMeasurement,
+  TaskListRequestPayload,
+  TaskOutputChunkSnapshot,
+  TaskRecordSnapshot,
   TraceLevel,
 } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
@@ -440,6 +443,66 @@ export class RunController {
     }
   }
 
+  async listTasks(
+    payload: TaskListRequestPayload = { limit: 50 },
+  ): Promise<TaskRecordSnapshot[]> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.listTasks(payload);
+      return result.tasks;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return [];
+    }
+  }
+
+  async readTaskOutput(
+    taskId: string,
+    maxChunks = 200,
+  ): Promise<TaskOutputChunkSnapshot[]> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.outputTask({ taskId, maxChunks });
+      return result.chunks;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return [];
+    }
+  }
+
+  async stopTask(taskId: string): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.stopTask({ taskId });
+      return result.cancelled;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
+    }
+  }
+
+  async joinTask(taskId: string): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.joinTask({ taskId });
+      return result.awaited;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
+    }
+  }
+
+  async promoteTask(taskId: string): Promise<boolean> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.promoteTask({ taskId });
+      return result.promoted;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return false;
+    }
+  }
+
   /**
    * Write a markdown transcript of the current session's in-memory events to
    * `<workspace>/.sparkwright/exports/session-<id>-<ts>.md`. Returns the path.
@@ -689,10 +752,14 @@ export class RunController {
         this.store.setStatus("done");
       } else {
         const terminalState = msg.payload.state;
-        if (
+        const userCancelled =
+          msg.payload.stopReason === "manual_cancelled" ||
+          msg.payload.stopReason === "user_cancelled";
+        if (userCancelled) {
+          this.store.setStatus("done");
+        } else if (
           terminalState === "failed" ||
-          terminalState === "cancelled" ||
-          msg.payload.stopReason === "manual_cancelled"
+          terminalState === "cancelled"
         ) {
           this.store.setError(runFailureMessage(msg.payload));
         } else {

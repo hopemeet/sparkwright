@@ -54,7 +54,7 @@ try {
 async function staticToolDisabledCase() {
   const workspace = await createWorkspace("static-disabled");
   await writeProjectConfig(workspace, {
-    tools: { disabled: ["shell"] },
+    tools: { disabled: ["bash"] },
   });
 
   const result = await runCli([
@@ -76,8 +76,10 @@ async function staticToolDisabledCase() {
   const ok =
     result.exitCode === 0 &&
     includesAll(toolNames, ["list_skills", "create_skill", "update_skill"]) &&
+    !toolNames.includes("bash") &&
     !toolNames.includes("shell") &&
-    toolNames.includes("read_file");
+    toolNames.includes("read") &&
+    !toolNames.includes("read_file");
 
   record({
     id: "SKILL_TOOLS_ALLOWLIST",
@@ -96,13 +98,13 @@ async function staticToolDisabledCase() {
 }
 
 async function scriptedShellManagedPackageGuardCase() {
-  const workspace = await createWorkspace("scripted-shell-guard");
+  const workspace = await createWorkspace("scripted-bash-guard");
   const script = [
     {
-      message: "attempt managed package shell write",
+      message: "attempt managed package bash write",
       toolCalls: [
         {
-          toolName: "shell",
+          toolName: "bash",
           arguments: {
             command:
               "mkdir -p .sparkwright/skills/bad-skill && printf bad > .sparkwright/skills/bad-skill/skill.md",
@@ -115,7 +117,7 @@ async function scriptedShellManagedPackageGuardCase() {
   const result = await runCli(
     [
       "run",
-      "Attempt to create a skill through shell.",
+      "Attempt to create a skill through bash.",
       "--workspace",
       workspace,
       "--model",
@@ -132,10 +134,10 @@ async function scriptedShellManagedPackageGuardCase() {
     },
   );
   const trace = await traceFromOutput(result.stdout, { workspace });
-  const failedShell = trace.events.find(
+  const failedBash = trace.events.find(
     (event) =>
       event.type === "tool.failed" &&
-      event.payload?.toolName === "shell" &&
+      event.payload?.toolName === "bash" &&
       String(event.payload?.error?.message ?? "").includes(
         "dedicated SparkWright capability tools",
       ),
@@ -147,21 +149,21 @@ async function scriptedShellManagedPackageGuardCase() {
     "bad-skill",
     "skill.md",
   );
-  const ok = Boolean(failedShell) && !existsSync(lowerSkillFile);
+  const ok = Boolean(failedBash) && !existsSync(lowerSkillFile);
 
   record({
-    id: "SHELL_MANAGED_PACKAGE_GUARD",
-    name: "shell cannot bypass managed skill package mutation",
+    id: "BASH_MANAGED_PACKAGE_GUARD",
+    name: "bash cannot bypass managed skill package mutation",
     status: ok ? "passed" : "failed",
     command: commandString(result.command),
     trace: trace.path,
     session: trace.sessionId,
-    evidence: `failedShell=${Boolean(failedShell)}; lowerSkillFile=${existsSync(lowerSkillFile)}`,
+    evidence: `failedBash=${Boolean(failedBash)}; lowerSkillFile=${existsSync(lowerSkillFile)}`,
     reason: ok
       ? undefined
       : failureDetails({
           exitCode: result.exitCode,
-          failedShell: Boolean(failedShell),
+          failedBash: Boolean(failedBash),
           lowerSkillFile: existsSync(lowerSkillFile),
           failures: toolFailures(trace.events),
         }),
@@ -171,10 +173,10 @@ async function scriptedShellManagedPackageGuardCase() {
 async function realCreateSkillCase() {
   const workspace = await createWorkspace("real-create");
   await writeProjectConfig(workspace, {
-    tools: { disabled: ["shell"] },
+    tools: { disabled: ["bash"] },
   });
   const prompt =
-    "Create a new project skill named release-reviewer for release readiness checks. Use list_skills if needed, call create_skill exactly once, omit the root argument so SparkWright uses the project skill root, then stop immediately and answer with the created path. Do not use shell. Do not modify files except creating the skill.";
+    "Create a new project skill named release-reviewer for release readiness checks. Use tool_search to find list_skills/create_skill as needed, call create_skill exactly once, omit the root argument so SparkWright uses the project skill root, then stop immediately and answer with the created path. Do not use bash. Do not modify files except creating the skill.";
   const result = await runCli([
     "run",
     prompt,
@@ -211,7 +213,9 @@ async function realCreateSkillCase() {
     outcome?.failing === false;
   const ok =
     result.exitCode === 0 &&
+    requests.includes("tool_search") &&
     requests.includes("create_skill") &&
+    !requests.includes("bash") &&
     !requests.includes("shell") &&
     (failures.length === 0 || recoveredCreateSkillFailures) &&
     skillEntries.length === 0 &&
@@ -255,7 +259,7 @@ async function realCreateSkillCase() {
 async function realUpdateSkillProposalCase() {
   const workspace = await createWorkspace("real-update");
   await writeProjectConfig(workspace, {
-    tools: { disabled: ["shell"] },
+    tools: { disabled: ["bash"] },
   });
   await writeSkill(
     workspace,
@@ -274,7 +278,7 @@ async function realUpdateSkillProposalCase() {
     join(workspace, ".sparkwright", "skills", "repo-reviewer", "SKILL.md"),
   );
   const prompt =
-    "Evolve the existing repo-reviewer skill to also check missing test coverage. Use list_skills if needed, call update_skill exactly once to create one draft proposal, then stop immediately and answer with the proposal id. Do not apply it. Do not use shell.";
+    "Evolve the existing repo-reviewer skill to also check missing test coverage. Use tool_search to find the managed Skill tools, call list_skills exactly once to inspect the existing project skills, call update_skill exactly once to create one draft proposal, then stop immediately and answer with the proposal id. Do not apply it. Do not use bash.";
   const result = await runCli([
     "run",
     prompt,
@@ -299,7 +303,9 @@ async function realUpdateSkillProposalCase() {
   );
   const ok =
     result.exitCode === 0 &&
+    requests.includes("tool_search") &&
     includesAll(requests, ["list_skills", "update_skill"]) &&
+    !requests.includes("bash") &&
     !requests.includes("shell") &&
     !has(trace.events, "tool.failed") &&
     proposals.length === 1 &&

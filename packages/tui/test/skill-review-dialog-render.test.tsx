@@ -69,6 +69,7 @@ describe("SkillReviewDialog rendering", () => {
           updatedAt: "2026-06-20T00:00:00.000Z",
           basePackageHash: "sha256:before",
           afterPackageHash: "sha256:after",
+          contentMode: "intent_stub",
           summary: "Update demo skill.",
           sourceLayer: "project",
           sourcePath: "/tmp/work/.sparkwright/skills/demo-skill/SKILL.md",
@@ -92,6 +93,8 @@ describe("SkillReviewDialog rendering", () => {
     );
 
     expect(text).toContain("[metadata]");
+    expect(text).toContain("[intent-only]");
+    expect(text).toContain('"contentMode": "intent_stub"');
     expect(text).toContain('"targetPath": ".sparkwright/skills/demo-skill"');
     expect(text).toContain(
       '"sourcePath": ".sparkwright/skills/demo-skill/SKILL.md"',

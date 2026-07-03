@@ -170,12 +170,12 @@ OpenAI-compatible proxies omit reasoning summary deltas.
 ```
 
 Standard tools are enabled by default. Use `tools.use` for broad selectors such
-as `workspace.read`, `workspace.write`, `shell`, `skills`, `agents`, `cron`,
+as `workspace.read`, `workspace.write`, `bash`, `skills`, `agents`, `cron`,
 `mcp`, or `mcp:<server>`; use `tools.allowed` only for concrete tool names.
 Use `tools.disabled` to close concrete tool names, and `tools.defer` only to
 delay built-in tool schemas. MCP tools use `capabilities.mcp.toolSchemaLoad`;
 do not configure them with wildcard tool names. Prefer `task(action=...)` for
-task inspection/control and `apply_patch` for ordinary file writes.
+task inspection/control and `edit` for ordinary file writes.
 
 ### Stdio MCP Server
 
@@ -259,7 +259,7 @@ file.
           "description": "Generated files are produced by build tooling.",
           "hook": "PreToolUse",
           "matcher": {
-            "toolName": ["edit_anchored_text", "apply_patch"],
+            "toolName": ["edit_anchored_text", "edit"],
             "pathGlob": "src/generated/**",
             "excludePathGlob": "src/generated/fixtures/**"
           },
@@ -273,7 +273,7 @@ file.
           "hook": "PostToolUse",
           "frequency": "oncePerTurn",
           "matcher": {
-            "toolName": ["edit_anchored_text", "apply_patch"]
+            "toolName": ["edit_anchored_text", "edit"]
           },
           "action": {
             "type": "command",
@@ -291,7 +291,7 @@ file.
           "trigger": "tool.completed",
           "matcher": {
             "eventType": "tool.completed",
-            "toolName": ["edit_anchored_text", "apply_patch"]
+            "toolName": ["edit_anchored_text", "edit"]
           },
           "action": {
             "type": "command",
@@ -382,8 +382,8 @@ Add `--workspace <path>` to manage project defaults in
 
 ```bash
 npm exec sparkwright -- capabilities inspect --workspace . --format text
-npm exec sparkwright -- tools allow read_file --workspace .
-npm exec sparkwright -- tools disable shell --workspace .
+npm exec sparkwright -- tools allow read --workspace .
+npm exec sparkwright -- tools disable bash --workspace .
 npm exec sparkwright -- tools defer todo_write --workspace .
 ```
 

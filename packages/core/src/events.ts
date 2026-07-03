@@ -43,7 +43,7 @@ export type EventType =
   | "run.command.applied"
   // Out-of-band notifications injected into the next turn by a
   // NotificationSource (e.g. task-completion queue, inbound chat). Owned by
-  // `@sparkwright/streaming-runtime`. See drainNotificationSources().
+  // the core/shared notification contract. See drainNotificationSources().
   | "run.notification.injected"
   | "run.notification.source_failed"
   | "run.state_transition.rejected"

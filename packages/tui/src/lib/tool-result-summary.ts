@@ -109,12 +109,17 @@ export function summarizeShellResult(
   maxLines = 4,
 ): { head: string; lines: string[]; timedOut: boolean } {
   const r = value as Record<string, unknown>;
-  const exitCode =
-    typeof r.exitCode === "number" ? String(r.exitCode) : String(r.exitCode);
   const timedOut = r.timedOut === true;
-  const head = timedOut
-    ? `shell timed out exit ${exitCode}`
-    : `shell exit ${exitCode}`;
+  const taskId = typeof r.taskId === "string" ? r.taskId : "";
+  const exitCode = typeof r.exitCode === "number" ? String(r.exitCode) : "";
+  const head =
+    r.promoted === true && taskId
+      ? `shell promoted -> ${taskId}`
+      : timedOut
+        ? `shell timed out${exitCode ? ` exit ${exitCode}` : ""}`
+        : exitCode
+          ? `shell exit ${exitCode}`
+          : "shell completed";
   const stdout = sanitizeAnsiForRender(str(r.stdout));
   const stderr = sanitizeAnsiForRender(str(r.stderr));
   const combined = [stdout, stderr ? `stderr: ${stderr}` : ""]

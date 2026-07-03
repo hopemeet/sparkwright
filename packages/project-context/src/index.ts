@@ -184,17 +184,17 @@ export interface BuildAgentPromptBuilderOptions {
  * Steer the model toward the workspace file tools instead of shelling out.
  * Without this, a goal like "create notes/demo.md" sends the model down an
  * `ls`/`mkdir`/`cat >` path — each a separate approval round-trip, and the
- * heredoc redirect trips the shell path guard — before it falls back to
- * `write_file`/`apply_patch`. Injected only when a file-writing tool is
+ * heredoc redirect trips the command path guard — before it falls back to
+ * file tools. Injected only when a file-writing tool is
  * actually present.
  */
 const FILE_TOOL_GUIDANCE = [
   "Workspace file edits:",
   "- To create or replace a file in the workspace, call the dedicated file",
-  "  tool (e.g. write_file or apply_patch) directly. write_file creates the file and any missing",
+  "  tool (write or edit) directly. write creates the file and any missing",
   "  parent directories for you — do NOT pre-check with `ls`, create dirs with",
-  "  `mkdir`, or write via shell redirection (`cat > file`, `tee`).",
-  "- Reserve the shell tool for running commands, not for reading or writing",
+  "  `mkdir`, or write via bash redirection (`cat > file`, `tee`).",
+  "- Reserve bash for running commands, not for reading or writing",
   "  workspace files (use the read/write file tools for that).",
   "- After a successful workspace write, if the task asks for tests or a known",
   "  verification command is available, run that command next instead of",
@@ -231,8 +231,8 @@ const SHELL_VALIDATION_GUIDANCE = [
  */
 const WORKSPACE_PATH_GUIDANCE = [
   "Workspace path resolution:",
-  "- Paths for the workspace tools (read_file, glob, grep,",
-  "  write_file, apply_patch) are relative to the workspace root shown as `cwd` in <env>.",
+  "- Paths for the workspace tools (read, write, edit, glob, grep) are relative",
+  "  to the workspace root shown as `cwd` in <env>.",
   "- Do NOT prefix paths with the workspace folder's own name. If cwd ends in",
   "  `/myrepo`, read `examples/x`, not `myrepo/examples/x` — the latter resolves",
   "  under `myrepo/myrepo/...` and will not be found.",
@@ -251,7 +251,7 @@ const REPO_EVIDENCE_GUIDANCE = [
   "- A path listing alone is discovery, not evidence for behavioral claims. If",
   "  you only listed files, say that the result is preliminary and read the",
   "  relevant files before proposing concrete changes.",
-  "- If a high-risk tool such as shell is denied, continue with read-only file",
+  "- If a high-risk tool such as bash is denied, continue with read-only file",
   "  tools where possible instead of asking the user to paste data that is",
   "  available in the workspace.",
 ].join("\n");
@@ -337,8 +337,7 @@ export function buildAgentPromptBuilder(
     createToolGuidanceSection({
       name: "workspace_file_tools",
       guidance: FILE_TOOL_GUIDANCE,
-      whenTool: (tool) =>
-        tool.name === "append_file" || tool.name === "write_file",
+      whenTool: (tool) => tool.name === "write" || tool.name === "edit",
     }),
   );
 
@@ -348,9 +347,7 @@ export function buildAgentPromptBuilder(
       name: "workspace_path_resolution",
       guidance: WORKSPACE_PATH_GUIDANCE,
       whenTool: (tool) =>
-        tool.name === "read_file" ||
-        tool.name === "glob" ||
-        tool.name === "grep",
+        tool.name === "read" || tool.name === "glob" || tool.name === "grep",
     }),
   );
 
@@ -359,9 +356,7 @@ export function buildAgentPromptBuilder(
       name: "repo_maintainer_evidence",
       guidance: REPO_EVIDENCE_GUIDANCE,
       whenTool: (tool) =>
-        tool.name === "read_file" ||
-        tool.name === "glob" ||
-        tool.name === "grep",
+        tool.name === "read" || tool.name === "glob" || tool.name === "grep",
     }),
   );
 
@@ -369,7 +364,7 @@ export function buildAgentPromptBuilder(
     createToolGuidanceSection({
       name: "command_verification",
       guidance: SHELL_VALIDATION_GUIDANCE,
-      whenTool: (tool) => tool.name === "shell",
+      whenTool: (tool) => tool.name === "bash",
     }),
   );
 

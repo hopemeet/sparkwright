@@ -1,7 +1,7 @@
 ---
 name: spark-tester
 description: Test skill for Sparkwright TUI. Use when the user mentions spark tester, skill smoke test, or verifying that skills load. Do NOT use for testing the user's own software or features; this only verifies that SparkWright loads skills.
-allowed-tools: shell
+allowed-tools: bash
 metadata:
   version: 0.1.0
 ---
