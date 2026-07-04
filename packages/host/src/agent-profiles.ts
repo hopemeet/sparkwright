@@ -10,6 +10,7 @@ import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { AgentMode, AgentProfile } from "@sparkwright/agent-runtime";
+import { splitMarkdownFrontmatter } from "@sparkwright/skills";
 import { parse as parseYaml } from "yaml";
 import { resolveCapabilityDirs } from "./layers.js";
 
@@ -260,7 +261,9 @@ export function parseAgentProfileFile(
   fallbackId: string,
   raw: string,
 ): AgentProfile {
-  const { frontmatter, body } = splitAgentFrontmatter(raw);
+  const { frontmatter, body } = splitMarkdownFrontmatter(raw, {
+    parseFrontmatter: parseAgentFrontmatterBlock,
+  });
   const explicitId = scalar(frontmatter, "id");
   const id =
     explicitId && AGENT_ID_PATTERN.test(explicitId) ? explicitId : fallbackId;
@@ -311,31 +314,15 @@ interface Frontmatter {
   [key: string]: unknown;
 }
 
-/** Split a leading `---`..`---` block; recognized keys only, no YAML dependency. */
-function splitAgentFrontmatter(raw: string): {
-  frontmatter: Frontmatter;
-  body: string;
-} {
-  const normalized = raw.replace(/^\uFEFF/, "");
-  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/.exec(
-    normalized,
-  );
-  if (!match) return { frontmatter: {}, body: normalized.trim() };
-  return {
-    frontmatter: parseFrontmatterBlock(match[1]!),
-    body: match[2]!.trim(),
-  };
-}
-
-function parseFrontmatterBlock(raw: string): Frontmatter {
+function parseAgentFrontmatterBlock(raw: string): Frontmatter {
   try {
     return normalizeFrontmatterKeys(parseYaml(raw));
   } catch {
-    return parseLineFrontmatter(raw);
+    return parseAgentLineFrontmatter(raw);
   }
 }
 
-function parseLineFrontmatter(raw: string): Frontmatter {
+function parseAgentLineFrontmatter(raw: string): Frontmatter {
   const frontmatter: Frontmatter = {};
   for (const line of raw.split(/\r?\n/)) {
     const kv = /^([A-Za-z0-9_-]+)[ \t]*:[ \t]*(.*)$/.exec(line);

@@ -118,6 +118,7 @@ import type {
   CapabilityEventHookConfig,
   CapabilityHooksConfig,
   CapabilityToolsConfig,
+  CapabilityVerificationConfig,
   CapabilityWorkflowHookConfig,
   ShellConfig,
   TaskConfig,
@@ -149,6 +150,8 @@ import {
   type CapabilitySkillInlineShellSummary,
   type CapabilityEventRuleSummary,
   type CapabilityWorkflowRuleSummary,
+  type CapabilityWorkflowAssetErrorSummary,
+  type CapabilityWorkflowAssetSummary,
 } from "@sparkwright/protocol";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import {
@@ -218,6 +221,7 @@ import {
 import {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
 import { createDocumentedCommandStopHook } from "./documented-command-check.js";
@@ -225,6 +229,7 @@ import {
   describeActiveEventRules,
   describeActiveWorkflowRules,
 } from "./active-rules.js";
+import { loadLayeredWorkflowAssets } from "./workflows.js";
 import {
   DISCOVERY_TOOL_NAME,
   WORKSPACE_WRITE_TOOL_NAMES,
@@ -458,6 +463,38 @@ interface PreparedHostRunEnvironment {
   runStoreMetadata: Record<string, unknown>;
 }
 
+export interface RuntimeWorkflowHookAssemblyOptions extends Omit<
+  CreateConfiguredWorkflowHooksOptions,
+  "hooks"
+> {
+  workflowHooks?: CapabilityWorkflowHookConfig[];
+  verification?: CapabilityVerificationConfig;
+  documentedCommand: {
+    goal: string;
+    shouldWrite: boolean;
+  };
+}
+
+export function assembleRuntimeWorkflowHooks(
+  options: RuntimeWorkflowHookAssemblyOptions,
+): WorkflowHook[] {
+  return [
+    ...createConfiguredWorkflowHooks({
+      ...options,
+      hooks: options.workflowHooks,
+    }),
+    ...createVerificationWorkflowHooks({
+      ...options,
+      verification: options.verification,
+    }),
+    ...createDocumentedCommandStopHook({
+      workspaceRoot: options.workspaceRoot,
+      goal: options.documentedCommand.goal,
+      shouldWrite: options.documentedCommand.shouldWrite,
+    }),
+  ];
+}
+
 function defaultSessionRootDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".sparkwright", "sessions");
 }
@@ -635,6 +672,11 @@ function summarizeCapabilitySnapshot(
       workflowNames: snapshot.rules?.workflow.map((rule) => rule.name) ?? [],
       events: snapshot.rules?.events?.length ?? 0,
       eventNames: snapshot.rules?.events?.map((rule) => rule.name) ?? [],
+    },
+    workflows: {
+      assets: snapshot.workflows?.assets.length ?? 0,
+      names: snapshot.workflows?.assets.map((asset) => asset.assetName) ?? [],
+      errors: snapshot.workflows?.errors?.length ?? 0,
     },
     shell: snapshot.shell,
   };
@@ -1538,30 +1580,21 @@ export class HostRuntime {
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     const tools = catalogToolDefinitions(toolCatalog);
-    const workflowHooks = [
-      ...createConfiguredWorkflowHooks({
-        hooks: hookConfig?.workflow,
-        workspaceRoot,
-        sandbox: shellConfig?.sandbox,
-        http: hookConfig?.http,
-        skillRoots: skillRoots.map((root) => root.root),
-        configPaths: loadedConfig.attempted.map((entry) => entry.path),
-        getRun: () => parentRunRef.current,
-        agentTool: delegateAgentTool,
-      }),
-      ...createVerificationWorkflowHooks({
-        verification: loadedConfig.config.capabilities?.verification,
-        workspaceRoot,
-        sandbox: shellConfig?.sandbox,
-        skillRoots: skillRoots.map((root) => root.root),
-        configPaths: loadedConfig.attempted.map((entry) => entry.path),
-      }),
-      ...createDocumentedCommandStopHook({
-        workspaceRoot,
+    const workflowHooks = assembleRuntimeWorkflowHooks({
+      workflowHooks: hookConfig?.workflow,
+      verification: loadedConfig.config.capabilities?.verification,
+      workspaceRoot,
+      sandbox: shellConfig?.sandbox,
+      http: hookConfig?.http,
+      skillRoots: skillRoots.map((root) => root.root),
+      configPaths: loadedConfig.attempted.map((entry) => entry.path),
+      getRun: () => parentRunRef.current,
+      agentTool: delegateAgentTool,
+      documentedCommand: {
         goal: input.goal,
         shouldWrite: input.shouldWrite,
-      }),
-    ];
+      },
+    });
     const workflowRules = describeActiveWorkflowRules({
       workflowHooks: hookConfig?.workflow,
       verification: loadedConfig.config.capabilities?.verification,
@@ -1573,6 +1606,7 @@ export class HostRuntime {
     const eventRules = describeActiveEventRules({
       eventHooks: hookConfig?.events,
     });
+    const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       model: modelCapabilitySummary(model.resolved),
       toolCatalog,
@@ -1595,6 +1629,7 @@ export class HostRuntime {
       shellPromotionAvailable: input.backgroundTasks === "enabled",
       workflowRules,
       eventRules,
+      workflows: workflowCapabilitySummary(workflows),
     });
 
     const mcpWorkspaceCwdServers = configuredMcpWorkspaceCwdServers(
@@ -2674,6 +2709,7 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const automation = await this.inspectAutomationSummary();
+    const workflows = await loadLayeredWorkflowAssets(this.opts.workspaceRoot);
     const model = await inspectResolvedModelConfig({
       modelRef: input.modelRef ?? this.opts.defaultModel,
       workspaceRoot: this.opts.workspaceRoot,
@@ -2885,6 +2921,7 @@ export class HostRuntime {
         eventRules: describeActiveEventRules({
           eventHooks: loadedConfig.config.capabilities?.hooks?.events,
         }),
+        workflows: workflowCapabilitySummary(workflows),
         automation,
       });
     } finally {
@@ -3644,6 +3681,10 @@ function buildCapabilitySnapshot(input: {
   shellPromotionAvailable?: boolean;
   workflowRules?: CapabilityWorkflowRuleSummary[];
   eventRules?: CapabilityEventRuleSummary[];
+  workflows?: {
+    assets: CapabilityWorkflowAssetSummary[];
+    errors?: CapabilityWorkflowAssetErrorSummary[];
+  };
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
@@ -3753,7 +3794,37 @@ function buildCapabilitySnapshot(input: {
           },
         }
       : {}),
+    ...(input.workflows ? { workflows: input.workflows } : {}),
     automation: input.automation,
+  };
+}
+
+function workflowCapabilitySummary(
+  report: Awaited<ReturnType<typeof loadLayeredWorkflowAssets>>,
+): {
+  assets: CapabilityWorkflowAssetSummary[];
+  errors?: CapabilityWorkflowAssetErrorSummary[];
+} {
+  return {
+    assets: report.assets.map((asset) => ({
+      assetName: asset.assetName,
+      sourcePath: asset.sourcePath,
+      layer: asset.layer,
+      contentHash: asset.contentHash,
+      ...(asset.version ? { version: asset.version } : {}),
+      ...(asset.description ? { description: asset.description } : {}),
+      nodeCount: asset.nodeCount,
+      ...(asset.configPath ? { configPath: asset.configPath } : {}),
+    })),
+    ...(report.errors.length > 0
+      ? {
+          errors: report.errors.map((error) => ({
+            sourcePath: error.sourcePath,
+            layer: error.layer,
+            message: error.message,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -6930,6 +7001,7 @@ function mergeCapabilitySnapshots(
         last.rules?.events ?? [],
       ),
     },
+    workflows: configured.workflows ?? last.workflows,
     automation: configured.automation ?? last.automation,
   };
 }

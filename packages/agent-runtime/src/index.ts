@@ -1408,6 +1408,7 @@ function parseAgentToolArgs(args: unknown): AgentToolInvocationInput {
 export * from "./tasks/index.js";
 export * from "./concurrency/index.js";
 export * from "./todo/index.js";
+export * from "./workflows/index.js";
 
 function defaultSummarize(input: AgentToolSummarizeInput): AgentToolResult {
   return summarizeDelegationResult(input);

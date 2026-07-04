@@ -19,6 +19,7 @@ import {
   createConfiguredWorkflowHooks,
   createVerificationWorkflowHooks,
 } from "../src/index.js";
+import { assembleRuntimeWorkflowHooks } from "../src/runtime.js";
 
 function runRecord() {
   const now = new Date().toISOString();
@@ -39,6 +40,39 @@ async function waitForEvent(events: EventLog, type: string): Promise<void> {
   }
   throw new Error(`timed out waiting for ${type}`);
 }
+
+describe("runtime workflow hook assembly", () => {
+  it("keeps configured, verification, then documented-command hook order", () => {
+    const hooks = assembleRuntimeWorkflowHooks({
+      workspaceRoot: process.cwd(),
+      workflowHooks: [
+        {
+          name: "config-guard",
+          hook: "RunStart",
+          action: { type: "context", content: "configured" },
+        },
+      ],
+      verification: {
+        mode: "require",
+        defaultProfile: "fast",
+        profiles: {
+          fast: [{ id: "test", command: "npm", args: ["test"] }],
+        },
+      },
+      documentedCommand: {
+        goal: "fix tests and verify documented commands pass",
+        shouldWrite: true,
+      },
+    });
+
+    expect(hooks.map((hook) => hook.name)).toEqual([
+      "config-guard",
+      "verification:fast:test",
+      "verification:stop-gate",
+      "documented-command-check",
+    ]);
+  });
+});
 
 describe("createConfiguredWorkflowHooks", () => {
   it("keeps configured workflow hooks in the awaited workflow hook lane", () => {
@@ -336,6 +370,72 @@ describe("createConfiguredWorkflowHooks", () => {
       );
       expect(events.all().map((event) => event.type)).not.toContain(
         "workflow_hook.blocked",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("pins configured advance support to ModelOutput and Stop", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        hooks: [
+          {
+            name: "model-output-advance",
+            hook: "ModelOutput",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'advance', reason:'model output accepted'}));",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+          {
+            name: "pre-tool-advance",
+            hook: "PreToolUse",
+            onError: "block",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'advance', reason:'should reject'}));",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+      });
+
+      const advanced = await runWorkflowHooks({
+        hooks,
+        hook: "ModelOutput",
+        run,
+        payload: {},
+        events,
+      });
+      expect(advanced.status).toBe("advanced");
+
+      const blocked = await runWorkflowHooks({
+        hooks,
+        hook: "PreToolUse",
+        run,
+        payload: { toolName: "read", arguments: {} },
+        events,
+      });
+      expect(blocked.status).toBe("blocked");
+      if (blocked.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(blocked.block.reason).toContain(
+        "advance is only supported for ModelOutput and Stop",
       );
     } finally {
       await rm(workspace, { recursive: true, force: true });

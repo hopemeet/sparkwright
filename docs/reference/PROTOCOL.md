@@ -281,6 +281,12 @@ Current event types:
   result, including non-blocking `advance` continuations for `ModelOutput` and
   `Stop`. Blocked events include reason/findings, and failed events include
   `{ error: { code, message } }`.
+- `workflow.started` / `workflow.node.started` /
+  `workflow.node.completed` / `workflow.waiting` /
+  `workflow.interrupted` / `workflow.completed` / `workflow.failed` /
+  `workflow.cancelled`: reserved workflow-runtime lifecycle vocabulary.
+  P0 reserves these event types for schema compatibility only; no runtime
+  emitter exists until the workflow projection phase.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write

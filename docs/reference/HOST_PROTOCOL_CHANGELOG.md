@@ -27,6 +27,9 @@ major; breaking changes bump the major.
 - Add optional `rules.events` to capability snapshots so clients can inspect
   configured non-blocking event hook subscribers. Workflow rule lifecycles are
   reported with canonical hook names.
+- Add optional `workflows` to capability snapshots so clients can inspect
+  parsed workflow assets and parse errors before any workflow runtime behavior
+  ships.
 - Promote persisted compact artifacts to `session-compact.v2` with top-level
   `freedChars`; unsupported v1 artifacts are ignored rather than migrated.
 - Add `metadata.summaryFingerprint` and `metadata.measurement` to compact

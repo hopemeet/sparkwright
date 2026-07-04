@@ -81,6 +81,14 @@ export function isTraceLevel(value: unknown): value is TraceLevel {
 export const INTERNAL_TRANSCRIPT_EVENT_TYPES = [
   "workflow_hook.started",
   "workflow_hook.completed",
+  "workflow.started",
+  "workflow.node.started",
+  "workflow.node.completed",
+  "workflow.waiting",
+  "workflow.interrupted",
+  "workflow.completed",
+  "workflow.failed",
+  "workflow.cancelled",
   "run.started",
   "run.created",
   "run.budget.checked",
@@ -863,6 +871,23 @@ export interface CapabilityEventRuleSummary {
   configurationHint?: string;
 }
 
+export interface CapabilityWorkflowAssetSummary {
+  assetName: string;
+  sourcePath: string;
+  layer: "builtin" | "user" | "project";
+  contentHash: string;
+  version?: string;
+  description?: string;
+  nodeCount: number;
+  configPath?: string;
+}
+
+export interface CapabilityWorkflowAssetErrorSummary {
+  sourcePath: string;
+  layer: "builtin" | "user" | "project";
+  message: string;
+}
+
 export interface CapabilitySnapshot {
   model?: CapabilityModelSummary;
   tools: CapabilityToolSummary[];
@@ -886,6 +911,10 @@ export interface CapabilitySnapshot {
   rules?: {
     workflow: CapabilityWorkflowRuleSummary[];
     events?: CapabilityEventRuleSummary[];
+  };
+  workflows?: {
+    assets: CapabilityWorkflowAssetSummary[];
+    errors?: CapabilityWorkflowAssetErrorSummary[];
   };
   automation?: CapabilityAutomationSummary;
 }

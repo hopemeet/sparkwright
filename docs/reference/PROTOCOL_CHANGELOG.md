@@ -12,6 +12,16 @@ Conventions:
 
 ## Unreleased
 
+- `event.schema.json`: additive — reserves `workflow.started`,
+  `workflow.node.started`, `workflow.node.completed`, `workflow.waiting`,
+  `workflow.interrupted`, `workflow.completed`, `workflow.failed`, and
+  `workflow.cancelled` for the workflow runtime lifecycle. Migration: none; P0
+  adds vocabulary only and no runtime emitter.
+
+- `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
+  include parsed workflow asset summaries and parse errors. Migration: none;
+  clients should treat the field as optional inspection diagnostics.
+
 - `host-message.schema.json`: additive — host requests now include
   `task.list`, `task.get`, `task.output`, `task.stop`, `task.join`, and
   `task.promote`; protocol errors may include `task_not_found`. Migration:
