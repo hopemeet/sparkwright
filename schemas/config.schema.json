@@ -1100,25 +1100,9 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "frequency": {
-                  "type": "string",
-                  "enum": ["always", "oncePerTurn"]
-                },
                 "injectOutput": {
                   "type": "string",
                   "enum": ["always", "onFailure", "never"]
-                }
-              },
-              "additionalProperties": false
-            },
-            "stopGate": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "requireCleanAfterLastWrite": {
-                  "type": "boolean"
                 }
               },
               "additionalProperties": false

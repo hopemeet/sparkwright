@@ -23,7 +23,7 @@ import {
   buildConfiguredAdapter,
   catalogToolDefinitions,
   createCliDiagnosticToolCatalog,
-  createDocumentedCommandStopHook,
+  createDocumentedCommandWorkflowHooks,
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
   DETERMINISTIC_PROVIDER,
@@ -33,11 +33,6 @@ import {
 } from "@sparkwright/host";
 import { buildAgentPromptBuilder } from "@sparkwright/project-context";
 import { createCliApprovalResolver } from "../cli-approval.js";
-import {
-  checkDocumentedCommands,
-  shouldCheckDocumentedCommands,
-  summarizeDocumentedCommandIssues,
-} from "../documented-command-check.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -46,6 +41,7 @@ import {
   completedRunHasCliIssues,
   createCliRunEventSummary,
   summarizeDeniedWorkspaceWrites,
+  summarizeDocumentedCommandFailures,
   summarizeRunFailure,
   summarizeUnhandledToolFailures,
   summarizeUnsupportedFinalClaims,
@@ -149,6 +145,11 @@ export async function startDirectCoreRun(
     loadedConfig.config.capabilities?.skills?.roots,
     env,
   );
+  const documentedCommandHooks = createDocumentedCommandWorkflowHooks({
+    workspaceRoot,
+    goal,
+    shouldWrite,
+  });
   const workflowHooks = createConfiguredWorkflowHooks({
     hooks: loadedConfig.config.capabilities?.hooks?.workflow,
     workspaceRoot,
@@ -156,13 +157,7 @@ export async function startDirectCoreRun(
     sandbox: loadedConfig.config.shell?.sandbox,
     skillRoots: skillRoots.map((root) => root.root),
     configPaths: loadedConfig.attempted.map((entry) => entry.path),
-  }).concat(
-    createDocumentedCommandStopHook({
-      workspaceRoot,
-      goal,
-      shouldWrite,
-    }),
-  );
+  }).concat(documentedCommandHooks);
   const trace = new MemoryTrace();
   const sessionStore = new FileSessionStore({ rootDir: sessionRootDir });
 
@@ -205,7 +200,6 @@ export async function startDirectCoreRun(
   });
 
   const eventSummary = createCliRunEventSummary();
-  let documentedCommandIssueCount = 0;
   const liveEvents = createLiveEventFormatter({ verbose: parsed.verbose });
 
   function recordEvent(event: SparkwrightEvent) {
@@ -241,21 +235,13 @@ export async function startDirectCoreRun(
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const documentedCommandSummary =
+      summarizeDocumentedCommandFailures(eventSummary);
+    if (documentedCommandSummary)
+      writeLine(io.stderr, documentedCommandSummary);
     const unsupportedClaimSummary =
       summarizeUnsupportedFinalClaims(eventSummary);
     if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
-    const documentedCommandIssues = shouldCheckDocumentedCommands({
-      goal,
-      shouldWrite,
-    })
-      ? checkDocumentedCommands(workspaceRoot)
-      : [];
-    documentedCommandIssueCount = documentedCommandIssues.length;
-    const documentedCommandSummary = summarizeDocumentedCommandIssues(
-      documentedCommandIssues,
-    );
-    if (documentedCommandSummary)
-      writeLine(io.stderr, documentedCommandSummary);
     const deniedWriteSummary = summarizeDeniedWorkspaceWrites(eventSummary);
     if (deniedWriteSummary) writeLine(io.stderr, deniedWriteSummary);
     const failureSummary = summarizeUnhandledToolFailures(eventSummary);
@@ -265,7 +251,7 @@ export async function startDirectCoreRun(
       events: eventSummary,
     });
     return {
-      exitCode: documentedCommandIssueCount > 0 ? 1 : exitCode,
+      exitCode,
       tracePath: store?.tracePath,
       sessionId,
       runState: result.state,
@@ -274,8 +260,7 @@ export async function startDirectCoreRun(
   } finally {
     closeEventHooks();
     const displayState =
-      run.record.state === "completed" &&
-      completedRunHasCliIssues(eventSummary, documentedCommandIssueCount)
+      run.record.state === "completed" && completedRunHasCliIssues(eventSummary)
         ? "completed_with_issues"
         : run.record.state;
     writeLine(

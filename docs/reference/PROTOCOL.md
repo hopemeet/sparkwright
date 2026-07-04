@@ -286,9 +286,13 @@ Current event types:
   `workflow.node.completed` / `workflow.waiting` /
   `workflow.interrupted` / `workflow.completed` / `workflow.failed` /
   `workflow.cancelled`: workflow-runtime lifecycle annotations. P1 projection
-  runs created with the experimental `workflow` field on the start-run request emit
+  runs created with the optional `workflow` field on the start-run request emit
   started/node/interrupted/completed/failed/cancelled events; `workflow.waiting`
   remains reserved until a later workflow phase adds a waiting-node emitter.
+  Built-in verification/documented-command run-level invariants reuse the
+  terminal workflow event vocabulary with `projectionKind: "invariant"` and
+  `verificationSource: "profile" | "documented_command"`, but do not emit
+  `workflow.node.*` events.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write
@@ -533,9 +537,10 @@ Field semantics:
 Completed final-answer payloads may also include `factLedger` with
 `schemaVersion:"fact-ledger.v1"`. The ledger records raw command facts
 (`exitCode`/`timedOut`), command initiator (`model-initiated` or
-`verifier-launched`), verifier `expect`/`satisfied` results, workspace write
-epochs, and stale markers. Consumers should prefer it over recomputing command
-facts from compact traces when present.
+`verifier-launched`), verifier `expect`/`satisfied` results, optional
+`verificationSource`, workspace write epochs, and stale markers. Consumers
+should prefer it over recomputing command facts from compact traces when
+present.
 
 `run.failed` payloads should include a reason, stable error code, human-readable message, structured failure, and optional metadata:
 

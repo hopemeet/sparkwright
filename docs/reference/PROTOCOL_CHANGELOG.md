@@ -20,7 +20,8 @@ Conventions:
 
 - `run.completed` payloads: additive — completed runs may include
   `factLedger` (`schemaVersion: "fact-ledger.v1"`) with raw command facts,
-  verifier result satisfaction, workspace write epochs, and stale markers.
+  verifier result satisfaction, optional `verificationSource`, workspace write
+  epochs, and stale markers.
   Migration: prefer `factLedger` for command/verification diagnostics when
   present; keep `commandOutcome` as the legacy compact snapshot.
 
@@ -34,9 +35,8 @@ Conventions:
 
 - `host-message.schema.json`: additive — `run.start` accepts optional
   `workflow`, the workflow asset name to instantiate for that run. Migration:
-  omit the field to keep ordinary host-run behavior. P1 keeps this surface
-  behind `SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1` until the P1.5 deletion gate
-  lands.
+  omit the field to keep ordinary host-run behavior. P1.5 removes the former
+  experimental environment gate.
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
   include parsed workflow asset summaries and parse errors. Migration: none;
@@ -71,8 +71,8 @@ Conventions:
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.rules.workflow`
   may include active workflow rule summaries for configured hooks,
-  verification-generated hooks, and built-in workflow rules. Migration: none;
-  clients should treat the field as optional diagnostics.
+  verification invariants, and built-in workflow rules.
+  Migration: none; clients should treat the field as optional diagnostics.
 
 - `event.schema.json`: additive — new `agent.routing.evaluated` event type.
   Hosts emit it when delegate routing hints are evaluated for a goal. The first
@@ -153,10 +153,11 @@ Conventions:
 
 - `config.schema.json`: additive — new optional
   `capabilities.verification` config surface. Hosts can define named
-  verification profiles and compile them into workflow hooks that run project
-  commands after workspace writes and optionally block final answers until the
-  selected profile passes after the latest write. Migration: none; omitted
-  verification config keeps existing behavior.
+  verification profiles and compile them into implicit workflow projection
+  verifiers. Required profile failures are recorded in the run's verification
+  result snapshot and can make a completed run fail. Migration: omitted
+  verification config keeps existing behavior; the former `stopGate` config
+  field was removed when verification moved behind projection.
 
 - `event.schema.json`: additive — four new `workflow_hook.*` event types for
   deterministic workflow hooks:

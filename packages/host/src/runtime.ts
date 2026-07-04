@@ -224,7 +224,7 @@ import {
   type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
-import { createDocumentedCommandStopHook } from "./documented-command-check.js";
+import { createDocumentedCommandWorkflowHooks } from "./documented-command-check.js";
 import {
   describeActiveEventRules,
   describeActiveWorkflowRules,
@@ -400,8 +400,6 @@ export interface RuntimeOptions {
   defaultTraceLevel?: TraceLevel;
   /** Default workspace-write permission when run.start does not specify one. */
   defaultShouldWrite?: boolean;
-  /** Internal P1 gate; P1.5 deletion decides when this can be removed. */
-  experimentalWorkflows?: boolean;
   /** Session-scoped MCP servers supplied by an embedding protocol (for example ACP). */
   extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */
@@ -483,22 +481,28 @@ export interface RuntimeWorkflowHookAssemblyOptions extends Omit<
 export function assembleRuntimeWorkflowHooks(
   options: RuntimeWorkflowHookAssemblyOptions,
 ): WorkflowHook[] {
+  const verificationHooks = createVerificationWorkflowHooks({
+    ...options,
+    verification: options.verification,
+  });
+  const documentedCommandHooks = createDocumentedCommandWorkflowHooks({
+    ...options,
+    workspaceRoot: options.workspaceRoot,
+    goal: options.documentedCommand.goal,
+    shouldWrite: options.documentedCommand.shouldWrite,
+  });
+  const projectionHooks = options.projectionHooks ?? [];
+  const workflowActive =
+    options.workflowActive === true || projectionHooks.length > 0;
   return [
     ...createConfiguredWorkflowHooks({
       ...options,
       hooks: options.workflowHooks,
-      workflowActive: options.workflowActive === true,
+      workflowActive,
     }),
-    ...createVerificationWorkflowHooks({
-      ...options,
-      verification: options.verification,
-    }),
-    ...createDocumentedCommandStopHook({
-      workspaceRoot: options.workspaceRoot,
-      goal: options.documentedCommand.goal,
-      shouldWrite: options.documentedCommand.shouldWrite,
-    }),
-    ...(options.projectionHooks ?? []),
+    ...verificationHooks,
+    ...documentedCommandHooks,
+    ...projectionHooks,
   ];
 }
 
@@ -703,7 +707,6 @@ const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
 const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
 const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
 const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
-const EXPERIMENTAL_WORKFLOWS_ENV = "SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS";
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -884,13 +887,6 @@ export class HostRuntime {
     this.taskManager.registerKind("agent", (controller, payload) =>
       this.runAgentTask(controller, payload),
     );
-  }
-
-  private workflowRuntimeEnabled(): boolean {
-    if (this.opts.experimentalWorkflows !== undefined) {
-      return this.opts.experimentalWorkflows;
-    }
-    return process.env[EXPERIMENTAL_WORKFLOWS_ENV] === "1";
   }
 
   hasActiveRun(): boolean {
@@ -1597,16 +1593,6 @@ export class HostRuntime {
     });
     const tools = catalogToolDefinitions(toolCatalog);
     const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
-    if (input.workflowName && !this.workflowRuntimeEnabled()) {
-      return {
-        ok: false,
-        error: {
-          code: "invalid_payload",
-          message:
-            "Workflow runtime is experimental. Set SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1 to use run.start.workflow.",
-        },
-      };
-    }
     const selectedWorkflow = input.workflowName
       ? workflows.assets.find((asset) => asset.assetName === input.workflowName)
       : undefined;
@@ -4427,6 +4413,7 @@ export function createInProcessDelegateModelResolver(input: {
 export type InProcessDelegateWorkflowHooksForProfile = (
   profileId: string,
   getRun: () => ReturnType<typeof createRun> | undefined,
+  context?: { goal?: string; shouldWrite?: boolean },
 ) => WorkflowHook[] | undefined;
 
 /** @internal Exported for focused host regression tests. */
@@ -4441,12 +4428,14 @@ export function createInProcessDelegateHooksResolver(input: {
 }): InProcessDelegateWorkflowHooksForProfile {
   const { byProfile, inProcessProfileIds } =
     inProcessDelegateProfileIndex(input);
-  return (profileId, getRun) => {
+  return (profileId, getRun, _context) => {
     if (!inProcessProfileIds.has(profileId)) return undefined;
     const profile = byProfile.get(profileId);
-    if (!profile?.hooks?.length) return undefined;
-    return createConfiguredWorkflowHooks({
-      hooks: profile.hooks.map(capabilityWorkflowHookFromAgentProfileHook),
+    const workflowHooks = profile?.hooks?.map(
+      capabilityWorkflowHookFromAgentProfileHook,
+    );
+    const hooks = createConfiguredWorkflowHooks({
+      hooks: workflowHooks,
       workspaceRoot: input.workspaceRoot,
       sandbox: input.sandbox,
       http: input.http,
@@ -4454,6 +4443,7 @@ export function createInProcessDelegateHooksResolver(input: {
       configPaths: input.configPaths,
       getRun,
     });
+    return hooks.length > 0 ? hooks : undefined;
   };
 }
 
@@ -4784,11 +4774,13 @@ function configuredDelegateLedgerKey(
 function childWorkflowHookSpawnOptions(
   profileId: string,
   workflowHooksForProfile: InProcessDelegateWorkflowHooksForProfile | undefined,
+  context?: { goal?: string; shouldWrite?: boolean },
 ): { workflowHooks?: WorkflowHook[]; createRun?: typeof createRun } {
   const childRunRef: { current?: ReturnType<typeof createRun> } = {};
   const workflowHooks = workflowHooksForProfile?.(
     profileId,
     () => childRunRef.current,
+    context,
   );
   if (!workflowHooks?.length) return {};
   return {
@@ -4930,6 +4922,10 @@ export function createConfiguredDelegateTools(input: {
           ...childWorkflowHookSpawnOptions(
             profile.id,
             input.workflowHooksForProfile,
+            {
+              goal: args.goal,
+              shouldWrite: input.allowReadWriteWorkspaceAccess,
+            },
           ),
           interactionChannel: null,
           approvalResolver: input.approvalResolver,
@@ -5340,6 +5336,10 @@ export function createDelegateParallelTool(input: {
             ...childWorkflowHookSpawnOptions(
               spec.profile.id,
               input.workflowHooksForProfile,
+              {
+                goal: task.goal,
+                shouldWrite: input.allowReadWriteWorkspaceAccess,
+              },
             ),
             interactionChannel: null,
             approvalResolver: input.approvalResolver,

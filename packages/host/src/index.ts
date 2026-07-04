@@ -67,6 +67,12 @@ export type {
   CreateWorkflowProjectionHooksOptions,
   WorkflowProjectionHookSet,
 } from "./workflow-projection.js";
+export { createInvariantProjectionHooks } from "./invariant-projection.js";
+export type {
+  CreateInvariantProjectionHooksOptions,
+  InvariantBuiltinVerifierHandler,
+  InvariantProjectionHookSet,
+} from "./invariant-projection.js";
 export {
   TracedProcessRunner,
   inferProcessRuntime,
@@ -84,7 +90,7 @@ export type { CreateVerificationWorkflowHooksOptions } from "./verification.js";
 export {
   checkDocumentedCommands,
   createDocumentedCommandRulePack,
-  createDocumentedCommandStopHook,
+  createDocumentedCommandWorkflowHooks,
   DOCUMENTED_COMMAND_RULE_ACTION_SUMMARY,
   DOCUMENTED_COMMAND_RULE_CONFIGURATION_HINT,
   DOCUMENTED_COMMAND_RULE_DESCRIPTION,
@@ -94,12 +100,12 @@ export {
   DOCUMENTED_COMMAND_RULE_NAME,
   evaluateDocumentedCommandRule,
   shouldCheckDocumentedCommands,
-  summarizeDocumentedCommandIssues,
 } from "./documented-command-check.js";
 export type {
   DocumentedCommandIssue,
   DocumentedCommandRuleActivation,
   DocumentedCommandRulePack,
+  CreateDocumentedCommandWorkflowHooksOptions,
 } from "./documented-command-check.js";
 export {
   projectSkillRoot,

@@ -204,7 +204,7 @@ describe("workflow assets", () => {
     ]);
   });
 
-  it("keeps workflow run instantiation behind the experimental gate", async () => {
+  it("instantiates workflow runs without an experimental release gate", async () => {
     const workspace = await tempWorkspace();
     await writeWorkflow(
       workspace,
@@ -222,7 +222,6 @@ describe("workflow assets", () => {
     const runtime = new HostRuntime({
       workspaceRoot: workspace,
       defaultModel: "deterministic",
-      experimentalWorkflows: false,
       emit: () => {},
     });
 
@@ -231,12 +230,8 @@ describe("workflow assets", () => {
       workflow: "gated",
     });
 
-    expect(started).toMatchObject({
-      ok: false,
-      error: {
-        code: "invalid_payload",
-        message: expect.stringContaining("experimental"),
-      },
-    });
+    expect(started).toMatchObject({ ok: true });
+    if (!started.ok) throw new Error(started.error.message);
+    runtime.cancelRun(started.runId, "test cleanup");
   });
 });

@@ -1243,18 +1243,10 @@ describe("host protocol", () => {
           expect.objectContaining({
             name: "verification:fast:test",
             source: "verification",
-            lifecycle: "PostToolUse",
-            matcher: "toolName=write|edit_anchored_text|edit; status=completed",
-            action: "command: npm test; injectOutput=onFailure",
-            blockingPotential: false,
-            enabled: true,
-            active: true,
-          }),
-          expect.objectContaining({
-            name: "verification:stop-gate",
-            source: "verification",
             lifecycle: "Stop",
-            blockingPotential: true,
+            matcher: "run-level invariant after workspace writes",
+            action: "invariant verifier command: npm test",
+            blockingPotential: false,
             enabled: true,
             active: true,
           }),
@@ -1262,7 +1254,7 @@ describe("host protocol", () => {
             name: "documented-command-check",
             source: "builtin",
             lifecycle: "Stop",
-            blockingPotential: true,
+            blockingPotential: false,
             enabled: true,
             active: false,
             status: "available",
@@ -3556,12 +3548,7 @@ describe("host protocol", () => {
                 },
                 afterWrites: {
                   profile: "fast",
-                  frequency: "always",
                   injectOutput: "onFailure",
-                },
-                stopGate: {
-                  enabled: true,
-                  requireCleanAfterLastWrite: true,
                 },
               },
             },
@@ -3625,12 +3612,22 @@ describe("host protocol", () => {
         (event) => event.type === "workspace.write.completed",
       );
       expect(write).toBeTruthy();
-      const verification = events.find(
-        (event) =>
-          event.type === "workflow_hook.completed" &&
-          (event.payload as { hookName?: string }).hookName ===
-            "verification:fast:unit",
-      );
+      const verification = events.find((event) => {
+        if (event.type !== "workflow_hook.completed") return false;
+        const payload = event.payload as
+          | {
+              hookName?: string;
+              result?: { metadata?: Record<string, unknown> };
+            }
+          | undefined;
+        const metadata = payload?.result?.metadata;
+        return (
+          payload?.hookName === "workflow:verification_fast" &&
+          metadata?.verificationSource === "profile" &&
+          metadata?.profile === "fast" &&
+          metadata?.verifierId === "unit"
+        );
+      });
       expect(verification?.sequence).toBeGreaterThan(write?.sequence ?? 0);
       expect(verification?.payload).toMatchObject({
         result: {

@@ -392,6 +392,9 @@ function parseWorkflowVerifier(
     );
   }
   const args = optionalStringArray(raw.args);
+  const cwd = optionalString(raw.cwd);
+  const timeoutMs = nonNegativeInteger(raw.timeoutMs);
+  const maxOutputBytes = nonNegativeInteger(raw.maxOutputBytes);
   const expect = parseWorkflowVerifierExpectation(raw.expect, nodeId, index);
   return {
     id:
@@ -401,6 +404,9 @@ function parseWorkflowVerifier(
     kind: "command",
     command,
     ...(args ? { args } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
     ...(expect ? { expect } : {}),
     ...(workflowVerifierAuthorized(raw) ? { authorized: true } : {}),
     ...(optionalRecord(raw.metadata)

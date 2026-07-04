@@ -2186,6 +2186,66 @@ describe("host tools", () => {
     expect(resolver("external_child", () => undefined)).toBeUndefined();
   });
 
+  it("does not inject global verifier hooks into in-process delegate children", async () => {
+    const ctx = await createWorkspace({ "README.md": "# Demo\n" });
+    const delegates = [
+      { profileId: "in_process", toolName: "delegate_in_process" },
+      { profileId: "acp_child", toolName: "delegate_acp" },
+    ];
+    const derivedAgents = [
+      {
+        effectiveProfile: {
+          id: "in_process",
+          mode: "child" as const,
+          allowedTools: [],
+        },
+        inheritedPolicy: [],
+        effectivePolicy: [],
+        parentAgentDenyCount: 0,
+        parentRunDenyCount: 0,
+        childDenyCount: 0,
+        effectiveToolCount: 0,
+      },
+      {
+        effectiveProfile: {
+          id: "acp_child",
+          mode: "child" as const,
+          allowedTools: [],
+          metadata: {
+            acp: {
+              transport: "stdio",
+              command: "delegate-acp",
+            },
+          },
+        },
+        inheritedPolicy: [],
+        effectivePolicy: [],
+        parentAgentDenyCount: 0,
+        parentRunDenyCount: 0,
+        childDenyCount: 0,
+        effectiveToolCount: 0,
+      },
+    ];
+    const resolver = createInProcessDelegateHooksResolver({
+      delegates,
+      derivedAgents,
+      workspaceRoot: ctx.workspaceRoot,
+    });
+
+    const hooks = resolver("in_process", () => undefined, {
+      goal: "Prepare this repo for handoff and verify documented commands",
+      shouldWrite: true,
+    });
+
+    expect(hooks).toBeUndefined();
+    expect(
+      resolver("acp_child", () => undefined, {
+        goal: "Prepare this repo for handoff and verify documented commands",
+        shouldWrite: true,
+      }),
+    ).toBeUndefined();
+  });
+
   it("attributes cached delegate model failures to the requested profile", async () => {
     const ctx = await createWorkspace({ "README.md": "# Demo\n" });
     const parentModel: ModelAdapter = {

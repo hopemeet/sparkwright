@@ -19,7 +19,6 @@ import {
   DOCUMENTED_COMMAND_RULE_NAME,
   evaluateDocumentedCommandRule,
 } from "./documented-command-check.js";
-import { WORKSPACE_WRITE_TOOL_NAMES } from "./tool-selectors.js";
 
 const DEFAULT_VERIFICATION_PROFILE = "fast";
 
@@ -100,13 +99,14 @@ function describeVerificationWorkflowRules(
   if (mode === "off") return [];
 
   const profileName = verificationProfileName(verification);
+  const workflowName = verificationWorkflowRuleName(profileName);
   const commands = verification.profiles?.[profileName] ?? [];
   if (mode === "suggest") {
     return [
       {
-        name: "verification:suggest",
+        name: workflowName,
         source: "verification",
-        lifecycle: "RunStart",
+        lifecycle: "TurnStart",
         matcher: "all",
         action:
           commands.length > 0
@@ -127,12 +127,12 @@ function describeVerificationWorkflowRules(
   if (commands.length === 0) {
     return [
       {
-        name: "verification:stop-gate",
+        name: workflowName,
         source: "verification",
         lifecycle: "Stop",
         matcher: "all",
-        action: `block final answer because profile "${profileName}" has no commands`,
-        blockingPotential: true,
+        action: `fail verification invariant because profile "${profileName}" has no commands`,
+        blockingPotential: false,
         enabled: true,
         active: true,
         status: "active",
@@ -145,48 +145,22 @@ function describeVerificationWorkflowRules(
   }
 
   const commandRules = commands.map((command) =>
-    describeVerificationCommandRule(verification, profileName, command),
+    describeVerificationCommandRule(profileName, workflowName, command),
   );
-  const stopGateEnabled = verification.stopGate?.enabled ?? true;
-  const requireCleanAfterLastWrite =
-    verification.stopGate?.requireCleanAfterLastWrite ?? true;
-  return [
-    ...commandRules,
-    {
-      name: "verification:stop-gate",
-      source: "verification",
-      lifecycle: "Stop",
-      matcher: "workspace.write.completed events",
-      action: `block final answer until profile "${profileName}" passes after the latest workspace write`,
-      blockingPotential: true,
-      enabled: stopGateEnabled && requireCleanAfterLastWrite,
-      active: stopGateEnabled && requireCleanAfterLastWrite,
-      status:
-        stopGateEnabled && requireCleanAfterLastWrite ? "active" : "disabled",
-      description:
-        "Requires verification commands to pass after the latest workspace write.",
-      disableHint:
-        "Set capabilities.verification.stopGate.enabled=false or requireCleanAfterLastWrite=false.",
-      configurationHint: "Configure capabilities.verification.stopGate.",
-    },
-  ];
+  return commandRules;
 }
 
 function describeVerificationCommandRule(
-  verification: CapabilityVerificationConfig,
   profileName: string,
+  workflowName: string,
   command: CapabilityVerificationCommandConfig,
 ): CapabilityWorkflowRuleSummary {
-  const injectOutput = verification.afterWrites?.injectOutput ?? "onFailure";
   return {
-    name: verificationHookName(profileName, command.id),
+    name: `${workflowName}:${command.id}`,
     source: "verification",
-    lifecycle: "PostToolUse",
-    matcher: summarizeMatcher({
-      toolName: [...WORKSPACE_WRITE_TOOL_NAMES],
-      status: "completed",
-    }),
-    action: `command: ${formatCommand(command.command, command.args)}; injectOutput=${injectOutput}`,
+    lifecycle: "Stop",
+    matcher: "run-level invariant after workspace writes",
+    action: `invariant verifier command: ${formatCommand(command.command, command.args)}`,
     blockingPotential: false,
     enabled: true,
     active: true,
@@ -216,7 +190,7 @@ function describeDocumentedCommandWorkflowRule(
     lifecycle: "Stop",
     matcher: DOCUMENTED_COMMAND_RULE_MATCHER_SUMMARY,
     action: DOCUMENTED_COMMAND_RULE_ACTION_SUMMARY,
-    blockingPotential: true,
+    blockingPotential: false,
     enabled: activation.enabled,
     active: activation.active,
     status: activation.active
@@ -238,8 +212,8 @@ function verificationProfileName(config: CapabilityVerificationConfig): string {
   );
 }
 
-function verificationHookName(profileName: string, commandId: string): string {
-  return `verification:${profileName}:${commandId}`;
+function verificationWorkflowRuleName(profileName: string): string {
+  return `verification:${profileName.replace(/[^A-Za-z0-9_.:-]+/g, "_") || DEFAULT_VERIFICATION_PROFILE}`;
 }
 
 function summarizeMatcher(matcher: WorkflowHookMatcher | undefined): string {

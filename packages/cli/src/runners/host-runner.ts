@@ -18,11 +18,6 @@ import {
   tracePathForSession,
 } from "@sparkwright/host";
 import { createCliApprovalResolver } from "../cli-approval.js";
-import {
-  checkDocumentedCommands,
-  shouldCheckDocumentedCommands,
-  summarizeDocumentedCommandIssues,
-} from "../documented-command-check.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
@@ -31,6 +26,7 @@ import {
   completedRunHasCliIssues,
   createCliRunEventSummary,
   summarizeDeniedWorkspaceWrites,
+  summarizeDocumentedCommandFailures,
   summarizeRunFailure,
   summarizeSkillLoadFailures,
   summarizeTerminalRunFailure,
@@ -138,7 +134,6 @@ async function runHostLifecycle(
   let stopReason: string | undefined;
   let failedMessage: string | undefined;
   let terminalFailurePrinted = false;
-  let documentedCommandIssueCount = 0;
   const eventSummary = createCliRunEventSummary();
   const forwardHostLogs = shouldForwardHostLogs(env);
   const liveEvents = createLiveEventFormatter({ verbose: input.verbose });
@@ -370,23 +365,15 @@ async function runHostLifecycle(
 
   try {
     await terminal;
-    const documentedCommandIssues = shouldCheckDocumentedCommands({
-      goal: "goal" in input ? input.goal : undefined,
-      shouldWrite,
-    })
-      ? checkDocumentedCommands(workspaceRoot)
-      : [];
-    documentedCommandIssueCount = documentedCommandIssues.length;
-    const documentedCommandSummary = summarizeDocumentedCommandIssues(
-      documentedCommandIssues,
-    );
-    if (documentedCommandSummary)
-      writeLine(io.stderr, documentedCommandSummary);
     const skillLoadFailureSummary = summarizeSkillLoadFailures(eventSummary);
     if (skillLoadFailureSummary) writeLine(io.stderr, skillLoadFailureSummary);
     const verificationSummary =
       summarizeVerificationCommandFailures(eventSummary);
     if (verificationSummary) writeLine(io.stderr, verificationSummary);
+    const documentedCommandSummary =
+      summarizeDocumentedCommandFailures(eventSummary);
+    if (documentedCommandSummary)
+      writeLine(io.stderr, documentedCommandSummary);
     const unsupportedClaimSummary =
       summarizeUnsupportedFinalClaims(eventSummary);
     if (unsupportedClaimSummary) writeLine(io.stderr, unsupportedClaimSummary);
@@ -400,7 +387,7 @@ async function runHostLifecycle(
       events: eventSummary,
     });
     return {
-      exitCode: documentedCommandIssueCount > 0 ? 1 : exitCode,
+      exitCode,
       tracePath,
       sessionId,
       runState,
@@ -408,8 +395,7 @@ async function runHostLifecycle(
     };
   } finally {
     const displayState =
-      runState === "completed" &&
-      completedRunHasCliIssues(eventSummary, documentedCommandIssueCount)
+      runState === "completed" && completedRunHasCliIssues(eventSummary)
         ? "completed_with_issues"
         : (runState ?? "unknown");
     writeLine(

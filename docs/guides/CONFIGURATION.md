@@ -512,12 +512,7 @@ linters, typecheckers, or package dependencies.
       },
       "afterWrites": {
         "profile": "fast",
-        "frequency": "always",
         "injectOutput": "onFailure"
-      },
-      "stopGate": {
-        "enabled": true,
-        "requireCleanAfterLastWrite": true
       }
     }
   }
@@ -529,8 +524,16 @@ Modes:
 - `off`: disable verification hooks.
 - `suggest`: inject the configured profile as guidance, but let the model
   choose when to run commands. This is the default when `mode` is omitted.
-- `require`: run the selected profile after write-tool calls and block final
-  answers until every command has passed after the latest workspace write.
+- `require`: enforce the selected profile as a run-level invariant and fail
+  completed runs when a configured command has not passed after the latest
+  workspace write. Freshness is keyed by the run write epoch; commands are
+  skipped before the first workspace write and are not re-run while the current
+  epoch already has passing results.
+
+`afterWrites.injectOutput` controls whether failed require-mode verifier output
+is injected back into retry turns (`always`, `onFailure`, or `never`). The older
+`afterWrites.frequency` field was removed with the workflow-runtime P1.5/D25
+migration because verification is no longer a PostToolUse hook.
 
 Prefer project commands such as `npm run lint`, `uv run ruff check .`, or
 `cargo clippy` over bare global tools. That keeps verification aligned with CI

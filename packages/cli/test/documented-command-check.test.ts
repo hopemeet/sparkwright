@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   checkDocumentedCommands,
   shouldCheckDocumentedCommands,
-  summarizeDocumentedCommandIssues,
 } from "../src/documented-command-check.js";
 
 const tempDirs: string[] = [];
@@ -42,9 +41,6 @@ describe("documented command check", () => {
       message:
         "cargo --manifest-path points to missing file: rust-utils/Cargo.toml",
     });
-    expect(summarizeDocumentedCommandIssues(issues)).toContain(
-      "stale documented command",
-    );
   });
 
   it("passes cargo manifest paths that exist", () => {

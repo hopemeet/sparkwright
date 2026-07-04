@@ -35,6 +35,7 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
   definition: WorkflowDefinition;
   workflowRunId?: string;
   stopRuntimeErrorThreshold?: number;
+  builtinVerifiers?: Record<string, WorkflowBuiltinVerifierHandler>;
   /** @internal Test-only fault injection for D23 fail-closed gate assertions. */
   faultInjection?: Partial<Record<WorkflowHookName, string>>;
 }
@@ -43,6 +44,17 @@ export interface WorkflowProjectionHookSet {
   workflowRunId: string;
   hooks: WorkflowHook[];
 }
+
+export interface WorkflowBuiltinVerifierInput {
+  workflowRunId: string;
+  node: WorkflowNodeDefinition;
+  verifier: WorkflowCommandVerifierDefinition;
+  hookInput: WorkflowHookInput;
+}
+
+export type WorkflowBuiltinVerifierHandler = (
+  input: WorkflowBuiltinVerifierInput,
+) => WorkflowHookResult | void | Promise<WorkflowHookResult | void>;
 
 export function createWorkflowProjectionHooks(
   options: CreateWorkflowProjectionHooksOptions,
@@ -450,24 +462,18 @@ function verifierStopHooks(
 ): WorkflowHook[] {
   return input.definition.nodes.flatMap((node) =>
     (node.verify ?? []).map((verifier) => {
-      const [inner] = createConfiguredWorkflowHooks({
-        ...input,
-        hooks: [
-          {
-            name: input.familyName,
-            hook: "Stop",
-            action: {
-              type: "command",
-              command: verifier.command,
-              args: verifier.args ?? [],
-              injectOutput: "never",
-            },
-          } satisfies CapabilityWorkflowHookConfig,
-        ],
-      });
-      if (!inner) {
-        throw new Error(`Failed to compile verifier "${verifier.id}".`);
+      const builtinVerifier = stringValue(verifier.metadata?.builtinVerifier);
+      const builtinHandler = builtinVerifier
+        ? input.builtinVerifiers?.[builtinVerifier]
+        : undefined;
+      if (builtinVerifier && !builtinHandler) {
+        throw new Error(
+          `Workflow verifier "${verifier.id}" references unknown built-in verifier "${builtinVerifier}".`,
+        );
       }
+      const inner = builtinHandler
+        ? undefined
+        : commandVerifierWorkflowHook(input, verifier);
       return {
         name: input.familyName,
         id: "workflow-command-verifier",
@@ -488,7 +494,7 @@ function verifierStopHooks(
               };
             }
             const expect = verifier.expect ?? "zero";
-            const result = await inner.handle({
+            const verifierInput = {
               ...hookInput,
               metadata: {
                 ...hookInput.metadata,
@@ -497,7 +503,15 @@ function verifierStopHooks(
                 verifierId: verifier.id,
                 expect,
               },
-            });
+            };
+            const result = builtinHandler
+              ? await builtinHandler({
+                  workflowRunId: input.workflowRunId,
+                  node,
+                  verifier,
+                  hookInput: verifierInput,
+                })
+              : await inner!.handle(verifierInput);
             return withVerifierMetadata(result, {
               workflowRunId: input.workflowRunId,
               nodeId: node.id,
@@ -509,6 +523,38 @@ function verifierStopHooks(
       } satisfies WorkflowHook;
     }),
   );
+}
+
+function commandVerifierWorkflowHook(
+  input: CreateWorkflowProjectionHooksOptions & { familyName: string },
+  verifier: WorkflowCommandVerifierDefinition,
+): WorkflowHook {
+  const [inner] = createConfiguredWorkflowHooks({
+    ...input,
+    hooks: [
+      {
+        name: input.familyName,
+        hook: "Stop",
+        action: {
+          type: "command",
+          command: verifier.command,
+          args: verifier.args ?? [],
+          ...(verifier.cwd ? { cwd: verifier.cwd } : {}),
+          ...(verifier.timeoutMs !== undefined
+            ? { timeoutMs: verifier.timeoutMs }
+            : {}),
+          ...(verifier.maxOutputBytes !== undefined
+            ? { maxOutputBytes: verifier.maxOutputBytes }
+            : {}),
+          injectOutput: "never",
+        },
+      } satisfies CapabilityWorkflowHookConfig,
+    ],
+  });
+  if (!inner) {
+    throw new Error(`Failed to compile verifier "${verifier.id}".`);
+  }
+  return inner;
 }
 
 function withVerifierMetadata(
@@ -524,6 +570,9 @@ function withVerifierMetadata(
   const metadata = isRecord(base.metadata) ? base.metadata : {};
   const exitCode = numberOrNullValue(metadata.exitCode);
   const timedOut = metadata.timedOut === true;
+  const verifierMetadata = isRecord(input.verifier.metadata)
+    ? input.verifier.metadata
+    : {};
   const satisfied = commandExpectationSatisfied(input.expect, {
     exitCode,
     timedOut,
@@ -531,6 +580,7 @@ function withVerifierMetadata(
   return {
     ...base,
     metadata: {
+      ...verifierMetadata,
       ...metadata,
       workflowRunId: input.workflowRunId,
       nodeId: input.nodeId,
