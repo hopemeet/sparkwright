@@ -300,14 +300,6 @@ export async function runCli(
     );
     return { exitCode: 1 };
   }
-  if (parsed.value.workflowName && !workflowRuntimeEnabled(env)) {
-    writeLine(
-      io.stderr,
-      "--workflow is experimental. Set SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1 to use it.",
-    );
-    return { exitCode: 1 };
-  }
-
   const { command } = parsed.value;
 
   if (command === "trace") {
@@ -455,12 +447,6 @@ export async function scaffoldFirstRunUserConfigIfMissing(input: {
 
 function directCoreEnabled(env: Record<string, string | undefined>): boolean {
   return env.SPARKWRIGHT_ENABLE_DIRECT_CORE === "1";
-}
-
-function workflowRuntimeEnabled(
-  env: Record<string, string | undefined>,
-): boolean {
-  return env.SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS === "1";
 }
 
 function loadCliRunInput(
@@ -5143,7 +5129,6 @@ const CONFIG_EXAMPLES: Record<string, unknown> = {
             { id: "test", kind: "test", command: "npm", args: ["test"] },
           ],
         },
-        stopGate: { enabled: true, requireCleanAfterLastWrite: true },
       },
     },
   },
@@ -7244,13 +7229,11 @@ async function scaffoldProjectConfig(
   return { exitCode: 0 };
 }
 
-function runUsage(env: Record<string, string | undefined>): string {
-  const workflowFlag = workflowRuntimeEnabled(env) ? " [--workflow name]" : "";
-  return `Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]${workflowFlag}`;
+function runUsage(_env: Record<string, string | undefined>): string {
+  return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--workflow name]';
 }
 
-function usage(env: Record<string, string | undefined>): string {
-  const workflowFlag = workflowRuntimeEnabled(env) ? " [--workflow name]" : "";
+function usage(_env: Record<string, string | undefined>): string {
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
@@ -7274,7 +7257,7 @@ function usage(env: Record<string, string | undefined>): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    `       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]${workflowFlag} [--verbose]`,
+    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--workflow name] [--verbose]',
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",

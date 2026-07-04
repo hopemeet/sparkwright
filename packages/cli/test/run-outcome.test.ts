@@ -4,6 +4,7 @@ import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
   createCliRunEventSummary,
+  summarizeDocumentedCommandFailures,
   summarizeSkillLoadFailures,
   summarizeUnsupportedFinalClaims,
   summarizeVerificationCommandFailures,
@@ -237,6 +238,92 @@ describe("CLI run outcome", () => {
     expect(summarizeVerificationProfileResults(summary)).toBe(
       "Verification: 1 passed (lint); 1 failed (typecheck exitCode=2).",
     );
+    expect(completedRunHasCliIssues(summary)).toBe(true);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      1,
+    );
+  });
+
+  it("summarizes verification profile results from terminal FactLedger snapshots", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 0,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:typecheck",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 0,
+              hookName: "workflow:verification_fast",
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "typecheck",
+              expect: "zero",
+              satisfied: false,
+              exitCode: 2,
+              timedOut: false,
+            },
+          ],
+          writes: [],
+          budgetExceeded: [],
+        },
+      }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    expect(summarizeVerificationProfileResults(summary)).toBe(
+      "Verification: 1 failed (typecheck exitCode=2).",
+    );
+    expect(completedRunHasCliIssues(summary)).toBe(true);
+    expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
+      1,
+    );
+  });
+
+  it("summarizes documented-command failures from completed outcomes", () => {
+    const summary = createCliRunEventSummary();
+    const log = new EventLog(createRunId());
+    for (const event of [
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 1,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:documented-command-check",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 1,
+              hookName: "workflow:documented_command",
+              verificationSource: "documented_command",
+              verifierId: "documented-command-check",
+              expect: "zero",
+              satisfied: false,
+              exitCode: 1,
+              timedOut: false,
+            },
+          ],
+          writes: [{ id: "write:1", sequence: 1, writeEpoch: 1 }],
+          budgetExceeded: [],
+        },
+      }),
+    ]) {
+      updateCliRunEventSummary(summary, event);
+    }
+
+    expect(summarizeDocumentedCommandFailures(summary)).toBe(
+      "Run completed with documented-command verification failures; exiting 1 (1 failed check, last exitCode=1). Last failed check: documented-command-check.",
+    );
+    expect(summarizeVerificationProfileResults(summary)).toBeUndefined();
     expect(completedRunHasCliIssues(summary)).toBe(true);
     expect(cliExitCodeForRun({ runState: "completed", events: summary })).toBe(
       1,

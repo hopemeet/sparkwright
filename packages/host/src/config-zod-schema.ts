@@ -619,21 +619,11 @@ export const VERIFICATION_COMMAND_CONFIG_KEYS =
 export const verificationAfterWritesSchema = z
   .object({
     profile: nonEmptyString.optional(),
-    frequency: workflowHookFrequencySchema.optional(),
     injectOutput: workflowHookOutputInjectionSchema.optional(),
   })
   .strict();
 export const VERIFICATION_AFTER_WRITES_CONFIG_KEYS =
   verificationAfterWritesSchema.keyof().options;
-
-export const verificationStopGateSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    requireCleanAfterLastWrite: z.boolean().optional(),
-  })
-  .strict();
-export const VERIFICATION_STOP_GATE_CONFIG_KEYS =
-  verificationStopGateSchema.keyof().options;
 
 export const verificationSchema = z
   .object({
@@ -643,7 +633,6 @@ export const verificationSchema = z
       .record(z.string(), z.array(verificationCommandSchema))
       .optional(),
     afterWrites: verificationAfterWritesSchema.optional(),
-    stopGate: verificationStopGateSchema.optional(),
   })
   .strict()
   .describe(
@@ -1145,9 +1134,6 @@ export type CapabilityVerificationCommandConfig = z.output<
 >;
 export type CapabilityVerificationAfterWritesConfig = NonNullable<
   z.output<typeof verificationSchema>["afterWrites"]
->;
-export type CapabilityVerificationStopGateConfig = NonNullable<
-  z.output<typeof verificationSchema>["stopGate"]
 >;
 export type CapabilityVerificationConfig = z.output<typeof verificationSchema>;
 export type CapabilitySkillsConfig = z.output<typeof skillsSchema>;

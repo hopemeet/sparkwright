@@ -2,6 +2,7 @@ import {
   EventLog,
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
+  analyzeVerificationProfileResults,
   commandOutcomeSnapshot,
   completedRunOutcomeFromEvents,
   createRunId,
@@ -914,6 +915,329 @@ describe("run outcome evidence", () => {
         lastExitCode: 2,
       },
     });
+  });
+
+  it("reads verification profile failures from terminal FactLedger snapshots", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow_hook.completed", {
+        hookName: "workflow:verification_fast",
+        result: {
+          status: "continue",
+          metadata: {
+            verificationSource: "profile",
+            profile: "fast",
+            verifierId: "typecheck",
+            expect: "zero",
+            exitCode: 2,
+            timedOut: false,
+          },
+        },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 0,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:typecheck",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 0,
+              hookName: "workflow:verification_fast",
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "typecheck",
+              expect: "zero",
+              satisfied: false,
+              exitCode: 2,
+              timedOut: false,
+            },
+          ],
+          writes: [],
+          budgetExceeded: [],
+        },
+      }),
+    ];
+
+    expect(analyzeVerificationProfileResults(events)).toEqual([
+      {
+        hookName: "workflow:verification_fast",
+        profile: "fast",
+        id: "typecheck",
+        status: "failed",
+        exitCode: 2,
+        timedOut: false,
+      },
+    ]);
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_verification_failures",
+      failing: true,
+      verificationProfileFailures: {
+        count: 1,
+        lastId: "typecheck",
+        lastExitCode: 2,
+      },
+    });
+  });
+
+  it("treats stale satisfied verification profile facts as failures", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 1,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:lint",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 0,
+              hookName: "workflow:verification_fast",
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "lint",
+              expect: "zero",
+              satisfied: true,
+              exitCode: 0,
+              timedOut: false,
+              stale: true,
+            },
+          ],
+          writes: [{ id: "write:2", sequence: 2, writeEpoch: 1 }],
+          budgetExceeded: [],
+        },
+      }),
+    ];
+
+    expect(analyzeVerificationProfileResults(events)).toEqual([
+      {
+        hookName: "workflow:verification_fast",
+        profile: "fast",
+        id: "lint",
+        status: "failed",
+        exitCode: 0,
+        timedOut: false,
+      },
+    ]);
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_verification_failures",
+      failing: true,
+      verificationProfileFailures: {
+        count: 1,
+        lastId: "lint",
+        lastExitCode: 0,
+      },
+    });
+  });
+
+  it("keeps profile verifier ids distinct under one invariant hook name", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 1,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:typecheck",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 1,
+              hookName: "workflow:verification_fast",
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "typecheck",
+              expect: "zero",
+              satisfied: false,
+              exitCode: 2,
+              timedOut: false,
+            },
+            {
+              id: "verify:2:lint",
+              commandFactId: "cmd:2",
+              sequence: 2,
+              writeEpoch: 1,
+              hookName: "workflow:verification_fast",
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "lint",
+              expect: "zero",
+              satisfied: true,
+              exitCode: 0,
+              timedOut: false,
+            },
+          ],
+          writes: [{ id: "write:1", sequence: 1, writeEpoch: 1 }],
+          budgetExceeded: [],
+        },
+      }),
+    ];
+
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_verification_failures",
+      failing: true,
+      verificationProfileFailures: {
+        count: 1,
+        lastId: "typecheck",
+        lastExitCode: 2,
+      },
+    });
+  });
+
+  it("does not double count built-in invariant workflow failures", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow.failed", {
+        workflowRunId: "verification_fast",
+        projectionKind: "invariant",
+        verificationSource: "profile",
+        reason: "verification failed",
+        failure: {
+          code: "VERIFICATION_PROFILE_FAILED",
+          message: "Verification failed.",
+        },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 1,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:lint",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 1,
+              hookName: "workflow:verification_fast",
+              verificationSource: "profile",
+              profile: "fast",
+              verifierId: "lint",
+              expect: "zero",
+              satisfied: false,
+              exitCode: 1,
+              timedOut: false,
+            },
+          ],
+          writes: [{ id: "write:1", sequence: 1, writeEpoch: 1 }],
+          budgetExceeded: [],
+        },
+      }),
+    ];
+
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_verification_failures",
+      failing: true,
+      verificationProfileFailures: {
+        count: 1,
+        lastId: "lint",
+        lastExitCode: 1,
+      },
+    });
+    expect(
+      completedRunOutcomeFromEvents(events)?.workflowFailure,
+    ).toBeUndefined();
+  });
+
+  it("classifies documented-command invariant failures", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow.failed", {
+        workflowRunId: "documented_command",
+        projectionKind: "invariant",
+        verificationSource: "documented_command",
+        reason: "documented command failed",
+        failure: {
+          code: "DOCUMENTED_COMMAND_FAILED",
+          message: "Documented-command failed.",
+        },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 1,
+          commands: [],
+          verificationResults: [
+            {
+              id: "verify:1:documented-command-check",
+              commandFactId: "cmd:1",
+              sequence: 1,
+              writeEpoch: 1,
+              hookName: "workflow:documented_command",
+              verificationSource: "documented_command",
+              verifierId: "documented-command-check",
+              expect: "zero",
+              satisfied: false,
+              exitCode: 1,
+              timedOut: false,
+            },
+          ],
+          writes: [{ id: "write:1", sequence: 1, writeEpoch: 1 }],
+          budgetExceeded: [],
+        },
+      }),
+    ];
+
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_verification_failures",
+      failing: true,
+      documentedCommandFailures: {
+        count: 1,
+        lastId: "documented-command-check",
+        lastExitCode: 1,
+      },
+    });
+    expect(
+      completedRunOutcomeFromEvents(events)?.workflowFailure,
+    ).toBeUndefined();
+  });
+
+  it("classifies documented-command invariant workflow failures without a ledger", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow.failed", {
+        workflowRunId: "documented_command",
+        projectionKind: "invariant",
+        verificationSource: "documented_command",
+        reason: "documented command failed",
+        failures: [
+          {
+            verifierId: "documented-command-check",
+            exitCode: 1,
+            timedOut: false,
+          },
+        ],
+        failure: {
+          code: "DOCUMENTED_COMMAND_FAILED",
+          message: "Documented-command failed.",
+        },
+      }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+      }),
+    ];
+
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_verification_failures",
+      failing: true,
+      documentedCommandFailures: {
+        count: 1,
+        lastId: "documented-command-check",
+        lastExitCode: 1,
+      },
+    });
+    expect(
+      completedRunOutcomeFromEvents(events)?.workflowFailure,
+    ).toBeUndefined();
   });
 
   it("includes workflow failures in the run outcome", () => {

@@ -51,6 +51,9 @@ export interface WorkflowCommandVerifierDefinition {
   kind: "command";
   command: string;
   args?: string[];
+  cwd?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
   expect?: WorkflowVerifierExpectation;
   /**
    * P1 trust declaration: verifier commands run inside a non-interactive hook

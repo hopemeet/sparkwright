@@ -9,7 +9,10 @@ import {
   parseVerificationHookName,
   stripLeadingEnvAssignments,
 } from "./fact-classifier.js";
-import type { FactLedgerSnapshot } from "./fact-ledger.js";
+import {
+  factLedgerSnapshotFromUnknown,
+  type FactLedgerSnapshot,
+} from "./fact-ledger.js";
 import { isRecord } from "./record-utils.js";
 
 export type ToolFailureCategory =
@@ -107,6 +110,12 @@ export interface CompletedRunOutcome {
   };
   /** @reserved Public outcome field consumed by trace/diagnostics readers of the serialized run.completed.outcome, not by an in-process TS reader. */
   verificationProfileFailures?: {
+    count: number;
+    lastId?: string;
+    lastExitCode?: number | null;
+  };
+  /** @reserved Public outcome field consumed by diagnostics for built-in documented-command invariants. */
+  documentedCommandFailures?: {
     count: number;
     lastId?: string;
     lastExitCode?: number | null;
@@ -500,8 +509,25 @@ export function analyzeCommandOutcomesFromFactLedger(
 export function analyzeVerificationProfileResults(
   events: readonly SparkwrightEvent[],
 ): VerificationProfileResult[] {
+  const ledgerResults = verificationProfileResultsFromEventLedgers(events);
+  if (ledgerResults) return ledgerResults;
+  return analyzeVerificationProfileResultsFromLegacyEvents(events);
+}
+
+function analyzeDocumentedCommandResults(
+  events: readonly SparkwrightEvent[],
+): VerificationProfileResult[] {
+  const ledgerResults = documentedCommandResultsFromEventLedgers(events);
+  if (ledgerResults) return ledgerResults;
+  return analyzeDocumentedCommandResultsFromLegacyEvents(events);
+}
+
+function analyzeVerificationProfileResultsFromLegacyEvents(
+  events: readonly SparkwrightEvent[],
+): VerificationProfileResult[] {
   const latest = new Map<string, VerificationProfileResult>();
   for (const event of events) {
+    collectInvariantWorkflowFailureResult(event, "profile", latest);
     if (event.type !== "workflow_hook.completed" || !isRecord(event.payload)) {
       continue;
     }
@@ -525,6 +551,119 @@ export function analyzeVerificationProfileResults(
     });
   }
   return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function verificationProfileResultsFromEventLedgers(
+  events: readonly SparkwrightEvent[],
+): VerificationProfileResult[] | undefined {
+  const latest = new Map<string, VerificationProfileResult>();
+  let sawLedger = false;
+  for (const event of events) {
+    const snapshot = factLedgerSnapshotFromRunCompleted(event);
+    if (!snapshot) continue;
+    sawLedger = true;
+    for (const result of verificationProfileResultsFromFactLedger(snapshot)) {
+      latest.set(verificationResultKey(result), result);
+    }
+  }
+  return sawLedger
+    ? [...latest.values()].sort((a, b) => a.id.localeCompare(b.id))
+    : undefined;
+}
+
+function documentedCommandResultsFromEventLedgers(
+  events: readonly SparkwrightEvent[],
+): VerificationProfileResult[] | undefined {
+  const latest = new Map<string, VerificationProfileResult>();
+  let sawLedger = false;
+  for (const event of events) {
+    const snapshot = factLedgerSnapshotFromRunCompleted(event);
+    if (!snapshot) continue;
+    sawLedger = true;
+    for (const result of documentedCommandResultsFromFactLedger(snapshot)) {
+      latest.set(verificationResultKey(result), result);
+    }
+  }
+  return sawLedger
+    ? [...latest.values()].sort((a, b) => a.id.localeCompare(b.id))
+    : undefined;
+}
+
+function analyzeDocumentedCommandResultsFromLegacyEvents(
+  events: readonly SparkwrightEvent[],
+): VerificationProfileResult[] {
+  const latest = new Map<string, VerificationProfileResult>();
+  for (const event of events) {
+    collectInvariantWorkflowFailureResult(event, "documented_command", latest);
+    if (event.type !== "workflow_hook.completed" || !isRecord(event.payload)) {
+      continue;
+    }
+    const hookName = stringValue(event.payload.hookName);
+    if (!hookName) continue;
+    const result = isRecord(event.payload.result)
+      ? event.payload.result
+      : undefined;
+    const metadata = isRecord(result?.metadata) ? result.metadata : undefined;
+    if (metadata?.verificationSource !== "documented_command") continue;
+    const id =
+      stringValue(metadata.verifierId) ??
+      stringValue(metadata.ruleName) ??
+      hookName;
+    const timedOut = booleanValue(metadata.timedOut) ?? false;
+    const exitCode = numberOrNullValue(metadata.exitCode);
+    const item: VerificationProfileResult = {
+      hookName,
+      id,
+      status: exitCode === 0 && !timedOut ? "passed" : "failed",
+      exitCode,
+      timedOut,
+    };
+    latest.set(verificationResultKey(item), item);
+  }
+  return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function collectInvariantWorkflowFailureResult(
+  event: SparkwrightEvent,
+  source: "profile" | "documented_command",
+  latest: Map<string, VerificationProfileResult>,
+): void {
+  if (event.type !== "workflow.failed" || !isRecord(event.payload)) return;
+  if (
+    event.payload.projectionKind !== "invariant" ||
+    event.payload.verificationSource !== source
+  ) {
+    return;
+  }
+  const workflowRunId = stringValue(event.payload.workflowRunId);
+  const hookName =
+    (workflowRunId ? `workflow:${workflowRunId}` : undefined) ??
+    stringValue(event.payload.assetName) ??
+    (source === "documented_command"
+      ? "workflow:documented_command"
+      : "workflow:verification");
+  const failures = Array.isArray(event.payload.failures)
+    ? event.payload.failures
+    : [{}];
+  for (const failure of failures) {
+    const failureRecord = isRecord(failure) ? failure : {};
+    const id =
+      stringValue(failureRecord.verifierId) ??
+      (source === "documented_command"
+        ? "documented-command-check"
+        : "verification");
+    const item: VerificationProfileResult = {
+      hookName,
+      ...(source === "profile" && stringValue(event.payload.profile)
+        ? { profile: stringValue(event.payload.profile) }
+        : {}),
+      id,
+      status: "failed",
+      exitCode: numberOrNullValue(failureRecord.exitCode),
+      timedOut: booleanValue(failureRecord.timedOut) ?? false,
+    };
+    latest.set(verificationResultKey(item), item);
+  }
 }
 
 export interface CommandOutcomeSnapshot {
@@ -679,24 +818,32 @@ export function completedRunOutcomeFromEvents(
   options: { factLedger?: FactLedgerSnapshot } = {},
 ): CompletedRunOutcome | undefined {
   const toolSummary = analyzeToolOutcomes(events);
-  const commandSummary = options.factLedger
-    ? analyzeCommandOutcomesFromFactLedger(options.factLedger)
+  const factLedger =
+    options.factLedger ?? latestFactLedgerSnapshotFromEvents(events);
+  const commandSummary = factLedger
+    ? analyzeCommandOutcomesFromFactLedger(factLedger)
     : analyzeCommandOutcomes(events);
   const unsupportedFinalClaims = analyzeUnsupportedFinalAnswerClaims(
     finalMessage,
     commandSummary,
   );
   const profileFailures = (
-    options.factLedger
-      ? verificationProfileResultsFromFactLedger(options.factLedger)
+    factLedger
+      ? verificationProfileResultsFromFactLedger(factLedger)
       : analyzeVerificationProfileResults(events)
+  ).filter((result) => result.status === "failed");
+  const documentedCommandFailures = (
+    factLedger
+      ? documentedCommandResultsFromFactLedger(factLedger)
+      : analyzeDocumentedCommandResults(events)
   ).filter((result) => result.status === "failed");
   const workflowFailures = analyzeWorkflowFailures(events);
   // Command-verification and profile-verification are a single "verification"
   // issue category for outcome-kind purposes.
   const hasVerificationFailures =
     commandSummary.unresolvedVerificationFailures.length > 0 ||
-    profileFailures.length > 0;
+    profileFailures.length > 0 ||
+    documentedCommandFailures.length > 0;
   const issueKinds = [
     toolSummary.unresolvedFailures.length > 0 ||
       toolSummary.recoveredFailures.length > 0,
@@ -721,6 +868,7 @@ export function completedRunOutcomeFromEvents(
   const lastCommandFailure =
     commandSummary.unresolvedVerificationFailures.at(-1);
   const lastProfileFailure = profileFailures.at(-1);
+  const lastDocumentedCommandFailure = documentedCommandFailures.at(-1);
   const lastWorkflowFailure = workflowFailures.at(-1);
   return {
     kind: completedRunOutcomeKind({
@@ -771,6 +919,19 @@ export function completedRunOutcomeFromEvents(
           },
         }
       : {}),
+    ...(documentedCommandFailures.length > 0
+      ? {
+          documentedCommandFailures: {
+            count: documentedCommandFailures.length,
+            ...(lastDocumentedCommandFailure?.id
+              ? { lastId: lastDocumentedCommandFailure.id }
+              : {}),
+            ...(lastDocumentedCommandFailure
+              ? { lastExitCode: lastDocumentedCommandFailure.exitCode }
+              : {}),
+          },
+        }
+      : {}),
     ...(unsupportedFinalClaims.length > 0
       ? {
           unsupportedFinalClaims: {
@@ -798,19 +959,70 @@ export function completedRunOutcomeFromEvents(
 export function verificationProfileResultsFromFactLedger(
   snapshot: FactLedgerSnapshot,
 ): VerificationProfileResult[] {
+  return verificationResultsFromFactLedger(snapshot, "profile");
+}
+
+function documentedCommandResultsFromFactLedger(
+  snapshot: FactLedgerSnapshot,
+): VerificationProfileResult[] {
+  return verificationResultsFromFactLedger(snapshot, "documented_command");
+}
+
+function verificationResultsFromFactLedger(
+  snapshot: FactLedgerSnapshot,
+  source: "profile" | "documented_command",
+): VerificationProfileResult[] {
   const latest = new Map<string, VerificationProfileResult>();
   for (const result of snapshot.verificationResults) {
-    if (!result.hookName?.startsWith("verification:")) continue;
-    latest.set(result.hookName, {
-      hookName: result.hookName,
-      ...(result.profile ? { profile: result.profile } : {}),
-      id: result.verifierId,
-      status: result.satisfied ? "passed" : "failed",
+    const parsed = parseVerificationHookName(result.hookName);
+    if (source === "profile") {
+      if (result.verificationSource !== "profile" && !parsed) continue;
+    } else if (result.verificationSource !== source) {
+      continue;
+    }
+    const hookName = result.hookName ?? result.id;
+    const id =
+      result.verifierId ??
+      parsed?.id ??
+      (source === "documented_command"
+        ? "documented-command-check"
+        : result.id);
+    const item: VerificationProfileResult = {
+      hookName,
+      ...(source === "profile" && (result.profile ?? parsed?.profile)
+        ? { profile: result.profile ?? parsed?.profile }
+        : {}),
+      id,
+      status: result.satisfied && result.stale !== true ? "passed" : "failed",
       exitCode: result.exitCode,
       timedOut: result.timedOut,
-    });
+    };
+    latest.set(verificationResultKey(item), item);
   }
   return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function verificationResultKey(result: VerificationProfileResult): string {
+  return `${result.hookName}:${result.id}`;
+}
+
+function latestFactLedgerSnapshotFromEvents(
+  events: readonly SparkwrightEvent[],
+): FactLedgerSnapshot | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const snapshot = factLedgerSnapshotFromRunCompleted(events[index]!);
+    if (snapshot) return snapshot;
+  }
+  return undefined;
+}
+
+function factLedgerSnapshotFromRunCompleted(
+  event: SparkwrightEvent,
+): FactLedgerSnapshot | undefined {
+  if (event.type !== "run.completed" || !isRecord(event.payload)) {
+    return undefined;
+  }
+  return factLedgerSnapshotFromUnknown(event.payload.factLedger);
 }
 
 function completedRunOutcomeKind(input: {
@@ -835,6 +1047,9 @@ function analyzeWorkflowFailures(
 ): Array<{ reason?: string; code?: string }> {
   return events.flatMap((event) => {
     if (event.type !== "workflow.failed" || !isRecord(event.payload)) {
+      return [];
+    }
+    if (event.payload.projectionKind === "invariant") {
       return [];
     }
     const failure = isRecord(event.payload.failure)

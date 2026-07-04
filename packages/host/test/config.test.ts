@@ -1305,12 +1305,7 @@ describe("loadHostConfig", () => {
             },
             afterWrites: {
               profile: "fast",
-              frequency: "always",
               injectOutput: "onFailure",
-            },
-            stopGate: {
-              enabled: true,
-              requireCleanAfterLastWrite: true,
             },
           },
         },
@@ -1340,12 +1335,7 @@ describe("loadHostConfig", () => {
         },
         afterWrites: {
           profile: "fast",
-          frequency: "always",
           injectOutput: "onFailure",
-        },
-        stopGate: {
-          enabled: true,
-          requireCleanAfterLastWrite: true,
         },
       });
     } finally {
@@ -1385,6 +1375,39 @@ describe("loadHostConfig", () => {
           (e) =>
             e.field === "capabilities.verification.afterWrites.profile" &&
             e.message.includes("also-missing"),
+        ),
+      ).toBe(true);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects removed verification afterWrites frequency", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          verification: {
+            mode: "require",
+            defaultProfile: "fast",
+            profiles: {
+              fast: [{ id: "lint", command: "npm", args: ["run", "lint"] }],
+            },
+            afterWrites: {
+              profile: "fast",
+              frequency: "always",
+            },
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+      expect(
+        loaded.errors.some(
+          (e) =>
+            e.field === "capabilities.verification.afterWrites.frequency" &&
+            e.message.includes("unknown field"),
         ),
       ).toBe(true);
     } finally {

@@ -98,9 +98,9 @@
       {
         "name": "verification:fast:test",
         "source": "verification",
-        "lifecycle": "PostToolUse",
-        "matcher": "toolName=write|edit_anchored_text|edit; status=completed",
-        "action": "command: npm test; injectOutput=onFailure",
+        "lifecycle": "Stop",
+        "matcher": "run-level invariant after workspace writes",
+        "action": "invariant verifier command: npm test",
         "blockingPotential": false,
         "enabled": true,
         "active": true,
@@ -111,8 +111,8 @@
         "source": "builtin",
         "lifecycle": "Stop",
         "matcher": "write-enabled goals about verification, tests, handoff, release, docs, or documented commands",
-        "action": "block final answer when README documented commands reference missing workspace paths",
-        "blockingPotential": true,
+        "action": "fail completed run when README documented commands reference missing workspace paths",
+        "blockingPotential": false,
         "enabled": true,
         "active": false,
         "status": "available"

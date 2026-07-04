@@ -22,8 +22,8 @@ major; breaking changes bump the major.
 - Add optional `model` to capability delegate summaries so clients can inspect
   profile-preferred delegate models.
 - Add optional `rules.workflow` to capability snapshots so clients can inspect
-  configured workflow hooks, verification-generated hooks, and built-in
-  workflow rule availability without changing run behavior.
+  configured workflow hooks, verification invariants, and built-in workflow
+  rule availability without changing run behavior.
 - Add optional `rules.events` to capability snapshots so clients can inspect
   configured non-blocking event hook subscribers. Workflow rule lifecycles are
   reported with canonical hook names.

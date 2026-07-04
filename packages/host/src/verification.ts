@@ -1,19 +1,32 @@
-import { createContextItemId, type WorkflowHook } from "@sparkwright/core";
+import type { WorkflowCommandVerifierDefinition } from "@sparkwright/agent-runtime";
+import {
+  createContextItemId,
+  type WorkflowHook,
+  type WorkflowHookResult,
+} from "@sparkwright/core";
 import type {
   CapabilityVerificationCommandConfig,
   CapabilityVerificationConfig,
 } from "./config.js";
 import {
-  createConfiguredWorkflowHooks,
-  type CreateConfiguredWorkflowHooksOptions,
-} from "./workflow-hooks.js";
+  createInvariantProjectionHooks,
+  type CreateInvariantProjectionHooksOptions,
+  type InvariantBuiltinVerifierInput,
+} from "./invariant-projection.js";
 
 const DEFAULT_PROFILE = "fast";
-const DEFAULT_WRITE_TOOLS = ["write", "edit_anchored_text", "edit"];
+const MISSING_PROFILE_BUILTIN_VERIFIER = "verification-profile-missing";
 
 export interface CreateVerificationWorkflowHooksOptions extends Omit<
-  CreateConfiguredWorkflowHooksOptions,
-  "hooks"
+  CreateInvariantProjectionHooksOptions,
+  | "assetName"
+  | "contentHash"
+  | "verificationSource"
+  | "profile"
+  | "verifiers"
+  | "guidance"
+  | "injectOutput"
+  | "builtinVerifiers"
 > {
   verification?: CapabilityVerificationConfig;
 }
@@ -27,151 +40,135 @@ export function createVerificationWorkflowHooks(
 
   const profileName = verificationProfileName(config);
   const commands = config.profiles?.[profileName] ?? [];
+  const renderedCommands = renderedVerificationCommands(commands);
+  const guidance = verificationGuidance(profileName, renderedCommands);
   if (mode === "suggest") {
-    return [createVerificationSuggestionHook(profileName, commands)];
-  }
-  if (commands.length === 0) {
-    return [createMissingProfileStopGate(profileName)];
-  }
-
-  const commandHooks = createConfiguredWorkflowHooks({
-    ...options,
-    hooks: commands.map((command) => ({
-      name: verificationHookName(profileName, command.id),
-      description: `Run ${command.id} verification after workspace writes.`,
-      hook: "PostToolUse",
-      frequency: config.afterWrites?.frequency,
-      matcher: {
-        toolName: DEFAULT_WRITE_TOOLS,
-        status: "completed",
-      },
-      action: {
-        type: "command",
-        command: command.command,
-        args: command.args,
-        cwd: command.cwd,
-        timeoutMs: command.timeoutMs,
-        maxOutputBytes: command.maxOutputBytes,
-        blockOnFailure: false,
-        injectOutput: config.afterWrites?.injectOutput ?? "onFailure",
-      },
-    })),
-  });
-
-  const stopGateEnabled = config.stopGate?.enabled ?? true;
-  const requireCleanAfterLastWrite =
-    config.stopGate?.requireCleanAfterLastWrite ?? true;
-  return [
-    ...commandHooks,
-    ...(stopGateEnabled && requireCleanAfterLastWrite
-      ? [createVerificationStopGate(profileName, commands)]
-      : []),
-  ];
-}
-
-function createVerificationSuggestionHook(
-  profileName: string,
-  commands: readonly CapabilityVerificationCommandConfig[],
-): WorkflowHook {
-  return {
-    name: "verification:suggest",
-    hook: "RunStart",
-    handle() {
-      const renderedCommands = commands
-        .map((command) =>
-          [command.command, ...(command.args ?? [])].join(" ").trim(),
-        )
-        .filter(Boolean);
-      return {
-        status: "continue",
-        context: [
-          {
-            id: createContextItemId(),
-            type: "system",
-            source: {
-              kind: "extension",
-              uri: "verification:suggest",
-            },
-            content:
-              renderedCommands.length > 0
-                ? `Project verification profile "${profileName}" is available. Run relevant verification commands before final answers after code writes: ${renderedCommands.join("; ")}.`
-                : `Project verification profile "${profileName}" is configured, but it has no commands.`,
+    return [
+      {
+        name: `verification:${profileName}`,
+        id: "verification-guidance",
+        hook: "TurnStart",
+        onError: "continue",
+        handle() {
+          return {
+            status: "continue",
+            context: [
+              {
+                id: createContextItemId(),
+                type: "system",
+                source: {
+                  kind: "extension",
+                  uri: `verification:${profileName}`,
+                },
+                content: guidance,
+                metadata: {
+                  layer: "working",
+                  stability: "turn",
+                  verificationSource: "profile",
+                  profile: profileName,
+                },
+              },
+            ],
             metadata: {
-              layer: "working",
-              stability: "session",
-              verificationProfile: profileName,
+              verificationSource: "profile",
+              profile: profileName,
             },
-          },
-        ],
-      };
-    },
-  };
-}
-
-function createMissingProfileStopGate(profileName: string): WorkflowHook {
-  return {
-    name: "verification:stop-gate",
-    hook: "Stop",
-    handle() {
-      return {
-        status: "block",
-        reason: `Verification profile "${profileName}" has no commands.`,
-        metadata: {
-          profile: profileName,
-          missingCommands: true,
+          };
         },
-      };
+      },
+    ];
+  }
+  return createInvariantProjectionHooks({
+    ...options,
+    workflowRunId: `verification_${safeWorkflowRunIdSegment(profileName)}`,
+    assetName: `verification:${profileName}`,
+    contentHash: `builtin:verification-profile:${profileName}:${renderedCommands.join("|")}`,
+    verificationSource: "profile",
+    profile: profileName,
+    verifiers: verificationCommandVerifiers(profileName, commands),
+    guidance,
+    injectOutput: config.afterWrites?.injectOutput,
+    builtinVerifiers: {
+      [MISSING_PROFILE_BUILTIN_VERIFIER]: missingProfileVerifier,
     },
-  };
+  }).hooks;
 }
 
-function createVerificationStopGate(
+function renderedVerificationCommands(
+  commands: readonly CapabilityVerificationCommandConfig[],
+): string[] {
+  return commands
+    .map((command) =>
+      [command.command, ...(command.args ?? [])].join(" ").trim(),
+    )
+    .filter(Boolean);
+}
+
+function verificationGuidance(
+  profileName: string,
+  renderedCommands: readonly string[],
+): string {
+  return renderedCommands.length > 0
+    ? `Project verification profile "${profileName}" is available. Run relevant verification commands before final answers after code writes: ${renderedCommands.join("; ")}.`
+    : `Project verification profile "${profileName}" is configured, but it has no commands.`;
+}
+
+function verificationCommandVerifiers(
   profileName: string,
   commands: readonly CapabilityVerificationCommandConfig[],
-): WorkflowHook {
-  return {
-    name: "verification:stop-gate",
-    hook: "Stop",
-    handle(input) {
-      const ledger = input.facts?.snapshot();
-      if (!ledger) {
-        return {
-          status: "block",
-          reason: "Verification FactLedger is unavailable.",
-          metadata: {
-            profile: profileName,
-            missingFactLedger: true,
-          },
-        };
-      }
-      const latestWrite = ledger.writes.at(-1);
-      if (!latestWrite) return { status: "continue" };
-
-      const missing = commands.filter(
-        (command) =>
-          !ledger.verificationResults.some(
-            (result) =>
-              !result.stale &&
-              result.writeEpoch === ledger.writeEpoch &&
-              result.sequence > latestWrite.sequence &&
-              result.profile === profileName &&
-              result.verifierId === command.id &&
-              result.satisfied,
-          ),
-      );
-      if (missing.length === 0) return { status: "continue" };
-
-      return {
-        status: "block",
-        reason:
-          `Verification profile "${profileName}" has not passed after the latest workspace write. ` +
-          `Missing: ${missing.map((command) => command.id).join(", ")}.`,
+): WorkflowCommandVerifierDefinition[] {
+  if (commands.length === 0) {
+    return [
+      {
+        id: "missing-profile",
+        kind: "command",
+        command: MISSING_PROFILE_BUILTIN_VERIFIER,
+        expect: "zero",
+        authorized: true,
         metadata: {
+          builtinVerifier: MISSING_PROFILE_BUILTIN_VERIFIER,
+          verificationSource: "profile",
           profile: profileName,
-          latestWriteSequence: latestWrite.sequence,
-          missing: missing.map((command) => command.id),
         },
-      };
+      },
+    ];
+  }
+  return commands.map((command) => ({
+    id: command.id,
+    kind: "command" as const,
+    command: command.command,
+    ...(command.args ? { args: command.args } : {}),
+    ...(command.cwd ? { cwd: command.cwd } : {}),
+    ...(command.timeoutMs !== undefined
+      ? { timeoutMs: command.timeoutMs }
+      : {}),
+    ...(command.maxOutputBytes !== undefined
+      ? { maxOutputBytes: command.maxOutputBytes }
+      : {}),
+    expect: "zero" as const,
+    authorized: true,
+    metadata: {
+      verificationSource: "profile",
+      profile: profileName,
+    },
+  }));
+}
+
+function missingProfileVerifier(
+  input: InvariantBuiltinVerifierInput,
+): WorkflowHookResult {
+  const profile =
+    typeof input.verifier.metadata?.profile === "string"
+      ? input.verifier.metadata.profile
+      : "unknown";
+  return {
+    status: "continue",
+    metadata: {
+      command: `verification profile "${profile}" has no commands`,
+      exitCode: 1,
+      timedOut: false,
+      verificationSource: "profile",
+      profile,
     },
   };
 }
@@ -182,6 +179,6 @@ function verificationProfileName(config: CapabilityVerificationConfig): string {
   );
 }
 
-function verificationHookName(profileName: string, commandId: string): string {
-  return `verification:${profileName}:${commandId}`;
+function safeWorkflowRunIdSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_.:-]+/g, "_") || DEFAULT_PROFILE;
 }

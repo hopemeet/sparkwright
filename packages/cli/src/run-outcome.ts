@@ -105,21 +105,13 @@ export function unresolvedVerificationCommandFailureCount(
     .length;
 }
 
-export function completedRunHasCliIssues(
-  summary: CliRunEventSummary,
-  documentedCommandIssueCount = 0,
-): boolean {
+export function completedRunHasCliIssues(summary: CliRunEventSummary): boolean {
   // The status label projects the same failing verdict as the exit code, so the
   // two cannot diverge. Expected-by-policy outcomes are not failures and are
   // surfaced separately instead: denied workspace writes via
   // summarizeDeniedWorkspaceWrites, unsupported final-answer claims (the
   // prose-based detector is unreliable) via summarizeUnsupportedFinalClaims.
-  return (
-    unhandledToolFailureCount(summary) > 0 ||
-    unresolvedVerificationCommandFailureCount(summary) > 0 ||
-    verificationProfileFailureCount(summary) > 0 ||
-    documentedCommandIssueCount > 0
-  );
+  return runOutcomeFailing(summary);
 }
 
 export function cliExitCodeForRun(input: {
@@ -144,26 +136,30 @@ export function cliExitCodeForRun(input: {
  * events with the same core function.
  */
 function runOutcomeFailing(summary: CliRunEventSummary): boolean {
-  const attached = attachedRunOutcomeFailing(summary.events);
-  if (attached !== undefined) return attached;
+  const outcome = completedRunOutcome(summary);
+  return isRecord(outcome) && outcome.failing === true;
+}
+
+function completedRunOutcome(summary: CliRunEventSummary): unknown {
   return (
+    attachedRunOutcome(summary.events) ??
     completedRunOutcomeFromEvents(
       summary.events,
       finalMessageFromEvents(summary.events),
-    )?.failing ?? false
+    )
   );
 }
 
-function attachedRunOutcomeFailing(
+function attachedRunOutcome(
   events: readonly SparkwrightEvent[],
-): boolean | undefined {
+): Record<string, unknown> | undefined {
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
     if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
     const outcome = isRecord(event.payload.outcome)
       ? event.payload.outcome
       : undefined;
-    return typeof outcome?.failing === "boolean" ? outcome.failing : undefined;
+    return outcome;
   }
   return undefined;
 }
@@ -315,6 +311,31 @@ export function summarizeVerificationProfileResults(
   return `Verification: ${parts.join("; ")}.`;
 }
 
+export function summarizeDocumentedCommandFailures(
+  summary: CliRunEventSummary,
+): string | undefined {
+  const outcome = completedRunOutcome(summary);
+  const failures =
+    isRecord(outcome) && isRecord(outcome.documentedCommandFailures)
+      ? outcome.documentedCommandFailures
+      : undefined;
+  const count =
+    typeof failures?.count === "number" && Number.isFinite(failures.count)
+      ? failures.count
+      : 0;
+  if (count === 0) return undefined;
+  const lastId = stringValue(failures?.lastId);
+  const lastExitCode =
+    typeof failures?.lastExitCode === "number" ||
+    failures?.lastExitCode === null
+      ? failures.lastExitCode
+      : undefined;
+  const status =
+    lastExitCode !== undefined ? `, last exitCode=${lastExitCode}` : "";
+  const last = lastId ? ` Last failed check: ${lastId}.` : "";
+  return `Run completed with documented-command verification failures; exiting 1 (${count} failed check${count === 1 ? "" : "s"}${status}).${last}`;
+}
+
 export function summarizeUnsupportedFinalClaims(
   summary: CliRunEventSummary,
 ): string | undefined {
@@ -423,12 +444,6 @@ function summarizeCliRunFailureSummary(
   const prefix =
     category === "model" || modelCategory ? "Model failed" : "Run failed";
   return `${prefix}: ${message}${details.length > 0 ? ` (${details.join(", ")})` : ""}`;
-}
-
-function verificationProfileFailureCount(summary: CliRunEventSummary): number {
-  return verificationProfileResults(summary).filter(
-    (result) => result.status === "failed",
-  ).length;
 }
 
 function verificationProfileResults(

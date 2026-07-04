@@ -183,7 +183,7 @@ Begin a new agent run.
 | `targetPath`     | string                    | no       | Workspace-relative target path the run should focus on when applicable.                                                                                                                                                       |
 | `shouldWrite`    | boolean                   | no       | Whether this run is allowed to request workspace writes.                                                                                                                                                                      |
 | `model`          | string                    | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
-| `workflow`       | string                    | no       | Experimental P1 workflow asset name to instantiate for this run. Requires the host workflow runtime gate to be enabled.                                                                                                       |
+| `workflow`       | string                    | no       | Workflow asset name to instantiate for this run. Omit it to keep ordinary host-run behavior.                                                                                                                                  |
 | `accessMode`     | string                    | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
 | `permissionMode` | string                    | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
 | `traceLevel`     | `"standard"` \| `"debug"` | no       | Trace persistence detail level; defaults to `standard`.                                                                                                                                                                       |
@@ -660,9 +660,9 @@ scanning files or interpreting local config.
       {
         "name": "verification:fast:test",
         "source": "verification",
-        "lifecycle": "PostToolUse",
-        "matcher": "toolName=write|edit_anchored_text|edit; status=completed",
-        "action": "command: npm test; injectOutput=onFailure",
+        "lifecycle": "Stop",
+        "matcher": "run-level invariant after workspace writes",
+        "action": "invariant verifier command: npm test",
         "blockingPotential": false,
         "enabled": true,
         "active": true,
@@ -674,8 +674,8 @@ scanning files or interpreting local config.
         "source": "builtin",
         "lifecycle": "Stop",
         "matcher": "write-enabled goals about verification, tests, handoff, release, docs, or documented commands",
-        "action": "block final answer when README documented commands reference missing workspace paths",
-        "blockingPotential": true,
+        "action": "fail completed run when README documented commands reference missing workspace paths",
+        "blockingPotential": false,
         "enabled": true,
         "active": false,
         "status": "available"
@@ -722,9 +722,9 @@ default because the child run enforces its own tool policies; set
 those fields describe the runtime gate under the inspected run options rather
 than promising an unconditional approval boolean.
 Capability snapshots may include `rules.workflow` and `rules.events`,
-host-authored inspection summaries for configured workflow hooks,
-verification-generated hooks, documented-command built-in rules, and
-non-blocking event subscribers. These summaries are diagnostics only:
+host-authored inspection summaries for configured workflow hooks, verification
+invariants, documented-command verifier rules, and non-blocking event
+subscribers. These summaries are diagnostics only:
 workflow-rule `lifecycle` uses the canonical workflow hook value,
 event-rule `trigger` uses the configured event trigger, `blockingPotential`
 describes whether the rule can block under its executor semantics, and `active`

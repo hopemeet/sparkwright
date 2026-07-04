@@ -19,6 +19,7 @@ import {
 import {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  createInvariantProjectionHooks,
   createWorkflowProjectionHooks,
   createVerificationWorkflowHooks,
 } from "../src/index.js";
@@ -45,7 +46,7 @@ async function waitForEvent(events: EventLog, type: string): Promise<void> {
 }
 
 describe("runtime workflow hook assembly", () => {
-  it("keeps configured, verification, then documented-command hook order", () => {
+  it("keeps configured hooks before implicit workflow projections", () => {
     const hooks = assembleRuntimeWorkflowHooks({
       workspaceRoot: process.cwd(),
       workflowHooks: [
@@ -68,12 +69,16 @@ describe("runtime workflow hook assembly", () => {
       },
     });
 
-    expect(hooks.map((hook) => hook.name)).toEqual([
-      "config-guard",
-      "verification:fast:test",
-      "verification:stop-gate",
-      "documented-command-check",
-    ]);
+    expect(hooks[0]?.name).toBe("config-guard");
+    expect(hooks.slice(1).map((hook) => hook.name)).toEqual(
+      expect.arrayContaining([
+        "workflow:verification_fast",
+        "workflow:documented_command",
+      ]),
+    );
+    expect(hooks.some((hook) => hook.name.startsWith("verification:"))).toBe(
+      false,
+    );
   });
 
   it("appends workflow projection hooks after existing producers", () => {
@@ -103,6 +108,285 @@ describe("runtime workflow hook assembly", () => {
       "config-guard",
       "workflow:wf_test",
     ]);
+  });
+
+  it("does not treat built-in invariant hooks as active governing workflows", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const facts = new FactLedger();
+      events.subscribe((event) => facts.observeEvent(event));
+      const hooks = assembleRuntimeWorkflowHooks({
+        workspaceRoot: workspace,
+        workflowHooks: [
+          {
+            name: "configured-advance",
+            hook: "Stop",
+            onError: "block",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'advance', reason:'configured advance'}));",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+        verification: {
+          mode: "require",
+          defaultProfile: "fast",
+          profiles: {
+            fast: [
+              {
+                id: "unit",
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+              },
+            ],
+          },
+        },
+        documentedCommand: {
+          goal: "prepare handoff and verify documented commands",
+          shouldWrite: true,
+        },
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+        facts,
+      });
+
+      expect(result.status).toBe("advanced");
+      if (result.status !== "advanced") {
+        throw new Error(`expected advanced, got ${result.status}`);
+      }
+      expect(result.advance.reason).toBe("configured advance");
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("createInvariantProjectionHooks", () => {
+  it("skips verifier commands when the run has no writes", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-invariant-"));
+    const marker = join(workspace, "ran.txt");
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createInvariantProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "verification_fast",
+        assetName: "verification:fast",
+        contentHash: "builtin:test",
+        verificationSource: "profile",
+        profile: "fast",
+        verifiers: [
+          {
+            id: "lint",
+            kind: "command",
+            command: process.execPath,
+            args: [
+              "-e",
+              `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran")`,
+            ],
+          },
+        ],
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "done" },
+        events,
+        facts: ledger,
+      });
+
+      expect(stop.status).toBe("continued");
+      await expect(readFile(marker, "utf8")).rejects.toThrow();
+      expect(ledger.snapshot().verificationResults).toEqual([]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("does not re-run commands once the current epoch is clean", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-invariant-"));
+    const marker = join(workspace, "count.txt");
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      events.emit("workspace.write.completed", { path: "src/app.ts" });
+      const projection = createInvariantProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "verification_fast",
+        assetName: "verification:fast",
+        contentHash: "builtin:test",
+        verificationSource: "profile",
+        profile: "fast",
+        verifiers: [
+          {
+            id: "lint",
+            kind: "command",
+            command: process.execPath,
+            args: [
+              "-e",
+              [
+                "const fs = require('node:fs');",
+                `const path = ${JSON.stringify(marker)};`,
+                "const count = fs.existsSync(path) ? Number(fs.readFileSync(path, 'utf8')) : 0;",
+                "fs.writeFileSync(path, String(count + 1));",
+              ].join(" "),
+            ],
+          },
+        ],
+      });
+
+      const first = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "done" },
+        events,
+        facts: ledger,
+      });
+      const second = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "done again" },
+        events,
+        facts: ledger,
+      });
+
+      expect(first.status).toBe("continued");
+      expect(second.status).toBe("continued");
+      await expect(readFile(marker, "utf8")).resolves.toBe("1");
+      expect(ledger.snapshot().verificationResults).toHaveLength(1);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("advances with failure evidence when the current epoch is dirty", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-invariant-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      events.emit("workspace.write.completed", { path: "src/app.ts" });
+      const projection = createInvariantProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "verification_fast",
+        assetName: "verification:fast",
+        contentHash: "builtin:test",
+        verificationSource: "profile",
+        profile: "fast",
+        injectOutput: "onFailure",
+        verifiers: [
+          {
+            id: "lint",
+            kind: "command",
+            command: process.execPath,
+            args: ["-e", "console.log('lint failed'); process.exit(2)"],
+          },
+        ],
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "done" },
+        events,
+        facts: ledger,
+      });
+
+      expect(stop.status).toBe("advanced");
+      expect(stop.context[0]?.content).toContain("lint failed");
+      expect(ledger.snapshot().verificationResults[0]).toMatchObject({
+        hookName: "workflow:verification_fast",
+        verifierId: "lint",
+        verificationSource: "profile",
+        profile: "fast",
+        satisfied: false,
+        stale: false,
+        writeEpoch: 1,
+        exitCode: 2,
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("records invariant failure when a pending retry is refused by budget", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-invariant-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      events.emit("workspace.write.completed", { path: "src/app.ts" });
+      const projection = createInvariantProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "verification_fast",
+        assetName: "verification:fast",
+        contentHash: "builtin:test",
+        verificationSource: "profile",
+        profile: "fast",
+        verifiers: [
+          {
+            id: "lint",
+            kind: "command",
+            command: process.execPath,
+            args: ["-e", "process.exit(2)"],
+          },
+        ],
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "done" },
+        events,
+        facts: ledger,
+      });
+      const signal = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "RuntimeSignal",
+        run,
+        payload: { signal: "budget.exceeded", source: "workflow" },
+        events,
+        facts: ledger,
+      });
+
+      expect(stop.status).toBe("advanced");
+      expect(signal.status).toBe("continued");
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "verification_fast",
+        projectionKind: "invariant",
+        verificationSource: "profile",
+        failure: { kind: "verification", code: "VERIFICATION_PROFILE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1937,7 +2221,7 @@ describe("createVerificationWorkflowHooks", () => {
 
     const result = await runWorkflowHooks({
       hooks,
-      hook: "RunStart",
+      hook: "TurnStart",
       run,
       payload: {},
       events,
@@ -1973,19 +2257,6 @@ describe("createVerificationWorkflowHooks", () => {
       });
 
       events.emit("workspace.write.completed", { path: "src/a.ts" });
-      await runWorkflowHooks({
-        hooks,
-        hook: "PostToolUse",
-        run,
-        step: 1,
-        payload: {
-          toolName: "edit",
-          status: "completed",
-          path: "src/a.ts",
-        },
-        events,
-      });
-
       const stop = await runWorkflowHooks({
         hooks,
         hook: "Stop",
@@ -2002,7 +2273,7 @@ describe("createVerificationWorkflowHooks", () => {
     }
   });
 
-  it("blocks final answers when the latest write is not verified", async () => {
+  it("records profile verifier results without verification hook names", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-verify-"));
     try {
       const run = runRecord();
@@ -2027,20 +2298,6 @@ describe("createVerificationWorkflowHooks", () => {
       });
 
       events.emit("workspace.write.completed", { path: "src/a.ts" });
-      await runWorkflowHooks({
-        hooks,
-        hook: "PostToolUse",
-        run,
-        step: 1,
-        payload: {
-          toolName: "apply_patch",
-          status: "completed",
-          path: "src/a.ts",
-        },
-        events,
-      });
-      events.emit("workspace.write.completed", { path: "src/b.ts" });
-
       const stop = await runWorkflowHooks({
         hooks,
         hook: "Stop",
@@ -2051,21 +2308,57 @@ describe("createVerificationWorkflowHooks", () => {
         facts,
       });
 
-      expect(stop.status).toBe("blocked");
-      if (stop.status !== "blocked") {
-        throw new Error("expected blocked workflow hook result");
-      }
-      expect(stop.block.reason).toContain("latest workspace write");
-      expect(stop.block.metadata).toMatchObject({
+      expect(stop.status).toBe("continued");
+      expect(facts.snapshot().verificationResults[0]).toMatchObject({
         profile: "fast",
-        missing: ["lint"],
+        verificationSource: "profile",
+        verifierId: "lint",
+        satisfied: true,
       });
+      expect(
+        facts
+          .snapshot()
+          .verificationResults[0]?.hookName?.startsWith(
+            "workflow:verification_fast",
+          ),
+      ).toBe(true);
+      const runEnd = await runWorkflowHooks({
+        hooks,
+        hook: "RunEnd",
+        run,
+        payload: { state: "completed" },
+        events,
+        facts,
+      });
+      expect(runEnd.status).toBe("continued");
+      expect(
+        events.all().some((event) => {
+          if (event.type !== "workflow.completed") return false;
+          const payload = event.payload as
+            | { projectionKind?: unknown; verificationSource?: unknown }
+            | undefined;
+          return (
+            payload?.projectionKind === "invariant" &&
+            payload.verificationSource === "profile"
+          );
+        }),
+      ).toBe(true);
+      expect(
+        events.all().some((event) => {
+          const hookName =
+            event.type === "workflow_hook.completed"
+              ? (event.payload as { hookName?: unknown } | undefined)?.hookName
+              : undefined;
+          if (typeof hookName !== "string") return false;
+          return hookName?.startsWith("verification:") === true;
+        }),
+      ).toBe(false);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
   });
 
-  it("blocks final answers when fresh verification fails", async () => {
+  it("advances with profile verifier evidence when fresh verification fails", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-verify-"));
     try {
       const run = runRecord();
@@ -2090,30 +2383,6 @@ describe("createVerificationWorkflowHooks", () => {
       });
 
       events.emit("workspace.write.completed", { path: "src/a.ts" });
-      await runWorkflowHooks({
-        hooks,
-        hook: "PostToolUse",
-        run,
-        step: 1,
-        payload: {
-          toolName: "edit",
-          status: "completed",
-          path: "src/a.ts",
-        },
-        events,
-      });
-
-      const verification = facts.snapshot().verificationResults[0];
-      expect(verification).toMatchObject({
-        profile: "fast",
-        verifierId: "lint",
-        expect: "zero",
-        satisfied: false,
-        stale: false,
-        writeEpoch: 1,
-        exitCode: 1,
-      });
-
       const stop = await runWorkflowHooks({
         hooks,
         hook: "Stop",
@@ -2124,14 +2393,22 @@ describe("createVerificationWorkflowHooks", () => {
         facts,
       });
 
-      expect(stop.status).toBe("blocked");
-      if (stop.status !== "blocked") {
-        throw new Error("expected blocked workflow hook result");
-      }
-      expect(stop.block.metadata).toMatchObject({
+      expect(stop.status).toBe("advanced");
+      expect(stop.context[0]?.content).toContain('"verifierId":"lint"');
+      const verification = facts.snapshot().verificationResults[0];
+      expect(verification).toMatchObject({
         profile: "fast",
-        missing: ["lint"],
+        verificationSource: "profile",
+        verifierId: "lint",
+        expect: "zero",
+        satisfied: false,
+        stale: false,
+        writeEpoch: 1,
+        exitCode: 1,
       });
+      expect(
+        events.all().some((event) => event.type === "workflow.failed"),
+      ).toBe(false);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

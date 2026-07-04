@@ -48,6 +48,13 @@ A timeline should be built from event families rather than exact payload shapes.
 | Workflow hooks                    | `workflow_hook.started`, `workflow_hook.completed`, `workflow_hook.blocked`, `workflow_hook.failed`                                                                           | Show deterministic lifecycle automation, healthy advances, and blocking decisions |
 | Workflow runtime                  | `workflow.started`, `workflow.node.started`, `workflow.node.completed`, `workflow.interrupted`, `workflow.completed`, `workflow.failed`, `workflow.cancelled`                 | Show P1 projection-run state, node verdicts, and terminal workflow status         |
 
+Built-in verification and documented-command guards are workflow-runtime
+annotations with `projectionKind: "invariant"` and `verificationSource:
+"profile" | "documented_command"`. They may emit `workflow.started`,
+`workflow.completed`, `workflow.failed`, `workflow.interrupted`, or
+`workflow.cancelled`, but they do not emit `workflow.node.*` events because
+they are run-level invariants rather than linear workflow definitions.
+
 Host-controlled process progress is accepted from line-start anchored stderr
 token lines such as
 `SPARKWRIGHT_EVENT: {"type":"progress","message":"running tests"}`. The host
@@ -207,8 +214,9 @@ Stable consumption rules:
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
 - Completed final-answer events may carry `factLedger` as the persisted
-  command/verification fact snapshot. It is an audit snapshot on the terminal
-  event, not a new event family.
+  command/verification fact snapshot, including optional `verificationSource`
+  on verifier-launched command/result facts. It is an audit snapshot on the
+  terminal event, not a new event family.
 
 For durable stores, update the run record and write `result.json` at terminal
 completion, but keep `trace.jsonl` append-only.

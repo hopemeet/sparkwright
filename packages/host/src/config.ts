@@ -122,7 +122,6 @@ import {
   VERIFICATION_CONFIG_KEYS,
   VERIFICATION_KINDS,
   VERIFICATION_MODES,
-  VERIFICATION_STOP_GATE_CONFIG_KEYS,
   WORKFLOW_HOOK_ACTION_CONFIG_KEYS_BY_TYPE,
   WORKFLOW_HOOK_ACTION_TYPES,
   WORKFLOW_HOOK_AGENT_RESULT_MODES,
@@ -161,7 +160,6 @@ import type {
   CapabilityVerificationConfig,
   CapabilityVerificationKind,
   CapabilityVerificationAfterWritesConfig,
-  CapabilityVerificationStopGateConfig,
   CapabilityWorkflowHookConfig,
   ModelCost,
   ProviderConfig,
@@ -190,7 +188,6 @@ export type {
   CapabilityVerificationKind,
   CapabilityVerificationMode,
   CapabilityVerificationAfterWritesConfig,
-  CapabilityVerificationStopGateConfig,
   CapabilityWorkflowHookConfig,
   CapabilityWorkflowHookFrequency,
   ModelCost,
@@ -2081,15 +2078,6 @@ function validateCapabilityVerification(
     );
     if (afterWrites) out.afterWrites = afterWrites;
   }
-  if (raw.stopGate !== undefined) {
-    const stopGate = validateVerificationStopGate(
-      raw.stopGate,
-      `${field}.stopGate`,
-      filePath,
-      errors,
-    );
-    if (stopGate) out.stopGate = stopGate;
-  }
 
   validateVerificationProfileReferences(out, field, filePath, errors);
   return out;
@@ -2254,17 +2242,6 @@ function validateVerificationAfterWrites(
       });
     }
   }
-  if (raw.frequency !== undefined) {
-    if (isStringOption(raw.frequency, WORKFLOW_HOOK_FREQUENCIES)) {
-      out.frequency = raw.frequency;
-    } else {
-      errors.push({
-        file: filePath,
-        field: `${field}.frequency`,
-        message: "must be always or oncePerTurn",
-      });
-    }
-  }
   if (raw.injectOutput !== undefined) {
     if (
       isStringOption(raw.injectOutput, WORKFLOW_HOOK_OUTPUT_INJECTION_MODES)
@@ -2277,46 +2254,6 @@ function validateVerificationAfterWrites(
         message: "must be always, onFailure, or never",
       });
     }
-  }
-  return out;
-}
-
-function validateVerificationStopGate(
-  raw: unknown,
-  field: string,
-  filePath: string,
-  errors: SharedConfigError[],
-): CapabilityVerificationStopGateConfig | undefined {
-  if (!isRecord(raw)) {
-    errors.push({ file: filePath, field, message: "must be an object" });
-    return undefined;
-  }
-  const allowed = new Set<string>(VERIFICATION_STOP_GATE_CONFIG_KEYS);
-  for (const key of Object.keys(raw)) {
-    if (!allowed.has(key)) {
-      errors.push({
-        file: filePath,
-        field: `${field}.${key}`,
-        message: `unknown field (allowed: ${[...allowed].join(", ")})`,
-      });
-    }
-  }
-  const out: CapabilityVerificationStopGateConfig = {};
-  if (raw.enabled !== undefined) {
-    out.enabled = validateOptionalBoolean(
-      raw.enabled,
-      `${field}.enabled`,
-      filePath,
-      errors,
-    );
-  }
-  if (raw.requireCleanAfterLastWrite !== undefined) {
-    out.requireCleanAfterLastWrite = validateOptionalBoolean(
-      raw.requireCleanAfterLastWrite,
-      `${field}.requireCleanAfterLastWrite`,
-      filePath,
-      errors,
-    );
   }
   return out;
 }

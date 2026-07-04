@@ -3,9 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createRunId,
+  EventLog,
+  FactLedger,
+  runWorkflowHooks,
+} from "@sparkwright/core";
+import {
   checkDocumentedCommands,
   createDocumentedCommandRulePack,
-  createDocumentedCommandStopHook,
+  createDocumentedCommandWorkflowHooks,
   DOCUMENTED_COMMAND_RULE_ID,
   DOCUMENTED_COMMAND_RULE_NAME,
   evaluateDocumentedCommandRule,
@@ -36,7 +42,7 @@ describe("documented command check", () => {
       id: DOCUMENTED_COMMAND_RULE_ID,
       source: "builtin",
       lifecycle: "Stop",
-      blockingPotential: true,
+      blockingPotential: false,
       activation: {
         enabled: true,
         active: true,
@@ -45,13 +51,15 @@ describe("documented command check", () => {
           "write-enabled goal requests verification/handoff/documented-command validation",
       },
     });
-    expect(active.hooks).toEqual([
-      expect.objectContaining({
-        id: DOCUMENTED_COMMAND_RULE_ID,
-        name: DOCUMENTED_COMMAND_RULE_NAME,
-        hook: "Stop",
-      }),
-    ]);
+    expect(active.hooks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "invariant-command-verifier",
+          name: "workflow:documented_command",
+          hook: "Stop",
+        }),
+      ]),
+    );
 
     const inactive = createDocumentedCommandRulePack({
       workspaceRoot: workspace,
@@ -104,7 +112,7 @@ describe("documented command check", () => {
     ]);
   });
 
-  it("provides a Stop hook that blocks finalization until stale commands are fixed", async () => {
+  it("skips documented-command verification when the run has no writes", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "sparkwright-host-doc-cmd-"));
     tempDirs.push(workspace);
     writeFileSync(
@@ -119,94 +127,161 @@ describe("documented command check", () => {
       ].join("\n"),
     );
 
-    const [hook] = createDocumentedCommandStopHook({
+    const hooks = createDocumentedCommandWorkflowHooks({
       workspaceRoot: workspace,
       goal: "Prepare this repo for handoff and make documented commands pass",
       shouldWrite: true,
     });
-    if (!hook) throw new Error("expected documented command hook");
+    const run = runRecord(
+      "Prepare this repo for handoff and make documented commands pass",
+    );
+    const events = new EventLog(run.id);
+    const facts = new FactLedger();
+    events.subscribe((event) => facts.observeEvent(event));
 
-    const result = await hook.handle({
+    const result = await runWorkflowHooks({
+      hooks,
       hook: "Stop",
-      run: {
-        id: "run_test" as never,
-        goal: "Prepare this repo for handoff and make documented commands pass",
-        state: "running",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        metadata: {},
-      },
+      run,
       payload: { message: "done" },
-      metadata: {},
+      events,
+      facts,
     });
 
-    expect(result).toMatchObject({
-      status: "block",
-      findings: [
-        {
-          code: "STALE_DOCUMENTED_COMMAND",
-          severity: "error",
-          message:
-            "README.md: cargo --manifest-path points to missing file: rust-utils/Cargo.toml",
-        },
-      ],
-      metadata: {
-        source: "builtin",
-        ruleName: DOCUMENTED_COMMAND_RULE_NAME,
-        activationReason:
-          "write-enabled goal requests verification/handoff/documented-command validation",
-        issueCount: 1,
-      },
+    expect(result.status).toBe("continued");
+    expect(facts.snapshot().verificationResults).toHaveLength(0);
+    expect(facts.snapshot().commands).toHaveLength(0);
+  });
+
+  it("compiles documented-command as an invariant verifier", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "sparkwright-host-doc-cmd-"));
+    tempDirs.push(workspace);
+    writeFileSync(
+      join(workspace, "README.md"),
+      [
+        "# Demo",
+        "",
+        "```bash",
+        "cargo test --manifest-path rust-utils/Cargo.toml",
+        "```",
+        "",
+      ].join("\n"),
+    );
+
+    const hooks = createDocumentedCommandWorkflowHooks({
+      workspaceRoot: workspace,
+      goal: "Prepare this repo for handoff and make documented commands pass",
+      shouldWrite: true,
+    });
+    const run = runRecord(
+      "Prepare this repo for handoff and make documented commands pass",
+    );
+    const events = new EventLog(run.id);
+    const facts = new FactLedger();
+    events.subscribe((event) => facts.observeEvent(event));
+    events.emit("workspace.write.completed", { path: "README.md" });
+
+    const result = await runWorkflowHooks({
+      hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts,
     });
 
-    expect(
-      await hook.handle({
-        hook: "Stop",
-        run: {
-          id: "run_test" as never,
-          goal: "Prepare this repo for handoff and make documented commands pass",
-          state: "running",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          metadata: {},
+    expect(result.status).toBe("advanced");
+    expect(result.context[0]?.content).toContain(DOCUMENTED_COMMAND_RULE_NAME);
+    expect(facts.snapshot().verificationResults[0]).toMatchObject({
+      verificationSource: "documented_command",
+      verifierId: DOCUMENTED_COMMAND_RULE_NAME,
+      satisfied: false,
+      exitCode: 1,
+    });
+    expect(facts.snapshot().commands[0]?.verificationSource).toBe(
+      "documented_command",
+    );
+    expect(events.all().some((event) => event.type === "workflow.failed")).toBe(
+      false,
+    );
+    expect(facts.snapshot().commands[0]?.command).toBe(
+      DOCUMENTED_COMMAND_RULE_NAME,
+    );
+
+    const metadata = facts.snapshot().commands[0];
+    expect(metadata).toMatchObject({
+      exitCode: 1,
+    });
+
+    const failedHook = events
+      .all()
+      .find((event) => event.type === "workflow_hook.completed");
+    expect(failedHook?.payload).toMatchObject({
+      hookName: "workflow:documented_command",
+      result: {
+        metadata: {
+          source: "builtin",
+          ruleName: DOCUMENTED_COMMAND_RULE_NAME,
+          activationReason:
+            "write-enabled goal requests verification/handoff/documented-command validation",
+          issueCount: 1,
         },
-        payload: { message: "done again" },
-        metadata: {},
-      }),
-    ).toMatchObject({
-      status: "continue",
-      metadata: {
-        source: "builtin",
-        ruleName: DOCUMENTED_COMMAND_RULE_NAME,
-        issueCount: 1,
-        repeatedIssueSignature: true,
       },
     });
 
     mkdirSync(join(workspace, "rust-utils"), { recursive: true });
     writeFileSync(join(workspace, "rust-utils", "Cargo.toml"), "[package]\n");
+    const passingHooks = createDocumentedCommandWorkflowHooks({
+      workspaceRoot: workspace,
+      goal: "Prepare this repo for handoff and make documented commands pass",
+      shouldWrite: true,
+    });
+    const passingRun = runRecord(
+      "Prepare this repo for handoff and make documented commands pass",
+    );
+    const passingEvents = new EventLog(passingRun.id);
+    const passingFacts = new FactLedger();
+    passingEvents.subscribe((event) => passingFacts.observeEvent(event));
+    passingEvents.emit("workspace.write.completed", { path: "README.md" });
     expect(
-      await hook.handle({
+      await runWorkflowHooks({
+        hooks: passingHooks,
         hook: "Stop",
-        run: {
-          id: "run_test" as never,
-          goal: "Prepare this repo for handoff and make documented commands pass",
-          state: "running",
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          metadata: {},
-        },
+        run: passingRun,
         payload: { message: "done" },
-        metadata: {},
+        events: passingEvents,
+        facts: passingFacts,
       }),
     ).toMatchObject({
-      status: "continue",
-      metadata: {
-        source: "builtin",
-        ruleName: DOCUMENTED_COMMAND_RULE_NAME,
-        issueCount: 0,
-        issues: [],
-      },
+      status: "continued",
     });
+    expect(passingFacts.snapshot().verificationResults[0]).toMatchObject({
+      verificationSource: "documented_command",
+      satisfied: true,
+      exitCode: 0,
+    });
+    await runWorkflowHooks({
+      hooks: passingHooks,
+      hook: "RunEnd",
+      run: passingRun,
+      payload: { state: "completed" },
+      events: passingEvents,
+      facts: passingFacts,
+    });
+    expect(
+      passingEvents.all().some((event) => event.type === "workflow.completed"),
+    ).toBe(true);
   });
 });
+
+function runRecord(goal: string) {
+  const now = new Date().toISOString();
+  return {
+    id: createRunId(),
+    goal,
+    state: "running" as const,
+    createdAt: now,
+    updatedAt: now,
+    metadata: {},
+  };
+}

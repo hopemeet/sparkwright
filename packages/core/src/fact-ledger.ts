@@ -41,6 +41,7 @@ export interface FactLedgerCommandFact {
   profile?: string;
   nodeId?: string;
   verifierId?: string;
+  verificationSource?: string;
   command?: string;
   args?: string[];
   commandKey?: string;
@@ -59,6 +60,7 @@ export interface FactLedgerVerificationResult {
   profile?: string;
   nodeId?: string;
   verifierId: string;
+  verificationSource?: string;
   expect: CommandExpectation;
   satisfied: boolean;
   exitCode: number | null;
@@ -206,6 +208,9 @@ export class FactLedger implements FactLedgerReader {
       ...(input.profile ? { profile: input.profile } : {}),
       ...(input.nodeId ? { nodeId: input.nodeId } : {}),
       ...(input.verifierId ? { verifierId: input.verifierId } : {}),
+      ...(input.verificationSource
+        ? { verificationSource: input.verificationSource }
+        : {}),
       ...(input.command ? { command: input.command } : {}),
       ...(input.args ? { args: input.args } : {}),
       ...(input.commandKey ? { commandKey: input.commandKey } : {}),
@@ -312,6 +317,9 @@ function verificationResultForHookCommand(
       : {}),
     ...(command.nodeId ? { nodeId: command.nodeId } : {}),
     verifierId,
+    ...(command.verificationSource
+      ? { verificationSource: command.verificationSource }
+      : {}),
     expect,
     satisfied: commandExpectationSatisfied(expect, command),
     exitCode: command.exitCode,
@@ -367,6 +375,9 @@ function commandFactFromRaw(
     ...(stringValue(value.verifierId)
       ? { verifierId: stringValue(value.verifierId) }
       : {}),
+    ...(stringValue(value.verificationSource)
+      ? { verificationSource: stringValue(value.verificationSource) }
+      : {}),
     ...(stringValue(value.command)
       ? { command: stringValue(value.command) }
       : {}),
@@ -413,6 +424,9 @@ function verificationResultFromRaw(
       : {}),
     ...(stringValue(value.nodeId) ? { nodeId: stringValue(value.nodeId) } : {}),
     verifierId,
+    ...(stringValue(value.verificationSource)
+      ? { verificationSource: stringValue(value.verificationSource) }
+      : {}),
     expect,
     satisfied:
       typeof value.satisfied === "boolean"

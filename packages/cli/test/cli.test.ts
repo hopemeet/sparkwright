@@ -107,7 +107,7 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("sparkwright --version|-v");
     expect(output.stdoutText()).toContain("sparkwright trace report");
     expect(output.stdoutText()).toContain('sparkwright run "your goal"');
-    expect(output.stdoutText()).not.toContain("--workflow name");
+    expect(output.stdoutText()).toContain("--workflow name");
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
@@ -155,17 +155,16 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain('Usage: sparkwright run "your goal"');
-    expect(output.stdoutText()).not.toContain("--workflow name");
+    expect(output.stdoutText()).toContain("--workflow name");
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
   });
 
-  it("shows workflow help only behind the experimental gate", async () => {
+  it("shows workflow help without an experimental gate", async () => {
     const output = createOutputCapture();
 
     const result = await runCli(["run", "--help"], {
-      env: { ...process.env, SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1" },
       io: {
         stdout: output.stdout,
         stderr: output.stderr,
@@ -706,17 +705,14 @@ describe("runCli", () => {
     expect(output.stdoutText()).not.toContain("Validation trace written to");
   });
 
-  it("keeps --workflow behind the experimental gate", async () => {
+  it("accepts --workflow without an experimental gate", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();
 
     const result = await runCli(
       ["run", "gated workflow", "--workspace", workspace, "--workflow", "demo"],
       {
-        env: {
-          ...process.env,
-          SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: undefined,
-        },
+        env: { ...process.env },
         io: {
           stdout: output.stdout,
           stderr: output.stderr,
@@ -726,10 +722,11 @@ describe("runCli", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(output.stderrText()).toContain(
-      "SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1",
+    expect(output.stderrText()).toContain('Workflow "demo" was not found.');
+    expect(output.stderrText()).not.toContain(
+      "SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS",
     );
-    expect(result.tracePath).toBeUndefined();
+    expect(result.tracePath).toBeDefined();
     expect(output.stdoutText()).not.toContain("run.started");
   });
 
@@ -2274,15 +2271,15 @@ describe("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain("workflow rules: 4");
+    expect(output.stdoutText()).toContain("workflow rules: 3");
     expect(output.stdoutText()).toContain(
       "rule: guard-shell [config] PreToolUse active; canBlock=true; matcher=toolName=shell; action=block: No shell.",
     );
     expect(output.stdoutText()).toContain(
-      "rule: verification:fast:test [verification] PostToolUse active; canBlock=false",
+      "rule: verification:fast:test [verification] Stop active; canBlock=false",
     );
     expect(output.stdoutText()).toContain(
-      "rule: documented-command-check [builtin] Stop available; canBlock=true",
+      "rule: documented-command-check [builtin] Stop available; canBlock=false",
     );
     expect(output.stdoutText()).toContain("event rules: 1");
     expect(output.stdoutText()).toContain(
@@ -7587,7 +7584,6 @@ describe("runCli", () => {
         {
           env: {
             ...process.env,
-            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
             SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
               { message: "done" },
             ]),
@@ -7650,7 +7646,6 @@ describe("runCli", () => {
         {
           env: {
             ...process.env,
-            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
             SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
               { message: "first done" },
               { message: "second done" },
@@ -7711,7 +7706,6 @@ describe("runCli", () => {
         {
           env: {
             ...process.env,
-            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
             SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
               { message: "first attempt" },
               { message: "second attempt" },
@@ -7768,7 +7762,6 @@ describe("runCli", () => {
         {
           env: {
             ...process.env,
-            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
             SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
               {
                 toolCalls: [
@@ -7821,12 +7814,7 @@ describe("runCli", () => {
             },
             afterWrites: {
               profile: "fast",
-              frequency: "always",
               injectOutput: "onFailure",
-            },
-            stopGate: {
-              enabled: true,
-              requireCleanAfterLastWrite: true,
             },
           },
         },
@@ -7892,13 +7880,32 @@ describe("runCli", () => {
     );
     const traceEvents = await readTrace(run.tracePath);
     expect(
-      traceEvents.find(
+      traceEvents.find((event) => {
+        if (event.type !== "workflow_hook.completed") return false;
+        const payload = event.payload as
+          | {
+              hookName?: string;
+              result?: { metadata?: Record<string, unknown> };
+            }
+          | undefined;
+        const metadata = payload?.result?.metadata;
+        return (
+          payload?.hookName === "workflow:verification_fast" &&
+          metadata?.verificationSource === "profile" &&
+          metadata?.profile === "fast" &&
+          metadata?.verifierId === "unit"
+        );
+      }),
+    ).toBeTruthy();
+    expect(
+      traceEvents.some(
         (event) =>
           event.type === "workflow_hook.completed" &&
-          (event.payload?.hookName as string | undefined) ===
-            "verification:fast:unit",
+          (event.payload?.hookName as string | undefined)?.startsWith(
+            "verification:",
+          ),
       ),
-    ).toBeTruthy();
+    ).toBe(false);
   });
 
   it("normalizes relative --workspace before host tools resolve absolute paths", async () => {
