@@ -386,6 +386,11 @@
           "description": "Whether this run is allowed to request workspace writes."
         },
         "model": { "type": "string", "minLength": 1 },
+        "workflow": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Workflow asset name to instantiate for this run."
+        },
         "accessMode": {
           "type": "string",
           "enum": ["read-only", "ask", "accept-edits", "bypass"],

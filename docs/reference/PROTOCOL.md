@@ -285,9 +285,10 @@ Current event types:
 - `workflow.started` / `workflow.node.started` /
   `workflow.node.completed` / `workflow.waiting` /
   `workflow.interrupted` / `workflow.completed` / `workflow.failed` /
-  `workflow.cancelled`: reserved workflow-runtime lifecycle vocabulary.
-  P0 reserves these event types for schema compatibility only; no runtime
-  emitter exists until the workflow projection phase.
+  `workflow.cancelled`: workflow-runtime lifecycle annotations. P1 projection
+  runs created with the experimental `workflow` field on the start-run request emit
+  started/node/interrupted/completed/failed/cancelled events; `workflow.waiting`
+  remains reserved until a later workflow phase adds a waiting-node emitter.
 - `extension.process.started` / `extension.process.progress` /
   `extension.process.completed` / `extension.process.failed`: host-controlled
   external process invocation evidence. External processes cannot write

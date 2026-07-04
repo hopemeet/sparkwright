@@ -65,6 +65,7 @@ type HooksHttpAllowRule = NonNullable<HooksHttpConfig["allow"]>[number];
 
 export interface CreateConfiguredWorkflowHooksOptions extends CommonHookActionOptions {
   hooks?: CapabilityWorkflowHookConfig[];
+  workflowActive?: boolean;
 }
 
 export function createConfiguredWorkflowHooks(
@@ -99,6 +100,7 @@ export function createConfiguredWorkflowHooks(
             ...hookActionRuntimeOptions(options),
             hookName: config.name,
             agentHookState,
+            workflowActive: options.workflowActive === true,
           });
         },
       };
@@ -185,6 +187,7 @@ interface RunConfiguredHookActionOptions {
   agentTool?: ToolDefinition;
   http?: CapabilityHooksConfig["http"];
   agentHookState?: AgentHookActionState;
+  workflowActive?: boolean;
 }
 
 interface HookActionInput<TPayload = unknown> {
@@ -228,7 +231,9 @@ async function runConfiguredHookAction(
     void exhaustive;
     throw new Error("Unsupported workflow hook action type.");
   }
-  return enforceWorkflowHookEffect(input.hook, result, label);
+  return enforceWorkflowHookEffect(input.hook, result, label, {
+    workflowActive: options.workflowActive === true,
+  });
 }
 
 async function runCommandWorkflowAction(
@@ -494,7 +499,22 @@ function enforceWorkflowHookEffect(
   hook: WorkflowHookName,
   result: WorkflowHookResult,
   label: string,
+  options: { workflowActive?: boolean } = {},
 ): WorkflowHookResult {
+  if (options.workflowActive === true && result.status === "advance") {
+    throw new Error(
+      `${label} returned advance while a workflow is active; configured hooks cannot advance workflow-controlled runs.`,
+    );
+  }
+  if (
+    options.workflowActive === true &&
+    hook === "PreToolUse" &&
+    result.status === "rewrite"
+  ) {
+    throw new Error(
+      `${label} returned rewrite while a workflow is active; configured PreToolUse hooks cannot rewrite workflow-controlled tool calls.`,
+    );
+  }
   if (result.status === "block" && !workflowHookAllowsBlock(hook)) {
     throw new Error(
       `${label} returned block for ${hook}, but this lifecycle cannot block run execution.`,

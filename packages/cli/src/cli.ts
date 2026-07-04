@@ -197,6 +197,7 @@ interface ParsedArgs {
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
   modelNameSource?: "config" | "cli";
+  workflowName?: string;
   sessionId?: string;
   format: "json" | "text";
   eventType?: string;
@@ -232,7 +233,7 @@ export async function runCli(
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
 
-  const helpText = helpForArgs(argv);
+  const helpText = helpForArgs(argv, env);
   if (helpText) {
     writeLine(io.stdout, helpText);
     return { exitCode: 0 };
@@ -289,6 +290,20 @@ export async function runCli(
     writeLine(
       io.stderr,
       "--direct-core is an internal diagnostics option. Set SPARKWRIGHT_ENABLE_DIRECT_CORE=1 to use it.",
+    );
+    return { exitCode: 1 };
+  }
+  if (parsed.value.directCore && parsed.value.workflowName) {
+    writeLine(
+      io.stderr,
+      "--workflow is only supported on the host runtime path; remove --direct-core.",
+    );
+    return { exitCode: 1 };
+  }
+  if (parsed.value.workflowName && !workflowRuntimeEnabled(env)) {
+    writeLine(
+      io.stderr,
+      "--workflow is experimental. Set SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1 to use it.",
     );
     return { exitCode: 1 };
   }
@@ -359,7 +374,7 @@ export async function runCli(
     return { exitCode: 1 };
   }
   if (command !== "run") {
-    writeLine(io.stderr, usage());
+    writeLine(io.stderr, usage(env));
     return { exitCode: 1 };
   }
 
@@ -409,6 +424,7 @@ export async function runCli(
           ...runInput,
           modelName:
             runInput.modelNameSource === "cli" ? runInput.modelName : undefined,
+          workflowName: runInput.workflowName,
           targetPath:
             runInput.targetPathSource === "cli"
               ? runInput.targetPath
@@ -439,6 +455,12 @@ export async function scaffoldFirstRunUserConfigIfMissing(input: {
 
 function directCoreEnabled(env: Record<string, string | undefined>): boolean {
   return env.SPARKWRIGHT_ENABLE_DIRECT_CORE === "1";
+}
+
+function workflowRuntimeEnabled(
+  env: Record<string, string | undefined>,
+): boolean {
+  return env.SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS === "1";
 }
 
 function loadCliRunInput(
@@ -788,6 +810,7 @@ function parseArgs(
   let modelNameSource: ParsedArgs["modelNameSource"] = defaults.model
     ? "config"
     : undefined;
+  let workflowName: string | undefined;
   let sessionId: string | undefined;
   let format: ParsedArgs["format"] = "json";
   let eventType: string | undefined;
@@ -970,6 +993,17 @@ function parseArgs(
         return { ok: false, message: "Usage: --model requires a model name" };
       modelName = value;
       modelNameSource = "cli";
+      args.splice(index, 2);
+      index -= 1;
+      continue;
+    }
+
+    if (arg === "--workflow") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        return { ok: false, message: "Usage: --workflow requires a name" };
+      }
+      workflowName = value;
       args.splice(index, 2);
       index -= 1;
       continue;
@@ -1412,6 +1446,7 @@ function parseArgs(
       permissionMode,
       modelName,
       modelNameSource,
+      workflowName,
       sessionId,
       format,
       eventType,
@@ -6026,9 +6061,12 @@ function cronUsage(): string {
   ].join("\n");
 }
 
-function helpForArgs(argv: readonly string[]): string | undefined {
+function helpForArgs(
+  argv: readonly string[],
+  env: Record<string, string | undefined>,
+): string | undefined {
   if (argv.length === 0) return undefined;
-  if (isHelpArg(argv[0])) return usage();
+  if (isHelpArg(argv[0])) return usage(env);
 
   const command = argv[0];
   const runResumeHelp =
@@ -6066,7 +6104,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   }
   if (command === "run") {
     if (runResumeHelp) return runResumeUsage();
-    return 'Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]';
+    return runUsage(env);
   }
   if (command === "trace") {
     return "Usage: sparkwright trace <summary|events|timeline|report|verify> <trace.jsonl>";
@@ -7206,7 +7244,13 @@ async function scaffoldProjectConfig(
   return { exitCode: 0 };
 }
 
-function usage(): string {
+function runUsage(env: Record<string, string | undefined>): string {
+  const workflowFlag = workflowRuntimeEnabled(env) ? " [--workflow name]" : "";
+  return `Usage: sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]${workflowFlag}`;
+}
+
+function usage(env: Record<string, string | undefined>): string {
+  const workflowFlag = workflowRuntimeEnabled(env) ? " [--workflow name]" : "";
   return [
     "Usage: sparkwright init             # scaffold ~/.config/sparkwright/config.yaml",
     "       sparkwright init --project   # scaffold committable <workspace>/.sparkwright/config.yaml",
@@ -7230,7 +7274,7 @@ function usage(): string {
     '       sparkwright skills create <name> --description "what it does" [--workspace path] [--root path] [--force]',
     "       sparkwright agents list|validate [--workspace path] [--format json|text]",
     '       sparkwright agents create <id> --prompt "what it should do" [--use selector] [--allow tool] [--delegate tool_name] [--workspace path] [--force]',
-    '       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model] [--verbose]',
+    `       sparkwright run "your goal" [--image path] [--workspace path] [--session-root path] [--target README.md] [--confidential path-or-glob] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--access-mode mode] [--session-id id] [--model provider/model]${workflowFlag} [--verbose]`,
     "       sparkwright trace summary <trace.jsonl> [--format json|text]",
     "       sparkwright trace events <trace.jsonl> [--type event.type] [--run-id id] [--contains text] [--limit n] [--jsonl] [--format json|text]",
     "       sparkwright trace timeline <trace.jsonl> [--run-id id] [--format json|text]",

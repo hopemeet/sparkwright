@@ -107,6 +107,7 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("sparkwright --version|-v");
     expect(output.stdoutText()).toContain("sparkwright trace report");
     expect(output.stdoutText()).toContain('sparkwright run "your goal"');
+    expect(output.stdoutText()).not.toContain("--workflow name");
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
     expect(output.stderrText()).toBe("");
@@ -154,8 +155,26 @@ describe("runCli", () => {
 
     expect(result.exitCode).toBe(0);
     expect(output.stdoutText()).toContain('Usage: sparkwright run "your goal"');
+    expect(output.stdoutText()).not.toContain("--workflow name");
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Trace written to");
+    expect(output.stderrText()).toBe("");
+  });
+
+  it("shows workflow help only behind the experimental gate", async () => {
+    const output = createOutputCapture();
+
+    const result = await runCli(["run", "--help"], {
+      env: { ...process.env, SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1" },
+      io: {
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdinIsTTY: false,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("--workflow name");
     expect(output.stderrText()).toBe("");
   });
 
@@ -685,6 +704,33 @@ describe("runCli", () => {
     expect(result.tracePath).toBeUndefined();
     expect(output.stdoutText()).not.toContain("run.started");
     expect(output.stdoutText()).not.toContain("Validation trace written to");
+  });
+
+  it("keeps --workflow behind the experimental gate", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["run", "gated workflow", "--workspace", workspace, "--workflow", "demo"],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: undefined,
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(output.stderrText()).toContain(
+      "SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1",
+    );
+    expect(result.tracePath).toBeUndefined();
+    expect(output.stdoutText()).not.toContain("run.started");
   });
 
   it("surfaces in-process delegate tools in capabilities inspect", async () => {
@@ -7501,6 +7547,258 @@ describe("runCli", () => {
     ).toBeTruthy();
   });
 
+  it("runs workflow projection acceptance ladder through the host CLI", async () => {
+    // ① single node + command verifier
+    {
+      const workspace = await createWorkspace("# Demo\n");
+      await writeWorkflowAsset(
+        workspace,
+        "single",
+        [
+          "---",
+          "nodes:",
+          "  - id: main",
+          "    execute: model",
+          "    verify:",
+          "      - id: ok",
+          "        kind: command",
+          `        command: ${JSON.stringify(process.execPath)}`,
+          '        args: ["-e", "process.exit(0)"]',
+          "        expect: zero",
+          "        authorized: true",
+          "---",
+          "## main",
+          "Finish once.",
+        ].join("\n"),
+      );
+      const run = await runCli(
+        [
+          "run",
+          "single verifier",
+          "--workspace",
+          workspace,
+          "--model",
+          "scripted",
+          "--workflow",
+          "single",
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            ...process.env,
+            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
+            SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+              { message: "done" },
+            ]),
+          },
+          io: { stdinIsTTY: false },
+        },
+      );
+
+      expect(run.exitCode).toBe(0);
+      const events = await readTrace(run.tracePath);
+      expect(events.some((event) => event.type === "workflow.completed")).toBe(
+        true,
+      );
+      expect(
+        events.some(
+          (event) =>
+            event.type === "workflow_hook.completed" &&
+            typeof event.payload?.hookName === "string" &&
+            event.payload.hookName.startsWith("workflow:") &&
+            !event.payload.hookName.startsWith("verification:"),
+        ),
+      ).toBe(true);
+    }
+
+    // ② two-node linear transition
+    {
+      const workspace = await createWorkspace("# Demo\n");
+      await writeWorkflowAsset(
+        workspace,
+        "linear",
+        [
+          "---",
+          "nodes:",
+          "  - id: first",
+          "    execute: model",
+          "    onPass: second",
+          "  - id: second",
+          "    execute: model",
+          "---",
+          "## first",
+          "Do the first node.",
+          "",
+          "## second",
+          "Do the second node.",
+        ].join("\n"),
+      );
+      const run = await runCli(
+        [
+          "run",
+          "linear workflow",
+          "--workspace",
+          workspace,
+          "--model",
+          "scripted",
+          "--workflow",
+          "linear",
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            ...process.env,
+            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
+            SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+              { message: "first done" },
+              { message: "second done" },
+            ]),
+          },
+          io: { stdinIsTTY: false },
+        },
+      );
+
+      expect(run.exitCode).toBe(0);
+      const events = await readTrace(run.tracePath);
+      expect(
+        events.filter((event) => event.type === "workflow.node.completed"),
+      ).toHaveLength(2);
+      expect(
+        events.find((event) => event.type === "workflow.node.completed")
+          ?.payload?.decision,
+      ).toMatchObject({ type: "goto", toNodeId: "second" });
+    }
+
+    // ③ onFail retry
+    {
+      const workspace = await createWorkspace("# Demo\n");
+      await writeWorkflowAsset(
+        workspace,
+        "retry",
+        [
+          "---",
+          "nodes:",
+          "  - id: verify",
+          "    execute: model",
+          "    verify:",
+          "      - id: marker",
+          "        kind: command",
+          `        command: ${JSON.stringify(process.execPath)}`,
+          '        args: ["-e", "process.exit(1)"]',
+          "        expect: zero",
+          "        authorized: true",
+          "    onFail: { retry: 1, then: fail }",
+          "---",
+          "## verify",
+          "Try once, then retry once.",
+        ].join("\n"),
+      );
+      const run = await runCli(
+        [
+          "run",
+          "retry workflow",
+          "--workspace",
+          workspace,
+          "--model",
+          "scripted",
+          "--workflow",
+          "retry",
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            ...process.env,
+            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
+            SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+              { message: "first attempt" },
+              { message: "second attempt" },
+            ]),
+          },
+          io: { stdinIsTTY: false },
+        },
+      );
+
+      expect(run.exitCode).toBe(1);
+      const events = await readTrace(run.tracePath);
+      expect(
+        events
+          .filter((event) => event.type === "workflow.node.completed")
+          .map((event) => event.payload?.decision),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "retry", nodeId: "verify" }),
+          expect.objectContaining({ type: "fail", fromNodeId: "verify" }),
+        ]),
+      );
+    }
+
+    // ④ PreToolUse clamp compliance
+    {
+      const workspace = await createWorkspace("# Demo\n");
+      await writeWorkflowAsset(
+        workspace,
+        "clamp",
+        [
+          "---",
+          "nodes:",
+          "  - id: main",
+          "    execute: model",
+          "    tools: [read]",
+          "---",
+          "## main",
+          "Only read is allowed.",
+        ].join("\n"),
+      );
+      const run = await runCli(
+        [
+          "run",
+          "clamp workflow",
+          "--workspace",
+          workspace,
+          "--model",
+          "scripted",
+          "--workflow",
+          "clamp",
+          "--trace-level",
+          "debug",
+        ],
+        {
+          env: {
+            ...process.env,
+            SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS: "1",
+            SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+              {
+                toolCalls: [
+                  {
+                    toolName: "bash",
+                    arguments: { command: "echo blocked" },
+                  },
+                ],
+              },
+              { message: "blocked as expected" },
+            ]),
+          },
+          io: { stdinIsTTY: false },
+        },
+      );
+
+      expect(run.exitCode).toBe(0);
+      const events = await readTrace(run.tracePath);
+      expect(
+        events.find(
+          (event) =>
+            event.type === "tool.failed" && event.payload?.toolName === "bash",
+        )?.payload?.error,
+      ).toMatchObject({ code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" });
+      expect(events.some((event) => event.type === "workflow.completed")).toBe(
+        true,
+      );
+    }
+  });
+
   it("prints configured verification profile results in host runs", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
@@ -9069,6 +9367,16 @@ describe("runCli", () => {
     tempDirs.push(workspace);
     await writeFile(join(workspace, "README.md"), readme, "utf8");
     return workspace;
+  }
+
+  async function writeWorkflowAsset(
+    workspace: string,
+    name: string,
+    workflow: string,
+  ): Promise<void> {
+    const dir = join(workspace, ".sparkwright", "workflows", name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "workflow.md"), workflow, "utf8");
   }
 
   // Read/write tools are available by default, so the write smokes no longer

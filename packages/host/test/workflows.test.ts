@@ -99,6 +99,55 @@ describe("workflow assets", () => {
     ).toThrow(/reserved for a later phase/);
   });
 
+  it("parses P1 verifier and transition fields", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "bugfix",
+      dir: "/tmp/bugfix",
+      sourcePath: "/tmp/bugfix/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: reproduce",
+        "    execute: model",
+        "    tools: [read_file, shell]",
+        "    verify:",
+        "      - id: failing-test",
+        "        kind: command",
+        "        command: node",
+        "        args: [--version]",
+        "        expect: zero",
+        "        authorized: true",
+        "    onPass: patch",
+        "    onFail: { retry: 2, then: fail }",
+        "  - id: patch",
+        "    execute: model",
+        "---",
+        "## reproduce",
+        "Reproduce.",
+        "",
+        "## patch",
+        "Patch.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes[0]).toMatchObject({
+      id: "reproduce",
+      tools: ["read_file", "shell"],
+      verify: [
+        {
+          id: "failing-test",
+          kind: "command",
+          command: "node",
+          args: ["--version"],
+          expect: "zero",
+          authorized: true,
+        },
+      ],
+      onPass: "patch",
+      onFail: { retry: 2, then: "fail" },
+    });
+  });
+
   it("keeps stronger workflow layers and records shadows", async () => {
     const workspace = await tempWorkspace();
     const xdg = join(workspace, "xdg");
@@ -153,5 +202,41 @@ describe("workflow assets", () => {
         nodeCount: 1,
       }),
     ]);
+  });
+
+  it("keeps workflow run instantiation behind the experimental gate", async () => {
+    const workspace = await tempWorkspace();
+    await writeWorkflow(
+      workspace,
+      "gated",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "---",
+        "## main",
+        "Run only when enabled.",
+      ].join("\n"),
+    );
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      experimentalWorkflows: false,
+      emit: () => {},
+    });
+
+    const started = await runtime.startRun({
+      goal: "try gated workflow",
+      workflow: "gated",
+    });
+
+    expect(started).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_payload",
+        message: expect.stringContaining("experimental"),
+      },
+    });
   });
 });

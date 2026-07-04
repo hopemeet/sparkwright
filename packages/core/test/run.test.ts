@@ -3102,6 +3102,47 @@ describe("SparkwrightRun", () => {
     ]);
   });
 
+  it("kicks RunEnd hooks when cancelled", async () => {
+    const payloads: unknown[] = [];
+    const run = createRun({
+      goal: "cancel hook",
+      workflowHooks: [
+        {
+          name: "capture-run-end",
+          hook: "RunEnd",
+          handle(input) {
+            payloads.push(input.payload);
+          },
+        },
+      ],
+    });
+
+    run.cancel({
+      reason: "User stopped the run.",
+      metadata: { source: "test" },
+    });
+
+    await waitForCondition(() => payloads.length === 1);
+
+    expect(payloads[0]).toMatchObject({
+      state: "cancelled",
+      reason: "manual_cancelled",
+      result: {
+        signal: "cancelled",
+        state: "cancelled",
+        stopReason: "manual_cancelled",
+        message: "User stopped the run.",
+        metadata: { source: "test" },
+      },
+    });
+    expect(run.events.all().map((event) => event.type)).toEqual([
+      "run.created",
+      "run.cancelled",
+      "workflow_hook.started",
+      "workflow_hook.completed",
+    ]);
+  });
+
   it("does not emit a second terminal when a cancel lands as the run completes", async () => {
     // Race: a cancel arrives while the model is producing its final answer. The
     // model cancels mid-completion, then returns — the loop must not emit a
@@ -5498,6 +5539,111 @@ describe("SparkwrightRun", () => {
     });
     expect(run.events.all().map((event) => event.type)).not.toContain(
       "run.budget.exceeded",
+    );
+  });
+
+  it("uses workflow source budget for workflow projection continuations", async () => {
+    let modelCalls = 0;
+    let stopCalls = 0;
+    const turnTransitions: unknown[] = [];
+    const run = createRun({
+      goal: "workflow source budget",
+      workflowHooks: [
+        {
+          name: "capture-turn-start",
+          hook: "TurnStart",
+          handle(input) {
+            turnTransitions.push(input.metadata.transition);
+          },
+        },
+        {
+          name: "workflow:test-run",
+          hook: "Stop",
+          handle() {
+            stopCalls += 1;
+            if (stopCalls === 1) {
+              return {
+                status: "advance",
+                reason: "workflow retry",
+              };
+            }
+            return { status: "continue" };
+          },
+        },
+      ],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: modelCalls === 1 ? "try again" : "done" };
+        },
+      },
+      maxSteps: 1,
+      forcedContinuationBudgets: { workflow: 1 },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(result.metadata).toMatchObject({
+      maxSteps: 1,
+      stepLimitReached: false,
+      forcedContinuationTurnsUsed: { workflow: 1 },
+    });
+    expect(turnTransitions[1]).toMatchObject({
+      reason: "workflow_hook_advanced",
+      metadata: {
+        hookName: "workflow:test-run",
+        forcedContinuationSource: "workflow",
+      },
+    });
+  });
+
+  it("refuses workflow projection continuations when the source budget is exhausted", async () => {
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "workflow source budget exhausted",
+      workflowHooks: [
+        {
+          name: "workflow:test-run",
+          hook: "Stop",
+          handle() {
+            return {
+              status: "advance",
+              reason: "workflow retry",
+            };
+          },
+        },
+      ],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: "final despite refused workflow continuation" };
+        },
+      },
+      maxSteps: 1,
+      forcedContinuationBudgets: { workflow: 0 },
+    });
+
+    const result = await run.start();
+    const budgetExceeded = run.events
+      .all()
+      .find((event) => event.type === "run.budget.exceeded");
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(1);
+    expect(result.metadata).not.toHaveProperty("forcedContinuationTurnsUsed");
+    expect(result.metadata).not.toHaveProperty("outcome");
+    expect(budgetExceeded?.payload).toMatchObject({
+      signal: "budget.exceeded",
+      family: "forced_continuation",
+      source: "workflow",
+      used: 0,
+      limit: 0,
+      reason: "workflow_hook_advanced",
+    });
+    expect(run.events.all().map((event) => event.type)).not.toContain(
+      "workflow.failed",
     );
   });
 

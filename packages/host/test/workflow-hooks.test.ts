@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createRun,
   createRunId,
   defineTool,
   EventLog,
@@ -18,6 +19,7 @@ import {
 import {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  createWorkflowProjectionHooks,
   createVerificationWorkflowHooks,
 } from "../src/index.js";
 import { assembleRuntimeWorkflowHooks } from "../src/runtime.js";
@@ -72,6 +74,493 @@ describe("runtime workflow hook assembly", () => {
       "verification:stop-gate",
       "documented-command-check",
     ]);
+  });
+
+  it("appends workflow projection hooks after existing producers", () => {
+    const hooks = assembleRuntimeWorkflowHooks({
+      workspaceRoot: process.cwd(),
+      workflowHooks: [
+        {
+          name: "config-guard",
+          hook: "RunStart",
+          action: { type: "context", content: "configured" },
+        },
+      ],
+      projectionHooks: [
+        {
+          name: "workflow:wf_test",
+          hook: "RunStart",
+          handle: () => undefined,
+        },
+      ],
+      documentedCommand: {
+        goal: "just answer",
+        shouldWrite: false,
+      },
+    });
+
+    expect(hooks.map((hook) => hook.name)).toEqual([
+      "config-guard",
+      "workflow:wf_test",
+    ]);
+  });
+});
+
+describe("createWorkflowProjectionHooks", () => {
+  it("rejects command verifiers without instantiation-time authorization", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_unauthorized",
+        definition: {
+          assetName: "unauthorized",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "verify",
+              execute: "model",
+              body: "Verify.",
+              verify: [
+                {
+                  id: "missing-auth",
+                  kind: "command",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                  expect: "zero",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ).toThrow(/not authorized/);
+  });
+
+  it("runs a command verifier and completes a single-node workflow", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_single",
+        definition: {
+          assetName: "single",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "verify",
+              execute: "model",
+              body: "Verify the result.",
+              verify: [
+                {
+                  id: "node-ok",
+                  kind: "command",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                  expect: "zero",
+                  authorized: true,
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "RunStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+      const stop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "done" },
+        events,
+        facts: ledger,
+      });
+
+      expect(stop.status).toBe("continued");
+      expect(events.all().map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "workflow.started",
+          "workflow_hook.completed",
+          "workflow.node.completed",
+          "workflow.completed",
+        ]),
+      );
+      expect(ledger.snapshot().verificationResults[0]).toMatchObject({
+        hookName: "workflow:wf_single",
+        nodeId: "verify",
+        verifierId: "node-ok",
+        expect: "zero",
+        satisfied: true,
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("advances linearly between model nodes", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_linear",
+        definition: {
+          assetName: "linear",
+          contentHash: "hash",
+          nodes: [
+            { id: "first", execute: "model", body: "First.", onPass: "second" },
+            { id: "second", execute: "model", body: "Second." },
+          ],
+        },
+      });
+
+      const firstStop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "first done" },
+        events,
+        facts: ledger,
+      });
+      const secondTurn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+      const secondStop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "second done" },
+        events,
+        facts: ledger,
+      });
+
+      expect(firstStop.status).toBe("advanced");
+      expect(secondTurn.context[0]?.content).toContain("Workflow node: second");
+      expect(secondStop.status).toBe("continued");
+      expect(events.all().map((event) => event.type)).toContain(
+        "workflow.completed",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("retries on verifier failure before failing the workflow", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_retry",
+        definition: {
+          assetName: "retry",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "verify",
+              execute: "model",
+              body: "Verify.",
+              verify: [
+                {
+                  id: "fails",
+                  kind: "command",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(2)"],
+                  expect: "zero",
+                  authorized: true,
+                },
+              ],
+              onFail: { retry: 1, then: "fail" },
+            },
+          ],
+        },
+      });
+
+      const firstStop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "try" },
+        events,
+        facts: ledger,
+      });
+      const secondStop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "try again" },
+        events,
+        facts: ledger,
+      });
+
+      expect(firstStop.status).toBe("advanced");
+      expect(secondStop.status).toBe("continued");
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map((event) => (event.payload as { attempt?: unknown }).attempt),
+      ).toEqual([1, 2]);
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_retry",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks tools outside the active node allowlist", async () => {
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_tools",
+      definition: {
+        assetName: "tools",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "limited",
+            execute: "model",
+            body: "Use only read_file.",
+            tools: ["read_file"],
+          },
+        ],
+      },
+    });
+    const run = runRecord();
+    const events = new EventLog(run.id);
+
+    const blocked = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "PreToolUse",
+      run,
+      payload: { toolName: "shell", arguments: {} },
+      events,
+    });
+
+    expect(blocked.status).toBe("blocked");
+    if (blocked.status !== "blocked") {
+      throw new Error("expected blocked workflow hook result");
+    }
+    expect(blocked.block.metadata).toMatchObject({
+      workflowRunId: "wf_tools",
+      nodeId: "limited",
+      toolName: "shell",
+      allowedTools: ["read_file"],
+    });
+  });
+
+  it("fails closed at RunStart and TurnStart projection gates", async () => {
+    for (const hook of ["RunStart", "TurnStart"] as const) {
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: `wf_${hook}`,
+        faultInjection: { [hook]: `${hook} exploded` },
+        definition: {
+          assetName: "faulty",
+          contentHash: "hash",
+          nodes: [{ id: "main", execute: "model", body: "Run." }],
+        },
+      });
+      const run = createRun({
+        goal: `${hook} fault`,
+        workflowHooks: projection.hooks,
+        model: {
+          async complete() {
+            return { message: "done" };
+          },
+        },
+      });
+
+      const result = await run.start();
+
+      expect(result.state).toBe("failed");
+      expect(result.stopReason).toBe("hook_stopped");
+      expect(
+        run.events.all().find((event) => event.type === "workflow_hook.failed")
+          ?.payload,
+      ).toMatchObject({ hook });
+    }
+  });
+
+  it("turns PreToolUse projection errors into synthetic tool failures", async () => {
+    let modelCalls = 0;
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_pretool_fault",
+      faultInjection: { PreToolUse: "pretool exploded" },
+      definition: {
+        assetName: "pretool",
+        contentHash: "hash",
+        nodes: [{ id: "main", execute: "model", body: "Run." }],
+      },
+    });
+    const run = createRun({
+      goal: "pretool fault",
+      workflowHooks: projection.hooks,
+      tools: [
+        defineTool({
+          name: "read_file",
+          description: "Read.",
+          inputSchema: { type: "object" },
+          execute() {
+            return { ok: true };
+          },
+        }),
+      ],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return modelCalls === 1
+            ? { toolCalls: [{ toolName: "read_file", arguments: {} }] }
+            : { message: "done" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(
+      run.events.all().find((event) => event.type === "tool.failed")?.payload,
+    ).toMatchObject({
+      toolName: "read_file",
+      error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
+    });
+  });
+
+  it("fails incomplete workflows when Stop projection errors exhaust the workflow source budget", async () => {
+    let modelCalls = 0;
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_stop_fault",
+      stopRuntimeErrorThreshold: 99,
+      faultInjection: { Stop: "stop exploded" },
+      definition: {
+        assetName: "stop",
+        contentHash: "hash",
+        nodes: [{ id: "main", execute: "model", body: "Run." }],
+      },
+    });
+    const run = createRun({
+      goal: "stop fault",
+      workflowHooks: projection.hooks,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: `done ${modelCalls}` };
+        },
+      },
+      maxSteps: 1,
+      forcedContinuationBudgets: { workflow: 1 },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(
+      run.events.all().filter((event) => event.type === "workflow_hook.failed")
+        .length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      run.events.all().find((event) => event.type === "run.budget.exceeded")
+        ?.payload,
+    ).toMatchObject({ source: "workflow" });
+    expect(
+      run.events.all().find((event) => event.type === "workflow.interrupted")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_stop_fault",
+      kind: "budget",
+      source: "workflow",
+    });
+    expect(
+      run.events.all().find((event) => event.type === "workflow.failed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_stop_fault",
+      failure: { kind: "runtime", code: "WORKFLOW_RUNTIME_FAILED" },
+    });
+    expect(result.metadata).toMatchObject({
+      outcome: {
+        failing: true,
+        workflowFailure: {
+          lastCode: "WORKFLOW_RUNTIME_FAILED",
+        },
+      },
+    });
+  });
+
+  it("bounds persistent Stop projection errors before maxSteps", async () => {
+    let modelCalls = 0;
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_stop_threshold",
+      stopRuntimeErrorThreshold: 2,
+      faultInjection: { Stop: "stop exploded" },
+      definition: {
+        assetName: "stop-threshold",
+        contentHash: "hash",
+        nodes: [{ id: "main", execute: "model", body: "Run." }],
+      },
+    });
+    const run = createRun({
+      goal: "stop threshold",
+      workflowHooks: projection.hooks,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: `done ${modelCalls}` };
+        },
+      },
+      maxSteps: 8,
+      forcedContinuationBudgets: { workflow: 5 },
+    });
+
+    const result = await run.start();
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(result.metadata).toMatchObject({
+      outcome: {
+        failing: true,
+        workflowFailure: {
+          lastCode: "WORKFLOW_RUNTIME_FAILED",
+        },
+      },
+    });
+    expect(
+      run.events.all().find((event) => event.type === "workflow.failed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_stop_threshold",
+      failure: { kind: "runtime", code: "WORKFLOW_RUNTIME_FAILED" },
+    });
   });
 });
 
@@ -371,6 +860,52 @@ describe("createConfiguredWorkflowHooks", () => {
       );
       expect(events.all().map((event) => event.type)).not.toContain(
         "workflow_hook.blocked",
+      );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects configured advance while a workflow is active", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        workflowActive: true,
+        hooks: [
+          {
+            name: "configured-advance",
+            hook: "Stop",
+            onError: "block",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'advance', reason:'configured advance'}));",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        payload: {},
+        events,
+      });
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(result.block.reason).toContain(
+        "configured hooks cannot advance workflow-controlled runs",
       );
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -766,6 +1301,52 @@ describe("createConfiguredWorkflowHooks", () => {
       expect(result.rewrites).toEqual([
         expect.objectContaining({ arguments: { command: "npm test" } }),
       ]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects configured PreToolUse rewrite while a workflow is active", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const hooks = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        workflowActive: true,
+        hooks: [
+          {
+            name: "configured-rewrite",
+            hook: "PreToolUse",
+            onError: "block",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{command:'npm test'}}}))",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+      });
+
+      const result = await runWorkflowHooks({
+        hooks,
+        hook: "PreToolUse",
+        run,
+        payload: { toolName: "shell", arguments: { command: "npm t" } },
+        events,
+      });
+
+      expect(result.status).toBe("blocked");
+      if (result.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
+      expect(result.block.reason).toContain(
+        "configured PreToolUse hooks cannot rewrite workflow-controlled tool calls",
+      );
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

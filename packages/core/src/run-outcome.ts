@@ -115,6 +115,12 @@ export interface CompletedRunOutcome {
     count: number;
     claims: Array<{ kind: "command_success"; command: string }>;
   };
+  /** @reserved Public outcome field consumed by trace/diagnostics readers of serialized workflow-run outcomes, not by an in-process TS reader. */
+  workflowFailure?: {
+    count: number;
+    lastReason?: string;
+    lastCode?: string;
+  };
 }
 
 export function analyzeCommandOutcomes(
@@ -685,6 +691,7 @@ export function completedRunOutcomeFromEvents(
       ? verificationProfileResultsFromFactLedger(options.factLedger)
       : analyzeVerificationProfileResults(events)
   ).filter((result) => result.status === "failed");
+  const workflowFailures = analyzeWorkflowFailures(events);
   // Command-verification and profile-verification are a single "verification"
   // issue category for outcome-kind purposes.
   const hasVerificationFailures =
@@ -695,6 +702,7 @@ export function completedRunOutcomeFromEvents(
       toolSummary.recoveredFailures.length > 0,
     hasVerificationFailures,
     unsupportedFinalClaims.length > 0,
+    workflowFailures.length > 0,
   ].filter(Boolean).length;
   const relevant =
     toolSummary.unresolvedFailures.length > 0
@@ -704,7 +712,8 @@ export function completedRunOutcomeFromEvents(
   if (
     relevant.length === 0 &&
     !hasVerificationFailures &&
-    unsupportedFinalClaims.length === 0
+    unsupportedFinalClaims.length === 0 &&
+    workflowFailures.length === 0
   ) {
     return undefined;
   }
@@ -712,6 +721,7 @@ export function completedRunOutcomeFromEvents(
   const lastCommandFailure =
     commandSummary.unresolvedVerificationFailures.at(-1);
   const lastProfileFailure = profileFailures.at(-1);
+  const lastWorkflowFailure = workflowFailures.at(-1);
   return {
     kind: completedRunOutcomeKind({
       issueKinds,
@@ -721,9 +731,12 @@ export function completedRunOutcomeFromEvents(
         toolSummary.recoveredFailures.length > 0,
       hasCommandFailures: hasVerificationFailures,
       hasUnsupportedFinalClaims: unsupportedFinalClaims.length > 0,
+      hasWorkflowFailures: workflowFailures.length > 0,
     }),
     failing:
-      toolSummary.unresolvedFailures.length > 0 || hasVerificationFailures,
+      toolSummary.unresolvedFailures.length > 0 ||
+      hasVerificationFailures ||
+      workflowFailures.length > 0,
     ...(relevant.length > 0
       ? {
           toolFailures: {
@@ -766,6 +779,19 @@ export function completedRunOutcomeFromEvents(
           },
         }
       : {}),
+    ...(workflowFailures.length > 0
+      ? {
+          workflowFailure: {
+            count: workflowFailures.length,
+            ...(lastWorkflowFailure?.reason
+              ? { lastReason: lastWorkflowFailure.reason }
+              : {}),
+            ...(lastWorkflowFailure?.code
+              ? { lastCode: lastWorkflowFailure.code }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -793,13 +819,45 @@ function completedRunOutcomeKind(input: {
   hasRecoveredToolFailures: boolean;
   hasCommandFailures: boolean;
   hasUnsupportedFinalClaims: boolean;
+  hasWorkflowFailures: boolean;
 }): CompletedRunOutcome["kind"] {
   if (input.issueKinds > 1) return "completed_with_issues";
+  if (input.hasWorkflowFailures) return "completed_with_issues";
   if (input.hasUnresolvedToolFailures) return "completed_with_tool_failures";
   if (input.hasRecoveredToolFailures)
     return "completed_with_recovered_tool_failures";
   if (input.hasCommandFailures) return "completed_with_verification_failures";
   return "completed_with_unsupported_final_claims";
+}
+
+function analyzeWorkflowFailures(
+  events: readonly SparkwrightEvent[],
+): Array<{ reason?: string; code?: string }> {
+  return events.flatMap((event) => {
+    if (event.type !== "workflow.failed" || !isRecord(event.payload)) {
+      return [];
+    }
+    const failure = isRecord(event.payload.failure)
+      ? event.payload.failure
+      : undefined;
+    return [
+      {
+        ...((stringValue(event.payload.reason) ?? stringValue(failure?.reason))
+          ? {
+              reason:
+                stringValue(event.payload.reason) ??
+                stringValue(failure?.reason),
+            }
+          : {}),
+        ...((stringValue(event.payload.code) ?? stringValue(failure?.code))
+          ? {
+              code:
+                stringValue(event.payload.code) ?? stringValue(failure?.code),
+            }
+          : {}),
+      },
+    ];
+  });
 }
 
 /**

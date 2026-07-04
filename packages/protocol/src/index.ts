@@ -314,6 +314,8 @@ export interface RunStartRequestPayload {
   shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
+  /** Workflow asset name to instantiate for this run. */
+  workflow?: string;
   /**
    * High-level run autonomy preset. When present, the host compiles it to
    * `permissionMode` + `shouldWrite` and a conflicting legacy `permissionMode`

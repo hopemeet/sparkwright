@@ -62,6 +62,11 @@ export type {
   BindConfiguredEventHooksOptions,
   CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
+export { createWorkflowProjectionHooks } from "./workflow-projection.js";
+export type {
+  CreateWorkflowProjectionHooksOptions,
+  WorkflowProjectionHookSet,
+} from "./workflow-projection.js";
 export {
   TracedProcessRunner,
   inferProcessRuntime,

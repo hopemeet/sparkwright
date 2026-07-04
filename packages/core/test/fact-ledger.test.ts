@@ -109,6 +109,7 @@ describe("FactLedger", () => {
           args: ["test"],
           exitCode: 1,
           timedOut: false,
+          nodeId: "reproduce",
           expect: "nonzero",
         },
       },
@@ -119,6 +120,7 @@ describe("FactLedger", () => {
       initiator: "verifier-launched",
       source: "workflow_hook",
       hookName: "verification:fast:repro",
+      nodeId: "reproduce",
       command: "npm",
       args: ["test"],
       exitCode: 1,
@@ -127,6 +129,7 @@ describe("FactLedger", () => {
     expect(snapshot.verificationResults[0]).toMatchObject({
       hookName: "verification:fast:repro",
       profile: "fast",
+      nodeId: "reproduce",
       verifierId: "repro",
       expect: "nonzero",
       satisfied: true,

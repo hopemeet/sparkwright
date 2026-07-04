@@ -39,6 +39,7 @@ export interface FactLedgerCommandFact {
   hookName?: string;
   hook?: string;
   profile?: string;
+  nodeId?: string;
   verifierId?: string;
   command?: string;
   args?: string[];
@@ -56,6 +57,7 @@ export interface FactLedgerVerificationResult {
   stale: boolean;
   hookName?: string;
   profile?: string;
+  nodeId?: string;
   verifierId: string;
   expect: CommandExpectation;
   satisfied: boolean;
@@ -202,6 +204,7 @@ export class FactLedger implements FactLedgerReader {
       ...(input.hookName ? { hookName: input.hookName } : {}),
       ...(input.hook ? { hook: input.hook } : {}),
       ...(input.profile ? { profile: input.profile } : {}),
+      ...(input.nodeId ? { nodeId: input.nodeId } : {}),
       ...(input.verifierId ? { verifierId: input.verifierId } : {}),
       ...(input.command ? { command: input.command } : {}),
       ...(input.args ? { args: input.args } : {}),
@@ -307,6 +310,7 @@ function verificationResultForHookCommand(
     ...((command.profile ?? parsed?.profile)
       ? { profile: command.profile ?? parsed?.profile }
       : {}),
+    ...(command.nodeId ? { nodeId: command.nodeId } : {}),
     verifierId,
     expect,
     satisfied: commandExpectationSatisfied(expect, command),
@@ -359,6 +363,7 @@ function commandFactFromRaw(
     ...(stringValue(value.profile)
       ? { profile: stringValue(value.profile) }
       : {}),
+    ...(stringValue(value.nodeId) ? { nodeId: stringValue(value.nodeId) } : {}),
     ...(stringValue(value.verifierId)
       ? { verifierId: stringValue(value.verifierId) }
       : {}),
@@ -406,6 +411,7 @@ function verificationResultFromRaw(
     ...(stringValue(value.profile)
       ? { profile: stringValue(value.profile) }
       : {}),
+    ...(stringValue(value.nodeId) ? { nodeId: stringValue(value.nodeId) } : {}),
     verifierId,
     expect,
     satisfied:
