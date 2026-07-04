@@ -1,8 +1,4 @@
-import {
-  createContextItemId,
-  type SparkwrightEvent,
-  type WorkflowHook,
-} from "@sparkwright/core";
+import { createContextItemId, type WorkflowHook } from "@sparkwright/core";
 import type {
   CapabilityVerificationCommandConfig,
   CapabilityVerificationConfig,
@@ -137,16 +133,30 @@ function createVerificationStopGate(
     name: "verification:stop-gate",
     hook: "Stop",
     handle(input) {
-      const events = stopPayloadEvents(input.payload);
-      const latestWrite = latestWorkspaceWrite(events);
+      const ledger = input.facts?.snapshot();
+      if (!ledger) {
+        return {
+          status: "block",
+          reason: "Verification FactLedger is unavailable.",
+          metadata: {
+            profile: profileName,
+            missingFactLedger: true,
+          },
+        };
+      }
+      const latestWrite = ledger.writes.at(-1);
       if (!latestWrite) return { status: "continue" };
 
       const missing = commands.filter(
         (command) =>
-          !hasSuccessfulVerificationAfter(
-            events,
-            verificationHookName(profileName, command.id),
-            latestWrite.sequence,
+          !ledger.verificationResults.some(
+            (result) =>
+              !result.stale &&
+              result.writeEpoch === ledger.writeEpoch &&
+              result.sequence > latestWrite.sequence &&
+              result.profile === profileName &&
+              result.verifierId === command.id &&
+              result.satisfied,
           ),
       );
       if (missing.length === 0) return { status: "continue" };
@@ -174,46 +184,4 @@ function verificationProfileName(config: CapabilityVerificationConfig): string {
 
 function verificationHookName(profileName: string, commandId: string): string {
   return `verification:${profileName}:${commandId}`;
-}
-
-function stopPayloadEvents(payload: unknown): readonly SparkwrightEvent[] {
-  if (!isRecord(payload)) return [];
-  return Array.isArray(payload.events)
-    ? (payload.events as SparkwrightEvent[])
-    : [];
-}
-
-function latestWorkspaceWrite(
-  events: readonly SparkwrightEvent[],
-): SparkwrightEvent | undefined {
-  return events
-    .filter((event) => event.type === "workspace.write.completed")
-    .sort((a, b) => b.sequence - a.sequence)[0];
-}
-
-function hasSuccessfulVerificationAfter(
-  events: readonly SparkwrightEvent[],
-  hookName: string,
-  sequence: number,
-): boolean {
-  return events.some((event) => {
-    if (
-      event.sequence <= sequence ||
-      event.type !== "workflow_hook.completed" ||
-      !isRecord(event.payload)
-    ) {
-      return false;
-    }
-    if (event.payload.hookName !== hookName) return false;
-    const result = isRecord(event.payload.result)
-      ? event.payload.result
-      : undefined;
-    if (!result || result.status !== "continue") return false;
-    const metadata = isRecord(result.metadata) ? result.metadata : undefined;
-    return metadata?.exitCode === 0 && metadata.timedOut !== true;
-  });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

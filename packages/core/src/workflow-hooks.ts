@@ -8,6 +8,7 @@
 // =============================================================================
 
 import type { EventEmitter, EventLog } from "./events.js";
+import type { FactLedgerReader } from "./fact-ledger.js";
 import type { ContextItem, RunRecord } from "./types.js";
 import type { ValidationFinding } from "./validation.js";
 
@@ -48,6 +49,7 @@ export interface WorkflowHookInput<TPayload = unknown> {
   payload: TPayload;
   metadata: Record<string, unknown>;
   events?: EventEmitter;
+  facts?: FactLedgerReader;
 }
 
 export type WorkflowHookResult =
@@ -110,6 +112,7 @@ export interface RunWorkflowHooksInput<TPayload = unknown> {
   payload: TPayload;
   metadata?: Record<string, unknown>;
   events: EventLog;
+  facts?: FactLedgerReader;
 }
 
 export interface WorkflowHookBlock {
@@ -176,6 +179,7 @@ export async function runWorkflowHooks(
           payload: input.payload,
           metadata,
           events: input.events,
+          facts: input.facts,
         }),
       );
 

@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import type { SparkwrightEvent } from "./events.js";
+import { stableDiagnosticJson } from "./fact-classifier.js";
 import { isRecord } from "./record-utils.js";
 
 const REPEATED_TOOL_REQUEST_THRESHOLD = 3;
@@ -353,26 +354,6 @@ function formatCountRecord(counts: Record<string, number>): string {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([key, count]) => `${key}:${count}`)
     .join(", ");
-}
-
-function stableDiagnosticJson(value: unknown): string {
-  try {
-    return JSON.stringify(stableDiagnosticValue(value));
-  } catch {
-    return String(value);
-  }
-}
-
-function stableDiagnosticValue(value: unknown): unknown {
-  if (Array.isArray(value))
-    return value.slice(0, 20).map(stableDiagnosticValue);
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .sort()
-      .slice(0, 20)
-      .map((key) => [key, stableDiagnosticValue(value[key])]),
-  );
 }
 
 function truncateDiagnostic(value: string, maxLength: number): string {

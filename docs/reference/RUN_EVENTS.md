@@ -205,6 +205,9 @@ Stable consumption rules:
   in `metadata.modelError` when available.
 - Once a terminal event is seen, ignore later state-transition attempts except
   to surface `run.state_transition.rejected` as diagnostics.
+- Completed final-answer events may carry `factLedger` as the persisted
+  command/verification fact snapshot. It is an audit snapshot on the terminal
+  event, not a new event family.
 
 For durable stores, update the run record and write `result.json` at terminal
 completion, but keep `trace.jsonl` append-only.

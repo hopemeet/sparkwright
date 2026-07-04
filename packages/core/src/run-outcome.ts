@@ -1,4 +1,15 @@
 import type { SparkwrightEvent } from "./events.js";
+import {
+  commandIdentity,
+  effectiveShellExitCode,
+  isExplicitVerificationCommand,
+  isShellToolName,
+  isVerificationGoal,
+  isVerificationRelevantCommand,
+  parseVerificationHookName,
+  stripLeadingEnvAssignments,
+} from "./fact-classifier.js";
+import type { FactLedgerSnapshot } from "./fact-ledger.js";
 import { isRecord } from "./record-utils.js";
 
 export type ToolFailureCategory =
@@ -212,10 +223,6 @@ export function analyzeCommandOutcomes(
   };
 }
 
-function isShellToolName(value: unknown): boolean {
-  return value === "bash" || value === "shell";
-}
-
 export function analyzeToolOutcomes(
   events: readonly SparkwrightEvent[],
 ): ToolOutcomeSummary {
@@ -413,6 +420,68 @@ export function analyzeToolOutcomes(
   };
 }
 
+export function analyzeCommandOutcomesFromFactLedger(
+  snapshot: FactLedgerSnapshot,
+): CommandOutcomeSummary {
+  const failures: ClassifiedCommandFailure[] = [];
+  const successes: ClassifiedCommandSuccess[] = [];
+  const byExitCode: Record<string, number> = {};
+
+  for (const fact of snapshot.commands) {
+    if (fact.stale || fact.initiator !== "model-initiated") continue;
+    if (fact.exitCode === 0 && !fact.timedOut) {
+      successes.push({
+        toolCallId: fact.toolCallId,
+        command: fact.command,
+        commandKey: fact.commandKey,
+        verificationRelevant: fact.verificationRelevant,
+        sequence: fact.sequence,
+      });
+      continue;
+    }
+    if (fact.exitCode !== null || fact.timedOut) {
+      const key = fact.timedOut ? "timed_out" : String(fact.exitCode);
+      byExitCode[key] = (byExitCode[key] ?? 0) + 1;
+      failures.push({
+        toolCallId: fact.toolCallId,
+        command: fact.command,
+        commandKey: fact.commandKey,
+        exitCode: fact.exitCode,
+        timedOut: fact.timedOut,
+        verificationRelevant: fact.verificationRelevant,
+        sequence: fact.sequence,
+      });
+    }
+  }
+
+  const verificationFailures = failures.filter(
+    (failure) => failure.verificationRelevant,
+  );
+  const unresolvedVerificationFailures = verificationFailures.filter(
+    (failure) => {
+      const failureSequence = failure.sequence ?? 0;
+      const laterSuccesses = successes.filter(
+        (success) =>
+          success.verificationRelevant &&
+          (success.sequence ?? 0) > failureSequence,
+      );
+      if (laterSuccesses.length === 0) return true;
+      if (!failure.commandKey) return false;
+      return !laterSuccesses.some(
+        (success) => success.commandKey === failure.commandKey,
+      );
+    },
+  );
+
+  return {
+    failures,
+    successes,
+    verificationFailures,
+    unresolvedVerificationFailures,
+    byExitCode,
+  };
+}
+
 /**
  * Configured verification-profile results, keyed by hook name (latest wins).
  * A non-zero exit code or a timeout marks the profile as failed. Stop-gate and
@@ -452,17 +521,6 @@ export function analyzeVerificationProfileResults(
   return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
-function parseVerificationHookName(
-  hookName: string | undefined,
-): { profile: string; id: string } | undefined {
-  if (!hookName?.startsWith("verification:")) return undefined;
-  const [, profile, ...idParts] = hookName.split(":");
-  const id = idParts.join(":");
-  if (!profile || !id) return undefined;
-  if (id === "stop-gate" || profile === "suggest") return undefined;
-  return { profile, id };
-}
-
 export interface CommandOutcomeSnapshot {
   total: number;
   byExitCode: Record<string, number>;
@@ -492,7 +550,20 @@ export interface CommandOutcomeSnapshot {
 export function commandOutcomeSnapshot(
   events: readonly SparkwrightEvent[],
 ): CommandOutcomeSnapshot | undefined {
-  const outcomes = analyzeCommandOutcomes(events);
+  return commandOutcomeSnapshotFromSummary(analyzeCommandOutcomes(events));
+}
+
+export function commandOutcomeSnapshotFromFactLedger(
+  snapshot: FactLedgerSnapshot,
+): CommandOutcomeSnapshot | undefined {
+  return commandOutcomeSnapshotFromSummary(
+    analyzeCommandOutcomesFromFactLedger(snapshot),
+  );
+}
+
+function commandOutcomeSnapshotFromSummary(
+  outcomes: CommandOutcomeSummary,
+): CommandOutcomeSnapshot | undefined {
   if (outcomes.failures.length === 0) return undefined;
   const lastFailure = outcomes.verificationFailures.at(-1);
   const lastUnresolved = outcomes.unresolvedVerificationFailures.at(-1);
@@ -599,16 +670,21 @@ export function toolOutcomeSnapshot(
 export function completedRunOutcomeFromEvents(
   events: readonly SparkwrightEvent[],
   finalMessage?: string,
+  options: { factLedger?: FactLedgerSnapshot } = {},
 ): CompletedRunOutcome | undefined {
   const toolSummary = analyzeToolOutcomes(events);
-  const commandSummary = analyzeCommandOutcomes(events);
+  const commandSummary = options.factLedger
+    ? analyzeCommandOutcomesFromFactLedger(options.factLedger)
+    : analyzeCommandOutcomes(events);
   const unsupportedFinalClaims = analyzeUnsupportedFinalAnswerClaims(
     finalMessage,
     commandSummary,
   );
-  const profileFailures = analyzeVerificationProfileResults(events).filter(
-    (result) => result.status === "failed",
-  );
+  const profileFailures = (
+    options.factLedger
+      ? verificationProfileResultsFromFactLedger(options.factLedger)
+      : analyzeVerificationProfileResults(events)
+  ).filter((result) => result.status === "failed");
   // Command-verification and profile-verification are a single "verification"
   // issue category for outcome-kind purposes.
   const hasVerificationFailures =
@@ -691,6 +767,24 @@ export function completedRunOutcomeFromEvents(
         }
       : {}),
   };
+}
+
+export function verificationProfileResultsFromFactLedger(
+  snapshot: FactLedgerSnapshot,
+): VerificationProfileResult[] {
+  const latest = new Map<string, VerificationProfileResult>();
+  for (const result of snapshot.verificationResults) {
+    if (!result.hookName?.startsWith("verification:")) continue;
+    latest.set(result.hookName, {
+      hookName: result.hookName,
+      ...(result.profile ? { profile: result.profile } : {}),
+      id: result.verifierId,
+      status: result.satisfied ? "passed" : "failed",
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+    });
+  }
+  return [...latest.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function completedRunOutcomeKind(input: {
@@ -1055,29 +1149,6 @@ function isFailureClaimContext(text: string): boolean {
   );
 }
 
-function effectiveShellExitCode(
-  command: string | undefined,
-  output: Record<string, unknown>,
-): number | null {
-  if (!command || !/\bEXIT:\$?/.test(command)) return null;
-  const combined = `${stringValue(output.stdout) ?? ""}\n${stringValue(output.stderr) ?? ""}`;
-  const matches = [...combined.matchAll(/(?:^|\n)EXIT:(\d+)(?:\r?\n|$)/g)];
-  const last = matches.at(-1)?.[1];
-  if (!last) return null;
-  const parsed = Number(last);
-  return Number.isInteger(parsed) ? parsed : null;
-}
-
-function commandIdentity(command: string | undefined): string | undefined {
-  if (!command) return undefined;
-  let normalized = command.trim();
-  normalized = normalized.replace(/\s*2>&1\s*/g, " ");
-  normalized = normalized.replace(/\s*;\s*echo\s+['"]?EXIT:\$\?['"]?\s*$/i, "");
-  normalized = normalized.replace(/^\(?\s*cd\s+(['"]?)[^&;()]+\1\s*&&\s*/i, "");
-  normalized = normalized.replace(/\s+/g, " ").trim();
-  return normalized || undefined;
-}
-
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -1089,65 +1160,6 @@ function numberOrNullValue(value: unknown): number | null {
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
-}
-
-function isVerificationGoal(goal: string | undefined): boolean {
-  if (!goal) return false;
-  const text = goal.toLowerCase();
-  return (
-    /\b(run|execute)\s+(the\s+)?(tests?|test suite|command|cli)\b/.test(text) ||
-    /\b(cargo test|pytest|npm test|pnpm test|yarn test|go test)\b/.test(text) ||
-    /\bverify\b/.test(text) ||
-    /\btest(s|ing)?\b/.test(text)
-  );
-}
-
-function isVerificationRelevantCommand(
-  command: string | undefined,
-  options: { verificationGoal: boolean },
-): boolean {
-  if (!command) return false;
-  const normalized = stripLeadingEnvAssignments(
-    commandIdentity(command) ?? command,
-  ).toLowerCase();
-  if (isExplicitVerificationCommand(normalized)) return true;
-  if (!options.verificationGoal) return false;
-  return !isProbeCommand(normalized);
-}
-
-function isExplicitVerificationCommand(command: string): boolean {
-  return (
-    /\b(cargo\s+(nextest\s+run|test)|go\s+test|pytest|py\.test)\b/.test(
-      command,
-    ) ||
-    /\b(npm|pnpm|yarn)\s+(run\s+)?(test|verify|check|lint)\b/.test(command) ||
-    /\b(vitest|jest|mocha)\b/.test(command) ||
-    /\bpython(?:\d+(?:\.\d+)*)?\s+-m\s+(unittest|pytest|[^;\s]+\.cli)\b/.test(
-      command,
-    )
-  );
-}
-
-function stripLeadingEnvAssignments(command: string): string {
-  let rest = command.trim();
-  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(rest)) {
-    const match = rest.match(
-      /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S+)\s*/,
-    );
-    if (!match) break;
-    rest = rest.slice(match[0].length).trimStart();
-  }
-  return rest;
-}
-
-function isProbeCommand(command: string): boolean {
-  return (
-    /^(pwd|ls|find|rg|grep|cat|sed|head|tail|wc|stat)\b/.test(command) ||
-    /^(which|command\s+-v)\b/.test(command) ||
-    /^node(?:\s+\S+)*\s+-e\b/.test(command) ||
-    /\b(--version|-v)\b/.test(command) ||
-    /\bpython(?:\d+(?:\.\d+)*)?\s+--version\b/.test(command)
-  );
 }
 
 /**

@@ -13,11 +13,17 @@ import {
 import {
   analyzeToolOutcomes,
   commandOutcomeSnapshot,
+  commandOutcomeSnapshotFromFactLedger,
   isPolicyOrApprovalFailure,
   toolOutcomeSnapshot,
   type CommandOutcomeSnapshot,
   type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
+import { isShellToolName } from "./fact-classifier.js";
+import {
+  factLedgerSnapshotFromUnknown,
+  type FactLedgerSnapshot,
+} from "./fact-ledger.js";
 import { serializeEventJsonl } from "./trace-codec.js";
 
 export interface TraceSummary {
@@ -1923,20 +1929,114 @@ function collectCommandFailures(
   summary: TraceSummary,
   events: readonly SparkwrightEvent[],
 ): void {
+  const snapshot = commandOutcomeSnapshotForTrace(events);
+  if (!snapshot) return;
+  summary.commandFailures.total = snapshot.total;
+  summary.commandFailures.byExitCode = snapshot.byExitCode;
+  summary.commandFailures.verification = snapshot.verification;
+}
+
+function commandOutcomeSnapshotForTrace(
+  events: readonly SparkwrightEvent[],
+): CommandOutcomeSnapshot | undefined {
+  const runEvents = eventsGroupedByRun(events);
+  if (runEvents.length <= 1) {
+    return commandOutcomeSnapshotForRun(events);
+  }
+  return mergeCommandOutcomeSnapshots(
+    runEvents.map((group) => commandOutcomeSnapshotForRun(group)),
+  );
+}
+
+function commandOutcomeSnapshotForRun(
+  events: readonly SparkwrightEvent[],
+): CommandOutcomeSnapshot | undefined {
+  const ledger = persistedFactLedger(events);
+  if (ledger) return commandOutcomeSnapshotFromFactLedger(ledger);
   const recomputed = everyShellCompletionHasCommandEvidence(events)
     ? commandOutcomeSnapshot(events)
     : undefined;
   // Prefer recomputing when raw debug events still carry shell command
   // evidence. Otherwise, use the run-persisted snapshot for standard/legacy
   // traces that may not retain command args in tool.completed output.
-  const snapshot =
+  return (
     recomputed ??
     persistedCommandOutcome(events) ??
-    commandOutcomeSnapshot(events);
-  if (!snapshot) return;
-  summary.commandFailures.total = snapshot.total;
-  summary.commandFailures.byExitCode = snapshot.byExitCode;
-  summary.commandFailures.verification = snapshot.verification;
+    commandOutcomeSnapshot(events)
+  );
+}
+
+function eventsGroupedByRun(
+  events: readonly SparkwrightEvent[],
+): SparkwrightEvent[][] {
+  const groups = new Map<string, SparkwrightEvent[]>();
+  for (const event of events) {
+    const runId = typeof event.runId === "string" ? event.runId : "__unknown__";
+    const group = groups.get(runId);
+    if (group) group.push(event);
+    else groups.set(runId, [event]);
+  }
+  return [...groups.values()];
+}
+
+function mergeCommandOutcomeSnapshots(
+  snapshots: readonly (CommandOutcomeSnapshot | undefined)[],
+): CommandOutcomeSnapshot | undefined {
+  const present = snapshots.filter(
+    (snapshot): snapshot is CommandOutcomeSnapshot => Boolean(snapshot),
+  );
+  if (present.length === 0) return undefined;
+  const byExitCode: Record<string, number> = {};
+  const verification: CommandOutcomeSnapshot["verification"] = {
+    total: 0,
+    unresolved: 0,
+  };
+  let total = 0;
+  for (const snapshot of present) {
+    total += snapshot.total;
+    for (const [exitCode, count] of Object.entries(snapshot.byExitCode)) {
+      byExitCode[exitCode] = (byExitCode[exitCode] ?? 0) + count;
+    }
+    verification.total += snapshot.verification.total;
+    verification.unresolved += snapshot.verification.unresolved;
+    if (snapshot.verification.lastCommand !== undefined) {
+      verification.lastCommand = snapshot.verification.lastCommand;
+    }
+    if ("lastExitCode" in snapshot.verification) {
+      verification.lastExitCode = snapshot.verification.lastExitCode;
+    }
+    if ("lastTimedOut" in snapshot.verification) {
+      verification.lastTimedOut = snapshot.verification.lastTimedOut;
+    }
+    if (snapshot.verification.lastFailureCommand !== undefined) {
+      verification.lastFailureCommand =
+        snapshot.verification.lastFailureCommand;
+    }
+    if ("lastFailureExitCode" in snapshot.verification) {
+      verification.lastFailureExitCode =
+        snapshot.verification.lastFailureExitCode;
+    }
+    if ("lastFailureTimedOut" in snapshot.verification) {
+      verification.lastFailureTimedOut =
+        snapshot.verification.lastFailureTimedOut;
+    }
+    if (snapshot.verification.lastSuccessfulVerificationCommand !== undefined) {
+      verification.lastSuccessfulVerificationCommand =
+        snapshot.verification.lastSuccessfulVerificationCommand;
+    }
+  }
+  return { total, byExitCode, verification };
+}
+
+function persistedFactLedger(
+  events: readonly SparkwrightEvent[],
+): FactLedgerSnapshot | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type !== "run.completed" || !isRecord(event.payload)) continue;
+    return factLedgerSnapshotFromUnknown(event.payload.factLedger);
+  }
+  return undefined;
 }
 
 function everyShellCompletionHasCommandEvidence(
@@ -3304,8 +3404,4 @@ function subagentIdentity(event: SparkwrightEvent): string | undefined {
   return isRecord(event.payload)
     ? stringValue(event.payload.agentProfileId, event.payload.childRunId)
     : undefined;
-}
-
-function isShellToolName(value: unknown): boolean {
-  return value === "bash" || value === "shell";
 }

@@ -528,6 +528,13 @@ Field semantics:
 }
 ```
 
+Completed final-answer payloads may also include `factLedger` with
+`schemaVersion:"fact-ledger.v1"`. The ledger records raw command facts
+(`exitCode`/`timedOut`), command initiator (`model-initiated` or
+`verifier-launched`), verifier `expect`/`satisfied` results, workspace write
+epochs, and stale markers. Consumers should prefer it over recomputing command
+facts from compact traces when present.
+
 `run.failed` payloads should include a reason, stable error code, human-readable message, structured failure, and optional metadata:
 
 ```json

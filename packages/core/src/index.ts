@@ -141,16 +141,53 @@ export type {
   VerificationProfileResult,
 } from "./run-outcome.js";
 export {
+  analyzeCommandOutcomesFromFactLedger,
   analyzeCommandOutcomes,
   analyzeToolOutcomes,
   analyzeVerificationProfileResults,
   classifyToolFailure,
   commandOutcomeSnapshot,
+  commandOutcomeSnapshotFromFactLedger,
   completedRunOutcomeFromEvents,
   isPolicyOrApprovalFailure,
   toolOutcomeSnapshot,
   toolTargetFingerprint,
+  verificationProfileResultsFromFactLedger,
 } from "./run-outcome.js";
+
+export type {
+  CommandExpectation,
+  ClassifiedCommandFactInput,
+  ShellCommandRequestFact,
+  WorkspaceWriteFactInput,
+} from "./fact-classifier.js";
+export {
+  commandExpectationSatisfied,
+  commandExpectationValue,
+  commandIdentity,
+  effectiveShellExitCode,
+  hookCommandFactFromWorkflowHookCompleted,
+  isShellToolName,
+  isVerificationGoal,
+  isVerificationRelevantCommand,
+  parseVerificationHookName,
+  shellCommandFactFromToolCompleted,
+  shellCommandRequestFromEvent,
+  stableDiagnosticJson,
+  workspaceWriteFactFromEvent,
+} from "./fact-classifier.js";
+
+export type {
+  FactLedgerCommandFact,
+  FactLedgerCommandInitiator,
+  FactLedgerCommandSource,
+  FactLedgerEpochMarker,
+  FactLedgerReader,
+  FactLedgerSnapshot,
+  FactLedgerVerificationResult,
+  FactLedgerWriteFact,
+} from "./fact-ledger.js";
+export { FactLedger, factLedgerSnapshotFromUnknown } from "./fact-ledger.js";
 
 // Display-safe path projection helpers shared by diagnostics/UI layers.
 export type { WorkspaceDisplayPathOptions } from "./path-display.js";

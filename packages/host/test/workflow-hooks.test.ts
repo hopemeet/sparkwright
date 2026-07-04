@@ -8,6 +8,7 @@ import {
   createRunId,
   defineTool,
   EventLog,
+  FactLedger,
   runWorkflowHooks,
 } from "@sparkwright/core";
 import {
@@ -1371,6 +1372,8 @@ describe("createVerificationWorkflowHooks", () => {
     try {
       const run = runRecord();
       const events = new EventLog(run.id);
+      const facts = new FactLedger();
+      events.subscribe((event) => facts.observeEvent(event));
       const hooks = createVerificationWorkflowHooks({
         workspaceRoot: workspace,
         verification: {
@@ -1409,6 +1412,7 @@ describe("createVerificationWorkflowHooks", () => {
         step: 2,
         payload: { events: events.all() },
         events,
+        facts,
       });
 
       expect(stop.status).toBe("continued");
@@ -1422,6 +1426,8 @@ describe("createVerificationWorkflowHooks", () => {
     try {
       const run = runRecord();
       const events = new EventLog(run.id);
+      const facts = new FactLedger();
+      events.subscribe((event) => facts.observeEvent(event));
       const hooks = createVerificationWorkflowHooks({
         workspaceRoot: workspace,
         verification: {
@@ -1461,6 +1467,7 @@ describe("createVerificationWorkflowHooks", () => {
         step: 2,
         payload: { events: events.all() },
         events,
+        facts,
       });
 
       expect(stop.status).toBe("blocked");
@@ -1468,6 +1475,78 @@ describe("createVerificationWorkflowHooks", () => {
         throw new Error("expected blocked workflow hook result");
       }
       expect(stop.block.reason).toContain("latest workspace write");
+      expect(stop.block.metadata).toMatchObject({
+        profile: "fast",
+        missing: ["lint"],
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks final answers when fresh verification fails", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-verify-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const facts = new FactLedger();
+      events.subscribe((event) => facts.observeEvent(event));
+      const hooks = createVerificationWorkflowHooks({
+        workspaceRoot: workspace,
+        verification: {
+          mode: "require",
+          defaultProfile: "fast",
+          profiles: {
+            fast: [
+              {
+                id: "lint",
+                command: process.execPath,
+                args: ["-e", "process.exit(1)"],
+              },
+            ],
+          },
+        },
+      });
+
+      events.emit("workspace.write.completed", { path: "src/a.ts" });
+      await runWorkflowHooks({
+        hooks,
+        hook: "PostToolUse",
+        run,
+        step: 1,
+        payload: {
+          toolName: "edit",
+          status: "completed",
+          path: "src/a.ts",
+        },
+        events,
+      });
+
+      const verification = facts.snapshot().verificationResults[0];
+      expect(verification).toMatchObject({
+        profile: "fast",
+        verifierId: "lint",
+        expect: "zero",
+        satisfied: false,
+        stale: false,
+        writeEpoch: 1,
+        exitCode: 1,
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks,
+        hook: "Stop",
+        run,
+        step: 2,
+        payload: { events: events.all() },
+        events,
+        facts,
+      });
+
+      expect(stop.status).toBe("blocked");
+      if (stop.status !== "blocked") {
+        throw new Error("expected blocked workflow hook result");
+      }
       expect(stop.block.metadata).toMatchObject({
         profile: "fast",
         missing: ["lint"],

@@ -3241,6 +3241,137 @@ describe("trace", () => {
     });
   });
 
+  it("prefers the persisted fact ledger over command outcome snapshots", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const standardJsonl = [
+      log.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        commandOutcome: {
+          total: 1,
+          byExitCode: { "1": 1 },
+          verification: { total: 1, unresolved: 1 },
+        },
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 1,
+          commands: [
+            {
+              id: "cmd:shell:2:call_1",
+              source: "shell_tool",
+              initiator: "model-initiated",
+              sequence: 2,
+              writeEpoch: 0,
+              stale: true,
+              toolCallId: "call_1",
+              toolName: "shell",
+              command: "npm test",
+              commandKey: "npm test",
+              exitCode: 1,
+              timedOut: false,
+              verificationRelevant: true,
+            },
+          ],
+          verificationResults: [],
+          writes: [{ id: "write:3", sequence: 3, writeEpoch: 1 }],
+        },
+      }),
+    ]
+      .map((event) => filterTraceEvent(event, "standard"))
+      .map(serializeEventJsonl)
+      .join("");
+
+    expect(summarizeTraceJsonl(standardJsonl).commandFailures.total).toBe(0);
+  });
+
+  it("aggregates persisted fact ledgers across runs", () => {
+    const failed = new EventLog(createRunId());
+    const clean = new EventLog(createRunId());
+    const standardJsonl = [
+      failed.emit("run.created", { goal: "verify" }, { sessionId: "s1" }),
+      failed.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 0,
+          commands: [
+            {
+              id: "cmd:shell:2:call_1",
+              source: "shell_tool",
+              initiator: "model-initiated",
+              sequence: 2,
+              writeEpoch: 0,
+              stale: false,
+              toolCallId: "call_1",
+              toolName: "shell",
+              command: "npm test",
+              commandKey: "npm test",
+              exitCode: 1,
+              timedOut: false,
+              verificationRelevant: true,
+            },
+          ],
+          verificationResults: [],
+          writes: [],
+        },
+      }),
+      clean.emit("run.created", { goal: "inspect" }, { sessionId: "s1" }),
+      clean.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 0,
+          commands: [],
+          verificationResults: [],
+          writes: [],
+        },
+      }),
+    ]
+      .map((event) => filterTraceEvent(event, "standard"))
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(standardJsonl);
+
+    expect(summary.commandFailures.total).toBe(1);
+    expect(summary.commandFailures.byExitCode).toEqual({ "1": 1 });
+    expect(summary.commandFailures.verification).toMatchObject({
+      total: 1,
+      unresolved: 1,
+      lastCommand: "npm test",
+      lastExitCode: 1,
+    });
+  });
+
+  it("treats a parseable fact ledger as authoritative over command outcome", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const standardJsonl = [
+      log.emit("run.created", { goal: run.goal }, { sessionId: "s1" }),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        commandOutcome: {
+          total: 1,
+          byExitCode: { "1": 1 },
+          verification: { total: 1, unresolved: 1 },
+        },
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 0,
+          commands: [],
+          verificationResults: [],
+          writes: [],
+        },
+      }),
+    ]
+      .map((event) => filterTraceEvent(event, "standard"))
+      .map(serializeEventJsonl)
+      .join("");
+
+    expect(summarizeTraceJsonl(standardJsonl).commandFailures.total).toBe(0);
+  });
+
   it("keeps command failures on standard traces without a persisted outcome", () => {
     const run = createRunRecord();
     const log = new EventLog(run.id);
