@@ -195,6 +195,7 @@ Current event types:
 - `run.notification.source_failed`: a notification source `drain()` or task-revival readiness check threw; the runtime swallowed the error and continued; metadata: `{ step, sourceIndex, message, phase? }`
 - `run.state_transition.rejected`
 - `run.budget.checked`: per-step budget evaluation; metadata carries usage snapshot
+- `run.budget.exceeded`: a per-source forced-continuation budget was exhausted; payload carries `{ signal: "budget.exceeded", family: "forced_continuation", source, used, limit, step?, reason? }` and the runtime refuses that continuation without directly failing the run
 - `plan.created`: a structured plan was produced by the planner surface
 - `plan.reviewed`: a plan was reviewed (approved, revised, or rejected) before execution
 - `plan.step.started`: execution of a plan step began

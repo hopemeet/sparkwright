@@ -4,6 +4,7 @@ import {
   FactLedger,
   commandOutcomeSnapshotFromFactLedger,
   createRunId,
+  factLedgerSnapshotFromUnknown,
   verificationProfileResultsFromFactLedger,
 } from "../src/index.js";
 
@@ -180,5 +181,45 @@ describe("FactLedger", () => {
       writeEpoch: 1,
       exitCode: 1,
     });
+  });
+
+  it("records forced-continuation budget exhaustion facts", () => {
+    const log = new EventLog(createRunId());
+    const ledger = new FactLedger();
+    log.subscribe((event) => ledger.observeEvent(event));
+
+    log.emit("workspace.write.completed", { path: "src/app.ts" });
+    log.emit("run.budget.exceeded", {
+      signal: "budget.exceeded",
+      family: "forced_continuation",
+      source: "revival",
+      used: 0,
+      limit: 0,
+      step: 1,
+      reason: "waiting_tasks",
+    });
+
+    expect(ledger.snapshot().budgetExceeded).toEqual([
+      expect.objectContaining({
+        source: "revival",
+        used: 0,
+        limit: 0,
+        step: 1,
+        reason: "waiting_tasks",
+        writeEpoch: 1,
+      }),
+    ]);
+  });
+
+  it("defaults missing budget exhaustion facts to an empty list when parsing persisted ledgers", () => {
+    const snapshot = factLedgerSnapshotFromUnknown({
+      schemaVersion: "fact-ledger.v1",
+      writeEpoch: 0,
+      commands: [],
+      verificationResults: [],
+      writes: [],
+    });
+
+    expect(snapshot?.budgetExceeded).toEqual([]);
   });
 });

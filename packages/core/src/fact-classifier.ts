@@ -1,4 +1,5 @@
 import type { SparkwrightEvent } from "./events.js";
+import type { ForcedContinuationSource } from "./types.js";
 import { isRecord } from "./record-utils.js";
 
 export type CommandExpectation = "zero" | "nonzero";
@@ -31,6 +32,15 @@ export interface ClassifiedCommandFactInput {
 export interface WorkspaceWriteFactInput {
   sequence: number;
   path?: string;
+}
+
+export interface ForcedContinuationBudgetExceededFactInput {
+  sequence: number;
+  source: ForcedContinuationSource;
+  used: number;
+  limit: number;
+  step?: number;
+  reason?: string;
 }
 
 export function shellCommandRequestFromEvent(
@@ -149,6 +159,45 @@ export function workspaceWriteFactFromEvent(
     sequence: event.sequence,
     path: stringValue(event.payload.path),
   };
+}
+
+export function forcedContinuationBudgetExceededFromEvent(
+  event: SparkwrightEvent,
+): ForcedContinuationBudgetExceededFactInput | undefined {
+  if (event.type !== "run.budget.exceeded" || !isRecord(event.payload)) {
+    return undefined;
+  }
+  const signal = stringValue(event.payload.signal);
+  const family = stringValue(event.payload.family);
+  const source = forcedContinuationSourceValue(event.payload.source);
+  const used = nonNegativeIntegerValue(event.payload.used);
+  const limit = nonNegativeIntegerValue(event.payload.limit);
+  if (
+    signal !== "budget.exceeded" ||
+    family !== "forced_continuation" ||
+    !source ||
+    used === undefined ||
+    limit === undefined
+  ) {
+    return undefined;
+  }
+  const step = nonNegativeIntegerValue(event.payload.step);
+  return {
+    sequence: event.sequence,
+    source,
+    used,
+    limit,
+    ...(step !== undefined ? { step } : {}),
+    ...(stringValue(event.payload.reason) !== undefined
+      ? { reason: stringValue(event.payload.reason) }
+      : {}),
+  };
+}
+
+export function forcedContinuationSourceValue(
+  value: unknown,
+): ForcedContinuationSource | undefined {
+  return value === "revival" || value === "workflow" ? value : undefined;
 }
 
 export function commandExpectationValue(
@@ -312,6 +361,12 @@ function stringValue(...values: unknown[]): string | undefined {
 function numberOrNullValue(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   return null;
+}
+
+function nonNegativeIntegerValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function booleanValue(value: unknown): boolean | undefined {

@@ -279,12 +279,13 @@ describe("renderTranscript", () => {
   it("does not collect internal run machinery into the raw list", () => {
     const events: RunEvent[] = [
       { type: "run.budget.checked", sequence: 1, payload: { x: 1 } },
+      { type: "run.budget.exceeded", sequence: 2, payload: { x: 1 } },
       {
         type: "workflow_hook.started",
-        sequence: 2,
+        sequence: 3,
         payload: { hookName: "h" },
       },
-      { type: "usage.updated", sequence: 3, payload: { tokens: 1 } },
+      { type: "usage.updated", sequence: 4, payload: { tokens: 1 } },
     ];
     const md = renderTranscript(
       { sessionId: "s", workspaceRoot: "/x" },
@@ -292,6 +293,7 @@ describe("renderTranscript", () => {
     );
     expect(md).not.toContain("Raw events");
     expect(md).not.toContain("run.budget.checked");
+    expect(md).not.toContain("run.budget.exceeded");
     expect(md).not.toContain("workflow_hook.started");
     expect(md).not.toContain("usage.updated");
   });

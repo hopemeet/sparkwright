@@ -212,6 +212,7 @@ export interface RunCheckpointV1 {
   budget: {
     configured?: RunBudget;
     usage: RunBudgetUsage;
+    forcedContinuation?: ForcedContinuationBudgetSnapshot;
   };
   /** @reserved Public checkpoint payload consumed by resume/fork tooling. */
   queues: {
@@ -236,6 +237,22 @@ export interface RunRecord {
   createdAt: string;
   updatedAt: string;
   metadata: Record<string, unknown>;
+}
+
+export type ForcedContinuationSource = "revival" | "workflow";
+
+export interface ForcedContinuationBudgetExceeded {
+  source: ForcedContinuationSource;
+  used: number;
+  limit: number;
+  step?: number;
+  reason?: string;
+}
+
+export interface ForcedContinuationBudgetSnapshot {
+  configured: Partial<Record<ForcedContinuationSource, number>>;
+  used: Partial<Record<ForcedContinuationSource, number>>;
+  exceeded: ForcedContinuationBudgetExceeded[];
 }
 
 export interface RunBudget {

@@ -92,6 +92,7 @@ export const INTERNAL_TRANSCRIPT_EVENT_TYPES = [
   "run.started",
   "run.created",
   "run.budget.checked",
+  "run.budget.exceeded",
   "run.cancelled",
   "run.cancel_requested",
   "run.state_transition.rejected",

@@ -16,6 +16,7 @@ import {
   type PendingNotification,
   type SparkwrightEvent,
   type TaskRevivalSource,
+  type WorkflowHook,
 } from "../src/index.js";
 import { LocalWorkspace } from "../src/workspace.js";
 
@@ -5409,6 +5410,97 @@ describe("SparkwrightRun", () => {
     });
   });
 
+  it("uses per-source forced-continuation budget for revival without changing wake metadata", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const turnTransitions: unknown[] = [];
+    const captureTurnStart: WorkflowHook = {
+      name: "capture-turn-start",
+      hook: "TurnStart",
+      handle(input) {
+        turnTransitions.push(input.metadata.transition);
+      },
+    };
+    const run = createRun({
+      goal: "revival source budget",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      workflowHooks: [captureTurnStart],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 1,
+      forcedContinuationBudgets: { revival: 1 },
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_source_budget completed.",
+      metadata: { taskId: "task_source_budget" },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.state).toBe("completed");
+    expect(result.metadata).toMatchObject({
+      revivalTurnsUsed: 1,
+      forcedContinuationTurnsUsed: { revival: 1 },
+    });
+    expect(turnTransitions[1]).toMatchObject({
+      reason: "next_turn",
+      metadata: {
+        wake: "waiting_tasks",
+        forcedContinuationSource: "revival",
+      },
+    });
+  });
+
+  it("prefers per-source revival budget over legacy maxRevivalTurns", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "per-source budget wins",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 1,
+      maxRevivalTurns: 0,
+      forcedContinuationBudgets: { revival: 1 },
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_precedence completed.",
+      metadata: { taskId: "task_precedence" },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(result.metadata).toMatchObject({
+      revivalTurnsUsed: 1,
+      forcedContinuationTurnsUsed: { revival: 1 },
+    });
+    expect(run.events.all().map((event) => event.type)).not.toContain(
+      "run.budget.exceeded",
+    );
+  });
+
   it("bounds awaited task revival with maxRevivalTurns", async () => {
     const source = new ManualTaskRevivalSource();
     source.pending = true;
@@ -5443,6 +5535,82 @@ describe("SparkwrightRun", () => {
     expect(modelCalls).toBe(2);
     expect(source.waitCalls).toBe(1);
     expect(result.metadata).toMatchObject({ revivalTurnsUsed: 1 });
+  });
+
+  it("emits a per-source budget fact when revival is exhausted", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const run = createRun({
+      goal: "revival exhausted",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: "done without revival" };
+        },
+      },
+      maxRevivalTurns: 0,
+    });
+
+    const result = await run.start();
+    const exceeded = run.events
+      .all()
+      .find((event) => event.type === "run.budget.exceeded");
+    const completed = run.events
+      .all()
+      .find((event) => event.type === "run.completed");
+
+    expect(result.state).toBe("completed");
+    expect(result.metadata).not.toHaveProperty("revivalTurnsUsed");
+    expect(modelCalls).toBe(1);
+    expect(source.waitCalls).toBe(0);
+    expect(exceeded?.payload).toMatchObject({
+      signal: "budget.exceeded",
+      family: "forced_continuation",
+      source: "revival",
+      used: 0,
+      limit: 0,
+      step: 1,
+      reason: "waiting_tasks",
+    });
+    expect(completed?.payload).toMatchObject({
+      factLedger: {
+        budgetExceeded: [
+          expect.objectContaining({
+            source: "revival",
+            used: 0,
+            limit: 0,
+          }),
+        ],
+      },
+    });
+  });
+
+  it("registers the workflow forced-continuation source without consuming it", async () => {
+    const run = createRun({
+      goal: "plain completion",
+      model: {
+        async complete() {
+          return { message: "done" };
+        },
+      },
+    });
+
+    const result = await run.start();
+    const checkpoint = run.checkpoint();
+
+    expect(result.state).toBe("completed");
+    expect(run.events.all().map((event) => event.type)).not.toContain(
+      "run.budget.exceeded",
+    );
+    expect(result.metadata).not.toHaveProperty("forcedContinuationTurnsUsed");
+    expect(checkpoint.budget.forcedContinuation).toMatchObject({
+      configured: { revival: 5, workflow: 5 },
+      used: { revival: 0, workflow: 0 },
+      exceeded: [],
+    });
   });
 
   it("wakes waiting_tasks from run.command.enqueued without polling the command queue", async () => {

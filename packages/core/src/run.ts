@@ -135,6 +135,9 @@ import type {
   RunCheckpointV1,
   RunCommand,
   RunRecord,
+  ForcedContinuationBudgetExceeded,
+  ForcedContinuationBudgetSnapshot,
+  ForcedContinuationSource,
   RunFailureCategory,
   RunLoopState,
   RunLoopTransition,
@@ -177,7 +180,121 @@ const DEFAULT_MODEL_RETRY_BACKOFF_MULTIPLIER = 2;
 const DEFAULT_MODEL_RETRY_JITTER: "full" | "none" = "full";
 const DEFAULT_MODEL_RETRY_RESPECT_RETRY_AFTER = true;
 const DEFAULT_MAX_REVIVAL_TURNS = 5;
+const FORCED_CONTINUATION_SOURCES = ["revival", "workflow"] as const;
 const FAILURE_CAUSE_RESPONSE_BODY_PREVIEW_CHARS = 2_000;
+
+type ForcedContinuationBudgetConfig = Partial<
+  Record<ForcedContinuationSource, number>
+>;
+
+class ForcedContinuationBudgetLedger {
+  private readonly configured: Record<ForcedContinuationSource, number>;
+  private readonly used: Record<ForcedContinuationSource, number>;
+  private readonly exceeded: ForcedContinuationBudgetExceeded[];
+
+  constructor(
+    configured: Record<ForcedContinuationSource, number>,
+    seed?: ForcedContinuationBudgetSnapshot,
+  ) {
+    this.configured = { ...configured };
+    this.used = {
+      revival: integerOrZero(seed?.used.revival),
+      workflow: integerOrZero(seed?.used.workflow),
+    };
+    this.exceeded = [...(seed?.exceeded ?? [])];
+  }
+
+  hasRemaining(source: ForcedContinuationSource): boolean {
+    return this.used[source] < this.configured[source];
+  }
+
+  consume(source: ForcedContinuationSource): void {
+    this.used[source] += 1;
+  }
+
+  usedFor(source: ForcedContinuationSource): number {
+    return this.used[source];
+  }
+
+  limitFor(source: ForcedContinuationSource): number {
+    return this.configured[source];
+  }
+
+  recordExceeded(
+    source: ForcedContinuationSource,
+    input: { step?: number; reason?: string } = {},
+  ): ForcedContinuationBudgetExceeded {
+    const fact: ForcedContinuationBudgetExceeded = {
+      source,
+      used: this.used[source],
+      limit: this.configured[source],
+      ...(input.step !== undefined ? { step: input.step } : {}),
+      ...(input.reason ? { reason: input.reason } : {}),
+    };
+    this.exceeded.push(fact);
+    return fact;
+  }
+
+  snapshot(): ForcedContinuationBudgetSnapshot {
+    return {
+      configured: { ...this.configured },
+      used: { ...this.used },
+      exceeded: this.exceeded.map((fact) => ({ ...fact })),
+    };
+  }
+}
+
+function resolveForcedContinuationBudgetConfig(
+  options: Pick<
+    CreateRunOptions,
+    "maxRevivalTurns" | "forcedContinuationBudgets"
+  >,
+): Record<ForcedContinuationSource, number> {
+  const configured = options.forcedContinuationBudgets ?? {};
+  if (
+    options.maxRevivalTurns !== undefined &&
+    !isNonNegativeInteger(options.maxRevivalTurns)
+  ) {
+    throw new Error("maxRevivalTurns must be a non-negative integer.");
+  }
+  for (const source of FORCED_CONTINUATION_SOURCES) {
+    const value = configured[source];
+    if (value !== undefined && !isNonNegativeInteger(value)) {
+      throw new Error(
+        `forcedContinuationBudgets.${source} must be a non-negative integer.`,
+      );
+    }
+  }
+  return {
+    revival:
+      configured.revival ??
+      options.maxRevivalTurns ??
+      DEFAULT_MAX_REVIVAL_TURNS,
+    workflow: configured.workflow ?? DEFAULT_MAX_REVIVAL_TURNS,
+  };
+}
+
+function forcedContinuationResultMetadata(
+  budget: ForcedContinuationBudgetLedger,
+): Record<string, unknown> {
+  const used = Object.fromEntries(
+    FORCED_CONTINUATION_SOURCES.flatMap((source) => {
+      const count = budget.usedFor(source);
+      return count > 0 ? [[source, count]] : [];
+    }),
+  );
+  return Object.keys(used).length > 0
+    ? { forcedContinuationTurnsUsed: used }
+    : {};
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function integerOrZero(value: unknown): number {
+  return isNonNegativeInteger(value) ? value : 0;
+}
 
 interface ToolStageTimings {
   schemaValidationMs?: number;
@@ -310,9 +427,17 @@ export interface CreateRunOptions {
   /**
    * Maximum number of awaited-task revival turns. These turns are budgeted
    * separately from maxSteps so a legitimate slow task completion can still be
-   * injected after the normal step budget is otherwise spent. Default 5.
+   * injected after the normal step budget is otherwise spent. Legacy alias for
+   * `forcedContinuationBudgets.revival`. Default 5.
    */
   maxRevivalTurns?: number;
+  /**
+   * Per-source in-run forced-continuation budgets. Sources are counted
+   * independently from `maxSteps` / `runBudget`; exhaustion refuses that forced
+   * continuation and emits a `run.budget.exceeded` fact instead of failing the
+   * run directly.
+   */
+  forcedContinuationBudgets?: ForcedContinuationBudgetConfig;
   /**
    * Out-of-band notifications drained at the start of each model step and
    * injected into working context through `run.notification.injected`.
@@ -596,8 +721,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly finalOutputValidation: "fail" | "continue";
   private readonly maxOutputRecoveries: number;
   private outputRecoveriesUsed = 0;
-  private readonly maxRevivalTurns: number;
-  private revivalTurnsUsed = 0;
+  private readonly forcedContinuationBudget: ForcedContinuationBudgetLedger;
   private readonly commandQueue: RunCommand[] = [];
   private readonly notificationSources: NotificationSource[];
   private readonly taskRevivalSource?: TaskRevivalSource;
@@ -747,7 +871,10 @@ export class SparkwrightRun implements RunHandle {
       options.doomLoopRepeatLimit ?? DEFAULT_DOOM_LOOP_TOOL_CALL_REPEAT_LIMIT;
     this.finalOutputValidation = options.finalOutputValidation ?? "fail";
     this.maxOutputRecoveries = options.maxOutputRecoveries ?? 3;
-    this.maxRevivalTurns = options.maxRevivalTurns ?? DEFAULT_MAX_REVIVAL_TURNS;
+    this.forcedContinuationBudget = new ForcedContinuationBudgetLedger(
+      resolveForcedContinuationBudgetConfig(options),
+      checkpoint?.budget.forcedContinuation,
+    );
     this.notificationSources = [...(options.notificationSources ?? [])];
     this.taskRevivalSource = options.taskRevivalSource;
     this.credentialResolver = options.credentialResolver;
@@ -775,10 +902,6 @@ export class SparkwrightRun implements RunHandle {
 
     if (!Number.isInteger(this.maxSteps) || this.maxSteps < 1) {
       throw new Error("maxSteps must be a positive integer.");
-    }
-
-    if (!Number.isInteger(this.maxRevivalTurns) || this.maxRevivalTurns < 0) {
-      throw new Error("maxRevivalTurns must be a non-negative integer.");
     }
 
     if (
@@ -1557,9 +1680,13 @@ export class SparkwrightRun implements RunHandle {
           maxSteps: this.maxSteps,
           stepLimitReached:
             state.step >= this.maxSteps && !isWaitingTasksWake(state),
-          ...(this.revivalTurnsUsed > 0
-            ? { revivalTurnsUsed: this.revivalTurnsUsed }
+          ...(this.forcedContinuationBudget.usedFor("revival") > 0
+            ? {
+                revivalTurnsUsed:
+                  this.forcedContinuationBudget.usedFor("revival"),
+              }
             : {}),
+          ...forcedContinuationResultMetadata(this.forcedContinuationBudget),
         });
       }
 
@@ -2050,7 +2177,15 @@ export class SparkwrightRun implements RunHandle {
   ): Promise<RunLoopState | undefined> {
     const source = this.taskRevivalSource;
     if (!source) return undefined;
-    if (this.revivalTurnsUsed >= this.maxRevivalTurns) return undefined;
+    if (!this.forcedContinuationBudget.hasRemaining("revival")) {
+      if (await this.hasAwaitedPendingAfterBudgetExhaustion(source)) {
+        this.emitForcedContinuationBudgetExceeded("revival", {
+          step: state.step,
+          reason: "waiting_tasks",
+        });
+      }
+      return undefined;
+    }
     let hasAwaitedPending: boolean;
     try {
       hasAwaitedPending = await source.hasAwaitedPending();
@@ -2103,16 +2238,31 @@ export class SparkwrightRun implements RunHandle {
       }
     }
 
-    this.revivalTurnsUsed += 1;
+    this.forcedContinuationBudget.consume("revival");
     return {
       ...state,
       step: state.step + 1,
       turnCount: state.turnCount + 1,
       transition: {
         reason: "next_turn",
-        metadata: { wake: "waiting_tasks" },
+        metadata: {
+          wake: "waiting_tasks",
+          forcedContinuationSource: "revival",
+        },
       },
     };
+  }
+
+  private async hasAwaitedPendingAfterBudgetExhaustion(
+    source: TaskRevivalSource,
+  ): Promise<boolean> {
+    try {
+      return await source.hasAwaitedPending();
+    } catch {
+      // Before S3, exhausted revival skipped the pending check entirely. Keep
+      // that fault-isolation behavior on the exhausted path.
+      return false;
+    }
   }
 
   private waitForCommandEnqueuedAfter(
@@ -2400,6 +2550,7 @@ export class SparkwrightRun implements RunHandle {
       budget: {
         configured: this.runBudget,
         usage: this.currentBudgetUsage(),
+        forcedContinuation: this.forcedContinuationBudget.snapshot(),
       },
       queues: {
         commandCount: this.commandQueue.length,
@@ -4048,6 +4199,18 @@ export class SparkwrightRun implements RunHandle {
         workflowHook: block,
       },
     );
+  }
+
+  private emitForcedContinuationBudgetExceeded(
+    source: ForcedContinuationSource,
+    input: { step?: number; reason?: string } = {},
+  ): void {
+    const fact = this.forcedContinuationBudget.recordExceeded(source, input);
+    this.events.emit("run.budget.exceeded", {
+      signal: "budget.exceeded",
+      family: "forced_continuation",
+      ...fact,
+    });
   }
 
   private reserveToolCallBudget(metadata: {

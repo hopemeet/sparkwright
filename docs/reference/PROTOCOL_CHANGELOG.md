@@ -12,6 +12,12 @@ Conventions:
 
 ## Unreleased
 
+- `event.schema.json`: additive — new `run.budget.exceeded` event type for
+  per-source forced-continuation budget exhaustion. Payloads carry `signal`,
+  `family`, `source`, `used`, `limit`, and optional `step` / `reason`.
+  Migration: consumers should treat the event as a refusal to continue that
+  source, not as a terminal run failure.
+
 - `run.completed` payloads: additive — completed runs may include
   `factLedger` (`schemaVersion: "fact-ledger.v1"`) with raw command facts,
   verifier result satisfaction, workspace write epochs, and stale markers.
