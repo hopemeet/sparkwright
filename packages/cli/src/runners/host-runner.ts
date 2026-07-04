@@ -54,6 +54,7 @@ export interface HostRunInput {
   backgroundTasks?: BackgroundTaskPolicy;
   permissionMode: PermissionMode;
   modelName?: string;
+  workflowName?: string;
   sessionId: string;
   targetPath?: string;
   confidentialPaths?: readonly string[];
@@ -74,6 +75,7 @@ export interface HostResumeInput {
   backgroundTasks?: BackgroundTaskPolicy;
   permissionMode: PermissionMode;
   modelName?: string;
+  workflowName?: string;
   sessionId?: string;
   targetPath?: string;
   confidentialPaths?: readonly string[];
@@ -123,6 +125,7 @@ async function runHostLifecycle(
     backgroundTasks,
     permissionMode,
     modelName,
+    workflowName,
     targetPath,
     confidentialPaths,
     traceLevel,
@@ -280,6 +283,7 @@ async function runHostLifecycle(
             accessMode,
             backgroundTasks,
             traceLevel,
+            workflowName,
           }),
           ...inputMetadataSummary(input.input),
         };
@@ -294,6 +298,7 @@ async function runHostLifecycle(
             traceLevel,
             modelName,
             modelNameSource: "request",
+            workflowName,
             confidentialPaths,
             shouldWrite,
             metadata,

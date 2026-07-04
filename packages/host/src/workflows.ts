@@ -1,9 +1,12 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type {
+  WorkflowCommandVerifierDefinition,
   WorkflowDefinition,
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
+  WorkflowTransitionDefinition,
+  WorkflowVerifierExpectation,
 } from "@sparkwright/agent-runtime";
 import {
   discoverMarkdownFolderAssets,
@@ -297,6 +300,10 @@ function workflowNodeFromRaw(
     title: optionalString(raw.title) ?? optionalString(raw.name),
     execute: optionalString(raw.execute) ?? optionalString(raw.type),
     body: sectionBody.get(id) ?? optionalString(raw.body) ?? fallbackBody ?? "",
+    tools: optionalStringArray(raw.tools),
+    verify: parseWorkflowVerifiers(raw.verify, id),
+    onPass: parseWorkflowTransition(raw.onPass ?? raw.on_pass, id, "onPass"),
+    onFail: parseWorkflowTransition(raw.onFail ?? raw.on_fail, id, "onFail"),
     metadata: optionalRecord(raw.metadata),
   });
 }
@@ -306,6 +313,10 @@ function workflowNodeFromFields(input: {
   title?: string;
   execute?: string;
   body: string;
+  tools?: string[];
+  verify?: WorkflowCommandVerifierDefinition[];
+  onPass?: WorkflowTransitionDefinition;
+  onFail?: WorkflowTransitionDefinition;
   metadata?: Record<string, unknown>;
 }): WorkflowNodeDefinition {
   if (!WORKFLOW_NODE_ID_PATTERN.test(input.id)) {
@@ -336,8 +347,123 @@ function workflowNodeFromFields(input: {
     ...(input.title ? { title: input.title } : {}),
     execute,
     body: input.body.trim(),
+    ...(input.tools ? { tools: input.tools } : {}),
+    ...(input.verify ? { verify: input.verify } : {}),
+    ...(input.onPass ? { onPass: input.onPass } : {}),
+    ...(input.onFail ? { onFail: input.onFail } : {}),
     ...(input.metadata ? { metadata: input.metadata } : {}),
   };
+}
+
+function parseWorkflowVerifiers(
+  raw: unknown,
+  nodeId: string,
+): WorkflowCommandVerifierDefinition[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new Error(`Workflow node ${nodeId} verify must be an array.`);
+  }
+  const verifiers = raw.map((entry, index) =>
+    parseWorkflowVerifier(entry, nodeId, index),
+  );
+  return verifiers.length > 0 ? verifiers : undefined;
+}
+
+function parseWorkflowVerifier(
+  raw: unknown,
+  nodeId: string,
+  index: number,
+): WorkflowCommandVerifierDefinition {
+  if (!isRecord(raw)) {
+    throw new Error(
+      `Workflow node ${nodeId} verifier ${index + 1} must be an object.`,
+    );
+  }
+  const kind = optionalString(raw.kind) ?? "command";
+  if (kind !== "command") {
+    throw new Error(
+      `Workflow node ${nodeId} verifier ${index + 1} kind must be command for P1.`,
+    );
+  }
+  const command = optionalString(raw.command);
+  if (!command) {
+    throw new Error(
+      `Workflow node ${nodeId} verifier ${index + 1} requires command and args; run string shorthand is not supported in P1.`,
+    );
+  }
+  const args = optionalStringArray(raw.args);
+  const expect = parseWorkflowVerifierExpectation(raw.expect, nodeId, index);
+  return {
+    id:
+      optionalString(raw.id) ??
+      optionalString(raw.name) ??
+      `${nodeId}:command:${index + 1}`,
+    kind: "command",
+    command,
+    ...(args ? { args } : {}),
+    ...(expect ? { expect } : {}),
+    ...(workflowVerifierAuthorized(raw) ? { authorized: true } : {}),
+    ...(optionalRecord(raw.metadata)
+      ? { metadata: optionalRecord(raw.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowVerifierExpectation(
+  raw: unknown,
+  nodeId: string,
+  index: number,
+): WorkflowVerifierExpectation | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === "zero" || raw === "nonzero") return raw;
+  throw new Error(
+    `Workflow node ${nodeId} verifier ${index + 1} expect must be zero or nonzero.`,
+  );
+}
+
+function workflowVerifierAuthorized(raw: Record<string, unknown>): boolean {
+  return raw.authorized === true || raw.authorization === "trusted";
+}
+
+function parseWorkflowTransition(
+  raw: unknown,
+  nodeId: string,
+  field: "onPass" | "onFail",
+): WorkflowTransitionDefinition | undefined {
+  if (raw === undefined) return undefined;
+  const target = optionalString(raw);
+  if (target) return target;
+  if (!isRecord(raw)) {
+    throw new Error(
+      `Workflow node ${nodeId} ${field} must be a target or object.`,
+    );
+  }
+  const goto = optionalString(raw.goto);
+  if (goto) return { goto };
+  if (raw.fail !== undefined) {
+    if (raw.fail === true) return { fail: true };
+    const reason = optionalString(raw.fail);
+    if (reason) return { fail: reason };
+    throw new Error(
+      `Workflow node ${nodeId} ${field}.fail must be true or a string.`,
+    );
+  }
+  if (raw.retry !== undefined) {
+    const retry = nonNegativeInteger(raw.retry);
+    if (retry === undefined) {
+      throw new Error(
+        `Workflow node ${nodeId} ${field}.retry must be a non-negative integer.`,
+      );
+    }
+    const then = parseWorkflowTransition(raw.then, nodeId, field);
+    return {
+      retry,
+      ...(then ? { then } : {}),
+    };
+  }
+  throw new Error(
+    `Workflow node ${nodeId} ${field} must use goto, retry, or fail.`,
+  );
 }
 
 function nodesFromSections(
@@ -430,6 +556,22 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim() !== "") return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return undefined;
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return undefined;
+  const items = value.flatMap((item) => {
+    const parsed = optionalString(item);
+    return parsed ? [parsed] : [];
+  });
+  return items.length > 0 ? items : undefined;
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function optionalRecord(value: unknown): Record<string, unknown> | undefined {

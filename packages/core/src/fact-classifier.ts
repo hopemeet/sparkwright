@@ -19,6 +19,7 @@ export interface ClassifiedCommandFactInput {
   hookName?: string;
   hook?: string;
   profile?: string;
+  nodeId?: string;
   verifierId?: string;
   command?: string;
   args?: string[];
@@ -120,6 +121,7 @@ export function hookCommandFactFromWorkflowHookCompleted(
 
   const hookName = stringValue(event.payload.hookName, metadata.hookName);
   const parsed = parseVerificationHookName(hookName);
+  const nodeId = stringValue(metadata.nodeId);
   const verifierId = stringValue(metadata.verifierId) ?? parsed?.id;
   const command = stringValue(metadata.command);
   const args = stringArrayValue(metadata.args);
@@ -132,6 +134,7 @@ export function hookCommandFactFromWorkflowHookCompleted(
     hookName,
     hook: stringValue(event.payload.hook, metadata.hook),
     profile: stringValue(metadata.profile) ?? parsed?.profile,
+    nodeId,
     verifierId,
     command,
     args,

@@ -391,6 +391,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "backgroundTasks",
           "permissionMode",
           "traceLevel",
+          "workflow",
           "metadata",
         ]) ??
         requireString(req.payload, "goal") ??
@@ -405,6 +406,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         ]) ??
         optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
         optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
+        optionalString(req.payload, "workflow") ??
         optionalRecord(req.payload, "metadata")
       );
     case "run.resume":

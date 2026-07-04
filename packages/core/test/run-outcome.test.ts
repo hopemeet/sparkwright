@@ -916,6 +916,31 @@ describe("run outcome evidence", () => {
     });
   });
 
+  it("includes workflow failures in the run outcome", () => {
+    const log = new EventLog(createRunId());
+    const events = [
+      log.emit("workflow.failed", {
+        workflowRunId: "workflow_test",
+        reason: "runtime",
+        failure: {
+          code: "WORKFLOW_RUNTIME_FAILED",
+          message: "Projection failed.",
+        },
+      }),
+      log.emit("run.completed", { reason: "final_answer" }),
+    ];
+
+    expect(completedRunOutcomeFromEvents(events)).toMatchObject({
+      kind: "completed_with_issues",
+      failing: true,
+      workflowFailure: {
+        count: 1,
+        lastReason: "runtime",
+        lastCode: "WORKFLOW_RUNTIME_FAILED",
+      },
+    });
+  });
+
   it("emits no outcome when all verification profiles pass", () => {
     const log = new EventLog(createRunId());
     const events = [

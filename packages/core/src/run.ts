@@ -1462,51 +1462,67 @@ export class SparkwrightRun implements RunHandle {
         state.step,
       );
       if (modelOutputHooks.status === "blocked") {
-        state = {
-          ...state,
-          context: [
-            ...state.context,
-            this.formatWorkflowHookBlockContinuation(
-              "ModelOutput",
-              modelOutputHooks.block,
-              state.step,
-            ),
-          ],
-          step: state.step + 1,
-          turnCount: state.turnCount + 1,
-          transition: {
-            reason: "validation_continuation",
-            metadata: { hookName: modelOutputHooks.block.hookName },
-          },
-        };
-        this.lastLoopState = cloneLoopState(state);
-        continue;
+        const budgeted = await this.consumeWorkflowForcedContinuationIfNeeded(
+          modelOutputHooks.block.hookName,
+          { step: state.step, reason: "validation_continuation" },
+        );
+        if (budgeted.permitted) {
+          state = {
+            ...state,
+            context: [
+              ...state.context,
+              this.formatWorkflowHookBlockContinuation(
+                "ModelOutput",
+                modelOutputHooks.block,
+                state.step,
+              ),
+            ],
+            step: state.step + 1,
+            turnCount: state.turnCount + 1,
+            transition: {
+              reason: "validation_continuation",
+              metadata: {
+                hookName: modelOutputHooks.block.hookName,
+                ...budgeted.transitionMetadata,
+              },
+            },
+          };
+          this.lastLoopState = cloneLoopState(state);
+          continue;
+        }
       }
       if (modelOutputHooks.status === "advanced") {
-        state = {
-          ...state,
-          context: [
-            ...state.context,
-            this.formatWorkflowHookAdvanceContinuation(
-              "ModelOutput",
-              modelOutputHooks.advance,
-              state.step,
-            ),
-            ...modelOutputHooks.context,
-          ],
-          step: state.step + 1,
-          turnCount: state.turnCount + 1,
-          transition: {
-            reason: "workflow_hook_advanced",
-            metadata: {
-              hookName: modelOutputHooks.advance.hookName,
-              hookId: modelOutputHooks.advance.hookId,
-              hook: "ModelOutput",
+        const budgeted = await this.consumeWorkflowForcedContinuationIfNeeded(
+          modelOutputHooks.advance.hookName,
+          { step: state.step, reason: "workflow_hook_advanced" },
+        );
+        if (budgeted.permitted) {
+          state = {
+            ...state,
+            context: [
+              ...state.context,
+              this.formatWorkflowHookAdvanceContinuation(
+                "ModelOutput",
+                modelOutputHooks.advance,
+                state.step,
+              ),
+              ...modelOutputHooks.context,
+            ],
+            step: state.step + 1,
+            turnCount: state.turnCount + 1,
+            transition: {
+              reason: "workflow_hook_advanced",
+              metadata: {
+                hookName: modelOutputHooks.advance.hookName,
+                hookId: modelOutputHooks.advance.hookId,
+                hook: "ModelOutput",
+                ...budgeted.transitionMetadata,
+              },
             },
-          },
-        };
-        this.lastLoopState = cloneLoopState(state);
-        continue;
+          };
+          this.lastLoopState = cloneLoopState(state);
+          continue;
+        }
       }
       if (modelOutputHooks.context.length > 0) {
         state = {
@@ -1616,51 +1632,67 @@ export class SparkwrightRun implements RunHandle {
           state.step,
         );
         if (stopHooks.status === "blocked") {
-          state = {
-            ...state,
-            context: [
-              ...state.context,
-              this.formatWorkflowHookBlockContinuation(
-                "Stop",
-                stopHooks.block,
-                state.step,
-              ),
-            ],
-            step: state.step + 1,
-            turnCount: state.turnCount + 1,
-            transition: {
-              reason: "stop_hook_blocked",
-              metadata: { hookName: stopHooks.block.hookName },
-            },
-          };
-          this.lastLoopState = cloneLoopState(state);
-          continue;
+          const budgeted = await this.consumeWorkflowForcedContinuationIfNeeded(
+            stopHooks.block.hookName,
+            { step: state.step, reason: "stop_hook_blocked" },
+          );
+          if (budgeted.permitted) {
+            state = {
+              ...state,
+              context: [
+                ...state.context,
+                this.formatWorkflowHookBlockContinuation(
+                  "Stop",
+                  stopHooks.block,
+                  state.step,
+                ),
+              ],
+              step: state.step + 1,
+              turnCount: state.turnCount + 1,
+              transition: {
+                reason: "stop_hook_blocked",
+                metadata: {
+                  hookName: stopHooks.block.hookName,
+                  ...budgeted.transitionMetadata,
+                },
+              },
+            };
+            this.lastLoopState = cloneLoopState(state);
+            continue;
+          }
         }
         if (stopHooks.status === "advanced") {
-          state = {
-            ...state,
-            context: [
-              ...state.context,
-              this.formatWorkflowHookAdvanceContinuation(
-                "Stop",
-                stopHooks.advance,
-                state.step,
-              ),
-              ...stopHooks.context,
-            ],
-            step: state.step + 1,
-            turnCount: state.turnCount + 1,
-            transition: {
-              reason: "workflow_hook_advanced",
-              metadata: {
-                hookName: stopHooks.advance.hookName,
-                hookId: stopHooks.advance.hookId,
-                hook: "Stop",
+          const budgeted = await this.consumeWorkflowForcedContinuationIfNeeded(
+            stopHooks.advance.hookName,
+            { step: state.step, reason: "workflow_hook_advanced" },
+          );
+          if (budgeted.permitted) {
+            state = {
+              ...state,
+              context: [
+                ...state.context,
+                this.formatWorkflowHookAdvanceContinuation(
+                  "Stop",
+                  stopHooks.advance,
+                  state.step,
+                ),
+                ...stopHooks.context,
+              ],
+              step: state.step + 1,
+              turnCount: state.turnCount + 1,
+              transition: {
+                reason: "workflow_hook_advanced",
+                metadata: {
+                  hookName: stopHooks.advance.hookName,
+                  hookId: stopHooks.advance.hookId,
+                  hook: "Stop",
+                  ...budgeted.transitionMetadata,
+                },
               },
-            },
-          };
-          this.lastLoopState = cloneLoopState(state);
-          continue;
+            };
+            this.lastLoopState = cloneLoopState(state);
+            continue;
+          }
         }
 
         // Surface step-budget context on a natural finish. A model can answer
@@ -1679,7 +1711,8 @@ export class SparkwrightRun implements RunHandle {
           stepsUsed: state.step,
           maxSteps: this.maxSteps,
           stepLimitReached:
-            state.step >= this.maxSteps && !isWaitingTasksWake(state),
+            state.step >= this.maxSteps &&
+            !isSourceBudgetedForcedContinuation(state),
           ...(this.forcedContinuationBudget.usedFor("revival") > 0
             ? {
                 revivalTurnsUsed:
@@ -2169,7 +2202,45 @@ export class SparkwrightRun implements RunHandle {
 
   private canEnterLoopStep(state: RunLoopState): boolean {
     if (state.step <= this.maxSteps) return true;
-    return isWaitingTasksWake(state);
+    return isSourceBudgetedForcedContinuation(state);
+  }
+
+  private async consumeWorkflowForcedContinuationIfNeeded(
+    hookName: string | undefined,
+    input: { step: number; reason: RunLoopTransition["reason"] },
+  ): Promise<{
+    permitted: boolean;
+    transitionMetadata?: Record<string, unknown>;
+  }> {
+    if (!isWorkflowProjectionHookName(hookName)) return { permitted: true };
+    if (!this.forcedContinuationBudget.hasRemaining("workflow")) {
+      const fact = this.emitForcedContinuationBudgetExceeded("workflow", {
+        step: input.step,
+        reason: input.reason,
+      });
+      await this.runWorkflowHookPhase(
+        "RuntimeSignal",
+        {
+          signal: "budget.exceeded",
+          family: "forced_continuation",
+          ...fact,
+        },
+        {
+          step: input.step,
+          signal: "budget.exceeded",
+          family: "forced_continuation",
+          source: "workflow",
+          reason: input.reason,
+        },
+        input.step,
+      );
+      return { permitted: false };
+    }
+    this.forcedContinuationBudget.consume("workflow");
+    return {
+      permitted: true,
+      transitionMetadata: { forcedContinuationSource: "workflow" },
+    };
   }
 
   private async waitForAwaitedTasksBeforeTerminal(
@@ -2621,6 +2692,11 @@ export class SparkwrightRun implements RunHandle {
       message: payload.message,
       metadata: payload.metadata,
     };
+    this.kickWorkflowHookPhase("RunEnd", {
+      state: "cancelled",
+      reason: "manual_cancelled",
+      result: this.result,
+    });
     // Fire-and-forget; cancel() is sync and storage failure cannot break the run.
     void this.safeStoreFinish(this.result);
     return this.result;
@@ -4204,13 +4280,14 @@ export class SparkwrightRun implements RunHandle {
   private emitForcedContinuationBudgetExceeded(
     source: ForcedContinuationSource,
     input: { step?: number; reason?: string } = {},
-  ): void {
+  ): ForcedContinuationBudgetExceeded {
     const fact = this.forcedContinuationBudget.recordExceeded(source, input);
     this.events.emit("run.budget.exceeded", {
       signal: "budget.exceeded",
       family: "forced_continuation",
       ...fact,
     });
+    return fact;
   }
 
   private reserveToolCallBudget(metadata: {
@@ -4891,8 +4968,13 @@ function isTerminalState(state: RunState): boolean {
   return state === "completed" || state === "failed" || state === "cancelled";
 }
 
-function isWaitingTasksWake(state: RunLoopState): boolean {
-  return state.transition.metadata?.wake === "waiting_tasks";
+function isSourceBudgetedForcedContinuation(state: RunLoopState): boolean {
+  const source = state.transition.metadata?.forcedContinuationSource;
+  return source === "revival" || source === "workflow";
+}
+
+function isWorkflowProjectionHookName(hookName: string | undefined): boolean {
+  return hookName?.startsWith("workflow:") === true;
 }
 
 function notificationErrorMessage(cause: unknown): string {

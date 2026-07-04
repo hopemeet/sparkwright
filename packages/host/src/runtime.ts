@@ -230,6 +230,7 @@ import {
   describeActiveWorkflowRules,
 } from "./active-rules.js";
 import { loadLayeredWorkflowAssets } from "./workflows.js";
+import { createWorkflowProjectionHooks } from "./workflow-projection.js";
 import {
   DISCOVERY_TOOL_NAME,
   WORKSPACE_WRITE_TOOL_NAMES,
@@ -399,6 +400,8 @@ export interface RuntimeOptions {
   defaultTraceLevel?: TraceLevel;
   /** Default workspace-write permission when run.start does not specify one. */
   defaultShouldWrite?: boolean;
+  /** Internal P1 gate; P1.5 deletion decides when this can be removed. */
+  experimentalWorkflows?: boolean;
   /** Session-scoped MCP servers supplied by an embedding protocol (for example ACP). */
   extraMcpServers?: readonly McpServerConfig[];
   /** Called to deliver host events to the client. */
@@ -468,6 +471,8 @@ export interface RuntimeWorkflowHookAssemblyOptions extends Omit<
   "hooks"
 > {
   workflowHooks?: CapabilityWorkflowHookConfig[];
+  workflowActive?: boolean;
+  projectionHooks?: WorkflowHook[];
   verification?: CapabilityVerificationConfig;
   documentedCommand: {
     goal: string;
@@ -482,6 +487,7 @@ export function assembleRuntimeWorkflowHooks(
     ...createConfiguredWorkflowHooks({
       ...options,
       hooks: options.workflowHooks,
+      workflowActive: options.workflowActive === true,
     }),
     ...createVerificationWorkflowHooks({
       ...options,
@@ -492,6 +498,7 @@ export function assembleRuntimeWorkflowHooks(
       goal: options.documentedCommand.goal,
       shouldWrite: options.documentedCommand.shouldWrite,
     }),
+    ...(options.projectionHooks ?? []),
   ];
 }
 
@@ -696,6 +703,7 @@ const MAIN_TODO_MAX_STALLED_CONTINUATIONS = 1;
 const MAIN_TODO_CONTINUATION_MAX_STEPS = 8;
 const MAIN_TODO_CONTINUATION_MAX_MODEL_CALLS = 8;
 const MAIN_TODO_CONTINUATION_MAX_TOOL_CALLS = 12;
+const EXPERIMENTAL_WORKFLOWS_ENV = "SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS";
 
 const DELEGATED_AGENT_CONTRACT = [
   "Delegated agent contract:",
@@ -876,6 +884,13 @@ export class HostRuntime {
     this.taskManager.registerKind("agent", (controller, payload) =>
       this.runAgentTask(controller, payload),
     );
+  }
+
+  private workflowRuntimeEnabled(): boolean {
+    if (this.opts.experimentalWorkflows !== undefined) {
+      return this.opts.experimentalWorkflows;
+    }
+    return process.env[EXPERIMENTAL_WORKFLOWS_ENV] === "1";
   }
 
   hasActiveRun(): boolean {
@@ -1217,6 +1232,7 @@ export class HostRuntime {
     targetPath?: string;
     confidentialPaths?: readonly string[];
     traceLevel?: TraceLevel;
+    workflowName?: string;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
   }): Promise<
@@ -1580,8 +1596,58 @@ export class HostRuntime {
       configPaths: loadedConfig.attempted.map((entry) => entry.path),
     });
     const tools = catalogToolDefinitions(toolCatalog);
+    const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
+    if (input.workflowName && !this.workflowRuntimeEnabled()) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message:
+            "Workflow runtime is experimental. Set SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1 to use run.start.workflow.",
+        },
+      };
+    }
+    const selectedWorkflow = input.workflowName
+      ? workflows.assets.find((asset) => asset.assetName === input.workflowName)
+      : undefined;
+    if (input.workflowName && !selectedWorkflow) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: `Workflow "${input.workflowName}" was not found.`,
+        },
+      };
+    }
+    let workflowProjection:
+      | ReturnType<typeof createWorkflowProjectionHooks>
+      | undefined;
+    try {
+      workflowProjection = selectedWorkflow
+        ? createWorkflowProjectionHooks({
+            definition: selectedWorkflow.definition,
+            workspaceRoot,
+            sandbox: shellConfig?.sandbox,
+            http: hookConfig?.http,
+            skillRoots: skillRoots.map((root) => root.root),
+            configPaths: loadedConfig.attempted.map((entry) => entry.path),
+            getRun: () => parentRunRef.current,
+            agentTool: delegateAgentTool,
+          })
+        : undefined;
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
     const workflowHooks = assembleRuntimeWorkflowHooks({
       workflowHooks: hookConfig?.workflow,
+      workflowActive: workflowProjection !== undefined,
+      projectionHooks: workflowProjection?.hooks,
       verification: loadedConfig.config.capabilities?.verification,
       workspaceRoot,
       sandbox: shellConfig?.sandbox,
@@ -1606,7 +1672,6 @@ export class HostRuntime {
     const eventRules = describeActiveEventRules({
       eventHooks: hookConfig?.events,
     });
-    const workflows = await loadLayeredWorkflowAssets(workspaceRoot);
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       model: modelCapabilitySummary(model.resolved),
       toolCatalog,
@@ -1645,6 +1710,16 @@ export class HostRuntime {
       traceLevel,
       ...(mcpWorkspaceCwdServers.length > 0 ? { mcpWorkspaceCwdServers } : {}),
       ...(input.modelRef ? { requestedModel: input.modelRef } : {}),
+      ...(selectedWorkflow && workflowProjection
+        ? {
+            workflow: {
+              workflowRunId: workflowProjection.workflowRunId,
+              assetName: selectedWorkflow.assetName,
+              version: selectedWorkflow.version,
+              contentHash: selectedWorkflow.contentHash,
+            },
+          }
+        : {}),
       resolvedModel: model.resolved,
       capabilitySnapshot: summarizeCapabilitySnapshot(
         this.lastCapabilitySnapshot,
@@ -2310,6 +2385,7 @@ export class HostRuntime {
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
       }),
+      workflowName: payload.workflow,
       runMetadata: {
         ...(payload.metadata ?? {}),
         ...accessMetadata,

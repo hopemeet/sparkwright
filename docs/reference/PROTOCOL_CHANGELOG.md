@@ -27,8 +27,16 @@ Conventions:
 - `event.schema.json`: additive — reserves `workflow.started`,
   `workflow.node.started`, `workflow.node.completed`, `workflow.waiting`,
   `workflow.interrupted`, `workflow.completed`, `workflow.failed`, and
-  `workflow.cancelled` for the workflow runtime lifecycle. Migration: none; P0
-  adds vocabulary only and no runtime emitter.
+  `workflow.cancelled` for the workflow runtime lifecycle. P1 begins emitting
+  these events for `run.start.workflow` projection runs. Migration: consumers
+  should treat workflow lifecycle events as optional annotations unless they opt
+  into workflow-aware UI/status rendering.
+
+- `host-message.schema.json`: additive — `run.start` accepts optional
+  `workflow`, the workflow asset name to instantiate for that run. Migration:
+  omit the field to keep ordinary host-run behavior. P1 keeps this surface
+  behind `SPARKWRIGHT_EXPERIMENTAL_WORKFLOWS=1` until the P1.5 deletion gate
+  lands.
 
 - `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
   include parsed workflow asset summaries and parse errors. Migration: none;

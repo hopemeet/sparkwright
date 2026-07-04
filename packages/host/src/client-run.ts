@@ -24,6 +24,7 @@ export interface HostClientRunMetadataInput {
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
   modelName?: string;
+  workflowName?: string;
 }
 
 export function resolveHostRequestModel(input: {
@@ -51,6 +52,7 @@ export function createHostClientRunMetadata(
     shouldWrite: input.shouldWrite,
     traceLevel: input.traceLevel,
     ...(input.modelName ? { model: input.modelName } : {}),
+    ...(input.workflowName ? { workflow: input.workflowName } : {}),
   };
 }
 
@@ -59,6 +61,7 @@ export function createHostStartRunRequest(input: {
   sessionId?: string;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
+  workflowName?: string;
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
@@ -74,6 +77,7 @@ export function createHostStartRunRequest(input: {
     ...(input.input ? { input: input.input } : {}),
     sessionId: input.sessionId,
     model: resolveHostRequestModel(input),
+    workflow: input.workflowName,
     accessMode: input.accessMode,
     backgroundTasks: input.backgroundTasks,
     permissionMode: input.accessMode ? undefined : input.permissionMode,
