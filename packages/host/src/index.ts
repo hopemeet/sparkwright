@@ -216,6 +216,18 @@ export {
   type AgentProfileCollision,
 } from "./agent-profiles.js";
 export {
+  WORKFLOW_FILE_NAME,
+  loadLayeredWorkflowAssets,
+  loadWorkflowAssetFromDir,
+  parseWorkflowMarkdownAsset,
+  type WorkflowAssetDetail,
+  type WorkflowAssetError,
+  type WorkflowAssetReport,
+  type WorkflowAssetRoot,
+  type WorkflowAssetShadow,
+  type WorkflowAssetSummary,
+} from "./workflows.js";
+export {
   loadHostConfig,
   normalizeGroupedConfig,
   configResolutionOrder,

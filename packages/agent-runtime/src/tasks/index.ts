@@ -78,6 +78,9 @@ export type {
   WorkflowProgressActorNotification,
   WorkflowProgressNotificationInput,
   WorkflowProgressNotificationPayload,
+  WorkflowWaitingActorNotification,
+  WorkflowWaitingNotificationInput,
+  WorkflowWaitingNotificationPayload,
 } from "./notifications.js";
 export {
   ActorNotificationCapacityError,

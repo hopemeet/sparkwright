@@ -33,6 +33,7 @@ import {
   type TaskNotification,
   type TaskOutputChunk,
   type WorkflowProgressNotificationInput,
+  type WorkflowWaitingNotificationInput,
 } from "../src/index.js";
 
 const PARENT_RUN_ID = "run_test_parent" as unknown as RunId;
@@ -149,6 +150,27 @@ function workflowProgressInput(
       progress: { message: "halfway" },
     },
     correlationId: "same-correlation",
+    ...overrides,
+  };
+}
+
+function workflowWaitingInput(
+  workflowId: string,
+  overrides: Partial<WorkflowWaitingNotificationInput> = {},
+): WorkflowWaitingNotificationInput {
+  return {
+    source: {
+      kind: "workflow",
+      id: workflowId,
+      runId: PARENT_RUN_ID,
+      sessionId: "session_actor_test",
+    },
+    type: "waiting",
+    payload: {
+      workflowId,
+      summary: `${workflowId} is waiting.`,
+      wait: { kind: "input", reason: "Need user input." },
+    },
     ...overrides,
   };
 }
@@ -547,6 +569,30 @@ describe("ActorNotificationSink and ActorInbox adapters", () => {
       correlationId: "same-correlation",
     });
     expect(queue.peek()).toHaveLength(0);
+  });
+
+  it("accepts reliable workflow waiting notifications with wait kind", async () => {
+    const queue = new InMemoryTaskNotificationQueue();
+
+    const result = queue
+      .asActorSink()
+      .deliver(workflowWaitingInput("workflow_waiting"));
+
+    expect(result).toEqual({ status: "accepted", acceptedCount: 1 });
+    expect(await peekActorInbox(queue.asActorInbox())).toMatchObject([
+      {
+        source: {
+          kind: "workflow",
+          id: "workflow_waiting",
+        },
+        type: "waiting",
+        qos: "reliable",
+        payload: {
+          workflowId: "workflow_waiting",
+          wait: { kind: "input" },
+        },
+      },
+    ]);
   });
 
   it("rejects invalid source routes but allows targetRunId to differ", async () => {

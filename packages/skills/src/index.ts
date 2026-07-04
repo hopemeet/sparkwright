@@ -8,7 +8,6 @@
 // matches the embedder's loop. Re-exports are grouped at the bottom so
 // downstream `import { ... } from "@sparkwright/skills"` keeps working.
 
-import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
@@ -25,6 +24,7 @@ import {
 } from "./preprocess.js";
 import { parseSkillManifestCompat } from "./manifest.js";
 import { createSkillPackageHasher } from "./package.js";
+import { markdownAssetContentHash } from "./markdown-folder-asset.js";
 
 const SKILL_FILE_NAME = "SKILL.md";
 const DEFAULT_MAX_SELECTED_SKILLS = 1;
@@ -394,7 +394,7 @@ export function parseSkill(
     triggers: manifest.triggers,
     body: manifest.instructions,
     sourcePath,
-    contentHash: sha256(content),
+    contentHash: markdownAssetContentHash(content),
     metadata,
   };
 }
@@ -1017,10 +1017,6 @@ function countMatches(left: Set<string>, right: Set<string>): number {
   return matches;
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 // -----------------------------------------------------------------------------
 // Discovery + description-matching protocol (v0.1, experimental)
 // -----------------------------------------------------------------------------
@@ -1055,6 +1051,18 @@ export {
   skillsToCapabilities,
   type SkillCapabilityOptions,
 } from "./capability.js";
+export {
+  discoverMarkdownFolderAssets,
+  loadMarkdownFolderAsset,
+  markdownAssetContentHash,
+  parseLooseFrontmatterBlock,
+  splitMarkdownFrontmatter,
+  type DiscoverMarkdownFolderAssetsOptions,
+  type LoadMarkdownFolderAssetOptions,
+  type MarkdownFolderAsset,
+  type MarkdownFrontmatterSplit,
+  type SplitMarkdownFrontmatterOptions,
+} from "./markdown-folder-asset.js";
 export {
   InMemorySkillUsageRecorder,
   recencyBoost,

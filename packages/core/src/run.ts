@@ -95,12 +95,13 @@ import {
 } from "./tool-orchestration.js";
 import {
   classifyToolFailure,
-  commandOutcomeSnapshot,
+  commandOutcomeSnapshotFromFactLedger,
   completedRunOutcomeFromEvents,
   stableRefTarget,
   toolOutcomeSnapshot,
   type ToolFailureCategory,
 } from "./run-outcome.js";
+import { FactLedger } from "./fact-ledger.js";
 import { ControlledWorkspace } from "./workspace.js";
 import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
@@ -580,6 +581,7 @@ export class SparkwrightRun implements RunHandle {
   private readonly promptBuilder: PromptBuilder<PromptMessage[]>;
   private readonly validationHooks: ValidationHook[];
   private readonly workflowHooks: WorkflowHook[];
+  private readonly factLedger = new FactLedger();
   private readonly runHealth = new RunHealthAnalyzer();
   private readonly compactionPipeline?: ReturnType<
     typeof createCompactionPipeline
@@ -663,6 +665,7 @@ export class SparkwrightRun implements RunHandle {
     this.events = new EventLog(this.record.id, {
       sequence: checkpoint?.eventSequence,
     });
+    this.events.subscribe((event) => this.factLedger.observeEvent(event));
     this.events.subscribe((event) => this.runHealth.observeEvent(event));
     this.policy = options.policy ?? createDefaultPolicy();
     this.interactionChannel = options.interactionChannel;
@@ -4018,6 +4021,7 @@ export class SparkwrightRun implements RunHandle {
       payload,
       metadata,
       events: this.events,
+      facts: this.factLedger,
     });
   }
 
@@ -4570,22 +4574,25 @@ export class SparkwrightRun implements RunHandle {
     if (isTerminalState(this.record.state) && this.result) {
       return this.result;
     }
+    const factLedger = this.factLedger.snapshot();
     const outcome =
       reason === "final_answer"
         ? completedRunOutcomeFromEvents(
             this.events.all(),
             typeof payload.message === "string" ? payload.message : undefined,
+            { factLedger },
           )
         : undefined;
     // Persist the command- and tool-outcome verdicts (computed over the full
     // event stream) so trace summaries stay correct for legacy traces that
     // may not retain the tool.completed output / tool.requested arguments they
     // would otherwise be recomputed from.
-    const commandOutcome = commandOutcomeSnapshot(this.events.all());
+    const commandOutcome = commandOutcomeSnapshotFromFactLedger(factLedger);
     const toolOutcome = toolOutcomeSnapshot(this.events.all());
     const completedPayload = {
       reason,
       ...payload,
+      factLedger,
       ...(outcome ? { outcome } : {}),
       ...(commandOutcome ? { commandOutcome } : {}),
       ...(toolOutcome ? { toolOutcome } : {}),

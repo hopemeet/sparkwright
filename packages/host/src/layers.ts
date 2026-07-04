@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 export type CapabilityLayer = "builtin" | "user" | "project";
-export type CapabilityKind = "skills" | "agents" | "command";
+export type CapabilityKind = "skills" | "agents" | "command" | "workflows";
 
 export interface ResolvedCapabilityDir {
   layer: CapabilityLayer;

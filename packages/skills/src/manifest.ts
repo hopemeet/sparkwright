@@ -6,6 +6,10 @@
 // surface empty. If a host needs richer YAML, they can preprocess upstream
 // and hand the result to {@link parseSkillManifestObject}.
 
+import {
+  parseLooseFrontmatterBlock,
+  splitMarkdownFrontmatter,
+} from "./markdown-folder-asset.js";
 import type { SkillManifest } from "./types.js";
 
 const DESCRIPTION_MAX_LENGTH = 1024;
@@ -93,7 +97,20 @@ function parseSkillManifestInternal(
   }
 
   if (trimmed.startsWith("---")) {
-    const { frontmatter, body } = splitFrontmatter(trimmed, source);
+    const { frontmatter, body, hasFrontmatter } = splitMarkdownFrontmatter(
+      trimmed,
+      {
+        source,
+        parseFrontmatter: parseSkillFrontmatterBlock,
+      },
+    );
+    if (!hasFrontmatter) {
+      throw new Error(
+        `Skill frontmatter must include a closing '---'${
+          source ? ` (${source})` : ""
+        }.`,
+      );
+    }
     if (
       frontmatter.instructions === undefined &&
       (body !== "" || options.allowEmptyInstructions)
@@ -201,98 +218,23 @@ function parseSkillManifestObjectInternal(
   return manifest;
 }
 
-interface FrontmatterSplit {
-  frontmatter: Record<string, unknown>;
-  body: string;
-}
-
-function splitFrontmatter(text: string, source?: string): FrontmatterSplit {
-  // Assume `text` starts with `---` (caller checked).
-  const afterOpen = text.slice(3);
-  const newline = afterOpen.indexOf("\n");
-  if (newline === -1) {
-    throw new Error(
-      `Skill frontmatter must include a closing '---'${
-        source ? ` (${source})` : ""
-      }.`,
-    );
-  }
-
-  const rest = afterOpen.slice(newline + 1);
-  const closeMatch = /\n---\s*(?:\n|$)/.exec(rest);
-  if (!closeMatch) {
-    throw new Error(
-      `Skill frontmatter must include a closing '---'${
-        source ? ` (${source})` : ""
-      }.`,
-    );
-  }
-
-  const head = rest.slice(0, closeMatch.index);
-  const body = rest.slice(closeMatch.index + closeMatch[0].length).trim();
-  return { frontmatter: parseFrontmatterBlock(head, source), body };
-}
-
-function parseFrontmatterBlock(
+function parseSkillFrontmatterBlock(
   block: string,
   source?: string,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  let nested: Record<string, unknown> | undefined;
-
-  for (const rawLine of block.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-    if (line.trim() === "" || line.trimStart().startsWith("#")) continue;
-
-    const nestedMatch = /^ {2}([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(line);
-    if (nestedMatch && nested) {
-      nested[nestedMatch[1]] = parseScalarOrList(nestedMatch[2] ?? "");
-      continue;
-    }
-
-    const match = /^([A-Za-z0-9_-]+):(?:\s*(.*))?$/.exec(line);
-    if (!match) {
+  try {
+    return parseLooseFrontmatterBlock(block, source);
+  } catch (cause) {
+    if (cause instanceof Error) {
       throw new Error(
-        `Unsupported skill frontmatter line${
-          source ? ` (${source})` : ""
-        }: ${line}`,
+        cause.message.replace(
+          "Unsupported markdown frontmatter line",
+          "Unsupported skill frontmatter line",
+        ),
       );
     }
-
-    const [, key, value = ""] = match;
-    if (value === "") {
-      nested = {};
-      out[key] = nested;
-    } else {
-      nested = undefined;
-      out[key] = parseScalarOrList(value);
-    }
+    throw cause;
   }
-
-  return out;
-}
-
-function parseScalarOrList(value: string): unknown {
-  const trimmed = value.trim();
-  if (trimmed === "") return "";
-
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      // fall through to scalar handling
-    }
-  }
-
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-
-  const quoted = /^["'](.*)["']$/.exec(trimmed);
-  if (quoted) return quoted[1];
-
-  return trimmed;
 }
 
 function requireString(

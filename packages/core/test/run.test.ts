@@ -806,12 +806,110 @@ describe("SparkwrightRun", () => {
 
     const completed = events.find((event) => event.type === "run.completed");
     expect(completed?.payload).toMatchObject({
+      factLedger: {
+        schemaVersion: "fact-ledger.v1",
+        writeEpoch: 0,
+        commands: [
+          {
+            initiator: "model-initiated",
+            source: "shell_tool",
+            command,
+            exitCode: 127,
+            timedOut: false,
+            stale: false,
+          },
+        ],
+      },
       commandOutcome: {
         total: 1,
         byExitCode: { "127": 1 },
         verification: { total: 1, unresolved: 1, lastExitCode: 127 },
       },
     });
+  });
+
+  it("does not persist stale command failures as commandOutcome", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-run-ledger-"));
+    tempDirs.push(root);
+    await writeFile(join(root, "README.md"), "before\n", "utf8");
+    const command = "npm test";
+    const events: SparkwrightEvent[] = [];
+
+    const shell = defineTool({
+      name: "shell",
+      description: "Run a shell command.",
+      inputSchema: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+      },
+      policy: { risk: "safe" },
+      execute() {
+        return { exitCode: 1, timedOut: false, stdout: "", stderr: "" };
+      },
+    });
+    const writeReadme = defineTool({
+      name: "write_readme",
+      description: "Write README.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      policy: { risk: "safe" },
+      async execute(_args, ctx) {
+        if (!ctx.workspace) throw new Error("missing workspace");
+        await ctx.workspace.writeText("README.md", "after\n");
+        return { ok: true };
+      },
+    });
+
+    let modelCalls = 0;
+    const model: ModelAdapter = {
+      async complete() {
+        modelCalls += 1;
+        if (modelCalls === 1) {
+          return { toolCalls: [{ toolName: "shell", arguments: { command } }] };
+        }
+        if (modelCalls === 2) {
+          return { toolCalls: [{ toolName: "write_readme", arguments: {} }] };
+        }
+        return { message: "done" };
+      },
+    };
+
+    const run = createRun({
+      goal: "Run verification and edit",
+      model,
+      tools: [shell, writeReadme],
+      workspace: new LocalWorkspace(root),
+      approvalResolver(request) {
+        expect(request.action).toBe("workspace.write");
+        return {
+          approvalId: request.id,
+          decision: "approved",
+        };
+      },
+      maxSteps: 4,
+    });
+    run.events.subscribe((event) => events.push(event));
+    await run.start();
+
+    const completed = events.find((event) => event.type === "run.completed");
+    expect(completed?.payload).toMatchObject({
+      factLedger: {
+        writeEpoch: 1,
+        commands: [
+          {
+            command,
+            exitCode: 1,
+            stale: true,
+            writeEpoch: 0,
+          },
+        ],
+      },
+    });
+    expect(completed?.payload).not.toHaveProperty("commandOutcome");
   });
 
   it("emits tool progress reported through the runtime context", async () => {

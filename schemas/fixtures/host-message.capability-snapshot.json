@@ -133,6 +133,19 @@
       }
     ]
   },
+  "workflows": {
+    "assets": [
+      {
+        "assetName": "bugfix",
+        "sourcePath": ".sparkwright/workflows/bugfix/workflow.md",
+        "layer": "project",
+        "contentHash": "abc123",
+        "version": "1.0.0",
+        "nodeCount": 2
+      }
+    ],
+    "errors": []
+  },
   "automation": {
     "cron": {
       "rootDir": "/tmp/sparkwright/cron",

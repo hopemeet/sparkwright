@@ -2244,6 +2244,98 @@ describe("runCli", () => {
     );
   });
 
+  it("lists workflow assets in capability inspect text output", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "workflows", "bugfix"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "workflows", "bugfix", "workflow.md"),
+      [
+        "---",
+        "version: 1.0.0",
+        "nodes:",
+        "  - id: reproduce",
+        "  - id: patch",
+        "---",
+        "## reproduce",
+        "Reproduce.",
+        "## patch",
+        "Patch.",
+      ].join("\n"),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain("workflows: 1 assets");
+    expect(output.stdoutText()).toContain(
+      "workflow: bugfix version=1.0.0 nodes=2",
+    );
+  });
+
+  it("lists and inspects workflow assets", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "workflows", "bugfix"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "workflows", "bugfix", "workflow.md"),
+      [
+        "---",
+        "version: 1.0.0",
+        "nodes: [main]",
+        "---",
+        "Main workflow body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const listOutput = createOutputCapture();
+    const list = await runCli(
+      ["workflow", "list", "--workspace", workspace, "--format", "text"],
+      {
+        io: { stdout: listOutput.stdout, stderr: listOutput.stderr },
+      },
+    );
+    expect(list.exitCode).toBe(0);
+    expect(listOutput.stdoutText()).toContain("workflow: bugfix version=1.0.0");
+
+    const inspectOutput = createOutputCapture();
+    const inspect = await runCli(
+      [
+        "workflow",
+        "inspect",
+        "bugfix",
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: inspectOutput.stdout, stderr: inspectOutput.stderr },
+      },
+    );
+    expect(inspect.exitCode).toBe(0);
+    const parsed = JSON.parse(inspectOutput.stdoutText()) as {
+      definition: {
+        assetName: string;
+        nodes: Array<{ id: string; body: string }>;
+      };
+    };
+    expect(parsed.definition.assetName).toBe("bugfix");
+    expect(parsed.definition.nodes).toEqual([
+      expect.objectContaining({ id: "main", body: "Main workflow body." }),
+    ]);
+  });
+
   it("shows missing model pricing in capability inspect", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });

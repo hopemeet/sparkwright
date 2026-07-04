@@ -92,6 +92,7 @@ import {
   runSkillDoctor,
   supersedeSkillProposal,
   loadLayeredAgentReport,
+  loadLayeredWorkflowAssets,
   loadHostConfig,
   configResolutionOrder,
   DEFAULT_DEFERRED_TOOLS,
@@ -140,6 +141,8 @@ import {
   type SkillReport,
   type SkillReviewDigest,
   type SkillStatsReport,
+  type WorkflowAssetDetail,
+  type WorkflowAssetReport,
 } from "@sparkwright/host";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import {
@@ -317,6 +320,10 @@ export async function runCli(
 
   if (command === "tasks") {
     return handleTasksCommand(parsed.value, io);
+  }
+
+  if (command === "workflow") {
+    return handleWorkflowCommand(parsed.value, io, env);
   }
 
   if (command === "capabilities") {
@@ -723,6 +730,7 @@ function parseArgs(
     "cron",
     "tools",
     "tasks",
+    "workflow",
     "capabilities",
     "delegates",
     "skills",
@@ -740,6 +748,7 @@ function parseArgs(
     command === "cron" ||
     command === "tools" ||
     command === "tasks" ||
+    command === "workflow" ||
     command === "capabilities" ||
     command === "delegates" ||
     command === "skills" ||
@@ -1257,6 +1266,18 @@ function parseArgs(
     };
   }
 
+  if (
+    command === "workflow" &&
+    subcommand !== "list" &&
+    subcommand !== "inspect"
+  ) {
+    return {
+      ok: false,
+      message:
+        "Usage: sparkwright workflow <list|inspect> [workflow-name] [--workspace path] [--format json|text]",
+    };
+  }
+
   if (command === "capabilities" && subcommand !== "inspect") {
     return {
       ok: false,
@@ -1352,6 +1373,7 @@ function parseArgs(
       ? (cronRefCommand ? args.slice(1) : args).join("\0")
       : command === "tools" ||
           command === "tasks" ||
+          command === "workflow" ||
           command === "capabilities" ||
           command === "delegates" ||
           command === "skills" ||
@@ -1710,6 +1732,107 @@ function formatTaskList(input: {
   return lines.join("\n");
 }
 
+async function handleWorkflowCommand(
+  parsed: ParsedArgs,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<CliRunResult> {
+  const subcommand = parsed.subcommand;
+  if (subcommand !== "list" && subcommand !== "inspect") {
+    writeLine(io.stderr, workflowUsage());
+    return { exitCode: 1 };
+  }
+
+  try {
+    const report = await loadLayeredWorkflowAssets(parsed.workspaceRoot, env);
+    if (subcommand === "list") {
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(report, null, 2)
+          : formatWorkflowListReport(report),
+      );
+      return { exitCode: report.errors.length > 0 ? 1 : 0 };
+    }
+
+    const name = firstCliWord(parsed.goal);
+    if (!name) {
+      writeLine(
+        io.stderr,
+        "Usage: sparkwright workflow inspect <workflow-name>",
+      );
+      return { exitCode: 1 };
+    }
+    const asset = report.assets.find((entry) => entry.assetName === name);
+    if (!asset) {
+      writeLine(io.stderr, `Workflow not found: ${name}`);
+      return { exitCode: 1 };
+    }
+    writeLine(
+      io.stdout,
+      parsed.format === "json"
+        ? JSON.stringify(asset, null, 2)
+        : formatWorkflowInspectReport(asset),
+    );
+    return { exitCode: report.errors.length > 0 ? 1 : 0 };
+  } catch (error) {
+    writeLine(
+      io.stderr,
+      error instanceof Error ? error.message : String(error),
+    );
+    return { exitCode: 1 };
+  }
+}
+
+function formatWorkflowListReport(report: WorkflowAssetReport): string {
+  const lines = [`workflows: ${report.assets.length}`];
+  for (const root of report.roots) {
+    lines.push(
+      `  root: ${root.layer} ${root.exists ? "exists" : "missing"} ${root.path}`,
+    );
+  }
+  for (const asset of report.assets) {
+    lines.push(
+      `  workflow: ${asset.assetName}${asset.version ? ` version=${asset.version}` : ""} nodes=${asset.nodeCount} layer=${asset.layer} source=${asset.sourcePath}`,
+    );
+  }
+  for (const shadow of report.shadows) {
+    lines.push(
+      `  shadow: ${shadow.assetName} kept=${shadow.keptSource} shadowed=${shadow.shadowedSource}`,
+    );
+  }
+  for (const error of report.errors) {
+    lines.push(`  error: ${error.layer} ${error.sourcePath}: ${error.message}`);
+  }
+  return lines.join("\n");
+}
+
+function formatWorkflowInspectReport(asset: WorkflowAssetDetail): string {
+  const lines = [
+    `workflow: ${asset.assetName}`,
+    `source: ${asset.sourcePath}`,
+    `layer: ${asset.layer}`,
+    `contentHash: ${asset.contentHash}`,
+    `version: ${asset.version ?? "(none)"}`,
+    `nodes: ${asset.definition.nodes.length}`,
+  ];
+  if (asset.description) lines.push(`description: ${asset.description}`);
+  if (asset.configPath) lines.push(`config: ${asset.configPath}`);
+  for (const node of asset.definition.nodes) {
+    lines.push(
+      `  node: ${node.id} execute=${node.execute ?? "model"} bodyChars=${node.body.length}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function firstCliWord(input: string): string | undefined {
+  const args = input.includes("\0")
+    ? input.split("\0").filter(Boolean)
+    : splitCliWords(input);
+  return args[0];
+}
+
 type ToolConfigAction = "allow" | "disable" | "defer";
 
 interface ToolsConfigShape {
@@ -1896,6 +2019,7 @@ interface CapabilityInspectReport {
   command: {
     dirs: Array<{ layer: string; path: string; exists: boolean }>;
   };
+  workflows: WorkflowAssetReport;
 }
 
 function appendReservedDelegateToolCollisions(input: {
@@ -2122,6 +2246,7 @@ async function loadCapabilityInspectReport(
       }),
     ),
   );
+  const workflows = await loadLayeredWorkflowAssets(workspaceRoot, env);
 
   const mcpServers: CapabilityInspectReport["mcp"]["servers"] = (
     capabilities?.mcp?.servers ?? []
@@ -2269,6 +2394,7 @@ async function loadCapabilityInspectReport(
       stateRoot: defaultCronRoot(env),
     },
     command: { dirs: commandDirs },
+    workflows,
   };
 }
 
@@ -2581,7 +2707,13 @@ function formatCapabilityInspectReport(
     `diagnostic tools: ${report.tools.available.length}`,
     `skills: ${report.skills.skills.length} effective, ${report.skills.roots.length} roots, ${report.skills.shadows.length} shadows, ${report.skills.errors.length} errors`,
     `skill inline shell: enabled=${String(report.skills.inlineShell.enabled)}; writePolicy=${report.skills.inlineShell.writePolicy}; sandbox=${report.skills.inlineShell.sandboxMode}; failClosed=${String(report.skills.inlineShell.failClosed)}${report.skills.inlineShell.timeoutMs !== undefined ? `; timeoutMs=${report.skills.inlineShell.timeoutMs}` : ""}${report.skills.inlineShell.maxOutputChars !== undefined ? `; maxOutputChars=${report.skills.inlineShell.maxOutputChars}` : ""}`,
+    `workflows: ${report.workflows.assets.length} assets, ${report.workflows.roots.length} roots, ${report.workflows.shadows.length} shadows, ${report.workflows.errors.length} errors`,
   ];
+  for (const workflow of report.workflows.assets) {
+    lines.push(
+      `  workflow: ${workflow.assetName}${workflow.version ? ` version=${workflow.version}` : ""} nodes=${workflow.nodeCount} layer=${workflow.layer} source=${workflow.sourcePath}`,
+    );
+  }
   const workflowRules = report.runtime?.rules?.workflow ?? [];
   const eventRules = report.runtime?.rules?.events ?? [];
   lines.push(`workflow rules: ${workflowRules.length}`);
@@ -5951,6 +6083,7 @@ function helpForArgs(argv: readonly string[]): string | undefined {
   if (command === "cron") return cronUsage();
   if (command === "tools") return toolsUsage();
   if (command === "tasks") return tasksUsage();
+  if (command === "workflow") return workflowUsage();
   if (command === "capabilities") return capabilitiesUsage();
   if (command === "delegates") return delegatesUsage();
   if (command === "skills") return skillsUsage();
@@ -6935,7 +7068,12 @@ function renderProjectConfigTemplate(): string {
   ].join("\n");
 }
 
-const PROJECT_CAPABILITY_DIRS = ["skills", "agents", "command"] as const;
+const PROJECT_CAPABILITY_DIRS = [
+  "skills",
+  "agents",
+  "command",
+  "workflows",
+] as const;
 
 /**
  * Scaffold the shared user config so first-time setup is "edit one file" rather
@@ -7059,7 +7197,7 @@ async function scaffoldProjectConfig(
   );
   writeLine(
     io.stdout,
-    "Created project capability directories: .sparkwright/skills, .sparkwright/agents, .sparkwright/command",
+    "Created project capability directories: .sparkwright/skills, .sparkwright/agents, .sparkwright/command, .sparkwright/workflows",
   );
   writeLine(
     io.stdout,
@@ -7080,6 +7218,7 @@ function usage(): string {
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
+    "       sparkwright workflow list|inspect [workflow-name] [--workspace path] [--format json|text]",
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
@@ -7116,6 +7255,13 @@ function tasksUsage(): string {
     "Usage: sparkwright tasks list [--workspace path] [--root-dir path] [--status status] [--kind kind] [--run-id id] [--format json|text]",
     "       sparkwright tasks get <task-id> [--workspace path] [--root-dir path]",
     "       sparkwright tasks output <task-id> [--workspace path] [--root-dir path] [--from-sequence n] [--max-chunks n]",
+  ].join("\n");
+}
+
+function workflowUsage(): string {
+  return [
+    "Usage: sparkwright workflow list [--workspace path] [--format json|text]",
+    "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
   ].join("\n");
 }
 

@@ -12,6 +12,22 @@ Conventions:
 
 ## Unreleased
 
+- `run.completed` payloads: additive — completed runs may include
+  `factLedger` (`schemaVersion: "fact-ledger.v1"`) with raw command facts,
+  verifier result satisfaction, workspace write epochs, and stale markers.
+  Migration: prefer `factLedger` for command/verification diagnostics when
+  present; keep `commandOutcome` as the legacy compact snapshot.
+
+- `event.schema.json`: additive — reserves `workflow.started`,
+  `workflow.node.started`, `workflow.node.completed`, `workflow.waiting`,
+  `workflow.interrupted`, `workflow.completed`, `workflow.failed`, and
+  `workflow.cancelled` for the workflow runtime lifecycle. Migration: none; P0
+  adds vocabulary only and no runtime emitter.
+
+- `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
+  include parsed workflow asset summaries and parse errors. Migration: none;
+  clients should treat the field as optional inspection diagnostics.
+
 - `host-message.schema.json`: additive — host requests now include
   `task.list`, `task.get`, `task.output`, `task.stop`, `task.join`, and
   `task.promote`; protocol errors may include `task_not_found`. Migration:

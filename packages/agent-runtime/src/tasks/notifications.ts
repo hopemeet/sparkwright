@@ -19,6 +19,7 @@ import type {
   TaskRecord,
   TaskStatus,
 } from "./types.js";
+import type { WorkflowWaitState } from "../workflows/types.js";
 
 export type InternalActorKind = "run" | "agent" | "task" | "workflow";
 
@@ -40,6 +41,7 @@ export type ActorNotificationType =
   | "completed"
   | "failed"
   | "cancelled"
+  | "waiting"
   | "progress"
   | "output";
 
@@ -210,6 +212,10 @@ export interface WorkflowProgressNotificationPayload extends WorkflowNotificatio
   message?: string;
 }
 
+export interface WorkflowWaitingNotificationPayload extends WorkflowNotificationPayloadBase {
+  wait: WorkflowWaitState;
+}
+
 type WorkflowActorRef = ActorRef & { kind: "workflow" };
 
 export type WorkflowCompletedNotificationInput =
@@ -230,10 +236,17 @@ export type WorkflowProgressNotificationInput =
     type: "progress";
   };
 
+export type WorkflowWaitingNotificationInput =
+  ActorNotificationInputBase<WorkflowWaitingNotificationPayload> & {
+    source: WorkflowActorRef;
+    type: "waiting";
+  };
+
 export type WorkflowActorNotificationInput =
   | WorkflowCompletedNotificationInput
   | WorkflowFailedNotificationInput
-  | WorkflowProgressNotificationInput;
+  | WorkflowProgressNotificationInput
+  | WorkflowWaitingNotificationInput;
 
 export type WorkflowCompletedActorNotification =
   ActorNotificationBase<WorkflowCompletedNotificationPayload> & {
@@ -256,10 +269,18 @@ export type WorkflowProgressActorNotification =
     qos: "lossy";
   };
 
+export type WorkflowWaitingActorNotification =
+  ActorNotificationBase<WorkflowWaitingNotificationPayload> & {
+    source: WorkflowActorRef;
+    type: "waiting";
+    qos: "reliable";
+  };
+
 export type WorkflowActorNotification =
   | WorkflowCompletedActorNotification
   | WorkflowFailedActorNotification
-  | WorkflowProgressActorNotification;
+  | WorkflowProgressActorNotification
+  | WorkflowWaitingActorNotification;
 
 export type AnyActorNotificationInput =
   | TaskActorNotificationInput
@@ -898,6 +919,23 @@ function validateWorkflowActorNotificationInput(
     payload.workflowId,
     "payload.workflowId",
   );
+  if (input.type === "waiting") {
+    const wait = payload.wait;
+    if (!isRecord(wait)) {
+      throw new ActorNotificationInvalidError(
+        "Workflow waiting payload requires wait.",
+      );
+    }
+    if (
+      wait.kind !== "input" &&
+      wait.kind !== "task" &&
+      wait.kind !== "approval"
+    ) {
+      throw new ActorNotificationInvalidError(
+        "Workflow waiting payload wait.kind must be input, task, or approval.",
+      );
+    }
+  }
 }
 
 function assertActorPayloadIdMatchesSource(

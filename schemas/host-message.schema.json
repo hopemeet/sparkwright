@@ -798,7 +798,57 @@
           },
           "additionalProperties": false
         },
+        "workflows": {
+          "type": "object",
+          "required": ["assets"],
+          "properties": {
+            "assets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CapabilityWorkflowAssetSummary"
+              }
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CapabilityWorkflowAssetErrorSummary"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "automation": { "$ref": "#/$defs/CapabilityAutomationSummary" }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityWorkflowAssetSummary": {
+      "type": "object",
+      "required": [
+        "assetName",
+        "sourcePath",
+        "layer",
+        "contentHash",
+        "nodeCount"
+      ],
+      "properties": {
+        "assetName": { "type": "string", "minLength": 1 },
+        "sourcePath": { "type": "string", "minLength": 1 },
+        "layer": { "type": "string", "enum": ["builtin", "user", "project"] },
+        "contentHash": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" },
+        "description": { "type": "string" },
+        "nodeCount": { "type": "integer", "minimum": 0 },
+        "configPath": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityWorkflowAssetErrorSummary": {
+      "type": "object",
+      "required": ["sourcePath", "layer", "message"],
+      "properties": {
+        "sourcePath": { "type": "string", "minLength": 1 },
+        "layer": { "type": "string", "enum": ["builtin", "user", "project"] },
+        "message": { "type": "string" }
       },
       "additionalProperties": false
     },
