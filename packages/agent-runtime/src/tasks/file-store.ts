@@ -10,11 +10,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { atomicWriteTextSync } from "../doc-store/index.js";
 import type {
   CreateTaskInput,
   TaskListFilter,
@@ -258,16 +258,6 @@ export class FileTaskStore implements TaskStore {
       `${JSON.stringify(record, null, 2)}\n`,
     );
   }
-}
-
-function atomicWriteTextSync(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(
-    dirname(path),
-    `.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
-  writeFileSync(tmp, content, "utf8");
-  renameSync(tmp, path);
 }
 
 function readLinesIfExists(path: string): string[] {
