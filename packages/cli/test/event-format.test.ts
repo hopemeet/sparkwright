@@ -21,6 +21,7 @@ describe("event-format live output filtering", () => {
   it("suppresses high-volume stream chunks from live CLI output", () => {
     expect(shouldPrintLiveEvent(event("model.stream.chunk"))).toBe(false);
     expect(shouldPrintLiveEvent(event("run.budget.checked"))).toBe(false);
+    expect(shouldPrintLiveEvent(event("run.budget.exceeded"))).toBe(true);
     expect(shouldPrintLiveEvent(event("model.stream.started"))).toBe(true);
     expect(shouldPrintLiveEvent(event("model.stream.completed"))).toBe(true);
     expect(shouldPrintLiveEvent(event("tool.requested"))).toBe(true);

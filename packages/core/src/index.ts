@@ -181,6 +181,7 @@ export type {
   FactLedgerCommandFact,
   FactLedgerCommandInitiator,
   FactLedgerCommandSource,
+  FactLedgerBudgetExceededFact,
   FactLedgerEpochMarker,
   FactLedgerReader,
   FactLedgerSnapshot,

@@ -1228,6 +1228,7 @@ function isUserHookTrigger(value: string): value is UserHookTrigger {
     value === "run.failed" ||
     value === "run.cancelled" ||
     value === "run.budget.checked" ||
+    value === "run.budget.exceeded" ||
     value === "model.requested" ||
     value === "model.completed" ||
     value === "tool.requested" ||

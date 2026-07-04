@@ -43,6 +43,7 @@ export type UserHookTrigger =
   | "run.failed"
   | "run.cancelled"
   | "run.budget.checked"
+  | "run.budget.exceeded"
   | "model.requested"
   | "model.completed"
   | "tool.requested"

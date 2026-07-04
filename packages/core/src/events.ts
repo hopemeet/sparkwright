@@ -48,6 +48,7 @@ export type EventType =
   | "run.notification.source_failed"
   | "run.state_transition.rejected"
   | "run.budget.checked"
+  | "run.budget.exceeded"
   | "plan.created"
   | "plan.reviewed"
   | "plan.step.started"

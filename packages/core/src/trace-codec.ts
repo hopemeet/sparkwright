@@ -113,6 +113,16 @@ function standardPayload(event: SparkwrightEvent): unknown {
       return summarizeModelOutput(event.payload);
     case "run.budget.checked":
       return pick(event.payload, ["stage", "usage", "metadata"]);
+    case "run.budget.exceeded":
+      return pick(event.payload, [
+        "signal",
+        "family",
+        "source",
+        "used",
+        "limit",
+        "step",
+        "reason",
+      ]);
     case "context.compaction_requested":
       return pick(event.payload, [
         "step",

@@ -627,17 +627,24 @@ describe("EventStream committed rendering", () => {
     expect(text).toContain("run cancelled");
   });
 
-  it("suppresses internal run budget checks", async () => {
+  it("suppresses internal run budget events", async () => {
     const text = await renderToText(
       stream([
         ev("run.budget.checked", 1, {
           requested: { modelCalls: 1 },
           remaining: { modelCalls: 4 },
         }),
+        ev("run.budget.exceeded", 2, {
+          source: "revival",
+          used: 0,
+          limit: 0,
+        }),
       ]),
     );
     expect(text).not.toContain("run.budget.checked");
+    expect(text).not.toContain("run.budget.exceeded");
     expect(text).not.toContain("modelCalls");
+    expect(text).not.toContain("revival");
   });
 
   it("suppresses successful workflow hook machinery", async () => {

@@ -2,6 +2,7 @@ import type { SparkwrightEvent } from "./events.js";
 import {
   commandExpectationSatisfied,
   commandExpectationValue,
+  forcedContinuationBudgetExceededFromEvent,
   hookCommandFactFromWorkflowHookCompleted,
   parseVerificationHookName,
   shellCommandFactFromToolCompleted,
@@ -10,8 +11,10 @@ import {
   isVerificationGoal,
   type ClassifiedCommandFactInput,
   type CommandExpectation,
+  type ForcedContinuationBudgetExceededFactInput,
   type ShellCommandRequestFact,
 } from "./fact-classifier.js";
+import type { ForcedContinuationSource } from "./types.js";
 import { isRecord } from "./record-utils.js";
 
 export type FactLedgerCommandInitiator =
@@ -67,12 +70,24 @@ export interface FactLedgerWriteFact {
   path?: string;
 }
 
+export interface FactLedgerBudgetExceededFact {
+  id: string;
+  sequence: number;
+  writeEpoch: number;
+  source: ForcedContinuationSource;
+  used: number;
+  limit: number;
+  step?: number;
+  reason?: string;
+}
+
 export interface FactLedgerSnapshot {
   schemaVersion: "fact-ledger.v1";
   writeEpoch: number;
   commands: FactLedgerCommandFact[];
   verificationResults: FactLedgerVerificationResult[];
   writes: FactLedgerWriteFact[];
+  budgetExceeded: FactLedgerBudgetExceededFact[];
 }
 
 export interface FactLedgerReader {
@@ -93,6 +108,7 @@ export class FactLedger implements FactLedgerReader {
     "stale"
   >[] = [];
   private readonly writes: FactLedgerWriteFact[] = [];
+  private readonly budgetExceeded: FactLedgerBudgetExceededFact[] = [];
 
   observeEvent(event: SparkwrightEvent): void {
     this.observeGoal(event);
@@ -106,6 +122,12 @@ export class FactLedger implements FactLedgerReader {
         writeEpoch: this.writeEpoch,
         ...(write.path ? { path: write.path } : {}),
       });
+      return;
+    }
+
+    const budgetExceeded = forcedContinuationBudgetExceededFromEvent(event);
+    if (budgetExceeded) {
+      this.recordBudgetExceeded(budgetExceeded);
       return;
     }
 
@@ -158,6 +180,7 @@ export class FactLedger implements FactLedgerReader {
         stale: stale(fact.writeEpoch),
       })),
       writes: this.writes.map((fact) => ({ ...fact })),
+      budgetExceeded: this.budgetExceeded.map((fact) => ({ ...fact })),
     };
   }
 
@@ -189,6 +212,21 @@ export class FactLedger implements FactLedgerReader {
     };
     this.commands.push(fact);
     return fact;
+  }
+
+  private recordBudgetExceeded(
+    input: ForcedContinuationBudgetExceededFactInput,
+  ): void {
+    this.budgetExceeded.push({
+      id: `budget:${input.sequence}:${input.source}`,
+      sequence: input.sequence,
+      writeEpoch: this.writeEpoch,
+      source: input.source,
+      used: input.used,
+      limit: input.limit,
+      ...(input.step !== undefined ? { step: input.step } : {}),
+      ...(input.reason ? { reason: input.reason } : {}),
+    });
   }
 
   private requestForToolCompletion(
@@ -243,6 +281,11 @@ export function factLedgerSnapshotFromUnknown(
       ? value.writes
           .map(writeFactFromRaw)
           .filter((item): item is FactLedgerWriteFact => Boolean(item))
+      : [],
+    budgetExceeded: Array.isArray(value.budgetExceeded)
+      ? value.budgetExceeded
+          .map((item) => budgetExceededFactFromRaw(item, writeEpoch))
+          .filter((item): item is FactLedgerBudgetExceededFact => Boolean(item))
       : [],
   };
 }
@@ -387,6 +430,41 @@ function writeFactFromRaw(value: unknown): FactLedgerWriteFact | undefined {
     sequence,
     writeEpoch,
     ...(stringValue(value.path) ? { path: stringValue(value.path) } : {}),
+  };
+}
+
+function budgetExceededFactFromRaw(
+  value: unknown,
+  currentWriteEpoch: number,
+): FactLedgerBudgetExceededFact | undefined {
+  if (!isRecord(value)) return undefined;
+  const sequence = numberValue(value.sequence);
+  const writeEpoch = numberValue(value.writeEpoch) ?? currentWriteEpoch;
+  const source =
+    value.source === "revival" || value.source === "workflow"
+      ? value.source
+      : undefined;
+  const used = numberValue(value.used);
+  const limit = numberValue(value.limit);
+  if (
+    sequence === undefined ||
+    !source ||
+    used === undefined ||
+    limit === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    id: stringValue(value.id) ?? `budget:${sequence}:${source}`,
+    sequence,
+    writeEpoch,
+    source,
+    used,
+    limit,
+    ...(numberValue(value.step) !== undefined
+      ? { step: numberValue(value.step) }
+      : {}),
+    ...(stringValue(value.reason) ? { reason: stringValue(value.reason) } : {}),
   };
 }
 
