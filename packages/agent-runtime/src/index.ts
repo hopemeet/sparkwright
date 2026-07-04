@@ -1406,6 +1406,7 @@ function parseAgentToolArgs(args: unknown): AgentToolInvocationInput {
 }
 
 export * from "./tasks/index.js";
+export * from "./doc-store/index.js";
 export * from "./concurrency/index.js";
 export * from "./todo/index.js";
 export * from "./workflows/index.js";
