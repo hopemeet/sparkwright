@@ -314,6 +314,8 @@ export {
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
+  createHostWorkflowListRequest,
+  createHostWorkflowResumeRequest,
   resolveHostRequestModel,
   tracePathForSession,
 } from "./client-run.js";

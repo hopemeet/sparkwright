@@ -15,6 +15,8 @@ import {
   type RunStartRequestPayload,
   type SessionCompactRequestPayload,
   type SessionInspectRequestPayload,
+  type WorkflowListRequestPayload,
+  type WorkflowResumeRequestPayload,
   type CapabilityInspectRequestPayload,
   type TaskGetRequestPayload,
   type TaskJoinRequestPayload,
@@ -299,6 +301,24 @@ export class Client extends TypedEmitter<ClientEventMap> {
       "run.resume",
       payload as unknown as Record<string, unknown>,
     ) as Promise<ResponseResults["run.resume"]>;
+  }
+
+  listWorkflowRuns(
+    payload: WorkflowListRequestPayload = {},
+  ): Promise<ResponseResults["workflow.list"]> {
+    return this.request(
+      "workflow.list",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["workflow.list"]>;
+  }
+
+  resumeWorkflowRun(
+    payload: WorkflowResumeRequestPayload,
+  ): Promise<ResponseResults["workflow.resume"]> {
+    return this.request(
+      "workflow.resume",
+      payload as unknown as Record<string, unknown>,
+    ) as Promise<ResponseResults["workflow.resume"]>;
   }
 
   cancelRun(payload: {

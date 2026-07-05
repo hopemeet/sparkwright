@@ -1,10 +1,21 @@
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { RunId } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   advanceWorkflowState,
   createInitialWorkflowRuntimeState,
+  FileWorkflowStore,
+  WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
   validateWorkflowRuntimeDefinition,
+  type WorkflowRunId,
   type WorkflowDefinition,
 } from "../src/index.js";
+
+async function tempDir(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "sparkwright-workflows-"));
+}
 
 function workflow(nodes: WorkflowDefinition["nodes"]): WorkflowDefinition {
   return {
@@ -143,5 +154,194 @@ describe("workflow runtime state machine", () => {
         target: "human",
       }),
     ]);
+  });
+});
+
+describe("FileWorkflowStore", () => {
+  it("persists workflow run records with pinned definition snapshots", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_test" as WorkflowRunId;
+    const definition = workflow([
+      { id: "plan", body: "Plan." },
+      { id: "patch", body: "Patch." },
+    ]);
+
+    const created = store.create({
+      id,
+      parentRunId: "run_parent" as RunId,
+      sessionId: "sess_one",
+      activeRunId: "run_first" as RunId,
+      assetName: definition.assetName,
+      contentHash: definition.contentHash,
+      currentNodeId: "plan",
+      attempts: { plan: 1 },
+      definitionSnapshot: definition,
+      now: () => "2026-07-04T00:00:00.000Z",
+    });
+
+    expect(created).toMatchObject({
+      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+      id,
+      status: "running",
+      activeRunId: "run_first",
+      runIds: ["run_first"],
+      resume: { verifyOnResume: true },
+      definitionSnapshot: {
+        assetName: "test-workflow",
+        nodes: [{ id: "plan" }, { id: "patch" }],
+      },
+    });
+
+    const updated = store.update(id, {
+      status: "completed",
+      currentNodeId: "patch",
+      attempts: { plan: 1, patch: 1 },
+      transitionLog: [
+        {
+          at: "2026-07-04T00:01:00.000Z",
+          verdict: { status: "passed" },
+          decision: {
+            type: "complete",
+            fromNodeId: "patch",
+            reason: "node_passed",
+          },
+        },
+      ],
+      now: () => "2026-07-04T00:02:00.000Z",
+    });
+
+    expect(updated.completedAt).toBe("2026-07-04T00:02:00.000Z");
+    expect(updated.transitionLog).toHaveLength(1);
+
+    const reopened = new FileWorkflowStore({
+      rootDir: root,
+      createRoot: false,
+    });
+    expect(reopened.get(id)).toMatchObject({
+      status: "completed",
+      completedAt: "2026-07-04T00:02:00.000Z",
+      definitionSnapshot: { contentHash: "hash" },
+    });
+    expect(
+      JSON.parse(await readFile(join(root, `${id}.json`), "utf8")),
+    ).toMatchObject({
+      schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+      id,
+    });
+  });
+
+  it("lists valid records while reporting corrupt entries", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    store.create({
+      id: "workflow_good" as WorkflowRunId,
+      assetName: "ok",
+      contentHash: "hash",
+    });
+    await writeFile(join(root, "bad-json.json"), "{", "utf8");
+    await writeFile(
+      join(root, "bad-shape.json"),
+      JSON.stringify({ schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION }),
+      "utf8",
+    );
+
+    const reopened = new FileWorkflowStore({
+      rootDir: root,
+      createRoot: false,
+    });
+    const listed = reopened.list();
+
+    expect(listed.records.map((record) => record.id)).toEqual([
+      "workflow_good",
+    ]);
+    expect(listed.invalidEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "invalid_json" }),
+        expect.objectContaining({ code: "invalid_document" }),
+      ]),
+    );
+  });
+
+  it("records JSONL store events and skips corrupt event rows", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_events" as WorkflowRunId;
+    store.create({
+      id,
+      assetName: "events",
+      contentHash: "hash",
+      now: () => "2026-07-04T00:00:00.000Z",
+    });
+    store.update(id, {
+      status: "failed",
+      failure: {
+        kind: "runtime",
+        code: "workflow.runtime",
+        message: "projection failed",
+      },
+      now: () => "2026-07-04T00:01:00.000Z",
+    });
+    await writeFile(join(root, `${id}.events.jsonl`), "{bad\n", {
+      flag: "a",
+    });
+
+    const log = store.eventLog(id);
+
+    expect(log.events.map((event) => event.type)).toEqual([
+      "created",
+      "failed",
+    ]);
+    expect(log.invalidEntries).toEqual([
+      expect.objectContaining({ code: "invalid_json", line: 3 }),
+    ]);
+  });
+
+  it("leases workflow records for single-writer adoption", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_lease" as WorkflowRunId;
+    store.create({ id, assetName: "lease", contentHash: "hash" });
+
+    const first = await store.acquireLease(id, {
+      owner: "worker-a",
+      ttlMs: 60_000,
+      now: () => new Date("2026-07-04T00:00:00.000Z"),
+    });
+    expect(first).not.toBeNull();
+
+    const second = await store.acquireLease(id, {
+      owner: "worker-b",
+      ttlMs: 60_000,
+      now: () => new Date("2026-07-04T00:00:01.000Z"),
+    });
+    expect(second).toBeNull();
+
+    expect(await first?.release()).toBe(true);
+    const afterRelease = await store.acquireLease(id, {
+      owner: "worker-b",
+      ttlMs: 60_000,
+      now: () => new Date("2026-07-04T00:00:02.000Z"),
+    });
+    expect(afterRelease?.owner).toBe("worker-b");
+    await afterRelease?.release();
+  });
+
+  it("requires waiting records to carry wait.kind and clears wait on terminal", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_wait" as WorkflowRunId;
+    store.create({ id, assetName: "wait", contentHash: "hash" });
+
+    expect(() => store.update(id, { status: "waiting" })).toThrow(/wait.kind/);
+    const waiting = store.update(id, {
+      status: "waiting",
+      wait: { kind: "input", reason: "need user" },
+    });
+    expect(waiting.wait).toEqual({ kind: "input", reason: "need user" });
+    expect(() =>
+      store.update(id, { status: "waiting", clearWait: true }),
+    ).toThrow(/wait.kind/);
+    expect(store.update(id, { status: "cancelled" }).wait).toBeUndefined();
   });
 });

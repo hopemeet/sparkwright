@@ -148,6 +148,8 @@ async function handleRequest(
             "task.stop",
             "task.join",
             "task.promote",
+            "workflow.list",
+            "workflow.resume",
             "capability.inspect",
             "run.resume",
             "run.inject_message",
@@ -330,6 +332,31 @@ async function handleRequest(
           promoted: r.promoted,
           awaited: r.awaited,
           status: r.status,
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "workflow.list": {
+      const r = await runtime.listWorkflowRuns(req.payload);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          workflows: r.workflows,
+          ...(r.invalidEntries ? { invalidEntries: r.invalidEntries } : {}),
+        });
+      } else {
+        respondError(conn, req.id, r.error);
+      }
+      return false;
+    }
+    case "workflow.resume": {
+      const r = await runtime.resumeWorkflowRun(req.payload);
+      if (r.ok) {
+        respondOk(conn, req.id, {
+          runId: r.runId,
+          workflowRunId: r.workflowRunId,
+          ...(r.sessionId ? { sessionId: r.sessionId } : {}),
         });
       } else {
         respondError(conn, req.id, r.error);
@@ -527,6 +554,48 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       return (
         requireOnly(req.payload, ["taskId"]) ??
         requireString(req.payload, "taskId")
+      );
+    case "workflow.list":
+      return (
+        requireOnly(req.payload, ["sessionId", "status", "limit"]) ??
+        optionalString(req.payload, "sessionId") ??
+        optionalEnum(req.payload, "status", [
+          "running",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled",
+        ]) ??
+        optionalPositiveInteger(req.payload, "limit", 200)
+      );
+    case "workflow.resume":
+      return (
+        requireOnly(req.payload, [
+          "workflowRunId",
+          "sessionId",
+          "targetPath",
+          "confidentialPaths",
+          "shouldWrite",
+          "model",
+          "accessMode",
+          "backgroundTasks",
+          "permissionMode",
+          "traceLevel",
+          "metadata",
+        ]) ??
+        requireString(req.payload, "workflowRunId") ??
+        optionalString(req.payload, "sessionId") ??
+        optionalString(req.payload, "targetPath") ??
+        optionalStringArray(req.payload, "confidentialPaths") ??
+        optionalBoolean(req.payload, "shouldWrite") ??
+        optionalString(req.payload, "model") ??
+        optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
+        optionalEnum(req.payload, "backgroundTasks", [
+          ...BACKGROUND_TASK_POLICIES,
+        ]) ??
+        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES]) ??
+        optionalEnum(req.payload, "traceLevel", [...TRACE_LEVELS]) ??
+        optionalRecord(req.payload, "metadata")
       );
     case "capability.inspect":
       return (

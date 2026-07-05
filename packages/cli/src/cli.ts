@@ -57,6 +57,7 @@ import {
   type RunInputPayload,
   type SessionCompactionInspectReport,
   type TraceLevel,
+  type WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import {
   createSessionFileRunStoreFactory,
@@ -160,7 +161,11 @@ import {
   createConfiguredCliTools,
   startDirectCoreRun,
 } from "./runners/direct-core-runner.js";
-import { resumeHostRun, startHostRun } from "./runners/host-runner.js";
+import {
+  resumeHostRun,
+  resumeHostWorkflowRun,
+  startHostRun,
+} from "./runners/host-runner.js";
 
 export type { CliIO } from "./io.js";
 
@@ -1289,12 +1294,13 @@ function parseArgs(
   if (
     command === "workflow" &&
     subcommand !== "list" &&
-    subcommand !== "inspect"
+    subcommand !== "inspect" &&
+    subcommand !== "resume"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright workflow <list|inspect> [workflow-name] [--workspace path] [--format json|text]",
+        "Usage: sparkwright workflow <list|inspect|resume> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     };
   }
 
@@ -1759,21 +1765,92 @@ async function handleWorkflowCommand(
   env: Record<string, string | undefined>,
 ): Promise<CliRunResult> {
   const subcommand = parsed.subcommand;
-  if (subcommand !== "list" && subcommand !== "inspect") {
+  if (
+    subcommand !== "list" &&
+    subcommand !== "inspect" &&
+    subcommand !== "resume"
+  ) {
     writeLine(io.stderr, workflowUsage());
     return { exitCode: 1 };
   }
 
   try {
+    if (subcommand === "resume") {
+      const workflowRunId = firstCliWord(parsed.goal);
+      if (!workflowRunId) {
+        writeLine(
+          io.stderr,
+          "Usage: sparkwright workflow resume <workflow-run-id>",
+        );
+        return { exitCode: 1 };
+      }
+      return resumeHostWorkflowRun(
+        {
+          workflowRunId,
+          workspaceRoot: parsed.workspaceRoot,
+          sessionRootDir: parsed.sessionRootDir,
+          shouldWrite: parsed.shouldWrite,
+          approveAll: parsed.approveAll,
+          approveEdits: parsed.approveEdits,
+          approveShellSafe: parsed.approveShellSafe,
+          accessMode: parsed.accessMode,
+          backgroundTasks: parsed.backgroundTasks,
+          permissionMode: parsed.permissionMode,
+          modelName: parsed.modelName,
+          sessionId: parsed.sessionId,
+          targetPath: parsed.targetPath,
+          confidentialPaths: parsed.confidentialPaths,
+          traceLevel: parsed.traceLevel,
+          verbose: parsed.verbose,
+        },
+        io,
+        env,
+      );
+    }
+
     const report = await loadLayeredWorkflowAssets(parsed.workspaceRoot, env);
     if (subcommand === "list") {
+      const runtime = new HostRuntime({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        defaultModel: parsed.modelName,
+        defaultPermissionMode: parsed.permissionMode,
+        defaultShouldWrite: parsed.shouldWrite,
+        defaultTraceLevel: parsed.traceLevel,
+        emit: () => {},
+      });
+      const listed = await runtime.listWorkflowRuns({
+        sessionId: parsed.sessionId,
+        limit: parsed.limit,
+      });
+      if (!listed.ok) {
+        writeLine(io.stderr, listed.error.message);
+        return { exitCode: 1 };
+      }
       writeLine(
         io.stdout,
         parsed.format === "json"
-          ? JSON.stringify(report, null, 2)
-          : formatWorkflowListReport(report),
+          ? JSON.stringify(
+              {
+                ...report,
+                workflowRuns: listed.workflows,
+                invalidWorkflowRunEntries: listed.invalidEntries ?? [],
+              },
+              null,
+              2,
+            )
+          : formatWorkflowListReport({
+              assets: report,
+              runs: listed.workflows,
+              invalidEntries: listed.invalidEntries ?? [],
+            }),
       );
-      return { exitCode: report.errors.length > 0 ? 1 : 0 };
+      return {
+        exitCode:
+          report.errors.length > 0 || (listed.invalidEntries?.length ?? 0) > 0
+            ? 1
+            : 0,
+      };
     }
 
     const name = firstCliWord(parsed.goal);
@@ -1805,24 +1882,39 @@ async function handleWorkflowCommand(
   }
 }
 
-function formatWorkflowListReport(report: WorkflowAssetReport): string {
-  const lines = [`workflows: ${report.assets.length}`];
-  for (const root of report.roots) {
+function formatWorkflowListReport(input: {
+  assets: WorkflowAssetReport;
+  runs: WorkflowRunSnapshot[];
+  invalidEntries: Array<{ path: string; code: string; reason: string }>;
+}): string {
+  const lines = [`workflow runs: ${input.runs.length}`];
+  for (const run of input.runs) {
+    lines.push(
+      `  workflow-run: ${run.id} ${run.status} asset=${run.assetName}${run.currentNodeId ? ` node=${run.currentNodeId}` : ""}${run.sessionId ? ` session=${run.sessionId}` : ""}`,
+    );
+  }
+  for (const invalid of input.invalidEntries) {
+    lines.push(
+      `  invalid-run: ${invalid.path}: ${invalid.code}: ${invalid.reason}`,
+    );
+  }
+  lines.push(`workflow assets: ${input.assets.assets.length}`);
+  for (const root of input.assets.roots) {
     lines.push(
       `  root: ${root.layer} ${root.exists ? "exists" : "missing"} ${root.path}`,
     );
   }
-  for (const asset of report.assets) {
+  for (const asset of input.assets.assets) {
     lines.push(
       `  workflow: ${asset.assetName}${asset.version ? ` version=${asset.version}` : ""} nodes=${asset.nodeCount} layer=${asset.layer} source=${asset.sourcePath}`,
     );
   }
-  for (const shadow of report.shadows) {
+  for (const shadow of input.assets.shadows) {
     lines.push(
       `  shadow: ${shadow.assetName} kept=${shadow.keptSource} shadowed=${shadow.shadowedSource}`,
     );
   }
-  for (const error of report.errors) {
+  for (const error of input.assets.errors) {
     lines.push(`  error: ${error.layer} ${error.sourcePath}: ${error.message}`);
   }
   return lines.join("\n");
@@ -7245,7 +7337,7 @@ function usage(_env: Record<string, string | undefined>): string {
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    "       sparkwright workflow list|inspect [workflow-name] [--workspace path] [--format json|text]",
+    "       sparkwright workflow list|inspect|resume [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
@@ -7289,6 +7381,7 @@ function workflowUsage(): string {
   return [
     "Usage: sparkwright workflow list [--workspace path] [--format json|text]",
     "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
+    "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
   ].join("\n");
 }
 

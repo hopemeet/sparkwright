@@ -12,7 +12,12 @@ import {
   type RunId,
   type SparkwrightEvent,
 } from "@sparkwright/core";
-import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
+import {
+  FileTaskStore,
+  FileWorkflowStore,
+  createTaskId,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
 import { FileSkillUsageRecorder } from "@sparkwright/skills";
 import type { Connection } from "../src/connection.js";
@@ -289,6 +294,22 @@ describe("host protocol", () => {
       ok: false,
       error: { code: "invalid_payload" },
     });
+
+    pair.clientSend({
+      envelope: "request",
+      id: "bad-workflow-resume",
+      kind: "workflow.resume",
+      timestamp: TIMESTAMP,
+      payload: { workflowRunId: "workflow_bad_force", force: true },
+    } as unknown as HostMessage);
+    const workflowResumeResp = await pair.waitFor(
+      (m) => m.envelope === "response" && m.id === "bad-workflow-resume",
+    );
+    expect(workflowResumeResp).toMatchObject({
+      envelope: "response",
+      ok: false,
+      error: { code: "invalid_payload" },
+    });
   });
 
   it("rejects an invalid run.start accessMode at the wire boundary", async () => {
@@ -379,6 +400,8 @@ describe("host protocol", () => {
             "task.stop",
             "task.join",
             "task.promote",
+            "workflow.list",
+            "workflow.resume",
           ]),
         },
       });
@@ -526,6 +549,79 @@ describe("host protocol", () => {
         envelope: "response",
         ok: false,
         error: { code: "invalid_payload" },
+      });
+    } finally {
+      pair.close();
+      await rmWhenReady(workspace);
+    }
+  });
+
+  it("serves durable workflow list requests", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-workflows-"),
+    );
+    const sessionId = "sess_workflow_protocol";
+    const workflowRunId = "workflow_protocol_list" as WorkflowRunId;
+    const pair = createConnectionPair();
+    try {
+      const store = new FileWorkflowStore({
+        rootDir: join(
+          workspace,
+          ".sparkwright",
+          "sessions",
+          sessionId,
+          "workflow-runs",
+        ),
+      });
+      store.create({
+        id: workflowRunId,
+        sessionId,
+        assetName: "bugfix",
+        contentHash: "hash-protocol",
+        currentNodeId: "main",
+        attempts: { main: 1 },
+      });
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "deterministic",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor((m) => m.envelope === "response" && m.id === "h");
+
+      pair.clientSend({
+        envelope: "request",
+        id: "workflow_list",
+        kind: "workflow.list",
+        timestamp: TIMESTAMP,
+        payload: { sessionId, status: "running" },
+      });
+      const listResp = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "workflow_list",
+      );
+
+      expect(listResp).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          workflows: [
+            expect.objectContaining({
+              id: workflowRunId,
+              sessionId,
+              assetName: "bugfix",
+              status: "running",
+              currentNodeId: "main",
+            }),
+          ],
+        },
       });
     } finally {
       pair.close();

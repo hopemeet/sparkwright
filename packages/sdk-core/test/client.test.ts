@@ -372,6 +372,66 @@ describe("@sparkwright/sdk-core Client", () => {
     });
   });
 
+  it("sends workflow inspection and resume requests", async () => {
+    const transport = new FakeTransport();
+    const client = new Client({
+      transport,
+      client: { name: "test-client", version: "0.0.0" },
+    });
+
+    const listed = client.listWorkflowRuns({
+      sessionId: "sess_1",
+      status: "running",
+      limit: 5,
+    });
+    let request = transport.sent[0];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "workflow.list",
+      payload: { sessionId: "sess_1", status: "running", limit: 5 },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-07-04T00:00:00.000Z",
+      ok: true,
+      result: { workflows: [] },
+    });
+    await expect(listed).resolves.toEqual({ workflows: [] });
+
+    const resumed = client.resumeWorkflowRun({
+      workflowRunId: "workflow_1",
+      sessionId: "sess_1",
+      model: "deterministic",
+    });
+    request = transport.sent[1];
+    expect(request).toMatchObject({
+      envelope: "request",
+      kind: "workflow.resume",
+      payload: {
+        workflowRunId: "workflow_1",
+        sessionId: "sess_1",
+        model: "deterministic",
+      },
+    });
+    transport.receive({
+      envelope: "response",
+      id: request.id,
+      timestamp: "2026-07-04T00:00:00.000Z",
+      ok: true,
+      result: {
+        runId: "run_1",
+        workflowRunId: "workflow_1",
+        sessionId: "sess_1",
+      },
+    });
+    await expect(resumed).resolves.toEqual({
+      runId: "run_1",
+      workflowRunId: "workflow_1",
+      sessionId: "sess_1",
+    });
+  });
+
   it("starts a run and collects stable lifecycle evidence", async () => {
     const transport = new FakeTransport();
     const client = new Client({

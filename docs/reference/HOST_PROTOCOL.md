@@ -265,6 +265,98 @@ Session-scoped runs resume into their existing session. Legacy
 host-owned resume attaches them to a newly-created session and returns that
 `sessionId`.
 
+### `workflow.list`
+
+List durable workflow-run snapshots. Workflow records are stored under the
+owning session root at `workflow-runs/<workflowRunId>.json`; malformed records
+are skipped and reported in `invalidEntries` instead of failing the list.
+
+Hosts advertise `workflow.list` in `host.ready.capabilities` once durable
+workflow storage is available.
+
+**Payload**
+
+| Field       | Type                                                                       | Required | Notes                                                |
+| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
+| `sessionId` | string                                                                     | no       | Limit the scan to one session.                       |
+| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                       |
+| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort. |
+
+**Response result**
+
+```json
+{
+  "workflows": [
+    {
+      "id": "workflow_abc",
+      "sessionId": "session_123",
+      "status": "running",
+      "assetName": "bugfix",
+      "version": "1.0.0",
+      "contentHash": "sha256:...",
+      "activeRunId": "run_456",
+      "runIds": ["run_456"],
+      "currentNodeId": "reproduce",
+      "attempts": { "reproduce": 1 },
+      "resume": { "verifyOnResume": true },
+      "createdAt": "2026-07-04T00:00:00.000Z",
+      "updatedAt": "2026-07-04T00:00:01.000Z"
+    }
+  ],
+  "invalidEntries": [
+    {
+      "path": "/workspace/.sparkwright/sessions/session_123/workflow-runs/bad.json",
+      "code": "parse_error",
+      "reason": "unsupported workflow run schemaVersion"
+    }
+  ]
+}
+```
+
+`waiting` is a terminal-resistant status value with an inline `wait` object
+whose `kind` is one of `input`, `task`, or `approval`. P2 consumes the record
+shape but does not emit waiting workflow nodes; the first waiting producer is a
+later workflow phase.
+
+### `workflow.resume`
+
+Adopt a non-terminal durable workflow run and start a new host run from its
+pinned workflow definition snapshot. The host does not reload the live asset
+for execution; it resumes from the record's pinned `{assetName, version,
+contentHash}` and `definitionSnapshot`, then appends the new `runId` to the
+record.
+
+Hosts advertise `workflow.resume` in `host.ready.capabilities` once durable
+workflow resume is available.
+
+**Payload**
+
+| Field            | Type    | Required | Notes                                                                                                                                                                                                                         |
+| ---------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflowRunId`  | string  | yes      | Durable workflow instance id, e.g. `workflow_abc`.                                                                                                                                                                            |
+| `sessionId`      | string  | no       | Session scope used to disambiguate where the workflow record lives.                                                                                                                                                           |
+| `targetPath`     | string  | no       | Workspace-relative target path the resumed run should focus on if needed.                                                                                                                                                     |
+| `shouldWrite`    | boolean | no       | Whether this resumed run is allowed to request workspace writes.                                                                                                                                                              |
+| `model`          | string  | no       | Model reference in `provider/model` form, or the reserved `deterministic`.                                                                                                                                                    |
+| `accessMode`     | string  | no       | Preferred high-level run autonomy: `read-only`, `ask`, `accept-edits`, or `bypass`. When present, the host compiles it to `permissionMode` and `shouldWrite`; conflicting legacy fields are ignored and recorded in metadata. |
+| `permissionMode` | string  | no       | `plan`, `default`, `accept_edits`, `dont_ask`, or `bypass_permissions`.                                                                                                                                                       |
+| `traceLevel`     | string  | no       | `standard` or `debug`; defaults to `standard`.                                                                                                                                                                                |
+| `metadata`       | object  | no       | Free-form metadata propagated to the resumed run record and trace context.                                                                                                                                                    |
+
+**Response result**
+
+| Field           | Type   | Notes                                              |
+| --------------- | ------ | -------------------------------------------------- |
+| `runId`         | string | Active run id for the resumed workflow execution.  |
+| `workflowRunId` | string | Durable workflow instance id from the request.     |
+| `sessionId`     | string | Session that owns the durable workflow-run record. |
+
+The host obtains a single-writer file lease before resuming. If another writer
+already adopted the record, if the record is terminal (`completed`, `failed`, or
+`cancelled`), or if the pinned definition snapshot is missing, the host responds
+with `invalid_payload`. If the workflow record cannot be found, the host
+responds with `run_not_found`.
+
 ### `run.cancel`
 
 Cancel a running run.

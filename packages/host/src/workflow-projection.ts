@@ -15,6 +15,7 @@ import {
   createInitialWorkflowRuntimeState,
   type WorkflowCommandVerifierDefinition,
   type WorkflowDefinition,
+  type WorkflowEvidenceRef,
   type WorkflowNodeDefinition,
   type WorkflowNodeVerdict,
   type WorkflowRuntimeState,
@@ -34,8 +35,13 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
 > {
   definition: WorkflowDefinition;
   workflowRunId?: string;
+  initialState?: WorkflowRuntimeState;
+  resumeVerificationNodeIds?: readonly string[];
   stopRuntimeErrorThreshold?: number;
   builtinVerifiers?: Record<string, WorkflowBuiltinVerifierHandler>;
+  onStateSnapshot?: (
+    snapshot: WorkflowProjectionStateSnapshot,
+  ) => void | Promise<void>;
   /** @internal Test-only fault injection for D23 fail-closed gate assertions. */
   faultInjection?: Partial<Record<WorkflowHookName, string>>;
 }
@@ -43,6 +49,32 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
 export interface WorkflowProjectionHookSet {
   workflowRunId: string;
   hooks: WorkflowHook[];
+  getState(): WorkflowRuntimeState;
+}
+
+export interface WorkflowProjectionStateSnapshot {
+  workflowRunId: string;
+  definition: WorkflowDefinition;
+  state: WorkflowRuntimeState;
+  phase:
+    | "started"
+    | "node_started"
+    | "node_completed"
+    | "interrupted"
+    | "terminal";
+  nodeId?: string;
+  attempt?: number;
+  verdict?: WorkflowNodeVerdict;
+  evidenceRefs?: WorkflowEvidenceRef[];
+  decision?: WorkflowTransitionDecision;
+  terminalStatus?: "completed" | "failed" | "cancelled";
+  failure?: {
+    kind: "verdict" | "runtime" | "cancelled";
+    code: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  };
+  metadata?: Record<string, unknown>;
 }
 
 export interface WorkflowBuiltinVerifierInput {
@@ -56,6 +88,11 @@ export type WorkflowBuiltinVerifierHandler = (
   input: WorkflowBuiltinVerifierInput,
 ) => WorkflowHookResult | void | Promise<WorkflowHookResult | void>;
 
+interface WorkflowNodeVerdictEvaluation {
+  verdict: WorkflowNodeVerdict;
+  evidenceRefs: WorkflowEvidenceRef[];
+}
+
 export function createWorkflowProjectionHooks(
   options: CreateWorkflowProjectionHooksOptions,
 ): WorkflowProjectionHookSet {
@@ -64,11 +101,16 @@ export function createWorkflowProjectionHooks(
   const familyName = `workflow:${workflowRunId}`;
   const stopRuntimeErrorThreshold =
     options.stopRuntimeErrorThreshold ?? DEFAULT_STOP_RUNTIME_ERROR_THRESHOLD;
-  let state = createInitialWorkflowRuntimeState(options.definition);
+  let state = options.initialState
+    ? cloneRuntimeState(options.initialState)
+    : createInitialWorkflowRuntimeState(options.definition);
   let workflowStarted = false;
   let terminalEmitted = false;
   let stopRuntimeErrors = 0;
   const nodeStartKeys = new Set<string>();
+  const pendingResumeVerificationNodeIds = new Set(
+    options.resumeVerificationNodeIds ?? [],
+  );
 
   const emit = (
     input: WorkflowHookInput,
@@ -125,6 +167,20 @@ export function createWorkflowProjectionHooks(
     });
   };
 
+  const persistSnapshot = async (
+    snapshot: Omit<
+      WorkflowProjectionStateSnapshot,
+      "workflowRunId" | "definition" | "state"
+    >,
+  ): Promise<void> => {
+    await options.onStateSnapshot?.({
+      workflowRunId,
+      definition: options.definition,
+      state: cloneRuntimeState(state),
+      ...snapshot,
+    });
+  };
+
   const maybeThrowInjected = (hook: WorkflowHookName): void => {
     const message = options.faultInjection?.[hook];
     if (message) throw new Error(message);
@@ -170,13 +226,17 @@ export function createWorkflowProjectionHooks(
       id: "workflow-run-start",
       hook: "RunStart",
       onError: "block",
-      handle(input) {
+      async handle(input) {
         maybeThrowInjected("RunStart");
         if (!workflowStarted) {
           workflowStarted = true;
           emit(input, "workflow.started", {
             status: "running",
             currentNodeId: state.currentNodeId,
+          });
+          await persistSnapshot({
+            phase: "started",
+            nodeId: state.currentNodeId,
           });
         }
         return { status: "continue", metadata: { workflowRunId } };
@@ -187,7 +247,7 @@ export function createWorkflowProjectionHooks(
       id: "workflow-turn-start",
       hook: "TurnStart",
       onError: "block",
-      handle(input) {
+      async handle(input) {
         maybeThrowInjected("TurnStart");
         if (state.status !== "running" || !state.currentNodeId) {
           return { status: "continue", metadata: { workflowRunId } };
@@ -201,6 +261,11 @@ export function createWorkflowProjectionHooks(
           return { status: "continue", metadata: { workflowRunId } };
         }
         emitNodeStartedIfNeeded(input, node, state);
+        await persistSnapshot({
+          phase: "node_started",
+          nodeId: node.id,
+          attempt: state.attempts[node.id] ?? 1,
+        });
         return {
           status: "continue",
           context: [nodeContextItem(workflowRunId, node, state)],
@@ -217,7 +282,7 @@ export function createWorkflowProjectionHooks(
       id: "workflow-tool-clamp",
       hook: "PreToolUse",
       onError: "block",
-      handle(input) {
+      async handle(input) {
         maybeThrowInjected("PreToolUse");
         if (state.status !== "running" || !state.currentNodeId) {
           return { status: "continue", metadata: { workflowRunId } };
@@ -249,9 +314,73 @@ export function createWorkflowProjectionHooks(
       hook: "Stop",
       onError: "block",
       handle(input) {
-        return withStopRuntimeBound(input, () => {
+        return withStopRuntimeBound(input, async () => {
           if (state.status !== "running" || !state.currentNodeId) {
             return { status: "continue", metadata: { workflowRunId } };
+          }
+          const resumeVerification = resumeVerificationNodes(
+            options.definition,
+            pendingResumeVerificationNodeIds,
+          );
+          if (resumeVerification.length > 0) {
+            const snapshot = input.facts?.snapshot();
+            const verdicts = resumeVerification.map((node) => {
+              const evaluation = nodeVerdictFromLedger(
+                snapshot,
+                familyName,
+                node,
+              );
+              return {
+                node,
+                attempt: state.attempts[node.id] ?? 1,
+                verdict: evaluation.verdict,
+                evidenceRefs: evaluation.evidenceRefs,
+              };
+            });
+            const failed = verdicts.find(
+              (entry) => entry.verdict.status !== "passed",
+            );
+            for (const entry of verdicts) {
+              if (entry.verdict.status === "passed") {
+                pendingResumeVerificationNodeIds.delete(entry.node.id);
+                await persistSnapshot({
+                  phase: "node_completed",
+                  nodeId: entry.node.id,
+                  attempt: entry.attempt,
+                  verdict: entry.verdict,
+                  evidenceRefs: entry.evidenceRefs,
+                  metadata: { resumeVerification: true },
+                });
+              }
+            }
+            if (failed) {
+              const advanced = advanceWorkflowState({
+                definition: options.definition,
+                state: {
+                  ...state,
+                  currentNodeId: failed.node.id,
+                },
+                verdict: failed.verdict,
+              });
+              state = advanced.state;
+              pendingResumeVerificationNodeIds.clear();
+              emitNodeCompleted(
+                input,
+                failed.node,
+                failed.attempt,
+                failed.verdict,
+                failed.evidenceRefs,
+                advanced.decision,
+              );
+              return hookResultForDecision(
+                input,
+                failed.node,
+                failed.attempt,
+                failed.verdict,
+                failed.evidenceRefs,
+                advanced.decision,
+              );
+            }
           }
           const node = currentNode(options.definition, state);
           if (!node) {
@@ -259,7 +388,7 @@ export function createWorkflowProjectionHooks(
               `Workflow node "${state.currentNodeId}" does not exist.`,
             );
           }
-          const verdict = nodeVerdictFromLedger(
+          const evaluation = nodeVerdictFromLedger(
             input.facts?.snapshot(),
             familyName,
             node,
@@ -268,17 +397,25 @@ export function createWorkflowProjectionHooks(
           const advanced = advanceWorkflowState({
             definition: options.definition,
             state,
-            verdict,
+            verdict: evaluation.verdict,
           });
           state = advanced.state;
           emitNodeCompleted(
             input,
             node,
             completedAttempt,
-            verdict,
+            evaluation.verdict,
+            evaluation.evidenceRefs,
             advanced.decision,
           );
-          return hookResultForDecision(input, advanced.decision);
+          return hookResultForDecision(
+            input,
+            node,
+            completedAttempt,
+            evaluation.verdict,
+            evaluation.evidenceRefs,
+            advanced.decision,
+          );
         });
       },
     },
@@ -287,10 +424,15 @@ export function createWorkflowProjectionHooks(
       id: "workflow-runtime-signal",
       hook: "RuntimeSignal",
       onError: "continue",
-      handle(input) {
+      async handle(input) {
         const signal = signalFromPayload(input.payload);
         if (signal === "doom_loop") {
           emitInterrupted(input, "doom_loop", { signal });
+          await persistSnapshot({
+            phase: "interrupted",
+            nodeId: state.currentNodeId,
+            metadata: { kind: "doom_loop", signal },
+          });
         }
         if (
           signal === "budget.exceeded" &&
@@ -306,6 +448,18 @@ export function createWorkflowProjectionHooks(
             "Workflow forced-continuation budget exhausted before the workflow reached a terminal state.",
             { signal, source: "workflow" },
           );
+          await persistSnapshot({
+            phase: "terminal",
+            nodeId: state.currentNodeId,
+            terminalStatus: "failed",
+            failure: {
+              kind: "runtime",
+              code: "workflow.runtime",
+              message:
+                "Workflow forced-continuation budget exhausted before the workflow reached a terminal state.",
+              metadata: { signal, source: "workflow" },
+            },
+          });
         }
         return { status: "continue", metadata: { workflowRunId } };
       },
@@ -315,7 +469,7 @@ export function createWorkflowProjectionHooks(
       id: "workflow-run-end",
       hook: "RunEnd",
       onError: "continue",
-      handle(input) {
+      async handle(input) {
         const payload = isRecord(input.payload) ? input.payload : {};
         const runState = stringValue(payload.state);
         const reason = stringValue(payload.reason);
@@ -325,6 +479,15 @@ export function createWorkflowProjectionHooks(
             terminalEmitted = true;
             emit(input, "workflow.cancelled", {
               reason: reason ?? "manual_cancelled",
+            });
+            await persistSnapshot({
+              phase: "terminal",
+              terminalStatus: "cancelled",
+              failure: {
+                kind: "cancelled",
+                code: "workflow.cancelled",
+                message: reason ?? "manual_cancelled",
+              },
             });
           }
           return { status: "continue", metadata: { workflowRunId } };
@@ -337,6 +500,16 @@ export function createWorkflowProjectionHooks(
               `Run failed before workflow completed${reason ? `: ${reason}` : ""}.`,
               { reason },
             );
+            await persistSnapshot({
+              phase: "terminal",
+              terminalStatus: "failed",
+              failure: {
+                kind: "runtime",
+                code: "workflow.runtime",
+                message: `Run failed before workflow completed${reason ? `: ${reason}` : ""}.`,
+                metadata: { reason },
+              },
+            });
           }
           return { status: "continue", metadata: { workflowRunId } };
         }
@@ -364,6 +537,7 @@ export function createWorkflowProjectionHooks(
     familyName,
     workflowRunId,
     state: () => state,
+    pendingResumeVerificationNodeIds,
     withStopRuntimeBound,
   });
 
@@ -388,20 +562,26 @@ export function createWorkflowProjectionHooks(
     node: WorkflowNodeDefinition,
     attempt: number,
     verdict: WorkflowNodeVerdict,
+    evidenceRefs: readonly WorkflowEvidenceRef[],
     decision: WorkflowTransitionDecision,
   ): void {
     emit(input, "workflow.node.completed", {
       nodeId: node.id,
       attempt,
       verdict,
+      evidenceRefs,
       decision,
     });
   }
 
   function hookResultForDecision(
     input: WorkflowHookInput,
+    node: WorkflowNodeDefinition,
+    attempt: number,
+    verdict: WorkflowNodeVerdict,
+    evidenceRefs: readonly WorkflowEvidenceRef[],
     decision: WorkflowTransitionDecision,
-  ): WorkflowHookResult {
+  ): Promise<WorkflowHookResult> {
     if (decision.type === "complete") {
       if (!terminalEmitted) {
         terminalEmitted = true;
@@ -410,10 +590,18 @@ export function createWorkflowProjectionHooks(
           fromNodeId: decision.fromNodeId,
         });
       }
-      return {
+      return persistSnapshot({
+        phase: "terminal",
+        nodeId: node.id,
+        attempt,
+        verdict,
+        evidenceRefs: [...evidenceRefs],
+        decision,
+        terminalStatus: "completed",
+      }).then(() => ({
         status: "continue",
         metadata: { workflowRunId, decision },
-      };
+      }));
     }
     if (decision.type === "fail") {
       if (!terminalEmitted) {
@@ -428,24 +616,46 @@ export function createWorkflowProjectionHooks(
           },
         });
       }
-      return {
+      return persistSnapshot({
+        phase: "terminal",
+        nodeId: node.id,
+        attempt,
+        verdict,
+        evidenceRefs: [...evidenceRefs],
+        decision,
+        terminalStatus: "failed",
+        failure: {
+          kind: "verdict",
+          code: "workflow.verdict",
+          message: decision.reason,
+          metadata: { fromNodeId: decision.fromNodeId },
+        },
+      }).then(() => ({
         status: "continue",
         metadata: { workflowRunId, decision },
-      };
+      }));
     }
-    return {
+    return persistSnapshot({
+      phase: "node_completed",
+      nodeId: node.id,
+      attempt,
+      verdict,
+      evidenceRefs: [...evidenceRefs],
+      decision,
+    }).then(() => ({
       status: "advance",
       reason:
         decision.type === "retry"
           ? `Workflow retry for node "${decision.nodeId}".`
           : `Workflow advanced to node "${decision.toNodeId}".`,
       metadata: { workflowRunId, decision },
-    };
+    }));
   }
 
   return {
     workflowRunId,
     hooks: [...verifierHooks, ...lifecycleHooks],
+    getState: () => cloneRuntimeState(state),
   };
 }
 
@@ -454,6 +664,7 @@ function verifierStopHooks(
     familyName: string;
     workflowRunId: string;
     state: () => WorkflowRuntimeState;
+    pendingResumeVerificationNodeIds: ReadonlySet<string>;
     withStopRuntimeBound(
       hookInput: WorkflowHookInput,
       run: () => WorkflowHookResult | void | Promise<WorkflowHookResult | void>,
@@ -482,7 +693,11 @@ function verifierStopHooks(
         handle(hookInput) {
           return input.withStopRuntimeBound(hookInput, async () => {
             const state = input.state();
-            if (state.status !== "running" || state.currentNodeId !== node.id) {
+            if (
+              state.status !== "running" ||
+              (state.currentNodeId !== node.id &&
+                !input.pendingResumeVerificationNodeIds.has(node.id))
+            ) {
               return {
                 status: "skipped",
                 reason: "workflow verifier belongs to another node",
@@ -595,19 +810,25 @@ function nodeVerdictFromLedger(
   snapshot: FactLedgerSnapshot | undefined,
   hookName: string,
   node: WorkflowNodeDefinition,
-): WorkflowNodeVerdict {
+): WorkflowNodeVerdictEvaluation {
   const verifiers = node.verify ?? [];
   if (verifiers.length === 0) {
     return {
-      status: "passed",
-      reason: "node_unverified",
-      metadata: { verified: false },
+      verdict: {
+        status: "passed",
+        reason: "node_unverified",
+        metadata: { verified: false },
+      },
+      evidenceRefs: [],
     };
   }
   if (!snapshot) {
     return {
-      status: "runtime_error",
-      reason: "FactLedger is unavailable to the workflow projection.",
+      verdict: {
+        status: "runtime_error",
+        reason: "FactLedger is unavailable to the workflow projection.",
+      },
+      evidenceRefs: [],
     };
   }
   const results = verifiers.map((verifier) => {
@@ -626,31 +847,57 @@ function nodeVerdictFromLedger(
       satisfied: latest?.satisfied === true && latest.stale === false,
     };
   });
+  const evidenceRefs = results.flatMap((result): WorkflowEvidenceRef[] => {
+    if (!result.latest) return [];
+    return [
+      {
+        kind: "fact",
+        ref: result.latest.id,
+        nodeId: node.id,
+        verifierId: result.verifier.id,
+        metadata: {
+          commandFactId: result.latest.commandFactId,
+          sequence: result.latest.sequence,
+          writeEpoch: result.latest.writeEpoch,
+          stale: result.latest.stale,
+        },
+      },
+    ];
+  });
   const failed = results.filter((result) => !result.satisfied);
   if (failed.length === 0) {
     return {
-      status: "passed",
-      reason: "verification_passed",
-      metadata: {
-        verified: true,
-        verifiers: results.map((result) => result.verifier.id),
+      verdict: {
+        status: "passed",
+        reason: "verification_passed",
+        metadata: {
+          verified: true,
+          verifiers: results.map((result) => result.verifier.id),
+          factRefs: evidenceRefs.map((ref) => ref.ref),
+        },
       },
+      evidenceRefs,
     };
   }
   return {
-    status: "failed",
-    reason: "verification_failed",
-    metadata: {
-      verified: true,
-      failures: failed.map((result) => ({
-        verifierId: result.verifier.id,
-        missing: result.latest === undefined,
-        stale: result.latest?.stale === true,
-        satisfied: result.latest?.satisfied,
-        exitCode: result.latest?.exitCode,
-        timedOut: result.latest?.timedOut,
-      })),
+    verdict: {
+      status: "failed",
+      reason: "verification_failed",
+      metadata: {
+        verified: true,
+        factRefs: evidenceRefs.map((ref) => ref.ref),
+        failures: failed.map((result) => ({
+          verifierId: result.verifier.id,
+          missing: result.latest === undefined,
+          stale: result.latest?.stale === true,
+          satisfied: result.latest?.satisfied,
+          exitCode: result.latest?.exitCode,
+          timedOut: result.latest?.timedOut,
+          factRef: result.latest?.id,
+        })),
+      },
     },
+    evidenceRefs,
   };
 }
 
@@ -696,6 +943,15 @@ function currentNode(
   return definition.nodes.find((node) => node.id === state.currentNodeId);
 }
 
+function resumeVerificationNodes(
+  definition: WorkflowDefinition,
+  pendingNodeIds: ReadonlySet<string>,
+): WorkflowNodeDefinition[] {
+  return definition.nodes.filter(
+    (node) => pendingNodeIds.has(node.id) && (node.verify?.length ?? 0) > 0,
+  );
+}
+
 function nodeContextItem(
   workflowRunId: string,
   node: WorkflowNodeDefinition,
@@ -719,6 +975,30 @@ function nodeContextItem(
       nodeId: node.id,
       attempt: state.attempts[node.id] ?? 1,
     },
+  };
+}
+
+function cloneRuntimeState(state: WorkflowRuntimeState): WorkflowRuntimeState {
+  return {
+    ...state,
+    attempts: { ...state.attempts },
+    transitionLog: state.transitionLog.map((entry) => ({
+      ...entry,
+      verdict: JSON.parse(
+        JSON.stringify(entry.verdict),
+      ) as typeof entry.verdict,
+      decision: JSON.parse(
+        JSON.stringify(entry.decision),
+      ) as typeof entry.decision,
+    })),
+    failure: state.failure
+      ? {
+          ...state.failure,
+          metadata: state.failure.metadata
+            ? { ...state.failure.metadata }
+            : undefined,
+        }
+      : undefined,
   };
 }
 
