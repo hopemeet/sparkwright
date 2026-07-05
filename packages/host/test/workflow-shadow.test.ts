@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { EventId, EventType, RunId } from "@sparkwright/core";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   shadowWorkflowFromEvents,
@@ -25,12 +26,12 @@ async function tempRoot(prefix: string): Promise<string> {
 
 function event(
   sequence: number,
-  type: string,
+  type: EventType,
   payload: Record<string, unknown> = {},
 ) {
   return {
-    id: `evt_${sequence}`,
-    runId: "run_shadow",
+    id: `evt_${sequence}` as EventId,
+    runId: "run_shadow" as RunId,
     type,
     timestamp: `2026-01-01T00:00:${String(sequence).padStart(2, "0")}.000Z`,
     sequence,

@@ -34,7 +34,8 @@ Session resume
   -> new run in same session
 
 Workflow resume
-  -> locate session workflow-runs/<workflowRunId>.json
+  -> locate workspace .sparkwright/workflow-runs/<workflowRunId>.json
+     or legacy session workflow-runs/<workflowRunId>.json
   -> acquire single-writer lease
   -> consume input waits at the actor boundary when status is waiting
   -> start a transient worker run with the pinned workflow definition
@@ -60,6 +61,10 @@ Future run in compacted session
   stored compiled definition snapshot rather than the live asset folder, and
   defaults `verifyOnResume` to true so completed verifier nodes whose latest
   verdict passed are rechecked before trusting the stored position.
+- Fresh workflow runs now persist their durable `WorkflowRunRecord` under the
+  workspace-level `.sparkwright/workflow-runs/` root. Resume and list still
+  discover legacy session-local `workflow-runs/` records for compatibility, and
+  resume continues to pass the located store back into the host projection.
 - Session compact artifacts seed future context only when `throughRunId` can be
   matched to completed turns. A mismatch produces an explicit
   conversation-layer warning item and falls back to replaying completed turns.
@@ -93,6 +98,24 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 store boundary: fresh workflow runs now
+  write to workspace `.sparkwright/workflow-runs/`; workflow list/resume also
+  read legacy session-local stores and resume uses the located store. Core
+  checkpoint replay, session replay, trace fallback, and TUI replay semantics
+  were not changed.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts -t "workflow"`; `npm --workspace @sparkwright/cli test
+  -- test/cli.test.ts -t "lists and inspects workflow assets|resumes workflow
+  runs"`; `npm --workspace @sparkwright/host run typecheck`;
+  `npm --workspace @sparkwright/cli run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T16:03:27+0800

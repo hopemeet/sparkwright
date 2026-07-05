@@ -182,6 +182,20 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a protocol/docs boundary: workflow records now
+  describe workspace-root fresh storage plus legacy session-root compatibility
+  in `HOST_PROTOCOL.md`, but `workflow.list` / `workflow.resume` request and
+  response payload shapes, host-event vocabulary, and capability advertisement
+  remain unchanged.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/protocol.test.ts -t
+  "workflow"`; `npm --workspace @sparkwright/cli run typecheck`.
+
+- Status: Read-only
 - Date: 2026-07-05T22:20:59+0800
 - Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` is a CLI
   and host-helper-only offline report. Host protocol request/response shapes,

@@ -277,6 +277,22 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a agent-runtime boundary: `FileWorkflowStore`
+  remains the shared workflow-run document store, now with both legacy
+  `workflowRunsDir({ sessionRootDir, sessionId })` and workspace-root
+  `workspaceWorkflowRunsDir({ workspaceRoot })` helpers. Record schema/file
+  format is unchanged.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/index.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "FileWorkflowStore|workflow-run roots"`; `npm
+  --workspace @sparkwright/agent-runtime run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run build`.
+
+- Status: Verified
 - Date: 2026-07-05T21:51:25+0800
 - Scope: workflow-runtime-v1 P6b portable workflow type boundary:
   `todo_clear` is now a structural verifier declaration only. Agent-runtime

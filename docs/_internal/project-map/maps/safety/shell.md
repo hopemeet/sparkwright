@@ -57,6 +57,10 @@ model calls shell tool
   distinguishable.
 - Shell mutation audit uses `workspace-snapshot.ts` for snapshot/diff/rollback;
   the same host primitive is reused by MCP side-effect detection.
+- Shell mutation audit excludes SparkWright runtime control-plane state such as
+  `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
+  session traces and durable workflow state are not reported as model shell
+  mutations.
 - Configured in-process delegates can select `shell`, but shell remains gated
   by the parent run's write-enabled policy; capability descriptors should mark
   this with `gatedByRunWrite` rather than attempting command-specific read-only
@@ -110,6 +114,20 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 safety boundary: workspace mutation audit
+  now excludes workspace `.sparkwright/workflow-runs/` alongside session
+  runtime state. Shell execution, classification, approval, sandbox clamps, and
+  process runners were not changed.
+- Read: `packages/host/src/workspace-snapshot.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/tools.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "runtime control-plane files"`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

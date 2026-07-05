@@ -87,6 +87,19 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a workspace-write boundary: workspace-level
+  `.sparkwright/workflow-runs/` is SparkWright control-plane state and is
+  excluded from foreground shell mutation audits alongside sessions/tasks.
+  Managed capability package paths remain audited.
+- Read: `packages/host/src/workspace-snapshot.ts`,
+  `packages/host/test/tools.test.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "runtime control-plane files"`.
+
 - Status: Read-only
 - Date: 2026-07-05T16:03:27+0800
 - Scope: workflow-runtime-v1 P5 routed-page check: bounded

@@ -83,6 +83,16 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 routed-page check: workspace-root workflow
+  run storage does not change MCP preparation, wrapped tool execution, server
+  cwd handling, workspace-cwd disclosure, or diagnostic payloads.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: not run for MCP-specific behavior; P9a made no MCP semantic change.
+
+- Status: Read-only
 - Date: 2026-07-05T16:03:27+0800
 - Scope: workflow-runtime-v1 P5 routed-page check: bounded
   `parallel` / `join` does not change MCP preparation, wrapped tool execution,

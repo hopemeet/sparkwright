@@ -748,6 +748,80 @@ typecheck`, `npm --workspace @sparkwright/host run build`, `npm --workspace
 a session trace|lists and inspects workflow assets"`, and `npm --workspace
 @sparkwright/cli run typecheck`.
 
+## Stage 9a — D5 workspace-root workflow store
+
+入口事实（2026-07-05）：P8a commit `53d658de` 已在当前分支，focused
+shadow gates 通过。P9a 兑现 D5 的第一半：workflow-run state location 从
+session-local fresh authority 提升为 workspace-root fresh authority；legacy
+session-root records 只作为兼容读/恢复面保留。本片不进入 unattended daemon /
+spawn / protocol/TUI。
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P9a 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- P9a 的删除验收：退役"session directory scan 是唯一 workflow-run lookup
+  authority"的旧形态；新 workflow run 写 workspace-root store，session-root
+  stores 降级为 legacy compatibility。
+- 失败即停：需要迁移/复制旧 records、删除 legacy compatibility、启动
+  unattended adopter 进程、workflow_start/spawn、protocol/TUI payload 变化、
+  或改变 session trace/todo 位置时，停下拆相位。
+
+### Step 1 — store path primitive
+
+- 在 agent-runtime workflow store 层新增 workspace-root workflow run 目录
+  helper，保留现有 session-root helper 作为 legacy path。
+- Focused gates：agent-runtime workflow store tests/typecheck。
+- 失败即停：需要改变 record schema 或 FileWorkflowStore 文件格式。
+
+### Step 2 — host fresh/list/resume routing
+
+- fresh workflow instantiation 使用 workspace-root workflow store。
+- `workflow list` 读取 workspace-root store + legacy session-root stores；
+  `sessionId` filter 同时作用于 workspace records 的 `record.sessionId` 和
+  legacy session path。
+- `workflow resume` 先/同时定位 workspace-root + legacy stores，并把 located
+  store 传进 actor episode path；legacy record resume 后仍写回原 legacy
+  store。
+- Focused gates：host workflow tests for fresh workspace-root write, legacy
+  list/resume, duplicate/id ambiguity, and no session-local fresh record。
+- 失败即停：需要改 protocol request/response、workflow notification outbox、
+  run trace location、或 todo ledger path。
+
+### Step 3 — CLI and docs/map closure
+
+- CLI `workflow list|resume` 行为不新增 flags；它只消费 host 的 promoted
+  list/resume behavior。
+- 更新 project-map；跑 focused host/CLI gates、typecheck、format、diff check、
+  project-map drift；通过后提交 P9a（不加 Co-Authored-By）。
+
+Implementation note (2026-07-05): P9a added
+`workspaceWorkflowRunsDir({ workspaceRoot })`, promoted fresh workflow runs to
+the workspace-level `.sparkwright/workflow-runs` store, and kept legacy
+`<sessionRoot>/<sessionId>/workflow-runs` records list/resume compatible.
+`workflow resume` now carries the located `FileWorkflowStore` into the actor
+episode path so workspace records and legacy records keep writing to their own
+stores under the same lease. Host workflow listing reads both stores and filters
+workspace records by `record.sessionId`; workspace snapshot audit excludes the
+new control-plane directory. The slice intentionally did not migrate/copy old
+records, delete legacy compatibility, change protocol/TUI payloads, start an
+unattended adopter, or reopen workflow_start/spawn. Focused gates passed:
+`npm --workspace @sparkwright/agent-runtime test -- test/workflows.test.ts -t
+"FileWorkflowStore|workflow-run roots"`, `npm --workspace
+@sparkwright/agent-runtime run typecheck`, `npm --workspace
+@sparkwright/agent-runtime run build`, `npm --workspace @sparkwright/host test
+-- test/workflows.test.ts -t "workflow"`, `npm --workspace @sparkwright/host
+test -- test/tools.test.ts -t "runtime control-plane files"`, `npm --workspace
+@sparkwright/host test -- test/protocol.test.ts -t "workflow"`, `npm
+--workspace @sparkwright/host run typecheck`, `npm --workspace @sparkwright/cli
+test -- test/cli.test.ts -t "lists and inspects workflow assets|resumes
+workflow runs"`, and `npm --workspace @sparkwright/cli run typecheck`.
+Closing release gate `npm run release:check` passed after fixing two
+release-level P8a leftovers surfaced by the gate: branded `SparkwrightEvent`
+fixture ids/run ids/event types in `workflow-distill`/`workflow-shadow` tests,
+and explicit `@reserved` ownership for public shadow/distill report fields that
+are consumed by CLI/JSON readers rather than in-process TypeScript readers.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

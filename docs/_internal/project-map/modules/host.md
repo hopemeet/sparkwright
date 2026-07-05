@@ -221,16 +221,19 @@ Does not own:
   PreToolUse block-only clamps, Stop verifier gates over the core FactLedger,
   `workflow.*` lifecycle events, and runtime interruption facts. It delegates
   transition decisions to the portable agent-runtime state machine.
-- P2 workflow runs are durable host-orchestrated records. Host acquires the
-  workflow run's single-writer lease before fresh record creation or resume, then
-  writes a `FileWorkflowStore` record under
-  `<sessionRoot>/<sessionId>/workflow-runs/`, pins the compiled workflow
-  definition snapshot, persists projection snapshots into current node,
-  attempts, verdict/transition logs, and run/fact evidence refs, refreshes a
-  single-writer lease while the run chain is active, and releases the lease on
-  terminal/rejected paths. `workflow resume` uses the pinned definition, not
-  the live asset folder, and `verifyOnResume` re-runs verifier nodes whose
-  latest stored verdict is passed before trusting the stored position.
+- Workflow runs are durable host-orchestrated records. After P9a, fresh runs
+  write `FileWorkflowStore` records under the workspace-level
+  `.sparkwright/workflow-runs/` store while retaining `sessionId` on each
+  record; legacy `<sessionRoot>/<sessionId>/workflow-runs/` records remain
+  list/resume compatible. Host acquires the workflow run's single-writer lease
+  before fresh record creation or resume, pins the compiled workflow definition
+  snapshot, persists projection snapshots into current node, attempts,
+  verdict/transition logs, and run/fact evidence refs, refreshes a single-writer
+  lease while the run chain is active, and releases the lease on terminal/
+  rejected paths. `workflow resume` uses the pinned definition and the located
+  store, not the live asset folder or a reconstructed session-root store;
+  `verifyOnResume` re-runs verifier nodes whose latest stored verdict is passed
+  before trusting the stored position.
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
@@ -693,6 +696,25 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a host boundary: fresh workflow runs now persist
+  in workspace-level `.sparkwright/workflow-runs`, while list/resume continue to
+  read legacy session-root stores. Resume carries the located store through the
+  actor episode path; protocol/TUI payloads, notification outbox location,
+  session trace/todo paths, and workflow_start remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workspace-snapshot.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/tools.test.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "workflow"`; `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "runtime control-plane files"`; `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "workflow"`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:20:59+0800

@@ -162,6 +162,9 @@ EventLog emits full event
 - Agent traces can also be written under `agents/<agent-id>/trace.jsonl`.
 - Session run directories do not duplicate trace JSONL; they include
   `trace-pointer.json` with relative links to the session and agent traces.
+- Workspace-level workflow run records under `.sparkwright/workflow-runs/` are
+  durable workflow state, not raw trace storage. Raw trace JSONL remains in the
+  session/agent trace roots above.
 - Raw JSONL remains append-only. Derived diagnostics such as trace timeline and
   verify may project aggregate ordering from `timestamp`/scoped `monotonicUs`,
   but the writer does not rewrite existing rows to enforce that order.
@@ -191,6 +194,19 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 routed-page check: fresh workflow state
+  moved from session-local `workflow-runs/` to workspace
+  `.sparkwright/workflow-runs/`, while session/agent raw trace JSONL locations,
+  event envelopes, filtering, and redaction stayed unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/core/src/trace-store.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: not run for raw trace codec/store behavior; P9a changed workflow state
+  lookup/storage, not raw trace persistence.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

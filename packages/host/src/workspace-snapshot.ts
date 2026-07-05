@@ -26,6 +26,7 @@ const AUDIT_EXCLUDED_DIRS = new Set([
 const AUDIT_EXCLUDED_PATHS = new Set([
   ".sparkwright/sessions",
   ".sparkwright/tasks",
+  ".sparkwright/workflow-runs",
 ]);
 const AUDIT_EXCLUDED_FILES = new Set([
   ".sparkwright/tui-history.jsonl",

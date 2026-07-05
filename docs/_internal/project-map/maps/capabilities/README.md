@@ -56,9 +56,11 @@ config + workspace capability roots
   `sparkwright workflow *` remain inspection surfaces; P1/P1.5 also lets
   `sparkwright run --workflow <name>` / `run.start.workflow` instantiate a
   selected asset without the former experimental workflow runtime gate.
-  P2 durable workflow run records are session state, not capabilities:
-  `sparkwright workflow list` may show both workflow assets and workflow run
-  records, but `capability.inspect.workflows` remains the asset inventory.
+  Durable workflow run records are workspace state for fresh P9a+ runs, with
+  legacy session-local lookup kept for compatibility; they are not
+  capabilities. `sparkwright workflow list` may show both workflow assets and
+  workflow run records, but `capability.inspect.workflows` remains the asset
+  inventory.
   P3 Step 4b.1 per-episode workflow catalog narrowing filters worker
   `ToolDefinition[]` at run creation; it does not change capability.inspect's
   asset inventory. A scoped `tool_search` may be added inside a filtered worker
@@ -193,6 +195,24 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 capability boundary: fresh workflow run
+  records moved to workspace `.sparkwright/workflow-runs/` with legacy
+  session-store lookup for list/resume. Workflow run records remain durable
+  runtime state, not capability inventory; `capability.inspect.workflows`
+  still reports assets only and no `workflow_start` surface was added.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts -t "workflow"`; `npm --workspace @sparkwright/cli test
+  -- test/cli.test.ts -t "lists and inspects workflow assets|resumes workflow
+  runs"`; `npm --workspace @sparkwright/host run typecheck`;
+  `npm --workspace @sparkwright/cli run typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

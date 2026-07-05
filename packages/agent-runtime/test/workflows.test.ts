@@ -9,7 +9,9 @@ import {
   createInitialWorkflowRuntimeState,
   FileWorkflowStore,
   runWorkflowRunChain,
+  workspaceWorkflowRunsDir,
   WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+  workflowRunsDir,
   validateWorkflowRuntimeDefinition,
   type WorkflowRunId,
   type WorkflowDefinition,
@@ -235,6 +237,15 @@ describe("workflow run-chain driver", () => {
 });
 
 describe("FileWorkflowStore", () => {
+  it("exposes session legacy and workspace workflow-run roots", () => {
+    expect(
+      workflowRunsDir({ sessionRootDir: "/state/sessions", sessionId: "sess" }),
+    ).toBe(join("/state/sessions", "sess", "workflow-runs"));
+    expect(workspaceWorkflowRunsDir({ workspaceRoot: "/workspace" })).toBe(
+      join("/workspace", ".sparkwright", "workflow-runs"),
+    );
+  });
+
   it("persists workflow run records with pinned definition snapshots", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });

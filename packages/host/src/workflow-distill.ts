@@ -25,6 +25,7 @@ export interface WorkflowDistillReport {
   assetName: string;
   goal?: string;
   terminalState?: string;
+  /** @reserved Public workflow-distill report field consumed by CLI/JSON report readers. */
   observed: {
     tools: string[];
     readPaths: string[];

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,7 +70,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function workflowStoreRoot(workspace: string, sessionId: string): string {
+function workflowStoreRoot(workspace: string, _sessionId?: string): string {
+  return join(workspace, ".sparkwright", "workflow-runs");
+}
+
+function legacyWorkflowStoreRoot(workspace: string, sessionId: string): string {
   return join(
     workspace,
     ".sparkwright",
@@ -689,6 +693,9 @@ describe("workflow assets", () => {
       kind: "run",
       ref: started.ok ? started.runId : "",
     });
+    await expect(
+      access(legacyWorkflowStoreRoot(workspace, sessionId)),
+    ).rejects.toThrow();
     const notifications = await runtime
       .workflowActorInbox()
       .drain((notification) => notification.source.kind === "workflow");
@@ -1253,13 +1260,7 @@ describe("workflow assets", () => {
       nodes: [{ id: "main", body: "Pinned body." }],
     };
     const store = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_resume_pinned" as WorkflowRunId;
     store.create({
@@ -1285,6 +1286,12 @@ describe("workflow assets", () => {
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
     });
+    const listed = await runtime.listWorkflowRuns({ sessionId });
+    expect(listed).toMatchObject({ ok: true });
+    if (!listed.ok) throw new Error(listed.error.message);
+    expect(listed.workflows).toEqual([
+      expect.objectContaining({ id: workflowRunId, sessionId }),
+    ]);
 
     const resumed = await runtime.resumeWorkflowRun({
       workflowRunId,
@@ -1294,7 +1301,7 @@ describe("workflow assets", () => {
     expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     const record = new FileWorkflowStore({
-      rootDir: workflowStoreRoot(workspace, sessionId),
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
       createRoot: false,
     }).get(workflowRunId);
 

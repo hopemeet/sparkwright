@@ -266,6 +266,18 @@ configured profiles/delegates
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 routed-page check: workflow store root
+  promotion changes durable workflow run lookup/storage only. Agent profile
+  discovery, delegate tool exposure, dynamic `spawn_agent`, child-run policy,
+  model routing, and subagent trace attribution are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: not run for agent/delegate capability behavior; P9a made no
+  agent-capability semantic change. Workflow focused gates passed in host/CLI.
+
 - Status: Verified
 - Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 agents capability check: workflow

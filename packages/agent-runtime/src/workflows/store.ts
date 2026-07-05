@@ -98,7 +98,7 @@ export interface WorkflowStore {
 }
 
 export interface FileWorkflowStoreOptions {
-  /** Directory containing workflow run snapshots/logs for one session. */
+  /** Directory containing workflow run snapshots/logs. */
   rootDir: string;
   /** Create the root eagerly. Set false for read-only inspection commands. */
   createRoot?: boolean;
@@ -374,6 +374,12 @@ export function workflowRunsDir(input: {
   sessionId: string;
 }): string {
   return join(input.sessionRootDir, input.sessionId, "workflow-runs");
+}
+
+export function workspaceWorkflowRunsDir(input: {
+  workspaceRoot: string;
+}): string {
+  return join(input.workspaceRoot, ".sparkwright", "workflow-runs");
 }
 
 export function assertSafeWorkflowRunId(id: WorkflowRunId): void {

@@ -38,7 +38,9 @@ export interface WorkflowShadowCheck {
   status: WorkflowShadowCheckStatus;
   message: string;
   nodeId?: string;
+  /** @reserved Public workflow-shadow check detail consumed by CLI/JSON report readers. */
   expected?: unknown;
+  /** @reserved Public workflow-shadow check detail consumed by CLI/JSON report readers. */
   observed?: unknown;
 }
 
@@ -56,6 +58,7 @@ export interface WorkflowShadowReport {
   };
   goal?: string;
   terminalState?: string;
+  /** @reserved Public workflow-shadow report field consumed by CLI/JSON report readers. */
   observed: {
     tools: string[];
     readPaths: string[];

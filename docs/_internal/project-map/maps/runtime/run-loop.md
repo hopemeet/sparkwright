@@ -201,6 +201,11 @@ createRun/resumeRunFromCheckpoint
   `advance`/`block` results, and the existing workflow forced-continuation
   source; there is no branch scheduler, branch cancellation bus, or multiple
   concurrent model episode loop inside core.
+- P9a D5 workspace-root workflow storage also stays host-side. Fresh
+  `WorkflowRunRecord` files move to workspace `.sparkwright/workflow-runs/`,
+  list/resume still read legacy session-local stores, and the resumed worker
+  episode still enters core as an ordinary run with the pinned workflow
+  definition.
 
 ## Consumers
 
@@ -222,6 +227,21 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 run-loop boundary: moving fresh workflow
+  run records to the workspace store changes host lookup/persistence only.
+  Core `createRun`/resume/checkpoint semantics, workflow hook lifecycle, and
+  forced-continuation budgets remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/protocol.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts -t "workflow"`; `npm --workspace @sparkwright/host
+  test -- test/protocol.test.ts -t "workflow"`; `npm --workspace
+  @sparkwright/host run typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

@@ -120,6 +120,7 @@ import {
   type WorkflowRunFailure,
   type WorkflowRunStatus,
   type WorkflowRuntimeState,
+  workspaceWorkflowRunsDir,
   workflowRunsDir,
 } from "@sparkwright/agent-runtime";
 import { CronStore, defaultCronRoot } from "@sparkwright/cron";
@@ -943,6 +944,10 @@ export class HostRuntime {
     return join(this.opts.workspaceRoot, ".sparkwright", "workflow-actors");
   }
 
+  private workflowStoreRootDir(): string {
+    return workspaceWorkflowRunsDir({ workspaceRoot: this.opts.workspaceRoot });
+  }
+
   private async runAgentTask(
     controller: TaskRunnerController,
     payload: unknown,
@@ -1508,6 +1513,24 @@ export class HostRuntime {
       code: string;
       reason: string;
     }> = [];
+    const seenWorkflowRunIds = new Set<string>();
+    const addRecord = (record: WorkflowRunRecord) => {
+      if (payload.sessionId && record.sessionId !== payload.sessionId) return;
+      if (payload.status && record.status !== payload.status) return;
+      const id = String(record.id);
+      if (seenWorkflowRunIds.has(id)) return;
+      seenWorkflowRunIds.add(id);
+      workflows.push(workflowRunSnapshot(record));
+    };
+    const workspaceStore = new FileWorkflowStore({
+      rootDir: this.workflowStoreRootDir(),
+      createRoot: false,
+    });
+    const workspaceListed = workspaceStore.list();
+    invalidEntries.push(...workspaceListed.invalidEntries);
+    for (const record of workspaceListed.records) {
+      addRecord(record);
+    }
     for (const sessionId of sessions) {
       const store = new FileWorkflowStore({
         rootDir: workflowRunsDir({ sessionRootDir, sessionId }),
@@ -1516,8 +1539,7 @@ export class HostRuntime {
       const listed = store.list();
       invalidEntries.push(...listed.invalidEntries);
       for (const record of listed.records) {
-        if (payload.status && record.status !== payload.status) continue;
-        workflows.push(workflowRunSnapshot(record));
+        addRecord(record);
       }
     }
     workflows.sort((left, right) =>
@@ -1573,6 +1595,7 @@ export class HostRuntime {
     confidentialPaths?: readonly string[];
     traceLevel?: TraceLevel;
     workflowName?: string;
+    workflowStore?: FileWorkflowStore;
     workflowRecord?: WorkflowRunRecord;
     workflowLease?: FileDocumentLease;
     runMetadata?: Record<string, unknown>;
@@ -1985,12 +2008,10 @@ export class HostRuntime {
       };
     }
     const workflowStore = workflowDefinition
-      ? new FileWorkflowStore({
-          rootDir: workflowRunsDir({
-            sessionRootDir,
-            sessionId: input.sessionId,
-          }),
-        })
+      ? (input.workflowStore ??
+        new FileWorkflowStore({
+          rootDir: this.workflowStoreRootDir(),
+        }))
       : undefined;
     let workflowRecord = input.workflowRecord;
     let workflowLease = input.workflowLease;
@@ -3008,6 +3029,7 @@ export class HostRuntime {
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
       }),
+      workflowStore: store,
       workflowRecord: record,
       workflowLease: lease,
       runMetadata: {
@@ -3167,6 +3189,31 @@ export class HostRuntime {
       store: FileWorkflowStore;
       sessionId: string;
     }> = [];
+    const workspaceStore = new FileWorkflowStore({
+      rootDir: this.workflowStoreRootDir(),
+      createRoot: false,
+    });
+    const workspaceRecord = workspaceStore.get(workflowRunId);
+    if (
+      workspaceRecord &&
+      (!sessionId || workspaceRecord.sessionId === sessionId)
+    ) {
+      const locatedSessionId = workspaceRecord.sessionId ?? sessionId;
+      if (!locatedSessionId) {
+        return {
+          ok: false,
+          error: {
+            code: "invalid_payload",
+            message: `Workflow run ${workflowRunId} does not record a sessionId; pass sessionId to resume it.`,
+          },
+        };
+      }
+      matches.push({
+        record: workspaceRecord,
+        store: workspaceStore,
+        sessionId: locatedSessionId,
+      });
+    }
     for (const candidateSessionId of sessions) {
       const store = new FileWorkflowStore({
         rootDir: workflowRunsDir({

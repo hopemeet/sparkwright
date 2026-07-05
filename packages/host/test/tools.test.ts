@@ -3718,7 +3718,7 @@ describe("host tools", () => {
     ).rejects.toThrow();
   });
 
-  it("still ignores runtime session files in shell mutation audits", async () => {
+  it("still ignores runtime control-plane files in shell mutation audits", async () => {
     const ctx = await createWorkspace({});
     const tool = createHostShellTool(ctx.workspaceRoot, {
       sandbox: { mode: "off" },
@@ -3727,7 +3727,9 @@ describe("host tools", () => {
     const result = await tool.execute(
       {
         command:
-          "mkdir -p .sparkwright/sessions/session-test && echo runtime > .sparkwright/sessions/session-test/log.txt",
+          "mkdir -p .sparkwright/sessions/session-test .sparkwright/workflow-runs && " +
+          "echo runtime > .sparkwright/sessions/session-test/log.txt && " +
+          "echo workflow > .sparkwright/workflow-runs/workflow-test.json",
       },
       ctx,
     );

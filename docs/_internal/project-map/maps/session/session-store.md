@@ -26,10 +26,13 @@ Host chooses/validates sessionId
   -> session.json + events.jsonl
   -> FileRunStore (trace-store.ts) writes session trace/transcript and agent run files
 
-Workflow run state
-  -> FileWorkflowStore writes workflow-runs/<workflowRunId>.json
-  -> workflow-runs/<workflowRunId>.events.jsonl
-  -> workflow-runs/<workflowRunId>.lease/
+Fresh workflow run state
+  -> FileWorkflowStore writes <workspace>/.sparkwright/workflow-runs/<workflowRunId>.json
+  -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.events.jsonl
+  -> <workspace>/.sparkwright/workflow-runs/<workflowRunId>.lease/
+
+Legacy workflow run state
+  -> <sessionRoot>/<sessionId>/workflow-runs/ remains list/resume compatible
 
 Manual compact
   -> compactSessionTurns()
@@ -56,11 +59,13 @@ Manual compact
   `transcript.jsonl`, `agents/<agent-id>/trace.jsonl`, per-run `run.json` /
   `result.json`, and `trace-pointer.json` files that point from each run
   directory back to the aggregate session and agent traces.
-- P2 workflow records live under
-  `<sessionRoot>/<sessionId>/workflow-runs/`. Each workflow run has a JSON
-  record, a JSONL event log, and a token lease path; corrupt record/log entries
-  are skipped with diagnostics by `FileWorkflowStore` rather than wedging
-  workflow list/resume.
+- Fresh workflow records live under workspace-level
+  `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
+  filters and resume context remain available. Legacy
+  `<sessionRoot>/<sessionId>/workflow-runs/` records remain list/resume
+  compatible. Each workflow run has a JSON record, a JSONL event log, and a
+  token lease path; corrupt record/log entries are skipped with diagnostics by
+  `FileWorkflowStore` rather than wedging workflow list/resume.
 - Manual session compact writes `compact.json` as a `session-compact.v2`
   artifact only when there is net savings. The artifact stores source run ids,
   `throughRunId`, original/summary char counts, top-level `freedChars`, and
@@ -95,6 +100,21 @@ Manual compact
 - Session metadata should make terminal run state easier to inspect.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a session/workspace storage boundary: fresh
+  workflow records moved to workspace-level `.sparkwright/workflow-runs/` while
+  legacy session-root workflow records remain readable/resumable. Session
+  traces, session events, todo ledgers, and compaction artifacts stay under the
+  session root.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "workflow"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "FileWorkflowStore|workflow-run roots"`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

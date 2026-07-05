@@ -280,6 +280,20 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a CLI surface: `workflow list` and
+  `workflow resume` consume host dual-store behavior for workspace-root fresh
+  records plus legacy session-root records without adding flags or changing
+  text/JSON response shapes.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/reference/HOST_PROTOCOL.md`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "lists
+  and inspects workflow assets|resumes workflow runs"`; `npm --workspace
+  @sparkwright/cli run typecheck`.
+
+- Status: Verified
 - Date: 2026-07-05T22:20:59+0800
 - Scope: workflow-runtime-v1 P8a CLI surface: `workflow shadow <workflowName>
   <sessionId>` emits text/JSON offline coverage reports from an existing
