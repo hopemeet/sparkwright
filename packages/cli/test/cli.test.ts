@@ -2427,6 +2427,131 @@ describe("runCli", () => {
     ]);
   });
 
+  it("distills a session trace into a workflow draft", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionId = "session_cli_distill";
+    const sessionDir = join(workspace, ".sparkwright", "sessions", sessionId);
+    await mkdir(sessionDir, { recursive: true });
+    const trace = [
+      {
+        id: "evt_1",
+        runId: "run_distill",
+        type: "run.created",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        sequence: 1,
+        payload: { goal: "update README and verify" },
+        metadata: { sessionId, agentId: "main" },
+      },
+      {
+        id: "evt_2",
+        runId: "run_distill",
+        type: "tool.requested",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        sequence: 2,
+        payload: {
+          id: "edit_1",
+          toolName: "edit_anchored_text",
+        },
+        metadata: { sessionId, agentId: "main" },
+      },
+      {
+        id: "evt_3",
+        runId: "run_distill",
+        type: "workspace.write.completed",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        sequence: 3,
+        payload: { path: "README.md" },
+        metadata: { sessionId, agentId: "main" },
+      },
+      {
+        id: "evt_4",
+        runId: "run_distill",
+        type: "tool.requested",
+        timestamp: "2026-01-01T00:00:04.000Z",
+        sequence: 4,
+        payload: {
+          id: "bash_1",
+          toolName: "bash",
+          arguments: { command: "npm test -- docs" },
+        },
+        metadata: { sessionId, agentId: "main" },
+      },
+      {
+        id: "evt_5",
+        runId: "run_distill",
+        type: "tool.completed",
+        timestamp: "2026-01-01T00:00:05.000Z",
+        sequence: 5,
+        payload: {
+          toolCallId: "bash_1",
+          toolName: "bash",
+          status: "completed",
+          exitCode: 0,
+        },
+        metadata: { sessionId, agentId: "main" },
+      },
+      {
+        id: "evt_6",
+        runId: "run_distill",
+        type: "run.completed",
+        timestamp: "2026-01-01T00:00:06.000Z",
+        sequence: 6,
+        payload: { state: "completed" },
+        metadata: { sessionId, agentId: "main" },
+      },
+    ];
+    await writeFile(
+      join(sessionDir, "trace.jsonl"),
+      trace.map((event) => JSON.stringify(event)).join("\n") + "\n",
+      "utf8",
+    );
+
+    const textOutput = createOutputCapture();
+    const text = await runCli(
+      [
+        "workflow",
+        "distill",
+        sessionId,
+        "--workspace",
+        workspace,
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: textOutput.stdout, stderr: textOutput.stderr },
+      },
+    );
+    expect(text.exitCode).toBe(0);
+    expect(textOutput.stdoutText()).toContain("# Distilled Workflow Draft");
+    expect(textOutput.stdoutText()).toContain("kind: diff_scope");
+    expect(textOutput.stdoutText()).toContain("npm test -- docs");
+
+    const jsonOutput = createOutputCapture();
+    const json = await runCli(
+      [
+        "workflow",
+        "distill",
+        sessionId,
+        "--workspace",
+        workspace,
+        "--format",
+        "json",
+      ],
+      {
+        io: { stdout: jsonOutput.stdout, stderr: jsonOutput.stderr },
+      },
+    );
+    expect(json.exitCode).toBe(0);
+    const report = JSON.parse(jsonOutput.stdoutText()) as {
+      ok: boolean;
+      assetName: string;
+      markdown: string;
+    };
+    expect(report.ok).toBe(true);
+    expect(report.assetName).toBe("distilled-update-readme-and-verify");
+    expect(report.markdown).toContain("## implement");
+  });
+
   it("resumes workflow runs through the host actor episode driver", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const sessionId = "sess_cli_workflow_resume";

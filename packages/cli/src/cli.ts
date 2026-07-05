@@ -112,6 +112,7 @@ import {
   filterDirectDelegatesForExposure,
   summarizeRunInputParts,
   describeExternalDelegateCapability,
+  distillWorkflowFromSession,
   existingSkillRoots,
   HostRuntime,
   catalogEntryOrigin,
@@ -144,6 +145,7 @@ import {
   type SkillStatsReport,
   type WorkflowAssetDetail,
   type WorkflowAssetReport,
+  type WorkflowDistillReport,
 } from "@sparkwright/host";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import {
@@ -1295,12 +1297,13 @@ function parseArgs(
     command === "workflow" &&
     subcommand !== "list" &&
     subcommand !== "inspect" &&
-    subcommand !== "resume"
+    subcommand !== "resume" &&
+    subcommand !== "distill"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright workflow <list|inspect|resume> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
+        "Usage: sparkwright workflow <list|inspect|resume|distill> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     };
   }
 
@@ -1768,7 +1771,8 @@ async function handleWorkflowCommand(
   if (
     subcommand !== "list" &&
     subcommand !== "inspect" &&
-    subcommand !== "resume"
+    subcommand !== "resume" &&
+    subcommand !== "distill"
   ) {
     writeLine(io.stderr, workflowUsage());
     return { exitCode: 1 };
@@ -1806,6 +1810,28 @@ async function handleWorkflowCommand(
         io,
         env,
       );
+    }
+
+    if (subcommand === "distill") {
+      const sessionId = firstCliWord(parsed.goal);
+      if (!sessionId) {
+        writeLine(
+          io.stderr,
+          "Usage: sparkwright workflow distill <session-id>",
+        );
+        return { exitCode: 1 };
+      }
+      const report = await distillWorkflowFromSession({
+        sessionRootDir: parsed.sessionRootDir,
+        sessionId,
+      });
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(report, null, 2)
+          : formatWorkflowDistillReport(report),
+      );
+      return { exitCode: report.ok ? 0 : 1 };
     }
 
     const report = await loadLayeredWorkflowAssets(parsed.workspaceRoot, env);
@@ -1937,6 +1963,24 @@ function formatWorkflowInspectReport(asset: WorkflowAssetDetail): string {
     );
   }
   return lines.join("\n");
+}
+
+function formatWorkflowDistillReport(report: WorkflowDistillReport): string {
+  const header = [
+    `# Distilled Workflow Draft`,
+    `session: ${report.sessionId}`,
+    `trace: ${report.tracePath}`,
+    `asset: ${report.assetName}`,
+    `events: ${report.eventCount}`,
+    `status: ${report.ok ? "ok" : "needs-review"}`,
+    ...(report.goal ? [`goal: ${report.goal}`] : []),
+    ...(report.terminalState ? [`terminal: ${report.terminalState}`] : []),
+    ...(report.warnings.length > 0
+      ? ["warnings:", ...report.warnings.map((warning) => `- ${warning}`)]
+      : []),
+    "",
+  ];
+  return [...header, report.markdown].join("\n");
 }
 
 function firstCliWord(input: string): string | undefined {
@@ -7337,7 +7381,7 @@ function usage(_env: Record<string, string | undefined>): string {
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    "       sparkwright workflow list|inspect|resume [workflow-name-or-run-id] [--workspace path] [--format json|text]",
+    "       sparkwright workflow list|inspect|resume|distill [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
@@ -7382,6 +7426,7 @@ function workflowUsage(): string {
     "Usage: sparkwright workflow list [--workspace path] [--format json|text]",
     "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
     "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
+    "       sparkwright workflow distill <session-id> [--workspace path] [--session-root path] [--format json|text]",
   ].join("\n");
 }
 

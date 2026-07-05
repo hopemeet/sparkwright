@@ -617,6 +617,67 @@ nodes"`, `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
 typecheck`. Targeted Prettier check passed for touched docs and TypeScript
 files.
 
+## Stage 7a — Read-only `workflow distill`
+
+入口事实（2026-07-05）：P6b commit `64e466eb` 已在当前分支，focused
+verifier gates 通过。P7a 进入池子第二项 `workflow distill`，但只做
+deterministic/read-only draft generator：从成功 session trace 生成待 review
+的 `workflow.md` 草稿，不写 asset folder、不走 skill-evolution proposal、不
+调用模型。
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P7a 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- P7a 的删除验收是署名 acceptance：没有旧 distiller 可删，本片退役
+  proposal parking-lot-only 的 `workflow distill` idea，先提供真实内部资产
+  供给入口。
+- 失败即停：需要模型 judge / LLM summarizer、自动写 `.sparkwright/workflows`、
+  自动创建/apply skill-evolution proposal、trace mutation、protocol/TUI
+  surface、shadow telemetry、或 workflow_start/spawn 时，停下拆相位。
+
+### Step 1 — host deterministic distiller
+
+- 新增 host helper：读取 `<session-root>/<session-id>/trace.jsonl`，校验
+  session id path safety，加载 trace events。
+- 提取 goal、run terminal state、observed tools、read/write paths、post-write
+  verification-like shell commands，生成 small linear workflow draft。
+- 输出包含 draft metadata、markdown、warnings；只作为 review-first 草稿。
+- Focused gates：host unit tests for successful distill, no completed run,
+  and path-safe session ids；host typecheck。
+- 失败即停：distiller 需要模型语义判断、读 raw model text 以外的隐私数据、
+  或生成表达式/dataflow。
+
+### Step 2 — CLI surface
+
+- `sparkwright workflow distill <session-id>` 输出 text 或 JSON。
+- text 输出直接给 `workflow.md` 草稿，附最小 header/warnings；JSON 输出
+  report + markdown。
+- Focused gates：CLI tests for text/json output + usage rejection；CLI
+  typecheck。
+- 失败即停：CLI 写入 asset/proposal、需要 host protocol、或改变既有
+  `workflow list|inspect|resume` 语义。
+
+### Step 3 — P7a 收尾
+
+- 跑 focused gates，通过后提交 P7a（不加 Co-Authored-By）。
+- 本片仍不要求 full release gate；进入 shadow mode / protocol / asset
+  write/apply surface 前再跑相位级 `npm run release:check`。
+
+Implementation note (2026-07-05): P7a added deterministic
+`workflow-distill.ts` and CLI `sparkwright workflow distill <session-id>`.
+The first slice mines ordinary session trace events for goal, observed tools,
+read/write paths, and post-write verification-like shell commands, then emits a
+review-first workflow markdown draft or JSON report. It intentionally does not
+write `.sparkwright/workflows`, create/apply skill-evolution proposals, call a
+model-backed summarizer, or require completed workflow-run records; that keeps
+the first asset-supply loop read-only and closer to the proposal's "mine a
+successful trace" shape. Focused gates passed: `npm --workspace
+@sparkwright/host test -- test/workflow-distill.test.ts`, `npm --workspace
+@sparkwright/cli test -- test/cli.test.ts -t "distills a session trace|lists
+and inspects workflow assets"`, `npm --workspace @sparkwright/host run
+typecheck`, and `npm --workspace @sparkwright/cli run typecheck`.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

@@ -306,6 +306,11 @@ Does not own:
   metadata/evidence refs, and fail-closes missing or unreadable providers as
   runtime errors. It does not replace the todo supervisor continuation audit or
   add FactLedger todo state.
+- P7a `workflow-distill.ts` is a read-only deterministic session-trace
+  distiller. It consumes existing trace events, derives observed tools/paths/
+  post-write verification commands, and renders a review-first workflow draft.
+  It does not write workflow assets, create skill-evolution proposals, mutate
+  traces, or add protocol/TUI runtime behavior.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -678,6 +683,20 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:04:23+0800
+- Scope: workflow-runtime-v1 P7a host boundary: deterministic
+  `workflow-distill.ts` reads session traces and renders review-first workflow
+  markdown/JSON reports without writing assets, adding model-backed
+  distillation, mutating traces, or changing runtime/protocol behavior.
+- Read: `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/index.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-distill.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T21:51:25+0800
