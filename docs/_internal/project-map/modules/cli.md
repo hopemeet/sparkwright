@@ -76,6 +76,11 @@ Does not own:
   It reads an existing session trace through host helpers and prints a
   review-first workflow markdown draft (or JSON report); it does not write
   workflow assets, create proposals, or mutate traces.
+- `sparkwright workflow shadow <workflowName> <sessionId>` is a read-only
+  offline coverage report. It compares a host-owned workflow asset against an
+  existing session trace through host helpers and prints text/JSON matched,
+  missing, and unobserved coverage checks. It does not start a run, write
+  workflow records, mutate traces, or change `workflow list|inspect|resume`.
 - `sparkwright run --workflow <name>` is the host-mode workflow instantiation
   surface. P1.5 removes the experimental environment gate; the flag remains
   unsupported on `--direct-core`. Ordinary runs omit the field and keep existing
@@ -273,6 +278,20 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a CLI surface: `workflow shadow <workflowName>
+  <sessionId>` emits text/JSON offline coverage reports from an existing
+  workflow asset and session trace without changing `workflow
+  list|inspect|resume|distill`, starting host runs, writing workflow state, or
+  adding protocol surfaces.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "shadows a workflow asset|distills a session trace|lists and inspects
+  workflow assets"`; `npm --workspace @sparkwright/cli run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:04:23+0800

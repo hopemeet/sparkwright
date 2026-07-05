@@ -223,6 +223,18 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: offline `workflow shadow`
+  does not call `createRun`, instantiate workflow projection hooks, advance
+  workflow runtime state, affect cancellation, or write terminal run outcomes.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for live run-loop behavior; P8a made no run-loop semantic
+  change. Focused shadow gates passed in host/CLI.
+
 - Status: Verified
 - Date: 2026-07-05T20:18:29+0800
 - Scope: workflow-runtime-v1 P5 post-review run-loop boundary: explicit

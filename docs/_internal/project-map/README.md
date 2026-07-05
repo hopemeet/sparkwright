@@ -114,7 +114,7 @@ follow the active maps below for the current contract.
 - `packages/core/src/access-mode.ts` (`run.accessMode` -> `permissionMode`/`shouldWrite` compile + clamp): [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/host/src/workflow-hooks.ts`, `packages/host/src/active-rules.ts`, or `packages/host/src/traced-process-runner.ts`: [modules/host.md](modules/host.md), [modules/core.md](modules/core.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
-- `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `packages/host/src/workflow-node-api.ts`, `sparkwright workflow list|inspect`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `packages/host/src/workflow-node-api.ts`, `packages/host/src/workflow-distill.ts`, `packages/host/src/workflow-shadow.ts`, `packages/host/src/workflow-trace-observation.ts`, `sparkwright workflow list|inspect|distill|shadow`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/cli/src/cli.ts`, `packages/cli/src/runners/direct-core-runner.ts`, or `packages/cli/src/runners/host-runner.ts`: [modules/cli.md](modules/cli.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/cli/src/event-format.ts`: [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `scripts/build-workspaces.mjs`, `scripts/check-dist-fresh.mjs`, `scripts/stamp-workspace-build.mjs`, or workspace `package.json` build scripts: [modules/cli.md](modules/cli.md)
@@ -159,6 +159,25 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a route update: `workflow shadow` and shared
+  workflow trace observation now route through host/CLI workflow docs while
+  remaining offline/read-only. No protocol/TUI/live-run routing was added.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; `npm
+  --workspace @sparkwright/cli test -- test/cli.test.ts -t "shadows a workflow
+  asset|distills a session trace|lists and inspects workflow assets"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/cli run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T20:18:29+0800

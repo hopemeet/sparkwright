@@ -257,6 +257,19 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: shared workflow trace
+  observation reads historical `tool.requested` / `tool.completed` events for
+  offline coverage only. It does not alter catalog assembly, validation,
+  approval, execution, trace emission, or tool result semantics.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for live tool orchestration; P8a made no tool execution
+  semantic change. Focused shadow gates passed in host/CLI.
+
 - Status: Verified
 - Date: 2026-07-05T13:59:13+0800
 - Scope: P3 Step 4b.1 review fix: workflow worker-entry catalog narrowing

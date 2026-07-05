@@ -113,6 +113,7 @@ import {
   summarizeRunInputParts,
   describeExternalDelegateCapability,
   distillWorkflowFromSession,
+  shadowWorkflowFromSession,
   existingSkillRoots,
   HostRuntime,
   catalogEntryOrigin,
@@ -146,6 +147,7 @@ import {
   type WorkflowAssetDetail,
   type WorkflowAssetReport,
   type WorkflowDistillReport,
+  type WorkflowShadowReport,
 } from "@sparkwright/host";
 import { prepareMcpToolsForRun } from "@sparkwright/mcp-adapter";
 import {
@@ -1298,12 +1300,13 @@ function parseArgs(
     subcommand !== "list" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
-    subcommand !== "distill"
+    subcommand !== "distill" &&
+    subcommand !== "shadow"
   ) {
     return {
       ok: false,
       message:
-        "Usage: sparkwright workflow <list|inspect|resume|distill> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
+        "Usage: sparkwright workflow <list|inspect|resume|distill|shadow> [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     };
   }
 
@@ -1772,7 +1775,8 @@ async function handleWorkflowCommand(
     subcommand !== "list" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
-    subcommand !== "distill"
+    subcommand !== "distill" &&
+    subcommand !== "shadow"
   ) {
     writeLine(io.stderr, workflowUsage());
     return { exitCode: 1 };
@@ -1830,6 +1834,31 @@ async function handleWorkflowCommand(
         parsed.format === "json"
           ? JSON.stringify(report, null, 2)
           : formatWorkflowDistillReport(report),
+      );
+      return { exitCode: report.ok ? 0 : 1 };
+    }
+
+    if (subcommand === "shadow") {
+      const [workflowName, sessionId] = splitCliWords(parsed.goal);
+      if (!workflowName || !sessionId) {
+        writeLine(
+          io.stderr,
+          "Usage: sparkwright workflow shadow <workflow-name> <session-id>",
+        );
+        return { exitCode: 1 };
+      }
+      const report = await shadowWorkflowFromSession({
+        workspaceRoot: parsed.workspaceRoot,
+        sessionRootDir: parsed.sessionRootDir,
+        workflowName,
+        sessionId,
+        env,
+      });
+      writeLine(
+        io.stdout,
+        parsed.format === "json"
+          ? JSON.stringify(report, null, 2)
+          : formatWorkflowShadowReport(report),
       );
       return { exitCode: report.ok ? 0 : 1 };
     }
@@ -1981,6 +2010,30 @@ function formatWorkflowDistillReport(report: WorkflowDistillReport): string {
     "",
   ];
   return [...header, report.markdown].join("\n");
+}
+
+function formatWorkflowShadowReport(report: WorkflowShadowReport): string {
+  const lines = [
+    `# Workflow Shadow Report`,
+    `workflow: ${report.workflowName}`,
+    `session: ${report.sessionId}`,
+    `trace: ${report.tracePath}`,
+    `source: ${report.asset.sourcePath}`,
+    `events: ${report.eventCount}`,
+    `status: ${report.ok ? "ok" : "needs-review"}`,
+    `checks: matched=${report.summary.matched} missing=${report.summary.missing} unobserved=${report.summary.unobserved}`,
+    ...(report.goal ? [`goal: ${report.goal}`] : []),
+    ...(report.terminalState ? [`terminal: ${report.terminalState}`] : []),
+  ];
+  if (report.warnings.length > 0) {
+    lines.push("warnings:");
+    for (const warning of report.warnings) lines.push(`- ${warning}`);
+  }
+  lines.push("coverage:");
+  for (const check of report.checks) {
+    lines.push(`- ${check.status} ${check.kind} ${check.id}: ${check.message}`);
+  }
+  return lines.join("\n");
 }
 
 function firstCliWord(input: string): string | undefined {
@@ -7427,6 +7480,7 @@ function workflowUsage(): string {
     "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
     "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
     "       sparkwright workflow distill <session-id> [--workspace path] [--session-root path] [--format json|text]",
+    "       sparkwright workflow shadow <workflow-name> <session-id> [--workspace path] [--session-root path] [--format json|text]",
   ].join("\n");
 }
 

@@ -96,6 +96,21 @@ Manual compact
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` reads an
+  existing `<sessionRoot>/<sessionId>/trace.jsonl` through host trace helpers
+  and does not write `session.json`, `events.jsonl`, workflow-run records, or
+  compaction artifacts.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; `npm
+  --workspace @sparkwright/cli test -- test/cli.test.ts -t "shadows a workflow
+  asset|distills a session trace|lists and inspects workflow assets"`.
+
 - Status: Verified
 - Date: 2026-07-05T00:42:02+0800
 - Scope: workflow-runtime-v1 P2 session layout: `workflow-runs/` is now the

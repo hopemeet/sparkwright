@@ -182,6 +182,19 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` is a CLI
+  and host-helper-only offline report. Host protocol request/response shapes,
+  workflow list/resume payloads, capability snapshot schema, host-event
+  vocabulary, and raw trace event vocabulary remain unchanged.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/protocol/src/index.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for protocol behavior; P8a made no protocol semantic change.
+  Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
 - Date: 2026-07-05T20:18:29+0800
 - Scope: workflow-runtime-v1 P5 post-review routed-page check: explicit
   `parallel.onPass`, branch-verifier rejection, delegate_parallel infra-error

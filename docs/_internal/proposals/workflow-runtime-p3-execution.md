@@ -678,6 +678,76 @@ successful trace" shape. Focused gates passed: `npm --workspace
 and inspects workflow assets"`, `npm --workspace @sparkwright/host run
 typecheck`, and `npm --workspace @sparkwright/cli run typecheck`.
 
+## Stage 8a — Offline `workflow shadow`
+
+入口事实（2026-07-05）：P7a commit `da882db6` 已在当前分支，focused
+distill gates 通过。P8a 进入池子第三项 shadow mode，但只做离线/read-only
+coverage report：现有 workflow asset 对照现有 session trace，报告 observed
+tools / writes / verification commands 是否被 workflow 声明覆盖，不启动 run、
+不写 workflow state、不订阅 live hooks。
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P8a 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- P8a 的删除验收是署名 acceptance：没有旧 shadow runner 可删，本片退役
+  proposal parking-lot-only 的 `shadow workflow` idea 的第一个可 review
+  表面，但明确不是 parallel runtime。
+- 失败即停：需要 live run subscription、protocol/TUI telemetry、workflow
+  record writes、run verdict changes、model judge、asset/proposal writes、replay
+  execution、workflow_start/spawn、或新 scheduler/hook producer 时，停下拆相位。
+
+### Step 1 — host offline shadow report
+
+- 抽出/复用 P7a 的 deterministic trace observation：goal、terminal state、
+  observed tools、read/write paths、post-write verification-like shell commands、
+  todo_write signal。
+- 新增 host helper：读取 layered workflow asset 与
+  `<session-root>/<session-id>/trace.jsonl`，校验 session id path safety。
+- report 对 observed facts 做 coverage：
+  - observed tool 是否由 model node `tools`、非 model node kind、command
+    verifier、或 `todo_clear` 覆盖；
+  - observed write path 是否由 `diff_scope.include` 覆盖；
+  - observed verification-like shell command 是否由 command verifier 覆盖；
+  - workflow 声明但 trace 未观察到的 verifier/tool 只标 `unobserved`，不
+    作为失败。
+- Focused gates：host unit tests for matched report、missing coverage、
+  non-completed trace warning、safe session id；host typecheck。
+- 失败即停：需要执行 workflow nodes、读取模型文本语义、或根据 report 自动
+  修改 asset。
+
+### Step 2 — CLI surface
+
+- `sparkwright workflow shadow <workflow-name> <session-id>` 输出 text 或
+  JSON；exit code 跟随 report `ok`（missing coverage 或非 completed trace
+  返回 1）。
+- Focused gates：CLI tests for text/json output + workflow-not-found / usage；
+  CLI typecheck。
+- 失败即停：CLI 写 workflow state、启动 host run、或改变既有
+  `workflow list|inspect|resume|distill` 语义。
+
+### Step 3 — P8a 收尾
+
+- 跑 focused gates，通过后提交 P8a（不加 Co-Authored-By）。
+- 本片仍不要求 full release gate；进入 live shadow telemetry / protocol /
+  TUI / replay execution / asset write/apply surface 前再跑相位级
+  `npm run release:check`。
+
+Implementation note (2026-07-05): P8a added shared deterministic
+`workflow-trace-observation.ts`, host `workflow-shadow.ts`, and CLI
+`sparkwright workflow shadow <workflow-name> <session-id>`. The command reads a
+workflow asset plus an existing session trace and reports matched/missing/
+unobserved coverage for observed tools, write paths, `diff_scope`, command
+verifier-like shell commands, and `todo_clear`. It intentionally does not start
+a run, instantiate projection hooks, write workflow-run records, mutate traces,
+or add protocol/TUI telemetry. Focused gates passed: `npm --workspace
+@sparkwright/host test -- test/workflow-shadow.test.ts
+test/workflow-distill.test.ts`, `npm --workspace @sparkwright/host run
+typecheck`, `npm --workspace @sparkwright/host run build`, `npm --workspace
+@sparkwright/cli test -- test/cli.test.ts -t "shadows a workflow asset|distills
+a session trace|lists and inspects workflow assets"`, and `npm --workspace
+@sparkwright/cli run typecheck`.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

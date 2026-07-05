@@ -24,6 +24,9 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/workflows.ts`
 - `packages/host/src/workflow-projection.ts`
 - `packages/host/src/workflow-node-api.ts`
+- `packages/host/src/workflow-distill.ts`
+- `packages/host/src/workflow-shadow.ts`
+- `packages/host/src/workflow-trace-observation.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/traced-process-runner.ts`
 - `packages/host/src/acp-child-agent.ts`
@@ -311,6 +314,13 @@ Does not own:
   post-write verification commands, and renders a review-first workflow draft.
   It does not write workflow assets, create skill-evolution proposals, mutate
   traces, or add protocol/TUI runtime behavior.
+- P8a `workflow-shadow.ts` is a read-only deterministic offline coverage
+  reporter. It compares an existing workflow asset against an existing session
+  trace using the shared `workflow-trace-observation.ts` extraction path and
+  reports matched/missing/unobserved coverage for observed tools, writes,
+  `diff_scope`, command-verifier-like shell commands, and `todo_clear`. It does
+  not instantiate workflows, write workflow-run records, mutate traces, execute
+  nodes, or add live protocol/TUI shadow telemetry.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -683,6 +693,25 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a host boundary: offline `workflow-shadow.ts`
+  reads workflow assets and session traces, reuses
+  `workflow-trace-observation.ts`, and emits coverage reports without starting
+  runs, writing workflow state, mutating traces, or adding protocol/TUI/live
+  hook behavior.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/index.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; `npm
+  --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`.
 
 - Status: Verified
 - Date: 2026-07-05T22:04:23+0800

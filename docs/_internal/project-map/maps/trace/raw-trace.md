@@ -193,6 +193,19 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: offline `workflow shadow`
+  reads existing raw trace events through `loadTraceEventsFile` but does not
+  write trace events, mutate traces, add raw trace event types, or change trace
+  filtering/redaction.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for raw trace codec/store behavior; P8a made no raw trace
+  semantic change. Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
 - Date: 2026-07-05T20:18:29+0800
 - Scope: workflow-runtime-v1 P5 post-review trace check: explicit parallel
   transition validation, branch-verifier rejection, and delegate_parallel infra

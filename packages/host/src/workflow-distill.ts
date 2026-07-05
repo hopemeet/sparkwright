@@ -5,17 +5,17 @@ import {
   type SparkwrightEvent,
 } from "@sparkwright/core";
 import { stringify as stringifyYaml } from "yaml";
+import {
+  observeWorkflowTraceEvents,
+  type WorkflowTraceObservedCommand,
+} from "./workflow-trace-observation.js";
 
 export interface WorkflowDistillOptions {
   sessionRootDir: string;
   sessionId: string;
 }
 
-export interface WorkflowDistillObservedCommand {
-  command: string;
-  toolName: string;
-  sequence: number;
-}
+export type WorkflowDistillObservedCommand = WorkflowTraceObservedCommand;
 
 export interface WorkflowDistillReport {
   ok: boolean;
@@ -33,11 +33,6 @@ export interface WorkflowDistillReport {
   };
   warnings: string[];
   markdown: string;
-}
-
-interface RequestedTool {
-  toolName: string;
-  command?: string;
 }
 
 export async function distillWorkflowFromSession(
@@ -58,59 +53,13 @@ export function distillWorkflowFromEvents(input: {
   tracePath: string;
   events: readonly SparkwrightEvent[];
 }): WorkflowDistillReport {
-  const events = [...input.events].sort((left, right) => {
-    const leftSeq = left.sequence ?? 0;
-    const rightSeq = right.sequence ?? 0;
-    return leftSeq - rightSeq;
-  });
-  const goal = events
-    .map((event) => stringValue(recordValue(event.payload)?.goal))
-    .find((value): value is string => value !== undefined);
-  const terminalState = [...events]
-    .reverse()
-    .map((event) =>
-      event.type === "run.completed" || event.type === "run.failed"
-        ? (stringValue(recordValue(event.payload)?.state) ?? event.type)
-        : undefined,
-    )
-    .find((value): value is string => value !== undefined);
-  const toolNames = uniqueStrings(
-    events
-      .filter((event) => event.type === "tool.requested")
-      .map((event) => stringValue(recordValue(event.payload)?.toolName))
-      .filter((value): value is string => value !== undefined)
-      .map(normalizeWorkflowToolName)
-      .filter((value): value is string => value !== undefined),
-  );
-  const readPaths = uniqueStrings(
-    events
-      .filter((event) => event.type === "workspace.read")
-      .map((event) => stringValue(recordValue(event.payload)?.path))
-      .filter((value): value is string => value !== undefined),
-  );
-  const writePaths = uniqueStrings(
-    events
-      .filter((event) => event.type === "workspace.write.completed")
-      .map((event) => stringValue(recordValue(event.payload)?.path))
-      .filter((value): value is string => value !== undefined),
-  );
-  const lastWriteSequence = events
-    .filter((event) => event.type === "workspace.write.completed")
-    .map((event) => event.sequence ?? 0)
-    .at(-1);
-  const requestedTools = requestedToolMap(events);
-  const verificationCommands = collectVerificationCommands({
-    events,
-    requestedTools,
-    afterSequence: lastWriteSequence,
-  });
-  const sawTodoWrite = events.some((event) => {
-    const payload = recordValue(event.payload);
-    return (
-      event.type === "tool.requested" &&
-      stringValue(payload?.toolName) === "todo_write"
-    );
-  });
+  const observation = observeWorkflowTraceEvents(input.events);
+  const goal = observation.goal;
+  const terminalState = observation.terminalState;
+  const toolNames = observation.tools;
+  const readPaths = observation.readPaths;
+  const writePaths = observation.writePaths;
+  const verificationCommands = observation.verificationCommands;
   const warnings: string[] = [];
   if (terminalState !== "completed") {
     warnings.push(
@@ -135,14 +84,14 @@ export function distillWorkflowFromEvents(input: {
     readPaths,
     writePaths,
     verificationCommands,
-    sawTodoWrite,
+    sawTodoWrite: observation.sawTodoWrite,
     warnings,
   });
   return {
     ok: terminalState === "completed",
     sessionId: input.sessionId,
     tracePath: input.tracePath,
-    eventCount: events.length,
+    eventCount: observation.eventCount,
     assetName,
     ...(goal ? { goal } : {}),
     ...(terminalState ? { terminalState } : {}),
@@ -283,116 +232,6 @@ function renderWorkflowDraft(input: {
   return ["---", frontmatter, "---", "", ...bodies, ""].join("\n");
 }
 
-function collectVerificationCommands(input: {
-  events: readonly SparkwrightEvent[];
-  requestedTools: ReadonlyMap<string, RequestedTool>;
-  afterSequence: number | undefined;
-}): WorkflowDistillObservedCommand[] {
-  const commands: WorkflowDistillObservedCommand[] = [];
-  const seen = new Set<string>();
-  for (const event of input.events) {
-    if (event.type !== "tool.completed") continue;
-    if (
-      input.afterSequence !== undefined &&
-      (event.sequence ?? 0) <= input.afterSequence
-    ) {
-      continue;
-    }
-    const payload = recordValue(event.payload);
-    const toolName = stringValue(payload?.toolName);
-    if (!toolName || !isShellTool(toolName)) continue;
-    if (stringValue(payload?.status) === "failed") continue;
-    const callId =
-      stringValue(payload?.toolCallId) ?? stringValue(payload?.id) ?? "";
-    const requested = input.requestedTools.get(callId);
-    const command =
-      requested?.command ??
-      commandFromRecord(payload) ??
-      stringValue(payload?.command);
-    if (!command || !isVerificationLikeCommand(command)) continue;
-    if (seen.has(command)) continue;
-    seen.add(command);
-    commands.push({
-      command,
-      toolName: normalizeWorkflowToolName(toolName) ?? toolName,
-      sequence: event.sequence ?? 0,
-    });
-  }
-  return commands;
-}
-
-function requestedToolMap(
-  events: readonly SparkwrightEvent[],
-): Map<string, RequestedTool> {
-  const requested = new Map<string, RequestedTool>();
-  for (const event of events) {
-    if (event.type !== "tool.requested") continue;
-    const payload = recordValue(event.payload);
-    const id = stringValue(payload?.id) ?? stringValue(payload?.toolCallId);
-    const toolName = stringValue(payload?.toolName);
-    if (!id || !toolName) continue;
-    requested.set(id, {
-      toolName,
-      command: commandFromRecord(recordValue(payload?.arguments)),
-    });
-  }
-  return requested;
-}
-
-function commandFromRecord(
-  record: Record<string, unknown> | undefined,
-): string | undefined {
-  if (!record) return undefined;
-  for (const key of ["command", "cmd", "script", "run"]) {
-    const value = stringValue(record[key]);
-    if (value) return value;
-  }
-  return undefined;
-}
-
-function normalizeWorkflowToolName(toolName: string): string | undefined {
-  const normalized = toolName.trim();
-  switch (normalized) {
-    case "read_file":
-    case "read":
-      return "read";
-    case "grep":
-    case "search":
-      return "grep";
-    case "glob":
-    case "list_dir":
-      return "glob";
-    case "write_file":
-    case "write":
-      return "write";
-    case "edit_anchored_text":
-    case "edit":
-      return "edit";
-    case "shell":
-    case "bash":
-      return "bash";
-    case "todo_write":
-      return "todo_write";
-    case "delegate_agent":
-    case "delegate_parallel":
-    case "task_create":
-      return normalized;
-    default:
-      return undefined;
-  }
-}
-
-function isShellTool(toolName: string): boolean {
-  const normalized = normalizeWorkflowToolName(toolName);
-  return normalized === "bash";
-}
-
-function isVerificationLikeCommand(command: string): boolean {
-  return /\b(test|tests|check|typecheck|lint|verify|build|release:check)\b/i.test(
-    command,
-  );
-}
-
 function pathLine(label: string, paths: readonly string[]): string {
   if (paths.length === 0) return `${label}: (none observed).`;
   return `${label}: ${paths.slice(0, 12).join(", ")}${paths.length > 12 ? ", ..." : ""}.`;
@@ -421,14 +260,4 @@ function slugify(value: string): string {
 
 function uniqueStrings(values: Iterable<string>): string[] {
   return [...new Set([...values].filter((value) => value.length > 0))];
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

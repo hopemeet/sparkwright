@@ -334,6 +334,16 @@ export type {
   WorkflowDistillReport,
 } from "./workflow-distill.js";
 export {
+  shadowWorkflowFromEvents,
+  shadowWorkflowFromSession,
+} from "./workflow-shadow.js";
+export type {
+  WorkflowShadowCheck,
+  WorkflowShadowCheckStatus,
+  WorkflowShadowOptions,
+  WorkflowShadowReport,
+} from "./workflow-shadow.js";
+export {
   MAX_RUN_IMAGE_INPUT_BYTES,
   SUPPORTED_RUN_IMAGE_INPUT_TYPES,
   buildImageRunInputPart,

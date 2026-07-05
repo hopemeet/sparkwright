@@ -112,6 +112,19 @@ model calls shell tool
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: offline `workflow shadow`
+  compares historical shell command strings against workflow declarations but
+  does not execute shell, classify commands, request approvals, change
+  sandbox/access clamps, or add a shell runner.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for live shell behavior; P8a made no shell execution semantic
+  change. Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
 - Date: 2026-07-05T20:18:29+0800
 - Scope: workflow-runtime-v1 P5 post-review routed-page check: branch
   validation and delegate_parallel infra-error handling changed host workflow

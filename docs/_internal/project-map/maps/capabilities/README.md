@@ -194,6 +194,19 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` reuses
+  workflow asset discovery/parsing for an offline report only. Capability
+  snapshots, active-rule inspection, workflow_start absence, tool catalogs, and
+  delegate/shell/MCP capability surfaces remain unchanged.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for capability inspection; P8a made no capability semantic
+  change. Focused shadow gates passed in host/CLI.
+
 - Status: Verified
 - Date: 2026-07-05T20:18:29+0800
 - Scope: workflow-runtime-v1 P5 capability boundary after post-review
