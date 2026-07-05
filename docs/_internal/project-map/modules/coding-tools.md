@@ -13,6 +13,7 @@ See also [../maps/runtime/tool-orchestration.md](../maps/runtime/tool-orchestrat
 - `packages/host/src/tool-selectors.ts`
 - `packages/host/src/tools.ts`
 - `packages/host/src/shell.ts`
+- `packages/project-context/src/index.ts`
 - `packages/coding-tools/src/*`
 - `packages/core/src/tools.ts`
 - `packages/core/src/workspace.ts`
@@ -76,6 +77,9 @@ Does not own:
 - Project-context file-tool guidance tells the model to run relevant known
   verification after successful writes instead of re-reading just-written or
   unchanged files.
+- Project-context `todo_planning` is the model-visible authority for when to
+  use `todo_write`: it appears only when `todo_write` is in the live inventory,
+  while the tool schema carries only structural/status/evidence rules.
 - Main, read-only child, and CLI diagnostic coding tool exposure should flow through the host tool catalog before reaching runtime, direct-core/cron runs, and capability snapshots.
 - Top-level `tools.use` filters the catalog by source/capability selectors
   before model-facing descriptors are built; `tools.allowed` and
@@ -106,6 +110,20 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T21:40:16+0800
+- Scope: workflow-runtime-v1 P6a self-hosting todo doctrine: project-context's
+  tool-gated `todo_planning` section is the single cadence source for
+  `todo_write`; child/read-only inventories without `todo_write` do not receive
+  the guidance.
+- Read: `packages/project-context/src/index.ts`,
+  `packages/project-context/test/index.test.ts`,
+  `packages/agent-runtime/src/todo/tools.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/project-context test --
+  test/index.test.ts -t "todo-planning"`; `npm --workspace
+  @sparkwright/project-context run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-01T22:09:33+0800

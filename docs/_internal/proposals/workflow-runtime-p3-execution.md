@@ -513,6 +513,56 @@ test/workflows.test.ts -t "lease"`, `npm --workspace @sparkwright/host test --
 test/workflows.test.ts test/workflow-hooks.test.ts`, and `npm --workspace
 @sparkwright/agent-runtime test -- test/workflows.test.ts`.
 
+## Stage 6a — Self-hosting plan/todo doctrine authority
+
+入口事实（2026-07-05）：P5 hardening commit `80c991ae` 已在当前分支，
+focused host/agent-runtime gates 与 full `npm run release:check` 通过。池子
+选片按"退役一个旧机制 + 有真实客户"先选 self-hosting plan/todo；本小片
+只收束 todo doctrine authority，不进入 workflow distill / shadow mode /
+workspace-root D5 / two-stage PreToolUse D20。
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P6a 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- 本节作为执行记录入口；P6a 的删除验收是退役 `todo_write` 工具描述里的
+  prompt-level cadence 副本，让 `project-context` 的 tool-gated
+  `todo_planning` 成为"何时维护 ledger"的唯一权威源。
+- 失败即停：如果需要替换 permission `plan` mode、删除 core `Plan` API、
+  新增 `todo_clear` verifier、workflow distill、shadow telemetry、或任何
+  `workflow_start` / spawn-shaped 入口，则停下拆到后续相位。
+
+### Step 1 — 收束 todo cadence 源头
+
+- `todo_write` tool description 保留 structural/status/evidence rules：
+  status alphabet、最多一个 `in_progress`、真实结果才能 `completed`、child
+  agents 不可写。
+- `todo_write` tool description 删除"同一 turn 更新 ledger / 不单独花一轮
+  bookkeeping"这类 cadence 指令；该指令只保留在 tool-gated
+  `todo_planning` prompt section。
+- Focused gates：`@sparkwright/project-context` todo-planning prompt test；
+  `@sparkwright/agent-runtime` todo tool description test；相关包 typecheck。
+- 失败即停：模型在有 `todo_write` inventory 时看不到 cadence；child/read-only
+  inventory 仍注入 `todo_planning`；或工具 schema 丢失状态/完成证据约束。
+
+### Step 2 — P6a 收尾
+
+- 跑 focused gates，通过后提交 P6a（不加 Co-Authored-By）。
+- 本小片不要求 full release gate；下一片入口前若进入更宽的 runtime/host
+  行为面，再跑相位级 `npm run release:check`。
+
+Implementation note (2026-07-05): P6a removed the duplicate prompt-level todo
+cadence sentence from `todo_write`'s tool description while preserving
+status/evidence schema guidance. `project-context`'s tool-gated
+`todo_planning` section remains the only place that says when to open, update,
+skip, or avoid rewriting the todo ledger. Focused gates passed:
+`npm --workspace @sparkwright/agent-runtime test -- test/todo.test.ts -t
+"todo_write schema|createTodoTools exposes|TodoLedger helpers"`,
+`npm --workspace @sparkwright/project-context test -- test/index.test.ts -t
+"todo-planning"`, `npm --workspace @sparkwright/agent-runtime run typecheck`,
+and `npm --workspace @sparkwright/project-context run typecheck`. Targeted
+Prettier check passed for the touched docs and TypeScript files.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

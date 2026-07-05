@@ -138,8 +138,7 @@ export function createTodoWriteTool(
     description: [
       "Create and maintain the run's todo list — a short checklist that tracks multi-step work and shows progress. Each call replaces the whole list, so pass every task, in order, every time.",
       "Each item has a `title` and a `status` (one of: pending, in_progress, completed, blocked, failed, skipped; synonyms like 'todo'/'done' are accepted). Keep at most one item in_progress at a time.",
-      "Mark an item in_progress when you start it, and completed the moment its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Never mark an item completed before its result is in.",
-      "Update the ledger in the same message as the action that caused the change — mark a finished item completed and the next item in_progress alongside your next tool call, rather than spending a separate turn on bookkeeping.",
+      "Use in_progress for the current active item, and completed only when its work is actually finished — based on real results, never on intent, and never by loosening what counts as done. Never mark an item completed before its result is in.",
       "Child agents may not call this tool.",
     ].join("\n"),
     inputSchema: {

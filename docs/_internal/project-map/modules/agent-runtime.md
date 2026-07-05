@@ -127,6 +127,12 @@ Does not own:
   `runTodoSupervised()` now expresses the todo-continuation chain as this
   degenerate workflow controller, preserving the existing todo audit decisions
   while moving the loop shape out of host.
+- `todo_write` tool schema text owns structural/status/evidence rules only:
+  whole-list replacement, canonical statuses, at most one `in_progress`, and
+  real evidence before `completed`. Prompt-level cadence ("when to open/update
+  the ledger, avoid rewrites, and fold bookkeeping into action turns") lives in
+  project-context's tool-gated `todo_planning` section, not in the tool schema
+  or todo continuation prompt.
 - P3 Step 4a keeps that boundary: host's actor episode driver calls the
   existing todo/workflow chain driver and creates worker runs itself. Do not add
   model construction, host config loading, tool catalogs, or session protocol
@@ -266,6 +272,20 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T21:40:16+0800
+- Scope: workflow-runtime-v1 P6a todo doctrine boundary: `todo_write`
+  description keeps status/evidence rules but no longer restates prompt-level
+  cadence; `runTodoSupervised()` and continuation prompts remain recovery-only
+  and do not own "when to touch the ledger" guidance.
+- Read: `packages/agent-runtime/src/todo/tools.ts`,
+  `packages/agent-runtime/src/todo/ledger.ts`,
+  `packages/agent-runtime/test/todo.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/todo.test.ts -t "todo_write schema|createTodoTools exposes|TodoLedger
+  helpers"`; `npm --workspace @sparkwright/agent-runtime run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T20:18:29+0800

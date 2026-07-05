@@ -349,6 +349,19 @@ describe("createTodoWriteTool", () => {
     const ledger = await readTodoLedger(path);
     expect(ledger.items).toHaveLength(1);
   });
+
+  it("keeps cadence guidance out of the todo_write schema text", async () => {
+    const path = await tempPath();
+    const todoWrite = createTodoWriteTool({ getTodoPath: () => path });
+    expect(todoWrite.description).toContain("one item in_progress");
+    expect(todoWrite.description).toContain(
+      "Never mark an item completed before its result is in.",
+    );
+    expect(todoWrite.description).not.toContain("same message");
+    expect(todoWrite.description).not.toContain("same turn");
+    expect(todoWrite.description).not.toContain("separate turn");
+    expect(todoWrite.description).not.toContain("bookkeeping");
+  });
 });
 
 describe("TodoLedger helpers", () => {
