@@ -288,8 +288,9 @@ Current event types:
   `workflow.cancelled`: workflow-runtime lifecycle annotations. Projection
   runs created with the optional `workflow` field on the start-run request emit
   started/node/interrupted/completed/failed/cancelled events and persist a
-  durable workflow-run snapshot under the owning session. `workflow.waiting`
-  remains reserved until a later workflow phase adds a waiting-node emitter.
+  durable workflow-run snapshot under the owning session. P3 human nodes emit
+  `workflow.waiting` with `wait.kind` and update the durable workflow-run
+  record to `status:"waiting"` before the host releases the workflow lease.
   Built-in verification/documented-command run-level invariants reuse the
   terminal workflow event vocabulary with `projectionKind: "invariant"` and
   `verificationSource: "profile" | "documented_command"`, but do not emit

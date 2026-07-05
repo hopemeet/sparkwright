@@ -5411,6 +5411,51 @@ describe("SparkwrightRun", () => {
     expect(source.drainCalls).toBeGreaterThanOrEqual(2);
   });
 
+  it("runs Stop workflow hooks before entering waiting_tasks for awaited task revival", async () => {
+    const source = new ManualTaskRevivalSource();
+    source.pending = true;
+    let modelCalls = 0;
+    const stopRunStates: string[] = [];
+    const run = createRun({
+      goal: "task terminal ordering",
+      notificationSources: [source],
+      taskRevivalSource: source,
+      workflowHooks: [
+        {
+          name: "capture-stop-state",
+          hook: "Stop",
+          handle(input) {
+            stopRunStates.push(input.run.state);
+          },
+        },
+      ],
+      model: {
+        async complete() {
+          modelCalls += 1;
+          return { message: modelCalls === 1 ? "waiting" : "done" };
+        },
+      },
+      maxSteps: 3,
+    });
+
+    const resultPromise = run.start();
+    await waitForCondition(() => run.record.state === "waiting_tasks");
+
+    source.deliver({
+      content: "Task task_terminal completed.",
+      metadata: { taskId: "task_terminal" },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.state).toBe("completed");
+    expect(modelCalls).toBe(2);
+    expect(stopRunStates).toEqual(["running", "running"]);
+    expect(result.metadata).toMatchObject({
+      revivalTurnsUsed: 1,
+    });
+  });
+
   it("revives awaited task completions after maxSteps is otherwise spent", async () => {
     const source = new ManualTaskRevivalSource();
     source.pending = true;

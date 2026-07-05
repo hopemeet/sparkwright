@@ -1,11 +1,18 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
+import type { RunBudget } from "@sparkwright/core";
 import type {
-  WorkflowCommandVerifierDefinition,
+  WorkflowCommandNodeDefinition,
+  WorkflowDelegateNodeDefinition,
+  WorkflowDiffScopeVerifierDefinition,
   WorkflowDefinition,
+  WorkflowHumanNodeDefinition,
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
+  WorkflowTaskNodeDefinition,
+  WorkflowTaskNodeMode,
   WorkflowTransitionDefinition,
+  WorkflowVerifierDefinition,
   WorkflowVerifierExpectation,
 } from "@sparkwright/agent-runtime";
 import {
@@ -30,6 +37,7 @@ const WORKFLOW_NODE_EXECUTE_KINDS = new Set<WorkflowNodeExecuteKind>([
   "command",
   "delegate",
   "task",
+  "human",
 ]);
 
 export interface WorkflowAssetSummary {
@@ -299,8 +307,14 @@ function workflowNodeFromRaw(
     id,
     title: optionalString(raw.title) ?? optionalString(raw.name),
     execute: optionalString(raw.execute) ?? optionalString(raw.type),
+    model: optionalString(raw.model),
+    runBudget: parseWorkflowRunBudget(raw.runBudget ?? raw.run_budget, id),
     body: sectionBody.get(id) ?? optionalString(raw.body) ?? fallbackBody ?? "",
     tools: optionalStringArray(raw.tools),
+    command: parseWorkflowCommandNode(raw, id),
+    delegate: parseWorkflowDelegateNode(raw, id),
+    task: parseWorkflowTaskNode(raw, id),
+    human: parseWorkflowHumanNode(raw, id),
     verify: parseWorkflowVerifiers(raw.verify, id),
     onPass: parseWorkflowTransition(raw.onPass ?? raw.on_pass, id, "onPass"),
     onFail: parseWorkflowTransition(raw.onFail ?? raw.on_fail, id, "onFail"),
@@ -312,9 +326,15 @@ function workflowNodeFromFields(input: {
   id: string;
   title?: string;
   execute?: string;
+  model?: string;
+  runBudget?: RunBudget;
   body: string;
   tools?: string[];
-  verify?: WorkflowCommandVerifierDefinition[];
+  command?: WorkflowCommandNodeDefinition;
+  delegate?: WorkflowDelegateNodeDefinition;
+  task?: WorkflowTaskNodeDefinition;
+  human?: WorkflowHumanNodeDefinition;
+  verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
   metadata?: Record<string, unknown>;
@@ -324,7 +344,7 @@ function workflowNodeFromFields(input: {
       `Workflow node id must use letters, numbers, '.', '_', ':', or '-' (max 64 chars): ${input.id}`,
     );
   }
-  if (input.execute === "human" || input.execute === "ask_user") {
+  if (input.execute === "ask_user") {
     throw new Error(
       `Workflow node ${input.id} uses ${input.execute}, which is reserved for a later phase.`,
     );
@@ -339,15 +359,21 @@ function workflowNodeFromFields(input: {
         : undefined;
   if (!execute) {
     throw new Error(
-      `Workflow node ${input.id} execute must be one of: model, command, delegate, task.`,
+      `Workflow node ${input.id} execute must be one of: model, command, delegate, task, human.`,
     );
   }
   return {
     id: input.id,
     ...(input.title ? { title: input.title } : {}),
     execute,
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.runBudget ? { runBudget: input.runBudget } : {}),
     body: input.body.trim(),
     ...(input.tools ? { tools: input.tools } : {}),
+    ...(input.command ? { command: input.command } : {}),
+    ...(input.delegate ? { delegate: input.delegate } : {}),
+    ...(input.task ? { task: input.task } : {}),
+    ...(input.human ? { human: input.human } : {}),
     ...(input.verify ? { verify: input.verify } : {}),
     ...(input.onPass ? { onPass: input.onPass } : {}),
     ...(input.onFail ? { onFail: input.onFail } : {}),
@@ -355,10 +381,159 @@ function workflowNodeFromFields(input: {
   };
 }
 
+function parseWorkflowCommandNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowCommandNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.command) ? raw.command : raw;
+  const command = isRecord(raw.command)
+    ? optionalString(raw.command.command)
+    : optionalString(raw.command);
+  if (execute !== "command" && !command) return undefined;
+  if (!command) {
+    throw new Error(`Workflow command node ${nodeId} requires command.`);
+  }
+  const args = optionalStringArray(source.args);
+  const cwd = optionalString(source.cwd);
+  const timeoutMs = nonNegativeInteger(source.timeoutMs);
+  const maxOutputBytes = nonNegativeInteger(source.maxOutputBytes);
+  const expect = parseWorkflowExpectation(
+    source.expect,
+    `Workflow command node ${nodeId} expect`,
+  );
+  return {
+    command,
+    ...(args ? { args } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
+    ...(expect ? { expect } : {}),
+    ...(workflowCommandAuthorized(source) ? { authorized: true } : {}),
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowDelegateNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowDelegateNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.delegate) ? raw.delegate : raw;
+  const agentId =
+    optionalString(source.agentId) ?? optionalString(source.agent_id);
+  const toolName =
+    optionalString(source.toolName) ?? optionalString(source.tool_name);
+  const goal = optionalString(source.goal);
+  if (execute !== "delegate" && !agentId && !toolName && !goal) {
+    return undefined;
+  }
+  if (!agentId && !toolName) {
+    throw new Error(
+      `Workflow delegate node ${nodeId} requires agentId or toolName.`,
+    );
+  }
+  if (!goal) {
+    throw new Error(`Workflow delegate node ${nodeId} requires goal.`);
+  }
+  return {
+    ...(agentId ? { agentId } : {}),
+    ...(toolName ? { toolName } : {}),
+    goal,
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowTaskNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowTaskNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.task) ? raw.task : raw;
+  const kind = optionalString(source.kind);
+  if (execute !== "task" && !kind) return undefined;
+  if (!kind) {
+    throw new Error(`Workflow task node ${nodeId} requires kind.`);
+  }
+  const mode = parseWorkflowTaskMode(source.mode, nodeId);
+  const awaited =
+    typeof source.awaited === "boolean" ? source.awaited : undefined;
+  return {
+    kind,
+    ...(optionalString(source.title)
+      ? { title: optionalString(source.title) }
+      : {}),
+    ...(mode ? { mode } : {}),
+    ...(awaited !== undefined ? { awaited } : {}),
+    ...(source.payload !== undefined ? { payload: source.payload } : {}),
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowTaskMode(
+  raw: unknown,
+  nodeId: string,
+): WorkflowTaskNodeMode | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === "foreground" || raw === "awaited" || raw === "background") {
+    return raw;
+  }
+  throw new Error(
+    `Workflow task node ${nodeId} mode must be foreground, awaited, or background.`,
+  );
+}
+
+function parseWorkflowHumanNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowHumanNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.human) ? raw.human : raw;
+  if (execute !== "human" && !isRecord(raw.human)) return undefined;
+  const waitSource = isRecord(source.wait) ? source.wait : source;
+  const kind = optionalString(waitSource.kind) ?? "input";
+  if (kind !== "input" && kind !== "task" && kind !== "approval") {
+    throw new Error(
+      `Workflow human node ${nodeId} wait.kind must be input, task, or approval.`,
+    );
+  }
+  const reason =
+    optionalString(waitSource.reason) ??
+    optionalString(source.reason) ??
+    optionalString(source.prompt);
+  return {
+    ...(optionalString(source.prompt)
+      ? { prompt: optionalString(source.prompt) }
+      : {}),
+    wait: {
+      kind,
+      ...(reason ? { reason } : {}),
+      ...(optionalString(waitSource.taskId)
+        ? { taskId: optionalString(waitSource.taskId) }
+        : {}),
+      ...(optionalString(waitSource.approvalId)
+        ? { approvalId: optionalString(waitSource.approvalId) }
+        : {}),
+      ...(optionalRecord(waitSource.metadata)
+        ? { metadata: optionalRecord(waitSource.metadata) }
+        : {}),
+    },
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
+}
+
 function parseWorkflowVerifiers(
   raw: unknown,
   nodeId: string,
-): WorkflowCommandVerifierDefinition[] | undefined {
+): WorkflowVerifierDefinition[] | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) {
     throw new Error(`Workflow node ${nodeId} verify must be an array.`);
@@ -373,16 +548,19 @@ function parseWorkflowVerifier(
   raw: unknown,
   nodeId: string,
   index: number,
-): WorkflowCommandVerifierDefinition {
+): WorkflowVerifierDefinition {
   if (!isRecord(raw)) {
     throw new Error(
       `Workflow node ${nodeId} verifier ${index + 1} must be an object.`,
     );
   }
   const kind = optionalString(raw.kind) ?? "command";
+  if (kind === "diff_scope") {
+    return parseWorkflowDiffScopeVerifier(raw, nodeId, index);
+  }
   if (kind !== "command") {
     throw new Error(
-      `Workflow node ${nodeId} verifier ${index + 1} kind must be command for P1.`,
+      `Workflow node ${nodeId} verifier ${index + 1} kind must be command or diff_scope for P3 Step 2.`,
     );
   }
   const command = optionalString(raw.command);
@@ -395,7 +573,10 @@ function parseWorkflowVerifier(
   const cwd = optionalString(raw.cwd);
   const timeoutMs = nonNegativeInteger(raw.timeoutMs);
   const maxOutputBytes = nonNegativeInteger(raw.maxOutputBytes);
-  const expect = parseWorkflowVerifierExpectation(raw.expect, nodeId, index);
+  const expect = parseWorkflowExpectation(
+    raw.expect,
+    `Workflow node ${nodeId} verifier ${index + 1} expect`,
+  );
   return {
     id:
       optionalString(raw.id) ??
@@ -408,26 +589,85 @@ function parseWorkflowVerifier(
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
     ...(expect ? { expect } : {}),
-    ...(workflowVerifierAuthorized(raw) ? { authorized: true } : {}),
+    ...(workflowCommandAuthorized(raw) ? { authorized: true } : {}),
     ...(optionalRecord(raw.metadata)
       ? { metadata: optionalRecord(raw.metadata) }
       : {}),
   };
 }
 
-function parseWorkflowVerifierExpectation(
-  raw: unknown,
+function parseWorkflowDiffScopeVerifier(
+  raw: Record<string, unknown>,
   nodeId: string,
   index: number,
+): WorkflowDiffScopeVerifierDefinition {
+  return {
+    id:
+      optionalString(raw.id) ??
+      optionalString(raw.name) ??
+      `${nodeId}:diff_scope:${index + 1}`,
+    kind: "diff_scope",
+    ...(optionalStringArray(raw.include)
+      ? { include: optionalStringArray(raw.include) }
+      : {}),
+    ...(optionalStringArray(raw.exclude)
+      ? { exclude: optionalStringArray(raw.exclude) }
+      : {}),
+    ...(optionalRecord(raw.metadata)
+      ? { metadata: optionalRecord(raw.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowExpectation(
+  raw: unknown,
+  field: string,
 ): WorkflowVerifierExpectation | undefined {
   if (raw === undefined) return undefined;
   if (raw === "zero" || raw === "nonzero") return raw;
-  throw new Error(
-    `Workflow node ${nodeId} verifier ${index + 1} expect must be zero or nonzero.`,
-  );
+  throw new Error(`${field} must be zero or nonzero.`);
 }
 
-function workflowVerifierAuthorized(raw: Record<string, unknown>): boolean {
+function parseWorkflowRunBudget(
+  raw: unknown,
+  nodeId: string,
+): RunBudget | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error(`Workflow node ${nodeId} runBudget must be an object.`);
+  }
+  const budget: RunBudget = {};
+  for (const key of [
+    "maxDurationMs",
+    "maxModelCalls",
+    "maxToolCalls",
+    "maxTokens",
+  ] as const) {
+    if (raw[key] === undefined) continue;
+    const value = positiveInteger(raw[key]);
+    if (value === undefined) {
+      throw new Error(
+        `Workflow node ${nodeId} runBudget.${key} must be a positive integer.`,
+      );
+    }
+    budget[key] = value;
+  }
+  if (raw.maxCostUsd !== undefined) {
+    if (
+      typeof raw.maxCostUsd !== "number" ||
+      !Number.isFinite(raw.maxCostUsd) ||
+      raw.maxCostUsd <= 0
+    ) {
+      throw new Error(
+        `Workflow node ${nodeId} runBudget.maxCostUsd must be a positive number.`,
+      );
+    }
+    budget.maxCostUsd = raw.maxCostUsd;
+  }
+  return Object.keys(budget).length > 0 ? budget : undefined;
+}
+
+function workflowCommandAuthorized(raw: Record<string, unknown>): boolean {
   return raw.authorized === true || raw.authorization === "trusted";
 }
 
@@ -576,6 +816,12 @@ function optionalStringArray(value: unknown): string[] | undefined {
 
 function nonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
     ? value
     : undefined;
 }

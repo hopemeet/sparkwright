@@ -548,6 +548,277 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("drains command delegate and task nodes at TurnStart before the next model node", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const controller = new AbortController();
+      const parentRun = {
+        record: run,
+        events,
+        abortSignal: controller.signal,
+      } as never;
+      let delegateCalls = 0;
+      let taskCalls = 0;
+      const agentTool = defineTool<Record<string, unknown>, unknown>({
+        name: "delegate_agent",
+        description: "Delegate to a configured agent.",
+        inputSchema: { type: "object" },
+        policy: { risk: "safe" },
+        execute(args, ctx) {
+          delegateCalls += 1;
+          expect(ctx.run.id).toBe(run.id);
+          expect(args).toMatchObject({
+            agentId: "reviewer",
+            goal: "Review command output.",
+          });
+          return { ok: true };
+        },
+      });
+      const taskTool = defineTool<Record<string, unknown>, unknown>({
+        name: "task_create",
+        description: "Create a task.",
+        inputSchema: { type: "object" },
+        policy: { risk: "safe" },
+        execute(args, ctx) {
+          taskCalls += 1;
+          expect(ctx.run.id).toBe(run.id);
+          expect(args).toMatchObject({
+            kind: "agent",
+            mode: "awaited",
+            payload: { goal: "Check docs." },
+          });
+          return { taskId: "task_1", mode: "awaited", awaited: true };
+        },
+      });
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_non_model",
+        getRun: () => parentRun,
+        agentTool,
+        taskTool,
+        definition: {
+          assetName: "non-model",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "command",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+              onPass: "delegate",
+            },
+            {
+              id: "delegate",
+              execute: "delegate",
+              body: "",
+              delegate: {
+                agentId: "reviewer",
+                goal: "Review command output.",
+              },
+              onPass: "task",
+            },
+            {
+              id: "task",
+              execute: "task",
+              body: "",
+              task: {
+                kind: "agent",
+                mode: "awaited",
+                payload: { goal: "Check docs." },
+              },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize results." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(delegateCalls).toBe(1);
+      expect(taskCalls).toBe(1);
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+      });
+      expect(turn.context[0]?.content).toContain("Workflow node: model");
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map((event) => (event.payload as { nodeId?: string }).nodeId),
+      ).toEqual(["command", "delegate", "task"]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("parks human nodes as durable waiting snapshots", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const snapshots: WorkflowProjectionStateSnapshot[] = [];
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_human_wait",
+        onStateSnapshot: (snapshot) => {
+          snapshots.push(snapshot);
+        },
+        definition: {
+          assetName: "human-wait",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "prepare",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+              onPass: "review",
+            },
+            {
+              id: "review",
+              execute: "human",
+              body: "Wait for review.",
+              human: {
+                prompt: "Review the release.",
+                wait: {
+                  kind: "input",
+                  reason: "Need release approval.",
+                },
+              },
+              onPass: "finish",
+            },
+            { id: "finish", execute: "model", body: "Finish." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "review",
+      });
+      expect(snapshots.at(-1)).toMatchObject({
+        phase: "waiting",
+        nodeId: "review",
+        wait: {
+          kind: "input",
+          reason: "Need release approval.",
+        },
+      });
+      expect(
+        events.all().find((event) => event.type === "workflow.waiting")
+          ?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_human_wait",
+        nodeId: "review",
+        wait: { kind: "input" },
+      });
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map((event) => (event.payload as { nodeId?: string }).nodeId),
+      ).toEqual(["prepare"]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("evaluates diff_scope from the node-entry write epoch", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_diff_scope",
+      definition: {
+        assetName: "diff-scope",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "edit",
+            execute: "model",
+            body: "Edit src only.",
+            verify: [
+              {
+                id: "src-only",
+                kind: "diff_scope",
+                include: ["src/**"],
+                exclude: ["src/generated/**"],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    events.emit("workspace.write.completed", { path: "README.md" });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState()).toMatchObject({
+      status: "failed",
+      failure: {
+        reason: "verification_failed",
+      },
+    });
+    expect(
+      events.all().find((event) => event.type === "workflow.failed")?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_diff_scope",
+      failure: { code: "WORKFLOW_NODE_FAILED" },
+    });
+  });
+
   it("re-verifies completed nodes on resume before trusting the saved position", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {
