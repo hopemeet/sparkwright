@@ -137,7 +137,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   over the narrowed catalog only, so deferred schema loading still works without
   exposing disallowed parent-catalog tools. The clamp canonicalizes tool-name
   comparisons, so legacy declarations such as `tools: [read_file]` permit the
-  canonical worker tool `read`.
+  canonical worker tool `read`. In the P10a two-stage `PreToolUse` path, the
+  clamp runs in the governance pass after configured argument rewrites, so
+  rewritten paths/tool arguments are checked before budget, repeat, policy,
+  approval, and execution.
 - Workflow P3 Step 4b.2 adds model-node `model` / `runBudget` routing at the
   same worker-entry boundary. It changes the worker's model adapter and budget
   parameters, but does not change tool identity, tool catalog construction, or
@@ -226,6 +229,9 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   progress for command hooks, event hooks, skills, delegates, and promoted task
   observation uses host-owned stderr `SPARKWRIGHT_EVENT:` token lines; token
   lines are stripped before stderr previews/artifacts/live output/task output.
+  For `PreToolUse`, result-producing configured actions run in the rewrite pass;
+  static block/context actions and workflow clamps run in governance over the
+  rewritten arguments.
 
 ## Consumers
 
@@ -256,6 +262,23 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:08:34+0800
+- Scope: P10a D20 tool orchestration ordering: configured `PreToolUse` rewrites
+  apply before governance clamps, while budget, repeat, policy, approval, and
+  execution remain downstream of both passes.
+- Read: `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/core/test/workflow-hooks.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/workflow-hooks.test.ts -t "PreToolUse|workflowHooks"`; `npm
+  --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/core run build`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "PreToolUse|blocks tools outside|configured
+  PreToolUse"`; `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

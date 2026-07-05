@@ -1152,6 +1152,7 @@ export function createWorkflowProjectionHooks(
       name: familyName,
       id: "workflow-tool-clamp",
       hook: "PreToolUse",
+      preToolUseStage: "governance",
       onError: "block",
       async handle(input) {
         maybeThrowInjected("PreToolUse");
@@ -1179,6 +1180,7 @@ export function createWorkflowProjectionHooks(
         if (options.isToolAvailable?.(toolName) === false) {
           return { status: "continue", metadata: { workflowRunId } };
         }
+        const path = workflowPathFromPayload(input.payload, input.metadata);
         return {
           status: "block",
           reason: `Workflow node "${node.id}" does not allow tool "${toolName}".`,
@@ -1187,6 +1189,7 @@ export function createWorkflowProjectionHooks(
             nodeId: node.id,
             toolName,
             allowedTools: allowed,
+            ...(path ? { path } : {}),
           },
         };
       },
@@ -2465,6 +2468,32 @@ function cloneRuntimeState(state: WorkflowRuntimeState): WorkflowRuntimeState {
 
 function toolNameFromPayload(payload: unknown): string | undefined {
   return isRecord(payload) ? stringValue(payload.toolName) : undefined;
+}
+
+function workflowPathFromPayload(
+  payload: unknown,
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const fromRecord = (record: Record<string, unknown>) => {
+    const direct =
+      stringValue(record.path) ??
+      stringValue(record.workspacePath) ??
+      stringValue(record.file) ??
+      stringValue(record.targetPath);
+    if (direct) return direct;
+    const paths = record.paths;
+    return Array.isArray(paths) ? stringValue(paths[0]) : undefined;
+  };
+  if (isRecord(payload)) {
+    const direct = fromRecord(payload);
+    if (direct) return direct;
+    const args = payload.arguments;
+    if (isRecord(args)) {
+      const fromArgs = fromRecord(args);
+      if (fromArgs) return fromArgs;
+    }
+  }
+  return stringValue(metadata.path);
 }
 
 function signalFromPayload(payload: unknown): string | undefined {

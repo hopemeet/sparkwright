@@ -2447,9 +2447,20 @@ describe("createWorkflowProjectionHooks", () => {
     const run = runRecord();
     const events = new EventLog(run.id);
 
+    const rewrite = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "PreToolUse",
+      preToolUseStage: "rewrite",
+      run,
+      payload: { toolName: "shell", arguments: {} },
+      events,
+    });
+    expect(rewrite.status).toBe("continued");
+
     const blocked = await runWorkflowHooks({
       hooks: projection.hooks,
       hook: "PreToolUse",
+      preToolUseStage: "governance",
       run,
       payload: { toolName: "shell", arguments: {} },
       events,
@@ -2465,6 +2476,118 @@ describe("createWorkflowProjectionHooks", () => {
       toolName: "shell",
       allowedTools: ["read_file"],
     });
+  });
+
+  it("runs configured rewrites before the real workflow tool clamp", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-projection-"));
+    try {
+      let executed = false;
+      let modelCalls = 0;
+      const configured = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        workflowActive: true,
+        hooks: [
+          {
+            name: "configured-rewrite",
+            hook: "PreToolUse",
+            onError: "block",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{command:'echo hi', path:'generated/a.ts'}}}))",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+      });
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_rewrite_clamp",
+        definition: {
+          assetName: "rewrite-clamp",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "limited",
+              execute: "model",
+              body: "Use only read_file.",
+              tools: ["read_file"],
+            },
+          ],
+        },
+      });
+      const run = createRun({
+        goal: "rewrite before projection clamp",
+        workflowHooks: [...configured, ...projection.hooks],
+        tools: [
+          defineTool({
+            name: "shell",
+            description: "Shell.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                command: { type: "string" },
+                path: { type: "string" },
+              },
+              required: ["command"],
+            },
+            execute() {
+              executed = true;
+              return { ok: true };
+            },
+          }),
+        ],
+        model: {
+          async complete(input) {
+            modelCalls += 1;
+            if (modelCalls === 1) {
+              return {
+                toolCalls: [
+                  {
+                    toolName: "shell",
+                    arguments: { command: "echo hi", path: "draft.ts" },
+                  },
+                ],
+              };
+            }
+            expect(input.context[0]?.content).toContain(
+              "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+            );
+            return { message: "blocked by workflow clamp" };
+          },
+        },
+      });
+
+      const result = await run.start();
+
+      expect(result.state).toBe("failed");
+      expect(modelCalls).toBe(2);
+      expect(executed).toBe(false);
+      expect(
+        run.events
+          .all()
+          .find(
+            (event) =>
+              event.type === "workflow_hook.blocked" &&
+              (event.payload as { hookId?: unknown }).hookId ===
+                "workflow-tool-clamp",
+          )?.payload,
+      ).toMatchObject({
+        reason: 'Workflow node "limited" does not allow tool "shell".',
+        resultMetadata: {
+          workflowRunId: "wf_rewrite_clamp",
+          nodeId: "limited",
+          toolName: "shell",
+          allowedTools: ["read_file"],
+          path: "generated/a.ts",
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("fails closed at RunStart and TurnStart projection gates", async () => {
@@ -3400,12 +3523,12 @@ describe("createConfiguredWorkflowHooks", () => {
     }
   });
 
-  it("rejects configured PreToolUse rewrite while a workflow is active", async () => {
+  it("applies configured PreToolUse rewrites before governance while a workflow is active", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
     try {
-      const run = runRecord();
-      const events = new EventLog(run.id);
-      const hooks = createConfiguredWorkflowHooks({
+      let executed = false;
+      let modelCalls = 0;
+      const configured = createConfiguredWorkflowHooks({
         workspaceRoot: workspace,
         workflowActive: true,
         hooks: [
@@ -3418,29 +3541,75 @@ describe("createConfiguredWorkflowHooks", () => {
               command: process.execPath,
               args: [
                 "-e",
-                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{command:'npm test'}}}))",
+                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{path:'generated/a.ts'}}}))",
               ],
               resultMode: "stdoutJson",
             },
           },
+          {
+            name: "generated-block",
+            hook: "PreToolUse",
+            matcher: { toolName: "write_file", pathGlob: "generated/**" },
+            action: { type: "block", reason: "generated files are locked" },
+          },
         ],
       });
-
-      const result = await runWorkflowHooks({
-        hooks,
-        hook: "PreToolUse",
-        run,
-        payload: { toolName: "shell", arguments: { command: "npm t" } },
-        events,
+      const run = createRun({
+        goal: "rewrite then govern",
+        workflowHooks: configured,
+        tools: [
+          defineTool({
+            name: "write_file",
+            description: "Write.",
+            inputSchema: {
+              type: "object",
+              properties: { path: { type: "string" } },
+              required: ["path"],
+            },
+            execute() {
+              executed = true;
+              return { ok: true };
+            },
+          }),
+        ],
+        model: {
+          async complete(input) {
+            modelCalls += 1;
+            if (modelCalls === 1) {
+              return {
+                toolCalls: [
+                  { toolName: "write_file", arguments: { path: "draft.ts" } },
+                ],
+              };
+            }
+            expect(input.context[0]?.content).toContain(
+              "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+            );
+            return { message: "blocked after rewrite" };
+          },
+        },
       });
 
-      expect(result.status).toBe("blocked");
-      if (result.status !== "blocked") {
-        throw new Error("expected blocked workflow hook result");
-      }
-      expect(result.block.reason).toContain(
-        "configured PreToolUse hooks cannot rewrite workflow-controlled tool calls",
-      );
+      const result = await run.start();
+
+      expect(result.state).toBe("completed");
+      expect(modelCalls).toBe(2);
+      expect(executed).toBe(false);
+      expect(
+        run.events.all().find((event) => event.type === "workflow_hook.blocked")
+          ?.payload,
+      ).toMatchObject({
+        hookName: "generated-block",
+        reason: "generated files are locked",
+      });
+      expect(
+        run.events.all().some((event) => {
+          if (event.type !== "workflow_hook.failed") return false;
+          return JSON.stringify(event.payload).includes(
+            "configured PreToolUse hooks cannot rewrite workflow-controlled tool calls",
+          );
+        }),
+      ).toBe(false);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

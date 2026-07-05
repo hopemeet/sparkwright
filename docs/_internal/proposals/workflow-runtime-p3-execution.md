@@ -822,6 +822,78 @@ fixture ids/run ids/event types in `workflow-distill`/`workflow-shadow` tests,
 and explicit `@reserved` ownership for public shadow/distill report fields that
 are consumed by CLI/JSON readers rather than in-process TypeScript readers.
 
+## Stage 10a — D20 two-stage PreToolUse
+
+入口事实（2026-07-05）：P9a commit `0bac1708` 已在当前分支，full
+`npm run release:check` 通过。P10a 兑现 D20：不新增 hook 名称、不改配置
+schema，只把 tool-call `PreToolUse` 执行拆成 rewrite → apply → governance
+两段，让 configured rewrite 在 active workflow 下恢复可用，同时 workflow
+clamp 一定看见 rewrite 后的参数。
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P10a 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- P10a 的删除验收：退役 P1 的 workflow-active configured `PreToolUse`
+  `rewrite` 硬禁止；替代机制是 staged core execution。
+- 失败即停：需要新增 hook lifecycle/config schema、rewrite tool name、
+  改 policy/approval/tool validation 的相对顺序、引入表达式语言、或重开
+  workflow_start/spawn 时，停下拆相位。
+
+### Step 1 — core staged PreToolUse runner
+
+- `processToolCall()` 先跑 `PreToolUse` rewrite stage，应用 arguments
+  rewrite，再跑 governance stage。
+- `runWorkflowHooks()` 支持仅对 `PreToolUse` 生效的 hook-stage 过滤；默认
+  未标注 hook 保持 legacy rewrite-stage 行为，避免 raw embedder hook 被执行
+  两次。
+- Focused gates：core workflow-hooks/run tests + core typecheck。
+- 失败即停：PostToolUse trace/observations 仍拿到旧参数、block 没有合成
+  `TOOL_BLOCKED_BY_WORKFLOW_HOOK`、或 rewrite 逃过后续 policy/approval。
+
+### Step 2 — host hook producers
+
+- configured result-producing `PreToolUse` hooks（`stdoutJson` /
+  `responseJson` / `workflowResult`）标为 rewrite stage；静态 block/context
+  等治理 hooks 标为 governance stage。
+- workflow projection `workflow-tool-clamp` 标为 governance stage，并移除
+  active workflow 下 configured `PreToolUse` rewrite 的硬拒绝。
+- Focused gates：host workflow-hooks tests for configured rewrite + workflow
+  clamp over rewritten args; host typecheck。
+- 失败即停：configured `advance` exclusivity 被放宽、workflow clamp 不再
+  fail closed、或 profile child hooks 获得主 workflow 的特殊权限。
+
+### Step 3 — docs/map closure
+
+- 更新 project-map 和必要 reference docs；跑 focused gates、format、diff
+  check、project-map drift；通过后提交 P10a（不加 Co-Authored-By）。
+
+Implementation note (2026-07-05): P10a added an internal
+`preToolUseStage` marker to core `WorkflowHook` objects and split tool-call
+`PreToolUse` in `processToolCall()` into rewrite -> apply argument rewrites ->
+governance. Core keeps the public lifecycle name unchanged, does not rewrite
+tool names, and leaves budget, repeat, policy, approval, validation, execution,
+and `PostToolUse` downstream of both stages. Host marks configured
+result-producing `PreToolUse` actions (`stdoutJson`, `responseJson`,
+`workflowResult`) as rewrite-stage, static block/context actions as governance,
+and the real `workflow-tool-clamp` as governance. The old workflow-active
+configured `PreToolUse` rewrite rejection was removed; configured `advance`
+exclusivity remains. The projection clamp now records the path it received in
+block metadata, giving the focused test a concrete assertion that the real clamp
+runs after rewrite and sees the rewritten path. Focused gates passed: `npm
+--workspace @sparkwright/core test -- test/workflow-hooks.test.ts -t
+"PreToolUse|workflowHooks"`, `npm --workspace @sparkwright/core run
+typecheck`, `npm --workspace @sparkwright/core run build`, `npm --workspace
+@sparkwright/host test -- test/workflow-hooks.test.ts -t
+"PreToolUse|blocks tools outside|configured PreToolUse|configured rewrites
+before the real workflow tool clamp"`, `npm --workspace @sparkwright/host run
+typecheck`, full `npm --workspace @sparkwright/core test --
+test/workflow-hooks.test.ts`, full `npm --workspace @sparkwright/host test --
+test/workflow-hooks.test.ts`, `npm --workspace @sparkwright/host run build`,
+`npm run typecheck:test`, `npm run check:dist-fresh`, `npm run format:check`,
+`git diff --check`, and project-map drift check. Closing release gate `npm run
+release:check` passed.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

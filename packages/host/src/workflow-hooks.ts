@@ -22,6 +22,7 @@ import {
   type WorkflowHook,
   type WorkflowHookInput,
   type WorkflowHookName,
+  type WorkflowPreToolUseStage,
   type WorkflowHookResult,
   type WorkflowHookRewritePatch,
 } from "@sparkwright/core";
@@ -83,6 +84,9 @@ export function createConfiguredWorkflowHooks(
         name: config.name,
         description: config.description,
         hook: config.hook,
+        ...(config.hook === "PreToolUse"
+          ? { preToolUseStage: configuredPreToolUseStage(config.action) }
+          : {}),
         matcher: config.matcher,
         onError: config.onError,
         handle: (input) => {
@@ -506,15 +510,6 @@ function enforceWorkflowHookEffect(
       `${label} returned advance while a workflow is active; configured hooks cannot advance workflow-controlled runs.`,
     );
   }
-  if (
-    options.workflowActive === true &&
-    hook === "PreToolUse" &&
-    result.status === "rewrite"
-  ) {
-    throw new Error(
-      `${label} returned rewrite while a workflow is active; configured PreToolUse hooks cannot rewrite workflow-controlled tool calls.`,
-    );
-  }
   if (result.status === "block" && !workflowHookAllowsBlock(hook)) {
     throw new Error(
       `${label} returned block for ${hook}, but this lifecycle cannot block run execution.`,
@@ -541,6 +536,21 @@ function enforceWorkflowHookEffect(
     );
   }
   return result;
+}
+
+function configuredPreToolUseStage(
+  action: CapabilityHookActionConfig,
+): WorkflowPreToolUseStage {
+  if (action.type === "command" && action.resultMode === "stdoutJson") {
+    return "rewrite";
+  }
+  if (action.type === "http" && action.resultMode === "responseJson") {
+    return "rewrite";
+  }
+  if (action.type === "agent" && action.resultMode === "workflowResult") {
+    return "rewrite";
+  }
+  return "governance";
 }
 
 function workflowHookAllowsBlock(hook: WorkflowHookName): boolean {

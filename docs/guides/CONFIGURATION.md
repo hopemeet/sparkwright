@@ -449,6 +449,10 @@ Set `resultMode` to `stdoutJson` when a command should return a JSON
 `WorkflowHookResult` on stdout. This can dynamically return `block`, `rewrite`,
 `skipped`, or `continue`; malformed JSON follows the hook's `onError` behavior.
 When `stdoutJson` is enabled, stdout is reserved for that final control JSON.
+For tool calls, `PreToolUse` runs result-producing rewrite hooks first, applies
+argument rewrites, then runs governance/block hooks over the rewritten
+arguments before budget, repeat, policy, approval, and tool execution checks.
+Rewrites can change tool arguments, not the requested tool name.
 Write live progress through the script helper, for example
 `progress("checking policy")`, or through the raw stderr wire
 `SPARKWRIGHT_EVENT: {"type":"progress","message":"checking policy"}`. The host

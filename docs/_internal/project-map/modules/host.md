@@ -527,6 +527,9 @@ Does not own:
   command `stdoutJson`, HTTP
   `responseJson`, and agent `workflowResult` paths for returning core
   `WorkflowHookResult` values; malformed results follow the hook `onError` path.
+  Result-producing configured `PreToolUse` hooks are tagged for the rewrite
+  pass, static block/context hooks for the governance pass, and the workflow
+  projection tool clamp also runs in governance so it sees rewritten arguments.
 - Workflow action results are gated by `enforceWorkflowHookEffect`, which rejects
   lifecycle-illegal effects before they reach core: `rewrite` only at
   `PreToolUse`, `advance` only at `ModelOutput` / `Stop`, `block` at every
@@ -696,6 +699,25 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:08:34+0800
+- Scope: P10a D20 host hook assembly: configured result-producing `PreToolUse`
+  actions run in the rewrite pass, configured static block/context actions and
+  the workflow projection clamp run in governance, and active-workflow
+  configured rewrites are no longer rejected before core staging.
+- Read: `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`,
+  `docs/reference/EXTENSION_INTERFACES.md`,
+  `docs/guides/CONFIGURATION.md`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/workflow-hooks.test.ts -t "PreToolUse|workflowHooks"`; `npm
+  --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/core run build`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "PreToolUse|blocks tools outside|configured
+  PreToolUse"`; `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

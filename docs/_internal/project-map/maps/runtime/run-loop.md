@@ -121,11 +121,13 @@ createRun/resumeRunFromCheckpoint
   because its results (`block`/`advance`/`rewrite`/`continue` context)
   deterministically steer the loop — you cannot block a `Stop`, advance a
   healthy `ModelOutput`/`Stop` continuation, rewrite `PreToolUse` arguments, or
-  inject context without the result before proceeding. A host `agent` workflow
-  action therefore runs a full sub-agent synchronously inside that gate and
-  spends foreground run time; non-blocking automation must use event hooks
-  instead. Guards live in the host (`enforceWorkflowHookEffect`, agent reentrancy
-  and Stop-block dedupe); see [../../modules/host.md](../../modules/host.md).
+  inject context without the result before proceeding. Tool-call `PreToolUse`
+  runs as rewrite -> apply argument rewrites -> governance, then proceeds to
+  budget/repeat/policy/approval/execution. A host `agent` workflow action
+  therefore runs a full sub-agent synchronously inside that gate and spends
+  foreground run time; non-blocking automation must use event hooks instead.
+  Guards live in the host (`enforceWorkflowHookEffect`, agent reentrancy and
+  Stop-block dedupe); see [../../modules/host.md](../../modules/host.md).
 - The opt-in `delegate_parallel` fan-out path is still a normal foreground tool
   call from the core run loop's perspective. The parent observes one
   `tool.*` lifecycle for the fan-out request, while host/agent-runtime child
@@ -227,6 +229,23 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:08:34+0800
+- Scope: P10a D20 run-loop ordering: tool-call `PreToolUse` now awaits a
+  rewrite pass and a governance pass before budget, repeat, policy, approval,
+  and execution; hook lifecycle names and event families remain unchanged.
+- Read: `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`,
+  `packages/core/test/workflow-hooks.test.ts`,
+  `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/workflow-hooks.test.ts -t "PreToolUse|workflowHooks"`; `npm
+  --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/core run build`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "PreToolUse|blocks tools outside|configured
+  PreToolUse"`; `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T23:09:50+0800

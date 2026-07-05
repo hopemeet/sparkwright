@@ -22,6 +22,8 @@ export type WorkflowHookName =
   | "RunEnd"
   | "RuntimeSignal";
 
+export type WorkflowPreToolUseStage = "rewrite" | "governance";
+
 export type WorkflowRuntimeSignal =
   | "budget.checked"
   | "budget.exceeded"
@@ -92,6 +94,12 @@ export interface WorkflowHook<TPayload = unknown> {
   description?: string;
   id?: string;
   hook: WorkflowHookName;
+  /**
+   * PreToolUse can run in two passes: rewrite/normalization first, then
+   * governance/block checks over the rewritten arguments. Unmarked hooks keep
+   * legacy behavior by participating in the rewrite pass only.
+   */
+  preToolUseStage?: WorkflowPreToolUseStage;
   matcher?: WorkflowHookMatcher;
   /**
    * Default is "continue" to match legacy RunHook fault isolation. Use
@@ -113,6 +121,7 @@ export interface RunWorkflowHooksInput<TPayload = unknown> {
   metadata?: Record<string, unknown>;
   events: EventLog;
   facts?: FactLedgerReader;
+  preToolUseStage?: WorkflowPreToolUseStage;
 }
 
 export interface WorkflowHookBlock {
@@ -158,6 +167,13 @@ export async function runWorkflowHooks(
 
   for (const hook of input.hooks) {
     if (hook.hook !== input.hook) continue;
+    if (
+      input.hook === "PreToolUse" &&
+      input.preToolUseStage !== undefined &&
+      !matchesPreToolUseStage(hook.preToolUseStage, input.preToolUseStage)
+    ) {
+      continue;
+    }
     if (!matchesWorkflowHook(hook.matcher, input.payload, metadata)) continue;
 
     const basePayload = {
@@ -223,6 +239,14 @@ export async function runWorkflowHooks(
       }
 
       if (result.status === "rewrite") {
+        if (
+          input.hook === "PreToolUse" &&
+          input.preToolUseStage === "governance"
+        ) {
+          throw new Error(
+            `Workflow hook "${hook.name}" returned rewrite during PreToolUse governance; rewrites must run before governance.`,
+          );
+        }
         rewrites.push(result.patch);
       }
       if (result.status === "continue" && result.context) {
@@ -261,6 +285,13 @@ export async function runWorkflowHooks(
   }
 
   return { status: "continued", context, rewrites };
+}
+
+function matchesPreToolUseStage(
+  hookStage: WorkflowPreToolUseStage | undefined,
+  requestedStage: WorkflowPreToolUseStage,
+): boolean {
+  return (hookStage ?? "rewrite") === requestedStage;
 }
 
 function workflowHookAllowsAdvance(hook: WorkflowHookName): boolean {

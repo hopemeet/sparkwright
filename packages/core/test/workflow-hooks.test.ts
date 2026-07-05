@@ -95,6 +95,67 @@ describe("runWorkflowHooks", () => {
     ]);
   });
 
+  it("filters PreToolUse hooks by staged rewrite and governance passes", async () => {
+    const run = {
+      id: createRunId(),
+      goal: "g",
+      state: "running" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: {},
+    };
+    const events = new EventLog(run.id);
+    const calls: string[] = [];
+    const hooks: WorkflowHook[] = [
+      {
+        name: "rewrite",
+        hook: "PreToolUse",
+        handle: () => {
+          calls.push("rewrite");
+          return {
+            status: "rewrite",
+            patch: { arguments: { path: "src/rewritten.ts" } },
+          };
+        },
+      },
+      {
+        name: "governance",
+        hook: "PreToolUse",
+        preToolUseStage: "governance",
+        handle: () => {
+          calls.push("governance");
+          return { status: "continue" };
+        },
+      },
+    ];
+
+    const rewrite = await runWorkflowHooks({
+      hooks,
+      hook: "PreToolUse",
+      preToolUseStage: "rewrite",
+      run,
+      payload: { toolName: "write_file", arguments: { path: "draft.ts" } },
+      events,
+    });
+    const governance = await runWorkflowHooks({
+      hooks,
+      hook: "PreToolUse",
+      preToolUseStage: "governance",
+      run,
+      payload: {
+        toolName: "write_file",
+        arguments: { path: "src/rewritten.ts" },
+      },
+      events,
+    });
+
+    expect(rewrite.rewrites).toEqual([
+      { arguments: { path: "src/rewritten.ts" } },
+    ]);
+    expect(governance.status).toBe("continued");
+    expect(calls).toEqual(["rewrite", "governance"]);
+  });
+
   it("can exclude matching paths from a broader path glob", async () => {
     const run = {
       id: createRunId(),
@@ -260,6 +321,74 @@ describe("workflowHooks in createRun", () => {
         {
           name: "no-generated",
           hook: "PreToolUse",
+          matcher: { toolName: "write_file", pathGlob: "generated/**" },
+          handle: () => ({
+            status: "block",
+            reason: "generated files are locked",
+          }),
+        },
+      ],
+    });
+
+    const result = await run.start();
+
+    expect(result.signal).toBe("completed");
+    expect(executed).toBe(false);
+    expect(run.events.all().map((event) => event.type)).toContain(
+      "workflow_hook.blocked",
+    );
+  });
+
+  it("applies PreToolUse rewrites before governance blocks", async () => {
+    let executed = false;
+    const write = defineTool({
+      name: "write_file",
+      description: "write",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      execute() {
+        executed = true;
+        return { ok: true };
+      },
+    });
+    let calls = 0;
+    const model: ModelAdapter = {
+      async complete(input) {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            toolCalls: [
+              { toolName: "write_file", arguments: { path: "draft.ts" } },
+            ],
+          };
+        }
+        expect(input.context[0]?.content).toContain(
+          "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+        );
+        return { message: "blocked after rewrite" };
+      },
+    };
+
+    const run = createRun({
+      goal: "g",
+      model,
+      tools: [write],
+      workflowHooks: [
+        {
+          name: "normalize-path",
+          hook: "PreToolUse",
+          handle: () => ({
+            status: "rewrite",
+            patch: { arguments: { path: "generated/a.ts" } },
+          }),
+        },
+        {
+          name: "no-generated",
+          hook: "PreToolUse",
+          preToolUseStage: "governance",
           matcher: { toolName: "write_file", pathGlob: "generated/**" },
           handle: () => ({
             status: "block",

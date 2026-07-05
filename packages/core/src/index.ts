@@ -671,6 +671,7 @@ export { combineRunHooks, createDynamicHookSet } from "./hooks.js";
 // Deterministic workflow hooks over the standard agent lifecycle.
 export type {
   WorkflowHookName,
+  WorkflowPreToolUseStage,
   WorkflowRuntimeSignal,
   WorkflowHookMatchValue,
   WorkflowHookMatcher,

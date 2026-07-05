@@ -54,6 +54,7 @@ import {
   type WorkflowHookBlock,
   type WorkflowHookExecution,
   type WorkflowHookName,
+  type WorkflowPreToolUseStage,
 } from "./workflow-hooks.js";
 import { createUsageTracker, type UsageTracker } from "./usage.js";
 import {
@@ -2875,21 +2876,21 @@ export class SparkwrightRun implements RunHandle {
     executionDiagnostic?: ToolExecutionDiagnostic,
     recordingOptions: ToolResultRecordingOptions = {},
   ): Promise<RunResult | undefined> {
-    const preToolHooks = await this.runWorkflowHookPhase(
-      "PreToolUse",
-      {
-        toolName: requestedCall.toolName,
-        arguments: requestedCall.arguments,
-        path: extractWorkflowPath(requestedCall.arguments),
-      },
-      {
-        step: state.step,
-        toolName: requestedCall.toolName,
-        path: extractWorkflowPath(requestedCall.arguments),
-      },
-      state.step,
-    );
-    if (preToolHooks.status === "blocked") {
+    const preToolPayload = (call: RequestedToolCall) => ({
+      toolName: call.toolName,
+      arguments: call.arguments,
+      path: extractWorkflowPath(call.arguments),
+    });
+    const preToolMetadata = (
+      call: RequestedToolCall,
+      preToolUseStage: WorkflowPreToolUseStage,
+    ) => ({
+      step: state.step,
+      toolName: call.toolName,
+      path: extractWorkflowPath(call.arguments),
+      preToolUseStage,
+    });
+    const recordPreToolBlock = async (block: WorkflowHookBlock) => {
       const call = createToolCall(
         this.record.id,
         requestedCall.toolName,
@@ -2904,8 +2905,8 @@ export class SparkwrightRun implements RunHandle {
         status: "failed",
         error: {
           code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
-          message: workflowHookBlockMessage(preToolHooks.block),
-          metadata: { workflowHook: preToolHooks.block },
+          message: workflowHookBlockMessage(block),
+          metadata: { workflowHook: block },
         },
         artifacts: [],
       };
@@ -2925,14 +2926,36 @@ export class SparkwrightRun implements RunHandle {
       );
       await this.runAfterToolCallHook(state, requestedCall, blocked);
       return undefined;
+    };
+
+    const preToolRewriteHooks = await this.runWorkflowHookPhase(
+      "PreToolUse",
+      preToolPayload(requestedCall),
+      preToolMetadata(requestedCall, "rewrite"),
+      state.step,
+      { preToolUseStage: "rewrite" },
+    );
+    if (preToolRewriteHooks.status === "blocked") {
+      return recordPreToolBlock(preToolRewriteHooks.block);
     }
-    for (const rewrite of preToolHooks.rewrites) {
+    for (const rewrite of preToolRewriteHooks.rewrites) {
       if ("arguments" in rewrite) {
         requestedCall = {
           ...requestedCall,
           arguments: rewrite.arguments,
         };
       }
+    }
+
+    const preToolGovernanceHooks = await this.runWorkflowHookPhase(
+      "PreToolUse",
+      preToolPayload(requestedCall),
+      preToolMetadata(requestedCall, "governance"),
+      state.step,
+      { preToolUseStage: "governance" },
+    );
+    if (preToolGovernanceHooks.status === "blocked") {
+      return recordPreToolBlock(preToolGovernanceHooks.block);
     }
 
     const toolBudgetFailure = this.reserveToolCallBudget({
@@ -4239,6 +4262,7 @@ export class SparkwrightRun implements RunHandle {
     payload: TPayload,
     metadata: Record<string, unknown>,
     step?: number,
+    options: { preToolUseStage?: WorkflowPreToolUseStage } = {},
   ): Promise<WorkflowHookExecution> {
     return runWorkflowHooks({
       hooks: this.workflowHooks,
@@ -4249,6 +4273,7 @@ export class SparkwrightRun implements RunHandle {
       metadata,
       events: this.events,
       facts: this.factLedger,
+      preToolUseStage: options.preToolUseStage,
     });
   }
 

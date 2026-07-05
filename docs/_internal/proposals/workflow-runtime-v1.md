@@ -1,6 +1,6 @@
 # Workflow Runtime v1 Proposal (Brainstorm Draft)
 
-> Status: **accepted slice P0 / P1 / P1.5 / P2 / P3 / P4 / P5 / P6a / P6b / P7a** — the Accepted Slice table
+> Status: **accepted slice P0 / P1 / P1.5 / P2 / P3 / P4 / P5 / P6a / P6b / P7a / P8a / P9a / P10a** — the Accepted Slice table
 > below is the only execution contract. Everything else is rationale,
 > constraints, P4+/destination design drafts, or parking lot; where a body
 > section could be misread as P1 work it carries an explicit phase label.
@@ -46,7 +46,7 @@
 > only consumes; the continuation budget (decision 14) implements only
 > after the S3 end-state is ratified cross-proposal.
 
-## Accepted Slice (P0/P1/P1.5/P2/P3/P4/P5/P6a/P6b/P7a) — the minimal closed loop
+## Accepted Slice (P0/P1/P1.5/P2/P3/P4/P5/P6a/P6b/P7a/P8a/P9a/P10a) — the minimal closed loop
 
 This table is the executable contract; the body below is rationale and
 constraints. Substrate references (S1–S4) resolve to
@@ -67,6 +67,7 @@ constraints. Substrate references (S1–S4) resolve to
 | P7a | P6b committed (`64e466eb`) and focused verifier gates passed. First `workflow distill` slice stays read-only/deterministic so it can feed internal asset supply without adding a model loop. | `sparkwright workflow distill <session-id>` reads the session trace, derives a review-first draft `workflow.md` plus JSON/text summary, and emits it to stdout; deterministic host helper extracts goal, observed tools, touched paths, writes, and post-write verification commands into a small linear workflow draft. | Writing `.sparkwright/workflows`; skill-evolution proposal creation/apply; model-backed distillation; trace mutation; protocol/TUI surface; shadow mode telemetry; workflow_start/spawn; expression/dataflow language; automatic authorization beyond observed static command drafts. | Named deletion acceptance: no old distiller exists; P7a retires the parking-lot-only `workflow distill` idea by shipping a read-only CLI draft generator. Acceptance owner: workflow-runtime maintainer for this branch. |
 | P8a | P7a committed (`da882db6`) and focused distill gates passed. The first shadow slice must stay offline/read-only so it does not reopen supervised/live hook ownership or D11/D26. | `sparkwright workflow shadow <workflow-name> <session-id>` reads an existing workflow asset and an existing session trace, reuses the deterministic trace observation path, and emits JSON/text coverage for observed tools, write paths, `diff_scope`, `todo_clear`, and command-verifier-like gates that the workflow would or would not cover. | Live run subscription, protocol/TUI shadow telemetry, workflow record writes, run verdict changes, model judgment, asset/proposal writes, replay execution, expression/dataflow language, workflow_start/spawn, or any second scheduler/hook producer. | Named deletion acceptance: no old shadow runner exists; P8a retires the parking-lot-only `shadow workflow` idea's first reviewable surface by making it an offline coverage report rather than a parallel runtime. Acceptance owner: workflow-runtime maintainer for this branch. |
 | P9a | P8a committed (`53d658de`) and focused shadow gates passed. This is the first D5 workspace-root lift slice and must not open unattended/spawn execution. | Fresh workflow runs persist in a workspace-level `workflow-runs` store under the workspace state root while retaining `sessionId` on each record; `workflow list` and `workflow resume` read the workspace-level store plus legacy session-root stores; resume passes the located store through the actor episode path so legacy records keep writing to their original store; tests prove fresh writes no longer create session-local workflow state and legacy records remain resumable/listable. | Migrating/copying old records; deleting legacy session-root compatibility; unattended daemon/adopter process; workflow_start/spawn; protocol/TUI payload changes; cross-workspace registry; changing session trace/todo locations; changing workflow notification outbox semantics. | P9a retires the session-directory scan as the only authoritative workflow-run lookup mechanism: workspace-root store becomes the fresh-run authority, with session-root stores demoted to legacy compatibility until a later signed deletion removes them. |
+| P10a | P9a committed (`0bac1708`) and full `npm run release:check` passed. This is the D20 compatibility slice and must not reopen workflow_start/spawn or hook lifecycle vocabulary. | Core `PreToolUse` execution becomes two-stage for tool calls: run rewrite-capable hooks first, apply argument rewrites, then run governance/block hooks such as workflow node clamps over the rewritten arguments; host marks configured result-producing `PreToolUse` hooks as rewrite-stage and workflow projection clamps as governance-stage; configured `PreToolUse` rewrites are again allowed while a workflow is active, with tests proving the workflow clamp observes rewritten arguments. | New hook names or config schema fields; expression/dataflow language; rewriting tool names; changing policy/approval/tool validation order after the two-stage PreToolUse boundary; protocol/TUI payload changes; workflow_start/spawn; a second hook runner or scheduler. | P10a retires the P1 hard prohibition that rejected configured `PreToolUse` `rewrite` while a workflow was active, replacing it with staged core execution so rewrites cannot bypass workflow clamps. |
 
 ### Phase Status
 
@@ -94,10 +95,11 @@ constraints. Substrate references (S1–S4) resolve to
   workflow source exhaustion also kicks a `RuntimeSignal(budget.exceeded)`
   customer notification so the P1 projection can record interruption /
   `workflow.failed(runtime)` before `run.completed`, `workflow.*` lifecycle
-  events are emitted for projection runs, configured `advance` / `rewrite`
-  effects are rejected while a workflow is active, command verifiers require
-  static argv plus explicit asset authorization, governing projection hooks
-  fail closed, and `cancel()` now kicks
+  events are emitted for projection runs, configured `advance` / initial
+  single-pass `rewrite` effects are rejected while a workflow is active
+  (rewrite half superseded by P10a staged PreToolUse), command verifiers
+  require static argv plus explicit asset authorization, governing projection
+  hooks fail closed, and `cancel()` now kicks
   `RunEnd(state: "cancelled", reason: "manual_cancelled")`. P1.5's
   verification/documented-command deletion remains outstanding.
 - 2026-07-04 — P1.5 deletion payoff landed locally on `feat/workflow-p15`, but
@@ -414,8 +416,9 @@ commit-pinned before implementation starts.
   try block in `runWorkflowHooks`, becoming `workflow_hook.failed` and then
   following `onError` — under the default, an illegal advance is silently
   absorbed and the run continues. Host-side `enforceWorkflowHookEffect`
-  now also rejects configured `advance` and PreToolUse `rewrite` while an
-  active workflow projection is present. Raw embedder hooks remain governed
+  rejects configured `advance` while an active workflow projection is present;
+  P10a replaced the older active-workflow `PreToolUse` rewrite rejection with
+  staged rewrite -> governance execution. Raw embedder hooks remain governed
   by their own `onError`; the P1 projection constructor forces
   `onError: "block"` for governing hooks and bounds persistent Stop runtime
   errors before they can loop to `maxSteps`.
@@ -1028,8 +1031,9 @@ Follow the hooks-control-plane precedent: inspection first, behavior later.
   facto true today but guarded by nothing. Cheap stake for decisions
   19–20 in the same test file (fifth pass): pin today's
   `enforceWorkflowHookEffect` surface (advance only for ModelOutput/Stop,
-  configured-action coverage) so the P1 workflow-active `advance`/`rewrite`
-  rejections extend a guarded surface instead of landing unguarded.
+  configured-action coverage) so the P1 workflow-active `advance`/temporary
+  `rewrite` rejections extend a guarded surface instead of landing unguarded;
+  P10a later replaced the rewrite rejection with staged PreToolUse.
 - **P1 — single-run linear workflow, model nodes only.** Two entry
   conditions (Accepted Slice): the FactLedger prerequisite refactor
   (independently testable, no workflow dependency — extract from
@@ -1378,18 +1382,16 @@ gate.
       `advance` capability (the todo-continuation doctrine remains the
       second customer). Scope: per-run; P1 does not project into delegate
       children, so profile hooks are unaffected.
-20. **PreToolUse compatibility — no configured `rewrite` while a workflow
-    is active.** (Third pass.) Because rewrites apply post-gate on
-    pre-rewrite payloads (Current Facts), a workflow clamp
-    cannot see rewritten args regardless of array position, and
-    a configured rewrite applied after the clamp's approval can move a
-    path/argument outside the node scope with no re-check. P1 structural
-    prohibition: while a workflow is active, configured `PreToolUse` hooks
-    may `block`/`continue` only; `rewrite` is rejected at compile time
-    alongside decision 19's advance exclusivity. Lifting this later
-    requires a staged two-phase `PreToolUse` (normalize/rewrite first,
-    apply, then governance/clamp over the rewritten args) — a core change
-    that is out of scope until a real customer needs it.
+20. **PreToolUse compatibility — staged rewrites before workflow
+    governance.** (Third pass; updated by P10a.) The original risk was that
+    single-pass rewrites applied after a workflow clamp had approved
+    pre-rewrite payloads, so a configured rewrite could move a path/argument
+    outside the node scope with no re-check. P1 therefore shipped a temporary
+    structural prohibition while a workflow was active. P10a retires that
+    prohibition by making tool-call `PreToolUse` a staged core gate:
+    normalize/rewrite first, apply argument rewrites, then run
+    governance/clamp hooks over the rewritten args. Decision 19's `advance`
+    exclusivity remains unchanged.
 21. **Workflow instance identity and the shipped notification contract.**
     (Fourth pass.) The actor-inbox unions are live code with a reserved
     `payload.workflowId`; this proposal stops letting readers guess what it
