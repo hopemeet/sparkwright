@@ -121,6 +121,9 @@ Does not own:
   interpret branch-local transitions. `FileWorkflowStore` lease events describe
   durable record adoption only: a fresh pre-create lease does not append
   `adopted`, while release events use the injected clock when supplied.
+- Workflow P6b adds the portable `todo_clear` verifier declaration. It is only
+  structural type vocabulary in agent-runtime; host owns parser admission,
+  session todo-ledger reads, verdict metadata, and fail-closed runtime behavior.
 - P3 Step 1 introduced a portable workflow run-chain driver:
   `runWorkflowRunChain()` owns the "run one episode, inspect terminal evidence,
   maybe continue" loop shape without constructing models or host config.
@@ -272,6 +275,20 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T21:51:25+0800
+- Scope: workflow-runtime-v1 P6b portable workflow type boundary:
+  `todo_clear` is now a structural verifier declaration only. Agent-runtime
+  still does not read todo ledgers, evaluate verifier verdicts, or alter the
+  todo supervisor continuation audit.
+- Read: `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/index.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime run typecheck`;
+  `npm --workspace @sparkwright/agent-runtime run build`; `npm --workspace
+  @sparkwright/agent-runtime test -- test/workflows.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-05T21:40:16+0800

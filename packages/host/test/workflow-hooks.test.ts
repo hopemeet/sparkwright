@@ -1966,6 +1966,211 @@ describe("createWorkflowProjectionHooks", () => {
     });
   });
 
+  it("passes todo_clear when the host todo ledger has no unfinished items", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_todo_clear_pass",
+      readTodoLedger: () => ({
+        schemaVersion: "todo-ledger.v1",
+        metadata: {},
+        items: [
+          { title: "done", status: "completed", depth: 0 },
+          { title: "skipped", status: "skipped", depth: 0 },
+        ],
+      }),
+      definition: {
+        assetName: "todo-clear",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "finish",
+            execute: "model",
+            body: "Finish.",
+            verify: [{ id: "todos-done", kind: "todo_clear" }],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState().status).toBe("completed");
+    expect(
+      events.all().find((event) => event.type === "workflow.node.completed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_todo_clear_pass",
+      nodeId: "finish",
+      verdict: {
+        status: "passed",
+        metadata: { verified: true, verifiers: ["todos-done"] },
+      },
+      evidenceRefs: [
+        {
+          kind: "run",
+          ref: run.id,
+          verifierId: "todos-done",
+          metadata: {
+            kind: "todo_clear",
+            summary: { unfinished: 0, hasUnfinished: false },
+          },
+        },
+      ],
+    });
+  });
+
+  it("fails todo_clear when the host todo ledger still has unfinished items", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_todo_clear_fail",
+      readTodoLedger: () => ({
+        schemaVersion: "todo-ledger.v1",
+        metadata: {},
+        items: [{ title: "finish docs", status: "pending", depth: 0 }],
+      }),
+      definition: {
+        assetName: "todo-clear",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "finish",
+            execute: "model",
+            body: "Finish.",
+            verify: [{ id: "todos-done", kind: "todo_clear" }],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState()).toMatchObject({
+      status: "failed",
+      failure: { reason: "verification_failed" },
+    });
+    expect(
+      events.all().find((event) => event.type === "workflow.node.completed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_todo_clear_fail",
+      nodeId: "finish",
+      verdict: {
+        status: "failed",
+        metadata: {
+          failures: [
+            {
+              verifierId: "todos-done",
+              kind: "todo_clear",
+              summary: { unfinished: 1, hasUnfinished: true },
+              unfinished: [{ title: "finish docs", status: "pending" }],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("fails closed when todo_clear has no host todo ledger provider", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_todo_clear_missing",
+      definition: {
+        assetName: "todo-clear",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "finish",
+            execute: "model",
+            body: "Finish.",
+            verify: [{ id: "todos-done", kind: "todo_clear" }],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState()).toMatchObject({
+      status: "failed",
+      failure: {
+        reason:
+          'Workflow todo_clear verifier "todos-done" requires a todo ledger provider.',
+      },
+    });
+    expect(
+      events.all().find((event) => event.type === "workflow.node.completed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_todo_clear_missing",
+      nodeId: "finish",
+      verdict: {
+        status: "runtime_error",
+        reason:
+          'Workflow todo_clear verifier "todos-done" requires a todo ledger provider.',
+      },
+    });
+  });
+
   it("re-verifies completed nodes on resume before trusting the saved position", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {

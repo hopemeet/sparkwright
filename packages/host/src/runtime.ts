@@ -92,6 +92,7 @@ import {
   findSimilarSuccessfulDelegation,
   notificationFromRecord,
   rememberSuccessfulDelegation,
+  readTodoLedger,
   runTodoSupervised,
   spawnSubAgent,
   summarizeDelegationResult,
@@ -2034,6 +2035,8 @@ export class HostRuntime {
               (workflowRecord?.evidenceRefs ?? []).filter(
                 (ref) => ref.nodeId === nodeId,
               ),
+            readTodoLedger: () =>
+              readTodoLedger(join(sessionRootDir, input.sessionId, "todo.md")),
             allowScriptWrite: input.shouldWrite,
             agentTool: delegateAgentTool,
             delegateParallelTool: tools.find(

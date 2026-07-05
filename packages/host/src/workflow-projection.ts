@@ -15,6 +15,9 @@ import {
   advanceWorkflowState,
   assertWorkflowRuntimeDefinition,
   createInitialWorkflowRuntimeState,
+  hasUnfinishedTodo,
+  summarizeTodoLedger,
+  type TodoLedger,
   type WorkflowCommandVerifierDefinition,
   type WorkflowDiffScopeVerifierDefinition,
   type WorkflowDefinition,
@@ -23,6 +26,7 @@ import {
   type WorkflowNodeVerdict,
   type WorkflowParallelBranchState,
   type WorkflowRuntimeState,
+  type WorkflowTodoClearVerifierDefinition,
   type WorkflowTransitionDecision,
   type WorkflowTransitionDefinition,
   type WorkflowVerifierDefinition,
@@ -56,6 +60,7 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
     snapshot: WorkflowProjectionStateSnapshot,
   ) => void | Promise<void>;
   getEvidenceRefs?: (nodeId: string) => readonly WorkflowEvidenceRef[];
+  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
   allowScriptWrite?: boolean;
   isToolAvailable?: (toolName: string) => boolean;
   /** @internal Test-only fault injection for D23 fail-closed gate assertions. */
@@ -1202,20 +1207,24 @@ export function createWorkflowProjectionHooks(
           );
           if (resumeVerification.length > 0) {
             const snapshot = input.facts?.snapshot();
-            const verdicts = resumeVerification.map((node) => {
-              const evaluation = nodeVerdictFromLedger(
-                snapshot,
-                familyName,
-                node,
-                undefined,
-              );
-              return {
-                node,
-                attempt: state.attempts[node.id] ?? 1,
-                verdict: evaluation.verdict,
-                evidenceRefs: evaluation.evidenceRefs,
-              };
-            });
+            const verdicts = await Promise.all(
+              resumeVerification.map(async (node) => {
+                const evaluation = await nodeVerdictFromLedger({
+                  snapshot,
+                  hookName: familyName,
+                  node,
+                  nodeEntryWriteEpoch: undefined,
+                  readTodoLedger: options.readTodoLedger,
+                  runId: input.run.id,
+                });
+                return {
+                  node,
+                  attempt: state.attempts[node.id] ?? 1,
+                  verdict: evaluation.verdict,
+                  evidenceRefs: evaluation.evidenceRefs,
+                };
+              }),
+            );
             const failed = verdicts.find(
               (entry) => entry.verdict.status !== "passed",
             );
@@ -1268,12 +1277,16 @@ export function createWorkflowProjectionHooks(
             );
           }
           emitNodeStartedIfNeeded(input, node, state);
-          const evaluation = nodeVerdictFromLedger(
-            input.facts?.snapshot(),
-            familyName,
+          const evaluation = await nodeVerdictFromLedger({
+            snapshot: input.facts?.snapshot(),
+            hookName: familyName,
             node,
-            nodeEntryEpochs.get(`${node.id}:${state.attempts[node.id] ?? 1}`),
-          );
+            nodeEntryWriteEpoch: nodeEntryEpochs.get(
+              `${node.id}:${state.attempts[node.id] ?? 1}`,
+            ),
+            readTodoLedger: options.readTodoLedger,
+            runId: input.run.id,
+          });
           const completedAttempt = state.attempts[node.id] ?? 1;
           const advanced = advanceWorkflowState({
             definition: options.definition,
@@ -1715,13 +1728,15 @@ function withVerifierMetadata(
   };
 }
 
-function nodeVerdictFromLedger(
-  snapshot: FactLedgerSnapshot | undefined,
-  hookName: string,
-  node: WorkflowNodeDefinition,
-  nodeEntryWriteEpoch: number | undefined,
-): WorkflowNodeVerdictEvaluation {
-  const verifiers = node.verify ?? [];
+async function nodeVerdictFromLedger(input: {
+  snapshot: FactLedgerSnapshot | undefined;
+  hookName: string;
+  node: WorkflowNodeDefinition;
+  nodeEntryWriteEpoch: number | undefined;
+  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
+  runId: string;
+}): Promise<WorkflowNodeVerdictEvaluation> {
+  const verifiers = input.node.verify ?? [];
   if (verifiers.length === 0) {
     return {
       verdict: {
@@ -1732,7 +1747,10 @@ function nodeVerdictFromLedger(
       evidenceRefs: [],
     };
   }
-  if (!snapshot) {
+  const factVerifiers = verifiers.filter(
+    (verifier) => verifier.kind !== "todo_clear",
+  );
+  if (!input.snapshot && factVerifiers.length > 0) {
     return {
       verdict: {
         status: "runtime_error",
@@ -1741,22 +1759,52 @@ function nodeVerdictFromLedger(
       evidenceRefs: [],
     };
   }
-  const results = verifiers.map((verifier) =>
-    verifier.kind === "diff_scope"
-      ? evaluateDiffScopeVerifier({
-          snapshot,
-          node,
+  const results = await Promise.all(
+    verifiers.map((verifier) => {
+      if (verifier.kind === "todo_clear") {
+        return evaluateTodoClearVerifier({
+          node: input.node,
           verifier,
-          nodeEntryWriteEpoch: nodeEntryWriteEpoch ?? 0,
-        })
-      : evaluateCommandVerifier({
-          snapshot,
-          hookName,
-          node,
+          readTodoLedger: input.readTodoLedger,
+          runId: input.runId,
+        });
+      }
+      if (verifier.kind === "diff_scope") {
+        return evaluateDiffScopeVerifier({
+          snapshot: input.snapshot!,
+          node: input.node,
           verifier,
-        }),
+          nodeEntryWriteEpoch: input.nodeEntryWriteEpoch ?? 0,
+        });
+      }
+      return evaluateCommandVerifier({
+        snapshot: input.snapshot!,
+        hookName: input.hookName,
+        node: input.node,
+        verifier,
+      });
+    }),
   );
   const evidenceRefs = results.flatMap((result) => result.evidenceRefs);
+  const runtimeError = results.find(
+    (result) => result.runtimeError !== undefined,
+  );
+  if (runtimeError) {
+    return {
+      verdict: {
+        status: "runtime_error",
+        reason: runtimeError.runtimeError ?? "Workflow verifier failed.",
+        metadata: {
+          verified: true,
+          factRefs: evidenceRefs.map((ref) => ref.ref),
+          failures: results
+            .filter((result) => !result.satisfied)
+            .map((result) => result.failure),
+        },
+      },
+      evidenceRefs,
+    };
+  }
   const failed = results.filter((result) => !result.satisfied);
   if (failed.length === 0) {
     return {
@@ -1791,6 +1839,7 @@ interface WorkflowVerifierCheckResult {
   satisfied: boolean;
   evidenceRefs: WorkflowEvidenceRef[];
   failure: Record<string, unknown>;
+  runtimeError?: string;
 }
 
 function evaluateCommandVerifier(input: {
@@ -1894,6 +1943,80 @@ function evaluateDiffScopeVerifier(input: {
         path: write.path,
         writeEpoch: write.writeEpoch,
       })),
+    },
+  };
+}
+
+async function evaluateTodoClearVerifier(input: {
+  node: WorkflowNodeDefinition;
+  verifier: WorkflowTodoClearVerifierDefinition;
+  readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
+  runId: string;
+}): Promise<WorkflowVerifierCheckResult> {
+  if (!input.readTodoLedger) {
+    const message = `Workflow todo_clear verifier "${input.verifier.id}" requires a todo ledger provider.`;
+    return {
+      verifier: input.verifier,
+      satisfied: false,
+      evidenceRefs: [],
+      runtimeError: message,
+      failure: {
+        verifierId: input.verifier.id,
+        kind: input.verifier.kind,
+        missingProvider: true,
+      },
+    };
+  }
+
+  let ledger: TodoLedger;
+  try {
+    ledger = await input.readTodoLedger();
+  } catch (cause) {
+    const message = `Workflow todo_clear verifier "${input.verifier.id}" failed to read the todo ledger: ${
+      cause instanceof Error ? cause.message : String(cause)
+    }`;
+    return {
+      verifier: input.verifier,
+      satisfied: false,
+      evidenceRefs: [],
+      runtimeError: message,
+      failure: {
+        verifierId: input.verifier.id,
+        kind: input.verifier.kind,
+        readFailed: true,
+        message,
+      },
+    };
+  }
+
+  const summary = summarizeTodoLedger(ledger);
+  const unfinished = ledger.items
+    .filter((item) => item.status !== "completed" && item.status !== "skipped")
+    .map((item) => ({
+      title: item.title,
+      status: item.status,
+      ...(item.id ? { id: item.id } : {}),
+    }));
+  return {
+    verifier: input.verifier,
+    satisfied: !hasUnfinishedTodo(ledger),
+    evidenceRefs: [
+      {
+        kind: "run",
+        ref: input.runId,
+        nodeId: input.node.id,
+        verifierId: input.verifier.id,
+        metadata: {
+          kind: "todo_clear",
+          summary,
+        },
+      },
+    ],
+    failure: {
+      verifierId: input.verifier.id,
+      kind: input.verifier.kind,
+      summary,
+      unfinished,
     },
   };
 }

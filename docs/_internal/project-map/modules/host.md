@@ -299,6 +299,13 @@ Does not own:
   `delegate_parallel` tool and is batched by `maxConcurrency`; P5 does not add a
   workflow scheduler, branch cancellation bus, nested parallel, human/model
   branches, branch verifier execution, or `workflow_start`.
+- P6b `todo_clear` is a host-evaluated workflow verifier. `workflows.ts` parses
+  the portable verifier declaration; `runtime.ts` supplies a provider for the
+  current session's `todo.md`; `workflow-projection.ts` reads that provider at
+  Stop, passes only when no unfinished todo items remain, records summary
+  metadata/evidence refs, and fail-closes missing or unreadable providers as
+  runtime errors. It does not replace the todo supervisor continuation audit or
+  add FactLedger todo state.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -671,6 +678,24 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T21:51:25+0800
+- Scope: workflow-runtime-v1 P6b host boundary: `todo_clear` parser,
+  projection evaluation, session todo provider wiring, pass/fail metadata, and
+  missing-provider fail-closed behavior are host-owned. No workflow_start,
+  FactLedger todo state, global invariant, or todo supervisor replacement was
+  added.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "todo_clear|P3 non-model nodes"`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "todo_clear|diff_scope"`; `npm --workspace
+  @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T20:18:29+0800

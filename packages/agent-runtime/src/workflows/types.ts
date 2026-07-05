@@ -185,9 +185,16 @@ export interface WorkflowDiffScopeVerifierDefinition {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowTodoClearVerifierDefinition {
+  id: string;
+  kind: "todo_clear";
+  metadata?: Record<string, unknown>;
+}
+
 export type WorkflowVerifierDefinition =
   | WorkflowCommandVerifierDefinition
-  | WorkflowDiffScopeVerifierDefinition;
+  | WorkflowDiffScopeVerifierDefinition
+  | WorkflowTodoClearVerifierDefinition;
 
 export type WorkflowTransitionDefinition =
   | string

@@ -344,6 +344,36 @@ describe("workflow assets", () => {
     ]);
   });
 
+  it("parses todo_clear verifiers", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "todo-clear",
+      dir: "/tmp/todo-clear",
+      sourcePath: "/tmp/todo-clear/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: finish",
+        "    execute: model",
+        "    verify:",
+        "      - kind: todo_clear",
+        "        name: todos-done",
+        "        metadata:",
+        "          owner: self-hosting",
+        "---",
+        "## finish",
+        "Finish the todo-backed work.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes[0]?.verify).toEqual([
+      {
+        id: "todos-done",
+        kind: "todo_clear",
+        metadata: { owner: "self-hosting" },
+      },
+    ]);
+  });
+
   it("parses P4 script nodes with asset-local paths and capability declarations", () => {
     const detail = parseWorkflowMarkdownAsset({
       assetName: "scripted-release",

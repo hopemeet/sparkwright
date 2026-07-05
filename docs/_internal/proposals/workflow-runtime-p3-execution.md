@@ -563,6 +563,60 @@ skip, or avoid rewriting the todo ledger. Focused gates passed:
 and `npm --workspace @sparkwright/project-context run typecheck`. Targeted
 Prettier check passed for the touched docs and TypeScript files.
 
+## Stage 6b — `todo_clear` workflow verifier
+
+入口事实（2026-07-05）：P6a commit `996be54e` 已在当前分支，focused
+todo/project-context gates 通过。P6b 继续 self-hosting todo 片，但不重开
+D18（todo supervisor continuation 已经是 degenerate workflow driver）、D11
+（不出 `workflow_start`）、D26（spawn-shaped reopening 约束）。
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P6b 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- P6b 的删除验收是署名 acceptance：没有旧执行 owner 可删，本片只把
+  `workflow-runtime-v1.md` 已列为 cheap future candidate 的 `todo_clear`
+  reserved-only verifier 兑现为真实 workflow verifier。
+- 失败即停：需要替换 todo supervisor continuation audit、把 todo 状态塞进
+  FactLedger、把 `todo_clear` 做成全局 invariant、或引入 workflow
+  distill/shadow/spawn/permission-plan 行为时，停下拆相位。
+
+### Step 1 — 类型 / parser / projection
+
+- agent-runtime portable verifier union 增加 `todo_clear`。
+- host workflow parser 接受 `kind: todo_clear`，只保留 `id/name` 与
+  `metadata`；不接受表达式语言或路径条件。
+- workflow projection Stop verdict 支持异步读取 host-supplied todo ledger
+  provider；ledger 无 unfinished items 则 pass，否则 failed，并在
+  verdict/evidence metadata 记录 summary。
+- provider 缺失或读取失败时 fail closed 为 `runtime_error`。
+- Focused gates：agent-runtime workflow typecheck；host parser/projection
+  tests；host typecheck。
+- 失败即停：`todo_clear` 需要访问 raw trace/tool events、与 supervisor
+  continuation 共享可变状态、或让 missing provider 误判为 pass。
+
+### Step 2 — P6b 收尾
+
+- 跑 focused gates，通过后提交 P6b（不加 Co-Authored-By）。
+- 本小片仍不要求 full release gate；进入 workflow distill 或更宽 host
+  行为面前再跑相位级 `npm run release:check`。
+
+Implementation note (2026-07-05): P6b added portable `todo_clear` verifier
+types, host workflow parser support, and projection evaluation through a
+host-supplied session todo ledger provider. `todo_clear` passes only when the
+ledger has no unfinished items, records summary metadata/evidence refs, and
+fails closed as `runtime_error` when the provider is missing. Runtime wires the
+provider to the current session's `todo.md`; the todo supervisor continuation
+audit remains unchanged. Focused gates passed: `npm --workspace
+@sparkwright/agent-runtime run typecheck`, `npm --workspace
+@sparkwright/agent-runtime run build`, `npm --workspace
+@sparkwright/agent-runtime test -- test/workflows.test.ts`, `npm --workspace
+@sparkwright/host test -- test/workflows.test.ts -t "todo_clear|P3 non-model
+nodes"`, `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+-t "todo_clear|diff_scope"`, and `npm --workspace @sparkwright/host run
+typecheck`. Targeted Prettier check passed for touched docs and TypeScript
+files.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点
