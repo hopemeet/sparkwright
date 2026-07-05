@@ -287,11 +287,14 @@ Does not own:
   executes only non-model branch nodes (`command`, `delegate`, `task`,
   `script`), persists branch verdict/evidence in
   `WorkflowRunRecord.parallelBranches`, and lets `join` read that state without
-  re-running branches. Branch-local transitions are not interpreted in P5;
-  only the `parallel` / `join` node verdicts advance through
-  `advanceWorkflowState()`. All-delegate fan-out must call the existing
-  `delegate_parallel` tool, and P5 does not add a workflow scheduler, branch
-  cancellation bus, nested parallel, human/model branches, or `workflow_start`.
+  re-running branches. `parallel` preserves branch `runtime_error` as a
+  fail-closed node verdict; `join` requires each waited branch to have one
+  producer and rejects stale `sourceNodeId` state. Branch-local transitions are
+  not interpreted in P5; only the `parallel` / `join` node verdicts advance
+  through `advanceWorkflowState()`. All-delegate fan-out must call the existing
+  `delegate_parallel` tool and is batched by `maxConcurrency`; P5 does not add a
+  workflow scheduler, branch cancellation bus, nested parallel, human/model
+  branches, or `workflow_start`.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -666,20 +669,21 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-05T16:03:27+0800
+- Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 host boundary: parser/projection/runtime now
   own bounded non-model branch fan-out, persisted branch state, join barriers,
-  and `delegate_parallel` reuse without adding workflow_start or a second
-  scheduler.
+  branch runtime-error fail-closed behavior, and `delegate_parallel` reuse
+  without adding workflow_start or a second scheduler.
 - Read: `packages/host/src/workflows.ts`,
   `packages/host/src/workflow-projection.ts`,
   `packages/host/src/runtime.ts`,
   `packages/host/test/workflows.test.ts`,
   `packages/host/test/workflow-hooks.test.ts`,
   `docs/_internal/proposals/workflow-runtime-v1.md`.
-- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts
-  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
-  typecheck`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T15:31:20+0800

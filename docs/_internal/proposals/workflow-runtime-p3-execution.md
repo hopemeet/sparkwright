@@ -438,14 +438,15 @@ for projection-time validation.
 
 - `parallel` 作为 non-model drain 节点执行 bounded branch fan-out：
   branch node 仅允许 `command` / `delegate` / `task` / `script`；all-delegate
-  branch set 优先走既有 `delegate_parallel` tool；task branch 继续走
-  `task_create` / task store，不新增 workflow scheduler。
+  branch set 优先走既有 `delegate_parallel` tool 且同样受
+  `maxConcurrency` 分批约束；task branch 继续走 `task_create` / task
+  store，不新增 workflow scheduler。
 - branch node 的 `onPass` / `onFail` 在 P5 不解释；跳转只由
   `parallel` / `join` 节点自己的 verdict 通过既有 `advanceWorkflowState`
   查表。
 - `join` 只读取持久 `parallelBranches`，所有 `waitFor` branch passed 则
-  passed；任一 failed/runtime_error 则 failed；缺失 branch state 为
-  runtime_error。
+  passed；任一普通 failed 则 failed；任一 runtime_error、缺失 branch
+  state、或 branch state producer 不匹配则 runtime_error。
 - Focused gates：host projection tests for parallel→join pass/fail/resume
   branch-state persistence；delegate_parallel reuse probe；host typecheck。
 - 失败即停：parallel 分支绕过 host primitive governance、join 重新执行分支、
@@ -456,10 +457,14 @@ non-model node, bounds branch execution (`maxConcurrency`, capped branch count),
 and fail-closes unsupported branch kinds (`model`, `human`, nested
 `parallel`/`join`). Mixed branch sets reuse the existing governed node runners
 for `command`, `task`, `delegate`, and `script`; all-delegate branch sets call
-the existing `delegate_parallel` tool with the parent runtime context rather
-than creating another fan-out path. Branch-local transitions are deliberately
-ignored in P5. `join` reads persisted branch states only and emits a normal
-node verdict; missing branch state is `runtime_error`.
+the existing `delegate_parallel` tool with the parent runtime context, batched
+by the same `maxConcurrency`, rather than creating another fan-out path.
+Branch-local transitions are deliberately ignored in P5. `parallel` and `join`
+preserve branch `runtime_error` as top-level `runtime_error` so D23 remains
+fail-closed; ordinary branch failures still produce normal failed verdicts.
+`join` reads persisted branch states only, requires each `waitFor` branch to
+have one producer parallel node, and rejects missing or stale `sourceNodeId`
+state as `runtime_error`.
 
 ### Step 3 — P5 收尾
 
@@ -476,6 +481,15 @@ typecheck`. The project-map default drift check passed after routed pages were
 reviewed. Full `npm run release:check` passed after correcting a Prettier miss
 and marking durable branch provenance (`sourceNodeId`) as a reserved public
 workflow field.
+
+Post-review fixup note (2026-07-05): sub-agent review found three P5
+hardening gaps. The follow-up fix keeps all-delegate fan-out on
+`delegate_parallel` but batches calls by `parallel.maxConcurrency`; makes branch
+`runtime_error` fail closed through `parallel` / `join` rather than being
+downgraded to ordinary failed verdicts; and rejects ambiguous or stale join
+producer state by validating unique branch producers plus `sourceNodeId` at the
+join barrier. Focused host gates and full `npm run release:check` passed after
+adding regression tests for these cases.
 
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 

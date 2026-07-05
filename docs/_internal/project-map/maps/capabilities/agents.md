@@ -267,18 +267,20 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-05T16:03:27+0800
+- Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 agents capability check: workflow
   all-delegate parallel branches reuse the existing opt-in
-  `delegate_parallel` foreground tool; no new agent capability surface,
-  delegate eligibility rule, or nested-agent policy was added.
+  `delegate_parallel` foreground tool and are batched by workflow
+  `maxConcurrency`; no new agent capability surface, delegate eligibility rule,
+  or nested-agent policy was added.
 - Read: `packages/host/src/workflow-projection.ts`,
   `packages/host/src/runtime.ts`,
   `packages/host/test/workflow-hooks.test.ts`,
   `docs/_internal/proposals/workflow-runtime-v1.md`.
-- Tests: `npm --workspace @sparkwright/host test --
-  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
-  typecheck`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T11:36:37+0800

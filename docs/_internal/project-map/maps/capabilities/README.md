@@ -80,8 +80,9 @@ config + workspace capability roots
   should not be special-cased by capability inventory consumers.
   P5 `parallel` / `join` nodes extend the workflow asset grammar and durable
   workflow run state, not capability inventory. All-delegate workflow fan-out
-  reuses the existing opt-in `delegate_parallel` tool when available; mixed
-  non-model branches use their existing governed primitives (`command`,
+  reuses the existing opt-in `delegate_parallel` tool when available and is
+  batched by `parallel.maxConcurrency`; mixed non-model branches use their
+  existing governed primitives (`command`,
   `delegate`, `task`, `script`). P5 still does not add `workflow_start`,
   branch-local model-facing tools, or a second configured-delegate fan-out
   surface.
@@ -191,20 +192,22 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-05T16:03:27+0800
+- Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 capability boundary: `parallel` / `join`
   remain workflow asset declarations plus host projection behavior; all-delegate
-  fan-out reuses existing `delegate_parallel`, and capability inspection still
-  does not gain `workflow_start` or a branch scheduler surface.
+  fan-out reuses existing `delegate_parallel` with workflow-side
+  `maxConcurrency` batching, and capability inspection still does not gain
+  `workflow_start` or a branch scheduler surface.
 - Read: `packages/host/src/workflows.ts`,
   `packages/host/src/workflow-projection.ts`,
   `packages/host/src/runtime.ts`,
   `packages/host/test/workflows.test.ts`,
   `packages/host/test/workflow-hooks.test.ts`,
   `docs/_internal/proposals/workflow-runtime-v1.md`.
-- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts
-  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
-  typecheck`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T15:31:20+0800

@@ -161,12 +161,13 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-05T16:03:27+0800
+- Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 routing update: bounded `parallel` / `join`
   nodes route through host workflow parsing/projection and agent-runtime
   durable `parallelBranches` state. All-delegate fan-out reuses the existing
-  `delegate_parallel` tool; workflow assets still do not expose
-  `workflow_start` or a second scheduler/cancellation bus.
+  `delegate_parallel` tool while honoring `maxConcurrency`; join barriers match
+  branch state to the unique producer parallel node. Workflow assets still do
+  not expose `workflow_start` or a second scheduler/cancellation bus.
 - Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
   `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
   `packages/host/src/workflows.ts`,
@@ -175,11 +176,10 @@ trace/session inspection.
   `packages/agent-runtime/src/workflows/types.ts`,
   `packages/agent-runtime/src/workflows/store.ts`,
   `packages/agent-runtime/src/workflows/machine.ts`.
-- Tests: `npm --workspace @sparkwright/agent-runtime test --
-  test/workflows.test.ts`; `npm --workspace @sparkwright/agent-runtime run
-  typecheck`; `npm --workspace @sparkwright/host test -- test/workflows.test.ts
-  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
-  typecheck`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T15:31:20+0800

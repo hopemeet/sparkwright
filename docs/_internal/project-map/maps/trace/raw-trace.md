@@ -193,18 +193,20 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-05T16:03:27+0800
+- Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 trace check: `parallel` / `join` reuse
   existing `workflow.node.*`, workflow terminal events, and evidence refs.
-  Branch state is persisted in `WorkflowRunRecord.parallelBranches`; no raw
-  trace event type or schema was added.
+  Branch state is persisted in `WorkflowRunRecord.parallelBranches`; branch
+  runtime errors now remain fail-closed through existing workflow failure events.
+  No raw trace event type or schema was added.
 - Read: `packages/host/src/workflow-projection.ts`,
   `packages/agent-runtime/src/workflows/types.ts`,
   `packages/host/test/workflow-hooks.test.ts`,
   `docs/_internal/proposals/workflow-runtime-v1.md`.
-- Tests: `npm --workspace @sparkwright/host test --
-  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
-  typecheck`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T11:36:37+0800

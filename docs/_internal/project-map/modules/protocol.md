@@ -182,17 +182,21 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-05T16:03:27+0800
+- Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 routed-page check: bounded
   `parallel` / `join` changes are host asset/projection and
   `WorkflowRunRecord` store internals. Host protocol request/response shapes,
   workflow list/resume payloads, and capability snapshot schema remain
-  unchanged.
+  unchanged by the P5 fail-closed/join-source hardening.
 - Read: `packages/host/src/runtime.ts`,
   `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
   `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
   `docs/_internal/proposals/workflow-runtime-v1.md`.
-- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts`;
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
   `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Read-only
