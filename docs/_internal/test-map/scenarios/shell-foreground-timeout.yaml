@@ -1,0 +1,70 @@
+id: shell-foreground-timeout
+area: shell
+status: Partially Verified
+
+task:
+  direction: "Run a shell command whose foreground budget expires."
+  prompt_shape: scripted
+  prompt: "Direct tool execution in tests; no model prompt required."
+  expected_behavior:
+    - "With TaskManager, the live process is promoted and returns promoted=true."
+    - "Without TaskManager, the process is aborted and returns timedOut=true."
+    - "Result reports foregroundTimeoutMs, promotionAvailable, and timeoutMsAliasUsed."
+    - "Legacy timeoutMs is an alias for foregroundTimeoutMs, not a hard-kill timeout."
+
+model:
+  baseline: deterministic
+  real_model_canary: null
+  sensitive_to:
+    - "Real model may avoid long-running shell unless prompt strongly requires it."
+
+capabilities:
+  tools_use:
+    - shell
+  permission_mode: default
+  write_enabled: false
+  approvals:
+    edits: false
+    shell_safe: true
+    all: false
+  skills: []
+  mcp: []
+  agents:
+    max_depth: null
+    delegate_profiles: []
+
+context:
+  workspace_fixture: "temporary empty workspace"
+  session_state: fresh
+  config_layers:
+    - "shell.foregroundTimeoutMs when config path is under test"
+  dirty_workspace_required: false
+
+environment:
+  trace_level: standard
+  platform_sensitive: false
+  sandbox_required: false
+  network_required: false
+  build_state:
+    requires_fresh_dist: true
+    note: "Host imports @sparkwright/shell-tool through package exports."
+
+assertions:
+  stable:
+    - "No-task-manager result has timedOut=true and no taskId."
+    - "Promotion-capable result has promoted=true and a durable task id."
+    - "No-task-manager stderr contains promotion-unavailable diagnostic."
+    - "Configured or per-call foregroundTimeoutMs is echoed in output."
+  non_stable:
+    - "Exact elapsed wall-clock time."
+    - "Exact process exit signal text from the platform."
+
+recommended_tests:
+  - "npm --workspace @sparkwright/shell-tool test"
+  - "npm --workspace @sparkwright/shell-tool run build"
+  - "npm --workspace @sparkwright/host test -- test/tools.test.ts"
+  - "npm --workspace @sparkwright/host test -- test/config.test.ts"
+
+known_failure_modes:
+  - "shell-dist-skew"
+

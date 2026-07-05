@@ -1,4 +1,4 @@
-import type { Brand, RunId } from "@sparkwright/core";
+import type { Brand, RunBudget, RunId } from "@sparkwright/core";
 import type { TaskError } from "../tasks/types.js";
 
 export type WorkflowRunId = Brand<string, "WorkflowRunId">;
@@ -76,9 +76,53 @@ export interface WorkflowRunRecord extends WorkflowAssetPin {
   metadata: Record<string, unknown>;
 }
 
-export type WorkflowNodeExecuteKind = "model" | "command" | "delegate" | "task";
+export type WorkflowNodeExecuteKind =
+  | "model"
+  | "command"
+  | "delegate"
+  | "task"
+  | "human";
 
 export type WorkflowVerifierExpectation = "zero" | "nonzero";
+
+export interface WorkflowCommandNodeDefinition {
+  command: string;
+  args?: string[];
+  cwd?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  expect?: WorkflowVerifierExpectation;
+  /**
+   * P3 trust declaration: command nodes are host-executed workflow asset code,
+   * so instantiation must opt in before the projection may run them.
+   */
+  authorized?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowDelegateNodeDefinition {
+  agentId?: string;
+  toolName?: string;
+  goal: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type WorkflowTaskNodeMode = "foreground" | "awaited" | "background";
+
+export interface WorkflowTaskNodeDefinition {
+  kind: string;
+  title?: string;
+  mode?: WorkflowTaskNodeMode;
+  awaited?: boolean;
+  payload?: unknown;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowHumanNodeDefinition {
+  prompt?: string;
+  wait?: WorkflowWaitState;
+  metadata?: Record<string, unknown>;
+}
 
 export interface WorkflowCommandVerifierDefinition {
   id: string;
@@ -97,7 +141,17 @@ export interface WorkflowCommandVerifierDefinition {
   metadata?: Record<string, unknown>;
 }
 
-export type WorkflowVerifierDefinition = WorkflowCommandVerifierDefinition;
+export interface WorkflowDiffScopeVerifierDefinition {
+  id: string;
+  kind: "diff_scope";
+  include?: string[];
+  exclude?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export type WorkflowVerifierDefinition =
+  | WorkflowCommandVerifierDefinition
+  | WorkflowDiffScopeVerifierDefinition;
 
 export type WorkflowTransitionDefinition =
   | string
@@ -116,8 +170,14 @@ export interface WorkflowNodeDefinition {
   id: string;
   title?: string;
   execute?: WorkflowNodeExecuteKind;
+  model?: string;
+  runBudget?: RunBudget;
   body: string;
   tools?: string[];
+  command?: WorkflowCommandNodeDefinition;
+  delegate?: WorkflowDelegateNodeDefinition;
+  task?: WorkflowTaskNodeDefinition;
+  human?: WorkflowHumanNodeDefinition;
   verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
@@ -206,6 +266,8 @@ export interface WorkflowNodeVerdictLogEntry {
 export type WorkflowStoreEventType =
   | "created"
   | "updated"
+  | "waiting"
+  | "input"
   | "completed"
   | "failed"
   | "cancelled"

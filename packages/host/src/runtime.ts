@@ -16,6 +16,7 @@ import {
   loadTraceEventsFile,
   createPermissionModePolicy,
   createRun,
+  createToolSearchTool,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
   defineTool,
@@ -57,6 +58,7 @@ import {
   type TaskRevivalSource,
   type SessionTraceFacts,
   type ToolDefinition,
+  type ToolDescriptor,
   type ToolOrigin,
   type WorkflowHook,
 } from "@sparkwright/core";
@@ -76,8 +78,9 @@ import {
 } from "@sparkwright/mcp-adapter";
 import {
   FileTaskNotificationOutbox,
+  FileWorkflowNotificationOutbox,
   FileWorkflowStore,
-  InMemoryTaskNotificationQueue,
+  advanceWorkflowState,
   assertSafeWorkflowRunId,
   type FileDocumentLease,
   FileTaskStore,
@@ -109,6 +112,7 @@ import {
   type SpawnedSubAgent,
   type WorkflowDefinition,
   type WorkflowEvidenceRef,
+  type WorkflowNodeDefinition,
   type WorkflowNodeVerdictLogEntry,
   type WorkflowRunId,
   type WorkflowRunRecord,
@@ -464,6 +468,12 @@ interface PreparedHostRunEnvironment {
   runIdHolder: { value: string | null };
   approvalResolver: ApprovalResolver;
   model: ModelAdapter;
+  modelRef: string;
+  resolvedModel: ResolvedModelConfig;
+  workflowModelAdapters: Map<
+    string,
+    { adapter: ModelAdapter; resolved: ResolvedModelConfig }
+  >;
   preparedSkills: PreparedSkills | null;
   preparedMcp: PreparedMcp | null;
   mainAgent: AgentProfile;
@@ -873,7 +883,7 @@ export class HostRuntime {
     ReturnType<typeof createRun>
   >();
   private readonly taskNotifications: FileTaskNotificationOutbox;
-  private readonly workflowNotifications: InMemoryTaskNotificationQueue;
+  private readonly workflowNotifications: FileWorkflowNotificationOutbox;
   private readonly taskManager: TaskManager;
   private active: ActiveRun | null = null;
   private readonly deliveredWorkflowNotifications = new Set<string>();
@@ -901,7 +911,10 @@ export class HostRuntime {
       rootDir: this.taskRootDir(),
       createRoot: false,
     });
-    this.workflowNotifications = new InMemoryTaskNotificationQueue();
+    this.workflowNotifications = new FileWorkflowNotificationOutbox({
+      rootDir: this.workflowNotificationRootDir(),
+      createRoot: false,
+    });
     this.taskManager = new TaskManager({
       store: new FileTaskStore({
         rootDir: this.taskRootDir(),
@@ -923,6 +936,10 @@ export class HostRuntime {
 
   private taskRootDir(): string {
     return join(this.opts.workspaceRoot, ".sparkwright", "tasks");
+  }
+
+  private workflowNotificationRootDir(): string {
+    return join(this.opts.workspaceRoot, ".sparkwright", "workflow-actors");
   }
 
   private async runAgentTask(
@@ -996,8 +1013,15 @@ export class HostRuntime {
     if (!env.workflowStore || !env.workflowRecord) return;
     const latest =
       env.workflowStore.get(env.workflowRecord.id) ?? env.workflowRecord;
+    if (latest.status === "waiting") {
+      this.deliverWorkflowNotification(latest);
+      await env.workflowLease?.release();
+      env.workflowLease = undefined;
+      env.workflowRecord = latest;
+      return;
+    }
     if (isTerminalWorkflowRunStatus(latest.status)) {
-      this.deliverWorkflowTerminalNotification(latest);
+      this.deliverWorkflowNotification(latest);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
       env.workflowRecord = latest;
@@ -1014,7 +1038,7 @@ export class HostRuntime {
         },
         metadata: { finalizedFromRunEnd: true },
       });
-      this.deliverWorkflowTerminalNotification(env.workflowRecord);
+      this.deliverWorkflowNotification(env.workflowRecord);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
       return;
@@ -1036,7 +1060,7 @@ export class HostRuntime {
         },
         metadata: { finalizedFromRunEnd: true },
       });
-      this.deliverWorkflowTerminalNotification(env.workflowRecord);
+      this.deliverWorkflowNotification(env.workflowRecord);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
       return;
@@ -1052,7 +1076,7 @@ export class HostRuntime {
         },
         metadata: { finalizedFromRunEnd: true },
       });
-      this.deliverWorkflowTerminalNotification(env.workflowRecord);
+      this.deliverWorkflowNotification(env.workflowRecord);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
     }
@@ -1066,8 +1090,15 @@ export class HostRuntime {
     if (!env.workflowStore || !env.workflowRecord) return;
     const latest =
       env.workflowStore.get(env.workflowRecord.id) ?? env.workflowRecord;
+    if (latest.status === "waiting") {
+      this.deliverWorkflowNotification(latest);
+      await env.workflowLease?.release();
+      env.workflowLease = undefined;
+      env.workflowRecord = latest;
+      return;
+    }
     if (isTerminalWorkflowRunStatus(latest.status)) {
-      this.deliverWorkflowTerminalNotification(latest);
+      this.deliverWorkflowNotification(latest);
       await env.workflowLease?.release();
       env.workflowLease = undefined;
       env.workflowRecord = latest;
@@ -1090,13 +1121,20 @@ export class HostRuntime {
       },
       metadata: { finalizedFromSupervisorError: true },
     });
-    this.deliverWorkflowTerminalNotification(env.workflowRecord);
+    this.deliverWorkflowNotification(env.workflowRecord);
     await env.workflowLease?.release();
     env.workflowLease = undefined;
   }
 
-  private deliverWorkflowTerminalNotification(record: WorkflowRunRecord): void {
-    if (record.status !== "completed" && record.status !== "failed") return;
+  private deliverWorkflowNotification(record: WorkflowRunRecord): void {
+    if (
+      record.status !== "completed" &&
+      record.status !== "failed" &&
+      record.status !== "waiting"
+    ) {
+      return;
+    }
+    if (record.status === "waiting" && !record.wait) return;
     const key = `${record.id}:${record.status}`;
     if (this.deliveredWorkflowNotifications.has(key)) return;
     this.deliveredWorkflowNotifications.add(key);
@@ -1111,11 +1149,33 @@ export class HostRuntime {
       ...(runId ? { parentRunId: String(runId) } : {}),
       ...(record.sessionId ? { sessionId: record.sessionId } : {}),
     };
+    if (record.status === "waiting") {
+      this.workflowNotifications.asActorSink().deliver({
+        source,
+        routeHint,
+        type: "waiting",
+        correlationId: `${record.id}:waiting:${record.currentNodeId ?? "unknown"}`,
+        payload: {
+          workflowId: record.id,
+          name: record.assetName,
+          summary: `Workflow ${record.assetName} is waiting.`,
+          wait: record.wait!,
+          metadata: {
+            assetName: record.assetName,
+            version: record.version,
+            contentHash: record.contentHash,
+            currentNodeId: record.currentNodeId,
+          },
+        },
+      });
+      return;
+    }
     if (record.status === "completed") {
       this.workflowNotifications.asActorSink().deliver({
         source,
         routeHint,
         type: "completed",
+        correlationId: `${record.id}:completed`,
         payload: {
           workflowId: record.id,
           name: record.assetName,
@@ -1138,6 +1198,7 @@ export class HostRuntime {
       source,
       routeHint,
       type: "failed",
+      correlationId: `${record.id}:failed`,
       payload: {
         workflowId: record.id,
         name: record.assetName,
@@ -1904,6 +1965,24 @@ export class HostRuntime {
         },
       };
     }
+    const workflowModelAdapters = workflowDefinition
+      ? await resolveWorkflowModelAdapters({
+          definition: workflowDefinition,
+          parentModelRef: model.resolved.modelRef,
+          goal: input.goal,
+          workspaceRoot,
+          targetPath: input.targetPath,
+        })
+      : { ok: true as const, adapters: new Map() };
+    if (!workflowModelAdapters.ok) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_payload",
+          message: workflowModelAdapters.message,
+        },
+      };
+    }
     const workflowStore = workflowDefinition
       ? new FileWorkflowStore({
           rootDir: workflowRunsDir({
@@ -1943,7 +2022,7 @@ export class HostRuntime {
                 latestRecord,
                 snapshot,
               );
-              this.deliverWorkflowTerminalNotification(workflowRecord);
+              this.deliverWorkflowNotification(workflowRecord);
             },
             workspaceRoot,
             sandbox: shellConfig?.sandbox,
@@ -1952,6 +2031,12 @@ export class HostRuntime {
             configPaths: loadedConfig.attempted.map((entry) => entry.path),
             getRun: () => parentRunRef.current,
             agentTool: delegateAgentTool,
+            taskTool: tools.find((tool) => tool.name === "task_create"),
+            isToolAvailable: (toolName) =>
+              toolsForWorkflowRecord(tools, workflowRecord).some(
+                (tool) =>
+                  canonicalToolName(tool.name) === canonicalToolName(toolName),
+              ),
           })
         : undefined;
       if (workflowProjection && workflowDefinition && workflowStore) {
@@ -2129,6 +2214,9 @@ export class HostRuntime {
         runIdHolder,
         approvalResolver,
         model: model.adapter,
+        modelRef: model.resolved.modelRef,
+        resolvedModel: model.resolved,
+        workflowModelAdapters: workflowModelAdapters.adapters,
         preparedSkills,
         preparedMcp,
         mainAgent,
@@ -2289,7 +2377,11 @@ export class HostRuntime {
       });
   }
 
-  private async startSupervisedRunChain(input: {
+  // P3 Step 4a: actor-owned episode driver. The workflow/todo actor owns the
+  // chain shape through runTodoSupervised -> runWorkflowRunChain; host creates
+  // transient core runs and wires session/lease/event glue for each episode.
+  private async startWorkflowActorEpisodeChain(input: {
+    episodeKind: "run_start" | "run_resume" | "workflow_resume";
     env: PreparedHostRunEnvironment;
     sessionId: string;
     todoPath: string;
@@ -2316,6 +2408,14 @@ export class HostRuntime {
       env.parentRunRef.current = run;
       env.runIdHolder.value = runId;
       if (env.workflowStore && env.workflowRecord) {
+        const episodeAllowedTools = workflowEpisodeAllowedTools(
+          env.workflowRecord,
+        );
+        const episodeMetadata =
+          workflowEpisodeMetadataFromRun(run) ??
+          workflowActorEpisodeMetadata(
+            workflowActorEpisodePlan(env, { budgetScope: "main_agent" }),
+          );
         env.workflowRecord = env.workflowStore.update(env.workflowRecord.id, {
           activeRunId: runId as RunId,
           appendRunId: runId as RunId,
@@ -2327,6 +2427,12 @@ export class HostRuntime {
           metadata: {
             activeRunId: runId,
             resumeRun: env.workflowRecord.runIds.length > 0,
+            episodeDriver: "workflow_actor",
+            episodeKind: input.episodeKind,
+            workflowEpisode: episodeMetadata,
+            ...(episodeAllowedTools
+              ? { episodeAllowedTools: episodeAllowedTools.normalized }
+              : {}),
           },
         });
       }
@@ -2413,6 +2519,7 @@ export class HostRuntime {
         const result = await run.start();
         previousRunId = runId;
         await input.afterRun?.(supervisedInput, run, result);
+        await this.recordWorkflowActorEpisodeUsage(env, run, result);
         if (this.runChainCancelled) {
           return {
             result: {
@@ -2515,6 +2622,27 @@ export class HostRuntime {
     }
   }
 
+  private async recordWorkflowActorEpisodeUsage(
+    env: PreparedHostRunEnvironment,
+    run: ReturnType<typeof createRun>,
+    result: RunResult,
+  ): Promise<void> {
+    if (!env.workflowStore || !env.workflowRecord) return;
+    const latest = env.workflowStore.get(env.workflowRecord.id);
+    if (!latest) return;
+    const episode = workflowEpisodeMetadataFromRun(run);
+    const usage = run.usage();
+    env.workflowRecord = env.workflowStore.update(latest.id, {
+      metadata: appendWorkflowEpisodeUsage(latest.metadata, {
+        runId: run.record.id,
+        stopReason: result.stopReason,
+        state: result.state,
+        ...(episode ? { episode } : {}),
+        usage,
+      }),
+    });
+  }
+
   private async resumeRunInner(
     payload: RunResumeRequestPayload,
   ): Promise<
@@ -2611,6 +2739,10 @@ export class HostRuntime {
       goal: string,
       extraContext: ContextItem[],
     ) => {
+      const episode = workflowActorEpisodePlan(env, {
+        fallbackRunBudget: resolveTodoContinuationRunBudget(env.mainAgent),
+        budgetScope: "todo_continuation",
+      });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.createTaskRevivalBridge(
         () => runRef.current?.record.id,
@@ -2631,12 +2763,12 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId: resumeSessionId,
         }),
-        tools: env.tools,
+        tools: toolsForWorkflowActorEpisode(env),
         workflowHooks: env.workflowHooks,
-        model: env.model,
+        model: episode.model,
         maxSteps: resolveTodoContinuationMaxSteps(env.mainAgent),
-        runBudget: resolveTodoContinuationRunBudget(env.mainAgent),
-        metadata: env.runMetadata,
+        runBudget: episode.runBudget,
+        metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
         notificationSources: [taskBridge.notificationSource],
         taskRevivalSource: taskBridge.taskRevivalSource,
         runStore: createSessionRunStoreFactory({
@@ -2648,7 +2780,10 @@ export class HostRuntime {
             agentId: located.agentId,
             traceLevel: env.traceLevel,
           }),
-          metadata: env.runStoreMetadata,
+          metadata: workflowActorEpisodeRunMetadata(
+            env.runStoreMetadata,
+            episode,
+          ),
         }),
       });
       runRef.current = run;
@@ -2667,7 +2802,8 @@ export class HostRuntime {
       metadata: { layer: "conversation", stability: "session" },
     });
 
-    const started = await this.startSupervisedRunChain({
+    const started = await this.startWorkflowActorEpisodeChain({
+      episodeKind: "run_resume",
       env,
       todoPath: join(env.sessionRootDir, resumeSessionId, "todo.md"),
       sessionId: resumeSessionId,
@@ -2678,6 +2814,10 @@ export class HostRuntime {
               supervisedInput.continuation.context,
             ])
           : (() => {
+              const episode = workflowActorEpisodePlan(env, {
+                fallbackRunBudget: env.mainAgent.runBudget,
+                budgetScope: "main_agent",
+              });
               const runRef: {
                 current?: ReturnType<typeof resumeRunFromCheckpoint>;
               } = {};
@@ -2699,13 +2839,19 @@ export class HostRuntime {
                   cwd: env.workspaceRoot,
                   sessionId: resumeSessionId,
                 }),
-                tools: env.tools,
-                model: env.model,
-                maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-                ...(env.mainAgent.runBudget !== undefined
-                  ? { runBudget: env.mainAgent.runBudget }
+                tools: toolsForWorkflowActorEpisode(env),
+                model: episode.model,
+                maxSteps: resolveWorkflowEpisodeMaxSteps(
+                  env.mainAgent,
+                  episode.runBudget,
+                ),
+                ...(episode.runBudget !== undefined
+                  ? { runBudget: episode.runBudget }
                   : {}),
-                metadata: env.runMetadata,
+                metadata: workflowActorEpisodeRunMetadata(
+                  env.runMetadata,
+                  episode,
+                ),
                 notificationSources: [taskBridge.notificationSource],
                 taskRevivalSource: taskBridge.taskRevivalSource,
                 runStore: createSessionRunStoreFactory({
@@ -2717,7 +2863,10 @@ export class HostRuntime {
                     agentId: located.agentId,
                     traceLevel: env.traceLevel,
                   }),
-                  metadata: env.runStoreMetadata,
+                  metadata: workflowActorEpisodeRunMetadata(
+                    env.runStoreMetadata,
+                    episode,
+                  ),
                 }),
               });
               runRef.current = run;
@@ -2758,7 +2907,8 @@ export class HostRuntime {
       payload.sessionId,
     );
     if (!located.ok) return located;
-    const { record, store, sessionId } = located;
+    let { record } = located;
+    const { store, sessionId } = located;
     if (isTerminalWorkflowRunStatus(record.status)) {
       return {
         ok: false,
@@ -2789,6 +2939,33 @@ export class HostRuntime {
           message: `Workflow run ${record.id} is already adopted by another writer.`,
         },
       };
+    }
+    if (record.status === "waiting") {
+      try {
+        record = consumeWorkflowActorWaitingInput(store, record, {
+          metadata: payload.metadata,
+        });
+      } catch (error) {
+        await lease.release();
+        return {
+          ok: false,
+          error: {
+            code: "invalid_payload",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      if (isTerminalWorkflowRunStatus(record.status)) {
+        this.deliverWorkflowNotification(record);
+        await lease.release();
+        return {
+          ok: false,
+          error: {
+            code: "invalid_payload",
+            message: `Workflow run ${record.id} reached ${record.status} while consuming waiting input.`,
+          },
+        };
+      }
     }
 
     const access = resolveRunAccessFields(
@@ -2847,6 +3024,10 @@ export class HostRuntime {
       sessionId,
     );
     const buildRun = (goal: string, extraContext: ContextItem[]) => {
+      const episode = workflowActorEpisodePlan(env, {
+        fallbackRunBudget: env.mainAgent.runBudget,
+        budgetScope: "main_agent",
+      });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.createTaskRevivalBridge(
         () => runRef.current?.record.id,
@@ -2871,14 +3052,17 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools: env.tools,
+        tools: toolsForWorkflowActorEpisode(env),
         workflowHooks: env.workflowHooks,
-        model: env.model,
-        maxSteps: resolveMainAgentMaxSteps(env.mainAgent),
-        ...(env.mainAgent.runBudget !== undefined
-          ? { runBudget: env.mainAgent.runBudget }
+        model: episode.model,
+        maxSteps: resolveWorkflowEpisodeMaxSteps(
+          env.mainAgent,
+          episode.runBudget,
+        ),
+        ...(episode.runBudget !== undefined
+          ? { runBudget: episode.runBudget }
           : {}),
-        metadata: env.runMetadata,
+        metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
         notificationSources: [taskBridge.notificationSource],
         taskRevivalSource: taskBridge.taskRevivalSource,
         runStore: createSessionRunStoreFactory({
@@ -2890,14 +3074,18 @@ export class HostRuntime {
             agentId: "main",
             traceLevel: env.traceLevel,
           }),
-          metadata: env.runStoreMetadata,
+          metadata: workflowActorEpisodeRunMetadata(
+            env.runStoreMetadata,
+            episode,
+          ),
         }),
       });
       runRef.current = run;
       return run;
     };
 
-    const started = await this.startSupervisedRunChain({
+    const started = await this.startWorkflowActorEpisodeChain({
+      episodeKind: "workflow_resume",
       env,
       todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
@@ -3089,6 +3277,10 @@ export class HostRuntime {
       extraContext: ContextItem[],
       overrides: { maxSteps?: number; runBudget?: RunBudget } = {},
     ) => {
+      const episode = workflowActorEpisodePlan(env, {
+        fallbackRunBudget: overrides.runBudget ?? env.mainAgent.runBudget,
+        budgetScope: overrides.runBudget ? "todo_continuation" : "main_agent",
+      });
       const runRef: { current?: ReturnType<typeof createRun> } = {};
       const taskBridge = this.createTaskRevivalBridge(
         () => runRef.current?.record.id,
@@ -3113,18 +3305,18 @@ export class HostRuntime {
           cwd: env.workspaceRoot,
           sessionId,
         }),
-        tools: env.tools,
+        tools: toolsForWorkflowActorEpisode(env),
         workflowHooks: env.workflowHooks,
-        model: env.model,
+        model: episode.model,
         // Bind the main agent on resources, not a leaked step count of 8: honor
         // the profile's RunBudget when set and derive the step ceiling from it.
-        maxSteps: overrides.maxSteps ?? resolveMainAgentMaxSteps(env.mainAgent),
-        ...(overrides.runBudget !== undefined
-          ? { runBudget: overrides.runBudget }
-          : env.mainAgent.runBudget !== undefined
-            ? { runBudget: env.mainAgent.runBudget }
-            : {}),
-        metadata: env.runMetadata,
+        maxSteps:
+          overrides.maxSteps ??
+          resolveWorkflowEpisodeMaxSteps(env.mainAgent, episode.runBudget),
+        ...(episode.runBudget !== undefined
+          ? { runBudget: episode.runBudget }
+          : {}),
+        metadata: workflowActorEpisodeRunMetadata(env.runMetadata, episode),
         notificationSources: [taskBridge.notificationSource],
         taskRevivalSource: taskBridge.taskRevivalSource,
         runStore: createSessionRunStoreFactory({
@@ -3136,7 +3328,10 @@ export class HostRuntime {
             agentId: "main",
             traceLevel: env.traceLevel,
           }),
-          metadata: env.runStoreMetadata,
+          metadata: workflowActorEpisodeRunMetadata(
+            env.runStoreMetadata,
+            episode,
+          ),
         }),
       });
       runRef.current = run;
@@ -3160,7 +3355,8 @@ export class HostRuntime {
       metadata: { layer: "conversation", stability: "session" },
     });
 
-    return this.startSupervisedRunChain({
+    return this.startWorkflowActorEpisodeChain({
+      episodeKind: "run_start",
       env,
       todoPath: join(env.sessionRootDir, sessionId, "todo.md"),
       sessionId,
@@ -7622,6 +7818,451 @@ function runtimeStateFromWorkflowRecord(
   };
 }
 
+interface WorkflowActorEpisodePlan {
+  model: ModelAdapter;
+  modelRef: string;
+  resolvedModel: ResolvedModelConfig;
+  nodeId?: string;
+  attempt?: number;
+  runBudget?: RunBudget;
+  budgetScope: "main_agent" | "todo_continuation";
+}
+
+async function resolveWorkflowModelAdapters(input: {
+  definition: WorkflowDefinition;
+  parentModelRef: string;
+  goal: string;
+  workspaceRoot: string;
+  targetPath?: string;
+}): Promise<
+  | {
+      ok: true;
+      adapters: Map<
+        string,
+        { adapter: ModelAdapter; resolved: ResolvedModelConfig }
+      >;
+    }
+  | { ok: false; message: string }
+> {
+  const adapters = new Map<
+    string,
+    { adapter: ModelAdapter; resolved: ResolvedModelConfig }
+  >();
+  const refs = new Set<string>();
+  for (const node of input.definition.nodes) {
+    const modelRef = workflowNodeModelRef(input.definition, node);
+    if (modelRef && modelRef !== input.parentModelRef) refs.add(modelRef);
+  }
+  for (const modelRef of refs) {
+    const built = await createModel({
+      modelRef,
+      goal: input.goal,
+      workspaceRoot: input.workspaceRoot,
+      ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+    });
+    if (!built.ok) {
+      return {
+        ok: false,
+        message: `Workflow node model "${modelRef}": ${built.message}`,
+      };
+    }
+    adapters.set(modelRef, {
+      adapter: built.adapter,
+      resolved: built.resolved,
+    });
+  }
+  return { ok: true, adapters };
+}
+
+function workflowActorEpisodePlan(
+  env: PreparedHostRunEnvironment,
+  options: {
+    fallbackRunBudget?: RunBudget;
+    budgetScope: WorkflowActorEpisodePlan["budgetScope"];
+  },
+): WorkflowActorEpisodePlan {
+  const node = currentWorkflowRecordNode(env.workflowRecord);
+  const nodeModelRef =
+    node && env.workflowRecord?.definitionSnapshot
+      ? workflowNodeModelRef(env.workflowRecord.definitionSnapshot, node)
+      : undefined;
+  const modelRef = nodeModelRef ?? env.modelRef;
+  const model =
+    nodeModelRef && env.workflowModelAdapters.has(modelRef)
+      ? env.workflowModelAdapters.get(modelRef)!
+      : { adapter: env.model, resolved: env.resolvedModel };
+  return {
+    model: model.adapter,
+    modelRef,
+    resolvedModel: model.resolved,
+    ...(node ? { nodeId: node.id } : {}),
+    ...(node && env.workflowRecord
+      ? { attempt: env.workflowRecord.attempts[node.id] ?? 1 }
+      : {}),
+    ...((node?.runBudget ?? options.fallbackRunBudget)
+      ? { runBudget: { ...(node?.runBudget ?? options.fallbackRunBudget) } }
+      : {}),
+    budgetScope: options.budgetScope,
+  };
+}
+
+function workflowActorEpisodeRunMetadata(
+  base: Record<string, unknown>,
+  episode: WorkflowActorEpisodePlan,
+): Record<string, unknown> {
+  return {
+    ...base,
+    resolvedModel: episode.resolvedModel,
+    workflowEpisode: workflowActorEpisodeMetadata(episode),
+  };
+}
+
+function workflowActorEpisodeMetadata(
+  episode: WorkflowActorEpisodePlan,
+): Record<string, unknown> {
+  return {
+    modelRef: episode.modelRef,
+    budgetScope: episode.budgetScope,
+    ...(episode.nodeId ? { nodeId: episode.nodeId } : {}),
+    ...(episode.attempt !== undefined ? { attempt: episode.attempt } : {}),
+    ...(episode.runBudget ? { runBudget: { ...episode.runBudget } } : {}),
+  };
+}
+
+function workflowEpisodeMetadataFromRun(
+  run: ReturnType<typeof createRun>,
+): Record<string, unknown> | undefined {
+  const raw = run.record.metadata.workflowEpisode;
+  return isPlainRecord(raw) ? cloneJsonLike(raw) : undefined;
+}
+
+function appendWorkflowEpisodeUsage(
+  metadata: Record<string, unknown>,
+  entry: {
+    runId: RunId;
+    state: RunResult["state"];
+    stopReason?: RunResult["stopReason"];
+    episode?: Record<string, unknown>;
+    usage: ReturnType<ReturnType<typeof createRun>["usage"]>;
+  },
+): Record<string, unknown> {
+  const entries = Array.isArray(metadata.workflowEpisodeUsage)
+    ? metadata.workflowEpisodeUsage.filter(isPlainRecord).map(cloneJsonLike)
+    : [];
+  const next = [
+    ...entries,
+    {
+      at: new Date().toISOString(),
+      runId: entry.runId,
+      state: entry.state,
+      ...(entry.stopReason ? { stopReason: entry.stopReason } : {}),
+      ...(entry.episode ? { episode: cloneJsonLike(entry.episode) } : {}),
+      usage: cloneJsonLike(entry.usage),
+    },
+  ];
+  return {
+    ...metadata,
+    workflowEpisodeUsage: next,
+    workflowUsage: summarizeWorkflowEpisodeUsage(next),
+  };
+}
+
+function summarizeWorkflowEpisodeUsage(
+  entries: readonly Record<string, unknown>[],
+): Record<string, unknown> {
+  let modelCalls = 0;
+  let toolCalls = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  let cachedTokens = 0;
+  let costUsd = 0;
+  for (const entry of entries) {
+    const usage = isPlainRecord(entry.usage) ? entry.usage : {};
+    modelCalls += numericField(usage, "modelCalls");
+    toolCalls += numericField(usage, "toolCalls");
+    costUsd += numericField(usage, "costUsd");
+    const tokens = isPlainRecord(usage.tokens) ? usage.tokens : {};
+    inputTokens += numericField(tokens, "input");
+    outputTokens += numericField(tokens, "output");
+    totalTokens += numericField(tokens, "total");
+    cachedTokens += numericField(tokens, "cached");
+  }
+  return {
+    episodes: entries.length,
+    modelCalls,
+    toolCalls,
+    tokens: {
+      input: inputTokens,
+      output: outputTokens,
+      total: totalTokens,
+      cached: cachedTokens,
+    },
+    costUsd,
+  };
+}
+
+function resolveWorkflowEpisodeMaxSteps(
+  profile: AgentProfile,
+  runBudget: RunBudget | undefined,
+): number {
+  const base = resolveMainAgentMaxSteps(profile);
+  if (runBudget?.maxModelCalls !== undefined) {
+    return Math.min(base, runBudget.maxModelCalls);
+  }
+  return base;
+}
+
+function currentWorkflowRecordNode(
+  record: WorkflowRunRecord | undefined,
+): WorkflowNodeDefinition | undefined {
+  if (!record?.definitionSnapshot || !record.currentNodeId) return undefined;
+  return record.definitionSnapshot.nodes.find(
+    (candidate) => candidate.id === record.currentNodeId,
+  );
+}
+
+function workflowNodeModelRef(
+  definition: WorkflowDefinition,
+  node: WorkflowNodeDefinition,
+): string | undefined {
+  if (!node.model) return undefined;
+  const tiers = workflowModelTiers(definition);
+  return tiers[node.model] ?? node.model;
+}
+
+function workflowModelTiers(
+  definition: WorkflowDefinition,
+): Record<string, string> {
+  const config = definition.config;
+  if (!isPlainRecord(config)) return {};
+  const raw = isPlainRecord(config.modelTiers)
+    ? config.modelTiers
+    : isPlainRecord(config.model_tiers)
+      ? config.model_tiers
+      : undefined;
+  if (!raw) return {};
+  return Object.fromEntries(
+    Object.entries(raw).flatMap(([key, value]) =>
+      typeof value === "string" && value.trim() !== ""
+        ? [[key, value.trim()]]
+        : [],
+    ),
+  );
+}
+
+function numericField(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function workflowEpisodeAllowedTools(
+  record: WorkflowRunRecord | undefined,
+): { nodeId: string; normalized: string[] } | undefined {
+  if (!record?.definitionSnapshot || !record.currentNodeId) return undefined;
+  const node = record.definitionSnapshot.nodes.find(
+    (candidate) => candidate.id === record.currentNodeId,
+  );
+  if (!node || (node.execute !== undefined && node.execute !== "model")) {
+    return undefined;
+  }
+  if (!node.tools || node.tools.length === 0) return undefined;
+  return {
+    nodeId: node.id,
+    normalized: [...new Set(node.tools.map(canonicalToolName))],
+  };
+}
+
+function toolsForWorkflowActorEpisode(
+  env: PreparedHostRunEnvironment,
+): ToolDefinition[] {
+  return toolsForWorkflowRecord(env.tools, env.workflowRecord);
+}
+
+function toolsForWorkflowRecord(
+  tools: readonly ToolDefinition[],
+  record: WorkflowRunRecord | undefined,
+): ToolDefinition[] {
+  const allowedTools = workflowEpisodeAllowedTools(record);
+  if (!allowedTools) return [...tools];
+  const allowed = new Set(allowedTools.normalized);
+  const filtered = tools.filter((tool) =>
+    allowed.has(canonicalToolName(tool.name)),
+  );
+  if (
+    filtered.some(
+      (tool) => tool.deferLoading === true && tool.alwaysLoad !== true,
+    ) &&
+    !filtered.some((tool) => canonicalToolName(tool.name) === "tool_search")
+  ) {
+    return [...filtered, workflowScopedToolSearch(filtered)];
+  }
+  return filtered;
+}
+
+function workflowScopedToolSearch(
+  tools: readonly ToolDefinition[],
+): ToolDefinition {
+  const descriptors = tools.map(workflowToolDescriptor);
+  return createToolSearchTool({
+    source: {
+      listDescriptors: () => descriptors,
+    },
+  });
+}
+
+function workflowToolDescriptor(tool: ToolDefinition): ToolDescriptor {
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    ...(tool.outputSchema !== undefined
+      ? { outputSchema: tool.outputSchema }
+      : {}),
+    ...(tool.canonicalName ? { canonicalName: tool.canonicalName } : {}),
+    ...(tool.legacyNames ? { legacyNames: [...tool.legacyNames] } : {}),
+    ...(tool.defaultExposureTier
+      ? { defaultExposureTier: tool.defaultExposureTier }
+      : {}),
+    ...(tool.relatedTools ? { relatedTools: [...tool.relatedTools] } : {}),
+    ...(tool.requiresTool ? { requiresTool: [...tool.requiresTool] } : {}),
+    ...(tool.timeoutMs !== undefined ? { timeoutMs: tool.timeoutMs } : {}),
+    loading: {
+      defer: tool.deferLoading,
+      alwaysLoad: tool.alwaysLoad,
+    },
+    ...(tool.resultSize ? { resultSize: { ...tool.resultSize } } : {}),
+    ...(tool.resultPresentation
+      ? { resultPresentation: { ...tool.resultPresentation } }
+      : {}),
+    ...(tool.policy ? { policy: { ...tool.policy } } : {}),
+    ...(tool.governance ? { governance: { ...tool.governance } } : {}),
+  };
+}
+
+// Actor-owned resume boundary for P3 input waits. The actor consumes the
+// external input event before it starts the next transient worker run.
+function consumeWorkflowActorWaitingInput(
+  store: FileWorkflowStore,
+  record: WorkflowRunRecord,
+  input: { metadata?: Record<string, unknown> },
+): WorkflowRunRecord {
+  if (record.status !== "waiting") return record;
+  if (!record.wait) {
+    throw new Error(`Workflow run ${record.id} is waiting without wait state.`);
+  }
+  if (record.wait.kind !== "input") {
+    throw new Error(
+      `Workflow run ${record.id} is waiting for ${record.wait.kind}; workflow.resume can only consume input waits in P3 Step 3.`,
+    );
+  }
+  if (!record.definitionSnapshot) {
+    throw new Error(
+      `Workflow run ${record.id} does not contain a pinned definition snapshot.`,
+    );
+  }
+  if (!record.currentNodeId) {
+    throw new Error(
+      `Workflow run ${record.id} is waiting without a current node.`,
+    );
+  }
+  const node = record.definitionSnapshot.nodes.find(
+    (candidate) => candidate.id === record.currentNodeId,
+  );
+  if (!node || node.execute !== "human") {
+    throw new Error(
+      `Workflow run ${record.id} input wait is not positioned on a human node.`,
+    );
+  }
+  const attempt = record.attempts[node.id] ?? 1;
+  const verdict = {
+    status: "passed" as const,
+    reason: "human_input_received",
+    metadata: {
+      wait: record.wait,
+      resumeMetadata: input.metadata ?? {},
+    },
+  };
+  const advanced = advanceWorkflowState({
+    definition: record.definitionSnapshot,
+    state: runtimeStateFromWorkflowRecord(record),
+    verdict,
+  });
+  const at = new Date().toISOString();
+  const evidenceRef = {
+    kind: "fact" as const,
+    ref: `workflow-input:${record.id}:${at}`,
+    nodeId: node.id,
+    metadata: {
+      wait: record.wait,
+      resumeMetadata: input.metadata ?? {},
+    },
+  };
+  const status = workflowStatusFromRuntimeState(advanced.state);
+  const updated = store.update(record.id, {
+    status,
+    clearWait: true,
+    ...(advanced.state.currentNodeId
+      ? { currentNodeId: advanced.state.currentNodeId }
+      : {}),
+    attempts: advanced.state.attempts,
+    evidenceRefs: appendWorkflowEvidenceRef(record.evidenceRefs, evidenceRef),
+    verdictLog: [
+      ...record.verdictLog,
+      {
+        at,
+        nodeId: node.id,
+        attempt,
+        verdict,
+        evidenceRefs: [evidenceRef],
+      },
+    ],
+    transitionLog: advanced.state.transitionLog,
+    metadata: {
+      resumedFromWait: true,
+      consumedWaitKind: record.wait.kind,
+      consumedWaitNodeId: node.id,
+    },
+    ...(advanced.state.failure
+      ? {
+          failure: {
+            kind: "verdict" as const,
+            code: "workflow.verdict",
+            message: advanced.state.failure.reason,
+            ...(advanced.state.failure.nodeId
+              ? { nodeId: advanced.state.failure.nodeId }
+              : {}),
+            ...(advanced.state.failure.metadata
+              ? { metadata: advanced.state.failure.metadata }
+              : {}),
+          },
+        }
+      : {}),
+  });
+  store.appendEvent({
+    at,
+    type: "input",
+    workflowRunId: record.id,
+    parentRunId: record.parentRunId,
+    status: updated.status,
+    metadata: {
+      wait: record.wait,
+      nodeId: node.id,
+      decision: advanced.decision,
+      resumeMetadata: input.metadata ?? {},
+    },
+  });
+  return updated;
+}
+
+function workflowStatusFromRuntimeState(
+  state: WorkflowRuntimeState,
+): WorkflowRunStatus {
+  if (state.status === "completed") return "completed";
+  if (state.status === "failed") return "failed";
+  return "running";
+}
+
 function completedWorkflowNodeIds(
   record: WorkflowRunRecord,
   definition: WorkflowDefinition,
@@ -7748,14 +8389,14 @@ function persistWorkflowProjectionSnapshot(
         )
       : record.evidenceRefs;
   const status =
-    snapshot.terminalStatus ??
-    (state.status === "completed"
-      ? "completed"
-      : state.status === "failed"
-        ? "failed"
-        : record.status === "waiting"
-          ? "waiting"
-          : "running");
+    snapshot.phase === "waiting"
+      ? "waiting"
+      : (snapshot.terminalStatus ??
+        (state.status === "completed"
+          ? "completed"
+          : state.status === "failed"
+            ? "failed"
+            : "running"));
   const failure = snapshot.failure
     ? ({
         kind: snapshot.failure.kind,
@@ -7768,6 +8409,11 @@ function persistWorkflowProjectionSnapshot(
   return store.update(record.id, {
     status,
     currentNodeId: state.currentNodeId,
+    ...(snapshot.phase === "waiting" && snapshot.wait
+      ? { wait: snapshot.wait }
+      : record.wait
+        ? { clearWait: true }
+        : {}),
     attempts: state.attempts,
     evidenceRefs,
     verdictLog,

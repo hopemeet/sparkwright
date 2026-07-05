@@ -57,6 +57,19 @@ function runEventPayload(
   };
 }
 
+function toolRunEventPayload(
+  event: { type?: string; payload?: unknown } | undefined,
+  type: string,
+  toolName: string,
+): Record<string, unknown> | undefined {
+  if (event?.type !== type || !isRecord(event.payload)) return undefined;
+  return event.payload.toolName === toolName ? event.payload : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function workflowStoreRoot(workspace: string, sessionId: string): string {
   return join(
     workspace,
@@ -95,6 +108,9 @@ describe("workflow assets", () => {
         "nodes:",
         "  - id: reproduce",
         "    title: Reproduce",
+        "    model: cheap",
+        "    runBudget:",
+        "      maxModelCalls: 2",
         "  - id: patch",
         "    execute: model",
         "---",
@@ -125,6 +141,8 @@ describe("workflow assets", () => {
         id: "reproduce",
         title: "Reproduce",
         execute: "model",
+        model: "cheap",
+        runBudget: { maxModelCalls: 2 },
         body: "Run the failing command.",
       },
       {
@@ -138,17 +156,46 @@ describe("workflow assets", () => {
     });
   });
 
-  it("rejects deferred human and ask_user nodes at parse time", () => {
+  it("parses human nodes and still rejects ask_user", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "wait-for-human",
+      dir: "/tmp/wait-for-human",
+      sourcePath: "/tmp/wait-for-human/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: wait",
+        "    execute: human",
+        "    human:",
+        "      prompt: Confirm the deployment.",
+        "      wait:",
+        "        kind: input",
+        "        reason: Need deployment approval.",
+        "---",
+        "## wait",
+        "Ask later.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes[0]).toMatchObject({
+      id: "wait",
+      execute: "human",
+      human: {
+        prompt: "Confirm the deployment.",
+        wait: { kind: "input", reason: "Need deployment approval." },
+      },
+    });
+
     expect(() =>
       parseWorkflowMarkdownAsset({
-        assetName: "wait-for-human",
-        dir: "/tmp/wait-for-human",
-        sourcePath: "/tmp/wait-for-human/workflow.md",
+        assetName: "ask-user",
+        dir: "/tmp/ask-user",
+        sourcePath: "/tmp/ask-user/workflow.md",
         raw: [
           "---",
           "nodes:",
           "  - id: wait",
-          "    execute: human",
+          "    execute: ask_user",
           "---",
           "## wait",
           "Ask later.",
@@ -204,6 +251,97 @@ describe("workflow assets", () => {
       onPass: "patch",
       onFail: { retry: 2, then: "fail" },
     });
+  });
+
+  it("parses P3 non-model nodes and diff_scope verifiers", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "p3-nodes",
+      dir: "/tmp/p3-nodes",
+      sourcePath: "/tmp/p3-nodes/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: command-check",
+        "    execute: command",
+        "    command: node",
+        "    args: [--version]",
+        "    authorization: trusted",
+        "    onPass: delegate-review",
+        "    verify:",
+        "      - kind: diff_scope",
+        "        include: ['src/**']",
+        "        exclude: ['src/generated/**']",
+        "  - id: delegate-review",
+        "    execute: delegate",
+        "    agentId: reviewer",
+        "    goal: Review the patch.",
+        "    onPass: task-followup",
+        "  - id: task-followup",
+        "    execute: task",
+        "    kind: agent",
+        "    mode: awaited",
+        "    payload:",
+        "      goal: Check docs.",
+        "    onPass: human-review",
+        "  - id: human-review",
+        "    execute: human",
+        "    prompt: Confirm the release.",
+        "    wait:",
+        "      kind: input",
+        "      reason: Need release confirmation.",
+        "---",
+        "## command-check",
+        "Run the command.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes).toEqual([
+      expect.objectContaining({
+        id: "command-check",
+        execute: "command",
+        command: {
+          command: "node",
+          args: ["--version"],
+          authorized: true,
+        },
+        verify: [
+          {
+            id: "command-check:diff_scope:1",
+            kind: "diff_scope",
+            include: ["src/**"],
+            exclude: ["src/generated/**"],
+          },
+        ],
+      }),
+      expect.objectContaining({
+        id: "delegate-review",
+        execute: "delegate",
+        delegate: {
+          agentId: "reviewer",
+          goal: "Review the patch.",
+        },
+      }),
+      expect.objectContaining({
+        id: "task-followup",
+        execute: "task",
+        task: {
+          kind: "agent",
+          mode: "awaited",
+          payload: { goal: "Check docs." },
+        },
+      }),
+      expect.objectContaining({
+        id: "human-review",
+        execute: "human",
+        human: {
+          prompt: "Confirm the release.",
+          wait: {
+            kind: "input",
+            reason: "Need release confirmation.",
+          },
+        },
+      }),
+    ]);
   });
 
   it("keeps stronger workflow layers and records shadows", async () => {
@@ -346,6 +484,10 @@ describe("workflow assets", () => {
       status: "completed",
       assetName: "durable",
       sessionId,
+      metadata: {
+        episodeDriver: "workflow_actor",
+        episodeKind: "run_start",
+      },
       definitionSnapshot: {
         assetName: "durable",
         nodes: [expect.objectContaining({ id: "main" })],
@@ -368,6 +510,392 @@ describe("workflow assets", () => {
         }),
       }),
     ]);
+  });
+
+  it("narrows model worker catalogs to the active workflow node tools", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_catalog";
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await writeWorkflow(
+      workspace,
+      "catalog",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "    tools: [read_file]",
+        "---",
+        "## main",
+        "Only read tools are available.",
+      ].join("\n"),
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "read",
+            arguments: { path: "README.md" },
+          },
+        ],
+      },
+      {
+        toolCalls: [
+          {
+            toolName: "write",
+            arguments: { path: "README.md", content: "should not write" },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "scripted",
+      emit: (event) => events.push(event),
+    });
+
+    try {
+      const started = await runtime.startRun({
+        goal: "run catalog workflow",
+        sessionId,
+        workflow: "catalog",
+      });
+
+      expect(started).toMatchObject({ ok: true });
+      await waitForHostEvent(events, (event) => event.kind === "run.completed");
+      const readResult = events
+        .map(runEventPayload)
+        .map((event) => toolRunEventPayload(event, "tool.completed", "read"))
+        .find((payload) => payload !== undefined);
+      expect(readResult).toMatchObject({ toolName: "read" });
+      const toolFailure = events
+        .map(runEventPayload)
+        .map((event) => toolRunEventPayload(event, "tool.failed", "write"))
+        .find((payload) => payload !== undefined);
+      expect(toolFailure).toMatchObject({
+        toolName: "write",
+        error: { code: "TOOL_NOT_FOUND" },
+      });
+      expect(toolFailure).not.toMatchObject({
+        error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
+      });
+      const record = await waitForWorkflowRecord(
+        workflowStoreRoot(workspace, sessionId),
+      );
+      expect(record).toMatchObject({
+        status: "completed",
+        metadata: {
+          episodeDriver: "workflow_actor",
+          episodeKind: "run_start",
+          episodeAllowedTools: ["read"],
+        },
+      });
+      await expect(
+        readFile(join(workspace, "README.md"), "utf8"),
+      ).resolves.toBe("# Demo\n");
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  });
+
+  it("keeps scoped tool_search when a workflow node allows deferred tools", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_deferred_catalog";
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await writeWorkflow(
+      workspace,
+      "deferred-catalog",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "    tools: [read_anchored_text]",
+        "---",
+        "## main",
+        "Use anchored reads only.",
+      ].join("\n"),
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "tool_search",
+            arguments: { query: "select:read_anchored_text,write" },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "scripted",
+      emit: (event) => events.push(event),
+    });
+
+    try {
+      const started = await runtime.startRun({
+        goal: "run deferred catalog workflow",
+        sessionId,
+        workflow: "deferred-catalog",
+      });
+
+      expect(started).toMatchObject({ ok: true });
+      await waitForHostEvent(events, (event) => event.kind === "run.completed");
+      const toolFailures = events
+        .map(runEventPayload)
+        .filter((event) => event?.type === "tool.failed");
+      expect(toolFailures).toEqual([]);
+      const toolSearchResult = events
+        .map(runEventPayload)
+        .find((event) => event?.type === "tool.completed")?.payload;
+      expect(toolSearchResult).toMatchObject({
+        toolName: "tool_search",
+        output: {
+          matches: [
+            expect.objectContaining({
+              name: "read_anchored_text",
+              deferred: true,
+            }),
+          ],
+        },
+      });
+      expect(
+        (
+          toolSearchResult as {
+            output?: { matches?: Array<{ name?: string }> };
+          }
+        ).output?.matches?.map((match) => match.name),
+      ).toEqual(["read_anchored_text"]);
+      const record = await waitForWorkflowRecord(
+        workflowStoreRoot(workspace, sessionId),
+      );
+      expect(record).toMatchObject({
+        status: "completed",
+        metadata: {
+          episodeDriver: "workflow_actor",
+          episodeKind: "run_start",
+          episodeAllowedTools: ["read_anchored_text"],
+        },
+      });
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  });
+
+  it("routes workflow actor episodes through node model and budget metadata", async () => {
+    const workspace = await tempWorkspace();
+    await writeWorkflow(
+      workspace,
+      "d6",
+      [
+        "---",
+        "nodes:",
+        "  - id: main",
+        "    execute: model",
+        "    model: cheap",
+        "    runBudget:",
+        "      maxModelCalls: 1",
+        "---",
+        "## main",
+        "Use the node model.",
+      ].join("\n"),
+      ["modelTiers:", "  cheap: scripted/d6"].join("\n"),
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      { message: "node model answered" },
+    ]);
+    const sessionId = "sess_workflow_d6";
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    try {
+      const started = await runtime.startRun({
+        goal: "run d6 workflow",
+        sessionId,
+        workflow: "d6",
+      });
+
+      expect(started).toMatchObject({ ok: true });
+      await waitForHostEvent(events, (event) => event.kind === "run.completed");
+      const record = await waitForWorkflowRecord(
+        workflowStoreRoot(workspace, sessionId),
+      );
+      expect(record.metadata.workflowEpisode).toMatchObject({
+        nodeId: "main",
+        attempt: 1,
+        modelRef: "scripted/d6",
+        runBudget: { maxModelCalls: 1 },
+      });
+      expect(record.metadata.workflowUsage).toMatchObject({
+        episodes: 1,
+        modelCalls: 1,
+      });
+      expect(record.metadata.workflowEpisodeUsage).toEqual([
+        expect.objectContaining({
+          runId: started.ok ? started.runId : "",
+          episode: expect.objectContaining({
+            nodeId: "main",
+            attempt: 1,
+            modelRef: "scripted/d6",
+          }),
+          usage: expect.objectContaining({
+            modelCalls: 1,
+          }),
+        }),
+      ]);
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  });
+
+  it("emits durable waiting notifications and consumes input waits on workflow resume", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_human_wait";
+    await writeWorkflow(
+      workspace,
+      "human-gate",
+      [
+        "---",
+        "nodes:",
+        "  - id: draft",
+        "    execute: model",
+        "    onPass: review",
+        "  - id: review",
+        "    execute: human",
+        "    wait:",
+        "      kind: input",
+        "      reason: Need human review.",
+        "    onPass: finish",
+        "  - id: finish",
+        "    execute: model",
+        "---",
+        "## draft",
+        "Draft the change.",
+        "",
+        "## finish",
+        "Finish after review.",
+      ].join("\n"),
+    );
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    const started = await runtime.startRun({
+      goal: "run human gated workflow",
+      sessionId,
+      workflow: "human-gate",
+    });
+
+    expect(started).toMatchObject({ ok: true });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+    const waitingRecord = await waitForWorkflowRecord(
+      workflowStoreRoot(workspace, sessionId),
+    );
+    expect(waitingRecord).toMatchObject({
+      status: "waiting",
+      currentNodeId: "review",
+      wait: { kind: "input", reason: "Need human review." },
+    });
+    expect(
+      await runtime
+        .workflowActorInbox()
+        .peek(
+          (notification) =>
+            notification.type === "waiting" &&
+            notification.source.id === waitingRecord.id,
+        ),
+    ).toMatchObject([
+      {
+        type: "waiting",
+        qos: "reliable",
+        payload: {
+          workflowId: waitingRecord.id,
+          wait: { kind: "input", reason: "Need human review." },
+        },
+      },
+    ]);
+    const listed = await runtime.listWorkflowRuns({
+      sessionId,
+      status: "waiting",
+    });
+    expect(listed).toMatchObject({ ok: true });
+    if (!listed.ok) throw new Error(listed.error.message);
+    expect(listed.workflows).toHaveLength(1);
+    expect(listed.workflows[0]).toMatchObject({
+      id: waitingRecord.id,
+      status: "waiting",
+      wait: expect.objectContaining({
+        kind: "input",
+        reason: "Need human review.",
+      }),
+    });
+
+    events.length = 0;
+    const resumed = await runtime.resumeWorkflowRun({
+      workflowRunId: waitingRecord.id,
+      sessionId,
+      metadata: { humanDecision: "approved" },
+    });
+
+    expect(resumed).toMatchObject({
+      ok: true,
+      workflowRunId: waitingRecord.id,
+      sessionId,
+    });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+    const store = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace, sessionId),
+      createRoot: false,
+    });
+    const completed = store.get(waitingRecord.id);
+    expect(completed).toMatchObject({
+      status: "completed",
+      metadata: {
+        episodeDriver: "workflow_actor",
+        episodeKind: "workflow_resume",
+      },
+    });
+    expect(completed?.wait).toBeUndefined();
+    const inputEvent = store
+      .eventLog(waitingRecord.id)
+      .events.find((event) => event.type === "input");
+    expect(inputEvent).toMatchObject({
+      status: "running",
+      metadata: expect.objectContaining({
+        nodeId: "review",
+        resumeMetadata: { humanDecision: "approved" },
+        wait: expect.objectContaining({
+          kind: "input",
+          reason: "Need human review.",
+        }),
+      }),
+    });
   });
 
   it("holds a workflow lease for fresh run records", async () => {
@@ -440,7 +968,7 @@ describe("workflow assets", () => {
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
   });
 
-  it("fails workflow records when the supervised run chain rejects", async () => {
+  it("fails workflow records when the actor episode chain rejects", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_supervisor_reject";
     await writeWorkflow(

@@ -5,8 +5,10 @@ import type { RunId } from "@sparkwright/core";
 import { describe, expect, it } from "vitest";
 import {
   advanceWorkflowState,
+  FileWorkflowNotificationOutbox,
   createInitialWorkflowRuntimeState,
   FileWorkflowStore,
+  runWorkflowRunChain,
   WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
   validateWorkflowRuntimeDefinition,
   type WorkflowRunId,
@@ -134,7 +136,7 @@ describe("workflow runtime state machine", () => {
     });
   });
 
-  it("rejects human and ask_user transition targets", () => {
+  it("rejects ask_user transition targets while treating human as a normal node id", () => {
     const issues = validateWorkflowRuntimeDefinition(
       workflow([
         { id: "start", body: "Start.", onPass: "ask_user" },
@@ -149,11 +151,49 @@ describe("workflow runtime state machine", () => {
         target: "ask_user",
       }),
       expect.objectContaining({
-        code: "WORKFLOW_UNSUPPORTED_TRANSITION_TARGET",
+        code: "WORKFLOW_UNKNOWN_TRANSITION_TARGET",
         nodeId: "other",
         target: "human",
       }),
     ]);
+  });
+});
+
+describe("workflow run-chain driver", () => {
+  it("runs one episode per continuation and returns the terminal decision", async () => {
+    const inputs: Array<{
+      continuation?: string;
+      continuationCount: number;
+    }> = [];
+
+    const result = await runWorkflowRunChain<string, string, string>({
+      runOnce(input) {
+        inputs.push(input);
+        return input.continuation ?? "initial";
+      },
+      decide({ output, continuationCount }) {
+        if (continuationCount >= 2) {
+          return {
+            kind: "terminal",
+            terminal: `done:${output}:${continuationCount}`,
+          };
+        }
+        return {
+          kind: "continue",
+          continuation: `next-${continuationCount + 1}`,
+        };
+      },
+    });
+
+    expect(inputs).toEqual([
+      { continuation: undefined, continuationCount: 0 },
+      { continuation: "next-1", continuationCount: 1 },
+      { continuation: "next-2", continuationCount: 2 },
+    ]);
+    expect(result).toEqual({
+      terminal: "done:next-2:2",
+      continuationCount: 2,
+    });
   });
 });
 
@@ -339,9 +379,78 @@ describe("FileWorkflowStore", () => {
       wait: { kind: "input", reason: "need user" },
     });
     expect(waiting.wait).toEqual({ kind: "input", reason: "need user" });
+    expect(store.eventLog(id).events.at(-1)).toMatchObject({
+      type: "waiting",
+      status: "waiting",
+      metadata: { wait: { kind: "input", reason: "need user" } },
+    });
+    store.appendEvent({
+      at: "2026-07-05T00:00:00.000Z",
+      type: "input",
+      workflowRunId: id,
+      status: "running",
+      metadata: { wait: waiting.wait },
+    });
+    expect(store.eventLog(id).events.at(-1)).toMatchObject({
+      type: "input",
+      metadata: { wait: { kind: "input", reason: "need user" } },
+    });
     expect(() =>
       store.update(id, { status: "waiting", clearWait: true }),
     ).toThrow(/wait.kind/);
     expect(store.update(id, { status: "cancelled" }).wait).toBeUndefined();
+  });
+
+  it("persists workflow waiting notifications in a file-backed actor outbox", async () => {
+    const root = await tempDir();
+    const outbox = new FileWorkflowNotificationOutbox({ rootDir: root });
+
+    outbox.asActorSink().deliver({
+      source: {
+        kind: "workflow",
+        id: "workflow_wait_notice",
+        runId: "run_parent",
+        sessionId: "session_wait",
+      },
+      routeHint: {
+        parentRunId: "run_parent",
+        sessionId: "session_wait",
+      },
+      type: "waiting",
+      correlationId: "workflow_wait_notice:waiting:review",
+      payload: {
+        workflowId: "workflow_wait_notice",
+        summary: "Workflow is waiting.",
+        wait: { kind: "input", reason: "Need review." },
+      },
+    });
+
+    const reopened = new FileWorkflowNotificationOutbox({ rootDir: root });
+    const inbox = reopened.asActorInbox();
+    await inbox.waitUntilAvailable({
+      predicate: (notification) => notification.type === "waiting",
+    });
+    expect(await inbox.peek()).toMatchObject([
+      {
+        source: {
+          kind: "workflow",
+          id: "workflow_wait_notice",
+          runId: "run_parent",
+          sessionId: "session_wait",
+        },
+        routeHint: {
+          parentRunId: "run_parent",
+          sessionId: "session_wait",
+        },
+        type: "waiting",
+        qos: "reliable",
+        payload: {
+          workflowId: "workflow_wait_notice",
+          wait: { kind: "input", reason: "Need review." },
+        },
+      },
+    ]);
+    expect(await inbox.drain()).toHaveLength(1);
+    expect(await inbox.peek()).toHaveLength(0);
   });
 });

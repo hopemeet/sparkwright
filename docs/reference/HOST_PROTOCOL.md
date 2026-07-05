@@ -314,9 +314,11 @@ workflow storage is available.
 ```
 
 `waiting` is a terminal-resistant status value with an inline `wait` object
-whose `kind` is one of `input`, `task`, or `approval`. P2 consumes the record
-shape but does not emit waiting workflow nodes; the first waiting producer is a
-later workflow phase.
+whose `kind` is one of `input`, `task`, or `approval`. P3 human nodes are the
+first producer: the host persists `status:"waiting"` plus the `wait` payload,
+emits a reliable workflow actor notification, and releases the workflow lease.
+`workflow.resume` consumes `input` waits by recording an `input` store event,
+clearing `wait`, and continuing from the next node.
 
 ### `workflow.resume`
 

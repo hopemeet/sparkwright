@@ -1,0 +1,69 @@
+id: capability-inspect-shell
+area: capability-inspect
+status: Partially Verified
+
+task:
+  direction: "Inspect configured shell capability state."
+  prompt_shape: scripted
+  prompt: "CLI command: sparkwright capabilities inspect --format text|json."
+  expected_behavior:
+    - "Text output separates shell foreground budget from shell sandbox status."
+    - "JSON output includes shell.foregroundTimeoutMs and shell.promotionAvailable."
+    - "Configured shell.foregroundTimeoutMs flows from host config to runtime snapshot."
+    - "Generated config schema accepts the field and rejects values above the cap."
+
+model:
+  baseline: deterministic
+  real_model_canary: null
+  sensitive_to:
+    - "No model call required."
+
+capabilities:
+  tools_use:
+    - shell
+  permission_mode: default
+  write_enabled: false
+  approvals:
+    edits: false
+    shell_safe: false
+    all: false
+  skills: []
+  mcp: []
+  agents:
+    max_depth: null
+    delegate_profiles: []
+
+context:
+  workspace_fixture: "temporary workspace with .sparkwright/config.json"
+  session_state: fresh
+  config_layers:
+    - "project config"
+  dirty_workspace_required: false
+
+environment:
+  trace_level: standard
+  platform_sensitive: true
+  sandbox_required: false
+  network_required: false
+  build_state:
+    requires_fresh_dist: true
+    note: "CLI imports built host/protocol packages in package-export paths."
+
+assertions:
+  stable:
+    - "foregroundTimeoutMs value matches config or 300000 default."
+    - "promotionAvailable is present."
+    - "sandbox filesystemIsolation allows platform-dependent values."
+  non_stable:
+    - "Exact sandbox runtime availability across OS."
+    - "Exact ordering of unrelated diagnostic tools."
+
+recommended_tests:
+  - "npm --workspace @sparkwright/protocol run build"
+  - "npm --workspace @sparkwright/host run build"
+  - "npm --workspace @sparkwright/cli test -- test/cli.test.ts -t \"capabilities inspect\""
+  - "npm --workspace @sparkwright/cli test -- test/config-schema.test.ts"
+
+known_failure_modes:
+  - "shell-dist-skew"
+

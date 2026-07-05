@@ -253,12 +253,15 @@ export class FileWorkflowStore implements WorkflowStore {
             ? "failed"
             : status === "cancelled"
               ? "cancelled"
-              : "updated",
+              : status === "waiting"
+                ? "waiting"
+                : "updated",
       workflowRunId: id,
       parentRunId: updated.parentRunId,
       status,
       metadata: {
         currentNodeId: updated.currentNodeId,
+        wait: updated.wait,
         failure: updated.failure,
       },
     });
@@ -485,6 +488,8 @@ function workflowStoreEventType(value: unknown): WorkflowStoreEvent["type"] {
   if (
     value === "created" ||
     value === "updated" ||
+    value === "waiting" ||
+    value === "input" ||
     value === "completed" ||
     value === "failed" ||
     value === "cancelled" ||

@@ -1,10 +1,16 @@
 export type {
   WorkflowAssetPin,
+  WorkflowCommandNodeDefinition,
   WorkflowCommandVerifierDefinition,
+  WorkflowDelegateNodeDefinition,
+  WorkflowDiffScopeVerifierDefinition,
   WorkflowDefinition,
   WorkflowEvidenceRef,
+  WorkflowHumanNodeDefinition,
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
+  WorkflowTaskNodeDefinition,
+  WorkflowTaskNodeMode,
   WorkflowNodeVerdict,
   WorkflowNodeVerdictLogEntry,
   WorkflowResumePolicy,
@@ -49,3 +55,17 @@ export {
   type WorkflowStoreEventLogResult,
   type WorkflowStoreListResult,
 } from "./store.js";
+export {
+  FileWorkflowNotificationOutbox,
+  type FileWorkflowNotificationEntry,
+  type FileWorkflowNotificationInvalidEntry,
+  type FileWorkflowNotificationOutboxOptions,
+} from "./notifications.js";
+export {
+  runWorkflowRunChain,
+  type RunWorkflowRunChainOptions,
+  type WorkflowRunChainDecision,
+  type WorkflowRunChainDecisionInput,
+  type WorkflowRunChainResult,
+  type WorkflowRunChainStepInput,
+} from "./run-chain.js";

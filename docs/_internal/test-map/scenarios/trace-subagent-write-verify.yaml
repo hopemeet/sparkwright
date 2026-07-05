@@ -1,0 +1,75 @@
+id: trace-subagent-write-verify
+area: trace-diagnostics
+status: Partially Verified
+
+task:
+  direction: "A child/delegate writes, reaches a partial terminal state, and the parent verifies after that write."
+  prompt_shape: strong-or-scripted
+  prompt: "Use a child agent to modify a file, then verify after the child write."
+  expected_behavior:
+    - "Raw child finality remains partial/truncated when the child hit a limit."
+    - "Child workspace.write.completed remains raw evidence."
+    - "Parent-visible subagent payload rolls up workspaceWrites."
+    - "Trace report can lower SUBAGENT_INCOMPLETE severity only with verifiedAfterChildWrite evidence."
+
+model:
+  baseline: scripted
+  real_model_canary: null
+  sensitive_to:
+    - "Model may verify before the child write."
+    - "Model may skip verification."
+    - "Model may complete the work itself instead of using a child unless prompted."
+    - "Model may describe a partial child answer as complete in prose."
+
+capabilities:
+  tools_use:
+    - workspace.read
+    - workspace.write
+    - agents
+    - shell
+  permission_mode: default
+  write_enabled: true
+  approvals:
+    edits: true
+    shell_safe: true
+    all: false
+  skills: []
+  mcp: []
+  agents:
+    max_depth: 1
+    delegate_profiles:
+      - writer
+
+context:
+  workspace_fixture: "minimal project with a verifiable command"
+  session_state: fresh
+  config_layers:
+    - "agent profile/delegate config when testing host path"
+  dirty_workspace_required: false
+
+environment:
+  trace_level: standard
+  platform_sensitive: false
+  sandbox_required: false
+  network_required: false
+  build_state:
+    requires_fresh_dist: false
+
+assertions:
+  stable:
+    - "Raw subagent terminal state is not rewritten."
+    - "Report evidence includes verifiedAfterChildWrite only when verification follows child write and no later write occurs."
+    - "Verification before child write keeps SUBAGENT_INCOMPLETE high severity."
+  non_stable:
+    - "Exact child step count for real models."
+    - "Exact final answer wording."
+    - "Exact ordering by run-local sequence across parent and child runs."
+
+recommended_tests:
+  - "npm --workspace @sparkwright/core test -- test/trace.test.ts"
+  - "npm --workspace @sparkwright/host test -- test/protocol.test.ts"
+
+known_failure_modes:
+  - "trace-subagent-finality"
+  - "model-skips-verification"
+

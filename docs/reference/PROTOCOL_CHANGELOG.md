@@ -31,7 +31,8 @@ Conventions:
   `workflow.cancelled` for the workflow runtime lifecycle. P1 begins emitting
   these events for `run.start.workflow` projection runs. Migration: consumers
   should treat workflow lifecycle events as optional annotations unless they opt
-  into workflow-aware UI/status rendering.
+  into workflow-aware UI/status rendering. P3 adds the first `workflow.waiting`
+  producer for human nodes and pairs it with durable workflow-run `wait` state.
 
 - `host-message.schema.json`: additive — `run.start` accepts optional
   `workflow`, the workflow asset name to instantiate for that run. Migration:

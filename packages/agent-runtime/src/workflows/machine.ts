@@ -67,7 +67,7 @@ export function validateWorkflowRuntimeDefinition(
     }
     ids.add(node.id);
     const execute = node.execute as string | undefined;
-    if (execute === "human" || execute === "ask_user") {
+    if (execute === "ask_user") {
       issues.push({
         code: "WORKFLOW_UNSUPPORTED_NODE",
         message: `Workflow node "${node.id}" uses unsupported execute kind "${execute}".`,
@@ -346,7 +346,7 @@ function collectTargetIssue(
   issues: WorkflowRuntimeValidationIssue[],
 ): void {
   if (target === "fail") return;
-  if (target === "human" || target === "ask_user") {
+  if (target === "ask_user") {
     issues.push({
       code: "WORKFLOW_UNSUPPORTED_TRANSITION_TARGET",
       message: `Workflow node "${node.id}" references unsupported transition target "${target}".`,

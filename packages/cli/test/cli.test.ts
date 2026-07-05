@@ -2425,6 +2425,78 @@ describe("runCli", () => {
     ]);
   });
 
+  it("resumes workflow runs through the host actor episode driver", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const sessionId = "sess_cli_workflow_resume";
+    const workflowRunId = "workflow_cli_resume" as WorkflowRunId;
+    const store = new FileWorkflowStore({
+      rootDir: join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        sessionId,
+        "workflow-runs",
+      ),
+    });
+    store.create({
+      id: workflowRunId,
+      sessionId,
+      assetName: "cli-resume",
+      contentHash: "hash-cli-resume",
+      currentNodeId: "main",
+      attempts: { main: 1 },
+      definitionSnapshot: {
+        assetName: "cli-resume",
+        contentHash: "hash-cli-resume",
+        nodes: [{ id: "main", body: "Resume through the CLI." }],
+      },
+      metadata: { goal: "resume workflow from cli" },
+    });
+    const output = createOutputCapture();
+
+    const resumed = await runCli(
+      [
+        "workflow",
+        "resume",
+        workflowRunId,
+        "--session",
+        sessionId,
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+      ],
+      {
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(resumed.exitCode).toBe(0);
+    expect(resumed.sessionId).toBe(sessionId);
+    expect(output.stdoutText()).toContain("run.completed");
+    const completed = new FileWorkflowStore({
+      rootDir: join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        sessionId,
+        "workflow-runs",
+      ),
+      createRoot: false,
+    }).get(workflowRunId);
+    expect(completed).toMatchObject({
+      status: "completed",
+      metadata: {
+        episodeDriver: "workflow_actor",
+        episodeKind: "workflow_resume",
+      },
+    });
+  });
+
   it("shows missing model pricing in capability inspect", async () => {
     const workspace = await createWorkspace("# Demo\n");
     await mkdir(join(workspace, ".sparkwright"), { recursive: true });
@@ -7775,7 +7847,7 @@ describe("runCli", () => {
       );
     }
 
-    // ④ PreToolUse clamp compliance
+    // ④ per-episode catalog clamp compliance
     {
       const workspace = await createWorkspace("# Demo\n");
       await writeWorkflowAsset(
@@ -7824,14 +7896,14 @@ describe("runCli", () => {
         },
       );
 
-      expect(run.exitCode).toBe(0);
+      expect(run.exitCode).toBe(1);
       const events = await readTrace(run.tracePath);
       expect(
         events.find(
           (event) =>
             event.type === "tool.failed" && event.payload?.toolName === "bash",
         )?.payload?.error,
-      ).toMatchObject({ code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" });
+      ).toMatchObject({ code: "TOOL_NOT_FOUND" });
       expect(events.some((event) => event.type === "workflow.completed")).toBe(
         true,
       );
