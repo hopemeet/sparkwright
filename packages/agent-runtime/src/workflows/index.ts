@@ -2,15 +2,22 @@ export type {
   WorkflowAssetPin,
   WorkflowCommandVerifierDefinition,
   WorkflowDefinition,
+  WorkflowEvidenceRef,
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
   WorkflowNodeVerdict,
+  WorkflowNodeVerdictLogEntry,
+  WorkflowResumePolicy,
   WorkflowRuntimeFailure,
   WorkflowRuntimeState,
   WorkflowRuntimeStatus,
+  WorkflowRunFailure,
+  WorkflowRunFailureKind,
   WorkflowRunId,
   WorkflowRunRecord,
   WorkflowRunStatus,
+  WorkflowStoreEvent,
+  WorkflowStoreEventType,
   WorkflowTransitionDecision,
   WorkflowTransitionDefinition,
   WorkflowTransitionLogEntry,
@@ -19,6 +26,7 @@ export type {
   WorkflowWaitKind,
   WorkflowWaitState,
 } from "./types.js";
+export { WORKFLOW_RUN_RECORD_SCHEMA_VERSION } from "./types.js";
 export {
   advanceWorkflowState,
   assertWorkflowRuntimeDefinition,
@@ -29,3 +37,15 @@ export {
   type AdvanceWorkflowStateResult,
   type WorkflowRuntimeValidationIssue,
 } from "./machine.js";
+export {
+  FileWorkflowStore,
+  assertSafeWorkflowRunId,
+  isSafeWorkflowRunId,
+  workflowRunsDir,
+  type CreateWorkflowRunRecordInput,
+  type FileWorkflowStoreOptions,
+  type WorkflowRunRecordPatch,
+  type WorkflowStore,
+  type WorkflowStoreEventLogResult,
+  type WorkflowStoreListResult,
+} from "./store.js";

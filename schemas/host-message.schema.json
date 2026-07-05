@@ -45,6 +45,8 @@
             "task.stop",
             "task.join",
             "task.promote",
+            "workflow.list",
+            "workflow.resume",
             "capability.inspect"
           ]
         },
@@ -180,6 +182,22 @@
           "then": {
             "properties": {
               "payload": { "$ref": "#/$defs/TaskPromoteRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "workflow.list" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/WorkflowListRequestPayload" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "workflow.resume" } } },
+          "then": {
+            "properties": {
+              "payload": { "$ref": "#/$defs/WorkflowResumeRequestPayload" }
             }
           }
         },
@@ -604,6 +622,10 @@
       "type": "string",
       "enum": ["pending", "running", "completed", "failed", "cancelled"]
     },
+    "WorkflowRunStatus": {
+      "type": "string",
+      "enum": ["running", "waiting", "completed", "failed", "cancelled"]
+    },
     "TaskError": {
       "type": "object",
       "required": ["code", "message"],
@@ -707,6 +729,71 @@
       "required": ["taskId"],
       "properties": {
         "taskId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowListRequestPayload": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional session scope used to limit workflow-run lookup."
+        },
+        "status": { "$ref": "#/$defs/WorkflowRunStatus" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+      },
+      "additionalProperties": false
+    },
+    "WorkflowResumeRequestPayload": {
+      "type": "object",
+      "required": ["workflowRunId"],
+      "properties": {
+        "workflowRunId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Durable workflow instance id to resume."
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional session scope used to disambiguate where the workflow run lives."
+        },
+        "targetPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Workspace-relative target path that the resumed run should focus on when applicable."
+        },
+        "shouldWrite": {
+          "type": "boolean",
+          "description": "Whether the resumed run is allowed to request workspace writes."
+        },
+        "model": { "type": "string", "minLength": 1 },
+        "accessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"],
+          "description": "High-level run autonomy preset. When present, the host compiles it to permissionMode + shouldWrite and ignores a conflicting legacy permissionMode."
+        },
+        "backgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"],
+          "description": "Session-level foreground/background task policy."
+        },
+        "permissionMode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "default",
+            "accept_edits",
+            "dont_ask",
+            "bypass_permissions"
+          ]
+        },
+        "traceLevel": {
+          "type": "string",
+          "enum": ["standard", "debug"]
+        },
+        "metadata": { "type": "object" }
       },
       "additionalProperties": false
     },

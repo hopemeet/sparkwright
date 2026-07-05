@@ -1,6 +1,10 @@
 import type { Brand, RunId } from "@sparkwright/core";
+import type { TaskError } from "../tasks/types.js";
 
 export type WorkflowRunId = Brand<string, "WorkflowRunId">;
+
+export const WORKFLOW_RUN_RECORD_SCHEMA_VERSION =
+  "sparkwright-workflow-run.v1" as const;
 
 export type WorkflowRunStatus =
   | "running"
@@ -25,17 +29,47 @@ export interface WorkflowWaitState {
   metadata?: Record<string, unknown>;
 }
 
-/**
- * Reserved durable workflow-run record shape. P0 defines the schema contract
- * only; no store or runtime writer exists yet.
- */
+export interface WorkflowEvidenceRef {
+  kind: "trace_span" | "artifact" | "task_output" | "fact" | "run";
+  ref: string;
+  nodeId?: string;
+  verifierId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type WorkflowRunFailureKind =
+  | "verdict"
+  | "runtime"
+  | "cancelled"
+  | "definition";
+
+export interface WorkflowRunFailure extends TaskError {
+  kind: WorkflowRunFailureKind;
+  nodeId?: string;
+}
+
+export interface WorkflowResumePolicy {
+  verifyOnResume: boolean;
+}
+
 export interface WorkflowRunRecord extends WorkflowAssetPin {
+  schemaVersion: typeof WORKFLOW_RUN_RECORD_SCHEMA_VERSION;
   id: WorkflowRunId;
   parentRunId?: RunId;
+  sessionId?: string;
+  activeRunId?: RunId;
+  runIds: RunId[];
   status: WorkflowRunStatus;
   /** @reserved Workflow runtime state field reserved for later workflow phases. */
   currentNodeId?: string;
   wait?: WorkflowWaitState;
+  attempts: Record<string, number>;
+  evidenceRefs: WorkflowEvidenceRef[];
+  verdictLog: WorkflowNodeVerdictLogEntry[];
+  transitionLog: WorkflowTransitionLogEntry[];
+  failure?: WorkflowRunFailure;
+  resume: WorkflowResumePolicy;
+  definitionSnapshot?: WorkflowDefinition;
   createdAt: string;
   updatedAt?: string;
   completedAt?: string;
@@ -159,4 +193,30 @@ export interface WorkflowTransitionLogEntry {
   at: string;
   verdict: WorkflowNodeVerdict;
   decision: WorkflowTransitionDecision;
+}
+
+export interface WorkflowNodeVerdictLogEntry {
+  at: string;
+  nodeId: string;
+  attempt: number;
+  verdict: WorkflowNodeVerdict;
+  evidenceRefs?: WorkflowEvidenceRef[];
+}
+
+export type WorkflowStoreEventType =
+  | "created"
+  | "updated"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "adopted"
+  | "released";
+
+export interface WorkflowStoreEvent {
+  at: string;
+  type: WorkflowStoreEventType;
+  workflowRunId: WorkflowRunId;
+  parentRunId?: RunId;
+  status: WorkflowRunStatus;
+  metadata?: Record<string, unknown>;
 }

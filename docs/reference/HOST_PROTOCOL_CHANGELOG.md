@@ -42,6 +42,11 @@ major; breaking changes bump the major.
   resolve as a promoted task ticket.
 - Add host task snapshot requests: `task.list`, `task.get`, `task.output`, and
   `task.stop`, plus `task_not_found` for missing durable background task ids.
+- Add workflow-run snapshot requests: `workflow.list` lists durable workflow
+  run records under session `workflow-runs/`, and `workflow.resume` adopts a
+  non-terminal workflow run by single-writer lease and starts a new host run
+  from the pinned workflow definition snapshot. Hosts advertise both in
+  `host.ready.capabilities`.
 
 ## 1.3 (2026-06-14)
 

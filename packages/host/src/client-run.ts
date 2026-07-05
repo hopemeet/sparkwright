@@ -8,6 +8,8 @@ import type {
   RunStartRequestPayload,
   RunAccessMode,
   TraceLevel,
+  WorkflowListRequestPayload,
+  WorkflowResumeRequestPayload,
 } from "@sparkwright/protocol";
 
 export type HostClientSource = "cli" | "tui" | "acp" | string;
@@ -112,6 +114,49 @@ export function createHostResumeRunRequest(input: {
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     fromTrace: input.fromTrace,
     force: input.force,
+    model: resolveHostRequestModel(input),
+    accessMode: input.accessMode,
+    backgroundTasks: input.backgroundTasks,
+    permissionMode: input.accessMode ? undefined : input.permissionMode,
+    traceLevel: input.traceLevel,
+    targetPath: input.targetPath,
+    ...(input.confidentialPaths && input.confidentialPaths.length > 0
+      ? { confidentialPaths: [...input.confidentialPaths] }
+      : {}),
+    shouldWrite: input.shouldWrite,
+    metadata: input.metadata,
+  };
+}
+
+export function createHostWorkflowListRequest(input: {
+  sessionId?: string;
+  status?: WorkflowListRequestPayload["status"];
+  limit?: number;
+}): WorkflowListRequestPayload {
+  return {
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.status ? { status: input.status } : {}),
+    ...(input.limit !== undefined ? { limit: input.limit } : {}),
+  };
+}
+
+export function createHostWorkflowResumeRequest(input: {
+  workflowRunId: string;
+  sessionId?: string;
+  modelName?: string;
+  modelNameSource?: HostClientModelSource;
+  accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
+  permissionMode?: PermissionMode;
+  traceLevel: TraceLevel;
+  targetPath?: string;
+  confidentialPaths?: readonly string[];
+  shouldWrite: boolean;
+  metadata: Record<string, unknown>;
+}): WorkflowResumeRequestPayload {
+  return {
+    workflowRunId: input.workflowRunId,
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     model: resolveHostRequestModel(input),
     accessMode: input.accessMode,
     backgroundTasks: input.backgroundTasks,

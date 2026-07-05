@@ -24,6 +24,7 @@ import {
   createVerificationWorkflowHooks,
 } from "../src/index.js";
 import { assembleRuntimeWorkflowHooks } from "../src/runtime.js";
+import type { WorkflowProjectionStateSnapshot } from "../src/workflow-projection.js";
 
 function runRecord() {
   const now = new Date().toISOString();
@@ -542,6 +543,192 @@ describe("createWorkflowProjectionHooks", () => {
       expect(events.all().map((event) => event.type)).toContain(
         "workflow.completed",
       );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("re-verifies completed nodes on resume before trusting the saved position", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      let verifierCalls = 0;
+      const snapshots: WorkflowProjectionStateSnapshot[] = [];
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_resume_reverify",
+        onStateSnapshot: (snapshot) => {
+          snapshots.push(snapshot);
+        },
+        initialState: {
+          status: "running",
+          currentNodeId: "second",
+          attempts: { first: 1, second: 1 },
+          transitionLog: [
+            {
+              at: "2026-07-04T00:00:00.000Z",
+              verdict: { status: "passed" },
+              decision: {
+                type: "goto",
+                fromNodeId: "first",
+                toNodeId: "second",
+                reason: "verification_passed",
+              },
+            },
+          ],
+        },
+        resumeVerificationNodeIds: ["first"],
+        builtinVerifiers: {
+          resumeOk: () => {
+            verifierCalls += 1;
+            return { status: "continue", metadata: { exitCode: 0 } };
+          },
+        },
+        definition: {
+          assetName: "resume",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "first",
+              execute: "model",
+              body: "First.",
+              verify: [
+                {
+                  id: "first-ok",
+                  kind: "command",
+                  command: "builtin",
+                  authorized: true,
+                  metadata: { builtinVerifier: "resumeOk" },
+                },
+              ],
+              onPass: "second",
+            },
+            { id: "second", execute: "model", body: "Second." },
+          ],
+        },
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "resume done" },
+        events,
+        facts: ledger,
+      });
+
+      expect(verifierCalls).toBe(1);
+      expect(stop.status).toBe("continued");
+      expect(projection.getState().status).toBe("completed");
+      expect(ledger.snapshot().verificationResults).toEqual([
+        expect.objectContaining({
+          nodeId: "first",
+          verifierId: "first-ok",
+          satisfied: true,
+        }),
+      ]);
+      expect(
+        snapshots.find(
+          (snapshot) =>
+            snapshot.phase === "node_completed" && snapshot.nodeId === "first",
+        )?.evidenceRefs,
+      ).toEqual([
+        expect.objectContaining({
+          kind: "fact",
+          ref: expect.stringMatching(/^verify:/),
+          nodeId: "first",
+          verifierId: "first-ok",
+        }),
+      ]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("feeds resume verifier drift back through the completed node transition", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_resume_drift",
+        initialState: {
+          status: "running",
+          currentNodeId: "second",
+          attempts: { first: 1, second: 1 },
+          transitionLog: [
+            {
+              at: "2026-07-04T00:00:00.000Z",
+              verdict: { status: "passed" },
+              decision: {
+                type: "goto",
+                fromNodeId: "first",
+                toNodeId: "second",
+                reason: "verification_passed",
+              },
+            },
+          ],
+        },
+        resumeVerificationNodeIds: ["first"],
+        builtinVerifiers: {
+          resumeDrift: () => ({
+            status: "continue",
+            metadata: { exitCode: 1 },
+          }),
+        },
+        definition: {
+          assetName: "resume",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "first",
+              execute: "model",
+              body: "First.",
+              verify: [
+                {
+                  id: "first-ok",
+                  kind: "command",
+                  command: "builtin",
+                  authorized: true,
+                  metadata: { builtinVerifier: "resumeDrift" },
+                },
+              ],
+              onFail: { retry: 1 },
+              onPass: "second",
+            },
+            { id: "second", execute: "model", body: "Second." },
+          ],
+        },
+      });
+
+      const stop = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "Stop",
+        run,
+        payload: { message: "resume done" },
+        events,
+        facts: ledger,
+      });
+
+      expect(stop.status).toBe("advanced");
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "first",
+        attempts: { first: 2 },
+      });
+      expect(ledger.snapshot().verificationResults).toEqual([
+        expect.objectContaining({
+          nodeId: "first",
+          verifierId: "first-ok",
+          satisfied: false,
+        }),
+      ]);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

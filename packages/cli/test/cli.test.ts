@@ -14,7 +14,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { FileTaskStore, createTaskId } from "@sparkwright/agent-runtime";
+import {
+  FileTaskStore,
+  FileWorkflowStore,
+  createTaskId,
+  type WorkflowRunId,
+} from "@sparkwright/agent-runtime";
 import {
   FileSessionStore,
   SESSION_COMPACT_SCHEMA_VERSION,
@@ -2326,6 +2331,7 @@ describe("runCli", () => {
 
   it("lists and inspects workflow assets", async () => {
     const workspace = await createWorkspace("# Demo\n");
+    const sessionId = "sess_cli_workflow_list";
     await mkdir(join(workspace, ".sparkwright", "workflows", "bugfix"), {
       recursive: true,
     });
@@ -2340,6 +2346,24 @@ describe("runCli", () => {
       ].join("\n"),
       "utf8",
     );
+    const store = new FileWorkflowStore({
+      rootDir: join(
+        workspace,
+        ".sparkwright",
+        "sessions",
+        sessionId,
+        "workflow-runs",
+      ),
+    });
+    store.create({
+      id: "workflow_cli_list" as WorkflowRunId,
+      sessionId,
+      assetName: "bugfix",
+      version: "1.0.0",
+      contentHash: "hash",
+      currentNodeId: "main",
+      attempts: { main: 1 },
+    });
 
     const listOutput = createOutputCapture();
     const list = await runCli(
@@ -2349,7 +2373,29 @@ describe("runCli", () => {
       },
     );
     expect(list.exitCode).toBe(0);
+    expect(listOutput.stdoutText()).toContain(
+      "workflow-run: workflow_cli_list running asset=bugfix",
+    );
     expect(listOutput.stdoutText()).toContain("workflow: bugfix version=1.0.0");
+
+    const jsonListOutput = createOutputCapture();
+    const jsonList = await runCli(
+      ["workflow", "list", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: jsonListOutput.stdout, stderr: jsonListOutput.stderr },
+      },
+    );
+    expect(jsonList.exitCode).toBe(0);
+    const listJson = JSON.parse(jsonListOutput.stdoutText()) as {
+      assets?: unknown[];
+      workflowRuns?: Array<{ id: string }>;
+    };
+    expect(listJson.assets).toEqual([
+      expect.objectContaining({ assetName: "bugfix" }),
+    ]);
+    expect(listJson.workflowRuns).toEqual([
+      expect.objectContaining({ id: "workflow_cli_list" }),
+    ]);
 
     const inspectOutput = createOutputCapture();
     const inspect = await runCli(

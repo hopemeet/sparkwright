@@ -285,9 +285,10 @@ Current event types:
 - `workflow.started` / `workflow.node.started` /
   `workflow.node.completed` / `workflow.waiting` /
   `workflow.interrupted` / `workflow.completed` / `workflow.failed` /
-  `workflow.cancelled`: workflow-runtime lifecycle annotations. P1 projection
+  `workflow.cancelled`: workflow-runtime lifecycle annotations. Projection
   runs created with the optional `workflow` field on the start-run request emit
-  started/node/interrupted/completed/failed/cancelled events; `workflow.waiting`
+  started/node/interrupted/completed/failed/cancelled events and persist a
+  durable workflow-run snapshot under the owning session. `workflow.waiting`
   remains reserved until a later workflow phase adds a waiting-node emitter.
   Built-in verification/documented-command run-level invariants reuse the
   terminal workflow event vocabulary with `projectionKind: "invariant"` and

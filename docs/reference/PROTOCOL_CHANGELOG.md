@@ -38,6 +38,13 @@ Conventions:
   omit the field to keep ordinary host-run behavior. P1.5 removes the former
   experimental environment gate.
 
+- `host-message.schema.json`: additive — host requests now include
+  `workflow.list` and `workflow.resume`. Workflow run records are stored under
+  the owning session's `workflow-runs/` directory, carry pinned asset
+  `{assetName, version, contentHash}` plus a definition snapshot, and resume
+  only non-terminal records through a single-writer lease. Migration: clients
+  can inspect/resume workflow instances without scraping trace events.
+
 - `host-message.schema.json`: additive — `CapabilitySnapshot.workflows` may
   include parsed workflow asset summaries and parse errors. Migration: none;
   clients should treat the field as optional inspection diagnostics.

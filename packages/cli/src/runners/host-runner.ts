@@ -13,6 +13,7 @@ import {
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
+  createHostWorkflowResumeRequest,
   recordHostClientStartFailure,
   resolveHostStdioSpawn,
   tracePathForSession,
@@ -81,6 +82,25 @@ export interface HostResumeInput {
   verbose?: boolean;
 }
 
+export interface HostWorkflowResumeInput {
+  workflowRunId: string;
+  workspaceRoot: string;
+  sessionRootDir: string;
+  shouldWrite: boolean;
+  approveAll: boolean;
+  approveEdits?: boolean;
+  approveShellSafe?: boolean;
+  accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
+  permissionMode: PermissionMode;
+  modelName?: string;
+  sessionId?: string;
+  targetPath?: string;
+  confidentialPaths?: readonly string[];
+  traceLevel: TraceLevel;
+  verbose?: boolean;
+}
+
 export interface HostRunResult {
   exitCode: number;
   tracePath?: string;
@@ -105,8 +125,16 @@ export async function resumeHostRun(
   return runHostLifecycle(input, io, env);
 }
 
+export async function resumeHostWorkflowRun(
+  input: HostWorkflowResumeInput,
+  io: CliIO,
+  env: Record<string, string | undefined>,
+): Promise<HostRunResult> {
+  return runHostLifecycle(input, io, env);
+}
+
 async function runHostLifecycle(
-  input: HostRunInput | HostResumeInput,
+  input: HostRunInput | HostResumeInput | HostWorkflowResumeInput,
   io: CliIO,
   env: Record<string, string | undefined>,
 ): Promise<HostRunResult> {
@@ -121,11 +149,11 @@ async function runHostLifecycle(
     backgroundTasks,
     permissionMode,
     modelName,
-    workflowName,
     targetPath,
     confidentialPaths,
     traceLevel,
   } = input;
+  const workflowName = "workflowName" in input ? input.workflowName : undefined;
 
   let client: Client | undefined;
   let runId: string | undefined;
@@ -301,7 +329,7 @@ async function runHostLifecycle(
           }),
         );
         runId = started.runId;
-      } else {
+      } else if ("runId" in input) {
         const metadata = createHostClientRunMetadata({
           source: "cli",
           targetPath,
@@ -316,6 +344,36 @@ async function runHostLifecycle(
             sessionId,
             fromTrace: input.fromTrace,
             force: input.force,
+            accessMode,
+            backgroundTasks,
+            permissionMode,
+            targetPath,
+            traceLevel,
+            modelName,
+            modelNameSource: "request",
+            confidentialPaths,
+            shouldWrite,
+            metadata,
+          }),
+        );
+        runId = resumed.runId;
+        if (resumed.sessionId) {
+          sessionId = resumed.sessionId;
+          tracePath = tracePathForSession({ sessionRootDir, sessionId });
+        }
+      } else {
+        const metadata = createHostClientRunMetadata({
+          source: "cli",
+          targetPath,
+          shouldWrite,
+          accessMode,
+          backgroundTasks,
+          traceLevel,
+        });
+        const resumed = await client.resumeWorkflowRun(
+          createHostWorkflowResumeRequest({
+            workflowRunId: input.workflowRunId,
+            sessionId,
             accessMode,
             backgroundTasks,
             permissionMode,

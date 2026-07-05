@@ -258,6 +258,8 @@ export type RequestKind =
   | "task.stop"
   | "task.join"
   | "task.promote"
+  | "workflow.list"
+  | "workflow.resume"
   | "capability.inspect";
 
 export interface HostRequestBase<TKind extends RequestKind, TPayload> {
@@ -353,6 +355,26 @@ export interface RunResumeRequestPayload {
    */
   accessMode?: RunAccessMode;
   /** Session-level foreground/background task policy. Defaults to enabled. */
+  backgroundTasks?: BackgroundTaskPolicy;
+  permissionMode?: PermissionMode;
+  traceLevel?: TraceLevel;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowListRequestPayload {
+  sessionId?: string;
+  status?: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  limit?: number;
+}
+
+export interface WorkflowResumeRequestPayload {
+  workflowRunId: string;
+  sessionId?: string;
+  targetPath?: string;
+  confidentialPaths?: string[];
+  shouldWrite?: boolean;
+  model?: string;
+  accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
   permissionMode?: PermissionMode;
   traceLevel?: TraceLevel;
@@ -576,6 +598,8 @@ export type HostRequest =
   | HostRequestBase<"task.stop", TaskStopRequestPayload>
   | HostRequestBase<"task.join", TaskJoinRequestPayload>
   | HostRequestBase<"task.promote", TaskPromoteRequestPayload>
+  | HostRequestBase<"workflow.list", WorkflowListRequestPayload>
+  | HostRequestBase<"workflow.resume", WorkflowResumeRequestPayload>
   | HostRequestBase<"capability.inspect", CapabilityInspectRequestPayload>;
 
 // ---------------------------------------------------------------------------
@@ -607,6 +631,15 @@ export interface ResponseResults {
   "run.resume": {
     runId: string;
     resumedFromRunId: string;
+    sessionId?: string;
+  };
+  "workflow.list": {
+    workflows: WorkflowRunSnapshot[];
+    invalidEntries?: Array<{ path: string; code: string; reason: string }>;
+  };
+  "workflow.resume": {
+    runId: string;
+    workflowRunId: string;
     sessionId?: string;
   };
   "run.inject_message": Record<string, never>;
@@ -669,6 +702,38 @@ export interface ResponseResults {
     status: TaskStatus;
   };
   "capability.inspect": CapabilitySnapshot;
+}
+
+export interface WorkflowRunSnapshot {
+  id: string;
+  sessionId?: string;
+  status: "running" | "waiting" | "completed" | "failed" | "cancelled";
+  assetName: string;
+  version?: string;
+  contentHash: string;
+  activeRunId?: string;
+  runIds: string[];
+  currentNodeId?: string;
+  attempts: Record<string, number>;
+  wait?: {
+    kind: "input" | "task" | "approval";
+    reason?: string;
+    taskId?: string;
+    approvalId?: string;
+    metadata?: Record<string, unknown>;
+  };
+  failure?: {
+    kind: "verdict" | "runtime" | "cancelled" | "definition";
+    code: string;
+    message: string;
+    nodeId?: string;
+    metadata?: Record<string, unknown>;
+  };
+  resume: { verifyOnResume: boolean };
+  createdAt: string;
+  updatedAt?: string;
+  completedAt?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CapabilityToolSummary {

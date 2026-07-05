@@ -1,0 +1,16 @@
+{
+  "envelope": "request",
+  "id": "req_workflow_resume_1",
+  "kind": "workflow.resume",
+  "timestamp": "2026-07-04T12:00:00.000Z",
+  "payload": {
+    "workflowRunId": "workflow_abc123",
+    "sessionId": "sess_123",
+    "model": "deterministic",
+    "permissionMode": "default",
+    "traceLevel": "standard",
+    "metadata": {
+      "source": "fixture"
+    }
+  }
+}
