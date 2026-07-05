@@ -271,6 +271,22 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review routed-page check: stricter
+  parallel validation, delegate_parallel crash classification, and workflow
+  lease event cleanup remain host/store behavior. CLI workflow commands,
+  direct-core run setup, text/JSON formatting, and protocol usage are unchanged.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`.
+
+- Status: Read-only
 - Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 routed-page check: `parallel` / `join` add
   host-parsed workflow asset semantics and durable run state only. CLI workflow

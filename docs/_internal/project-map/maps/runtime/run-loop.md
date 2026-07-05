@@ -193,11 +193,14 @@ createRun/resumeRunFromCheckpoint
 - P5 bounded `parallel` / `join` also stays outside core loop semantics. Host
   projection drains the non-model parallel node, records branch verdict/evidence
   in `WorkflowRunRecord.parallelBranches`, preserves branch runtime errors as
-  fail-closed node verdicts, and drains `join` by reading durable state from the
-  unique producer parallel node. Core still observes normal awaited workflow
-  hooks, `advance`/`block` results, and the existing workflow
-  forced-continuation source; there is no branch scheduler, branch cancellation
-  bus, or multiple concurrent model episode loop inside core.
+  fail-closed node verdicts, rejects branch-local verifiers that are not wired
+  in P5, and drains `join` by reading durable state from the unique producer
+  parallel node. `parallel` requires explicit `onPass` so the portable state
+  machine's default next-node transition cannot fall through into branch
+  execution. Core still observes normal awaited workflow hooks,
+  `advance`/`block` results, and the existing workflow forced-continuation
+  source; there is no branch scheduler, branch cancellation bus, or multiple
+  concurrent model episode loop inside core.
 
 ## Consumers
 
@@ -219,6 +222,22 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review run-loop boundary: explicit
+  `parallel.onPass` and branch-verifier validation are host projection
+  constructor rules, delegate_parallel infra errors become workflow node
+  runtime errors through the existing hook path, and runtime terminal failures
+  preserve durable branch diagnostics without adding core loop state.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/machine.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-05T18:02:15+0800

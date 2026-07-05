@@ -182,6 +182,23 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review routed-page check: explicit
+  `parallel.onPass`, branch-verifier rejection, delegate_parallel infra-error
+  fail-closed behavior, and workflow-store lease event cleanup are host/store
+  internals. Host protocol requests/responses, workflow list/resume payloads,
+  capability snapshot schema, and host-event vocabulary remain unchanged.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/protocol/src/index.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`.
+
+- Status: Read-only
 - Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 routed-page check: bounded
   `parallel` / `join` changes are host asset/projection and

@@ -193,6 +193,23 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review trace check: explicit parallel
+  transition validation, branch-verifier rejection, and delegate_parallel infra
+  crash fail-closed behavior reuse existing `workflow.node.*` /
+  `workflow.failed` payloads and durable evidence refs. Runtime terminal failure
+  state now preserves `parallelBranches` for diagnostics, but no raw trace event
+  family or schema field was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Read-only
 - Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 trace check: `parallel` / `join` reuse
   existing `workflow.node.*`, workflow terminal events, and evidence refs.

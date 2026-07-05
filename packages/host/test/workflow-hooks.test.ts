@@ -764,6 +764,112 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("rejects parallel nodes without explicit onPass", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_parallel_requires_on_pass",
+        definition: {
+          assetName: "parallel-requires-on-pass",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            { id: "model", execute: "model", body: "Continue." },
+          ],
+        },
+      }),
+    ).toThrow(/requires explicit onPass/);
+  });
+
+  it("rejects parallel onPass targets that enter a branch", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_parallel_on_pass_branch",
+        definition: {
+          assetName: "parallel-on-pass-branch",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "lint",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/onPass must not target branch/);
+  });
+
+  it("rejects parallel branch verifiers that P5 would not execute", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_parallel_branch_verify",
+        definition: {
+          assetName: "parallel-branch-verify",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "model",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+              verify: [
+                {
+                  id: "lint-check",
+                  kind: "command",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                  authorized: true,
+                },
+              ],
+            },
+            { id: "model", execute: "model", body: "Continue." },
+          ],
+        },
+      }),
+    ).toThrow(/branch "lint" declares verify/);
+  });
+
   it("fails closed when a parallel branch returns a runtime error", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {
@@ -783,6 +889,7 @@ describe("createWorkflowProjectionHooks", () => {
               execute: "parallel",
               body: "",
               parallel: { branches: ["task"], maxConcurrency: 1 },
+              onPass: "model",
               onFail: "model",
             },
             {
@@ -1203,6 +1310,7 @@ describe("createWorkflowProjectionHooks", () => {
               execute: "parallel",
               body: "",
               parallel: { branches: ["review", "test"], maxConcurrency: 2 },
+              onPass: "done",
             },
             {
               id: "review",
@@ -1216,6 +1324,7 @@ describe("createWorkflowProjectionHooks", () => {
               body: "",
               delegate: { agentId: "tester", goal: "Test." },
             },
+            { id: "done", execute: "model", body: "Continue." },
           ],
         },
       });
@@ -1253,6 +1362,93 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("fails closed when delegate_parallel crashes during all-delegate fan-out", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const delegateParallelTool = defineTool<Record<string, unknown>, unknown>(
+        {
+          name: "delegate_parallel",
+          description: "Delegate several configured agents.",
+          inputSchema: { type: "object" },
+          policy: { risk: "safe" },
+          execute() {
+            throw new Error("transport exploded");
+          },
+        },
+      );
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_delegate_parallel_crash",
+        delegateParallelTool,
+        definition: {
+          assetName: "delegate-parallel-crash",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["review", "test"], maxConcurrency: 2 },
+              onPass: "done",
+              onFail: "recover",
+            },
+            {
+              id: "review",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "reviewer", goal: "Review." },
+            },
+            {
+              id: "test",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "tester", goal: "Test." },
+            },
+            { id: "done", execute: "model", body: "Continue." },
+            { id: "recover", execute: "model", body: "Recover." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        parallelBranches: {
+          review: {
+            status: "runtime_error",
+            verdict: { reason: "delegate_parallel_runtime_error" },
+          },
+          test: {
+            status: "runtime_error",
+            verdict: { reason: "delegate_parallel_runtime_error" },
+          },
+        },
+      });
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_delegate_parallel_crash",
+        fromNodeId: "fanout",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("rejects joins whose branches have ambiguous parallel producers", () => {
     expect(() =>
       createWorkflowProjectionHooks({
@@ -1267,12 +1463,14 @@ describe("createWorkflowProjectionHooks", () => {
               execute: "parallel",
               body: "",
               parallel: { branches: ["shared"], maxConcurrency: 1 },
+              onPass: "join",
             },
             {
               id: "fanout_b",
               execute: "parallel",
               body: "",
               parallel: { branches: ["shared"], maxConcurrency: 1 },
+              onPass: "join",
             },
             {
               id: "shared",
@@ -1385,6 +1583,79 @@ describe("createWorkflowProjectionHooks", () => {
         workflowRunId: "wf_join_stale_branch",
         fromNodeId: "join",
         failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves parallel branch diagnostics when runtime failure ends workflow", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_runtime_preserves_parallel",
+        initialState: {
+          status: "running",
+          currentNodeId: "model",
+          attempts: { model: 1 },
+          parallelBranches: {
+            lint: {
+              sourceNodeId: "fanout",
+              nodeId: "lint",
+              attempt: 1,
+              status: "passed",
+              verdict: { status: "passed", reason: "command_passed" },
+              completedAt: "2026-07-05T00:00:00.000Z",
+            },
+          },
+          transitionLog: [],
+        },
+        definition: {
+          assetName: "runtime-preserves-parallel",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "model",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            { id: "model", execute: "model", body: "Continue." },
+          ],
+        },
+      });
+
+      const signal = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "RuntimeSignal",
+        run,
+        payload: { signal: "budget.exceeded", source: "workflow" },
+        events,
+        facts: ledger,
+      });
+
+      expect(signal.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        parallelBranches: {
+          lint: { sourceNodeId: "fanout", status: "passed" },
+        },
       });
     } finally {
       await rm(workspace, { recursive: true, force: true });

@@ -112,6 +112,23 @@ model calls shell tool
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review routed-page check: branch
+  validation and delegate_parallel infra-error handling changed host workflow
+  projection only. Parallel command/script branches still reuse existing command
+  hook execution, `workflow-node-api.ts`, `TracedProcessRunner`,
+  shell-sandbox clamps, and run write gates; no shell runner, sandbox tier, or
+  direct script capability path was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Read-only
 - Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 routed-page check: parallel command/script
   branches reuse existing command hook execution, `workflow-node-api.ts`,

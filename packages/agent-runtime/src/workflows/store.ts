@@ -308,14 +308,16 @@ export class FileWorkflowStore implements WorkflowStore {
       if (!lease) return null;
       const record = this.records.get(id);
       const at = options.now?.().toISOString() ?? new Date().toISOString();
-      this.appendEvent({
-        at,
-        type: "adopted",
-        workflowRunId: id,
-        parentRunId: record?.parentRunId,
-        status: record?.status ?? "running",
-        metadata: { owner: lease.owner, token: lease.token },
-      });
+      if (record) {
+        this.appendEvent({
+          at,
+          type: "adopted",
+          workflowRunId: id,
+          parentRunId: record.parentRunId,
+          status: record.status,
+          metadata: { owner: lease.owner, token: lease.token },
+        });
+      }
       return {
         ...lease,
         release: async () => {
@@ -323,7 +325,7 @@ export class FileWorkflowStore implements WorkflowStore {
           if (released) {
             const latest = this.records.get(id);
             this.appendEvent({
-              at: new Date().toISOString(),
+              at: options.now?.().toISOString() ?? new Date().toISOString(),
               type: "released",
               workflowRunId: id,
               parentRunId: latest?.parentRunId,

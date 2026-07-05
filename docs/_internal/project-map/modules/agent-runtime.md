@@ -118,7 +118,9 @@ Does not own:
   can resume without re-running branches. Agent-runtime validates referenced
   branch node ids and preserves the state across transitions/store round trips,
   but it does not execute branches, schedule work, call `delegate_parallel`, or
-  interpret branch-local transitions.
+  interpret branch-local transitions. `FileWorkflowStore` lease events describe
+  durable record adoption only: a fresh pre-create lease does not append
+  `adopted`, while release events use the injected clock when supplied.
 - P3 Step 1 introduced a portable workflow run-chain driver:
   `runWorkflowRunChain()` owns the "run one episode, inspect terminal evidence,
   maybe continue" loop shape without constructing models or host config.
@@ -264,6 +266,22 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 post-review store hardening: durable branch state
+  still round-trips through agent-runtime, fresh pre-create workflow leases no
+  longer emit misleading `adopted` events, and release events honor the injected
+  clock for deterministic tests. Host still owns branch execution and P5
+  projection validation.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`; `npm --workspace @sparkwright/agent-runtime
+  test -- test/workflows.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-05T16:03:27+0800

@@ -287,14 +287,18 @@ Does not own:
   executes only non-model branch nodes (`command`, `delegate`, `task`,
   `script`), persists branch verdict/evidence in
   `WorkflowRunRecord.parallelBranches`, and lets `join` read that state without
-  re-running branches. `parallel` preserves branch `runtime_error` as a
-  fail-closed node verdict; `join` requires each waited branch to have one
-  producer and rejects stale `sourceNodeId` state. Branch-local transitions are
-  not interpreted in P5; only the `parallel` / `join` node verdicts advance
-  through `advanceWorkflowState()`. All-delegate fan-out must call the existing
+  re-running branches. `parallel` requires explicit `onPass` and rejects pass
+  edges into its own branch set, so adjacency cannot fall through into branch
+  execution. P5 rejects branch-local `verify` declarations because branch Stop
+  verifiers are not wired. `parallel` preserves branch `runtime_error` and
+  delegate_parallel infrastructure crashes as fail-closed node verdicts; `join`
+  requires each waited branch to have one producer and rejects stale
+  `sourceNodeId` state. Branch-local transitions are not interpreted in P5;
+  only the `parallel` / `join` node verdicts advance through
+  `advanceWorkflowState()`. All-delegate fan-out must call the existing
   `delegate_parallel` tool and is batched by `maxConcurrency`; P5 does not add a
   workflow scheduler, branch cancellation bus, nested parallel, human/model
-  branches, or `workflow_start`.
+  branches, branch verifier execution, or `workflow_start`.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -667,6 +671,23 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review hardening: host projection now
+  requires explicit `parallel.onPass`, rejects pass edges into branch nodes,
+  rejects branch-local `verify`, maps delegate_parallel infrastructure throws to
+  branch `runtime_error`, and preserves branch diagnostics on runtime terminal
+  failures. No workflow_start, scheduler, branch bus, or protocol surface was
+  added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-05T18:02:15+0800

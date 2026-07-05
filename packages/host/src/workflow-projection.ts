@@ -24,6 +24,7 @@ import {
   type WorkflowParallelBranchState,
   type WorkflowRuntimeState,
   type WorkflowTransitionDecision,
+  type WorkflowTransitionDefinition,
   type WorkflowVerifierDefinition,
   type WorkflowWaitState,
 } from "@sparkwright/agent-runtime";
@@ -169,13 +170,17 @@ export function createWorkflowProjectionHooks(
   ): void => {
     if (terminalEmitted) return;
     terminalEmitted = true;
+    const previousState = cloneRuntimeState(state);
     state = {
       status: "failed",
-      attempts: { ...state.attempts },
-      transitionLog: [...state.transitionLog],
+      attempts: previousState.attempts,
+      ...(previousState.parallelBranches
+        ? { parallelBranches: previousState.parallelBranches }
+        : {}),
+      transitionLog: previousState.transitionLog,
       failure: {
         reason: "runtime",
-        nodeId: state.currentNodeId,
+        nodeId: previousState.currentNodeId,
         metadata: { message, ...metadata },
       },
     };
@@ -958,10 +963,45 @@ export function createWorkflowProjectionHooks(
         } satisfies RuntimeContext,
       );
     } catch (cause) {
-      output =
-        isRecord(cause) && isRecord(cause.metadata)
-          ? cause.metadata
-          : { error: cause instanceof Error ? cause.message : String(cause) };
+      if (isDelegateParallelIncomplete(cause)) {
+        output = cause.metadata;
+      } else {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        const code = stringValue(isRecord(cause) ? cause.code : undefined);
+        return branches.map((branch) => {
+          const attempt =
+            (state.parallelBranches?.[branch.id]?.attempt ?? 0) + 1;
+          const metadata = {
+            execute: "delegate",
+            delegateParallel: true,
+            parallelNodeId: parallelNode.id,
+            error: message,
+            ...(code ? { code } : {}),
+          };
+          return {
+            node: branch,
+            state: parallelBranchState({
+              parallelNode,
+              branch,
+              attempt,
+              verdict: {
+                status: "runtime_error",
+                reason: "delegate_parallel_runtime_error",
+                metadata,
+              },
+              evidenceRefs: [
+                {
+                  kind: "run",
+                  ref: `${input.run.id}:${parallelNode.id}:${branch.id}`,
+                  nodeId: branch.id,
+                  metadata: { attempt, ...metadata },
+                },
+              ],
+              metadata: { delegateParallel: true },
+            }),
+          };
+        });
+      }
     }
     const results = delegateParallelResults(output);
     return branches.map((branch, index) => {
@@ -1948,6 +1988,19 @@ function assertParallelNodeRunnable(
   if (!parallel || parallel.branches.length === 0) {
     throw new Error(`Workflow parallel node "${node.id}" requires branches.`);
   }
+  if (!node.onPass) {
+    throw new Error(
+      `Workflow parallel node "${node.id}" requires explicit onPass; P5 forbids implicit fall-through from a parallel node.`,
+    );
+  }
+  const onPassBranchTarget = workflowTransitionTargets(node.onPass).find(
+    (target) => parallel.branches.includes(target),
+  );
+  if (onPassBranchTarget) {
+    throw new Error(
+      `Workflow parallel node "${node.id}" onPass must not target branch "${onPassBranchTarget}".`,
+    );
+  }
   if (parallel.branches.length > MAX_PARALLEL_BRANCHES) {
     throw new Error(
       `Workflow parallel node "${node.id}" accepts at most ${MAX_PARALLEL_BRANCHES} branches.`,
@@ -1968,6 +2021,11 @@ function assertParallelNodeRunnable(
     if (branch.id === node.id) {
       throw new Error(
         `Workflow parallel node "${node.id}" cannot branch to itself.`,
+      );
+    }
+    if ((branch.verify?.length ?? 0) > 0) {
+      throw new Error(
+        `Workflow parallel node "${node.id}" branch "${branch.id}" declares verify, but P5 branch verifiers are not executed.`,
       );
     }
     const execute = nodeExecuteKind(branch);
@@ -2025,6 +2083,17 @@ function assertStaticArgv(verifier: WorkflowCommandVerifierDefinition): void {
       );
     }
   }
+}
+
+function workflowTransitionTargets(
+  transition: WorkflowTransitionDefinition,
+): string[] {
+  if (typeof transition === "string") return [transition];
+  if ("goto" in transition) return [transition.goto];
+  if ("retry" in transition && transition.then) {
+    return workflowTransitionTargets(transition.then);
+  }
+  return [];
 }
 
 function currentNode(
@@ -2218,6 +2287,16 @@ function delegateParallelResults(
   if (!isRecord(output) || !Array.isArray(output.results)) return [];
   return output.results.map((result) =>
     isRecord(result) ? result : undefined,
+  );
+}
+
+function isDelegateParallelIncomplete(
+  cause: unknown,
+): cause is Record<string, unknown> & { metadata: Record<string, unknown> } {
+  return (
+    isRecord(cause) &&
+    stringValue(cause.code) === "DELEGATE_PARALLEL_INCOMPLETE" &&
+    isRecord(cause.metadata)
   );
 }
 

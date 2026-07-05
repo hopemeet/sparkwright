@@ -435,6 +435,40 @@ describe("FileWorkflowStore", () => {
     await afterRelease?.release();
   });
 
+  it("does not log adoption for fresh pre-create leases and uses the injected release clock", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_fresh_lease" as WorkflowRunId;
+    let now = new Date("2026-07-04T00:00:00.000Z");
+
+    const lease = await store.acquireLease(id, {
+      owner: "fresh-worker",
+      ttlMs: 60_000,
+      now: () => now,
+    });
+    expect(lease).not.toBeNull();
+    expect(store.eventLog(id).events).toEqual([]);
+
+    store.create({
+      id,
+      assetName: "fresh",
+      contentHash: "hash",
+      now: () => "2026-07-04T00:01:00.000Z",
+    });
+    now = new Date("2026-07-04T00:02:00.000Z");
+    expect(await lease?.release()).toBe(true);
+
+    expect(store.eventLog(id).events.map((event) => event.type)).toEqual([
+      "created",
+      "released",
+    ]);
+    expect(store.eventLog(id).events.at(-1)).toMatchObject({
+      at: "2026-07-04T00:02:00.000Z",
+      type: "released",
+      metadata: { owner: "fresh-worker" },
+    });
+  });
+
   it("requires waiting records to carry wait.kind and clears wait on terminal", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });

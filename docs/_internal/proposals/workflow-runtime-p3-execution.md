@@ -443,7 +443,12 @@ for projection-time validation.
   store，不新增 workflow scheduler。
 - branch node 的 `onPass` / `onFail` 在 P5 不解释；跳转只由
   `parallel` / `join` 节点自己的 verdict 通过既有 `advanceWorkflowState`
-  查表。
+  查表。Post-review hardening requires `parallel.onPass` explicitly and
+  rejects `onPass` targets that enter a declared branch, so a `parallel` node
+  can never fall through into branch execution by adjacency.
+- branch node 的 `verify` declarations 在 P5 明确 fail closed：branch Stop
+  verifiers are not wired in this slice, so parser/projection construction must
+  reject the declaration instead of silently dropping it.
 - `join` 只读取持久 `parallelBranches`，所有 `waitFor` branch passed 则
   passed；任一普通 failed 则 failed；任一 runtime_error、缺失 branch
   state、或 branch state producer 不匹配则 runtime_error。
@@ -483,13 +488,30 @@ and marking durable branch provenance (`sourceNodeId`) as a reserved public
 workflow field.
 
 Post-review fixup note (2026-07-05): sub-agent review found three P5
-hardening gaps. The follow-up fix keeps all-delegate fan-out on
+hardening gaps. The first follow-up fix keeps all-delegate fan-out on
 `delegate_parallel` but batches calls by `parallel.maxConcurrency`; makes branch
 `runtime_error` fail closed through `parallel` / `join` rather than being
 downgraded to ordinary failed verdicts; and rejects ambiguous or stale join
 producer state by validating unique branch producers plus `sourceNodeId` at the
 join barrier. Focused host gates and full `npm run release:check` passed after
 adding regression tests for these cases.
+
+Second post-review fixup note (2026-07-05): the next hardening pass closes the
+remaining P5/P2-adjacent review issues without broadening the slice:
+`parallel` now requires explicit `onPass` and forbids routing that pass edge
+into a branch; P5 branch `verify` declarations are rejected because branch Stop
+verifiers are not executed; all-delegate `delegate_parallel` infrastructure
+throws become branch `runtime_error` while known
+`DELEGATE_PARALLEL_INCOMPLETE` metadata still maps to ordinary branch failed
+verdicts; runtime terminal failures preserve existing `parallelBranches` for
+diagnostics; and fresh pre-create workflow leases no longer append misleading
+`adopted` events while release events honor the injected clock. Focused gates
+run so far: `npm --workspace @sparkwright/host test --
+test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+diagnostics"`, `npm --workspace @sparkwright/agent-runtime test --
+test/workflows.test.ts -t "lease"`, `npm --workspace @sparkwright/host test --
+test/workflows.test.ts test/workflow-hooks.test.ts`, and `npm --workspace
+@sparkwright/agent-runtime test -- test/workflows.test.ts`.
 
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 

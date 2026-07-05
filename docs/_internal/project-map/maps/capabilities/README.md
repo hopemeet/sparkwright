@@ -81,11 +81,14 @@ config + workspace capability roots
   P5 `parallel` / `join` nodes extend the workflow asset grammar and durable
   workflow run state, not capability inventory. All-delegate workflow fan-out
   reuses the existing opt-in `delegate_parallel` tool when available and is
-  batched by `parallel.maxConcurrency`; mixed non-model branches use their
-  existing governed primitives (`command`,
-  `delegate`, `task`, `script`). P5 still does not add `workflow_start`,
-  branch-local model-facing tools, or a second configured-delegate fan-out
-  surface.
+  batched by `parallel.maxConcurrency`; delegate_parallel transport crashes are
+  projection runtime errors while ordinary delegate child failures remain branch
+  failed verdicts. Mixed non-model branches use their existing governed
+  primitives (`command`, `delegate`, `task`, `script`). P5 also requires
+  explicit `parallel.onPass` and rejects branch-local `verify` declarations in
+  projection validation. P5 still does not add `workflow_start`, branch-local
+  model-facing tools, branch verifier execution, or a second configured-delegate
+  fan-out surface.
 - Config-declared capabilities can live in JSON or YAML config files. Host owns
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
@@ -190,6 +193,22 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 capability boundary after post-review
+  hardening: explicit parallel transitions, branch-verifier rejection, and
+  delegate_parallel crash handling remain workflow projection validation/runtime
+  behavior. Capability inventory still gains no workflow_start, branch-local
+  tool surface, or second delegate fan-out capability.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-05T18:02:15+0800

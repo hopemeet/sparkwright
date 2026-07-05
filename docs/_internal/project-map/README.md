@@ -161,6 +161,27 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review hardening route: `parallel` now
+  requires explicit pass routing and rejects pass edges into branch nodes,
+  branch-local `verify` is fail-closed, delegate_parallel infrastructure throws
+  become branch runtime errors, runtime terminal failures preserve branch
+  diagnostics, and fresh workflow pre-create leases no longer emit misleading
+  adoption events. Protocol/CLI/capability surfaces remain unchanged.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`; `npm --workspace
+  @sparkwright/agent-runtime test -- test/workflows.test.ts`.
+
+- Status: Verified
 - Date: 2026-07-05T18:02:15+0800
 - Scope: workflow-runtime-v1 P5 routing update: bounded `parallel` / `join`
   nodes route through host workflow parsing/projection and agent-runtime
