@@ -22,6 +22,8 @@ export type {
   WorkflowRunId,
   WorkflowRunRecord,
   WorkflowRunStatus,
+  WorkflowScriptNodeCapability,
+  WorkflowScriptNodeDefinition,
   WorkflowStoreEvent,
   WorkflowStoreEventType,
   WorkflowTransitionDecision,

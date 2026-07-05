@@ -10,6 +10,8 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Main Files
 
 - `packages/host/src/shell.ts`
+- `packages/host/src/traced-process-runner.ts`
+- `packages/host/src/workflow-node-api.ts`
 - `packages/host/src/workspace-snapshot.ts`
 - `packages/shell-tool/src/*`
 - `packages/shell-sandbox/src/*`
@@ -81,6 +83,13 @@ model calls shell tool
 - Promoted shell tasks keep `task.*` as their trace lifecycle; stdout/stderr are
   buffered in `TaskStore`, mirrored as `task.output`, and summarized on the
   terminal task event through `ProcessOutputSummary`.
+- Workflow P4 script processes reuse the host process/sandbox substrate rather
+  than defining a second runner. `workflow-node-api.ts` maps script execution
+  into `TracedProcessRunner.runJsonRpc()` with shell-sandbox policy inputs,
+  stdout reserved for newline-delimited JSON-RPC, and stderr reserved for
+  progress/telemetry. Script requests for governed command side effects go back
+  through the host node API (`invoke(type:"command")`) instead of granting the
+  script a raw shell capability.
 
 ## Consumers
 
@@ -101,6 +110,21 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 shell/process safety: stdio script node
+  execution reuses `TracedProcessRunner` and shell-sandbox access clamps, while
+  governed command effects stay host-mediated through the node API.
+- Read: `packages/host/src/traced-process-runner.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/external-command-agent.ts`,
+  `packages/host/test/traced-process-runner.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/traced-process-runner.test.ts test/workflow-hooks.test.ts
+  test/external-command-agent.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-02T01:15:00+0800

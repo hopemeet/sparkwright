@@ -105,6 +105,12 @@ Does not own:
   the raw structural declaration only. Host owns model-ref resolution,
   model-tier lookup, adapter construction, and applying the budget to worker
   episodes.
+- Workflow P4 adds portable `script` execution shape declarations:
+  `WorkflowNodeExecuteKind` includes `script`, and
+  `WorkflowScriptNodeDefinition` carries path/args/cwd/env/stdin/timeouts,
+  output caps, metadata, and declared capability names. Agent-runtime does not
+  execute scripts, grant capabilities, map sandbox policy, read workflow asset
+  directories, or expose the stdio node API; host owns all of those behaviors.
 - P3 Step 1 introduced a portable workflow run-chain driver:
   `runWorkflowRunChain()` owns the "run one episode, inspect terminal evidence,
   maybe continue" loop shape without constructing models or host config.
@@ -250,6 +256,22 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 boundary check: script node fields are
+  portable workflow type declarations only; agent-runtime still does not run
+  script processes, resolve asset paths, grant sandbox/capabilities, or expose
+  node APIs.
+- Read: `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/index.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/agent-runtime run build`; `npm run
+  release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T12:15:55+0800

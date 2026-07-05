@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, normalize, sep } from "node:path";
 import type { RunBudget } from "@sparkwright/core";
 import type {
   WorkflowCommandNodeDefinition,
@@ -9,6 +9,8 @@ import type {
   WorkflowHumanNodeDefinition,
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
+  WorkflowScriptNodeCapability,
+  WorkflowScriptNodeDefinition,
   WorkflowTaskNodeDefinition,
   WorkflowTaskNodeMode,
   WorkflowTransitionDefinition,
@@ -38,6 +40,16 @@ const WORKFLOW_NODE_EXECUTE_KINDS = new Set<WorkflowNodeExecuteKind>([
   "delegate",
   "task",
   "human",
+  "script",
+]);
+const WORKFLOW_SCRIPT_CAPABILITIES = new Set<WorkflowScriptNodeCapability>([
+  "read",
+  "write",
+  "shell",
+  "network",
+  "mcp",
+  "agent",
+  "task",
 ]);
 
 export interface WorkflowAssetSummary {
@@ -220,6 +232,8 @@ function buildWorkflowDetail(
   const definition: WorkflowDefinition = {
     assetName: markdown.assetName,
     contentHash: markdown.contentHash,
+    sourcePath: markdown.sourcePath,
+    sourceDir: markdown.dir,
     ...(markdown.version ? { version: markdown.version } : {}),
     ...(description ? { description } : {}),
     nodes,
@@ -315,6 +329,7 @@ function workflowNodeFromRaw(
     delegate: parseWorkflowDelegateNode(raw, id),
     task: parseWorkflowTaskNode(raw, id),
     human: parseWorkflowHumanNode(raw, id),
+    script: parseWorkflowScriptNode(raw, id),
     verify: parseWorkflowVerifiers(raw.verify, id),
     onPass: parseWorkflowTransition(raw.onPass ?? raw.on_pass, id, "onPass"),
     onFail: parseWorkflowTransition(raw.onFail ?? raw.on_fail, id, "onFail"),
@@ -334,6 +349,7 @@ function workflowNodeFromFields(input: {
   delegate?: WorkflowDelegateNodeDefinition;
   task?: WorkflowTaskNodeDefinition;
   human?: WorkflowHumanNodeDefinition;
+  script?: WorkflowScriptNodeDefinition;
   verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
@@ -359,7 +375,7 @@ function workflowNodeFromFields(input: {
         : undefined;
   if (!execute) {
     throw new Error(
-      `Workflow node ${input.id} execute must be one of: model, command, delegate, task, human.`,
+      `Workflow node ${input.id} execute must be one of: model, command, delegate, task, human, script.`,
     );
   }
   return {
@@ -374,6 +390,7 @@ function workflowNodeFromFields(input: {
     ...(input.delegate ? { delegate: input.delegate } : {}),
     ...(input.task ? { task: input.task } : {}),
     ...(input.human ? { human: input.human } : {}),
+    ...(input.script ? { script: input.script } : {}),
     ...(input.verify ? { verify: input.verify } : {}),
     ...(input.onPass ? { onPass: input.onPass } : {}),
     ...(input.onFail ? { onFail: input.onFail } : {}),
@@ -528,6 +545,87 @@ function parseWorkflowHumanNode(
       ? { metadata: optionalRecord(source.metadata) }
       : {}),
   };
+}
+
+function parseWorkflowScriptNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowScriptNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.script) ? raw.script : raw;
+  const path = isRecord(raw.script)
+    ? optionalString(raw.script.path)
+    : optionalString(raw.script);
+  if (execute !== "script" && !path) return undefined;
+  if (!path) {
+    throw new Error(`Workflow script node ${nodeId} requires script.path.`);
+  }
+  if (!isSafeRelativeWorkflowScriptPath(path)) {
+    throw new Error(
+      `Workflow script node ${nodeId} script.path must be a relative path inside the workflow asset.`,
+    );
+  }
+  const args = optionalStringArray(source.args);
+  const cwd = optionalString(source.cwd);
+  if (cwd && !isSafeRelativeWorkflowScriptCwd(cwd)) {
+    throw new Error(
+      `Workflow script node ${nodeId} cwd must be relative to the workflow asset.`,
+    );
+  }
+  const timeoutMs = nonNegativeInteger(source.timeoutMs);
+  const maxOutputBytes = nonNegativeInteger(source.maxOutputBytes);
+  const env = optionalStringRecord(source.env);
+  const stdin = optionalString(source.stdin);
+  const capabilities = parseWorkflowScriptCapabilities(
+    source.capabilities,
+    nodeId,
+  );
+  return {
+    path,
+    ...(args ? { args } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(env ? { env } : {}),
+    ...(stdin ? { stdin } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
+    ...(capabilities ? { capabilities } : {}),
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowScriptCapabilities(
+  raw: unknown,
+  nodeId: string,
+): WorkflowScriptNodeCapability[] | undefined {
+  const values = optionalStringArray(raw);
+  if (!values) return undefined;
+  const invalid = values.find(
+    (value) =>
+      !WORKFLOW_SCRIPT_CAPABILITIES.has(value as WorkflowScriptNodeCapability),
+  );
+  if (invalid) {
+    throw new Error(
+      `Workflow script node ${nodeId} capabilities must use: read, write, shell, network, mcp, agent, task.`,
+    );
+  }
+  return [...new Set(values as WorkflowScriptNodeCapability[])];
+}
+
+function isSafeRelativeWorkflowScriptPath(path: string): boolean {
+  if (isAbsolute(path) || path.includes("\0") || path.includes("\\")) {
+    return false;
+  }
+  const normalized = normalize(path);
+  if (normalized === "." || normalized === "..") return false;
+  if (normalized.startsWith(`..${sep}`)) return false;
+  return true;
+}
+
+function isSafeRelativeWorkflowScriptCwd(path: string): boolean {
+  if (path === ".") return true;
+  return isSafeRelativeWorkflowScriptPath(path);
 }
 
 function parseWorkflowVerifiers(
@@ -812,6 +910,17 @@ function optionalStringArray(value: unknown): string[] | undefined {
     return parsed ? [parsed] : [];
   });
   return items.length > 0 ? items : undefined;
+}
+
+function optionalStringRecord(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value).flatMap(([key, entry]) => {
+    const parsed = optionalString(entry);
+    return parsed ? [[key, parsed] as const] : [];
+  });
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function nonNegativeInteger(value: unknown): number | undefined {

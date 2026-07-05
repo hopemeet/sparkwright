@@ -11,6 +11,8 @@ cron, shell/task tools, and capability inspection.
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
+- `packages/host/src/workflows.ts`
+- `packages/host/src/workflow-node-api.ts`
 - `packages/skills/src/*`
 - `packages/mcp-adapter/src/index.ts`
 - `packages/agent-runtime/src/*`
@@ -70,6 +72,12 @@ config + workspace capability roots
   P3 Step 4b.3 does not add a `workflow_start` tool or capability field;
   workflow assets remain request-selected capabilities rather than
   model-spawned tasks.
+  P4 `script` nodes are asset-authored declarations executed only by the host
+  projection. Their declared capabilities map to host access clamps at
+  instantiation time; scripts do not receive capability objects, do not write
+  trace, and can perform side effects only by calling host node API methods over
+  stdio JSON-RPC. Built-in dogfood workflows are ordinary workflow assets and
+  should not be special-cased by capability inventory consumers.
 - Config-declared capabilities can live in JSON or YAML config files. Host owns
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
@@ -174,6 +182,21 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 capability boundary: script nodes are
+  workflow-asset declarations with host-side capability clamps and stdio node
+  API governance; capability.inspect inventory remains the workflow asset
+  surface and does not gain `workflow_start`.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "workflow
+  assets"`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T13:59:13+0800

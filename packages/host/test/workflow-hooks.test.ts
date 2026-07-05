@@ -669,6 +669,160 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("runs script nodes through the stdio workflow node API", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const assetDir = join(workspace, "scripted");
+      await mkdir(assetDir, { recursive: true });
+      await writeFile(
+        join(assetDir, "node.mjs"),
+        [
+          "import readline from 'node:readline';",
+          "let id = 1;",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "function send(method, params) { console.log(JSON.stringify({ jsonrpc: '2.0', id: id++, method, params })); }",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.id === 1) send('getEvidence', { nodeId: 'previous' });",
+          "  else if (msg.id === 2) {",
+          "    console.error('SPARKWRIGHT_EVENT: ' + JSON.stringify({ type: 'progress', message: 'script saw evidence', data: { count: msg.result.length } }));",
+          "    send('complete', { result: { evidence: msg.result.length } });",
+          "  } else if (msg.id === 3) process.exit(0);",
+          "});",
+          "send('initialize', { nodeId: 'script' });",
+        ].join("\n"),
+        "utf8",
+      );
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_script",
+        allowScriptWrite: false,
+        getEvidenceRefs: (nodeId) =>
+          nodeId === "previous" ? [{ kind: "fact", ref: "fact:previous" }] : [],
+        definition: {
+          assetName: "scripted",
+          contentHash: "hash",
+          sourceDir: assetDir,
+          nodes: [
+            {
+              id: "script",
+              execute: "script",
+              body: "",
+              script: {
+                path: "node.mjs",
+                capabilities: ["read"],
+              },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize script output." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+      });
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map(
+            (event) => event.payload as { nodeId?: string; verdict?: unknown },
+          ),
+      ).toEqual([
+        expect.objectContaining({
+          nodeId: "script",
+          verdict: expect.objectContaining({
+            status: "passed",
+            reason: "script_completed",
+          }),
+        }),
+      ]);
+      expect(
+        events
+          .all()
+          .find((event) => event.type === "extension.process.progress")
+          ?.payload,
+      ).toMatchObject({
+        message: "script saw evidence",
+        data: { count: 1 },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when script nodes declare unsupported capabilities", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_script_capability",
+        allowScriptWrite: true,
+        definition: {
+          assetName: "scripted",
+          contentHash: "hash",
+          sourceDir: workspace,
+          nodes: [
+            {
+              id: "script",
+              execute: "script",
+              body: "",
+              script: {
+                path: "node.mjs",
+                capabilities: ["network"],
+              },
+            },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        failure: {
+          reason: expect.stringContaining("unsupported capability"),
+        },
+      });
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_script_capability",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("parks human nodes as durable waiting snapshots", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {

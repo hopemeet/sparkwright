@@ -81,7 +81,8 @@ export type WorkflowNodeExecuteKind =
   | "command"
   | "delegate"
   | "task"
-  | "human";
+  | "human"
+  | "script";
 
 export type WorkflowVerifierExpectation = "zero" | "nonzero";
 
@@ -121,6 +122,27 @@ export interface WorkflowTaskNodeDefinition {
 export interface WorkflowHumanNodeDefinition {
   prompt?: string;
   wait?: WorkflowWaitState;
+  metadata?: Record<string, unknown>;
+}
+
+export type WorkflowScriptNodeCapability =
+  | "read"
+  | "write"
+  | "shell"
+  | "network"
+  | "mcp"
+  | "agent"
+  | "task";
+
+export interface WorkflowScriptNodeDefinition {
+  path: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  stdin?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  capabilities?: WorkflowScriptNodeCapability[];
   metadata?: Record<string, unknown>;
 }
 
@@ -178,6 +200,7 @@ export interface WorkflowNodeDefinition {
   delegate?: WorkflowDelegateNodeDefinition;
   task?: WorkflowTaskNodeDefinition;
   human?: WorkflowHumanNodeDefinition;
+  script?: WorkflowScriptNodeDefinition;
   verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
@@ -185,6 +208,8 @@ export interface WorkflowNodeDefinition {
 }
 
 export interface WorkflowDefinition extends WorkflowAssetPin {
+  sourcePath?: string;
+  sourceDir?: string;
   description?: string;
   nodes: WorkflowNodeDefinition[];
   config?: Record<string, unknown>;

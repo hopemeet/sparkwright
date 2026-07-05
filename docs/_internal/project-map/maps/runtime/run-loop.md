@@ -183,6 +183,13 @@ createRun/resumeRunFromCheckpoint
   only enforces an ordinary worker run budget and emits ordinary usage/outcome
   facts. Retry-time model escalation needs a future model-node boundary split
   that starts a new worker episode; it is not a new in-loop mutation.
+- P4 script nodes also keep core workflow-unaware. Host projection drains a
+  script node before the next model boundary and records verdict/evidence into
+  `WorkflowRunRecord`; core only sees ordinary workflow-hook advances, blocks,
+  and forced-continuation budget events. The script stdio node API reads prior
+  node evidence through host-owned `getEvidence(nodeId)`; there is no expression
+  language, no direct trace writer in the script, and no node-boundary
+  compaction trigger in this slice.
 
 ## Consumers
 
@@ -204,6 +211,21 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 run-loop boundary: script node execution is a
+  host projection drain through the stdio node API, while core loop semantics,
+  hook lifecycles, forced-continuation budgets, and compaction timing remain
+  unchanged.
+- Read: `packages/core/src/run.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T12:15:55+0800

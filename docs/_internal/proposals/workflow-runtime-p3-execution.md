@@ -292,6 +292,101 @@ continuing into those items from this execution plan.
   Step 4b 升级阶梯由此获得真实客户。这是 Stage 3
   self-hosting / distill 的前置侦察，不改变其排序。
 
+## Stage 4 — P4 执行方案（script 节点 + stdio JSON-RPC node API）
+
+入口事实（2026-07-05）：PR #47 已合入 main（merge commit
+`8593b4a8`），本地从 main 拉出 `feat/workflow-p4`。P4 继续服从
+`workflow-runtime-v1.md` Accepted Slice；P3 的 D11 结果不重开：
+本阶段不实现 `workflow_start`，任何 spawn 形态未来仍必须满足 D26。
+
+P4 处置三个悬置项：
+
+| 悬置项 | P4 处置 |
+| --- | --- |
+| node-boundary compaction 接线 | **明确不做。** D10 的表达能力保持为事实，但 P4 的风险面已包含进程/RPC/授权；compaction 接线留给第一个直接需要上下文治理的后续片。 |
+| 4b.2 遗留 retry 时模型升级 + cruise-mode 策略 | **明确不做 retry escalation。** P4 只兑现 deterministic script cruise（零模型节点执行）；retry-time 模型升级仍等待 model-node boundary split，把每次 attempt 变成独立 worker episode。 |
+| asset-supply-first | **本阶段做。** 新增 2–3 条真实内部 workflow 资产（release 子集、workflow runtime 子集等），高阶探针优先用这些资产，不再只靠玩具 fixture。 |
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P4 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- 本节作为执行记录入口；后续每步记录 focused gates 与结果。
+- 失败即停：发现 P4 需要重开 `workflow_start`、引入表达式语言、或新造
+  第二套进程管理，即停并回报。
+
+### Step 1 — 类型 / parser / dogfood 资产
+
+- `WorkflowNodeExecuteKind` 增加 `script`，资产 parser 支持
+  `execute: script`、相对 `scripts/` 路径、参数/env/stdin/timeout/output
+  限制、能力声明。
+- 新增真实内部 workflow 资产，覆盖 release 子集和 workflow runtime
+  子集；资产只声明能力，不直接持有能力。
+- Focused gates：agent-runtime workflow type tests；host workflow parser /
+  asset tests；`npm --workspace @sparkwright/agent-runtime run typecheck`；
+  `npm --workspace @sparkwright/host run typecheck`。
+- 失败即停：脚本路径可逃逸资产目录、资产能力变成运行时授权、或 dogfood
+  资产只能靠合成 fixture 才能解释。
+
+Implementation note (2026-07-05): `WorkflowNodeExecuteKind` now includes
+`script`; host asset parsing accepts asset-local script paths, args/cwd/env/
+stdin/timeout/output limits, capability declarations, and stores
+`sourceDir/sourcePath` on the pinned definition snapshot for resume. Parser
+tests cover script parsing and asset escape rejection. Two builtin dogfood
+assets landed: `release-check-focused` and `workflow-runtime-p4-smoke`.
+
+### Step 2 — stdio JSON-RPC node API
+
+- 在 `TracedProcessRunner` / `stdio-v1` 家族内实现 node API 子进程协议：
+  JSON-RPC 走 stdin/stdout，遥测继续走 stderr token；脚本不写 trace。
+- Node API v1 方法：`initialize`、`progress`、`getEvidence(nodeId)`、
+  `complete(result)`、`fail(reason)`，以及经 host 治理基元的窄
+  primitive 调用入口。
+- 沙箱复用 shell-sandbox 分级；host 将资产声明映射到 access clamp，
+  D16 授权全有或全无。
+- Focused gates：host traced-process/node-api tests；workflow script node
+  tests；stderr telemetry parsing tests。
+- 失败即停：stdout 被当作遥测、脚本可直接写 trace、或 RPC 能绕过 host
+  policy/approval/access clamp。
+
+Implementation note (2026-07-05): `TracedProcessRunner.runJsonRpc()` runs a
+newline-delimited JSON-RPC child protocol over stdout/stdin while preserving
+stderr `SPARKWRIGHT_EVENT` telemetry. `workflow-node-api.ts` exposes script
+methods `initialize`, `progress`, `getEvidence`, `invoke`, `complete`, and
+`fail`; `invoke(command)` routes through the existing configured workflow hook
+command primitive, and declared `write` capability is rejected when the parent
+run is read-only.
+
+### Step 3 — stdio progress sampler 删除兑现
+
+- 把 `external-command-agent` 的私有 progress head/tail 采样器迁到
+  `TracedProcessRunner` 共享 helper；external command delegates 与 script
+  node API 共享同一 stdio-v1 telemetry 采样形状。
+- 保留 P3 hook-bound 非 model runner；actor-bound deterministic executor
+  迁移风险较高，明确不折进 P4 script slice。
+- Focused gates：host traced-process tests；external-command-agent progress
+  tests；workflow script node tests。
+- 失败即停：script node API 或 external command delegate 出现第二套 stderr
+  telemetry parser / progress sampler，或 stdout 被重新用作遥测。
+
+Implementation note (2026-07-05): `createProcessProgressSampleCollector()` now
+lives in `traced-process-runner.ts`; `external-command-agent.ts` deleted its
+private progress head/tail collector and consumes the shared helper. Script
+node API and external command delegates therefore share the same stdio-v1
+progress sampling family.
+
+### Step 4 — P4 收尾
+
+- 跑 P4 focused gates，再跑一次全量 `npm run release:check`。
+- 通过后提交 P4（不加 Co-Authored-By），再进入 P5 契约先行。
+- 相位简报包含：交付、删除兑现、全量门、契约/决策修订、P5 入口条件。
+
+Implementation note (2026-07-05): focused gates passed for host workflow
+parser/projection/script tests, traced-process JSON-RPC tests, external command
+progress tests, agent-runtime workflow tests, and agent-runtime/host typecheck
+and build. Full `npm run release:check` remains the P4 closing gate before the
+P4 commit.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

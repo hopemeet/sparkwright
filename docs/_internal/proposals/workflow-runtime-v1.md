@@ -1,6 +1,6 @@
 # Workflow Runtime v1 Proposal (Brainstorm Draft)
 
-> Status: **accepted slice P0 / P1 / P1.5 / P2 / P3** — the Accepted Slice table
+> Status: **accepted slice P0 / P1 / P1.5 / P2 / P3 / P4** — the Accepted Slice table
 > below is the only execution contract. Everything else is rationale,
 > constraints, P4+/destination design drafts, or parking lot; where a body
 > section could be misread as P1 work it carries an explicit phase label.
@@ -46,7 +46,7 @@
 > only consumes; the continuation budget (decision 14) implements only
 > after the S3 end-state is ratified cross-proposal.
 
-## Accepted Slice (P0/P1/P1.5/P2/P3) — the minimal closed loop
+## Accepted Slice (P0/P1/P1.5/P2/P3/P4) — the minimal closed loop
 
 This table is the executable contract; the body below is rationale and
 constraints. Substrate references (S1–S4) resolve to
@@ -60,6 +60,7 @@ constraints. Substrate references (S1–S4) resolve to
 | P1.5 | P1 landed | verification profile → host-owned run-level invariant projection (D25); documented-command Stop hook → built-in invariant verifier (D25); `verification:` hookName-protocol consumers (`analyzeVerificationProfileResults` + CLI exit path) migrate to ledger/verification-result snapshot reads | implicit verification/documented-command installation on delegate child runs unless a future opt-in feature adds it; treating run-level invariants as user-authored workflow nodes | release gate pending until both old live gate implementations are deleted **and** D25 restores latest-write invariant semantics without the experimental flag |
 | P2 | P1.5 + S1 landed | `WorkflowRunRecord` writes real durable state in the session root; `FileWorkflowStore` on S1 doc-store; pinned definition snapshots; attempts, evidence refs, verdict/transition logs; single-writer lease with refresh/release; cross-run `workflow resume`; resume re-verification; workflow list/resume protocol + CLI/SDK surfaces; terminal workflow actor notifications through the shipped actor-inbox union | P3 node kinds, first `waiting` emitter, workflow actor episode driver, node-boundary compaction implementation | consumes S1 instead of adding a new file-store copy; retires the P0 reserved-only workflow-run-record contract |
 | P3 | P2 merged to main (PR #46, merge commit `44f80db3`). D18 is **not** an entry condition; it is the Step 1 exit gate and Step 4a entry gate before actor episode spawning. | D18 degenerate workflow expression for the host supervisor todo-continuation chain; non-model node runner semantics decision; `command` / `task` / `delegate` / `human` nodes; `waiting` durability contract + first D21 reliable emitter; actor-owned episode driver inversion; per-episode catalog narrowing; escalation ladder / cruise mode budget rules (D6); `workflow_start` decision (D11); `diff_scope` verifier + node-entry epoch marker; `task_terminal` ordering decision at Step 2 entry. | `script` nodes and stdio JSON-RPC node API (P4); `parallel` / `join` (P5); node-boundary compaction implementation/wiring (deferred until a later phase explicitly accepts it); workspace-root state promotion (D5); two-phase PreToolUse (D20); `workflow distill` and parking-lot ideas. | Step 4a retires `startSupervisedRunChain` and converges the three run-chain owners (core continuation / `startSupervisedRunChain` / workflow episodes) onto one driver. |
+| P4 | P3 merged to main (PR #47, merge commit `8593b4a8`). P4 must preserve the P3/D11 outcome: no model-facing `workflow_start` tool, and any future spawn-shaped reopening must satisfy D26. | `script` workflow nodes; stdio JSON-RPC node API over child stdin/stdout with telemetry kept on stderr as a `TracedProcessRunner` / `stdio-v1` family member; script asset declarations mapped through shell-sandbox/access clamps with D16 all-or-nothing authorization; host-owned node API methods for progress, completion/failure, `getEvidence(nodeId)`, and governed primitive calls; two or three real internal dogfood workflow assets for release/runtime probe ladders. | node-boundary compaction wiring (D10 remains expressible but not connected in P4); retry-time model escalation / model-node boundary split and cruise-mode policy beyond deterministic script execution; actor-bound deterministic executor migration for all non-model nodes; `parallel` / `join` (P5); `workflow_start` / spawn mode (D26 future slice only); expression language for dataflow. | P4 retires `external-command-agent`'s private progress head/tail sampler by moving stdio progress sampling into the `TracedProcessRunner` family; scripts reuse that traced-process/sandbox family instead of adding another process protocol. |
 
 ### Phase Status
 
@@ -232,6 +233,29 @@ constraints. Substrate references (S1–S4) resolve to
   implementation/wiring deferred until a later phase explicitly accepts it.
   P3 therefore stops after the Step 4b decision records instead of quietly
   expanding the acceptance criteria.
+- 2026-07-05 — P4 contract admitted after P3 merged to main as PR #47
+  (`8593b4a8`). P4 keeps the phase discipline narrow: scripts and the stdio
+  JSON-RPC node API land together with a stdio progress-sampling deletion in
+  the traced-process family. Node-boundary compaction is explicitly not wired
+  in P4 even though D10 says the existing substrate can express it; retry-time
+  model escalation stays deferred until a model-node boundary split turns each
+  attempt into its own worker episode; the larger actor-bound deterministic
+  executor migration is not folded into the script slice; `workflow_start`
+  remains absent per the P3 D11 outcome and D26 envelope. Asset-supply-first is
+  accepted here as project-local dogfood assets, not as runtime semantics.
+- 2026-07-05 — P4 implementation landed locally on `feat/workflow-p4`:
+  workflow assets parse `execute: script` nodes with asset-local paths,
+  capability declarations, env/stdin/timeout/output limits, and pinned
+  `sourceDir`/`sourcePath` for resume; `TracedProcessRunner` now owns a
+  newline-delimited JSON-RPC stdio child mode with stdout reserved for RPC and
+  stderr retaining `SPARKWRIGHT_EVENT` telemetry; script nodes execute through
+  the host node API (`initialize`, `progress`, `getEvidence`, `invoke`,
+  `complete`, `fail`) and D16 rejects declared write capability in read-only
+  runs. The deletion payoff is the shared progress sampler in
+  `traced-process-runner.ts`, consumed by external command delegates and the
+  script path instead of an `external-command-agent` private copy. Two builtin
+  dogfood assets (`release-check-focused`, `workflow-runtime-p4-smoke`) now
+  provide real internal focused-gate pipelines.
 
 ## Purpose
 

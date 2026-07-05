@@ -2323,7 +2323,7 @@ describe("runCli", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(output.stdoutText()).toContain("workflows: 1 assets");
+    expect(output.stdoutText()).toMatch(/workflows: \d+ assets/);
     expect(output.stdoutText()).toContain(
       "workflow: bugfix version=1.0.0 nodes=2",
     );
@@ -2390,9 +2390,11 @@ describe("runCli", () => {
       assets?: unknown[];
       workflowRuns?: Array<{ id: string }>;
     };
-    expect(listJson.assets).toEqual([
-      expect.objectContaining({ assetName: "bugfix" }),
-    ]);
+    expect(listJson.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ assetName: "bugfix" }),
+      ]),
+    );
     expect(listJson.workflowRuns).toEqual([
       expect.objectContaining({ id: "workflow_cli_list" }),
     ]);

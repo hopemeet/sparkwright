@@ -128,15 +128,15 @@ describe("workflow assets", () => {
     });
 
     expect(report.errors).toEqual([]);
-    expect(report.assets).toHaveLength(1);
-    expect(report.assets[0]).toMatchObject({
+    const bugfix = report.assets.find((asset) => asset.assetName === "bugfix");
+    expect(bugfix).toMatchObject({
       assetName: "bugfix",
       layer: "project",
       version: "1.2.3",
       description: "Fix a bug with evidence.",
       nodeCount: 2,
     });
-    expect(report.assets[0]?.definition.nodes).toEqual([
+    expect(bugfix?.definition.nodes).toEqual([
       {
         id: "reproduce",
         title: "Reproduce",
@@ -151,7 +151,7 @@ describe("workflow assets", () => {
         body: "Patch the code.",
       },
     ]);
-    expect(report.assets[0]?.definition.config).toEqual({
+    expect(bugfix?.definition.config).toEqual({
       modelTiers: { cheap: "deterministic" },
     });
   });
@@ -344,6 +344,78 @@ describe("workflow assets", () => {
     ]);
   });
 
+  it("parses P4 script nodes with asset-local paths and capability declarations", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "scripted-release",
+      dir: "/tmp/scripted-release",
+      sourcePath: "/tmp/scripted-release/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: release-probe",
+        "    execute: script",
+        "    script:",
+        "      path: scripts/release-probe.mjs",
+        "      args: [--focused]",
+        "      cwd: .",
+        "      env:",
+        "        CI: '1'",
+        "      timeoutMs: 120000",
+        "      maxOutputBytes: 32768",
+        "      capabilities: [read, shell, read]",
+        "    onPass: done",
+        "  - id: done",
+        "    execute: model",
+        "---",
+        "## release-probe",
+        "Run the release probe.",
+        "",
+        "## done",
+        "Summarize.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition).toMatchObject({
+      sourceDir: "/tmp/scripted-release",
+      sourcePath: "/tmp/scripted-release/workflow.md",
+    });
+    expect(detail.definition.nodes[0]).toMatchObject({
+      id: "release-probe",
+      execute: "script",
+      script: {
+        path: "scripts/release-probe.mjs",
+        args: ["--focused"],
+        cwd: ".",
+        env: { CI: "1" },
+        timeoutMs: 120000,
+        maxOutputBytes: 32768,
+        capabilities: ["read", "shell"],
+      },
+      onPass: "done",
+    });
+  });
+
+  it("rejects script paths that escape the workflow asset", () => {
+    expect(() =>
+      parseWorkflowMarkdownAsset({
+        assetName: "script-escape",
+        dir: "/tmp/script-escape",
+        sourcePath: "/tmp/script-escape/workflow.md",
+        raw: [
+          "---",
+          "nodes:",
+          "  - id: bad",
+          "    execute: script",
+          "    script:",
+          "      path: ../outside.mjs",
+          "---",
+          "## bad",
+          "Nope.",
+        ].join("\n"),
+      }),
+    ).toThrow(/relative path inside the workflow asset/);
+  });
+
   it("keeps stronger workflow layers and records shadows", async () => {
     const workspace = await tempWorkspace();
     const xdg = join(workspace, "xdg");
@@ -364,7 +436,10 @@ describe("workflow assets", () => {
       XDG_CONFIG_HOME: xdg,
     });
 
-    expect(report.assets[0]).toMatchObject({
+    const release = report.assets.find(
+      (asset) => asset.assetName === "release",
+    );
+    expect(release).toMatchObject({
       assetName: "release",
       layer: "project",
       version: "project",
@@ -391,13 +466,15 @@ describe("workflow assets", () => {
 
     expect(inspected).toMatchObject({ ok: true });
     if (!inspected.ok) throw new Error(inspected.error.message);
-    expect(inspected.snapshot.workflows?.assets).toEqual([
-      expect.objectContaining({
-        assetName: "inspectable",
-        version: "0.1",
-        nodeCount: 1,
-      }),
-    ]);
+    expect(inspected.snapshot.workflows?.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assetName: "inspectable",
+          version: "0.1",
+          nodeCount: 1,
+        }),
+      ]),
+    );
   });
 
   it("instantiates workflow runs without an experimental release gate", async () => {

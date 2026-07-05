@@ -2030,6 +2030,11 @@ export class HostRuntime {
             skillRoots: skillRoots.map((root) => root.root),
             configPaths: loadedConfig.attempted.map((entry) => entry.path),
             getRun: () => parentRunRef.current,
+            getEvidenceRefs: (nodeId) =>
+              (workflowRecord?.evidenceRefs ?? []).filter(
+                (ref) => ref.nodeId === nodeId,
+              ),
+            allowScriptWrite: input.shouldWrite,
             agentTool: delegateAgentTool,
             taskTool: tools.find((tool) => tool.name === "task_create"),
             isToolAvailable: (toolName) =>

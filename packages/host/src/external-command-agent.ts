@@ -29,12 +29,10 @@ import {
   type DelegateWorkspaceAccess,
 } from "./delegate-capability.js";
 import {
-  type ProgressChunk,
+  createProcessProgressSampleCollector,
   TracedProcessRunner,
+  type ProgressChunk,
 } from "./traced-process-runner.js";
-
-const EXTERNAL_COMMAND_PROGRESS_HEAD_LIMIT = 5;
-const EXTERNAL_COMMAND_PROGRESS_TAIL_LIMIT = 5;
 
 export interface ExternalCommandAgentConfig {
   command: string;
@@ -445,7 +443,7 @@ async function runExternalCommand(input: {
         ? renderStdin(input.goal, input.metadata)
         : undefined;
     const runner = new TracedProcessRunner();
-    const progress = createExternalCommandProgressCollector();
+    const progress = createProcessProgressSampleCollector();
     const result = await runner.run({
       emitter: input.emitter,
       runId: input.runId,
@@ -527,49 +525,6 @@ async function runExternalCommand(input: {
   } finally {
     await executionWorkspace.cleanup();
   }
-}
-
-function createExternalCommandProgressCollector(): {
-  record(chunk: ProgressChunk): void;
-  summary(input: {
-    progressCount: number;
-    progressDropped: number;
-  }): Pick<
-    ExternalCommandDelegateToolResult,
-    "progressCount" | "progressDropped" | "progressHead" | "progressTail"
-  >;
-} {
-  const progressHead: ProgressChunk[] = [];
-  const progressTail: ProgressChunk[] = [];
-  return {
-    record(chunk) {
-      const sample = cloneProgressChunk(chunk);
-      if (progressHead.length < EXTERNAL_COMMAND_PROGRESS_HEAD_LIMIT) {
-        progressHead.push(sample);
-        return;
-      }
-      progressTail.push(sample);
-      if (progressTail.length > EXTERNAL_COMMAND_PROGRESS_TAIL_LIMIT) {
-        progressTail.shift();
-      }
-    },
-    summary(input) {
-      return {
-        progressCount: input.progressCount,
-        progressDropped: input.progressDropped,
-        progressHead: progressHead.map(cloneProgressChunk),
-        progressTail: progressTail.map(cloneProgressChunk),
-      };
-    },
-  };
-}
-
-function cloneProgressChunk(chunk: ProgressChunk): ProgressChunk {
-  return {
-    ...(chunk.message !== undefined ? { message: chunk.message } : {}),
-    ...(chunk.channel !== undefined ? { channel: chunk.channel } : {}),
-    ...(chunk.data !== undefined ? { data: { ...chunk.data } } : {}),
-  };
 }
 
 function delegateSandboxConfig(input: {

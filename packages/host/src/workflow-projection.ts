@@ -32,6 +32,7 @@ import {
   type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
 import { canonicalToolName } from "./tool-identities.js";
+import { runWorkflowScriptNode } from "./workflow-node-api.js";
 
 const DEFAULT_STOP_RUNTIME_ERROR_THRESHOLD = 3;
 
@@ -49,6 +50,8 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
   onStateSnapshot?: (
     snapshot: WorkflowProjectionStateSnapshot,
   ) => void | Promise<void>;
+  getEvidenceRefs?: (nodeId: string) => readonly WorkflowEvidenceRef[];
+  allowScriptWrite?: boolean;
   isToolAvailable?: (toolName: string) => boolean;
   /** @internal Test-only fault injection for D23 fail-closed gate assertions. */
   faultInjection?: Partial<Record<WorkflowHookName, string>>;
@@ -401,6 +404,25 @@ export function createWorkflowProjectionHooks(
       }
       if (node.execute === "task") {
         return await executeTaskNode(input, node, attempt);
+      }
+      if (node.execute === "script") {
+        return await runWorkflowScriptNode({
+          workflowRunId,
+          assetName: options.definition.assetName,
+          sourceDir: options.definition.sourceDir,
+          node,
+          attempt,
+          hookInput: input,
+          workspaceRoot: options.workspaceRoot,
+          sandbox: options.sandbox,
+          sandboxRuntime: options.sandboxRuntime,
+          skillRoots: options.skillRoots,
+          configPaths: options.configPaths,
+          allowWrite: options.allowScriptWrite === true,
+          getEvidence: (nodeId) => options.getEvidenceRefs?.(nodeId) ?? [],
+          invokePrimitive: (action) =>
+            runConfiguredNodeAction(input, node.id, action),
+        });
       }
       return {
         verdict: {

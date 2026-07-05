@@ -22,6 +22,8 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
+- `packages/host/src/workflow-projection.ts`
+- `packages/host/src/workflow-node-api.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/traced-process-runner.ts`
 - `packages/host/src/acp-child-agent.ts`
@@ -262,6 +264,27 @@ Does not own:
   workflow episode catalogs must omit `workflow_start` by default. Future
   spawn-shaped support must first join the unified task lifecycle and enforce
   explicit recursion depth plus access clamping.
+- P4 script nodes are host-owned non-model workflow nodes. `workflows.ts`
+  parses `execute: script` plus asset-local `script.path` / args / env / cwd /
+  stdin / timeouts / output caps / declared capabilities, and pins
+  `WorkflowDefinition.sourcePath` / `sourceDir` into the durable definition
+  snapshot so resumed runs execute the pinned asset-local script path rather
+  than rediscovering live asset state. `workflow-projection.ts` drains the node
+  through `workflow-node-api.ts`, which runs a stdio JSON-RPC child through
+  `TracedProcessRunner.runJsonRpc()`: stdout is RPC only, stderr remains
+  telemetry/progress, and scripts report effects through host API methods such
+  as `progress`, `getEvidence(nodeId)`, governed `invoke(type:"command")`,
+  `complete`, and `fail`. Script-declared write capability is fail-closed when
+  the parent run lacks `shouldWrite`; scripts do not write trace directly and do
+  not receive raw host capabilities.
+- P4 keeps node-boundary compaction and retry-time model escalation out of
+  host execution. There is still no `workflow_start` tool; script nodes do not
+  introduce an expression language, and data flow between nodes remains
+  explicit host `getEvidence(nodeId)` over recorded evidence refs.
+- `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
+  by stdio JSON-RPC process progress and by the external-command delegate. Keep
+  future process integrations on this shared runner/sampler path rather than
+  rebuilding local stdout/stderr progress collectors.
 - P3 Step 2 supervised projection supports non-model `command`, `delegate`, and
   `task` nodes at host-owned node boundaries. `workflows.ts` parses explicit
   node runner fields plus `diff_scope`; `workflow-projection.ts` drains
@@ -630,6 +653,26 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 host boundary: script node parsing,
+  asset-local path pinning, stdio JSON-RPC execution, host node API method
+  routing, shell-sandbox reuse, read-only write-capability fail-closed behavior,
+  and shared process progress sampling are host-owned.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `packages/host/src/external-command-agent.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/host/test/traced-process-runner.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts
+  test/traced-process-runner.test.ts test/external-command-agent.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm run
+  release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T13:59:13+0800
