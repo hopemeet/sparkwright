@@ -83,6 +83,16 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` does not change MCP preparation, wrapped tool execution,
+  server cwd handling, or diagnostic payloads.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: not run for MCP-specific behavior; P5 made no MCP semantic change.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a routing check for
   `packages/host/src/runtime.ts`: actor episode driver inversion does not

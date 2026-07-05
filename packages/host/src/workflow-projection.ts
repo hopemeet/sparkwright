@@ -21,6 +21,7 @@ import {
   type WorkflowEvidenceRef,
   type WorkflowNodeDefinition,
   type WorkflowNodeVerdict,
+  type WorkflowParallelBranchState,
   type WorkflowRuntimeState,
   type WorkflowTransitionDecision,
   type WorkflowVerifierDefinition,
@@ -35,6 +36,8 @@ import { canonicalToolName } from "./tool-identities.js";
 import { runWorkflowScriptNode } from "./workflow-node-api.js";
 
 const DEFAULT_STOP_RUNTIME_ERROR_THRESHOLD = 3;
+const DEFAULT_PARALLEL_MAX_CONCURRENCY = 4;
+const MAX_PARALLEL_BRANCHES = 8;
 
 export interface CreateWorkflowProjectionHooksOptions extends Omit<
   CreateConfiguredWorkflowHooksOptions,
@@ -42,6 +45,7 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
 > {
   definition: WorkflowDefinition;
   taskTool?: ToolDefinition;
+  delegateParallelTool?: ToolDefinition;
   workflowRunId?: string;
   initialState?: WorkflowRuntimeState;
   resumeVerificationNodeIds?: readonly string[];
@@ -104,6 +108,11 @@ export type WorkflowBuiltinVerifierHandler = (
 interface WorkflowNodeVerdictEvaluation {
   verdict: WorkflowNodeVerdict;
   evidenceRefs: WorkflowEvidenceRef[];
+}
+
+interface WorkflowParallelBranchExecution {
+  node: WorkflowNodeDefinition;
+  state: WorkflowParallelBranchState;
 }
 
 export function createWorkflowProjectionHooks(
@@ -424,6 +433,12 @@ export function createWorkflowProjectionHooks(
             runConfiguredNodeAction(input, node.id, action),
         });
       }
+      if (node.execute === "parallel") {
+        return await executeParallelNode(input, node, attempt);
+      }
+      if (node.execute === "join") {
+        return executeJoinNode(node, attempt);
+      }
       return {
         verdict: {
           status: "runtime_error",
@@ -626,6 +641,284 @@ export function createWorkflowProjectionHooks(
         },
       ],
     };
+  };
+
+  const executeParallelNode = async (
+    input: WorkflowHookInput,
+    node: WorkflowNodeDefinition,
+    attempt: number,
+  ): Promise<WorkflowNodeVerdictEvaluation> => {
+    const parallel = node.parallel;
+    if (!parallel) {
+      return {
+        verdict: {
+          status: "runtime_error",
+          reason: `Workflow parallel node "${node.id}" has no parallel definition.`,
+        },
+        evidenceRefs: [],
+      };
+    }
+    const branches = parallel.branches.map((branchId) => {
+      const branch = findWorkflowNode(options.definition, branchId);
+      if (!branch) {
+        throw new Error(
+          `Workflow parallel node "${node.id}" references unknown branch "${branchId}".`,
+        );
+      }
+      return branch;
+    });
+    const allDelegateBranches = branches.every(
+      (branch) => nodeExecuteKind(branch) === "delegate",
+    );
+    const branchResults = allDelegateBranches
+      ? await executeDelegateParallelBranches(input, node, branches)
+      : await runBounded(
+          branches,
+          parallel.maxConcurrency ?? DEFAULT_PARALLEL_MAX_CONCURRENCY,
+          async (branch) => executeParallelBranch(input, node, branch),
+        );
+    const branchStates = Object.fromEntries(
+      branchResults.map((result) => [result.node.id, result.state]),
+    );
+    state = {
+      ...state,
+      parallelBranches: {
+        ...(state.parallelBranches ?? {}),
+        ...branchStates,
+      },
+    };
+    const failed = branchResults.filter(
+      (result) => result.state.status !== "passed",
+    );
+    const evidenceRefs = branchResults.flatMap(
+      (result) => result.state.evidenceRefs ?? [],
+    );
+    return {
+      verdict:
+        failed.length === 0
+          ? {
+              status: "passed",
+              reason: "parallel_branches_passed",
+              metadata: {
+                execute: "parallel",
+                branches: branches.map((branch) => branch.id),
+                branchStatuses: branchStatusMetadata(branchResults),
+              },
+            }
+          : {
+              status: "failed",
+              reason: "parallel_branch_failed",
+              metadata: {
+                execute: "parallel",
+                branches: branches.map((branch) => branch.id),
+                failedBranches: failed.map((result) => result.node.id),
+                branchStatuses: branchStatusMetadata(branchResults),
+              },
+            },
+      evidenceRefs: [
+        ...evidenceRefs,
+        {
+          kind: "fact" as const,
+          ref: `workflow-parallel:${workflowRunId}:${node.id}:${attempt}`,
+          nodeId: node.id,
+          metadata: {
+            execute: "parallel",
+            branches: branches.map((branch) => branch.id),
+            branchStatuses: branchStatusMetadata(branchResults),
+          },
+        },
+      ],
+    };
+  };
+
+  const executeJoinNode = (
+    node: WorkflowNodeDefinition,
+    attempt: number,
+  ): WorkflowNodeVerdictEvaluation => {
+    const join = node.join;
+    if (!join) {
+      return {
+        verdict: {
+          status: "runtime_error",
+          reason: `Workflow join node "${node.id}" has no join definition.`,
+        },
+        evidenceRefs: [],
+      };
+    }
+    const branchStates = join.waitFor.map((branchId) => ({
+      branchId,
+      state: state.parallelBranches?.[branchId],
+    }));
+    const missing = branchStates.filter((entry) => !entry.state);
+    if (missing.length > 0) {
+      return {
+        verdict: {
+          status: "runtime_error",
+          reason: `Workflow join node "${node.id}" is missing branch state for: ${missing.map((entry) => entry.branchId).join(", ")}.`,
+          metadata: {
+            execute: "join",
+            waitFor: join.waitFor,
+            missing: missing.map((entry) => entry.branchId),
+          },
+        },
+        evidenceRefs: [],
+      };
+    }
+    const failed = branchStates.filter(
+      (entry) => entry.state?.status !== "passed",
+    );
+    const evidenceRefs = branchStates.flatMap(
+      (entry) => entry.state?.evidenceRefs ?? [],
+    );
+    return {
+      verdict:
+        failed.length === 0
+          ? {
+              status: "passed",
+              reason: "join_branches_passed",
+              metadata: {
+                execute: "join",
+                waitFor: join.waitFor,
+                branchStatuses: Object.fromEntries(
+                  branchStates.map((entry) => [
+                    entry.branchId,
+                    entry.state!.status,
+                  ]),
+                ),
+              },
+            }
+          : {
+              status: "failed",
+              reason: "join_branch_failed",
+              metadata: {
+                execute: "join",
+                waitFor: join.waitFor,
+                failedBranches: failed.map((entry) => entry.branchId),
+                branchStatuses: Object.fromEntries(
+                  branchStates.map((entry) => [
+                    entry.branchId,
+                    entry.state!.status,
+                  ]),
+                ),
+              },
+            },
+      evidenceRefs: [
+        ...evidenceRefs,
+        {
+          kind: "fact" as const,
+          ref: `workflow-join:${workflowRunId}:${node.id}:${attempt}`,
+          nodeId: node.id,
+          metadata: { execute: "join", waitFor: join.waitFor },
+        },
+      ],
+    };
+  };
+
+  const executeParallelBranch = async (
+    input: WorkflowHookInput,
+    parallelNode: WorkflowNodeDefinition,
+    branch: WorkflowNodeDefinition,
+  ): Promise<WorkflowParallelBranchExecution> => {
+    const attempt = (state.parallelBranches?.[branch.id]?.attempt ?? 0) + 1;
+    const execution = await executeNonModelNode(input, branch, attempt);
+    return {
+      node: branch,
+      state: parallelBranchState({
+        parallelNode,
+        branch,
+        attempt,
+        verdict: execution.verdict,
+        evidenceRefs: execution.evidenceRefs,
+      }),
+    };
+  };
+
+  const executeDelegateParallelBranches = async (
+    input: WorkflowHookInput,
+    parallelNode: WorkflowNodeDefinition,
+    branches: readonly WorkflowNodeDefinition[],
+  ): Promise<WorkflowParallelBranchExecution[]> => {
+    if (!options.delegateParallelTool) {
+      throw new Error(
+        `Workflow parallel node "${parallelNode.id}" requires delegate_parallel for all-delegate fan-out.`,
+      );
+    }
+    let output: unknown;
+    try {
+      const parent = options.getRun?.();
+      output = await options.delegateParallelTool.execute(
+        {
+          delegates: branches.map((branch) => ({
+            ...(branch.delegate?.agentId
+              ? { agentId: branch.delegate.agentId }
+              : {}),
+            ...(branch.delegate?.toolName
+              ? { toolName: branch.delegate.toolName }
+              : {}),
+            goal: branch.delegate?.goal ?? branch.body,
+            metadata: {
+              ...(branch.delegate?.metadata ?? {}),
+              workflowRunId,
+              parallelNodeId: parallelNode.id,
+              branchNodeId: branch.id,
+            },
+          })),
+        },
+        {
+          run: parent?.record ?? input.run,
+          ...(parent?.getWorkspace ? { workspace: parent.getWorkspace() } : {}),
+          ...(parent?.abortSignal ? { abortSignal: parent.abortSignal } : {}),
+        } satisfies RuntimeContext,
+      );
+    } catch (cause) {
+      output =
+        isRecord(cause) && isRecord(cause.metadata)
+          ? cause.metadata
+          : { error: cause instanceof Error ? cause.message : String(cause) };
+    }
+    const results = delegateParallelResults(output);
+    return branches.map((branch, index) => {
+      const result = results[index];
+      const verdict =
+        result?.signal === "completed"
+          ? ({
+              status: "passed" as const,
+              reason: "delegate_parallel_branch_completed",
+              metadata: { execute: "delegate", result },
+            } satisfies WorkflowNodeVerdict)
+          : ({
+              status: "failed" as const,
+              reason: "delegate_parallel_branch_failed",
+              metadata: { execute: "delegate", result },
+            } satisfies WorkflowNodeVerdict);
+      const evidenceRefs: WorkflowEvidenceRef[] = [
+        {
+          kind: "run",
+          ref:
+            stringValue(isRecord(result) ? result.childRunId : undefined) ??
+            `${input.run.id}:${parallelNode.id}:${branch.id}`,
+          nodeId: branch.id,
+          metadata: {
+            attempt: (state.parallelBranches?.[branch.id]?.attempt ?? 0) + 1,
+            execute: "delegate",
+            parallelNodeId: parallelNode.id,
+            delegateParallel: true,
+            result,
+          },
+        },
+      ];
+      return {
+        node: branch,
+        state: parallelBranchState({
+          parallelNode,
+          branch,
+          attempt: (state.parallelBranches?.[branch.id]?.attempt ?? 0) + 1,
+          verdict,
+          evidenceRefs,
+          metadata: { delegateParallel: true },
+        }),
+      };
+    });
   };
 
   const runConfiguredNodeAction = async (
@@ -1492,6 +1785,10 @@ function validateWorkflowProjectionDefinition(
       assertTaskNodeRunnable(node);
     } else if (execute === "human") {
       assertHumanNodeRunnable(node);
+    } else if (execute === "parallel") {
+      assertParallelNodeRunnable(definition, node);
+    } else if (execute === "join") {
+      assertJoinNodeRunnable(node);
     }
     for (const verifier of node.verify ?? []) {
       if (verifier.kind === "command") {
@@ -1556,6 +1853,57 @@ function assertHumanNodeRunnable(node: WorkflowNodeDefinition): void {
   }
 }
 
+function assertParallelNodeRunnable(
+  definition: WorkflowDefinition,
+  node: WorkflowNodeDefinition,
+): void {
+  const parallel = node.parallel;
+  if (!parallel || parallel.branches.length === 0) {
+    throw new Error(`Workflow parallel node "${node.id}" requires branches.`);
+  }
+  if (parallel.branches.length > MAX_PARALLEL_BRANCHES) {
+    throw new Error(
+      `Workflow parallel node "${node.id}" accepts at most ${MAX_PARALLEL_BRANCHES} branches.`,
+    );
+  }
+  if (
+    parallel.maxConcurrency !== undefined &&
+    (parallel.maxConcurrency < 1 ||
+      parallel.maxConcurrency > MAX_PARALLEL_BRANCHES)
+  ) {
+    throw new Error(
+      `Workflow parallel node "${node.id}" maxConcurrency must be between 1 and ${MAX_PARALLEL_BRANCHES}.`,
+    );
+  }
+  for (const branchId of parallel.branches) {
+    const branch = findWorkflowNode(definition, branchId);
+    if (!branch) continue;
+    if (branch.id === node.id) {
+      throw new Error(
+        `Workflow parallel node "${node.id}" cannot branch to itself.`,
+      );
+    }
+    const execute = nodeExecuteKind(branch);
+    if (
+      execute !== "command" &&
+      execute !== "delegate" &&
+      execute !== "task" &&
+      execute !== "script"
+    ) {
+      throw new Error(
+        `Workflow parallel node "${node.id}" branch "${branch.id}" uses unsupported execute kind "${execute}". P5 supports command, delegate, task, and script branches only.`,
+      );
+    }
+  }
+}
+
+function assertJoinNodeRunnable(node: WorkflowNodeDefinition): void {
+  const join = node.join;
+  if (!join || join.waitFor.length === 0) {
+    throw new Error(`Workflow join node "${node.id}" requires waitFor.`);
+  }
+}
+
 function assertVerifierAuthorized(
   verifier: WorkflowCommandVerifierDefinition,
 ): void {
@@ -1580,7 +1928,16 @@ function currentNode(
   definition: WorkflowDefinition,
   state: WorkflowRuntimeState,
 ): WorkflowNodeDefinition | undefined {
-  return definition.nodes.find((node) => node.id === state.currentNodeId);
+  return state.currentNodeId
+    ? findWorkflowNode(definition, state.currentNodeId)
+    : undefined;
+}
+
+function findWorkflowNode(
+  definition: WorkflowDefinition,
+  nodeId: string,
+): WorkflowNodeDefinition | undefined {
+  return definition.nodes.find((node) => node.id === nodeId);
 }
 
 function nextNodeIsNonModel(
@@ -1681,10 +2038,88 @@ function humanWaitState(node: WorkflowNodeDefinition): WorkflowWaitState {
   };
 }
 
+function parallelBranchState(input: {
+  parallelNode: WorkflowNodeDefinition;
+  branch: WorkflowNodeDefinition;
+  attempt: number;
+  verdict: WorkflowNodeVerdict;
+  evidenceRefs: readonly WorkflowEvidenceRef[];
+  metadata?: Record<string, unknown>;
+}): WorkflowParallelBranchState {
+  return {
+    sourceNodeId: input.parallelNode.id,
+    nodeId: input.branch.id,
+    attempt: input.attempt,
+    status: input.verdict.status,
+    verdict: cloneJsonLike(input.verdict),
+    evidenceRefs: input.evidenceRefs.map((ref) => ({
+      ...ref,
+      metadata: ref.metadata ? { ...ref.metadata } : undefined,
+    })),
+    completedAt: new Date().toISOString(),
+    ...(input.metadata ? { metadata: { ...input.metadata } } : {}),
+  };
+}
+
+function branchStatusMetadata(
+  branches: readonly WorkflowParallelBranchExecution[],
+): Record<string, string> {
+  return Object.fromEntries(
+    branches.map((branch) => [branch.node.id, branch.state.status]),
+  );
+}
+
+async function runBounded<T, R>(
+  items: readonly T[],
+  maxConcurrency: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+  async function runNext(): Promise<void> {
+    const index = nextIndex;
+    nextIndex += 1;
+    if (index >= items.length) return;
+    results[index] = await worker(items[index]!);
+    await runNext();
+  }
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, maxConcurrency), items.length) },
+    () => runNext(),
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+function delegateParallelResults(
+  output: unknown,
+): Array<Record<string, unknown> | undefined> {
+  if (!isRecord(output) || !Array.isArray(output.results)) return [];
+  return output.results.map((result) =>
+    isRecord(result) ? result : undefined,
+  );
+}
+
 function cloneRuntimeState(state: WorkflowRuntimeState): WorkflowRuntimeState {
   return {
     ...state,
     attempts: { ...state.attempts },
+    parallelBranches: state.parallelBranches
+      ? Object.fromEntries(
+          Object.entries(state.parallelBranches).map(([key, branch]) => [
+            key,
+            {
+              ...branch,
+              verdict: cloneJsonLike(branch.verdict),
+              evidenceRefs: branch.evidenceRefs?.map((ref) => ({
+                ...ref,
+                metadata: ref.metadata ? { ...ref.metadata } : undefined,
+              })),
+              metadata: branch.metadata ? { ...branch.metadata } : undefined,
+            },
+          ]),
+        )
+      : undefined,
     transitionLog: state.transitionLog.map((entry) => ({
       ...entry,
       verdict: JSON.parse(
@@ -1762,4 +2197,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function cloneJsonLike<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

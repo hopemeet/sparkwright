@@ -387,6 +387,96 @@ progress tests, agent-runtime workflow tests, and agent-runtime/host typecheck
 and build. Full `npm run release:check` remains the P4 closing gate before the
 P4 commit.
 
+## Stage 5 — P5 执行方案（有界 parallel / join）
+
+入口事实（2026-07-05）：P4 已提交在当前分支（`a83104fb
+feat(workflows): add script node api`），P4 closing gate `npm run
+release:check` 通过。P5 继续服从 `workflow-runtime-v1.md` Accepted
+Slice；D11/D26 不重开，不实现 `workflow_start` 或 spawn-shaped workflow
+instantiation。
+
+P5 对 D21/D23/D24 的组合裁定：
+
+| 既有决策 | P5 组合 |
+| --- | --- |
+| D21 workflow instance identity / notification contract | branch 状态只写入同一个 `WorkflowRunRecord.parallelBranches`；通知仍携带 workflow instance id，不新增 branch notification family。 |
+| D23 fail-closed projection | `parallel` / `join` 仍由 projection hooks 执行；parser/constructor 对 unsupported branch kinds fail closed；runtime projection error 仍走 existing gate-specific fail-closed path。 |
+| D24 interruption / cancellation | cancellation / budget / doom-loop 仍记录 workflow interruption；P5 不新增 branch cancellation bus。已完成 branch state 保留，未完成 branch 不再被调度。 |
+
+### Step 0 — 契约与失败即停线
+
+- Accepted Slice 表补 P5 行，写清 entry / in slice / explicitly out /
+  deletion bound。
+- 本节作为执行记录入口；P5 明确只做 bounded non-model branch fan-out +
+  persisted branch-state join。
+- 失败即停：需要多 model episode 并行、branch-local transition interpreter、
+  implicit expression/dataflow、或 workflow-owned task/delegate scheduler，即停并回报。
+
+### Step 1 — 类型 / parser / durable branch state
+
+- `WorkflowNodeExecuteKind` 增加 `parallel` / `join`。
+- `parallel` node parser 支持 `branches`、`maxConcurrency`；`join` node
+  parser 支持 `waitFor`。
+- `WorkflowRuntimeState` / `WorkflowRunRecord` 增加 portable
+  `parallelBranches`，store parse/clone/update/resume 保留该状态。
+- Focused gates：agent-runtime workflow/store tests；host workflow parser
+  tests；agent-runtime/host typecheck。
+- 失败即停：branch state 只存在 host metadata、resume 丢 branch verdict、或
+  parser 接受嵌套 parallel/model/human branch 而没有 fail-closed 规则。
+
+Implementation note (2026-07-05): agent-runtime now carries portable
+`parallel` / `join` node declarations plus durable
+`WorkflowRunRecord.parallelBranches` / `WorkflowRuntimeState.parallelBranches`.
+The state machine validates branch/wait targets and preserves branch state
+across `goto` / `retry` / `complete` / `fail`; `FileWorkflowStore` parses,
+clones, updates, and reloads branch verdict/evidence. Host workflow parsing
+accepts `parallel.branches`, `parallel.maxConcurrency`, and `join.waitFor`,
+rejects duplicate branch ids, and keeps branch kinds as structural declarations
+for projection-time validation.
+
+### Step 2 — projection 执行与 join barrier
+
+- `parallel` 作为 non-model drain 节点执行 bounded branch fan-out：
+  branch node 仅允许 `command` / `delegate` / `task` / `script`；all-delegate
+  branch set 优先走既有 `delegate_parallel` tool；task branch 继续走
+  `task_create` / task store，不新增 workflow scheduler。
+- branch node 的 `onPass` / `onFail` 在 P5 不解释；跳转只由
+  `parallel` / `join` 节点自己的 verdict 通过既有 `advanceWorkflowState`
+  查表。
+- `join` 只读取持久 `parallelBranches`，所有 `waitFor` branch passed 则
+  passed；任一 failed/runtime_error 则 failed；缺失 branch state 为
+  runtime_error。
+- Focused gates：host projection tests for parallel→join pass/fail/resume
+  branch-state persistence；delegate_parallel reuse probe；host typecheck。
+- 失败即停：parallel 分支绕过 host primitive governance、join 重新执行分支、
+  或出现第二套 delegate fan-out/background scheduler。
+
+Implementation note (2026-07-05): host projection now drains `parallel` as a
+non-model node, bounds branch execution (`maxConcurrency`, capped branch count),
+and fail-closes unsupported branch kinds (`model`, `human`, nested
+`parallel`/`join`). Mixed branch sets reuse the existing governed node runners
+for `command`, `task`, `delegate`, and `script`; all-delegate branch sets call
+the existing `delegate_parallel` tool with the parent runtime context rather
+than creating another fan-out path. Branch-local transitions are deliberately
+ignored in P5. `join` reads persisted branch states only and emits a normal
+node verdict; missing branch state is `runtime_error`.
+
+### Step 3 — P5 收尾
+
+- 跑 P5 focused gates，再跑一次全量 `npm run release:check`。
+- 通过后提交 P5（不加 Co-Authored-By）。
+- 相位简报包含：交付、删除兑现、全量门、契约/决策修订、池子选片入口。
+
+Implementation note (2026-07-05): focused gates passed:
+`npm --workspace @sparkwright/agent-runtime test -- test/workflows.test.ts`,
+`npm --workspace @sparkwright/agent-runtime run typecheck`,
+`npm --workspace @sparkwright/host test -- test/workflows.test.ts
+test/workflow-hooks.test.ts`, and `npm --workspace @sparkwright/host run
+typecheck`. The project-map default drift check passed after routed pages were
+reviewed. Full `npm run release:check` passed after correcting a Prettier miss
+and marking durable branch provenance (`sourceNodeId`) as a reserved public
+workflow field.
+
 ## 开放决策（各自绑定到步骤入口，不再是泛列表）
 
 1. 非 model 节点 runner 语义 —— **Step 2 入口 ①**（推荐 host 节点

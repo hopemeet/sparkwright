@@ -270,6 +270,19 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: `parallel` / `join` add
+  host-parsed workflow asset semantics and durable run state only. CLI workflow
+  commands, direct-core runner setup, text/JSON formatting, and protocol usage
+  are unchanged.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
 - Status: Verified
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a CLI smoke: `sparkwright workflow

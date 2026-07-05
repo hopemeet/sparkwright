@@ -669,6 +669,220 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("runs bounded parallel branches and joins from durable branch state", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const snapshots: WorkflowProjectionStateSnapshot[] = [];
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_parallel_join",
+        onStateSnapshot: (snapshot) => {
+          snapshots.push(snapshot);
+        },
+        definition: {
+          assetName: "parallel-join",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint", "types"], maxConcurrency: 2 },
+              onPass: "join",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            {
+              id: "types",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            {
+              id: "join",
+              execute: "join",
+              body: "",
+              join: { waitFor: ["lint", "types"] },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize checks." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+        parallelBranches: {
+          lint: { sourceNodeId: "fanout", status: "passed", attempt: 1 },
+          types: { sourceNodeId: "fanout", status: "passed", attempt: 1 },
+        },
+      });
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map((event) => (event.payload as { nodeId?: string }).nodeId),
+      ).toEqual(["fanout", "join"]);
+      expect(
+        snapshots.find(
+          (snapshot) =>
+            snapshot.phase === "node_completed" && snapshot.nodeId === "fanout",
+        )?.state.parallelBranches,
+      ).toMatchObject({
+        lint: { status: "passed" },
+        types: { status: "passed" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("uses delegate_parallel for all-delegate parallel fan-out", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      let delegateParallelCalls = 0;
+      const delegateParallelTool = defineTool<Record<string, unknown>, unknown>(
+        {
+          name: "delegate_parallel",
+          description: "Delegate several configured agents.",
+          inputSchema: { type: "object" },
+          policy: { risk: "safe" },
+          execute(args) {
+            delegateParallelCalls += 1;
+            expect(args).toMatchObject({
+              delegates: [
+                { agentId: "reviewer", goal: "Review the patch." },
+                { agentId: "tester", goal: "Run focused tests." },
+              ],
+            });
+            return {
+              mode: "parallel",
+              completed: 2,
+              failed: 0,
+              results: [
+                {
+                  index: 0,
+                  signal: "completed",
+                  childRunId: "run_reviewer",
+                  profileId: "reviewer",
+                },
+                {
+                  index: 1,
+                  signal: "completed",
+                  childRunId: "run_tester",
+                  profileId: "tester",
+                },
+              ],
+            };
+          },
+        },
+      );
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_delegate_parallel",
+        delegateParallelTool,
+        definition: {
+          assetName: "delegate-parallel",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["review", "test"], maxConcurrency: 2 },
+              onPass: "join",
+            },
+            {
+              id: "review",
+              execute: "delegate",
+              body: "",
+              delegate: {
+                agentId: "reviewer",
+                goal: "Review the patch.",
+              },
+            },
+            {
+              id: "test",
+              execute: "delegate",
+              body: "",
+              delegate: {
+                agentId: "tester",
+                goal: "Run focused tests.",
+              },
+            },
+            {
+              id: "join",
+              execute: "join",
+              body: "",
+              join: { waitFor: ["review", "test"] },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize delegates." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(delegateParallelCalls).toBe(1);
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+        parallelBranches: {
+          review: {
+            status: "passed",
+            metadata: { delegateParallel: true },
+          },
+          test: {
+            status: "passed",
+            metadata: { delegateParallel: true },
+          },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("runs script nodes through the stdio workflow node API", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {

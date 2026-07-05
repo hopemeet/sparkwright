@@ -182,6 +182,20 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` changes are host asset/projection and
+  `WorkflowRunRecord` store internals. Host protocol request/response shapes,
+  workflow list/resume payloads, and capability snapshot schema remain
+  unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a protocol check: actor episode driver
   inversion and `startSupervisedRunChain()` deletion require no new request,

@@ -88,6 +88,20 @@ tool proposes write
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` reuses existing governed primitives. Command/script
+  branch writes still pass through normal run access/write gates and host node
+  API governance; workspace-write policy and trace event pairing are unchanged.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a routing check for
   `packages/host/src/runtime.ts`: actor episode driver inversion keeps normal

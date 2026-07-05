@@ -111,6 +111,14 @@ Does not own:
   output caps, metadata, and declared capability names. Agent-runtime does not
   execute scripts, grant capabilities, map sandbox policy, read workflow asset
   directories, or expose the stdio node API; host owns all of those behaviors.
+- Workflow P5 adds portable `parallel` / `join` declarations and durable
+  branch-state shape. `WorkflowRunRecord.parallelBranches` and
+  `WorkflowRuntimeState.parallelBranches` carry per-branch source node,
+  attempt, verdict, evidence refs, completion time, and metadata so host joins
+  can resume without re-running branches. Agent-runtime validates referenced
+  branch node ids and preserves the state across transitions/store round trips,
+  but it does not execute branches, schedule work, call `delegate_parallel`, or
+  interpret branch-local transitions.
 - P3 Step 1 introduced a portable workflow run-chain driver:
   `runWorkflowRunChain()` owns the "run one episode, inspect terminal evidence,
   maybe continue" loop shape without constructing models or host config.
@@ -256,6 +264,20 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 agent-runtime boundary: portable workflow
+  types/state/store now include `parallel` / `join` declarations and durable
+  branch state while branch execution and scheduling stay in host.
+- Read: `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/machine.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/agent-runtime run build`.
 
 - Status: Verified
 - Date: 2026-07-05T15:31:20+0800

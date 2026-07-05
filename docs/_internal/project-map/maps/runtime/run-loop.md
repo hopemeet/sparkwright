@@ -190,6 +190,13 @@ createRun/resumeRunFromCheckpoint
   node evidence through host-owned `getEvidence(nodeId)`; there is no expression
   language, no direct trace writer in the script, and no node-boundary
   compaction trigger in this slice.
+- P5 bounded `parallel` / `join` also stays outside core loop semantics. Host
+  projection drains the non-model parallel node, records branch verdict/evidence
+  in `WorkflowRunRecord.parallelBranches`, and drains `join` by reading that
+  durable state. Core still observes normal awaited workflow hooks,
+  `advance`/`block` results, and the existing workflow forced-continuation
+  source; there is no branch scheduler, branch cancellation bus, or multiple
+  concurrent model episode loop inside core.
 
 ## Consumers
 
@@ -211,6 +218,21 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 run-loop boundary: bounded parallel/join is
+  host projection plus durable workflow state; core loop/hook lifecycle,
+  workflow forced-continuation budget, and cancellation semantics are
+  unchanged.
+- Read: `packages/core/src/run.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T15:31:20+0800

@@ -395,6 +395,90 @@ describe("workflow assets", () => {
     });
   });
 
+  it("parses P5 parallel and join nodes", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "parallel-release",
+      dir: "/tmp/parallel-release",
+      sourcePath: "/tmp/parallel-release/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: fanout",
+        "    execute: parallel",
+        "    parallel:",
+        "      branches: [lint, types]",
+        "      maxConcurrency: 2",
+        "    onPass: join",
+        "  - id: lint",
+        "    execute: command",
+        "    command:",
+        "      command: npm",
+        "      args: [run, lint]",
+        "      authorized: true",
+        "  - id: types",
+        "    execute: command",
+        "    command:",
+        "      command: npm",
+        "      args: [run, typecheck]",
+        "      authorized: true",
+        "  - id: join",
+        "    execute: join",
+        "    join:",
+        "      waitFor: [lint, types]",
+        "    onPass: done",
+        "  - id: done",
+        "    execute: model",
+        "---",
+        "## fanout",
+        "Run checks.",
+        "",
+        "## done",
+        "Summarize.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "fanout",
+          execute: "parallel",
+          parallel: {
+            branches: ["lint", "types"],
+            maxConcurrency: 2,
+          },
+          onPass: "join",
+        }),
+        expect.objectContaining({
+          id: "join",
+          execute: "join",
+          join: { waitFor: ["lint", "types"] },
+          onPass: "done",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects duplicate parallel branches", () => {
+    expect(() =>
+      parseWorkflowMarkdownAsset({
+        assetName: "parallel-duplicate",
+        dir: "/tmp/parallel-duplicate",
+        sourcePath: "/tmp/parallel-duplicate/workflow.md",
+        raw: [
+          "---",
+          "nodes:",
+          "  - id: fanout",
+          "    execute: parallel",
+          "    parallel:",
+          "      branches: [lint, lint]",
+          "---",
+          "## fanout",
+          "Run checks.",
+        ].join("\n"),
+      }),
+    ).toThrow(/duplicates/);
+  });
+
   it("rejects script paths that escape the workflow asset", () => {
     expect(() =>
       parseWorkflowMarkdownAsset({

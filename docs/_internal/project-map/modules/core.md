@@ -299,6 +299,20 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` stayed in host workflow projection and agent-runtime
+  durable state. Core workflow hook lifecycle, run events, FactLedger, policy,
+  checkpoint, and trace storage semantics were not changed.
+- Read: `packages/core/src/run.ts`,
+  `packages/core/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
 - Status: Verified
 - Date: 2026-07-04T22:20:04+0800
 - Scope: workflow-runtime-v1 D25 core outcome repair: terminal FactLedger

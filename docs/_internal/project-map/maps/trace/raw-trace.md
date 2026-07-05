@@ -193,6 +193,20 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 trace check: `parallel` / `join` reuse
+  existing `workflow.node.*`, workflow terminal events, and evidence refs.
+  Branch state is persisted in `WorkflowRunRecord.parallelBranches`; no raw
+  trace event type or schema was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a trace check: actor episode driver
   inversion does not add or rename raw event types. Existing run, workflow, and

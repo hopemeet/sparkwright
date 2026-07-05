@@ -64,6 +64,7 @@ export interface WorkflowRunRecord extends WorkflowAssetPin {
   currentNodeId?: string;
   wait?: WorkflowWaitState;
   attempts: Record<string, number>;
+  parallelBranches?: Record<string, WorkflowParallelBranchState>;
   evidenceRefs: WorkflowEvidenceRef[];
   verdictLog: WorkflowNodeVerdictLogEntry[];
   transitionLog: WorkflowTransitionLogEntry[];
@@ -82,7 +83,9 @@ export type WorkflowNodeExecuteKind =
   | "delegate"
   | "task"
   | "human"
-  | "script";
+  | "script"
+  | "parallel"
+  | "join";
 
 export type WorkflowVerifierExpectation = "zero" | "nonzero";
 
@@ -146,6 +149,17 @@ export interface WorkflowScriptNodeDefinition {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowParallelNodeDefinition {
+  branches: string[];
+  maxConcurrency?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowJoinNodeDefinition {
+  waitFor: string[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface WorkflowCommandVerifierDefinition {
   id: string;
   kind: "command";
@@ -201,6 +215,8 @@ export interface WorkflowNodeDefinition {
   task?: WorkflowTaskNodeDefinition;
   human?: WorkflowHumanNodeDefinition;
   script?: WorkflowScriptNodeDefinition;
+  parallel?: WorkflowParallelNodeDefinition;
+  join?: WorkflowJoinNodeDefinition;
   verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
@@ -224,10 +240,28 @@ export interface WorkflowRuntimeFailure {
   metadata?: Record<string, unknown>;
 }
 
+export type WorkflowParallelBranchStatus =
+  | "passed"
+  | "failed"
+  | "runtime_error";
+
+export interface WorkflowParallelBranchState {
+  /** @reserved Public workflow branch provenance consumed by resume diagnostics and future workflow UIs. */
+  sourceNodeId: string;
+  nodeId: string;
+  attempt: number;
+  status: WorkflowParallelBranchStatus;
+  verdict: WorkflowNodeVerdict;
+  evidenceRefs?: WorkflowEvidenceRef[];
+  completedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface WorkflowRuntimeState {
   status: WorkflowRuntimeStatus;
   currentNodeId?: string;
   attempts: Record<string, number>;
+  parallelBranches?: Record<string, WorkflowParallelBranchState>;
   transitionLog: WorkflowTransitionLogEntry[];
   failure?: WorkflowRuntimeFailure;
 }

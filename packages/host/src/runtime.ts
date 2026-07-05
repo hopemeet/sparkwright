@@ -2036,6 +2036,9 @@ export class HostRuntime {
               ),
             allowScriptWrite: input.shouldWrite,
             agentTool: delegateAgentTool,
+            delegateParallelTool: tools.find(
+              (tool) => tool.name === DELEGATE_PARALLEL_TOOL_NAME,
+            ),
             taskTool: tools.find((tool) => tool.name === "task_create"),
             isToolAvailable: (toolName) =>
               toolsForWorkflowRecord(tools, workflowRecord).some(
@@ -7811,6 +7814,9 @@ function runtimeStateFromWorkflowRecord(
       verdict: cloneJsonLike(entry.verdict),
       decision: cloneJsonLike(entry.decision),
     })),
+    ...(record.parallelBranches
+      ? { parallelBranches: cloneJsonLike(record.parallelBranches) }
+      : {}),
     ...(record.failure
       ? {
           failure: {
@@ -8420,6 +8426,9 @@ function persistWorkflowProjectionSnapshot(
         ? { clearWait: true }
         : {}),
     attempts: state.attempts,
+    ...(state.parallelBranches
+      ? { parallelBranches: cloneJsonLike(state.parallelBranches) }
+      : {}),
     evidenceRefs,
     verdictLog,
     transitionLog: state.transitionLog,

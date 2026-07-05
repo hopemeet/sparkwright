@@ -95,6 +95,22 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 resume check: workflow resume continues to
+  load the pinned `WorkflowRunRecord`; `parallelBranches` is durable record
+  state restored into host projection state so `join` can resume without
+  re-running branches. No checkpoint/replay fallback shape changed.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a resume boundary: host run resume and
   workflow resume now route through `startWorkflowActorEpisodeChain()` after

@@ -222,6 +222,20 @@ trace.jsonl
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` does not change trace summary/timeline/report/verify
+  derivation. Branch verdicts are workflow record state plus normal node
+  completion evidence, not a new diagnostic event family.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
 - Status: Verified
 - Date: 2026-07-05T00:42:02+0800
 - Scope: workflow-runtime-v1 P2 check: durable workflow run list/resume does

@@ -161,6 +161,27 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routing update: bounded `parallel` / `join`
+  nodes route through host workflow parsing/projection and agent-runtime
+  durable `parallelBranches` state. All-delegate fan-out reuses the existing
+  `delegate_parallel` tool; workflow assets still do not expose
+  `workflow_start` or a second scheduler/cancellation bus.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/machine.ts`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/host test -- test/workflows.test.ts
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
 - Date: 2026-07-05T15:31:20+0800
 - Scope: workflow-runtime-v1 P4 routing update: workflow script nodes and the
   stdio JSON-RPC node API route through host workflow parsing/projection,

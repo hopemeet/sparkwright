@@ -281,6 +281,17 @@ Does not own:
   host execution. There is still no `workflow_start` tool; script nodes do not
   introduce an expression language, and data flow between nodes remains
   explicit host `getEvidence(nodeId)` over recorded evidence refs.
+- P5 `parallel` / `join` nodes remain host projection behavior over durable
+  workflow state. `workflows.ts` parses explicit `parallel.branches`,
+  `parallel.maxConcurrency`, and `join.waitFor`; `workflow-projection.ts`
+  executes only non-model branch nodes (`command`, `delegate`, `task`,
+  `script`), persists branch verdict/evidence in
+  `WorkflowRunRecord.parallelBranches`, and lets `join` read that state without
+  re-running branches. Branch-local transitions are not interpreted in P5;
+  only the `parallel` / `join` node verdicts advance through
+  `advanceWorkflowState()`. All-delegate fan-out must call the existing
+  `delegate_parallel` tool, and P5 does not add a workflow scheduler, branch
+  cancellation bus, nested parallel, human/model branches, or `workflow_start`.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -653,6 +664,22 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 host boundary: parser/projection/runtime now
+  own bounded non-model branch fan-out, persisted branch state, join barriers,
+  and `delegate_parallel` reuse without adding workflow_start or a second
+  scheduler.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T15:31:20+0800

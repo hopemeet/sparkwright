@@ -77,6 +77,12 @@ export function validateWorkflowRuntimeDefinition(
   }
 
   for (const node of definition.nodes) {
+    for (const target of node.parallel?.branches ?? []) {
+      collectTargetIssue(target, node, ids, issues);
+    }
+    for (const target of node.join?.waitFor ?? []) {
+      collectTargetIssue(target, node, ids, issues);
+    }
     collectTransitionIssues(node.onPass, node, ids, issues);
     collectTransitionIssues(node.onFail, node, ids, issues);
   }
@@ -264,6 +270,9 @@ function applyDecision(
         status: "running",
         currentNodeId: decision.toNodeId,
         attempts: bumpAttempt(input.state.attempts, decision.toNodeId),
+        ...(input.state.parallelBranches
+          ? { parallelBranches: { ...input.state.parallelBranches } }
+          : {}),
         transitionLog: [...input.state.transitionLog, logEntry],
       };
     case "retry":
@@ -274,18 +283,27 @@ function applyDecision(
           ...input.state.attempts,
           [decision.nodeId]: decision.attempt,
         },
+        ...(input.state.parallelBranches
+          ? { parallelBranches: { ...input.state.parallelBranches } }
+          : {}),
         transitionLog: [...input.state.transitionLog, logEntry],
       };
     case "complete":
       return {
         status: "completed",
         attempts: { ...input.state.attempts },
+        ...(input.state.parallelBranches
+          ? { parallelBranches: { ...input.state.parallelBranches } }
+          : {}),
         transitionLog: [...input.state.transitionLog, logEntry],
       };
     case "fail":
       return {
         status: "failed",
         attempts: { ...input.state.attempts },
+        ...(input.state.parallelBranches
+          ? { parallelBranches: { ...input.state.parallelBranches } }
+          : {}),
         transitionLog: [...input.state.transitionLog, logEntry],
         failure: {
           reason: decision.reason,

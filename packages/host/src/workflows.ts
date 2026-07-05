@@ -7,8 +7,10 @@ import type {
   WorkflowDiffScopeVerifierDefinition,
   WorkflowDefinition,
   WorkflowHumanNodeDefinition,
+  WorkflowJoinNodeDefinition,
   WorkflowNodeDefinition,
   WorkflowNodeExecuteKind,
+  WorkflowParallelNodeDefinition,
   WorkflowScriptNodeCapability,
   WorkflowScriptNodeDefinition,
   WorkflowTaskNodeDefinition,
@@ -41,6 +43,8 @@ const WORKFLOW_NODE_EXECUTE_KINDS = new Set<WorkflowNodeExecuteKind>([
   "task",
   "human",
   "script",
+  "parallel",
+  "join",
 ]);
 const WORKFLOW_SCRIPT_CAPABILITIES = new Set<WorkflowScriptNodeCapability>([
   "read",
@@ -330,6 +334,8 @@ function workflowNodeFromRaw(
     task: parseWorkflowTaskNode(raw, id),
     human: parseWorkflowHumanNode(raw, id),
     script: parseWorkflowScriptNode(raw, id),
+    parallel: parseWorkflowParallelNode(raw, id),
+    join: parseWorkflowJoinNode(raw, id),
     verify: parseWorkflowVerifiers(raw.verify, id),
     onPass: parseWorkflowTransition(raw.onPass ?? raw.on_pass, id, "onPass"),
     onFail: parseWorkflowTransition(raw.onFail ?? raw.on_fail, id, "onFail"),
@@ -350,6 +356,8 @@ function workflowNodeFromFields(input: {
   task?: WorkflowTaskNodeDefinition;
   human?: WorkflowHumanNodeDefinition;
   script?: WorkflowScriptNodeDefinition;
+  parallel?: WorkflowParallelNodeDefinition;
+  join?: WorkflowJoinNodeDefinition;
   verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
@@ -375,7 +383,7 @@ function workflowNodeFromFields(input: {
         : undefined;
   if (!execute) {
     throw new Error(
-      `Workflow node ${input.id} execute must be one of: model, command, delegate, task, human, script.`,
+      `Workflow node ${input.id} execute must be one of: model, command, delegate, task, human, script, parallel, join.`,
     );
   }
   return {
@@ -391,6 +399,8 @@ function workflowNodeFromFields(input: {
     ...(input.task ? { task: input.task } : {}),
     ...(input.human ? { human: input.human } : {}),
     ...(input.script ? { script: input.script } : {}),
+    ...(input.parallel ? { parallel: input.parallel } : {}),
+    ...(input.join ? { join: input.join } : {}),
     ...(input.verify ? { verify: input.verify } : {}),
     ...(input.onPass ? { onPass: input.onPass } : {}),
     ...(input.onFail ? { onFail: input.onFail } : {}),
@@ -611,6 +621,71 @@ function parseWorkflowScriptCapabilities(
     );
   }
   return [...new Set(values as WorkflowScriptNodeCapability[])];
+}
+
+function parseWorkflowParallelNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowParallelNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.parallel) ? raw.parallel : raw;
+  const branches = optionalStringArray(source.branches);
+  if (execute !== "parallel" && !branches) return undefined;
+  if (!branches || branches.length === 0) {
+    throw new Error(`Workflow parallel node ${nodeId} requires branches.`);
+  }
+  const uniqueBranches = [...new Set(branches)];
+  if (uniqueBranches.length !== branches.length) {
+    throw new Error(
+      `Workflow parallel node ${nodeId} branches must not contain duplicates.`,
+    );
+  }
+  const maxConcurrency = positiveInteger(
+    source.maxConcurrency ?? source.max_concurrency,
+  );
+  if (
+    (source.maxConcurrency !== undefined ||
+      source.max_concurrency !== undefined) &&
+    maxConcurrency === undefined
+  ) {
+    throw new Error(
+      `Workflow parallel node ${nodeId} maxConcurrency must be a positive integer.`,
+    );
+  }
+  return {
+    branches: uniqueBranches,
+    ...(maxConcurrency !== undefined ? { maxConcurrency } : {}),
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
+}
+
+function parseWorkflowJoinNode(
+  raw: Record<string, unknown>,
+  nodeId: string,
+): WorkflowJoinNodeDefinition | undefined {
+  const execute = optionalString(raw.execute) ?? optionalString(raw.type);
+  const source = isRecord(raw.join) ? raw.join : raw;
+  const waitFor =
+    optionalStringArray(source.waitFor ?? source.wait_for) ??
+    optionalStringArray(source.branches);
+  if (execute !== "join" && !waitFor) return undefined;
+  if (!waitFor || waitFor.length === 0) {
+    throw new Error(`Workflow join node ${nodeId} requires waitFor.`);
+  }
+  const uniqueWaitFor = [...new Set(waitFor)];
+  if (uniqueWaitFor.length !== waitFor.length) {
+    throw new Error(
+      `Workflow join node ${nodeId} waitFor must not contain duplicates.`,
+    );
+  }
+  return {
+    waitFor: uniqueWaitFor,
+    ...(optionalRecord(source.metadata)
+      ? { metadata: optionalRecord(source.metadata) }
+      : {}),
+  };
 }
 
 function isSafeRelativeWorkflowScriptPath(path: string): boolean {
