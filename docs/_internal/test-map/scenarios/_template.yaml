@@ -1,0 +1,51 @@
+id: example-scenario
+area: "example-area"
+status: Untested
+
+task:
+  direction: "What user-facing behavior is being exercised?"
+  prompt_shape: "strong|weak|adversarial|scripted"
+  prompt: "Representative prompt or scripted tool-call intent."
+  expected_behavior:
+    - "Stable behavior the system should exhibit."
+
+model:
+  baseline: deterministic
+  real_model_canary: null
+  sensitive_to:
+    - "Model may choose a different valid route."
+
+capabilities:
+  tools_use: []
+  permission_mode: default
+  write_enabled: false
+  approvals:
+    edits: false
+    shell_safe: false
+    all: false
+  skills: []
+  mcp: []
+  agents:
+    max_depth: null
+    delegate_profiles: []
+
+context:
+  workspace_fixture: null
+  session_state: fresh
+  config_layers: []
+  dirty_workspace_required: false
+
+environment:
+  trace_level: standard
+  platform_sensitive: false
+  sandbox_required: false
+  network_required: false
+  build_state:
+    requires_fresh_dist: false
+
+assertions:
+  stable: []
+  non_stable: []
+
+recommended_tests: []
+known_failure_modes: []

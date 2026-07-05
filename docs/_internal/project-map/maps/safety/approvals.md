@@ -1,0 +1,178 @@
+# Approvals
+
+## Purpose
+
+Approvals gate risky actions while preserving an audit trail of what was asked,
+how it was resolved, and what happened afterward.
+
+See [workspace-writes.md](workspace-writes.md) and [shell.md](shell.md).
+
+## Main Files
+
+- `packages/core/src/run.ts`
+- `packages/core/src/approval.ts`
+- `packages/core/src/approval-policy.ts`
+- `packages/host/src/runtime.ts`
+- `packages/host/src/client-approval.ts`
+- `packages/cli/src/cli-approval.ts`
+- `packages/tui/src/app.tsx`
+- `packages/tui/src/state/run-controller.ts`
+- `packages/tui/src/lib/permission.ts`
+
+## Data Flow
+
+```txt
+policy requires approval
+  -> approval.requested / interaction.requested
+  -> CLI/TUI/host resolver
+  -> approval.resolved / interaction.resolved
+  -> action continues or denial path
+```
+
+## Contracts
+
+- `approval.requested` carries an id used by protocol `approval.resolve`.
+- `approval.resolved` preserves optional resolver `message` and structured
+  `autoApproved` state; trace summary/report diagnostics should not rely on
+  message prose for new traces.
+- Approval denial does not automatically mean run cancellation.
+- Repeating a denied same-target tool request does not convert the denial into
+  an unexpected tool failure. The repeated-tool guard preserves
+  policy/approval-denial semantics for diagnostics and run outcome, while the
+  original approval/policy event remains the audit source.
+- Pending approval UI should key by approval/request identity.
+- `shouldWrite: false` keeps a hard-deny write gate before approval. Interactive
+  clients that need write approvals should start write-enabled runs
+  (`shouldWrite: true`) and rely on `permissionMode` plus normal approval
+  policy for auto/manual responses.
+- Trace verification checks that resolutions do not exceed requests.
+- `approvals.cronMode` is a config default for cron command permission mode;
+  named approval behavior remains owned by the normal core/host approval path,
+  and explicit CLI flags still override the default.
+- TUI sends shared `accessMode` at the run boundary; the host projects it to
+  core `permissionMode`/`shouldWrite` and clamps it to any project access
+  ceiling. Deprecated standalone TUI approval scopes (`approveAll`,
+  `approveEdits`, `approveShellSafe`, and config `approvals.*`) do not
+  independently auto-resolve TUI prompts; `bypass` and `accept-edits` remain
+  auto-answering through their derived core permission modes.
+- Host run access resolution also clamps `backgroundTasks` against project
+  ceilings. This is governance, not an approval prompt: cap/policy denials for
+  background task surfaces are recoverable tool failures rather than
+  `approval.requested` events.
+- Configured in-process delegate child runs share the host approval resolver
+  with the parent run, so child workspace-write and shell gates still resolve
+  through the same CLI/TUI approval and trace path. They do not receive an
+  interaction channel for arbitrary user questions.
+
+## Consumers
+
+- Host pending approval map.
+- CLI flags such as `--yes`, `--yes-edits`, and `--yes-shell-safe`.
+- TUI approval layer via host-client approval helpers.
+- Trace safety summary and verification.
+
+## Change Checklist
+
+- Check host protocol payloads and TUI controller calls.
+- Check non-interactive CLI behavior.
+- Check duplicate rendering between `approval.*` and `interaction.*`.
+- Keep approval payloads free of secrets.
+
+## Known Debts
+
+- Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
+
+## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-05T00:42:02+0800
+- Scope: workflow-runtime-v1 P2 routing check: `workflow resume` reuses normal
+  host run access/approval fields and single-writer workflow leases, but adds
+  no new approval request/resolution semantics.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/cli/src/runners/host-runner.ts`,
+  `packages/cli/src/cli.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: not run for approval-specific behavior; P2 made no approval semantic
+  change.
+
+- Status: Verified
+- Date: 2026-07-02T21:55:07+0800
+- Scope: repeated-tool guard diagnostics preserve approval/policy-denial
+  semantics without changing approval request/resolution behavior or write-gate
+  ordering.
+- Read: `packages/core/src/run.ts`, `packages/core/src/run-outcome.ts`,
+  `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/test/run.test.ts`,
+  `packages/core/test/run-outcome.test.ts`,
+  `packages/core/test/trace.test.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/run.test.ts test/run-outcome.test.ts test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`;
+  `npm run build --workspace @sparkwright/core`;
+  `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-02T01:15:00+0800
+- Scope: run access governance now includes `backgroundTasks` clamping, while
+  background-task policy denials remain tool-level recoverable failures instead
+  of approval prompts. Existing approval request/resolution semantics did not
+  otherwise change.
+- Read: `packages/core/src/access-mode.ts`,
+  `packages/host/src/run-access.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/access-mode.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/run-access.test.ts
+  test/config.test.ts -t "background task policy|backgroundTasks|accessMode"`.
+
+- Status: Verified
+- Date: 2026-06-29T09:28:39+0800
+- Scope: checked after `shell` -> `bash` canonicalization; approval semantics
+  did not change, and shell approval matching now accepts canonical and legacy
+  names.
+- Read: `packages/core/src/approval-policy.ts`,
+  `packages/host/src/shell.ts`, `packages/tui/src/components/approval-prompt.tsx`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/run.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts test/config-schema.test.ts`;
+  `npm --workspace @sparkwright/tui test -- test/tool-request-preview.test.ts`.
+
+- Status: Verified
+- Date: 2026-06-28T20:30:50+0800
+- Scope: fixed read-only access-mode approval semantics at the policy layer:
+  explicitly safe tools with read-only/no-op governance no longer request
+  approval in plan mode, while metadata-incomplete tools, write gates, and
+  risky tool approvals remain intact across CLI and TUI.
+- Read: `packages/core/src/policy.ts`,
+  `packages/core/test/policy.test.ts`,
+  `packages/host/src/tools.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `packages/tui/test/sdk-cutover.test.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts test/access-mode.test.ts test/trace.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/run-access.test.ts test/protocol.test.ts test/tools.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts test/config-schema.test.ts`;
+  `npm --workspace @sparkwright/tui test -- test/sdk-cutover.test.ts test/permission.test.ts`;
+  real mini CLI read-only trace `session_mqxrirn46qlht3xf` and TUI read-only
+  trace `session_tui_mqxrn5zz` verified with 0 approvals and 0 writes.
+
+- Status: Verified
+- Date: 2026-06-26T23:59:00+0800
+- Scope: `accessMode` projection to `permissionMode`/`shouldWrite`, project
+  ceiling clamp, and TUI runtime mode approval behavior.
+- Read: `packages/core/src/run.ts`, `packages/core/src/policy.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/client-approval.ts`,
+  `packages/tui/src/components/approval-prompt.tsx`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/lib/permission.ts`, `packages/host/src/run-access.ts`,
+  `packages/host/test/protocol.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/access-mode.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/run-access.test.ts test/protocol.test.ts`;
+  `npm --workspace @sparkwright/tui test -- test/permission.test.ts test/sdk-cutover.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts`;
+  `npm run schema:check`; `npm run build`; `npm run check:dist-fresh`.

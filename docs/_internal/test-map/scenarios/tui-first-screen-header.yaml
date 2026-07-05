@@ -1,0 +1,62 @@
+id: tui-first-screen-header
+area: tui-rendering
+status: Partially Verified
+
+task:
+  direction: "Render the first TUI screen and live status line."
+  prompt_shape: scripted
+  prompt: "Render React/Ink components with fake stdout."
+  expected_behavior:
+    - "Committed EventStream owns the static SparkWright/cwd/session header."
+    - "Pinned StatusBar does not repeat the SparkWright brand."
+    - "StatusBar shows live run state, model, and permission mode while active."
+    - "StatusBar also shows the current model while idle after runtime model switches."
+
+model:
+  baseline: deterministic
+  real_model_canary: null
+  sensitive_to:
+    - "No model behavior required; only component state matters."
+
+capabilities:
+  tools_use: []
+  permission_mode: default
+  write_enabled: false
+  approvals:
+    edits: false
+    shell_safe: false
+    all: false
+  skills: []
+  mcp: []
+  agents:
+    max_depth: null
+    delegate_profiles: []
+
+context:
+  workspace_fixture: null
+  session_state: fresh
+  config_layers: []
+  dirty_workspace_required: false
+
+environment:
+  trace_level: standard
+  platform_sensitive: false
+  sandbox_required: false
+  network_required: false
+  build_state:
+    requires_fresh_dist: false
+
+assertions:
+  stable:
+    - "StatusBar text does not contain SparkWright."
+    - "EventStream header contains SparkWright exactly as committed scrollback."
+  non_stable:
+    - "Spinner glyph."
+    - "Ink escape/control sequences."
+    - "Exact width truncation outside tested columns."
+
+recommended_tests:
+  - "npm --workspace @sparkwright/tui test -- test/status-bar-render.test.tsx test/event-stream-render.test.ts"
+
+known_failure_modes:
+  - "tui-static-header-duplication"
