@@ -135,6 +135,19 @@ completed prior turns
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration touched only the atomic writer used by
+  `FileSessionStore` `session.json` saves. Runtime compaction stages, session
+  compaction artifact schema, summary acceptance, and context projection are
+  unchanged.
+- Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`.
+- Tests: storage-focused `npm --workspace @sparkwright/core test --
+  test/session.test.ts` and `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; compaction-specific tests not run for this
+  storage-only change.
+
+- Status: Read-only
 - Date: 2026-07-05T00:42:02+0800
 - Scope: workflow-runtime-v1 P2 D10 review: confirmed no new compaction stage
   is needed for future workflow node-boundary span-to-summary, because the

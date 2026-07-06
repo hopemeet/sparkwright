@@ -279,6 +279,17 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 cron persistence migration changed `CronStore.save()` to use
+  the shared atomic writer. CLI cron command parsing, text/JSON response
+  shapes, `cron tick`, and `cron run <ref>` behavior are unchanged.
+- Read: `packages/cron/src/store.ts`, `packages/cron/src/commands.ts`,
+  `packages/cli/src/cli.ts`, `docs/_internal/project-map/maps/capabilities/cron.md`.
+- Tests: cron storage/schedule-focused `npm --workspace @sparkwright/cron test
+  -- test/schedule.test.ts`; CLI-specific tests not rerun for this persistence
+  implementation-only change.
+
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800
 - Scope: workflow-runtime-v1 P9a CLI surface: `workflow list` and

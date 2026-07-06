@@ -700,6 +700,18 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 cron persistence migration changed `CronStore.save()` to use
+  the shared atomic writer. Host capability preparation, cron tool catalog
+  exposure, session roots, and protocol payloads are unchanged.
+- Read: `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/maps/capabilities/cron.md`,
+  `docs/_internal/project-map/modules/host.md`.
+- Tests: cron storage/schedule-focused `npm --workspace @sparkwright/cron test
+  -- test/schedule.test.ts`; host-specific tests not rerun for this persistence
+  implementation-only change.
+
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800
 - Scope: P10a D20 host hook assembly: configured result-producing `PreToolUse`

@@ -267,6 +267,21 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration moved the shared atomic writer implementation under
+  core `file-atomic` while preserving the `agent-runtime` doc-store public
+  wrapper. Agent profile discovery, delegate exposure, dynamic `spawn_agent`,
+  background-agent task policy, task-notification format, and subagent trace
+  attribution are unchanged.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/core/src/file-atomic.ts`,
+  `packages/agent-runtime/src/tasks/file-notifications.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`.
+- Tests: storage-focused `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; agent-capability behavior not rerun for this
+  implementation-only change.
+
+- Status: Read-only
 - Date: 2026-07-06T14:45:00+0800
 - Scope: C9 S1 migration touched `packages/agent-runtime/src/tasks/file-notifications.ts`
   only. Task-notification file writes now use the shared doc-store atomic writer;

@@ -59,6 +59,9 @@ Manual compact
   `transcript.jsonl`, `agents/<agent-id>/trace.jsonl`, per-run `run.json` /
   `result.json`, and `trace-pointer.json` files that point from each run
   directory back to the aggregate session and agent traces.
+- `FileSessionStore` writes `session.json` through core `file-atomic`, the same
+  lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
+  core cannot depend upward on runtime packages.
 - Fresh workflow records live under workspace-level
   `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
   filters and resume context remain available. Legacy
@@ -100,6 +103,23 @@ Manual compact
 - Session metadata should make terminal run state easier to inspect.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration: `FileSessionStore.writeSession()` now composes core
+  `file-atomic` for `session.json` writes, retiring the private
+  `packages/core/src/session.ts` tmp+retry+rename copy. Session layout,
+  `SessionEvent.sequence`, compaction artifacts, and replay consumers are
+  unchanged.
+- Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
+  `packages/core/src/internal.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

@@ -21,6 +21,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/trace-diagnostics.ts`
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-store.ts`
+- `packages/core/src/file-atomic.ts`
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
@@ -267,6 +268,10 @@ Does not own:
 - `session.ts` owns the `session-compact.v2` artifact parser/writer; artifacts
   require top-level `freedChars` and are ignored when the schema or
   `throughRunId` anchor is invalid.
+- `file-atomic.ts` owns the package-bottom atomic text writer used by
+  core-owned stores and by the `agent-runtime` doc-store public wrapper. Core
+  must not import `agent-runtime`; shared file atomics live below runtime
+  packages to preserve package boundaries.
 - `session-compaction.ts` owns deterministic session-turn extraction and
   old-turn eviction over completed user/assistant turns; it also exposes the
   `SessionSummarizer` seam, deterministic summarizer preview, trace-derived
@@ -301,6 +306,25 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration: core gained `file-atomic.ts` as the lower-level
+  atomic text writer so `FileSessionStore.writeSession()` and
+  `agent-runtime` doc-store share one implementation without making core
+  depend on runtime packages. Session file format, event ordering, and
+  compaction contracts are unchanged.
+- Read: `packages/core/src/file-atomic.ts`, `packages/core/src/session.ts`,
+  `packages/core/src/internal.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `scripts/check-internal-imports.mjs`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`; `npm run
+  check:internal-imports`; `npm run check:package-boundaries`.
 
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800

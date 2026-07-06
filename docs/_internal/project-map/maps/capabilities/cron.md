@@ -102,6 +102,19 @@ cron config/state
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration moved the shared atomic writer implementation under
+  core `file-atomic` while preserving the `agent-runtime` doc-store public
+  wrapper used by `CronStore.save()`. Cron schema, command/tool contracts,
+  scheduler semantics, and run success derivation are unchanged.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/core/src/file-atomic.ts`, `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`.
+- Tests: storage-focused `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; cron behavior not rerun for this implementation-only
+  doc-store wrapper change.
+
 - Status: Verified
 - Date: 2026-07-06T18:44:10+0800
 - Scope: C9 S1 migration: `CronStore.save()` now uses the shared

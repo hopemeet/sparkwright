@@ -111,7 +111,12 @@ listed below.
   `atomicWriteTextSync()` copy. Third migration (2026-07-06, C9-②):
   `CronStore` saves now use the shared primitive, retiring
   `packages/cron/src/store.ts`'s private tmp+fsync+rename+directory-fsync
-  write flow. Remaining known atomic-write copy: `core/src/session.ts`.
+  write flow. Fourth migration (2026-07-06, C9-③): `FileSessionStore`
+  `session.json` saves now share the same atomic writer by lowering the
+  implementation to `packages/core/src/file-atomic.ts` and keeping
+  `agent-runtime/src/doc-store` as the public wrapper, retiring
+  `packages/core/src/session.ts`'s private tmp+retry+rename copy. No known C9
+  atomic-write copies remain.
 - **Customers:** FileTaskStore + FileTaskNotificationOutbox
   (background-task), FileWorkflowStore (workflow P2), CronStore,
   FileMemoryStore, FileSessionStore/FileRunStore (opportunistic),

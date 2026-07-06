@@ -99,6 +99,19 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration touched only the atomic writer used for
+  `FileSessionStore` `session.json` saves. Checkpoint resume, from-trace
+  reconstruction, session replay projection, workflow resume discovery, and TUI
+  replay semantics are unchanged.
+- Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`.
+- Tests: storage-focused `npm --workspace @sparkwright/core test --
+  test/session.test.ts` and `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; resume-specific tests not run for this storage-only
+  change.
+
 - Status: Verified
 - Date: 2026-07-05T23:09:50+0800
 - Scope: workflow-runtime-v1 P9a D5 store boundary: fresh workflow runs now

@@ -192,7 +192,11 @@
   `cron/src/store.ts`。完成 2026-07-06 C9-②:
   `packages/cron/src/store.ts` 私有 `save()` 已迁到
   `agent-runtime/src/doc-store` 的 `atomicWriteText()`,退役该文件私有
-  tmp+fsync+rename+目录 fsync 写入流程;剩余 `core/src/session.ts`。**
+  tmp+fsync+rename+目录 fsync 写入流程;剩余 `core/src/session.ts`。完成
+  2026-07-06 C9-③:`packages/core/src/session.ts` 私有 `atomicWriteText()`
+  已退役;因 `@sparkwright/core` 不能依赖上层 runtime 包,实现改为下沉
+  `packages/core/src/file-atomic.ts` 并让 `agent-runtime/src/doc-store`
+  保持公共 wrapper 复用同一实现。C9 三处存量迁移完成。**
 - **C10|Tier 3 删除清单**:ACP 入口缺 `--session-root`(写进工作区)、
   `capabilities inspect` 少报 inline-config agents(capability-upgrade
   Phase 1 留尾同源)、`detectSkillLearnTarget` 旁路未删。

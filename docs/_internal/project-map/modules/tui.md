@@ -222,6 +222,18 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 cron persistence migration changed `CronStore.save()` only.
+  TUI cron capability creation, session replay, activity rendering, and
+  permission-mode UI behavior are unchanged.
+- Read: `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/maps/capabilities/cron.md`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: cron storage/schedule-focused `npm --workspace @sparkwright/cron test
+  -- test/schedule.test.ts`; TUI-specific tests not rerun for this persistence
+  implementation-only change.
+
 - Status: Verified
 - Date: 2026-07-04T12:43:33+0800
 - Scope: workflow-runtime-v1 S3 transcript filtering: TUI event stream and

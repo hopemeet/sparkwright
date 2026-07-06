@@ -38,12 +38,15 @@ Does not own:
 ## Contracts
 
 - Task events are trace-visible through core when executed as tools.
-- `doc-store/` owns workflow-agnostic file-backed primitives for session-root
-  stores: atomic text/JSON document writes with Windows rename retry cleanup,
+- `doc-store/` owns the public workflow-agnostic file-backed primitive surface
+  for session-root stores: atomic text/JSON document writes with Windows
+  rename retry cleanup,
   corrupt-entry-tolerant JSON directory/log scans with diagnostics, JSONL
   append-log helpers, and token-entry single-writer leases. Feature stores such
   as tasks/workflows/cron compose these primitives instead of carrying their
-  own atomic-write or append-log copies.
+  own atomic-write or append-log copies. The atomic text writer delegates to
+  core's `file-atomic` helper so core-owned session stores can share the
+  implementation without a reverse dependency on `agent-runtime`.
 - `task_create` can start external work; read-only task tools inspect state/output.
 - `TaskManager.registeredKinds()` exposes live runner keys for model-facing
   diagnostics; `createTaskCreate()` can accept optional
@@ -277,6 +280,25 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration: `agent-runtime` doc-store kept its public
+  `atomicWriteText()` / `atomicWriteTextSync()` surface while delegating the
+  implementation to core's internal `file-atomic` helper. This lets
+  `FileSessionStore` retire its private copy without violating the `core`
+  package-boundary rule.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/test/doc-store.test.ts`,
+  `packages/core/src/file-atomic.ts`, `packages/core/src/session.ts`,
+  `packages/core/src/internal.ts`, `scripts/check-internal-imports.mjs`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; `npm --workspace @sparkwright/core test --
+  test/session.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/core run typecheck`; `npm run
+  check:internal-imports`; `npm run check:package-boundaries`.
 
 - Status: Verified
 - Date: 2026-07-06T18:44:10+0800

@@ -19,6 +19,10 @@ const ALLOWED_CORE_INTERNAL_IMPORTS = new Map([
     "Host owns the current local reference harness and file-backed trace store.",
   ],
   [
+    "packages/agent-runtime/src/doc-store/index.ts",
+    "Agent-runtime doc-store is the public wrapper around core file-atomic helpers while core stays below runtime packages.",
+  ],
+  [
     "packages/streaming-runtime/src/index.ts",
     "Streaming runtime owns a sibling reference loop that currently constructs EventLog.",
   ],
