@@ -105,12 +105,37 @@ Does not own:
   the raw structural declaration only. Host owns model-ref resolution,
   model-tier lookup, adapter construction, and applying the budget to worker
   episodes.
+- Workflow P4 adds portable `script` execution shape declarations:
+  `WorkflowNodeExecuteKind` includes `script`, and
+  `WorkflowScriptNodeDefinition` carries path/args/cwd/env/stdin/timeouts,
+  output caps, metadata, and declared capability names. Agent-runtime does not
+  execute scripts, grant capabilities, map sandbox policy, read workflow asset
+  directories, or expose the stdio node API; host owns all of those behaviors.
+- Workflow P5 adds portable `parallel` / `join` declarations and durable
+  branch-state shape. `WorkflowRunRecord.parallelBranches` and
+  `WorkflowRuntimeState.parallelBranches` carry per-branch source node,
+  attempt, verdict, evidence refs, completion time, and metadata so host joins
+  can resume without re-running branches. Agent-runtime validates referenced
+  branch node ids and preserves the state across transitions/store round trips,
+  but it does not execute branches, schedule work, call `delegate_parallel`, or
+  interpret branch-local transitions. `FileWorkflowStore` lease events describe
+  durable record adoption only: a fresh pre-create lease does not append
+  `adopted`, while release events use the injected clock when supplied.
+- Workflow P6b adds the portable `todo_clear` verifier declaration. It is only
+  structural type vocabulary in agent-runtime; host owns parser admission,
+  session todo-ledger reads, verdict metadata, and fail-closed runtime behavior.
 - P3 Step 1 introduced a portable workflow run-chain driver:
   `runWorkflowRunChain()` owns the "run one episode, inspect terminal evidence,
   maybe continue" loop shape without constructing models or host config.
   `runTodoSupervised()` now expresses the todo-continuation chain as this
   degenerate workflow controller, preserving the existing todo audit decisions
   while moving the loop shape out of host.
+- `todo_write` tool schema text owns structural/status/evidence rules only:
+  whole-list replacement, canonical statuses, at most one `in_progress`, and
+  real evidence before `completed`. Prompt-level cadence ("when to open/update
+  the ledger, avoid rewrites, and fold bookkeeping into action turns") lives in
+  project-context's tool-gated `todo_planning` section, not in the tool schema
+  or todo continuation prompt.
 - P3 Step 4a keeps that boundary: host's actor episode driver calls the
   existing todo/workflow chain driver and creates worker runs itself. Do not add
   model construction, host config loading, tool catalogs, or session protocol
@@ -250,6 +275,96 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a agent-runtime boundary: `FileWorkflowStore`
+  remains the shared workflow-run document store, now with both legacy
+  `workflowRunsDir({ sessionRootDir, sessionId })` and workspace-root
+  `workspaceWorkflowRunsDir({ workspaceRoot })` helpers. Record schema/file
+  format is unchanged.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/index.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "FileWorkflowStore|workflow-run roots"`; `npm
+  --workspace @sparkwright/agent-runtime run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run build`.
+
+- Status: Verified
+- Date: 2026-07-05T21:51:25+0800
+- Scope: workflow-runtime-v1 P6b portable workflow type boundary:
+  `todo_clear` is now a structural verifier declaration only. Agent-runtime
+  still does not read todo ledgers, evaluate verifier verdicts, or alter the
+  todo supervisor continuation audit.
+- Read: `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/index.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime run typecheck`;
+  `npm --workspace @sparkwright/agent-runtime run build`; `npm --workspace
+  @sparkwright/agent-runtime test -- test/workflows.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-05T21:40:16+0800
+- Scope: workflow-runtime-v1 P6a todo doctrine boundary: `todo_write`
+  description keeps status/evidence rules but no longer restates prompt-level
+  cadence; `runTodoSupervised()` and continuation prompts remain recovery-only
+  and do not own "when to touch the ledger" guidance.
+- Read: `packages/agent-runtime/src/todo/tools.ts`,
+  `packages/agent-runtime/src/todo/ledger.ts`,
+  `packages/agent-runtime/test/todo.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/todo.test.ts -t "todo_write schema|createTodoTools exposes|TodoLedger
+  helpers"`; `npm --workspace @sparkwright/agent-runtime run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 post-review store hardening: durable branch state
+  still round-trips through agent-runtime, fresh pre-create workflow leases no
+  longer emit misleading `adopted` events, and release events honor the injected
+  clock for deterministic tests. Host still owns branch execution and P5
+  projection validation.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`; `npm --workspace @sparkwright/agent-runtime
+  test -- test/workflows.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 agent-runtime boundary: portable workflow
+  types/state/store now include `parallel` / `join` declarations and durable
+  branch state while branch execution and scheduling stay in host.
+- Read: `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/machine.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/agent-runtime run build`.
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 boundary check: script node fields are
+  portable workflow type declarations only; agent-runtime still does not run
+  script processes, resolve asset paths, grant sandbox/capabilities, or expose
+  node APIs.
+- Read: `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/index.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/agent-runtime run build`; `npm run
+  release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T12:15:55+0800

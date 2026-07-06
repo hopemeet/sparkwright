@@ -210,6 +210,73 @@ describe("TracedProcessRunner", () => {
     expect(processEvents[1]?.spanId).toBe(processEvents[0]?.spanId);
   });
 
+  it("runs newline-delimited JSON-RPC over stdout/stdin and keeps telemetry on stderr", async () => {
+    const runId = createRunId();
+    const events = new EventLog(runId);
+    const runner = new TracedProcessRunner();
+    const seen: string[] = [];
+    const script = [
+      "const readline = require('node:readline');",
+      "let id = 1;",
+      "const rl = readline.createInterface({ input: process.stdin });",
+      "function send(method, params) { console.log(JSON.stringify({ jsonrpc: '2.0', id: id++, method, params })); }",
+      "rl.on('line', (line) => {",
+      "  const msg = JSON.parse(line);",
+      "  if (msg.id === 1) send('getEvidence', { nodeId: 'build' });",
+      "  else if (msg.id === 2) {",
+      "    console.error('SPARKWRIGHT_EVENT: ' + JSON.stringify({ type: 'progress', message: 'script telemetry', data: { evidence: msg.result.length } }));",
+      "    send('complete', { result: 'ok' });",
+      "  } else if (msg.id === 3) process.exit(0);",
+      "});",
+      "send('initialize', { nodeId: 'build' });",
+    ].join("\n");
+
+    const result = await runner.runJsonRpc({
+      emitter: events,
+      runId,
+      name: "workflow-script",
+      kind: "custom",
+      runtime: "node",
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      onRequest(request) {
+        seen.push(request.method);
+        if (request.method === "initialize") {
+          return { protocol: "workflow-node-api.v1" };
+        }
+        if (request.method === "getEvidence") {
+          return [{ kind: "fact", ref: "fact:1" }];
+        }
+        if (request.method === "complete") {
+          return { accepted: true };
+        }
+        throw new Error(`unexpected method ${request.method}`);
+      },
+    });
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      rpcRequests: 3,
+      rpcErrors: 0,
+      progressCount: 1,
+    });
+    expect(seen).toEqual(["initialize", "getEvidence", "complete"]);
+    expect(
+      events.all().filter((event) => event.type.startsWith("extension.")),
+    ).toEqual([
+      expect.objectContaining({ type: "extension.process.started" }),
+      expect.objectContaining({
+        type: "extension.process.progress",
+        payload: expect.objectContaining({
+          message: "script telemetry",
+          data: { evidence: 1 },
+        }),
+      }),
+      expect.objectContaining({ type: "extension.process.completed" }),
+    ]);
+  });
+
   it("redacts skill_script argument previews to a stable summary", async () => {
     const runId = createRunId();
     const events = new EventLog(runId);

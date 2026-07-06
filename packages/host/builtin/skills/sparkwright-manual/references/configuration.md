@@ -312,7 +312,11 @@ must gate the final answer. Workflow lifecycle names are canonical-only:
 `RunStart`, `TurnStart`, `ModelOutput`, `PreToolUse`, `PostToolUse`, `Stop`,
 `RunEnd`, and `RuntimeSignal`. Set `resultMode` to `stdoutJson` when a command
 should return a JSON `WorkflowHookResult` on stdout; keep stdout reserved for
-that final control JSON and report live progress with helper calls such as
+that final control JSON. For tool calls, result-producing `PreToolUse` hooks
+run first and can rewrite arguments; governance/block hooks then run over the
+rewritten arguments before budget, repeat, policy, approval, and tool execution
+checks. Rewrites do not change the requested tool name. Report live progress
+with helper calls such as
 `progress("checking policy")` or a stderr `SPARKWRIGHT_EVENT:` progress token
 line. Use
 `capabilities.hooks.events` for non-blocking event subscribers; event hooks emit

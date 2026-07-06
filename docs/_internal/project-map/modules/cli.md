@@ -72,6 +72,15 @@ Does not own:
   workflow run through host mode. It uses the stored pinned definition snapshot
   and does not expose `--force`. P3 Step 4a keeps the CLI surface unchanged
   while the host routes the request through the actor episode driver.
+- `sparkwright workflow distill <sessionId>` is a read-only draft generator.
+  It reads an existing session trace through host helpers and prints a
+  review-first workflow markdown draft (or JSON report); it does not write
+  workflow assets, create proposals, or mutate traces.
+- `sparkwright workflow shadow <workflowName> <sessionId>` is a read-only
+  offline coverage report. It compares a host-owned workflow asset against an
+  existing session trace through host helpers and prints text/JSON matched,
+  missing, and unobserved coverage checks. It does not start a run, write
+  workflow records, mutate traces, or change `workflow list|inspect|resume`.
 - `sparkwright run --workflow <name>` is the host-mode workflow instantiation
   surface. P1.5 removes the experimental environment gate; the flag remains
   unsupported on `--direct-core`. Ordinary runs omit the field and keep existing
@@ -269,6 +278,80 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a CLI surface: `workflow list` and
+  `workflow resume` consume host dual-store behavior for workspace-root fresh
+  records plus legacy session-root records without adding flags or changing
+  text/JSON response shapes.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/reference/HOST_PROTOCOL.md`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "lists
+  and inspects workflow assets|resumes workflow runs"`; `npm --workspace
+  @sparkwright/cli run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a CLI surface: `workflow shadow <workflowName>
+  <sessionId>` emits text/JSON offline coverage reports from an existing
+  workflow asset and session trace without changing `workflow
+  list|inspect|resume|distill`, starting host runs, writing workflow state, or
+  adding protocol surfaces.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "shadows a workflow asset|distills a session trace|lists and inspects
+  workflow assets"`; `npm --workspace @sparkwright/cli run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T22:04:23+0800
+- Scope: workflow-runtime-v1 P7a CLI surface: `workflow distill <sessionId>`
+  emits text/JSON workflow draft reports from an existing session trace without
+  changing `workflow list|inspect|resume`, writing assets, or adding protocol
+  surfaces.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "distills a session trace|lists and inspects workflow assets"`; `npm
+  --workspace @sparkwright/cli run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review routed-page check: stricter
+  parallel validation, delegate_parallel crash classification, and workflow
+  lease event cleanup remain host/store behavior. CLI workflow commands,
+  direct-core run setup, text/JSON formatting, and protocol usage are unchanged.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`.
+
+- Status: Read-only
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: `parallel` / `join` add
+  host-parsed workflow asset semantics and durable run state only. CLI workflow
+  commands, direct-core runner setup, text/JSON formatting, and protocol usage
+  are unchanged by the P5 fail-closed/join-source hardening.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T11:36:37+0800

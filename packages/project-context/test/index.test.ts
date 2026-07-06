@@ -339,5 +339,7 @@ describe("buildAgentPromptBuilder", () => {
     // The anti-churn cadence must be stated: list already in context + the
     // write echoes state, so no need to read it back or rewrite unchanged.
     expect(guidance).toContain("never need to read it back");
+    expect(guidance).toContain("same turn as the");
+    expect(guidance).toContain("rather than spending a separate");
   });
 });

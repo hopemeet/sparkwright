@@ -112,9 +112,9 @@ follow the active maps below for the current contract.
 - `packages/host/src/runtime.ts` or `packages/host/src/run-access.ts`: [modules/host.md](modules/host.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/capabilities/mcp.md](maps/capabilities/mcp.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/host/src/client-input.ts`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/tui.md](modules/tui.md), [modules/protocol.md](modules/protocol.md)
 - `packages/core/src/access-mode.ts` (`run.accessMode` -> `permissionMode`/`shouldWrite` compile + clamp): [modules/host.md](modules/host.md), [modules/protocol.md](modules/protocol.md), [maps/safety/approvals.md](maps/safety/approvals.md)
-- `packages/host/src/workflow-hooks.ts`, `packages/host/src/active-rules.ts`, or `packages/host/src/traced-process-runner.ts`: [modules/host.md](modules/host.md), [modules/core.md](modules/core.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
+- `packages/host/src/workflow-hooks.ts`, `packages/host/src/active-rules.ts`, or `packages/host/src/traced-process-runner.ts`: [modules/host.md](modules/host.md), [modules/core.md](modules/core.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/host/src/acp-child-agent.ts`, `packages/host/src/external-command-agent.ts`, `packages/host/src/delegate-capability.ts`, `packages/host/src/delegate-runner.ts`, or `packages/host/src/agent-profiles.ts`: [modules/host.md](modules/host.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/capabilities/agents.md](maps/capabilities/agents.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
-- `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `sparkwright workflow list|inspect`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
+- `packages/host/src/workflows.ts`, `packages/host/src/workflow-projection.ts`, `packages/host/src/workflow-node-api.ts`, `packages/host/src/workflow-distill.ts`, `packages/host/src/workflow-shadow.ts`, `packages/host/src/workflow-trace-observation.ts`, `sparkwright workflow list|inspect|distill|shadow`, or `sparkwright run --workflow`: [modules/host.md](modules/host.md), [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/capabilities/README.md](maps/capabilities/README.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/safety/shell.md](maps/safety/shell.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md)
 - `packages/cli/src/cli.ts`, `packages/cli/src/runners/direct-core-runner.ts`, or `packages/cli/src/runners/host-runner.ts`: [modules/cli.md](modules/cli.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
 - `packages/cli/src/event-format.ts`: [modules/cli.md](modules/cli.md), [modules/protocol.md](modules/protocol.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `scripts/build-workspaces.mjs`, `scripts/check-dist-fresh.mjs`, `scripts/stamp-workspace-build.mjs`, or workspace `package.json` build scripts: [modules/cli.md](modules/cli.md)
@@ -159,6 +159,88 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a route update: `workflow shadow` and shared
+  workflow trace observation now route through host/CLI workflow docs while
+  remaining offline/read-only. No protocol/TUI/live-run routing was added.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; `npm
+  --workspace @sparkwright/cli test -- test/cli.test.ts -t "shadows a workflow
+  asset|distills a session trace|lists and inspects workflow assets"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/cli run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review hardening route: `parallel` now
+  requires explicit pass routing and rejects pass edges into branch nodes,
+  branch-local `verify` is fail-closed, delegate_parallel infrastructure throws
+  become branch runtime errors, runtime terminal failures preserve branch
+  diagnostics, and fresh workflow pre-create leases no longer emit misleading
+  adoption events. Protocol/CLI/capability surfaces remain unchanged.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`; `npm --workspace
+  @sparkwright/agent-runtime test -- test/workflows.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 routing update: bounded `parallel` / `join`
+  nodes route through host workflow parsing/projection and agent-runtime
+  durable `parallelBranches` state. All-delegate fan-out reuses the existing
+  `delegate_parallel` tool while honoring `maxConcurrency`; join barriers match
+  branch state to the unique producer parallel node. Workflow assets still do
+  not expose `workflow_start` or a second scheduler/cancellation bus.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/src/workflows/machine.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 routing update: workflow script nodes and the
+  stdio JSON-RPC node API route through host workflow parsing/projection,
+  `workflow-node-api.ts`, `TracedProcessRunner`, shell-sandbox/access clamps,
+  and agent-runtime portable workflow types. Core run-loop behavior remains
+  workflow-unaware; workflow assets stay request-selected capabilities, not a
+  model-facing `workflow_start` surface.
+- Read: `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts
+  test/traced-process-runner.test.ts test/external-command-agent.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/workflows.test.ts`;
+  `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T13:59:13+0800

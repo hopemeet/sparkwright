@@ -162,6 +162,9 @@ EventLog emits full event
 - Agent traces can also be written under `agents/<agent-id>/trace.jsonl`.
 - Session run directories do not duplicate trace JSONL; they include
   `trace-pointer.json` with relative links to the session and agent traces.
+- Workspace-level workflow run records under `.sparkwright/workflow-runs/` are
+  durable workflow state, not raw trace storage. Raw trace JSONL remains in the
+  session/agent trace roots above.
 - Raw JSONL remains append-only. Derived diagnostics such as trace timeline and
   verify may project aggregate ordering from `timestamp`/scoped `monotonicUs`,
   but the writer does not rewrite existing rows to enforce that order.
@@ -191,6 +194,65 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 routed-page check: fresh workflow state
+  moved from session-local `workflow-runs/` to workspace
+  `.sparkwright/workflow-runs/`, while session/agent raw trace JSONL locations,
+  event envelopes, filtering, and redaction stayed unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/core/src/trace-store.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: not run for raw trace codec/store behavior; P9a changed workflow state
+  lookup/storage, not raw trace persistence.
+
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: offline `workflow shadow`
+  reads existing raw trace events through `loadTraceEventsFile` but does not
+  write trace events, mutate traces, add raw trace event types, or change trace
+  filtering/redaction.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for raw trace codec/store behavior; P8a made no raw trace
+  semantic change. Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review trace check: explicit parallel
+  transition validation, branch-verifier rejection, and delegate_parallel infra
+  crash fail-closed behavior reuse existing `workflow.node.*` /
+  `workflow.failed` payloads and durable evidence refs. Runtime terminal failure
+  state now preserves `parallelBranches` for diagnostics, but no raw trace event
+  family or schema field was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Read-only
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 trace check: `parallel` / `join` reuse
+  existing `workflow.node.*`, workflow terminal events, and evidence refs.
+  Branch state is persisted in `WorkflowRunRecord.parallelBranches`; branch
+  runtime errors now remain fail-closed through existing workflow failure events.
+  No raw trace event type or schema was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-05T11:36:37+0800

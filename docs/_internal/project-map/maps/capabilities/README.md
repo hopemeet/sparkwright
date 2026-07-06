@@ -11,6 +11,8 @@ cron, shell/task tools, and capability inspection.
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tools.ts`
+- `packages/host/src/workflows.ts`
+- `packages/host/src/workflow-node-api.ts`
 - `packages/skills/src/*`
 - `packages/mcp-adapter/src/index.ts`
 - `packages/agent-runtime/src/*`
@@ -54,9 +56,11 @@ config + workspace capability roots
   `sparkwright workflow *` remain inspection surfaces; P1/P1.5 also lets
   `sparkwright run --workflow <name>` / `run.start.workflow` instantiate a
   selected asset without the former experimental workflow runtime gate.
-  P2 durable workflow run records are session state, not capabilities:
-  `sparkwright workflow list` may show both workflow assets and workflow run
-  records, but `capability.inspect.workflows` remains the asset inventory.
+  Durable workflow run records are workspace state for fresh P9a+ runs, with
+  legacy session-local lookup kept for compatibility; they are not
+  capabilities. `sparkwright workflow list` may show both workflow assets and
+  workflow run records, but `capability.inspect.workflows` remains the asset
+  inventory.
   P3 Step 4b.1 per-episode workflow catalog narrowing filters worker
   `ToolDefinition[]` at run creation; it does not change capability.inspect's
   asset inventory. A scoped `tool_search` may be added inside a filtered worker
@@ -70,6 +74,23 @@ config + workspace capability roots
   P3 Step 4b.3 does not add a `workflow_start` tool or capability field;
   workflow assets remain request-selected capabilities rather than
   model-spawned tasks.
+  P4 `script` nodes are asset-authored declarations executed only by the host
+  projection. Their declared capabilities map to host access clamps at
+  instantiation time; scripts do not receive capability objects, do not write
+  trace, and can perform side effects only by calling host node API methods over
+  stdio JSON-RPC. Built-in dogfood workflows are ordinary workflow assets and
+  should not be special-cased by capability inventory consumers.
+  P5 `parallel` / `join` nodes extend the workflow asset grammar and durable
+  workflow run state, not capability inventory. All-delegate workflow fan-out
+  reuses the existing opt-in `delegate_parallel` tool when available and is
+  batched by `parallel.maxConcurrency`; delegate_parallel transport crashes are
+  projection runtime errors while ordinary delegate child failures remain branch
+  failed verdicts. Mixed non-model branches use their existing governed
+  primitives (`command`, `delegate`, `task`, `script`). P5 also requires
+  explicit `parallel.onPass` and rejects branch-local `verify` declarations in
+  projection validation. P5 still does not add `workflow_start`, branch-local
+  model-facing tools, branch verifier execution, or a second configured-delegate
+  fan-out surface.
 - Config-declared capabilities can live in JSON or YAML config files. Host owns
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
@@ -174,6 +195,86 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 capability boundary: fresh workflow run
+  records moved to workspace `.sparkwright/workflow-runs/` with legacy
+  session-store lookup for list/resume. Workflow run records remain durable
+  runtime state, not capability inventory; `capability.inspect.workflows`
+  still reports assets only and no `workflow_start` surface was added.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts -t "workflow"`; `npm --workspace @sparkwright/cli test
+  -- test/cli.test.ts -t "lists and inspects workflow assets|resumes workflow
+  runs"`; `npm --workspace @sparkwright/host run typecheck`;
+  `npm --workspace @sparkwright/cli run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` reuses
+  workflow asset discovery/parsing for an offline report only. Capability
+  snapshots, active-rule inspection, workflow_start absence, tool catalogs, and
+  delegate/shell/MCP capability surfaces remain unchanged.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for capability inspection; P8a made no capability semantic
+  change. Focused shadow gates passed in host/CLI.
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 capability boundary after post-review
+  hardening: explicit parallel transitions, branch-verifier rejection, and
+  delegate_parallel crash handling remain workflow projection validation/runtime
+  behavior. Capability inventory still gains no workflow_start, branch-local
+  tool surface, or second delegate fan-out capability.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 capability boundary: `parallel` / `join`
+  remain workflow asset declarations plus host projection behavior; all-delegate
+  fan-out reuses existing `delegate_parallel` with workflow-side
+  `maxConcurrency` batching, and capability inspection still does not gain
+  `workflow_start` or a branch scheduler surface.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 capability boundary: script nodes are
+  workflow-asset declarations with host-side capability clamps and stdio node
+  API governance; capability.inspect inventory remains the workflow asset
+  surface and does not gain `workflow_start`.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "workflow
+  assets"`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T13:59:13+0800

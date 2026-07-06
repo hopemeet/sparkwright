@@ -267,6 +267,34 @@ configured profiles/delegates
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 routed-page check: workflow store root
+  promotion changes durable workflow run lookup/storage only. Agent profile
+  discovery, delegate tool exposure, dynamic `spawn_agent`, child-run policy,
+  model routing, and subagent trace attribution are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: not run for agent/delegate capability behavior; P9a made no
+  agent-capability semantic change. Workflow focused gates passed in host/CLI.
+
+- Status: Verified
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 agents capability check: workflow
+  all-delegate parallel branches reuse the existing opt-in
+  `delegate_parallel` foreground tool and are batched by workflow
+  `maxConcurrency`; no new agent capability surface, delegate eligibility rule,
+  or nested-agent policy was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a routing check for
   `packages/host/src/runtime.ts`: actor episode driver inversion does not

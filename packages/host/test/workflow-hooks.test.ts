@@ -669,6 +669,1153 @@ describe("createWorkflowProjectionHooks", () => {
     }
   });
 
+  it("runs bounded parallel branches and joins from durable branch state", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const snapshots: WorkflowProjectionStateSnapshot[] = [];
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_parallel_join",
+        onStateSnapshot: (snapshot) => {
+          snapshots.push(snapshot);
+        },
+        definition: {
+          assetName: "parallel-join",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint", "types"], maxConcurrency: 2 },
+              onPass: "join",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            {
+              id: "types",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            {
+              id: "join",
+              execute: "join",
+              body: "",
+              join: { waitFor: ["lint", "types"] },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize checks." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+        parallelBranches: {
+          lint: { sourceNodeId: "fanout", status: "passed", attempt: 1 },
+          types: { sourceNodeId: "fanout", status: "passed", attempt: 1 },
+        },
+      });
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map((event) => (event.payload as { nodeId?: string }).nodeId),
+      ).toEqual(["fanout", "join"]);
+      expect(
+        snapshots.find(
+          (snapshot) =>
+            snapshot.phase === "node_completed" && snapshot.nodeId === "fanout",
+        )?.state.parallelBranches,
+      ).toMatchObject({
+        lint: { status: "passed" },
+        types: { status: "passed" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects parallel nodes without explicit onPass", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_parallel_requires_on_pass",
+        definition: {
+          assetName: "parallel-requires-on-pass",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            { id: "model", execute: "model", body: "Continue." },
+          ],
+        },
+      }),
+    ).toThrow(/requires explicit onPass/);
+  });
+
+  it("rejects parallel onPass targets that enter a branch", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_parallel_on_pass_branch",
+        definition: {
+          assetName: "parallel-on-pass-branch",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "lint",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/onPass must not target branch/);
+  });
+
+  it("rejects parallel branch verifiers that P5 would not execute", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_parallel_branch_verify",
+        definition: {
+          assetName: "parallel-branch-verify",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "model",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+              verify: [
+                {
+                  id: "lint-check",
+                  kind: "command",
+                  command: process.execPath,
+                  args: ["-e", "process.exit(0)"],
+                  authorized: true,
+                },
+              ],
+            },
+            { id: "model", execute: "model", body: "Continue." },
+          ],
+        },
+      }),
+    ).toThrow(/branch "lint" declares verify/);
+  });
+
+  it("fails closed when a parallel branch returns a runtime error", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_parallel_runtime_error",
+        definition: {
+          assetName: "parallel-runtime-error",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["task"], maxConcurrency: 1 },
+              onPass: "model",
+              onFail: "model",
+            },
+            {
+              id: "task",
+              execute: "task",
+              body: "",
+              task: {
+                kind: "agent",
+                mode: "awaited",
+                payload: { goal: "Check docs." },
+              },
+            },
+            {
+              id: "model",
+              execute: "model",
+              body: "This model node must not run after a branch runtime error.",
+            },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        parallelBranches: {
+          task: {
+            sourceNodeId: "fanout",
+            status: "runtime_error",
+            verdict: {
+              reason: "Workflow task nodes require the host task_create tool.",
+            },
+          },
+        },
+      });
+      expect(projection.getState().currentNodeId).toBeUndefined();
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_parallel_runtime_error",
+        fromNodeId: "fanout",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces maxConcurrency for task parallel branches", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const parentRun = {
+        record: run,
+        events,
+      } as never;
+      let inFlight = 0;
+      let maxSeen = 0;
+      const taskTool = defineTool<Record<string, unknown>, unknown>({
+        name: "task_create",
+        description: "Create a task.",
+        inputSchema: { type: "object" },
+        policy: { risk: "safe" },
+        async execute(args) {
+          inFlight += 1;
+          maxSeen = Math.max(maxSeen, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          inFlight -= 1;
+          return {
+            taskId: `task_${String((args.payload as { id?: string }).id)}`,
+            status: "completed",
+          };
+        },
+      });
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_parallel_task_bound",
+        getRun: () => parentRun,
+        taskTool,
+        definition: {
+          assetName: "parallel-task-bound",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: {
+                branches: ["task_a", "task_b", "task_c"],
+                maxConcurrency: 2,
+              },
+              onPass: "model",
+            },
+            {
+              id: "task_a",
+              execute: "task",
+              body: "",
+              task: { kind: "agent", payload: { id: "a" } },
+            },
+            {
+              id: "task_b",
+              execute: "task",
+              body: "",
+              task: { kind: "agent", payload: { id: "b" } },
+            },
+            {
+              id: "task_c",
+              execute: "task",
+              body: "",
+              task: { kind: "agent", payload: { id: "c" } },
+            },
+            { id: "model", execute: "model", body: "Summarize checks." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(maxSeen).toBe(2);
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+        parallelBranches: {
+          task_a: { status: "passed" },
+          task_b: { status: "passed" },
+          task_c: { status: "passed" },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("uses delegate_parallel for all-delegate parallel fan-out", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      let delegateParallelCalls = 0;
+      const delegateParallelTool = defineTool<Record<string, unknown>, unknown>(
+        {
+          name: "delegate_parallel",
+          description: "Delegate several configured agents.",
+          inputSchema: { type: "object" },
+          policy: { risk: "safe" },
+          execute(args) {
+            delegateParallelCalls += 1;
+            expect(args).toMatchObject({
+              delegates: [
+                { agentId: "reviewer", goal: "Review the patch." },
+                { agentId: "tester", goal: "Run focused tests." },
+              ],
+            });
+            return {
+              mode: "parallel",
+              completed: 2,
+              failed: 0,
+              results: [
+                {
+                  index: 0,
+                  signal: "completed",
+                  childRunId: "run_reviewer",
+                  profileId: "reviewer",
+                },
+                {
+                  index: 1,
+                  signal: "completed",
+                  childRunId: "run_tester",
+                  profileId: "tester",
+                },
+              ],
+            };
+          },
+        },
+      );
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_delegate_parallel",
+        delegateParallelTool,
+        definition: {
+          assetName: "delegate-parallel",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["review", "test"], maxConcurrency: 2 },
+              onPass: "join",
+            },
+            {
+              id: "review",
+              execute: "delegate",
+              body: "",
+              delegate: {
+                agentId: "reviewer",
+                goal: "Review the patch.",
+              },
+            },
+            {
+              id: "test",
+              execute: "delegate",
+              body: "",
+              delegate: {
+                agentId: "tester",
+                goal: "Run focused tests.",
+              },
+            },
+            {
+              id: "join",
+              execute: "join",
+              body: "",
+              join: { waitFor: ["review", "test"] },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize delegates." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(delegateParallelCalls).toBe(1);
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+        parallelBranches: {
+          review: {
+            status: "passed",
+            metadata: { delegateParallel: true },
+          },
+          test: {
+            status: "passed",
+            metadata: { delegateParallel: true },
+          },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("batches all-delegate parallel fan-out by maxConcurrency", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const callSizes: number[] = [];
+      const delegateParallelTool = defineTool<Record<string, unknown>, unknown>(
+        {
+          name: "delegate_parallel",
+          description: "Delegate several configured agents.",
+          inputSchema: { type: "object" },
+          policy: { risk: "safe" },
+          execute(args) {
+            const delegates = args.delegates as Array<{
+              agentId: string;
+              metadata: { branchNodeId: string };
+            }>;
+            callSizes.push(delegates.length);
+            return {
+              mode: "parallel",
+              completed: delegates.length,
+              failed: 0,
+              results: delegates.map((delegate, index) => ({
+                index,
+                signal: "completed",
+                childRunId: `run_${delegate.metadata.branchNodeId}`,
+                profileId: delegate.agentId,
+              })),
+            };
+          },
+        },
+      );
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_delegate_parallel_batched",
+        delegateParallelTool,
+        definition: {
+          assetName: "delegate-parallel-batched",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: {
+                branches: ["review", "test", "docs"],
+                maxConcurrency: 2,
+              },
+              onPass: "model",
+            },
+            {
+              id: "review",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "reviewer", goal: "Review." },
+            },
+            {
+              id: "test",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "tester", goal: "Test." },
+            },
+            {
+              id: "docs",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "docs", goal: "Check docs." },
+            },
+            { id: "model", execute: "model", body: "Summarize delegates." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(callSizes).toEqual([2, 1]);
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+        parallelBranches: {
+          review: { status: "passed" },
+          test: { status: "passed" },
+          docs: { status: "passed" },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails all-delegate parallel fan-out on incomplete branch results", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const delegateParallelTool = defineTool<Record<string, unknown>, unknown>(
+        {
+          name: "delegate_parallel",
+          description: "Delegate several configured agents.",
+          inputSchema: { type: "object" },
+          policy: { risk: "safe" },
+          execute() {
+            return {
+              mode: "parallel",
+              completed: 1,
+              failed: 1,
+              results: [
+                {
+                  index: 0,
+                  signal: "completed",
+                  childRunId: "run_review",
+                  profileId: "reviewer",
+                },
+                {
+                  index: 1,
+                  signal: "failed",
+                  childRunId: "run_test",
+                  profileId: "tester",
+                },
+              ],
+            };
+          },
+        },
+      );
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_delegate_parallel_incomplete",
+        delegateParallelTool,
+        definition: {
+          assetName: "delegate-parallel-incomplete",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["review", "test"], maxConcurrency: 2 },
+              onPass: "done",
+            },
+            {
+              id: "review",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "reviewer", goal: "Review." },
+            },
+            {
+              id: "test",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "tester", goal: "Test." },
+            },
+            { id: "done", execute: "model", body: "Continue." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        parallelBranches: {
+          review: { status: "passed" },
+          test: { status: "failed" },
+        },
+      });
+      expect(
+        events.all().find((event) => event.type === "workflow.node.completed")
+          ?.payload,
+      ).toMatchObject({
+        nodeId: "fanout",
+        verdict: {
+          status: "failed",
+          reason: "parallel_branch_failed",
+          metadata: { failedBranches: ["test"] },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when delegate_parallel crashes during all-delegate fan-out", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const delegateParallelTool = defineTool<Record<string, unknown>, unknown>(
+        {
+          name: "delegate_parallel",
+          description: "Delegate several configured agents.",
+          inputSchema: { type: "object" },
+          policy: { risk: "safe" },
+          execute() {
+            throw new Error("transport exploded");
+          },
+        },
+      );
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_delegate_parallel_crash",
+        delegateParallelTool,
+        definition: {
+          assetName: "delegate-parallel-crash",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["review", "test"], maxConcurrency: 2 },
+              onPass: "done",
+              onFail: "recover",
+            },
+            {
+              id: "review",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "reviewer", goal: "Review." },
+            },
+            {
+              id: "test",
+              execute: "delegate",
+              body: "",
+              delegate: { agentId: "tester", goal: "Test." },
+            },
+            { id: "done", execute: "model", body: "Continue." },
+            { id: "recover", execute: "model", body: "Recover." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        parallelBranches: {
+          review: {
+            status: "runtime_error",
+            verdict: { reason: "delegate_parallel_runtime_error" },
+          },
+          test: {
+            status: "runtime_error",
+            verdict: { reason: "delegate_parallel_runtime_error" },
+          },
+        },
+      });
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_delegate_parallel_crash",
+        fromNodeId: "fanout",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects joins whose branches have ambiguous parallel producers", () => {
+    expect(() =>
+      createWorkflowProjectionHooks({
+        workspaceRoot: process.cwd(),
+        workflowRunId: "wf_join_ambiguous",
+        definition: {
+          assetName: "join-ambiguous",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout_a",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["shared"], maxConcurrency: 1 },
+              onPass: "join",
+            },
+            {
+              id: "fanout_b",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["shared"], maxConcurrency: 1 },
+              onPass: "join",
+            },
+            {
+              id: "shared",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            {
+              id: "join",
+              execute: "join",
+              body: "",
+              join: { waitFor: ["shared"] },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/produced by multiple parallel nodes/);
+  });
+
+  it("fails closed when join sees branch state from another parallel node", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_join_stale_branch",
+        initialState: {
+          status: "running",
+          currentNodeId: "join",
+          attempts: { join: 1 },
+          parallelBranches: {
+            lint: {
+              sourceNodeId: "other_fanout",
+              nodeId: "lint",
+              attempt: 1,
+              status: "passed",
+              verdict: { status: "passed", reason: "command_passed" },
+              completedAt: new Date().toISOString(),
+            },
+          },
+          transitionLog: [],
+        },
+        definition: {
+          assetName: "join-stale-branch",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "join",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            {
+              id: "join",
+              execute: "join",
+              body: "",
+              join: { waitFor: ["lint"] },
+              onFail: "model",
+            },
+            {
+              id: "model",
+              execute: "model",
+              body: "This model must not run after stale branch state.",
+            },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        failure: {
+          reason: expect.stringContaining(
+            "branch state from a different parallel node",
+          ),
+          nodeId: "join",
+        },
+      });
+      expect(projection.getState().currentNodeId).toBeUndefined();
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_join_stale_branch",
+        fromNodeId: "join",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves parallel branch diagnostics when runtime failure ends workflow", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_runtime_preserves_parallel",
+        initialState: {
+          status: "running",
+          currentNodeId: "model",
+          attempts: { model: 1 },
+          parallelBranches: {
+            lint: {
+              sourceNodeId: "fanout",
+              nodeId: "lint",
+              attempt: 1,
+              status: "passed",
+              verdict: { status: "passed", reason: "command_passed" },
+              completedAt: "2026-07-05T00:00:00.000Z",
+            },
+          },
+          transitionLog: [],
+        },
+        definition: {
+          assetName: "runtime-preserves-parallel",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "fanout",
+              execute: "parallel",
+              body: "",
+              parallel: { branches: ["lint"], maxConcurrency: 1 },
+              onPass: "model",
+            },
+            {
+              id: "lint",
+              execute: "command",
+              body: "",
+              command: {
+                command: process.execPath,
+                args: ["-e", "process.exit(0)"],
+                authorized: true,
+              },
+            },
+            { id: "model", execute: "model", body: "Continue." },
+          ],
+        },
+      });
+
+      const signal = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "RuntimeSignal",
+        run,
+        payload: { signal: "budget.exceeded", source: "workflow" },
+        events,
+        facts: ledger,
+      });
+
+      expect(signal.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        parallelBranches: {
+          lint: { sourceNodeId: "fanout", status: "passed" },
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("runs script nodes through the stdio workflow node API", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const assetDir = join(workspace, "scripted");
+      await mkdir(assetDir, { recursive: true });
+      await writeFile(
+        join(assetDir, "node.mjs"),
+        [
+          "import readline from 'node:readline';",
+          "let id = 1;",
+          "const rl = readline.createInterface({ input: process.stdin });",
+          "function send(method, params) { console.log(JSON.stringify({ jsonrpc: '2.0', id: id++, method, params })); }",
+          "rl.on('line', (line) => {",
+          "  const msg = JSON.parse(line);",
+          "  if (msg.id === 1) send('getEvidence', { nodeId: 'previous' });",
+          "  else if (msg.id === 2) {",
+          "    console.error('SPARKWRIGHT_EVENT: ' + JSON.stringify({ type: 'progress', message: 'script saw evidence', data: { count: msg.result.length } }));",
+          "    send('complete', { result: { evidence: msg.result.length } });",
+          "  } else if (msg.id === 3) process.exit(0);",
+          "});",
+          "send('initialize', { nodeId: 'script' });",
+        ].join("\n"),
+        "utf8",
+      );
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_script",
+        allowScriptWrite: false,
+        getEvidenceRefs: (nodeId) =>
+          nodeId === "previous" ? [{ kind: "fact", ref: "fact:previous" }] : [],
+        definition: {
+          assetName: "scripted",
+          contentHash: "hash",
+          sourceDir: assetDir,
+          nodes: [
+            {
+              id: "script",
+              execute: "script",
+              body: "",
+              script: {
+                path: "node.mjs",
+                capabilities: ["read"],
+              },
+              onPass: "model",
+            },
+            { id: "model", execute: "model", body: "Summarize script output." },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("continued");
+      expect(projection.getState()).toMatchObject({
+        status: "running",
+        currentNodeId: "model",
+      });
+      expect(
+        events
+          .all()
+          .filter((event) => event.type === "workflow.node.completed")
+          .map(
+            (event) => event.payload as { nodeId?: string; verdict?: unknown },
+          ),
+      ).toEqual([
+        expect.objectContaining({
+          nodeId: "script",
+          verdict: expect.objectContaining({
+            status: "passed",
+            reason: "script_completed",
+          }),
+        }),
+      ]);
+      expect(
+        events
+          .all()
+          .find((event) => event.type === "extension.process.progress")
+          ?.payload,
+      ).toMatchObject({
+        message: "script saw evidence",
+        data: { count: 1 },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when script nodes declare unsupported capabilities", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
+    try {
+      const run = runRecord();
+      const events = new EventLog(run.id);
+      const ledger = new FactLedger();
+      events.subscribe((event) => ledger.observeEvent(event));
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_script_capability",
+        allowScriptWrite: true,
+        definition: {
+          assetName: "scripted",
+          contentHash: "hash",
+          sourceDir: workspace,
+          nodes: [
+            {
+              id: "script",
+              execute: "script",
+              body: "",
+              script: {
+                path: "node.mjs",
+                capabilities: ["network"],
+              },
+            },
+          ],
+        },
+      });
+
+      const turn = await runWorkflowHooks({
+        hooks: projection.hooks,
+        hook: "TurnStart",
+        run,
+        payload: {},
+        events,
+        facts: ledger,
+      });
+
+      expect(turn.status).toBe("blocked");
+      expect(projection.getState()).toMatchObject({
+        status: "failed",
+        failure: {
+          reason: expect.stringContaining("unsupported capability"),
+        },
+      });
+      expect(
+        events.all().find((event) => event.type === "workflow.failed")?.payload,
+      ).toMatchObject({
+        workflowRunId: "wf_script_capability",
+        failure: { code: "WORKFLOW_NODE_FAILED" },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("parks human nodes as durable waiting snapshots", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-workflow-"));
     try {
@@ -816,6 +1963,211 @@ describe("createWorkflowProjectionHooks", () => {
     ).toMatchObject({
       workflowRunId: "wf_diff_scope",
       failure: { code: "WORKFLOW_NODE_FAILED" },
+    });
+  });
+
+  it("passes todo_clear when the host todo ledger has no unfinished items", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_todo_clear_pass",
+      readTodoLedger: () => ({
+        schemaVersion: "todo-ledger.v1",
+        metadata: {},
+        items: [
+          { title: "done", status: "completed", depth: 0 },
+          { title: "skipped", status: "skipped", depth: 0 },
+        ],
+      }),
+      definition: {
+        assetName: "todo-clear",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "finish",
+            execute: "model",
+            body: "Finish.",
+            verify: [{ id: "todos-done", kind: "todo_clear" }],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState().status).toBe("completed");
+    expect(
+      events.all().find((event) => event.type === "workflow.node.completed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_todo_clear_pass",
+      nodeId: "finish",
+      verdict: {
+        status: "passed",
+        metadata: { verified: true, verifiers: ["todos-done"] },
+      },
+      evidenceRefs: [
+        {
+          kind: "run",
+          ref: run.id,
+          verifierId: "todos-done",
+          metadata: {
+            kind: "todo_clear",
+            summary: { unfinished: 0, hasUnfinished: false },
+          },
+        },
+      ],
+    });
+  });
+
+  it("fails todo_clear when the host todo ledger still has unfinished items", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_todo_clear_fail",
+      readTodoLedger: () => ({
+        schemaVersion: "todo-ledger.v1",
+        metadata: {},
+        items: [{ title: "finish docs", status: "pending", depth: 0 }],
+      }),
+      definition: {
+        assetName: "todo-clear",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "finish",
+            execute: "model",
+            body: "Finish.",
+            verify: [{ id: "todos-done", kind: "todo_clear" }],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState()).toMatchObject({
+      status: "failed",
+      failure: { reason: "verification_failed" },
+    });
+    expect(
+      events.all().find((event) => event.type === "workflow.node.completed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_todo_clear_fail",
+      nodeId: "finish",
+      verdict: {
+        status: "failed",
+        metadata: {
+          failures: [
+            {
+              verifierId: "todos-done",
+              kind: "todo_clear",
+              summary: { unfinished: 1, hasUnfinished: true },
+              unfinished: [{ title: "finish docs", status: "pending" }],
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("fails closed when todo_clear has no host todo ledger provider", async () => {
+    const run = runRecord();
+    const events = new EventLog(run.id);
+    const ledger = new FactLedger();
+    events.subscribe((event) => ledger.observeEvent(event));
+    const projection = createWorkflowProjectionHooks({
+      workspaceRoot: process.cwd(),
+      workflowRunId: "wf_todo_clear_missing",
+      definition: {
+        assetName: "todo-clear",
+        contentHash: "hash",
+        nodes: [
+          {
+            id: "finish",
+            execute: "model",
+            body: "Finish.",
+            verify: [{ id: "todos-done", kind: "todo_clear" }],
+          },
+        ],
+      },
+    });
+
+    await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "TurnStart",
+      run,
+      payload: {},
+      events,
+      facts: ledger,
+    });
+    const stop = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "Stop",
+      run,
+      payload: { message: "done" },
+      events,
+      facts: ledger,
+    });
+
+    expect(stop.status).toBe("continued");
+    expect(projection.getState()).toMatchObject({
+      status: "failed",
+      failure: {
+        reason:
+          'Workflow todo_clear verifier "todos-done" requires a todo ledger provider.',
+      },
+    });
+    expect(
+      events.all().find((event) => event.type === "workflow.node.completed")
+        ?.payload,
+    ).toMatchObject({
+      workflowRunId: "wf_todo_clear_missing",
+      nodeId: "finish",
+      verdict: {
+        status: "runtime_error",
+        reason:
+          'Workflow todo_clear verifier "todos-done" requires a todo ledger provider.',
+      },
     });
   });
 
@@ -1095,9 +2447,20 @@ describe("createWorkflowProjectionHooks", () => {
     const run = runRecord();
     const events = new EventLog(run.id);
 
+    const rewrite = await runWorkflowHooks({
+      hooks: projection.hooks,
+      hook: "PreToolUse",
+      preToolUseStage: "rewrite",
+      run,
+      payload: { toolName: "shell", arguments: {} },
+      events,
+    });
+    expect(rewrite.status).toBe("continued");
+
     const blocked = await runWorkflowHooks({
       hooks: projection.hooks,
       hook: "PreToolUse",
+      preToolUseStage: "governance",
       run,
       payload: { toolName: "shell", arguments: {} },
       events,
@@ -1113,6 +2476,118 @@ describe("createWorkflowProjectionHooks", () => {
       toolName: "shell",
       allowedTools: ["read_file"],
     });
+  });
+
+  it("runs configured rewrites before the real workflow tool clamp", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "sparkwright-projection-"));
+    try {
+      let executed = false;
+      let modelCalls = 0;
+      const configured = createConfiguredWorkflowHooks({
+        workspaceRoot: workspace,
+        workflowActive: true,
+        hooks: [
+          {
+            name: "configured-rewrite",
+            hook: "PreToolUse",
+            onError: "block",
+            action: {
+              type: "command",
+              command: process.execPath,
+              args: [
+                "-e",
+                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{command:'echo hi', path:'generated/a.ts'}}}))",
+              ],
+              resultMode: "stdoutJson",
+            },
+          },
+        ],
+      });
+      const projection = createWorkflowProjectionHooks({
+        workspaceRoot: workspace,
+        workflowRunId: "wf_rewrite_clamp",
+        definition: {
+          assetName: "rewrite-clamp",
+          contentHash: "hash",
+          nodes: [
+            {
+              id: "limited",
+              execute: "model",
+              body: "Use only read_file.",
+              tools: ["read_file"],
+            },
+          ],
+        },
+      });
+      const run = createRun({
+        goal: "rewrite before projection clamp",
+        workflowHooks: [...configured, ...projection.hooks],
+        tools: [
+          defineTool({
+            name: "shell",
+            description: "Shell.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                command: { type: "string" },
+                path: { type: "string" },
+              },
+              required: ["command"],
+            },
+            execute() {
+              executed = true;
+              return { ok: true };
+            },
+          }),
+        ],
+        model: {
+          async complete(input) {
+            modelCalls += 1;
+            if (modelCalls === 1) {
+              return {
+                toolCalls: [
+                  {
+                    toolName: "shell",
+                    arguments: { command: "echo hi", path: "draft.ts" },
+                  },
+                ],
+              };
+            }
+            expect(input.context[0]?.content).toContain(
+              "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+            );
+            return { message: "blocked by workflow clamp" };
+          },
+        },
+      });
+
+      const result = await run.start();
+
+      expect(result.state).toBe("failed");
+      expect(modelCalls).toBe(2);
+      expect(executed).toBe(false);
+      expect(
+        run.events
+          .all()
+          .find(
+            (event) =>
+              event.type === "workflow_hook.blocked" &&
+              (event.payload as { hookId?: unknown }).hookId ===
+                "workflow-tool-clamp",
+          )?.payload,
+      ).toMatchObject({
+        reason: 'Workflow node "limited" does not allow tool "shell".',
+        resultMetadata: {
+          workflowRunId: "wf_rewrite_clamp",
+          nodeId: "limited",
+          toolName: "shell",
+          allowedTools: ["read_file"],
+          path: "generated/a.ts",
+        },
+      });
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 
   it("fails closed at RunStart and TurnStart projection gates", async () => {
@@ -2048,12 +3523,12 @@ describe("createConfiguredWorkflowHooks", () => {
     }
   });
 
-  it("rejects configured PreToolUse rewrite while a workflow is active", async () => {
+  it("applies configured PreToolUse rewrites before governance while a workflow is active", async () => {
     const workspace = await mkdtemp(join(tmpdir(), "sparkwright-hook-"));
     try {
-      const run = runRecord();
-      const events = new EventLog(run.id);
-      const hooks = createConfiguredWorkflowHooks({
+      let executed = false;
+      let modelCalls = 0;
+      const configured = createConfiguredWorkflowHooks({
         workspaceRoot: workspace,
         workflowActive: true,
         hooks: [
@@ -2066,29 +3541,75 @@ describe("createConfiguredWorkflowHooks", () => {
               command: process.execPath,
               args: [
                 "-e",
-                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{command:'npm test'}}}))",
+                "console.log(JSON.stringify({status:'rewrite', patch:{arguments:{path:'generated/a.ts'}}}))",
               ],
               resultMode: "stdoutJson",
             },
           },
+          {
+            name: "generated-block",
+            hook: "PreToolUse",
+            matcher: { toolName: "write_file", pathGlob: "generated/**" },
+            action: { type: "block", reason: "generated files are locked" },
+          },
         ],
       });
-
-      const result = await runWorkflowHooks({
-        hooks,
-        hook: "PreToolUse",
-        run,
-        payload: { toolName: "shell", arguments: { command: "npm t" } },
-        events,
+      const run = createRun({
+        goal: "rewrite then govern",
+        workflowHooks: configured,
+        tools: [
+          defineTool({
+            name: "write_file",
+            description: "Write.",
+            inputSchema: {
+              type: "object",
+              properties: { path: { type: "string" } },
+              required: ["path"],
+            },
+            execute() {
+              executed = true;
+              return { ok: true };
+            },
+          }),
+        ],
+        model: {
+          async complete(input) {
+            modelCalls += 1;
+            if (modelCalls === 1) {
+              return {
+                toolCalls: [
+                  { toolName: "write_file", arguments: { path: "draft.ts" } },
+                ],
+              };
+            }
+            expect(input.context[0]?.content).toContain(
+              "TOOL_BLOCKED_BY_WORKFLOW_HOOK",
+            );
+            return { message: "blocked after rewrite" };
+          },
+        },
       });
 
-      expect(result.status).toBe("blocked");
-      if (result.status !== "blocked") {
-        throw new Error("expected blocked workflow hook result");
-      }
-      expect(result.block.reason).toContain(
-        "configured PreToolUse hooks cannot rewrite workflow-controlled tool calls",
-      );
+      const result = await run.start();
+
+      expect(result.state).toBe("completed");
+      expect(modelCalls).toBe(2);
+      expect(executed).toBe(false);
+      expect(
+        run.events.all().find((event) => event.type === "workflow_hook.blocked")
+          ?.payload,
+      ).toMatchObject({
+        hookName: "generated-block",
+        reason: "generated files are locked",
+      });
+      expect(
+        run.events.all().some((event) => {
+          if (event.type !== "workflow_hook.failed") return false;
+          return JSON.stringify(event.payload).includes(
+            "configured PreToolUse hooks cannot rewrite workflow-controlled tool calls",
+          );
+        }),
+      ).toBe(false);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }

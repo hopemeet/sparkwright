@@ -234,7 +234,10 @@ Does not own:
   longer resolves legacy lifecycle aliases or owns a workflow-hook observe mode.
   Block/advance/rewrite effects are lifecycle-specific: `advance` is a healthy
   continuation for `ModelOutput` and `Stop` that emits `workflow_hook.completed`
-  instead of `workflow_hook.blocked`. Host-owned
+  instead of `workflow_hook.blocked`. Tool-call `PreToolUse` is two-stage:
+  rewrite hooks run first, core applies argument rewrites, then governance hooks
+  see the rewritten payload before budget, repeat, policy, approval, and
+  execution. Host-owned
   `capabilities.hooks.events` uses the user-hook event lane outside the awaited
   workflow hook executor. `RunHook.beforeToolCall.skip` and `ValidationHook`
   remain supported lower-level seams for embedders, telemetry, workspace-write
@@ -298,6 +301,37 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:08:34+0800
+- Scope: P10a D20 two-stage `PreToolUse`: core keeps canonical lifecycle names
+  while splitting tool-call hook execution into rewrite and governance passes so
+  rewritten arguments are checked before budget/policy/approval/execution.
+- Read: `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`,
+  `packages/core/src/index.ts`, `packages/core/test/workflow-hooks.test.ts`,
+  `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/workflow-hooks.test.ts -t "PreToolUse|workflowHooks"`; `npm
+  --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/core run build`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "PreToolUse|blocks tools outside|configured
+  PreToolUse"`; `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` stayed in host workflow projection and agent-runtime
+  durable state. Core workflow hook lifecycle, run events, FactLedger, policy,
+  checkpoint, and trace storage semantics were not changed.
+- Read: `packages/core/src/run.ts`,
+  `packages/core/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-04T22:20:04+0800

@@ -10,6 +10,8 @@ See [workspace-writes.md](workspace-writes.md) and [../../modules/coding-tools.m
 ## Main Files
 
 - `packages/host/src/shell.ts`
+- `packages/host/src/traced-process-runner.ts`
+- `packages/host/src/workflow-node-api.ts`
 - `packages/host/src/workspace-snapshot.ts`
 - `packages/shell-tool/src/*`
 - `packages/shell-sandbox/src/*`
@@ -55,6 +57,10 @@ model calls shell tool
   distinguishable.
 - Shell mutation audit uses `workspace-snapshot.ts` for snapshot/diff/rollback;
   the same host primitive is reused by MCP side-effect detection.
+- Shell mutation audit excludes SparkWright runtime control-plane state such as
+  `.sparkwright/sessions/` and `.sparkwright/workflow-runs/` so host-owned
+  session traces and durable workflow state are not reported as model shell
+  mutations.
 - Configured in-process delegates can select `shell`, but shell remains gated
   by the parent run's write-enabled policy; capability descriptors should mark
   this with `gatedByRunWrite` rather than attempting command-specific read-only
@@ -81,6 +87,13 @@ model calls shell tool
 - Promoted shell tasks keep `task.*` as their trace lifecycle; stdout/stderr are
   buffered in `TaskStore`, mirrored as `task.output`, and summarized on the
   terminal task event through `ProcessOutputSummary`.
+- Workflow P4 script processes reuse the host process/sandbox substrate rather
+  than defining a second runner. `workflow-node-api.ts` maps script execution
+  into `TracedProcessRunner.runJsonRpc()` with shell-sandbox policy inputs,
+  stdout reserved for newline-delimited JSON-RPC, and stderr reserved for
+  progress/telemetry. Script requests for governed command side effects go back
+  through the host node API (`invoke(type:"command")`) instead of granting the
+  script a raw shell capability.
 
 ## Consumers
 
@@ -101,6 +114,80 @@ model calls shell tool
 - Shell is powerful and cross-cuts workspace, tasks, trace, and capability state.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 safety boundary: workspace mutation audit
+  now excludes workspace `.sparkwright/workflow-runs/` alongside session
+  runtime state. Shell execution, classification, approval, sandbox clamps, and
+  process runners were not changed.
+- Read: `packages/host/src/workspace-snapshot.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/tools.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "runtime control-plane files"`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: offline `workflow shadow`
+  compares historical shell command strings against workflow declarations but
+  does not execute shell, classify commands, request approvals, change
+  sandbox/access clamps, or add a shell runner.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: not run for live shell behavior; P8a made no shell execution semantic
+  change. Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review routed-page check: branch
+  validation and delegate_parallel infra-error handling changed host workflow
+  projection only. Parallel command/script branches still reuse existing command
+  hook execution, `workflow-node-api.ts`, `TracedProcessRunner`,
+  shell-sandbox clamps, and run write gates; no shell runner, sandbox tier, or
+  direct script capability path was added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Read-only
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: parallel command/script
+  branches reuse existing command hook execution, `workflow-node-api.ts`,
+  `TracedProcessRunner`, shell-sandbox clamps, and run write gates. P5 adds no
+  new shell runner, sandbox tier, or direct script capability path.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 shell/process safety: stdio script node
+  execution reuses `TracedProcessRunner` and shell-sandbox access clamps, while
+  governed command effects stay host-mediated through the node API.
+- Read: `packages/host/src/traced-process-runner.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/external-command-agent.ts`,
+  `packages/host/test/traced-process-runner.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/traced-process-runner.test.ts test/workflow-hooks.test.ts
+  test/external-command-agent.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-02T01:15:00+0800

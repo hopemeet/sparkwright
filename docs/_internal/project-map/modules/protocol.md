@@ -182,6 +182,68 @@ Does not own:
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a protocol/docs boundary: workflow records now
+  describe workspace-root fresh storage plus legacy session-root compatibility
+  in `HOST_PROTOCOL.md`, but `workflow.list` / `workflow.resume` request and
+  response payload shapes, host-event vocabulary, and capability advertisement
+  remain unchanged.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/protocol.test.ts -t
+  "workflow"`; `npm --workspace @sparkwright/cli run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` is a CLI
+  and host-helper-only offline report. Host protocol request/response shapes,
+  workflow list/resume payloads, capability snapshot schema, host-event
+  vocabulary, and raw trace event vocabulary remain unchanged.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/protocol/src/index.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for protocol behavior; P8a made no protocol semantic change.
+  Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review routed-page check: explicit
+  `parallel.onPass`, branch-verifier rejection, delegate_parallel infra-error
+  fail-closed behavior, and workflow-store lease event cleanup are host/store
+  internals. Host protocol requests/responses, workflow list/resume payloads,
+  capability snapshot schema, and host-event vocabulary remain unchanged.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/protocol/src/index.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "lease"`.
+
+- Status: Read-only
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` changes are host asset/projection and
+  `WorkflowRunRecord` store internals. Host protocol request/response shapes,
+  workflow list/resume payloads, and capability snapshot schema remain
+  unchanged by the P5 fail-closed/join-source hardening.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a protocol check: actor episode driver
   inversion and `startSupervisedRunChain()` deletion require no new request,

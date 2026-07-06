@@ -571,6 +571,13 @@ Lifecycle effects:
 | `RunEnd`        | Current call sites are fire-and-forget; a block can emit hook lifecycle events but does not change the already-terminal run result. | Unsupported.                                                                                          | No current effect.                                                                          |
 | `RuntimeSignal` | Can fail or stop the run when called from an awaited runtime-signal gate.                                                           | Unsupported.                                                                                          | No current effect.                                                                          |
 
+For tool calls, `PreToolUse` is a two-stage awaited gate. Rewrite-capable hooks
+run first, core applies argument rewrites, and governance/block hooks then see
+the rewritten arguments before budget, repeat, policy, approval, and tool
+execution checks. The tool name is not rewritten. Unmarked in-process
+`WorkflowHook` objects participate in the rewrite pass for compatibility;
+hosts can mark their generated hooks for the governance pass.
+
 Hooks are wired with `createRun({ workflowHooks: [...] })`. Each hook can
 carry a matcher so broad lifecycle names remain usable without adding many
 micro-hooks:
@@ -636,6 +643,9 @@ as a `WorkflowHookResult`. This lets a sandboxed command produce `block`,
 same core result protocol. Omit it, or use `exitCode`, to keep the legacy
 exit-code behavior. When `stdoutJson` is enabled, stdout is reserved for the
 final control JSON; progress belongs on stderr through the helper/wire protocol.
+For configured `PreToolUse`, result-producing command/HTTP/agent actions run in
+the rewrite pass, while static block/context actions run in the governance pass
+and therefore match the rewritten arguments.
 
 Workflow hook actions can also call `http(s)` endpoints (`type: "http"`) or
 configured delegate agents (`type: "agent"`). HTTP actions can parse

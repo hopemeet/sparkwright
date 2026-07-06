@@ -22,6 +22,11 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/workflow-hooks.ts`
 - `packages/host/src/invariant-projection.ts`
 - `packages/host/src/workflows.ts`
+- `packages/host/src/workflow-projection.ts`
+- `packages/host/src/workflow-node-api.ts`
+- `packages/host/src/workflow-distill.ts`
+- `packages/host/src/workflow-shadow.ts`
+- `packages/host/src/workflow-trace-observation.ts`
 - `packages/host/src/active-rules.ts`
 - `packages/host/src/traced-process-runner.ts`
 - `packages/host/src/acp-child-agent.ts`
@@ -216,16 +221,19 @@ Does not own:
   PreToolUse block-only clamps, Stop verifier gates over the core FactLedger,
   `workflow.*` lifecycle events, and runtime interruption facts. It delegates
   transition decisions to the portable agent-runtime state machine.
-- P2 workflow runs are durable host-orchestrated records. Host acquires the
-  workflow run's single-writer lease before fresh record creation or resume, then
-  writes a `FileWorkflowStore` record under
-  `<sessionRoot>/<sessionId>/workflow-runs/`, pins the compiled workflow
-  definition snapshot, persists projection snapshots into current node,
-  attempts, verdict/transition logs, and run/fact evidence refs, refreshes a
-  single-writer lease while the run chain is active, and releases the lease on
-  terminal/rejected paths. `workflow resume` uses the pinned definition, not
-  the live asset folder, and `verifyOnResume` re-runs verifier nodes whose
-  latest stored verdict is passed before trusting the stored position.
+- Workflow runs are durable host-orchestrated records. After P9a, fresh runs
+  write `FileWorkflowStore` records under the workspace-level
+  `.sparkwright/workflow-runs/` store while retaining `sessionId` on each
+  record; legacy `<sessionRoot>/<sessionId>/workflow-runs/` records remain
+  list/resume compatible. Host acquires the workflow run's single-writer lease
+  before fresh record creation or resume, pins the compiled workflow definition
+  snapshot, persists projection snapshots into current node, attempts,
+  verdict/transition logs, and run/fact evidence refs, refreshes a single-writer
+  lease while the run chain is active, and releases the lease on terminal/
+  rejected paths. `workflow resume` uses the pinned definition and the located
+  store, not the live asset folder or a reconstructed session-root store;
+  `verifyOnResume` re-runs verifier nodes whose latest stored verdict is passed
+  before trusting the stored position.
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
@@ -262,6 +270,64 @@ Does not own:
   workflow episode catalogs must omit `workflow_start` by default. Future
   spawn-shaped support must first join the unified task lifecycle and enforce
   explicit recursion depth plus access clamping.
+- P4 script nodes are host-owned non-model workflow nodes. `workflows.ts`
+  parses `execute: script` plus asset-local `script.path` / args / env / cwd /
+  stdin / timeouts / output caps / declared capabilities, and pins
+  `WorkflowDefinition.sourcePath` / `sourceDir` into the durable definition
+  snapshot so resumed runs execute the pinned asset-local script path rather
+  than rediscovering live asset state. `workflow-projection.ts` drains the node
+  through `workflow-node-api.ts`, which runs a stdio JSON-RPC child through
+  `TracedProcessRunner.runJsonRpc()`: stdout is RPC only, stderr remains
+  telemetry/progress, and scripts report effects through host API methods such
+  as `progress`, `getEvidence(nodeId)`, governed `invoke(type:"command")`,
+  `complete`, and `fail`. Script-declared write capability is fail-closed when
+  the parent run lacks `shouldWrite`; scripts do not write trace directly and do
+  not receive raw host capabilities.
+- P4 keeps node-boundary compaction and retry-time model escalation out of
+  host execution. There is still no `workflow_start` tool; script nodes do not
+  introduce an expression language, and data flow between nodes remains
+  explicit host `getEvidence(nodeId)` over recorded evidence refs.
+- P5 `parallel` / `join` nodes remain host projection behavior over durable
+  workflow state. `workflows.ts` parses explicit `parallel.branches`,
+  `parallel.maxConcurrency`, and `join.waitFor`; `workflow-projection.ts`
+  executes only non-model branch nodes (`command`, `delegate`, `task`,
+  `script`), persists branch verdict/evidence in
+  `WorkflowRunRecord.parallelBranches`, and lets `join` read that state without
+  re-running branches. `parallel` requires explicit `onPass` and rejects pass
+  edges into its own branch set, so adjacency cannot fall through into branch
+  execution. P5 rejects branch-local `verify` declarations because branch Stop
+  verifiers are not wired. `parallel` preserves branch `runtime_error` and
+  delegate_parallel infrastructure crashes as fail-closed node verdicts; `join`
+  requires each waited branch to have one producer and rejects stale
+  `sourceNodeId` state. Branch-local transitions are not interpreted in P5;
+  only the `parallel` / `join` node verdicts advance through
+  `advanceWorkflowState()`. All-delegate fan-out must call the existing
+  `delegate_parallel` tool and is batched by `maxConcurrency`; P5 does not add a
+  workflow scheduler, branch cancellation bus, nested parallel, human/model
+  branches, branch verifier execution, or `workflow_start`.
+- P6b `todo_clear` is a host-evaluated workflow verifier. `workflows.ts` parses
+  the portable verifier declaration; `runtime.ts` supplies a provider for the
+  current session's `todo.md`; `workflow-projection.ts` reads that provider at
+  Stop, passes only when no unfinished todo items remain, records summary
+  metadata/evidence refs, and fail-closes missing or unreadable providers as
+  runtime errors. It does not replace the todo supervisor continuation audit or
+  add FactLedger todo state.
+- P7a `workflow-distill.ts` is a read-only deterministic session-trace
+  distiller. It consumes existing trace events, derives observed tools/paths/
+  post-write verification commands, and renders a review-first workflow draft.
+  It does not write workflow assets, create skill-evolution proposals, mutate
+  traces, or add protocol/TUI runtime behavior.
+- P8a `workflow-shadow.ts` is a read-only deterministic offline coverage
+  reporter. It compares an existing workflow asset against an existing session
+  trace using the shared `workflow-trace-observation.ts` extraction path and
+  reports matched/missing/unobserved coverage for observed tools, writes,
+  `diff_scope`, command-verifier-like shell commands, and `todo_clear`. It does
+  not instantiate workflows, write workflow-run records, mutate traces, execute
+  nodes, or add live protocol/TUI shadow telemetry.
+- `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
+  by stdio JSON-RPC process progress and by the external-command delegate. Keep
+  future process integrations on this shared runner/sampler path rather than
+  rebuilding local stdout/stderr progress collectors.
 - P3 Step 2 supervised projection supports non-model `command`, `delegate`, and
   `task` nodes at host-owned node boundaries. `workflows.ts` parses explicit
   node runner fields plus `diff_scope`; `workflow-projection.ts` drains
@@ -461,6 +527,9 @@ Does not own:
   command `stdoutJson`, HTTP
   `responseJson`, and agent `workflowResult` paths for returning core
   `WorkflowHookResult` values; malformed results follow the hook `onError` path.
+  Result-producing configured `PreToolUse` hooks are tagged for the rewrite
+  pass, static block/context hooks for the governance pass, and the workflow
+  projection tool clamp also runs in governance so it sees rewritten arguments.
 - Workflow action results are gated by `enforceWorkflowHookEffect`, which rejects
   lifecycle-illegal effects before they reach core: `rewrite` only at
   `PreToolUse`, `advance` only at `ModelOutput` / `Stop`, `block` at every
@@ -630,6 +699,149 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:08:34+0800
+- Scope: P10a D20 host hook assembly: configured result-producing `PreToolUse`
+  actions run in the rewrite pass, configured static block/context actions and
+  the workflow projection clamp run in governance, and active-workflow
+  configured rewrites are no longer rejected before core staging.
+- Read: `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`,
+  `docs/reference/EXTENSION_INTERFACES.md`,
+  `docs/guides/CONFIGURATION.md`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/workflow-hooks.test.ts -t "PreToolUse|workflowHooks"`; `npm
+  --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/core run build`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "PreToolUse|blocks tools outside|configured
+  PreToolUse"`; `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T22:37:13+0800
+- Scope: workflow-runtime-v1 P9a host boundary: fresh workflow runs now persist
+  in workspace-level `.sparkwright/workflow-runs`, while list/resume continue to
+  read legacy session-root stores. Resume carries the located store through the
+  actor episode path; protocol/TUI payloads, notification outbox location,
+  session trace/todo paths, and workflow_start remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workspace-snapshot.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/tools.test.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "workflow"`; `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "runtime control-plane files"`; `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "workflow"`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a host boundary: offline `workflow-shadow.ts`
+  reads workflow assets and session traces, reuses
+  `workflow-trace-observation.ts`, and emits coverage reports without starting
+  runs, writing workflow state, mutating traces, or adding protocol/TUI/live
+  hook behavior.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/index.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; `npm
+  --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`.
+
+- Status: Verified
+- Date: 2026-07-05T22:04:23+0800
+- Scope: workflow-runtime-v1 P7a host boundary: deterministic
+  `workflow-distill.ts` reads session traces and renders review-first workflow
+  markdown/JSON reports without writing assets, adding model-backed
+  distillation, mutating traces, or changing runtime/protocol behavior.
+- Read: `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/index.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-distill.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T21:51:25+0800
+- Scope: workflow-runtime-v1 P6b host boundary: `todo_clear` parser,
+  projection evaluation, session todo provider wiring, pass/fail metadata, and
+  missing-provider fail-closed behavior are host-owned. No workflow_start,
+  FactLedger todo state, global invariant, or todo supervisor replacement was
+  added.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "todo_clear|P3 non-model nodes"`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "todo_clear|diff_scope"`; `npm --workspace
+  @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review hardening: host projection now
+  requires explicit `parallel.onPass`, rejects pass edges into branch nodes,
+  rejects branch-local `verify`, maps delegate_parallel infrastructure throws to
+  branch `runtime_error`, and preserves branch diagnostics on runtime terminal
+  failures. No workflow_start, scheduler, branch bus, or protocol surface was
+  added.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`,
+  `docs/_internal/proposals/workflow-runtime-p3-execution.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 host boundary: parser/projection/runtime now
+  own bounded non-model branch fan-out, persisted branch state, join barriers,
+  branch runtime-error fail-closed behavior, and `delegate_parallel` reuse
+  without adding workflow_start or a second scheduler.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 host boundary: script node parsing,
+  asset-local path pinning, stdio JSON-RPC execution, host node API method
+  routing, shell-sandbox reuse, read-only write-capability fail-closed behavior,
+  and shared process progress sampling are host-owned.
+- Read: `packages/host/src/workflows.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/src/traced-process-runner.ts`,
+  `packages/host/src/external-command-agent.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/host/test/traced-process-runner.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts
+  test/traced-process-runner.test.ts test/external-command-agent.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm run
+  release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T13:59:13+0800

@@ -64,6 +64,7 @@ export interface WorkflowRunRecord extends WorkflowAssetPin {
   currentNodeId?: string;
   wait?: WorkflowWaitState;
   attempts: Record<string, number>;
+  parallelBranches?: Record<string, WorkflowParallelBranchState>;
   evidenceRefs: WorkflowEvidenceRef[];
   verdictLog: WorkflowNodeVerdictLogEntry[];
   transitionLog: WorkflowTransitionLogEntry[];
@@ -81,7 +82,10 @@ export type WorkflowNodeExecuteKind =
   | "command"
   | "delegate"
   | "task"
-  | "human";
+  | "human"
+  | "script"
+  | "parallel"
+  | "join";
 
 export type WorkflowVerifierExpectation = "zero" | "nonzero";
 
@@ -124,6 +128,38 @@ export interface WorkflowHumanNodeDefinition {
   metadata?: Record<string, unknown>;
 }
 
+export type WorkflowScriptNodeCapability =
+  | "read"
+  | "write"
+  | "shell"
+  | "network"
+  | "mcp"
+  | "agent"
+  | "task";
+
+export interface WorkflowScriptNodeDefinition {
+  path: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  stdin?: string;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+  capabilities?: WorkflowScriptNodeCapability[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowParallelNodeDefinition {
+  branches: string[];
+  maxConcurrency?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface WorkflowJoinNodeDefinition {
+  waitFor: string[];
+  metadata?: Record<string, unknown>;
+}
+
 export interface WorkflowCommandVerifierDefinition {
   id: string;
   kind: "command";
@@ -149,9 +185,16 @@ export interface WorkflowDiffScopeVerifierDefinition {
   metadata?: Record<string, unknown>;
 }
 
+export interface WorkflowTodoClearVerifierDefinition {
+  id: string;
+  kind: "todo_clear";
+  metadata?: Record<string, unknown>;
+}
+
 export type WorkflowVerifierDefinition =
   | WorkflowCommandVerifierDefinition
-  | WorkflowDiffScopeVerifierDefinition;
+  | WorkflowDiffScopeVerifierDefinition
+  | WorkflowTodoClearVerifierDefinition;
 
 export type WorkflowTransitionDefinition =
   | string
@@ -178,6 +221,9 @@ export interface WorkflowNodeDefinition {
   delegate?: WorkflowDelegateNodeDefinition;
   task?: WorkflowTaskNodeDefinition;
   human?: WorkflowHumanNodeDefinition;
+  script?: WorkflowScriptNodeDefinition;
+  parallel?: WorkflowParallelNodeDefinition;
+  join?: WorkflowJoinNodeDefinition;
   verify?: WorkflowVerifierDefinition[];
   onPass?: WorkflowTransitionDefinition;
   onFail?: WorkflowTransitionDefinition;
@@ -185,6 +231,8 @@ export interface WorkflowNodeDefinition {
 }
 
 export interface WorkflowDefinition extends WorkflowAssetPin {
+  sourcePath?: string;
+  sourceDir?: string;
   description?: string;
   nodes: WorkflowNodeDefinition[];
   config?: Record<string, unknown>;
@@ -199,10 +247,28 @@ export interface WorkflowRuntimeFailure {
   metadata?: Record<string, unknown>;
 }
 
+export type WorkflowParallelBranchStatus =
+  | "passed"
+  | "failed"
+  | "runtime_error";
+
+export interface WorkflowParallelBranchState {
+  /** @reserved Public workflow branch provenance consumed by resume diagnostics and future workflow UIs. */
+  sourceNodeId: string;
+  nodeId: string;
+  attempt: number;
+  status: WorkflowParallelBranchStatus;
+  verdict: WorkflowNodeVerdict;
+  evidenceRefs?: WorkflowEvidenceRef[];
+  completedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface WorkflowRuntimeState {
   status: WorkflowRuntimeStatus;
   currentNodeId?: string;
   attempts: Record<string, number>;
+  parallelBranches?: Record<string, WorkflowParallelBranchState>;
   transitionLog: WorkflowTransitionLogEntry[];
   failure?: WorkflowRuntimeFailure;
 }

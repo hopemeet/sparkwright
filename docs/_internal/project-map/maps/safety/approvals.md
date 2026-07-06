@@ -85,6 +85,18 @@ policy requires approval
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` is an
+  offline trace/asset report and does not start runs, request approvals, change
+  run access fields, or execute workflow command/script nodes.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for approval-specific behavior; P8a made no approval semantic
+  change. Focused shadow gates passed in host/CLI.
+
+- Status: Read-only
 - Date: 2026-07-05T00:42:02+0800
 - Scope: workflow-runtime-v1 P2 routing check: `workflow resume` reuses normal
   host run access/approval fields and single-writer workflow leases, but adds

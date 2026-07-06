@@ -19,6 +19,7 @@ import type {
   WorkflowAssetPin,
   WorkflowEvidenceRef,
   WorkflowNodeVerdict,
+  WorkflowParallelBranchState,
   WorkflowNodeVerdictLogEntry,
   WorkflowResumePolicy,
   WorkflowRunFailure,
@@ -40,6 +41,7 @@ export interface CreateWorkflowRunRecordInput extends WorkflowAssetPin {
   runIds?: WorkflowRunRecord["runIds"];
   currentNodeId?: string;
   attempts?: Record<string, number>;
+  parallelBranches?: WorkflowRunRecord["parallelBranches"];
   evidenceRefs?: WorkflowEvidenceRef[];
   verdictLog?: WorkflowNodeVerdictLogEntry[];
   transitionLog?: WorkflowTransitionLogEntry[];
@@ -59,6 +61,7 @@ export interface WorkflowRunRecordPatch {
   wait?: WorkflowWaitState;
   clearWait?: boolean;
   attempts?: Record<string, number>;
+  parallelBranches?: WorkflowRunRecord["parallelBranches"];
   evidenceRefs?: WorkflowEvidenceRef[];
   verdictLog?: WorkflowNodeVerdictLogEntry[];
   transitionLog?: WorkflowTransitionLogEntry[];
@@ -95,7 +98,7 @@ export interface WorkflowStore {
 }
 
 export interface FileWorkflowStoreOptions {
-  /** Directory containing workflow run snapshots/logs for one session. */
+  /** Directory containing workflow run snapshots/logs. */
   rootDir: string;
   /** Create the root eagerly. Set false for read-only inspection commands. */
   createRoot?: boolean;
@@ -135,6 +138,9 @@ export class FileWorkflowStore implements WorkflowStore {
       status: "running",
       ...(input.currentNodeId ? { currentNodeId: input.currentNodeId } : {}),
       attempts: { ...(input.attempts ?? {}) },
+      ...(input.parallelBranches
+        ? { parallelBranches: cloneParallelBranches(input.parallelBranches) }
+        : {}),
       evidenceRefs: [...(input.evidenceRefs ?? [])],
       verdictLog: [...(input.verdictLog ?? [])],
       transitionLog: [...(input.transitionLog ?? [])],
@@ -213,6 +219,9 @@ export class FileWorkflowStore implements WorkflowStore {
         : {}),
       ...(wait ? { wait } : { wait: undefined }),
       ...(patch.attempts ? { attempts: { ...patch.attempts } } : {}),
+      ...(patch.parallelBranches
+        ? { parallelBranches: cloneParallelBranches(patch.parallelBranches) }
+        : {}),
       ...(patch.evidenceRefs
         ? { evidenceRefs: patch.evidenceRefs.map(cloneEvidenceRef) }
         : {}),
@@ -299,14 +308,16 @@ export class FileWorkflowStore implements WorkflowStore {
       if (!lease) return null;
       const record = this.records.get(id);
       const at = options.now?.().toISOString() ?? new Date().toISOString();
-      this.appendEvent({
-        at,
-        type: "adopted",
-        workflowRunId: id,
-        parentRunId: record?.parentRunId,
-        status: record?.status ?? "running",
-        metadata: { owner: lease.owner, token: lease.token },
-      });
+      if (record) {
+        this.appendEvent({
+          at,
+          type: "adopted",
+          workflowRunId: id,
+          parentRunId: record.parentRunId,
+          status: record.status,
+          metadata: { owner: lease.owner, token: lease.token },
+        });
+      }
       return {
         ...lease,
         release: async () => {
@@ -314,7 +325,7 @@ export class FileWorkflowStore implements WorkflowStore {
           if (released) {
             const latest = this.records.get(id);
             this.appendEvent({
-              at: new Date().toISOString(),
+              at: options.now?.().toISOString() ?? new Date().toISOString(),
               type: "released",
               workflowRunId: id,
               parentRunId: latest?.parentRunId,
@@ -363,6 +374,12 @@ export function workflowRunsDir(input: {
   sessionId: string;
 }): string {
   return join(input.sessionRootDir, input.sessionId, "workflow-runs");
+}
+
+export function workspaceWorkflowRunsDir(input: {
+  workspaceRoot: string;
+}): string {
+  return join(input.workspaceRoot, ".sparkwright", "workflow-runs");
 }
 
 export function assertSafeWorkflowRunId(id: WorkflowRunId): void {
@@ -421,6 +438,9 @@ function parseWorkflowRunRecord(raw: unknown): WorkflowRunRecord {
           ),
         )
       : {},
+    ...(isRecord(raw.parallelBranches)
+      ? { parallelBranches: parseParallelBranches(raw.parallelBranches) }
+      : {}),
     evidenceRefs: Array.isArray(raw.evidenceRefs)
       ? raw.evidenceRefs.filter(isRecord).map(parseEvidenceRef)
       : [],
@@ -506,6 +526,9 @@ function cloneRecord(record: WorkflowRunRecord): WorkflowRunRecord {
     ...record,
     runIds: [...record.runIds],
     attempts: { ...record.attempts },
+    parallelBranches: record.parallelBranches
+      ? cloneParallelBranches(record.parallelBranches)
+      : undefined,
     evidenceRefs: record.evidenceRefs.map(cloneEvidenceRef),
     verdictLog: record.verdictLog.map(cloneVerdictLogEntry),
     transitionLog: record.transitionLog.map(cloneTransitionLogEntry),
@@ -548,6 +571,62 @@ function waitKind(value: unknown): WorkflowWaitState["kind"] {
     return value;
   }
   throw new Error("workflow wait.kind must be input, task, or approval");
+}
+
+function cloneParallelBranches(
+  branches: Record<string, WorkflowParallelBranchState>,
+): Record<string, WorkflowParallelBranchState> {
+  return Object.fromEntries(
+    Object.entries(branches).map(([key, branch]) => [
+      key,
+      {
+        ...branch,
+        verdict: cloneJsonLike(branch.verdict),
+        evidenceRefs: branch.evidenceRefs?.map(cloneEvidenceRef),
+        metadata: branch.metadata ? { ...branch.metadata } : undefined,
+      },
+    ]),
+  );
+}
+
+function parseParallelBranches(
+  raw: Record<string, unknown>,
+): Record<string, WorkflowParallelBranchState> {
+  return Object.fromEntries(
+    Object.entries(raw)
+      .filter((entry): entry is [string, Record<string, unknown>] =>
+        isRecord(entry[1]),
+      )
+      .map(([key, branch]) => [
+        key,
+        {
+          sourceNodeId: stringField(branch, "sourceNodeId"),
+          nodeId: stringField(branch, "nodeId"),
+          attempt:
+            typeof branch.attempt === "number" && branch.attempt > 0
+              ? branch.attempt
+              : 1,
+          status: parallelBranchStatus(branch.status),
+          verdict: cloneJsonLike(branch.verdict) as WorkflowNodeVerdict,
+          evidenceRefs: Array.isArray(branch.evidenceRefs)
+            ? branch.evidenceRefs.filter(isRecord).map(parseEvidenceRef)
+            : undefined,
+          completedAt: stringField(branch, "completedAt"),
+          ...(isRecord(branch.metadata)
+            ? { metadata: { ...branch.metadata } }
+            : {}),
+        },
+      ]),
+  );
+}
+
+function parallelBranchStatus(
+  value: unknown,
+): WorkflowParallelBranchState["status"] {
+  if (value === "passed" || value === "failed" || value === "runtime_error") {
+    return value;
+  }
+  throw new Error("workflow parallel branch status is invalid");
 }
 
 function cloneEvidenceRef(ref: WorkflowEvidenceRef): WorkflowEvidenceRef {

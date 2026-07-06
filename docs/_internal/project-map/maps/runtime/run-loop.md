@@ -121,11 +121,13 @@ createRun/resumeRunFromCheckpoint
   because its results (`block`/`advance`/`rewrite`/`continue` context)
   deterministically steer the loop — you cannot block a `Stop`, advance a
   healthy `ModelOutput`/`Stop` continuation, rewrite `PreToolUse` arguments, or
-  inject context without the result before proceeding. A host `agent` workflow
-  action therefore runs a full sub-agent synchronously inside that gate and
-  spends foreground run time; non-blocking automation must use event hooks
-  instead. Guards live in the host (`enforceWorkflowHookEffect`, agent reentrancy
-  and Stop-block dedupe); see [../../modules/host.md](../../modules/host.md).
+  inject context without the result before proceeding. Tool-call `PreToolUse`
+  runs as rewrite -> apply argument rewrites -> governance, then proceeds to
+  budget/repeat/policy/approval/execution. A host `agent` workflow action
+  therefore runs a full sub-agent synchronously inside that gate and spends
+  foreground run time; non-blocking automation must use event hooks instead.
+  Guards live in the host (`enforceWorkflowHookEffect`, agent reentrancy and
+  Stop-block dedupe); see [../../modules/host.md](../../modules/host.md).
 - The opt-in `delegate_parallel` fan-out path is still a normal foreground tool
   call from the core run loop's perspective. The parent observes one
   `tool.*` lifecycle for the fan-out request, while host/agent-runtime child
@@ -183,6 +185,29 @@ createRun/resumeRunFromCheckpoint
   only enforces an ordinary worker run budget and emits ordinary usage/outcome
   facts. Retry-time model escalation needs a future model-node boundary split
   that starts a new worker episode; it is not a new in-loop mutation.
+- P4 script nodes also keep core workflow-unaware. Host projection drains a
+  script node before the next model boundary and records verdict/evidence into
+  `WorkflowRunRecord`; core only sees ordinary workflow-hook advances, blocks,
+  and forced-continuation budget events. The script stdio node API reads prior
+  node evidence through host-owned `getEvidence(nodeId)`; there is no expression
+  language, no direct trace writer in the script, and no node-boundary
+  compaction trigger in this slice.
+- P5 bounded `parallel` / `join` also stays outside core loop semantics. Host
+  projection drains the non-model parallel node, records branch verdict/evidence
+  in `WorkflowRunRecord.parallelBranches`, preserves branch runtime errors as
+  fail-closed node verdicts, rejects branch-local verifiers that are not wired
+  in P5, and drains `join` by reading durable state from the unique producer
+  parallel node. `parallel` requires explicit `onPass` so the portable state
+  machine's default next-node transition cannot fall through into branch
+  execution. Core still observes normal awaited workflow hooks,
+  `advance`/`block` results, and the existing workflow forced-continuation
+  source; there is no branch scheduler, branch cancellation bus, or multiple
+  concurrent model episode loop inside core.
+- P9a D5 workspace-root workflow storage also stays host-side. Fresh
+  `WorkflowRunRecord` files move to workspace `.sparkwright/workflow-runs/`,
+  list/resume still read legacy session-local stores, and the resumed worker
+  episode still enters core as an ordinary run with the pinned workflow
+  definition.
 
 ## Consumers
 
@@ -204,6 +229,97 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-05T23:08:34+0800
+- Scope: P10a D20 run-loop ordering: tool-call `PreToolUse` now awaits a
+  rewrite pass and a governance pass before budget, repeat, policy, approval,
+  and execution; hook lifecycle names and event families remain unchanged.
+- Read: `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`,
+  `packages/core/test/workflow-hooks.test.ts`,
+  `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test --
+  test/workflow-hooks.test.ts -t "PreToolUse|workflowHooks"`; `npm
+  --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/core run build`; `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "PreToolUse|blocks tools outside|configured
+  PreToolUse"`; `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 run-loop boundary: moving fresh workflow
+  run records to the workspace store changes host lookup/persistence only.
+  Core `createRun`/resume/checkpoint semantics, workflow hook lifecycle, and
+  forced-continuation budgets remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/protocol.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts -t "workflow"`; `npm --workspace @sparkwright/host
+  test -- test/protocol.test.ts -t "workflow"`; `npm --workspace
+  @sparkwright/host run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-05T22:20:59+0800
+- Scope: workflow-runtime-v1 P8a routed-page check: offline `workflow shadow`
+  does not call `createRun`, instantiate workflow projection hooks, advance
+  workflow runtime state, affect cancellation, or write terminal run outcomes.
+- Read: `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for live run-loop behavior; P8a made no run-loop semantic
+  change. Focused shadow gates passed in host/CLI.
+
+- Status: Verified
+- Date: 2026-07-05T20:18:29+0800
+- Scope: workflow-runtime-v1 P5 post-review run-loop boundary: explicit
+  `parallel.onPass` and branch-verifier validation are host projection
+  constructor rules, delegate_parallel infra errors become workflow node
+  runtime errors through the existing hook path, and runtime terminal failures
+  preserve durable branch diagnostics without adding core loop state.
+- Read: `packages/host/src/workflow-projection.ts`,
+  `packages/agent-runtime/src/workflows/machine.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts -t "parallel|join|delegate_parallel|branch
+  diagnostics"`; `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-hooks.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-05T18:02:15+0800
+- Scope: workflow-runtime-v1 P5 run-loop boundary: bounded parallel/join is
+  host projection plus durable workflow state, including delegate fan-out
+  batching and fail-closed branch runtime errors; core loop/hook lifecycle,
+  workflow forced-continuation budget, and cancellation semantics are unchanged.
+- Read: `packages/core/src/run.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflow-hooks.test.ts
+  -t "parallel|join|delegate_parallel"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts test/workflow-hooks.test.ts`;
+  `npm --workspace @sparkwright/host run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-05T15:31:20+0800
+- Scope: workflow-runtime-v1 P4 run-loop boundary: script node execution is a
+  host projection drain through the stdio node API, while core loop semantics,
+  hook lifecycles, forced-continuation budgets, and compaction timing remain
+  unchanged.
+- Read: `packages/core/src/run.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T12:15:55+0800

@@ -102,6 +102,26 @@ cron config/state
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-05T23:09:50+0800
+- Scope: workflow-runtime-v1 P9a D5 routed-page check: workspace-root workflow
+  run storage does not change cron state, cron tool schemas, scheduler
+  semantics, or cron run success derivation.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: not run for cron-specific behavior; P9a made no cron semantic change.
+
+- Status: Read-only
+- Date: 2026-07-05T16:03:27+0800
+- Scope: workflow-runtime-v1 P5 routed-page check: bounded
+  `parallel` / `join` does not change cron state, cron tool schemas,
+  scheduler semantics, or cron run success derivation.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `docs/_internal/proposals/workflow-runtime-v1.md`.
+- Tests: not run for cron-specific behavior; P5 made no cron semantic change.
+
+- Status: Read-only
 - Date: 2026-07-05T11:36:37+0800
 - Scope: workflow-runtime-v1 P3 Step 4a routing check for
   `packages/host/src/runtime.ts`: actor episode driver inversion does not

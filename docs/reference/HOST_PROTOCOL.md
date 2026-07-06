@@ -267,20 +267,23 @@ host-owned resume attaches them to a newly-created session and returns that
 
 ### `workflow.list`
 
-List durable workflow-run snapshots. Workflow records are stored under the
-owning session root at `workflow-runs/<workflowRunId>.json`; malformed records
-are skipped and reported in `invalidEntries` instead of failing the list.
+List durable workflow-run snapshots. Fresh workflow records are stored under the
+workspace state root at `.sparkwright/workflow-runs/<workflowRunId>.json` and
+retain their `sessionId` in the record. Hosts also read legacy session-root
+records from `<sessionRoot>/<sessionId>/workflow-runs/` for compatibility;
+malformed records are skipped and reported in `invalidEntries` instead of
+failing the list.
 
 Hosts advertise `workflow.list` in `host.ready.capabilities` once durable
 workflow storage is available.
 
 **Payload**
 
-| Field       | Type                                                                       | Required | Notes                                                |
-| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
-| `sessionId` | string                                                                     | no       | Limit the scan to one session.                       |
-| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                       |
-| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort. |
+| Field       | Type                                                                       | Required | Notes                                                                              |
+| ----------- | -------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| `sessionId` | string                                                                     | no       | Filter workspace records by `record.sessionId` and legacy records by session path. |
+| `status`    | `"running"` \| `"waiting"` \| `"completed"` \| `"failed"` \| `"cancelled"` | no       | Filter by workflow-run status.                                                     |
+| `limit`     | integer 1..200                                                             | no       | Maximum snapshots to return after newest-first sort.                               |
 
 **Response result**
 
@@ -347,11 +350,11 @@ workflow resume is available.
 
 **Response result**
 
-| Field           | Type   | Notes                                              |
-| --------------- | ------ | -------------------------------------------------- |
-| `runId`         | string | Active run id for the resumed workflow execution.  |
-| `workflowRunId` | string | Durable workflow instance id from the request.     |
-| `sessionId`     | string | Session that owns the durable workflow-run record. |
+| Field           | Type   | Notes                                             |
+| --------------- | ------ | ------------------------------------------------- |
+| `runId`         | string | Active run id for the resumed workflow execution. |
+| `workflowRunId` | string | Durable workflow instance id from the request.    |
+| `sessionId`     | string | Session recorded on the durable workflow run.     |
 
 The host obtains a single-writer file lease before resuming. If another writer
 already adopted the record, if the record is terminal (`completed`, `failed`, or

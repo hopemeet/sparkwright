@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,7 +70,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function workflowStoreRoot(workspace: string, sessionId: string): string {
+function workflowStoreRoot(workspace: string, _sessionId?: string): string {
+  return join(workspace, ".sparkwright", "workflow-runs");
+}
+
+function legacyWorkflowStoreRoot(workspace: string, sessionId: string): string {
   return join(
     workspace,
     ".sparkwright",
@@ -128,15 +132,15 @@ describe("workflow assets", () => {
     });
 
     expect(report.errors).toEqual([]);
-    expect(report.assets).toHaveLength(1);
-    expect(report.assets[0]).toMatchObject({
+    const bugfix = report.assets.find((asset) => asset.assetName === "bugfix");
+    expect(bugfix).toMatchObject({
       assetName: "bugfix",
       layer: "project",
       version: "1.2.3",
       description: "Fix a bug with evidence.",
       nodeCount: 2,
     });
-    expect(report.assets[0]?.definition.nodes).toEqual([
+    expect(bugfix?.definition.nodes).toEqual([
       {
         id: "reproduce",
         title: "Reproduce",
@@ -151,7 +155,7 @@ describe("workflow assets", () => {
         body: "Patch the code.",
       },
     ]);
-    expect(report.assets[0]?.definition.config).toEqual({
+    expect(bugfix?.definition.config).toEqual({
       modelTiers: { cheap: "deterministic" },
     });
   });
@@ -344,6 +348,192 @@ describe("workflow assets", () => {
     ]);
   });
 
+  it("parses todo_clear verifiers", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "todo-clear",
+      dir: "/tmp/todo-clear",
+      sourcePath: "/tmp/todo-clear/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: finish",
+        "    execute: model",
+        "    verify:",
+        "      - kind: todo_clear",
+        "        name: todos-done",
+        "        metadata:",
+        "          owner: self-hosting",
+        "---",
+        "## finish",
+        "Finish the todo-backed work.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes[0]?.verify).toEqual([
+      {
+        id: "todos-done",
+        kind: "todo_clear",
+        metadata: { owner: "self-hosting" },
+      },
+    ]);
+  });
+
+  it("parses P4 script nodes with asset-local paths and capability declarations", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "scripted-release",
+      dir: "/tmp/scripted-release",
+      sourcePath: "/tmp/scripted-release/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: release-probe",
+        "    execute: script",
+        "    script:",
+        "      path: scripts/release-probe.mjs",
+        "      args: [--focused]",
+        "      cwd: .",
+        "      env:",
+        "        CI: '1'",
+        "      timeoutMs: 120000",
+        "      maxOutputBytes: 32768",
+        "      capabilities: [read, shell, read]",
+        "    onPass: done",
+        "  - id: done",
+        "    execute: model",
+        "---",
+        "## release-probe",
+        "Run the release probe.",
+        "",
+        "## done",
+        "Summarize.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition).toMatchObject({
+      sourceDir: "/tmp/scripted-release",
+      sourcePath: "/tmp/scripted-release/workflow.md",
+    });
+    expect(detail.definition.nodes[0]).toMatchObject({
+      id: "release-probe",
+      execute: "script",
+      script: {
+        path: "scripts/release-probe.mjs",
+        args: ["--focused"],
+        cwd: ".",
+        env: { CI: "1" },
+        timeoutMs: 120000,
+        maxOutputBytes: 32768,
+        capabilities: ["read", "shell"],
+      },
+      onPass: "done",
+    });
+  });
+
+  it("parses P5 parallel and join nodes", () => {
+    const detail = parseWorkflowMarkdownAsset({
+      assetName: "parallel-release",
+      dir: "/tmp/parallel-release",
+      sourcePath: "/tmp/parallel-release/workflow.md",
+      raw: [
+        "---",
+        "nodes:",
+        "  - id: fanout",
+        "    execute: parallel",
+        "    parallel:",
+        "      branches: [lint, types]",
+        "      maxConcurrency: 2",
+        "    onPass: join",
+        "  - id: lint",
+        "    execute: command",
+        "    command:",
+        "      command: npm",
+        "      args: [run, lint]",
+        "      authorized: true",
+        "  - id: types",
+        "    execute: command",
+        "    command:",
+        "      command: npm",
+        "      args: [run, typecheck]",
+        "      authorized: true",
+        "  - id: join",
+        "    execute: join",
+        "    join:",
+        "      waitFor: [lint, types]",
+        "    onPass: done",
+        "  - id: done",
+        "    execute: model",
+        "---",
+        "## fanout",
+        "Run checks.",
+        "",
+        "## done",
+        "Summarize.",
+      ].join("\n"),
+    });
+
+    expect(detail.definition.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "fanout",
+          execute: "parallel",
+          parallel: {
+            branches: ["lint", "types"],
+            maxConcurrency: 2,
+          },
+          onPass: "join",
+        }),
+        expect.objectContaining({
+          id: "join",
+          execute: "join",
+          join: { waitFor: ["lint", "types"] },
+          onPass: "done",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects duplicate parallel branches", () => {
+    expect(() =>
+      parseWorkflowMarkdownAsset({
+        assetName: "parallel-duplicate",
+        dir: "/tmp/parallel-duplicate",
+        sourcePath: "/tmp/parallel-duplicate/workflow.md",
+        raw: [
+          "---",
+          "nodes:",
+          "  - id: fanout",
+          "    execute: parallel",
+          "    parallel:",
+          "      branches: [lint, lint]",
+          "---",
+          "## fanout",
+          "Run checks.",
+        ].join("\n"),
+      }),
+    ).toThrow(/duplicates/);
+  });
+
+  it("rejects script paths that escape the workflow asset", () => {
+    expect(() =>
+      parseWorkflowMarkdownAsset({
+        assetName: "script-escape",
+        dir: "/tmp/script-escape",
+        sourcePath: "/tmp/script-escape/workflow.md",
+        raw: [
+          "---",
+          "nodes:",
+          "  - id: bad",
+          "    execute: script",
+          "    script:",
+          "      path: ../outside.mjs",
+          "---",
+          "## bad",
+          "Nope.",
+        ].join("\n"),
+      }),
+    ).toThrow(/relative path inside the workflow asset/);
+  });
+
   it("keeps stronger workflow layers and records shadows", async () => {
     const workspace = await tempWorkspace();
     const xdg = join(workspace, "xdg");
@@ -364,7 +554,10 @@ describe("workflow assets", () => {
       XDG_CONFIG_HOME: xdg,
     });
 
-    expect(report.assets[0]).toMatchObject({
+    const release = report.assets.find(
+      (asset) => asset.assetName === "release",
+    );
+    expect(release).toMatchObject({
       assetName: "release",
       layer: "project",
       version: "project",
@@ -391,13 +584,15 @@ describe("workflow assets", () => {
 
     expect(inspected).toMatchObject({ ok: true });
     if (!inspected.ok) throw new Error(inspected.error.message);
-    expect(inspected.snapshot.workflows?.assets).toEqual([
-      expect.objectContaining({
-        assetName: "inspectable",
-        version: "0.1",
-        nodeCount: 1,
-      }),
-    ]);
+    expect(inspected.snapshot.workflows?.assets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assetName: "inspectable",
+          version: "0.1",
+          nodeCount: 1,
+        }),
+      ]),
+    );
   });
 
   it("instantiates workflow runs without an experimental release gate", async () => {
@@ -498,6 +693,9 @@ describe("workflow assets", () => {
       kind: "run",
       ref: started.ok ? started.runId : "",
     });
+    await expect(
+      access(legacyWorkflowStoreRoot(workspace, sessionId)),
+    ).rejects.toThrow();
     const notifications = await runtime
       .workflowActorInbox()
       .drain((notification) => notification.source.kind === "workflow");
@@ -1062,13 +1260,7 @@ describe("workflow assets", () => {
       nodes: [{ id: "main", body: "Pinned body." }],
     };
     const store = new FileWorkflowStore({
-      rootDir: join(
-        workspace,
-        ".sparkwright",
-        "sessions",
-        sessionId,
-        "workflow-runs",
-      ),
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
     });
     const workflowRunId = "workflow_resume_pinned" as WorkflowRunId;
     store.create({
@@ -1094,6 +1286,12 @@ describe("workflow assets", () => {
       defaultModel: "deterministic",
       emit: (event) => events.push(event),
     });
+    const listed = await runtime.listWorkflowRuns({ sessionId });
+    expect(listed).toMatchObject({ ok: true });
+    if (!listed.ok) throw new Error(listed.error.message);
+    expect(listed.workflows).toEqual([
+      expect.objectContaining({ id: workflowRunId, sessionId }),
+    ]);
 
     const resumed = await runtime.resumeWorkflowRun({
       workflowRunId,
@@ -1103,7 +1301,7 @@ describe("workflow assets", () => {
     expect(resumed).toMatchObject({ ok: true, workflowRunId, sessionId });
     await waitForHostEvent(events, (event) => event.kind === "run.completed");
     const record = new FileWorkflowStore({
-      rootDir: workflowStoreRoot(workspace, sessionId),
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
       createRoot: false,
     }).get(workflowRunId);
 

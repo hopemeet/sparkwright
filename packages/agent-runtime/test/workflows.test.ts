@@ -9,7 +9,9 @@ import {
   createInitialWorkflowRuntimeState,
   FileWorkflowStore,
   runWorkflowRunChain,
+  workspaceWorkflowRunsDir,
   WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+  workflowRunsDir,
   validateWorkflowRuntimeDefinition,
   type WorkflowRunId,
   type WorkflowDefinition,
@@ -136,6 +138,43 @@ describe("workflow runtime state machine", () => {
     });
   });
 
+  it("preserves durable parallel branch state across transitions", () => {
+    const definition = workflow([
+      { id: "fanout", body: "Fan out.", onPass: "join" },
+      { id: "join", body: "Join." },
+    ]);
+    const started = createInitialWorkflowRuntimeState(definition);
+
+    const result = advanceWorkflowState({
+      definition,
+      state: {
+        ...started,
+        parallelBranches: {
+          "unit-a": {
+            sourceNodeId: "fanout",
+            nodeId: "unit-a",
+            attempt: 1,
+            status: "passed",
+            verdict: { status: "passed", reason: "branch_passed" },
+            completedAt: "2026-07-04T00:01:30.000Z",
+          },
+        },
+      },
+      verdict: { status: "passed" },
+    });
+
+    expect(result.state).toMatchObject({
+      currentNodeId: "join",
+      parallelBranches: {
+        "unit-a": {
+          sourceNodeId: "fanout",
+          nodeId: "unit-a",
+          status: "passed",
+        },
+      },
+    });
+  });
+
   it("rejects ask_user transition targets while treating human as a normal node id", () => {
     const issues = validateWorkflowRuntimeDefinition(
       workflow([
@@ -198,6 +237,15 @@ describe("workflow run-chain driver", () => {
 });
 
 describe("FileWorkflowStore", () => {
+  it("exposes session legacy and workspace workflow-run roots", () => {
+    expect(
+      workflowRunsDir({ sessionRootDir: "/state/sessions", sessionId: "sess" }),
+    ).toBe(join("/state/sessions", "sess", "workflow-runs"));
+    expect(workspaceWorkflowRunsDir({ workspaceRoot: "/workspace" })).toBe(
+      join("/workspace", ".sparkwright", "workflow-runs"),
+    );
+  });
+
   it("persists workflow run records with pinned definition snapshots", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });
@@ -237,6 +285,24 @@ describe("FileWorkflowStore", () => {
       status: "completed",
       currentNodeId: "patch",
       attempts: { plan: 1, patch: 1 },
+      parallelBranches: {
+        "unit-a": {
+          sourceNodeId: "fanout",
+          nodeId: "unit-a",
+          attempt: 1,
+          status: "passed",
+          verdict: { status: "passed", reason: "branch_passed" },
+          evidenceRefs: [
+            {
+              kind: "run",
+              ref: "run_branch_a",
+              nodeId: "unit-a",
+              metadata: { execute: "command" },
+            },
+          ],
+          completedAt: "2026-07-04T00:01:30.000Z",
+        },
+      },
       transitionLog: [
         {
           at: "2026-07-04T00:01:00.000Z",
@@ -262,6 +328,19 @@ describe("FileWorkflowStore", () => {
       status: "completed",
       completedAt: "2026-07-04T00:02:00.000Z",
       definitionSnapshot: { contentHash: "hash" },
+      parallelBranches: {
+        "unit-a": {
+          sourceNodeId: "fanout",
+          nodeId: "unit-a",
+          status: "passed",
+          evidenceRefs: [
+            expect.objectContaining({
+              ref: "run_branch_a",
+              metadata: { execute: "command" },
+            }),
+          ],
+        },
+      },
     });
     expect(
       JSON.parse(await readFile(join(root, `${id}.json`), "utf8")),
@@ -365,6 +444,40 @@ describe("FileWorkflowStore", () => {
     });
     expect(afterRelease?.owner).toBe("worker-b");
     await afterRelease?.release();
+  });
+
+  it("does not log adoption for fresh pre-create leases and uses the injected release clock", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_fresh_lease" as WorkflowRunId;
+    let now = new Date("2026-07-04T00:00:00.000Z");
+
+    const lease = await store.acquireLease(id, {
+      owner: "fresh-worker",
+      ttlMs: 60_000,
+      now: () => now,
+    });
+    expect(lease).not.toBeNull();
+    expect(store.eventLog(id).events).toEqual([]);
+
+    store.create({
+      id,
+      assetName: "fresh",
+      contentHash: "hash",
+      now: () => "2026-07-04T00:01:00.000Z",
+    });
+    now = new Date("2026-07-04T00:02:00.000Z");
+    expect(await lease?.release()).toBe(true);
+
+    expect(store.eventLog(id).events.map((event) => event.type)).toEqual([
+      "created",
+      "released",
+    ]);
+    expect(store.eventLog(id).events.at(-1)).toMatchObject({
+      at: "2026-07-04T00:02:00.000Z",
+      type: "released",
+      metadata: { owner: "fresh-worker" },
+    });
   });
 
   it("requires waiting records to carry wait.kind and clears wait on terminal", async () => {
