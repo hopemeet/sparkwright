@@ -201,7 +201,11 @@
   `capabilities inspect` 少报 inline-config agents(capability-upgrade
   Phase 1 留尾同源)、`detectSkillLearnTarget` 旁路未删。
   **→ 裁决 2026-07-06:批认领(先做 capabilities inspect inline
-  agents,反哺 C2/C7)。**
+  agents,反哺 C2/C7)。完成 2026-07-06 C10:`capability.inspect`/CLI
+  runtime snapshot 改为报告 resolved inline-config profiles,不再只报告
+  delegate 派生 profile;ACP `--session-root` 在当前基线已落地,本项跳过代码
+  改动并记录;TUI `detectSkillLearnTarget` 自动目标猜测旁路已删除,自动
+  `/skill-learn` drafts 固定进入 `session-learnings`。**
 - **C11|登记在案的债**:workflow 单写 lease 的 TTL 泄漏(backlog)、
   P2 评审遗留 double-cast core debt。
   **→ 裁决 2026-07-06:缓(不打断收口;触发器:下一个触碰 workflow

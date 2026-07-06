@@ -95,6 +95,10 @@ config + workspace capability roots
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
 - `capability.inspect` should report runtime tools from the host catalog so sources/deferred flags match the actual run surface.
+- `CapabilitySnapshot.agents.profiles` is the resolved profile inventory
+  (Agent.md plus inline config) and is broader than configured-delegate
+  callability. Non-delegate or primary profiles can appear in the profile list
+  without appearing as `delegate_*` tools.
 - `CapabilitySnapshot.model.pricing` reports the selected model's cost
   availability before a run finishes. Host model resolution owns the status:
   explicit provider `cost` wins, built-in pricing is second, and otherwise
@@ -195,6 +199,19 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 capability inspection profile inventory: host snapshots and CLI
+  JSON now include resolved inline-config profiles that are not delegate-derived;
+  delegate descriptors remain separate.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "capability inspect|capability inspection"`;
+  `npm --workspace @sparkwright/host run build`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "capabilities inspect|capability inspect|inline-config profiles"`.
 
 - Status: Verified
 - Date: 2026-07-05T23:09:50+0800

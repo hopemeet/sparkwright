@@ -497,10 +497,12 @@ Source-check clarifications:
   from an explicit user instruction to persistent loadable Skill text without a
   separate review click. Capability inspection and docs should say that
   clearly.
-- `session-learnings` is the default sink, but learned drafts can target an
-  existing named Skill when the prompt mentions one and that Skill resolves.
-  There is still no lifecycle that clusters accumulated learnings, proposes
-  promotion into a new named Skill, or archives stale learnings.
+- `session-learnings` is the TUI automatic-learning sink. C10 deleted the
+  prompt-text `detectSkillLearnTarget` guesser, so automatic `/skill-learn`
+  drafts no longer infer an existing named Skill from prose; explicit update
+  paths can still pass a target name into the proposal helper. There is still no
+  lifecycle that clusters accumulated learnings, proposes promotion into a new
+  named Skill, or archives stale learnings.
 
 ## Review Prompt
 

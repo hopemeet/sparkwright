@@ -196,6 +196,10 @@ Does not own:
 - Capability panels, Skill review metadata, and Skill learn toasts render host
   paths through the shared display-path projection: workspace paths become
   relative and external absolute paths collapse to non-host locators.
+- TUI automatic `/skill-learn` drafts use the conservative notice evidence and
+  active session id only; they no longer infer a target Skill name from prompt
+  text before calling the proposal helper. Named Skill updates stay on explicit
+  `/skill-update` / review flows.
 - `ApprovalPrompt` displays the policy reason when the approval payload does
   not carry a separate human reason, so write-gate escalation explains why the
   user is being asked.
@@ -221,6 +225,17 @@ Does not own:
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 deleted the TUI `detectSkillLearnTarget` automatic target guesser;
+  `/skill-learn` draft/apply automation now writes only the session-learning
+  proposal path unless an explicit caller supplies a target.
+- Read: `packages/tui/src/app.tsx`, `packages/tui/src/lib/skill-learn.ts`,
+  `packages/tui/test/skill-evolution.test.ts`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/skill-evolution.test.ts`.
 
 - Status: Read-only
 - Date: 2026-07-06T19:24:51+0800

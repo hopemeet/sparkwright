@@ -20,6 +20,7 @@ See [../../modules/skills.md](../../modules/skills.md).
 - `packages/skills/src/guard.ts` (`inspectSkill` trust × severity; wired at draft + apply)
 - `packages/host/src/skill-doctor.ts` (`runSkillDoctor` structural validation)
 - `packages/cli/src/cli.ts` (`skills proposals|history|restore`)
+- `packages/tui/src/app.tsx` (`/skill-learn` automatic notice/draft/apply trigger)
 - `packages/tui/src/lib/skill-evolution.ts`, `packages/tui/src/lib/skill-learn.ts`
 - `packages/host/test/skill-evolution.test.ts`, `packages/cli/test/cli.test.ts`
 
@@ -106,6 +107,10 @@ history kinds:   create | update | restore
   Reverse-lookup: `skills proposals list --run <id>` / `--session <id>` filters
   by provenance (`--session` is the global flag, read from `parsed.sessionId`).
   CLI-authored proposals have none.
+- **TUI automatic learning target:** `/skill-learn` notice/draft/apply uses
+  only conservative reuse-signal evidence plus the active session id. It does
+  not infer a target Skill name from prompt text; named Skill updates are
+  explicit `/skill-update` or caller-supplied `targetSkillName` paths.
 - **Run-scoped draft idempotency:** during a model run, repeated `create_skill`
   or `update_skill` drafts for the same skill and run id return the existing
   draft proposal (`changed:false`, `existing:true`) instead of creating another
@@ -156,6 +161,18 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 removed the TUI prompt-text target detector for automatic
+  `/skill-learn` drafts while preserving explicit target support in the proposal
+  helper.
+- Read: `packages/tui/src/app.tsx`, `packages/tui/src/lib/skill-learn.ts`,
+  `packages/tui/test/skill-evolution.test.ts`,
+  `docs/reference/SKILLS.md`,
+  `docs/_internal/proposals/skill-runtime-v1-redesign.md`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/skill-evolution.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-03T12:53:49+0800

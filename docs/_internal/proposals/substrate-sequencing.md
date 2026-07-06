@@ -265,12 +265,14 @@ checkboxes, a recorded date/commit. No process theater.
 ## Tier 3 — pure deletions / fork-closing (small PRs, no design needed)
 
 - ACP entrypoint lacks `--session-root` and writes into the workspace —
-  close the entrypoint fork.
-- `capabilities inspect` under-reports inline-config agents — close the
-  reporting fork.
-- Sweep for neutralized-but-not-deleted code (e.g. the
-  `detectSkillLearnTarget` detector that is bypassed at
-  `createSkillLearnDraftProposal`) and delete rather than bypass.
+  closed in the current baseline: ACP parses `--session-root` and passes it to
+  `HostRuntime`.
+- `capabilities inspect` under-reports inline-config agents — closed
+  2026-07-06 by reporting all resolved profiles in host runtime snapshots,
+  including inline-config profiles that are not delegate-derived.
+- Sweep for neutralized-but-not-deleted code — closed 2026-07-06 for the
+  `detectSkillLearnTarget` detector: the TUI no longer guesses target Skill
+  names from prompts before calling `createSkillLearnDraftProposal`.
 - **Explicit non-goal:** the two run loops (`core.createRun` vs the
   streaming-runtime loop) stay separate. No equivalence work until a real
   convergence customer exists — declared non-convergence is also

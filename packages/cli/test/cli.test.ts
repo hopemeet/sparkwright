@@ -2206,6 +2206,60 @@ describe("runCli", () => {
     );
   });
 
+  it("reports inline-config profiles in runtime capability inspect snapshots", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            profiles: [
+              { id: "main", mode: "primary" },
+              { id: "reviewer", name: "Reviewer", mode: "child" },
+              { id: "auditor", name: "Auditor", mode: "primary" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      runtime?: {
+        agents: {
+          profiles: Array<{ id: string; name?: string; mode?: string }>;
+        };
+      };
+      agents: {
+        profiles: Array<{ id: string; layer: string }>;
+      };
+    };
+    expect(report.agents.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "auditor", layer: "config" }),
+      ]),
+    );
+    expect(report.runtime?.agents.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "auditor",
+          name: "Auditor",
+          mode: "primary",
+        }),
+      ]),
+    );
+  });
+
   it("shows the default tool set in capability inspect", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const output = createOutputCapture();

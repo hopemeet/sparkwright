@@ -508,6 +508,11 @@ Does not own:
   in-process delegates in `agents.delegateTools`; CLI and TUI consume that
   snapshot descriptor instead of maintaining a local in-process delegate
   inventory.
+- `CapabilitySnapshot.agents.profiles` reports the full resolved agent profile
+  inventory from layered Agent.md files plus inline config. It is diagnostic
+  inventory, not callability: primary/non-delegate profiles remain visible here
+  even when only child/all profiles become `delegate_agent` targets or direct
+  `delegate_*` aliases.
 - `capability.inspect` also exposes host-owned `rules.workflow` descriptors for
   configured workflow hooks, verification invariants, and the documented-command
   built-in invariant, plus `rules.events` descriptors for configured
@@ -699,6 +704,19 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 capability inspection: host runtime snapshots now report all
+  resolved inline/file agent profiles in `agents.profiles`, while
+  `agents.delegateTools` remains the separate callability/delegation descriptor
+  list. The ACP `--session-root` path was checked in source and already existed.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/acp-adapter/src/main.ts`, `packages/acp-adapter/src/session.ts`,
+  `packages/acp-adapter/src/agent.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "capability inspect|capability inspection"`;
+  `npm --workspace @sparkwright/host run build`.
 
 - Status: Read-only
 - Date: 2026-07-06T19:24:51+0800

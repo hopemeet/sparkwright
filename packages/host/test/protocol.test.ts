@@ -2519,6 +2519,7 @@ describe("host protocol", () => {
               profiles: [
                 { id: "main", mode: "primary" },
                 { id: "reviewer", name: "Reviewer", mode: "child" },
+                { id: "auditor", name: "Auditor", mode: "primary" },
               ],
               delegateTools: [
                 {
@@ -2606,6 +2607,7 @@ describe("host protocol", () => {
             profiles: [
               { id: "main", mode: "primary" },
               { id: "reviewer", name: "Reviewer", mode: "child" },
+              { id: "auditor", name: "Auditor", mode: "primary" },
             ],
             delegateTools: [
               {

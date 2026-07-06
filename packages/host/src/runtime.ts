@@ -2165,10 +2165,10 @@ export class HostRuntime {
       ),
       mcpStatuses: preparedMcp?.statuses ?? {},
       mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
-      agentProfiles: [
+      agentProfiles: capabilitySnapshotAgentProfiles(
         mainAgent,
-        ...derivedAgents.map((agent) => agent.effectiveProfile),
-      ],
+        resolvedProfiles,
+      ),
       delegateTools: delegateDescriptors,
       shellSandbox,
       shellForegroundTimeoutMs:
@@ -3891,10 +3891,10 @@ export class HostRuntime {
             ]),
           ),
         mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
-        agentProfiles: [
+        agentProfiles: capabilitySnapshotAgentProfiles(
           mainAgent,
-          ...derivedAgents.map((agent) => agent.effectiveProfile),
-        ],
+          resolvedProfiles,
+        ),
         delegateTools: describeConfiguredDelegateTools({
           delegates: delegationTargets,
           derivedAgents,
@@ -5109,6 +5109,16 @@ function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
       (profile) => profile.id === MAIN_AGENT_ID || profile.mode === "primary",
     ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
   );
+}
+
+function capabilitySnapshotAgentProfiles(
+  mainAgent: AgentProfile,
+  profiles: readonly AgentProfile[],
+): AgentProfile[] {
+  const byId = new Map<string, AgentProfile>();
+  byId.set(mainAgent.id, mainAgent);
+  for (const profile of profiles) byId.set(profile.id, profile);
+  return [...byId.values()];
 }
 
 function emitAgentProfileCollisionWarnings(

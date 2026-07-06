@@ -106,6 +106,10 @@ Does not own:
   delegate inventory. Snapshot-less fallback uses the host-resolved delegate
   list so inline profile `delegateTool` hints and explicit delegate config stay
   aligned.
+- CLI JSON preserves both views: `agents.profiles` is the layered/config report,
+  and `runtime.agents.profiles` comes from host `CapabilitySnapshot` and must
+  include inline-config profiles even when they are primary/non-delegate
+  diagnostics rather than callable delegate tools.
 - `doctor paths` reports installation, install version/current target, CLI/TUI/ACP
   entrypoints, user config/capability roots, user state including host crash
   logs, and workspace state without starting a run.
@@ -278,6 +282,17 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 CLI capability inspection now verifies that runtime snapshots
+  include inline-config profiles that are not delegate-derived; host remains
+  the runtime snapshot source.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/runtime.ts`, `docs/_internal/project-map/modules/cli.md`.
+- Tests: `npm --workspace @sparkwright/host run build`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "capabilities inspect|capability inspect|inline-config profiles"`.
 
 - Status: Read-only
 - Date: 2026-07-06T19:24:51+0800

@@ -107,6 +107,11 @@ configured profiles/delegates
   `capabilities.agents.exposure` / `pinnedDelegates` / `exposeAsDelegate`
   request them. Default exposure is indexed, so new child profiles no longer
   create one model-facing tool each.
+- Capability inspection keeps profile inventory broader than delegation:
+  `CapabilitySnapshot.agents.profiles` reports all resolved Agent.md and
+  inline-config profiles, including primary/non-delegate profiles, while
+  `agents.delegateTools` and runtime tools describe the narrower callable
+  delegation surfaces.
 - `capabilities.agents.enableParallelDelegates` exposes the opt-in
   `delegate_parallel` main-run tool. It fans out across configured in-process
   delegates only, targets them by `agentId` (preferred) or legacy `toolName`,
@@ -265,6 +270,21 @@ configured profiles/delegates
   or mtime prefilters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 closed the capability-inspection reporting fork for inline-config
+  agents: host/CLI snapshots now keep profile inventory separate from delegate
+  callability and include profiles that are not delegate-derived.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/delegate-capability.ts`,
+  `packages/host/test/protocol.test.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "capability inspect|capability inspection"`;
+  `npm --workspace @sparkwright/host run build`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "capabilities inspect|capability inspect|inline-config profiles"`.
 
 - Status: Read-only
 - Date: 2026-07-06T19:24:51+0800

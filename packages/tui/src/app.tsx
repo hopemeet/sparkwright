@@ -55,7 +55,6 @@ import {
   applySkillLearnDraftProposal,
   createSkillLearnDraftProposal,
   detectSkillLearnNotice,
-  detectSkillLearnTarget,
   formatSkillLearnStatus,
   parseSkillLearnMode,
   readSkillLearnStatus,
@@ -517,7 +516,6 @@ function AppReady(
         if (notice && goals.length > skillLearnNoticeCountRef.current) {
           const goalCount = goals.length;
           const sessionId = state.sessionId;
-          const targetSkillName = detectSkillLearnTarget(goals);
           void readSkillLearnStatus(resolved.workspaceRoot)
             .then((status) => {
               if (status.mode === "off") return;
@@ -536,7 +534,6 @@ function AppReady(
                 resolved.workspaceRoot,
                 notice,
                 {
-                  ...(targetSkillName ? { targetSkillName } : {}),
                   ...(sessionId ? { sessionId } : {}),
                 },
               )
