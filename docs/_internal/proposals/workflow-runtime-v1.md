@@ -1250,6 +1250,10 @@ gate.
    records episode + usage facts. The retry/escalation policy itself requires
    a later model-node boundary split so a retry can start a fresh worker with a
    stronger model instead of continuing inside the same core run.
+   **Reopen condition (C4, 2026-07-06):** retry-time model upgrade and cruise
+   policy reopen only after internal dogfood workflow assets, especially the P4
+   probe ladder family, produce retry-rate evidence. No schedule is accepted
+   without that evidence.
 7. **Probe ladder (one variable per step):** ① one node + one command
    verifier + nano/haiku via CLI QA harness → ② two-node linear transition
    → ③ onFail retry → ④ PreToolUse clamp compliance → ⑤ escalation ladder.
@@ -1274,6 +1278,10 @@ gate.
     caller-selected source spans and an explicit summary artifact/context item;
     no new compaction stage is required in P2. Implementation remains deferred
     until a later phase decides when node-boundary compaction should run.
+    **Reopen condition (C4, 2026-07-06):** wiring node-boundary compaction
+    reopens only after the first real workflow failure whose cause is context
+    growth across node boundaries. The trigger is evidence from a failing
+    workflow, not a speculative cleanup pass.
 11. **Instantiation surface — CLI/config only in P1.** `sparkwright run
     --workflow <name>`: deterministic, directly testable by the CLI QA
     harness (probe ladder ①). A model-facing `workflow_start` tool is a new
@@ -1599,6 +1607,10 @@ gate.
       envelope before the unified task-lifecycle birth, recursion-depth, and
       authorization clamp contracts exist as first-class workflow-start
       inputs.
+    - *Reopen condition (C4, 2026-07-06).* A model-facing `workflow_start`
+      surface remains closed until the unified task-lifecycle birth contract,
+      recursive depth control, and access-mode authorization clamp are all
+      first-class inputs to the instantiation envelope.
 
 ## Review Prompt
 

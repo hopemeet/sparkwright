@@ -25,6 +25,25 @@ after this config shape is agreed. Because there is no released user base, there
 is no migration story to preserve: legacy fields are removed outright, not
 aliased.
 
+## Consolidation Ownership Boundary
+
+C2 ratified a three-layer split on 2026-07-06. This proposal owns only the
+selector/toolset compilation vocabulary: the names users write in toolsets, the
+no-alias selector grammar, and how those selectors expand into concrete tool
+visibility.
+
+Built-in tool identity is a separate layer. Canonical tool names, legacy tool
+aliases, and default exposure tiers are sourced from
+`packages/host/src/tool-identities.ts` and recorded in
+[`builtin-tool-surface-consolidation.md`](builtin-tool-surface-consolidation.md).
+This proposal may reference that layer when explaining examples, but it must not
+redefine the alias or tier table.
+
+The product default public/advanced/infrastructure surface is also owned by
+[`builtin-tool-surface-consolidation.md`](builtin-tool-surface-consolidation.md).
+Access config consumes that surface through selectors and policy; it does not
+own which built-in tools are public by default.
+
 ## Design Direction
 
 - Keep generated config files short. Generated files should contain chosen
@@ -72,7 +91,10 @@ aliased.
 
 ## Capability Selectors
 
-Selectors are the single capability vocabulary. There are no broad aliases.
+Selectors are the single toolset compilation vocabulary. There are no broad
+aliases at this layer. Legacy built-in tool aliases such as `read_file` ->
+`read` are tool-identity facts, not selector syntax; see the consolidation
+ownership boundary above.
 
 ```txt
 workspace.read

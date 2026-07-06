@@ -43,6 +43,10 @@ approval through `--yes` if the model asks to edit, and stores trace data under:
 examples/repo-pilot/.sparkwright/sessions/<session-id>/
 ```
 
+`--target README.md` limits where workspace writes may land. It does not narrow
+workspace reads to that file; use confidential read policy/configuration when a
+path must not be read.
+
 Omit `--yes` to review the approval prompt yourself. Omit `--write` for a
 read-only smoke test.
 

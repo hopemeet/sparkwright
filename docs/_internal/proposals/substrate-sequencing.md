@@ -8,9 +8,10 @@
 > proposals stop re-stating (and re-inventing) the same substrates.
 >
 > Active proposals covered: `workflow-runtime-v1.md`,
-> `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`, and the
-> QA convergence plan. Evidence lines below were verified against the
-> `feat/background-agent-jobs` working tree on 2026-07-04.
+> `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`, and
+> `qa-convergence-plan.md` (stub home created 2026-07-06 from C12). Evidence
+> lines below were verified against the `feat/background-agent-jobs` working
+> tree on 2026-07-04 unless a later line states otherwise.
 
 ## The problem this page solves
 

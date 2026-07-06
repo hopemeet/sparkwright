@@ -723,11 +723,15 @@ Put user arguments in prompt text instead.
   stricter mode but cannot exceed the project ceiling.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
-- `confidentialPaths`: opt-in read-confidentiality globs. Unions across layers
-  (a later layer can only add entries, never drop them).
+- `confidentialPaths`: additional read-confidentiality globs layered on top of
+  SparkWright's built-in confidential defaults. Unions across layers (a later
+  layer can only add entries, never drop them).
 - `write`: workspace write guardrails (`maxFiles`, `maxDiffLines`,
   `allowDeletions`) that override the runtime defaults. Merges conservatively —
   the smaller `maxFiles`/`maxDiffLines` wins and `allowDeletions: false` wins.
+  CLI `--target` is part of this write boundary: it narrows workspace writes and
+  write budgets, but it is not a read sandbox. Workspace reads are governed by
+  the workspace boundary and confidential read policy, not by `--target`.
 - `shell.foregroundTimeoutMs`: foreground shell budget before background
   promotion or no-task-manager kill. Later layers override this scalar.
 - `shell.sandbox`: OS-level sandbox for the host shell executor. Merges
