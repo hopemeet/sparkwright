@@ -1554,7 +1554,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "Preferred grouping for security boundaries. Flattens to confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode."
+      "description": "Preferred grouping for security boundaries. Flattens to confidentialDefaults/confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode."
     },
     "run": {
       "type": "object",

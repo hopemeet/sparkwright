@@ -235,6 +235,20 @@ createRun/resumeRunFromCheckpoint
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance run-policy fix: host-loaded
+  `confidentialDefaults`/`confidentialPaths` now seed every start/resume
+  episode policy before `createRun`/`resumeRunFromCheckpoint()`. Core
+  scheduling, hook ordering, continuation budgeting, and completed-with-policy-
+  denial outcome semantics are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/core/src/run.ts`,
+  `packages/core/src/run-outcome.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② run-loop outcome check: confidential read policy denials stay
   expected-by-policy and do not force a failed run when followed by a final

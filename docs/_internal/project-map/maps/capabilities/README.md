@@ -201,6 +201,19 @@ config + workspace capability roots
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance routed-page check: merging host-loaded
+  confidential read config into runtime policies does not change capability
+  snapshots, tool availability, workflow/event rule descriptors, MCP
+  resolution, or agent profile inventory.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/README.md`.
+- Tests: no capability-specific tests run; host confidential protocol tests
+  ran for the changed policy path.
+
+- Status: Read-only
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② routed-page check: read-confidentiality defaults are run policy
   plumbing, not capability inventory. Capability snapshots, tool availability,

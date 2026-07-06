@@ -993,7 +993,7 @@ export const policyGroupSchema = z
   })
   .strict()
   .describe(
-    "Preferred grouping for security boundaries. Flattens to confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode.",
+    "Preferred grouping for security boundaries. Flattens to confidentialDefaults/confidentialPaths/write and shell.sandbox. Run autonomy lives in run.accessMode.",
   );
 export const POLICY_GROUP_CONFIG_KEYS = policyGroupSchema.keyof().options;
 

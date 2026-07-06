@@ -99,6 +99,21 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance resume policy fix: `run.resume` and
+  `workflow.resume` continuation episodes now reuse the prepared environment's
+  effective confidential read policy, including workspace config values when
+  protocol payload fields are omitted. Checkpoint lookup, from-trace replay,
+  and workflow adoption semantics are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/client-run.ts`,
+  `packages/host/test/client-run.test.ts`,
+  `packages/host/test/protocol.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/client-run.test.ts`; `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
 - Status: Read-only
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② routed-page check: run resume and workflow resume now pass

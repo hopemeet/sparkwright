@@ -83,6 +83,18 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance routed-page check: host-loaded confidential
+  read config now feeds run policy construction, but MCP server preparation,
+  wrapped tool execution, cwd handling, workspace-cwd disclosure, and
+  diagnostic payloads are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `docs/_internal/project-map/maps/capabilities/mcp.md`.
+- Tests: no MCP-specific tests run; host confidential protocol tests ran for
+  the changed policy path.
+
+- Status: Read-only
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② routed-page check: host runtime policy construction now carries
   `confidentialDefaults`, but MCP server preparation, wrapped tool execution,

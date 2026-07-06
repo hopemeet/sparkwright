@@ -268,6 +268,19 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance read-tool policy fix: protocol runs that rely
+  on workspace config now reach the same effective read-scope policy as CLI-
+  supplied runs. Tool catalog/filtering and `tool.requested`/`tool.failed`
+  orchestration are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/host/src/tools.ts`,
+  `packages/core/src/workspace.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② read tool orchestration check: built-in confidential read
   defaults are enforced inside the normal tool execution path, preserving

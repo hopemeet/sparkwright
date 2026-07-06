@@ -179,7 +179,10 @@
   `confidentialDefaults` 显式覆盖开关,host/direct-core/run resume/workflow
   resume 均通过 `resolveRunConfidentialPaths()` 解析保守默认+
   `confidentialPaths`;默认拒绝沿用 `workspace.read.denied` trace 与
-  `READ_SCOPE_DENIED`;QA fixture 名称核对未发现 credential 类误伤。**
+  `READ_SCOPE_DENIED`;QA fixture 名称核对未发现 credential 类误伤。
+  验收修正 2026-07-06:host runtime 现在把 workspace config 中的
+  `confidentialDefaults`/`confidentialPaths` 合入 prepared run policy,覆盖
+  TUI/ACP/SDK 等不随 payload 主动传字段的协议入口。**
 
 ### 丙组 — 已定未做完(不需要裁决,需要排期认领)
 

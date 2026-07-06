@@ -199,6 +199,19 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance trace check: protocol runs using workspace
+  config now emit `workspace.read` for allowed default-confidential paths and
+  `workspace.read.denied` for explicit configured confidential paths. No raw
+  trace event families or filtering rules changed.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/core/src/workspace.ts`,
+  `packages/core/src/events.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② raw trace check: denied confidential reads use the existing
   `workspace.read.denied` event and `tool.failed READ_SCOPE_DENIED` without

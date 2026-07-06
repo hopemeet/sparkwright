@@ -711,6 +711,24 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance fix: `prepareHostRunEnvironment()` now merges
+  host-loaded `confidentialPaths`/`confidentialDefaults` with per-request
+  protocol payloads before constructing start/resume/workflow-resume run
+  policies, so TUI/ACP/SDK-style clients that omit those fields still honor
+  workspace config.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `packages/host/src/client-run.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/host/test/client-run.test.ts`,
+  `docs/reference/HOST_PROTOCOL_CHANGELOG.md`,
+  `docs/guides/CONFIGURATION.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/client-run.test.ts`; `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`; `npm run schema:generate`.
+
+- Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② host config/protocol plumbing for read-confidentiality defaults:
   config accepts `confidentialDefaults`, host clients only serialize false as

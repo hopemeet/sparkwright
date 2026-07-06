@@ -92,6 +92,19 @@ tool proposes write
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance routed-page check: host-loaded
+  confidential read config now feeds the read-scope policy for protocol runs,
+  while workspace-write policy, write event pairing, untracked write-capable
+  markers, and `--target` write scope remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/core/src/workspace.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/guides/CONFIGURATION.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② routed-page check: read-confidentiality defaults changed the
   read-scope policy boundary only. Managed workspace-write policy, write event

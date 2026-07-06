@@ -1153,10 +1153,10 @@ SparkWright treats config and project capabilities as user-owned assets:
   `tools.disabled`, `tools.defer`, and MCP server `enabled` settings.
 - If a project setting does not combine with a user setting, remember that most
   fields other than `providers` are replaced wholesale — except the security
-  boundaries (`accessMode`, `confidentialDefaults`, `confidentialPaths`,
-  `write`, `shell.sandbox`),
+  boundaries (`accessMode`, `confidentialPaths`, `write`, `shell.sandbox`),
   which merge conservatively. Project `accessMode` is a ceiling; requests above
-  it are clamped.
+  it are clamped. `confidentialDefaults` is the explicit later-layer override
+  for the built-in confidential deny set.
 - If an MCP server cannot start, verify `cwd`, command path, timeout, and
   whether `enabled` is false.
 

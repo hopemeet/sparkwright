@@ -306,6 +306,13 @@ function createHostRunPolicy(input: {
   ]);
 }
 
+function mergeConfidentialPaths(
+  ...groups: Array<readonly string[] | undefined>
+): string[] | undefined {
+  const merged = groups.flatMap((group) => group ?? []);
+  return merged.length > 0 ? [...new Set(merged)] : undefined;
+}
+
 type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
   servers?: McpServerConfig[];
 };
@@ -495,6 +502,8 @@ interface PreparedHostRunEnvironment {
   parentRunRef: { current?: ReturnType<typeof createRun> };
   traceLevel: TraceLevel;
   writeGuardrails?: WriteGuardrailsConfig;
+  confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   runMetadata: Record<string, unknown>;
   runStoreMetadata: Record<string, unknown>;
 }
@@ -1637,6 +1646,12 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const writeGuardrails = loadedConfig.config.write;
+    const confidentialPaths = mergeConfidentialPaths(
+      loadedConfig.config.confidentialPaths,
+      input.confidentialPaths,
+    );
+    const confidentialDefaults =
+      input.confidentialDefaults ?? loadedConfig.config.confidentialDefaults;
     const skillRoots = resolveSkillRootsForRuntime(
       workspaceRoot,
       skillConfig?.roots,
@@ -1767,8 +1782,8 @@ export class HostRuntime {
       permissionMode: input.permissionMode,
       shouldWrite: input.shouldWrite,
       targetPath: input.targetPath,
-      confidentialPaths: input.confidentialPaths,
-      confidentialDefaults: input.confidentialDefaults,
+      confidentialPaths,
+      confidentialDefaults,
       writeGuardrails,
     });
     const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
@@ -2270,6 +2285,8 @@ export class HostRuntime {
         parentRunRef,
         traceLevel,
         writeGuardrails,
+        confidentialPaths,
+        confidentialDefaults,
         runMetadata,
         runStoreMetadata,
       },
@@ -2790,8 +2807,8 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
-          confidentialPaths: payload.confidentialPaths,
-          confidentialDefaults: payload.confidentialDefaults,
+          confidentialPaths: env.confidentialPaths,
+          confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -2867,8 +2884,8 @@ export class HostRuntime {
                   permissionMode,
                   shouldWrite,
                   targetPath: payload.targetPath,
-                  confidentialPaths: payload.confidentialPaths,
-                  confidentialDefaults: payload.confidentialDefaults,
+                  confidentialPaths: env.confidentialPaths,
+                  confidentialDefaults: env.confidentialDefaults,
                   writeGuardrails: env.writeGuardrails,
                 }),
                 promptBuilder: buildAgentPromptBuilder({
@@ -3083,8 +3100,8 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
-          confidentialPaths: payload.confidentialPaths,
-          confidentialDefaults: payload.confidentialDefaults,
+          confidentialPaths: env.confidentialPaths,
+          confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -3363,8 +3380,8 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
-          confidentialPaths: payload.confidentialPaths,
-          confidentialDefaults: payload.confidentialDefaults,
+          confidentialPaths: env.confidentialPaths,
+          confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
