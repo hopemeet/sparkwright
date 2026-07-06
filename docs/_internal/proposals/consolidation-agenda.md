@@ -185,7 +185,11 @@
   登记的 remaining copies(core/session 标 opportunistic)——是存量,
   不是违约;列在这里防止它永远"opportunistic"。
   **→ 裁决 2026-07-06:批认领(三处迁 S1 doc-store,优先挑小 PR:
-  file-notifications 或 cron 先行)。**
+  file-notifications 或 cron 先行)。完成 2026-07-06 C9-①:
+  `packages/agent-runtime/src/tasks/file-notifications.ts` 已迁到
+  `agent-runtime/src/doc-store` 的 `atomicWriteTextSync()`,退役该文件私有
+  tmp-write + rename helper;剩余 `core/src/session.ts` 与
+  `cron/src/store.ts`。**
 - **C10|Tier 3 删除清单**:ACP 入口缺 `--session-root`(写进工作区)、
   `capabilities inspect` 少报 inline-config agents(capability-upgrade
   Phase 1 留尾同源)、`detectSkillLearnTarget` 旁路未删。

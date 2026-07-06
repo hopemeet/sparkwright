@@ -102,6 +102,21 @@ cron config/state
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T14:45:00+0800
+- Scope: C9 S1 migration touched task-notification persistence only. Cron state,
+  `CronStore`, cron tool schemas, scheduler semantics, and cron run success
+  derivation are unchanged; `packages/cron/src/store.ts` remains a named
+  remaining atomic-write migration candidate.
+- Read: `packages/agent-runtime/src/tasks/file-notifications.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`.
+- Tests: cron-specific behavior not run separately; storage-focused
+  `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts
+  test/tasks.test.ts` and `npm --workspace @sparkwright/agent-runtime run
+  typecheck` passed.
+
+- Status: Read-only
 - Date: 2026-07-05T23:09:50+0800
 - Scope: workflow-runtime-v1 P9a D5 routed-page check: workspace-root workflow
   run storage does not change cron state, cron tool schemas, scheduler

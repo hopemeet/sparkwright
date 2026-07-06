@@ -185,13 +185,15 @@ Does not own:
 - `FileTaskNotificationOutbox` is the durable counterpart for terminal task
   notifications. It supports non-consuming `peek()`/`waitUntilAvailable()` and
   predicate `drain()` so hosts can replay only notifications for the resumed
-  run. Its actor adapter derives inbox-scoped monotonic sequence from stable
-  file ordering with an in-process high-water mark, without changing the
-  existing `task-notifications/*.json` format. Because that format stores
-  legacy `TaskNotification` entries, the file-backed actor sink accepts only
-  terminal task actor notifications that can round-trip through that shape; it
-  rejects workflow/progress/output inputs and actor-only envelope fields with a
-  typed non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. It stores
+  run. Its JSON entry writes compose the shared `doc-store`
+  `atomicWriteTextSync()` primitive, while preserving the existing
+  `task-notifications/*.json` format. Its actor adapter derives inbox-scoped
+  monotonic sequence from stable file ordering with an in-process high-water
+  mark, without changing the existing format. Because that format stores legacy
+  `TaskNotification` entries, the file-backed actor sink accepts only terminal
+  task actor notifications that can round-trip through that shape; it rejects
+  workflow/progress/output inputs and actor-only envelope fields with a typed
+  non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. It stores
   notifications, not task execution. The actor inbox view skips unreadable or
   actor-invalid file entries and exposes them through `invalidActorEntries()`
   so a single stale/bad file cannot wedge actor `peek()`/`drain()`/readiness
@@ -275,6 +277,22 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T14:45:00+0800
+- Scope: C9 S1 migration: `FileTaskNotificationOutbox` now uses the shared
+  `doc-store` `atomicWriteTextSync()` for `task-notifications/*.json` entry
+  writes, retiring its private tmp-write + rename helper without changing the
+  file format or actor-inbox semantics.
+- Read: `packages/agent-runtime/src/tasks/file-notifications.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `packages/agent-runtime/test/doc-store.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts test/tasks.test.ts`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

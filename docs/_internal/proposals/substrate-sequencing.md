@@ -105,8 +105,11 @@ listed below.
   First migration: `FileTaskStore` record writes now use the shared
   primitive, retiring its private
   `packages/agent-runtime/src/tasks/file-store.ts` `atomicWriteTextSync()`
-  copy. Remaining known atomic-write copies include
-  `tasks/file-notifications.ts`, `core/src/session.ts`, and `cron/src/store.ts`.
+  copy. Second migration (2026-07-06, C9-①):
+  `FileTaskNotificationOutbox` entry writes now use the shared primitive,
+  retiring `packages/agent-runtime/src/tasks/file-notifications.ts`'s private
+  `atomicWriteTextSync()` copy. Remaining known atomic-write copies include
+  `core/src/session.ts` and `cron/src/store.ts`.
 - **Customers:** FileTaskStore + FileTaskNotificationOutbox
   (background-task), FileWorkflowStore (workflow P2), CronStore,
   FileMemoryStore, FileSessionStore/FileRunStore (opportunistic),

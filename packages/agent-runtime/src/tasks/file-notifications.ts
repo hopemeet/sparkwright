@@ -7,12 +7,11 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { atomicWriteTextSync } from "../doc-store/index.js";
 import {
   ActorNotificationUnsupportedError,
   acceptActorNotificationInput,
@@ -518,16 +517,6 @@ function assertPersistableLegacyTaskActorNotification(
       ", ",
     )}.`,
   );
-}
-
-function atomicWriteTextSync(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const tmp = join(
-    dirname(path),
-    `.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
-  writeFileSync(tmp, content, "utf8");
-  renameSync(tmp, path);
 }
 
 function makeAbortError(): Error {
