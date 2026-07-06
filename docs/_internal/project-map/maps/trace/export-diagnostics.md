@@ -90,6 +90,19 @@ session trace.jsonl
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for TUI `/skill-learn` target-detector deletion.
+  Transcript export rendering, event-store replay, tool display, and trace
+  diagnostic boundaries are unchanged.
+- Read: `packages/tui/src/app.tsx`,
+  `packages/tui/test/skill-evolution.test.tsx`,
+  `packages/tui/src/lib/transcript.ts`, `docs/reference/SKILLS.md`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/skill-evolution.test.tsx`; `npm --workspace @sparkwright/tui run
+  typecheck`; `npm --workspace @sparkwright/tui run build`; `npm run
+  release:check`.
+
 - Status: Verified
 - Date: 2026-06-30T01:07:00+0800
 - Scope: checked after durable task browsing moved behind host `task.*`

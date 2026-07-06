@@ -98,6 +98,10 @@ Does not own:
   sandboxing, and trace events. Failed inline shell expansion should insert a
   short marker into Skill content rather than raw stderr; host trace summaries
   carry the bounded diagnostic output.
+- Experimental Skill bundle helpers are retired. `@sparkwright/skills` no
+  longer exports bundle registries, slash-command bundle resolution, or
+  `.bundle.json` loading; any future grouped-skill product surface must use the
+  governed `skill_load`/trace/usage path rather than injecting untracked bodies.
 - Project skills live under `.sparkwright/skills/` by default.
 - Evolution is actor-split for proposal application: model-facing
   `create_skill` and `update_skill` only draft proposals; model tools can
@@ -144,6 +148,20 @@ Does not own:
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:08:48+0800
+- Scope: C8-bundles deletion retired the experimental Skill bundle helper and
+  slash-resolution surface after the no-customer audit found no host/CLI/TUI or
+  runtime product consumers.
+- Read: `packages/skills/src/index.ts`, deleted
+  `packages/skills/src/bundles.ts`, deleted
+  `packages/skills/test/bundles.test.ts`, `packages/skills/README.md`,
+  `docs/_internal/proposals/skill-runtime-v1-redesign.md`.
+- Tests: `npm --workspace @sparkwright/skills test`;
+  `npm --workspace @sparkwright/skills run typecheck`;
+  `npm --workspace @sparkwright/skills run build`;
+  `npm run check:dist-fresh`.
 
 - Status: Verified
 - Date: 2026-07-04T08:16:19+0800
@@ -212,18 +230,19 @@ Does not own:
   proposals"`; `npm --workspace @sparkwright/cli run build`.
 - Prior verification — Date: 2026-06-27T19:27:28+0800
 - Scope: removed unused loader/bundle test scaffolding while preserving Skill
-  parser, loader, index, and bundle behavior.
+  parser, loader, index, and then-current bundle behavior. Superseded by
+  C8-bundles deletion on 2026-07-06.
 - Read: `packages/skills/src/loader.ts`,
-  `packages/skills/src/bundles.ts`,
+  `packages/skills/src/bundles.ts` (deleted later by C8-bundles),
   `packages/skills/src/index.ts`,
   `packages/skills/test/index.test.ts`,
   `packages/skills/test/skills.test.ts`,
-  `packages/skills/test/bundles.test.ts`,
+  `packages/skills/test/bundles.test.ts` (deleted later by C8-bundles),
   `docs/_internal/project-map/maps/capabilities/skills.md`,
   `docs/_internal/project-map/maps/capabilities/skill-evolution.md`.
 - Tests: `npm --workspace @sparkwright/skills run typecheck`;
   `npm --workspace @sparkwright/skills test -- test/skills.test.ts
-  test/index.test.ts test/bundles.test.ts`.
+  test/index.test.ts test/bundles.test.ts` (historical).
 - Prior verification — Date: 2026-06-27T17:52:04+0800
 - Scope: recorded Phase 1 Skill parser/manifest unification decision and
   compatibility adapter behavior.

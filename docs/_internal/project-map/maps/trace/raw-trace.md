@@ -196,6 +196,18 @@ EventLog emits full event
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for HostRuntime capability-inspection profile
+  inventory. Raw trace JSONL locations, event envelopes, event families,
+  filtering, and redaction are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/core/src/trace-store.ts`, `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "inspect reports inline agent profiles"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`; `npm run release:check`.
+
+- Status: Read-only
 - Date: 2026-07-05T23:09:50+0800
 - Scope: workflow-runtime-v1 P9a D5 routed-page check: fresh workflow state
   moved from session-local `workflow-runs/` to workspace

@@ -83,6 +83,10 @@ skill roots
 - Capability snapshots and CLI `capabilities inspect` expose a path-free
   `skills.inlineShell` policy summary (`enabled`, `writePolicy`,
   `sandboxMode`, `failClosed`, timeout/output caps).
+- Skill bundles are not a v1 runtime capability. The experimental package-level
+  bundle registry, `.bundle.json` loader, and slash-command resolver were
+  removed; grouped Skill behavior must not bypass the governed `skill_load`
+  events, usage sidecar, or trace surfaces.
 - Skill create/update tools are managed capability mutations, not raw shell
   writes; successful managed mutations emit `capability.mutation.completed`.
 - File-backed Skill usage recorders reload the current sidecar before reads and
@@ -118,6 +122,20 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:08:48+0800
+- Scope: C8-bundles deletion removed the experimental package-level bundle
+  capability surface after confirming no product customers; Skill loading and
+  evolution remain the supported capability paths.
+- Read: `packages/skills/src/index.ts`, deleted
+  `packages/skills/src/bundles.ts`, deleted
+  `packages/skills/test/bundles.test.ts`, `packages/skills/README.md`,
+  `docs/_internal/project-map/maps/capabilities/skills.md`.
+- Tests: `npm --workspace @sparkwright/skills test`;
+  `npm --workspace @sparkwright/skills run typecheck`;
+  `npm --workspace @sparkwright/skills run build`;
+  `npm run check:dist-fresh`.
 
 - Status: Verified
 - Date: 2026-07-03T12:53:49+0800
@@ -160,16 +178,17 @@ skill roots
   proposals"`; `npm --workspace @sparkwright/cli run build`.
 - Prior verification — Date: 2026-06-27T19:27:28+0800
 - Scope: confirmed loader/bundle cleanup did not change skill loading,
-  on-demand load, or bundle behavior.
+  on-demand load, or then-current bundle behavior. Superseded by C8-bundles
+  deletion on 2026-07-06.
 - Read: `packages/skills/src/loader.ts`,
-  `packages/skills/src/bundles.ts`,
+  `packages/skills/src/bundles.ts` (deleted later by C8-bundles),
   `packages/skills/src/index.ts`,
   `packages/skills/test/index.test.ts`,
   `packages/skills/test/skills.test.ts`,
-  `packages/skills/test/bundles.test.ts`.
+  `packages/skills/test/bundles.test.ts` (deleted later by C8-bundles).
 - Tests: `npm --workspace @sparkwright/skills run typecheck`;
   `npm --workspace @sparkwright/skills test -- test/skills.test.ts
-  test/index.test.ts test/bundles.test.ts`.
+  test/index.test.ts test/bundles.test.ts` (historical).
 - Prior verification — Date: 2026-06-27T17:52:04+0800
 - Scope: recorded Phase 1 Skill parser/manifest unification and compatibility
   adapter behavior for the loading capability.

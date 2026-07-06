@@ -112,9 +112,9 @@ C8 closes the four remaining v1 open questions:
   boundary, and loading a Skill must not widen tool visibility.
 - Manual CLI `sparkwright skills create` remains a human direct-write management
   command. Model-facing Skill creation and updates remain on the proposal path.
-- Bundles are not part of the product/runtime surface for v1. Package-level
-  bundle helpers, slash resolution, and capability projection are marked
-  pending deletion after the batch-3 no-customer audit.
+- Bundles are not part of the product/runtime surface for v1. The batch-3
+  no-customer audit found no host/CLI/TUI/runtime product consumers, and C8
+  removed the package-level bundle helpers, slash resolution, and tests.
 
 ## Target Architecture
 
@@ -308,13 +308,13 @@ Recommended change:
 Current bundle/capability helpers should not remain ambiguous.
 
 C8 decision for v1: bundles are killed from the SparkWright product/runtime
-surface. `bundles.ts`, slash resolution, and capability projection remain only
-as package-level leftovers until batch 3 verifies that there are no product
-customers and deletes the surface.
+surface. Batch 3 verified there were no host/CLI/TUI/runtime product customers
+and removed `bundles.ts`, slash resolution, and the package-level tests.
 
-Do not expose bundle behavior in user-facing docs until host behavior exists.
-If a future product need revives bundle-like behavior, it must use the same
-`skill_load` and usage/trace path rather than injecting untracked bodies.
+Do not reintroduce bundle behavior in user-facing docs unless a future host
+behavior exists. If a future product need revives bundle-like behavior, it must
+use the same `skill_load` and usage/trace path rather than injecting untracked
+bodies.
 
 ## Doctor Upgrades
 
@@ -406,17 +406,15 @@ Doctor should stay deterministic. It should not call a model.
 ### Phase 5: Delete experimental bundle surface
 
 - C8 outcome: bundles are not promoted to runtime behavior.
-- Batch 3 owns the no-customer audit and deletion of bundle helpers, slash
-  resolution, and capability projection.
-- Do not remove exported APIs until that audit has confirmed no product
-  consumers.
+- Implemented 2026-07-06: Batch 3 no-customer audit found no product
+  consumers, then deleted bundle helpers, slash resolution, exports, and tests.
 
 ## Non-Goals
 
 - No background auto-writer by default.
 - No semantic/vector retrieval requirement.
 - No broad YAML parser unless a real use case requires it.
-- No direct execution of bundled scripts during discovery.
+- No direct execution of Skill-authored scripts during discovery.
 - No automatic mutation of user, builtin, or legacy Skill roots.
 - No claim that associated run failures were caused by loaded Skills.
 

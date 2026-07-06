@@ -87,6 +87,18 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for HostRuntime capability-inspection profile
+  inventory. Workspace write policy, managed write event pairing, shell mutation
+  audits, and workspace-read denial behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/host/src/workspace-snapshot.ts`, `packages/host/src/tools.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "inspect reports inline agent profiles"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`; `npm run release:check`.
+
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800
 - Scope: workflow-runtime-v1 P9a workspace-write boundary: workspace-level

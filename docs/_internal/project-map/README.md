@@ -162,6 +162,21 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T20:08:48+0800
+- Scope: C8-bundles deletion kept Skill routing on the package/capability maps
+  and recorded that `packages/skills/src/bundles.ts` plus its tests were
+  retired rather than remaining routed hot spots.
+- Read: `packages/skills/src/index.ts`, deleted
+  `packages/skills/src/bundles.ts`, deleted
+  `packages/skills/test/bundles.test.ts`,
+  `docs/_internal/project-map/modules/skills.md`,
+  `docs/_internal/project-map/maps/capabilities/skills.md`.
+- Tests: `npm --workspace @sparkwright/skills test`;
+  `npm --workspace @sparkwright/skills run typecheck`;
+  `npm --workspace @sparkwright/skills run build`;
+  `npm run check:dist-fresh`.
+
+- Status: Verified
 - Date: 2026-07-05T22:20:59+0800
 - Scope: workflow-runtime-v1 P8a route update: `workflow shadow` and shared
   workflow trace observation now route through host/CLI workflow docs while
@@ -771,13 +786,14 @@ test/capabilities-panel-render.test.tsx -t "workflow rule summaries"`;
   `packages/host/src/tool-catalog.ts`, `packages/host/src/agent-profiles.ts`,
   `packages/host/src/agent-report.ts`, `packages/host/src/server.ts`,
   `packages/host/src/skill-evolution.ts`,
-  `packages/skills/src/loader.ts`, `packages/skills/src/bundles.ts`.
+  `packages/skills/src/loader.ts`, `packages/skills/src/bundles.ts`
+  (deleted later by C8-bundles).
 - Tests: `npm --workspace @sparkwright/host run typecheck`;
   `npm --workspace @sparkwright/skills run typecheck`;
   `npm --workspace @sparkwright/host test --
 test/agent-profiles.test.ts test/skill-evolution.test.ts
 test/protocol.test.ts`; `npm --workspace @sparkwright/skills test --
-test/skills.test.ts test/index.test.ts test/bundles.test.ts`;
+test/skills.test.ts test/index.test.ts test/bundles.test.ts` (historical);
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "filters
 proposals|agents|capabilities inspect"`.
 - Prior verification — Date: 2026-06-27T18:53:34+0800

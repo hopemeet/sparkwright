@@ -1096,15 +1096,6 @@ export {
   type PreprocessSkillOptions,
 } from "./preprocess.js";
 export {
-  SkillBundleRegistry,
-  resolveBundle,
-  resolveSlashCommand,
-  buildBundleInvocationMessage,
-  loadBundlesFromDirectory,
-  type SkillBundle,
-  type ResolvedBundle,
-} from "./bundles.js";
-export {
   createSkillPackageHasher,
   computeSkillPackageHash,
   listSkillPackageFiles,

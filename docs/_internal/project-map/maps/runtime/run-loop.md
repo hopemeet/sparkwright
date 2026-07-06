@@ -230,6 +230,18 @@ createRun/resumeRunFromCheckpoint
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for HostRuntime capability-inspection profile
+  inventory. Runtime turn creation, continuation, hook ordering, tool execution,
+  approval flow, and wakeup behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "inspect reports inline agent profiles"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`; `npm run release:check`.
+
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800
 - Scope: P10a D20 run-loop ordering: tool-call `PreToolUse` now awaits a

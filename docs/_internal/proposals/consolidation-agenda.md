@@ -150,7 +150,10 @@
   policy 是唯一强制边界);CLI 直写保留给人类,模型侧仍走 proposal;
   bundles 杀(无明确客户,按 rule zero)。完成 2026-07-06:
   `skill-runtime-v1-redesign.md` 已改为 resolved decisions;bundles 标为
-  批次 3 no-customer audit 后删除。**
+  批次 3 no-customer audit 后删除。完成 2026-07-06 C8-bundles:
+  no-customer audit 未发现 host/CLI/TUI/runtime 产品调用点;已删除
+  `packages/skills/src/bundles.ts`、bundle export/slash resolution 与
+  `packages/skills/test/bundles.test.ts`,退役实验 bundle helper 面。**
 
 - **C13|read-scope 残留(安全语义,单独拍,不与 cleanup 混批)**:读
   机密层**已存在**——`createWorkspaceReadScopePolicy`

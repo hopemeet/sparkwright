@@ -35,7 +35,8 @@ version of the shared substrate they need. Verified dispersion as of
   store classes** — and Windows rename EPERM is a recurring CI failure
   class, so every copy is an independent Windows bug surface.
 - **≥4 markdown/frontmatter asset parsers** (skills
-  bundles/preprocess/manifest, `host/agent-profiles.ts`,
+  preprocess/manifest, retired skill bundle parser,
+  `host/agent-profiles.ts`,
   `project-commands`, frontmatter handling in `host/tools.ts`) — the
   workflow asset folder would be the fifth.
 - **3+ workflow-hook producers** assembled with no ordering contract

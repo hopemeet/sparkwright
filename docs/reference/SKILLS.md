@@ -22,7 +22,7 @@ my-skill/
 ```
 
 `SKILL.md` is the only required file. Bundled resources may be listed or loaded
-through governed helper paths, but bundled scripts should not execute merely
+through governed helper paths, but Skill-authored scripts should not execute merely
 because a Skill was discovered.
 
 ## Inline Shell Preprocessing
