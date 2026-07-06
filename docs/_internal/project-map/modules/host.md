@@ -142,6 +142,11 @@ Does not own:
   (`shouldWrite: false`) keep the hard-deny write gate; interactive TUI clients
   that need write approvals send `shouldWrite: true` with an approval-oriented
   `permissionMode`.
+- Host start/resume/workflow-resume run policies pass `confidentialPaths` and
+  `confidentialDefaults` through core `resolveRunConfidentialPaths()`.
+  `confidentialDefaults` defaults to true and may be set false by config or
+  protocol clients to opt out of SparkWright's built-in conservative read-deny
+  list while retaining any explicit `confidentialPaths`.
 - `run.accessMode` is the single user-facing run autonomy knob. The protocol
   `RunStart`/`RunResume` payloads accept optional `accessMode`
   (`read-only`/`ask`/`accept-edits`/`bypass`); `host/src/run-access.ts`
@@ -704,6 +709,20 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② host config/protocol plumbing for read-confidentiality defaults:
+  config accepts `confidentialDefaults`, host clients only serialize false as
+  an explicit override, and runtime policies use core's resolver for
+  start/resume/workflow-resume.
+- Read: `packages/host/src/config.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `packages/host/src/client-run.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/test/config.test.ts`,
+  `packages/host/test/client-run.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/config.test.ts
+  test/client-run.test.ts`; `npm --workspace @sparkwright/host run build`.
 
 - Status: Verified
 - Date: 2026-07-06T19:48:49+0800

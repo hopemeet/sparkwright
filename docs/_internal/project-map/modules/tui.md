@@ -59,6 +59,9 @@ Does not own:
   `accept-edits` preserve their mode semantics. `RunController` snapshots this
   projected permission mode at run start, so runtime mode switches affect the
   next run without changing auto-approval behavior for the active run.
+- TUI config compatibility accepts the shared `confidentialDefaults` config key
+  but does not own a separate UI surface for read-confidentiality defaults; host
+  config/runtime own validation and enforcement.
 - `shift+tab` (`cycle-permission-mode`) cycles the runtime permission mode in
   read-only -> ask -> accept-edits -> bypass order, skipping modes above the
   project access ceiling. The switch is runtime-local, updates the
@@ -225,6 +228,15 @@ Does not own:
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② TUI routed-page check: `packages/tui/src/lib/config.ts` now
+  tolerates the shared `confidentialDefaults` config key. No run-controller,
+  approval, or UI contract changed.
+- Read: `packages/tui/src/lib/config.ts`,
+  `packages/host/src/config-zod-schema.ts`, `packages/host/src/config.ts`.
+- Tests: not run for TUI; C13 focused validation ran in core/host/CLI/protocol.
 
 - Status: Verified
 - Date: 2026-07-06T19:48:49+0800

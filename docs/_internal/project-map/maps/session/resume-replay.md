@@ -100,6 +100,18 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: run resume and workflow resume now pass
+  `confidentialDefaults` to host policy construction. Checkpoint replay,
+  from-trace reconstruction, session replay projection, and workflow state
+  adoption semantics are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/cli/src/runners/host-runner.ts`, `packages/cli/src/cli.ts`,
+  `packages/protocol/src/index.ts`.
+- Tests: not run for resume-specific behavior; C13 focused validation ran in
+  core/host/CLI/protocol.
+
+- Status: Read-only
 - Date: 2026-07-06T19:24:51+0800
 - Scope: C9 S1 migration touched only the atomic writer used for
   `FileSessionStore` `session.json` saves. Checkpoint resume, from-trace

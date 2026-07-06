@@ -1385,6 +1385,129 @@ describe("runCli", () => {
     );
   });
 
+  it("denies built-in confidential reads by default in host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, ".env"), "API_TOKEN=abc\n", "utf8");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "read env",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt confidential read",
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: ".env" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    // Read-scope policy denials are expected-by-policy outcomes, so they do
+    // not fail the whole run when the model continues with a final answer. The
+    // safety contract is the trace gate: no `workspace.read` is emitted.
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(
+      events.find((event) => event.type === "workspace.read.denied")?.payload,
+    ).toMatchObject({ path: ".env" });
+    expect(
+      events.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "READ_SCOPE_DENIED",
+      ),
+    ).toBeTruthy();
+    expect(
+      events.find(
+        (event) =>
+          event.type === "workspace.read" && event.payload?.path === ".env",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("allows config to override built-in confidential defaults", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(join(workspace, ".env"), "API_TOKEN=abc\n", "utf8");
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ confidentialDefaults: false }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "read env",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "read env",
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: ".env" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(
+      events.find(
+        (event) =>
+          event.type === "workspace.read" && event.payload?.path === ".env",
+      ),
+    ).toBeTruthy();
+    expect(
+      events.find((event) => event.type === "workspace.read.denied"),
+    ).toBeUndefined();
+  });
+
   it("writes host run sessions under --session-root", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));

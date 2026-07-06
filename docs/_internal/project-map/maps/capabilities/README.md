@@ -200,6 +200,17 @@ config + workspace capability roots
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: read-confidentiality defaults are run policy
+  plumbing, not capability inventory. Capability snapshots, tool availability,
+  workflow/event rule descriptors, and MCP resolution behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config.ts`, `packages/host/src/config-zod-schema.ts`,
+  `packages/cli/src/cli.ts`.
+- Tests: not run for capability-specific behavior; C13 focused validation ran
+  in core/host/CLI/protocol.
+
 - Status: Verified
 - Date: 2026-07-06T19:48:49+0800
 - Scope: C10 capability inspection profile inventory: host snapshots and CLI

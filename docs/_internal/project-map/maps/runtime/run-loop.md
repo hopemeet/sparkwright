@@ -49,6 +49,10 @@ createRun/resumeRunFromCheckpoint
   context into the synthetic `REPEATED_TOOL_CALL_SKIPPED` result. Policy and
   approval denials keep their expected-denial category through the guard; other
   repeated calls keep the normal argument/runtime failure classification.
+- Completed-run outcome treats read-confidentiality denials as expected policy
+  denials. A run can still complete successfully after a denied confidential
+  read if the model produces a final answer; the denial remains visible through
+  `workspace.read.denied` and `tool.failed`.
 - Before emitting `tool.requested`, the run loop asks the concrete
   `ToolDefinition.previewArgs()` for bounded display text and stores it on the
   event payload as `preview`; this is presentation metadata and does not affect
@@ -229,6 +233,17 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② run-loop outcome check: confidential read policy denials stay
+  expected-by-policy and do not force a failed run when followed by a final
+  answer.
+- Read: `packages/core/src/run-outcome.ts`, `packages/core/src/policy.ts`,
+  `packages/core/src/workspace.ts`, `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
 
 - Status: Read-only
 - Date: 2026-07-06T20:12:52+0800

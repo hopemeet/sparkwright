@@ -162,6 +162,26 @@ trace/session inspection.
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② route update: read-confidentiality defaults now route through
+  core policy, host config/runtime/protocol, CLI run plumbing, TUI config
+  compatibility, safety/tool/trace maps, and resume/session routed pages. No
+  new hot-path source file needed a root routing entry.
+- Read: `packages/core/src/policy.ts`, `packages/host/src/config.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`,
+  `packages/protocol/src/index.ts`, `packages/tui/src/lib/config.ts`,
+  `docs/_internal/project-map/modules/core.md`,
+  `docs/_internal/project-map/modules/host.md`,
+  `docs/_internal/project-map/modules/cli.md`,
+  `docs/_internal/project-map/modules/protocol.md`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/host test --
+  test/config.test.ts test/client-run.test.ts`; `npm --workspace
+  @sparkwright/protocol test`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`; `npm run schema:check`.
+
+- Status: Verified
 - Date: 2026-07-06T20:08:48+0800
 - Scope: C8-bundles deletion kept Skill routing on the package/capability maps
   and recorded that `packages/skills/src/bundles.ts` plus its tests were

@@ -15,7 +15,7 @@ export const CONFIG_SCHEMA_ID =
 export const CONFIG_SCHEMA_PROTOCOL_VERSION = "0.2";
 export const CONFIG_SCHEMA_TITLE = "Sparkwright Config";
 export const CONFIG_SCHEMA_DESCRIPTION =
-  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); other shared fields are wholesale-overridden.";
+  "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.";
 
 export const stringSchema = z.string();
 export const nonEmptyString = stringSchema.min(1);
@@ -954,7 +954,10 @@ export const tasksSchema = z
   .record(nonEmptyString, taskConfigSchema)
   .describe("Model-backed auxiliary task routing and budget defaults.");
 export const confidentialPathsSchema = nonEmptyStringArray.describe(
-  "Opt-in read-confidentiality paths or globs whose contents a run must not read.",
+  "Additional read-confidentiality paths or globs whose contents a run must not read.",
+);
+export const confidentialDefaultsSchema = booleanSchema.describe(
+  "Whether runs include SparkWright's built-in conservative confidential path defaults. Defaults to true.",
 );
 export const maxStepsSchema = positiveInteger.describe(
   "Explicit main-run step ceiling.",
@@ -984,6 +987,7 @@ export const IDENTITY_GROUP_CONFIG_KEYS = identityGroupSchema.keyof().options;
 export const policyGroupSchema = z
   .object({
     confidentialPaths: confidentialPathsSchema.optional(),
+    confidentialDefaults: confidentialDefaultsSchema.optional(),
     write: writeGuardrailsSchema.optional(),
     sandbox: shellSandboxSchema.optional(),
   })
@@ -1031,6 +1035,7 @@ export const CONFIG_GROUP_FIELD_MAP = {
   identity: { model: "model", providers: "providers" },
   policy: {
     confidentialPaths: "confidentialPaths",
+    confidentialDefaults: "confidentialDefaults",
     write: "write",
     sandbox: "shell",
   },
@@ -1063,6 +1068,7 @@ export const sparkwrightConfigZodSchema = z
     backgroundTasks: backgroundTasksSchema.optional(),
     workspace: workspaceSchema.optional(),
     confidentialPaths: confidentialPathsSchema.optional(),
+    confidentialDefaults: confidentialDefaultsSchema.optional(),
     write: writeGuardrailsSchema.optional(),
     runBudget: runBudgetSchema.optional(),
     maxSteps: maxStepsSchema.optional(),

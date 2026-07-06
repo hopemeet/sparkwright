@@ -198,6 +198,26 @@ listed below.
   primitive only if the same PR migrates at least one existing copy
   (agent-profiles is the smallest).
 
+### S5. Run-boundary read-confidentiality defaults
+
+- **Owner:** core for the path-default primitive, host/CLI/protocol for run
+  boundary plumbing.
+- **Status:** implemented 2026-07-06 from C13-②. `packages/core/src/policy.ts`
+  now exposes `resolveRunConfidentialPaths()` as the one helper that combines
+  the built-in conservative deny set (`.env`, secret/token/credential patterns,
+  `.ssh`, `.aws`, `.gcp`, `.azure`) with caller-supplied
+  `confidentialPaths`. Host start/resume/workflow resume and CLI direct-core
+  runs use it; protocol 1.4 carries optional `confidentialDefaults:false` so
+  embedders can intentionally own the full list. Denials keep the existing
+  `workspace.read.denied` trace event and `READ_SCOPE_DENIED` tool failure.
+- **Customers:** host runs, CLI direct-core diagnostics, host protocol clients,
+  TUI config compatibility.
+- **Retired mechanism:** the prior "config absent means workspace reads are
+  fully open unless a caller manually prepended defaults" boundary is retired
+  in favor of one configurable run-boundary resolver.
+- **Scope guard:** this is a read-confidentiality gate only. `--target` remains
+  write-scoped and must not become an implicit read sandbox.
+
 ## S3 annex — budget end-state one-pager (drafted 2026-07-04, ratified 2026-07-04)
 
 The merge is tractable only with a three-way altitude split; every prior

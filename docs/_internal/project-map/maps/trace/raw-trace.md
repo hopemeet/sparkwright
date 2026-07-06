@@ -54,6 +54,9 @@ EventLog emits full event
   `policyDecisionMs`, `approvalWaitMs`, `executionMs`,
   `resultValidationMs`). These are diagnostics on existing terminal events;
   they do not change span closure or event-family semantics.
+- `workspace.read.denied` is the raw trace evidence for read-scope policy
+  denial. It pairs with the enclosing read tool's `tool.failed`
+  `READ_SCOPE_DENIED`; successful reads continue to use `workspace.read`.
 - Workflow runtime lifecycle events are emitted by projection runs:
   `workflow.started`, `workflow.node.started`, `workflow.node.completed`,
   `workflow.waiting`, `workflow.interrupted`, `workflow.completed`,
@@ -194,6 +197,17 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② raw trace check: denied confidential reads use the existing
+  `workspace.read.denied` event and `tool.failed READ_SCOPE_DENIED` without
+  adding event families or changing trace filtering.
+- Read: `packages/core/src/workspace.ts`, `packages/core/src/events.ts`,
+  `packages/core/src/policy.ts`, `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
 
 - Status: Read-only
 - Date: 2026-07-06T20:12:52+0800

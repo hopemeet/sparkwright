@@ -150,6 +150,11 @@ Does not own:
   `run.start` / `run.resume` requests and surfaces `backgroundTasks` /
   `backgroundTasksCeiling` in config inspection. There is not currently a
   separate CLI flag; host owns validation, clamping, and execution behavior.
+- CLI run/config plumbing also carries config-derived `confidentialDefaults`
+  into host requests and direct-core diagnostics. The CLI config template keeps
+  it under `policy`; `confidentialDefaults:false` is an explicit opt-out from
+  built-in read-confidentiality defaults, not a write-scope or `--target`
+  control.
 - CLI cron state commands route create/update/list/status/pause/resume/remove
   through `@sparkwright/cron` `CronCommandService`; `CronStore` is not the
   product-surface contract. `cron create` keeps the created job JSON on stdout
@@ -282,6 +287,19 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② CLI propagation for read-confidentiality defaults: host runs,
+  run resume, workflow resume, direct-core resume, config inspection, and the
+  starter template carry `confidentialDefaults` consistently.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/cli/src/runners/direct-core-runner.ts`,
+  `packages/cli/src/runners/host-runner.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "confidential"`; `npm --workspace @sparkwright/cli run typecheck`; `npm
+  --workspace @sparkwright/cli run build`.
 
 - Status: Verified
 - Date: 2026-07-06T19:48:49+0800

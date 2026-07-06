@@ -78,6 +78,7 @@ describe("host client run request helpers", () => {
         traceLevel: "debug",
         targetPath: "README.md",
         confidentialPaths: ["secret*"],
+        confidentialDefaults: false,
         shouldWrite: true,
         metadata,
       }),
@@ -90,6 +91,7 @@ describe("host client run request helpers", () => {
       traceLevel: "debug",
       targetPath: "README.md",
       confidentialPaths: ["secret*"],
+      confidentialDefaults: false,
       shouldWrite: true,
       metadata,
     });

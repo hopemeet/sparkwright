@@ -9,7 +9,6 @@ import {
   createRunId,
   createDefaultPolicy,
   createLayeredPolicy,
-  DEFAULT_CONFIDENTIAL_PATHS,
   createSessionId,
   createSessionRunStoreFactory,
   loadSessionCompactArtifact,
@@ -19,6 +18,7 @@ import {
   createToolSearchTool,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
+  resolveRunConfidentialPaths,
   defineTool,
   FileSessionStore,
   EventLog,
@@ -279,6 +279,7 @@ function createHostRunPolicy(input: {
   shouldWrite: boolean;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   writeGuardrails?: WriteGuardrailsConfig;
 }): Policy {
   // Config write guardrails override the built-in defaults when present. The
@@ -296,13 +297,11 @@ function createHostRunPolicy(input: {
       maxDiffLines: input.writeGuardrails?.maxDiffLines ?? 200,
       allowDeletions: input.writeGuardrails?.allowDeletions ?? true,
     }),
-    // Opt-in read-confidentiality. Empty list is a no-op, so default runs are
-    // unaffected; when set, reads of matching files are denied at the tool layer.
     createWorkspaceReadScopePolicy({
-      confidentialPaths: [
-        ...DEFAULT_CONFIDENTIAL_PATHS,
-        ...(input.confidentialPaths ?? []),
-      ],
+      confidentialPaths: resolveRunConfidentialPaths({
+        confidentialDefaults: input.confidentialDefaults,
+        confidentialPaths: input.confidentialPaths,
+      }),
     }),
   ]);
 }
@@ -1593,6 +1592,7 @@ export class HostRuntime {
     sessionId: string;
     targetPath?: string;
     confidentialPaths?: readonly string[];
+    confidentialDefaults?: boolean;
     traceLevel?: TraceLevel;
     workflowName?: string;
     workflowStore?: FileWorkflowStore;
@@ -1768,6 +1768,7 @@ export class HostRuntime {
       shouldWrite: input.shouldWrite,
       targetPath: input.targetPath,
       confidentialPaths: input.confidentialPaths,
+      confidentialDefaults: input.confidentialDefaults,
       writeGuardrails,
     });
     const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
@@ -2746,6 +2747,7 @@ export class HostRuntime {
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
+      confidentialDefaults: payload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -2789,6 +2791,7 @@ export class HostRuntime {
           shouldWrite,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
+          confidentialDefaults: payload.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -2865,6 +2868,7 @@ export class HostRuntime {
                   shouldWrite,
                   targetPath: payload.targetPath,
                   confidentialPaths: payload.confidentialPaths,
+                  confidentialDefaults: payload.confidentialDefaults,
                   writeGuardrails: env.writeGuardrails,
                 }),
                 promptBuilder: buildAgentPromptBuilder({
@@ -3025,6 +3029,7 @@ export class HostRuntime {
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
+      confidentialDefaults: payload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -3079,6 +3084,7 @@ export class HostRuntime {
           shouldWrite,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
+          confidentialDefaults: payload.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -3288,6 +3294,7 @@ export class HostRuntime {
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
+      confidentialDefaults: payload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -3357,6 +3364,7 @@ export class HostRuntime {
           shouldWrite,
           targetPath: payload.targetPath,
           confidentialPaths: payload.confidentialPaths,
+          confidentialDefaults: payload.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({

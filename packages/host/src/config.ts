@@ -15,7 +15,8 @@
  * replacement, capabilities merge by sub-capability, and the security
  * boundaries — shell.sandbox, permissionMode, and
  * confidentialPaths — merge conservatively so later (lower-trust) layers cannot
- * weaken an earlier layer's policy.
+ * weaken an earlier layer's policy. confidentialDefaults is the explicit
+ * later-layer override for the built-in confidential path set.
  * Callers layer CLI flags / env on top.
  */
 
@@ -77,6 +78,7 @@ import {
   CAPABILITIES_CONFIG_KEYS,
   CONFIG_GROUP_CONFIG_KEYS,
   CONFIG_GROUP_FIELD_MAP,
+  confidentialDefaultsSchema,
   confidentialPathsSchema,
   DELEGATE_TOOL_BOOLEAN_CONFIG_KEYS,
   DELEGATE_TOOL_CONFIG_KEYS,
@@ -275,9 +277,15 @@ export interface SharedConfig {
   /** Path relative to the config file, or absolute. */
   workspace?: string;
   /**
-   * Workspace-relative paths/globs whose contents a run must not read. Opt-in
-   * read-confidentiality: matching `read_file`/`grep` reads are denied at
-   * the tool layer. Empty/absent leaves the default permissive behavior.
+   * Whether runs include the built-in conservative read-confidentiality globs.
+   * Defaults to true when absent. Set false only when the config intentionally
+   * owns the full confidential path list.
+   */
+  confidentialDefaults?: boolean;
+  /**
+   * Workspace-relative paths/globs whose contents a run must not read. These
+   * extend the built-in confidential defaults unless `confidentialDefaults` is
+   * set false. Matching `read_file`/`grep` reads are denied at the tool layer.
    */
   confidentialPaths?: string[];
   /**
@@ -382,6 +390,7 @@ export interface SharedConfigSourceMap {
   backgroundTasksCeiling?: string;
   permissionMode?: string;
   workspace?: string;
+  confidentialDefaults?: string;
   confidentialPaths?: string;
   write?: string;
   shell?: string;
@@ -4381,6 +4390,20 @@ function validateShared(
       sources.confidentialPaths = origin;
     }
   }
+  if (obj.confidentialDefaults !== undefined) {
+    const confidentialDefaults = validateZodValue(
+      confidentialDefaultsSchema,
+      obj.confidentialDefaults,
+      "confidentialDefaults",
+      filePath,
+      errors,
+      "must be a boolean",
+    );
+    if (confidentialDefaults !== undefined) {
+      config.confidentialDefaults = confidentialDefaults;
+      sources.confidentialDefaults = origin;
+    }
+  }
   if (obj.write !== undefined) {
     const write = validateWriteGuardrails(obj.write, filePath, errors);
     if (write) {
@@ -4569,6 +4592,7 @@ export async function loadHostConfig(
       backgroundTasks: layerBackgroundTasks,
       // permissionMode is derived from accessMode; never merged from a layer.
       permissionMode: _layerPermissionMode,
+      confidentialDefaults: layerConfidentialDefaults,
       confidentialPaths: layerConfidentialPaths,
       write: layerWrite,
       ...rest
@@ -4672,6 +4696,10 @@ export async function loadHostConfig(
       );
       sources.confidentialPaths = v.sources.confidentialPaths;
     }
+    if (layerConfidentialDefaults !== undefined) {
+      merged.confidentialDefaults = layerConfidentialDefaults;
+      sources.confidentialDefaults = v.sources.confidentialDefaults;
+    }
     if (layerWrite !== undefined) {
       merged.write = mergeWriteGuardrails(merged.write, layerWrite);
       sources.write = v.sources.write;
@@ -4684,6 +4712,7 @@ export async function loadHostConfig(
     delete fieldSources.backgroundTasks;
     delete fieldSources.backgroundTasksCeiling;
     delete fieldSources.permissionMode;
+    delete fieldSources.confidentialDefaults;
     delete fieldSources.confidentialPaths;
     delete fieldSources.write;
     Object.assign(sources, fieldSources);

@@ -43,6 +43,10 @@ model tool calls
   expected policy/approval denials non-failing. This rule is category-based,
   not tool-specific; do not special-case shell/bash when adding future guarded
   tools.
+- Read-family tools execute through the controlled workspace guard. A
+  confidential read denied by the run policy emits `workspace.read.denied` and
+  a `tool.failed` with `READ_SCOPE_DENIED`; it must not also emit
+  `workspace.read` for the denied path.
 - Tool target identity for capability calls (cron/agent/task) keys on the
   top-level `ref` via the shared `stableRefTarget` helper
   (`packages/core/src/run-outcome.ts`). Both the doom-loop guard
@@ -262,6 +266,19 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② read tool orchestration check: built-in confidential read
+  defaults are enforced inside the normal tool execution path, preserving
+  `tool.requested`/`tool.failed` pairing and avoiding `workspace.read` on
+  denied paths.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
+  `packages/host/src/tools.ts`, `packages/host/src/runtime.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
 
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800

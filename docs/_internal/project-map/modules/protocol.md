@@ -96,6 +96,11 @@ Does not own:
 - `shouldWrite` is the run start/resume write-capability gate. When it is
   `false`, write-capable requests are denied by policy rather than represented
   as a separate read-only approval-escalation protocol field.
+- Protocol 1.4 run start/resume/workflow-resume payloads may include
+  `confidentialPaths` plus optional `confidentialDefaults:false`. Omitted
+  `confidentialDefaults` means host defaults apply; false is the only wire
+  value that disables SparkWright's built-in conservative read-confidentiality
+  list for that run boundary.
 - `INTERNAL_TRANSCRIPT_EVENT_TYPES` / `isInternalTranscriptEventType()` are the
   shared low-signal event filter used by TUI live transcript rendering and
   `/export`; this is product transcript visibility, not raw trace semantics.
@@ -180,6 +185,19 @@ Does not own:
 - Protocol and file trace contracts are related but separate; avoid documenting one as the other.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② protocol 1.4 reserves the optional
+  `confidentialDefaults:false` run-boundary override and aligns
+  host-message schema/fixture/reference docs.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/protocol/test/index.test.ts`,
+  `schemas/host-message.schema.json`,
+  `schemas/fixtures/host-message.request.run-start.json`,
+  `docs/reference/HOST_PROTOCOL.md`, `docs/reference/PROTOCOL_CHANGELOG.md`.
+- Tests: `npm --workspace @sparkwright/protocol test`; `npm run
+  schema:check`; `npm --workspace @sparkwright/protocol run build`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:37:13+0800

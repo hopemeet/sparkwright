@@ -223,6 +223,17 @@ trace.jsonl
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: confidential read denials remain existing raw
+  `workspace.read.denied` / `tool.failed` evidence. Trace summary, timeline,
+  report, verify, and host session inspection derivations were not changed.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/workspace.ts`, `packages/core/src/policy.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for trace diagnostic commands; C13 focused validation ran in
+  core/host/CLI/protocol.
+
+- Status: Read-only
 - Date: 2026-07-05T22:20:59+0800
 - Scope: workflow-runtime-v1 P8a routed-page check: `workflow shadow` reads
   existing trace events for an offline workflow coverage report but does not

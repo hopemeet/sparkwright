@@ -56,6 +56,10 @@ tool proposes write
   writes and avoid saying "no workspace changes" when an untracked
   write-capable boundary occurred; the summary still must not claim a specific
   file mutation from this marker alone.
+- Read-confidentiality is adjacent but separate from workspace-write safety.
+  `workspace.read.denied` is the audit event for denied confidential reads; it
+  does not consume or imply the managed `workspace.write.*` path, and `--target`
+  remains write-scoped rather than a read sandbox.
 - MCP tools are normal external tools. If they write files without using
   managed `workspace.write.*`, those writes are not counted as managed
   workspace writes; stdio MCP servers default to neutral cwd to avoid accidental
@@ -86,6 +90,20 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: read-confidentiality defaults changed the
+  read-scope policy boundary only. Managed workspace-write policy, write event
+  pairing, untracked write-capable markers, and `--target` write scope are
+  unchanged.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
 
 - Status: Read-only
 - Date: 2026-07-06T20:12:52+0800

@@ -229,6 +229,12 @@ Does not own:
   actions are denied before approval. Write-enabled runs still route managed
   workspace mutations through the `workspace.write` diff approval path and
   write guardrails.
+- Read-confidentiality is a separate workspace-read policy layer.
+  `resolveRunConfidentialPaths()` is the run-boundary helper that prepends
+  SparkWright's conservative defaults unless `confidentialDefaults:false` is
+  explicitly supplied, then appends caller `confidentialPaths`. Matching reads
+  emit `workspace.read.denied` and fail the tool with `READ_SCOPE_DENIED`;
+  successful reads still emit `workspace.read`.
 - `WorkflowHook` is the deterministic project-facing rule layer. Current public
   lifecycle values are canonical-only: `RunStart`, `TurnStart`, `ModelOutput`,
   `PreToolUse`, `PostToolUse`, `Stop`, `RunEnd`, and `RuntimeSignal`. Core no
@@ -306,6 +312,18 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② read-confidentiality defaults: core owns the shared
+  `resolveRunConfidentialPaths()` resolver and the read-scope policy still
+  emits `workspace.read.denied` / `READ_SCOPE_DENIED` without changing write
+  gates or approval semantics.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
+  `packages/core/test/policy.test.ts`, `packages/core/test/workspace.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-06T19:24:51+0800

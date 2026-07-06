@@ -3,7 +3,7 @@
   "$id": "https://sparkwright.dev/schemas/v0/config.schema.json",
   "x-sparkwrightProtocolVersion": "0.2",
   "title": "Sparkwright Config",
-  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); other shared fields are wholesale-overridden.",
+  "description": "User-editable settings shared by the CLI and the interactive TUI. Loaded (in order, later overriding earlier) from ~/.config/sparkwright/config.{json,yaml,yml}, <workspace>/.sparkwright/config.{json,yaml,yml}, and $SPARKWRIGHT_CONFIG. Within a user/project layer, config.json wins over config.yaml, which wins over config.yml; multiple files in one layer are reported as a conflict. CLI args and env vars override files. Fields may be written flat or under the preferred groups identity/policy/run/ui; tools and capabilities are top-level groups. A field set both ways conflicts and the grouped value wins. The providers map is merged by key, tools.use and tools.allowed intersect, tools.disabled unions, tools.defer is replaced by later layers, capabilities merges by sub-capability, and the security boundaries - shell.sandbox, run.accessMode, confidentialPaths, and write - merge conservatively so later layers cannot weaken an earlier layer's policy (project clamps user); confidentialDefaults is an explicit later-layer override for the built-in confidential path set; other shared fields are wholesale-overridden.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -121,7 +121,11 @@
         "type": "string",
         "minLength": 1
       },
-      "description": "Opt-in read-confidentiality paths or globs whose contents a run must not read."
+      "description": "Additional read-confidentiality paths or globs whose contents a run must not read."
+    },
+    "confidentialDefaults": {
+      "type": "boolean",
+      "description": "Whether runs include SparkWright's built-in conservative confidential path defaults. Defaults to true."
     },
     "write": {
       "type": "object",
@@ -1456,7 +1460,11 @@
             "type": "string",
             "minLength": 1
           },
-          "description": "Opt-in read-confidentiality paths or globs whose contents a run must not read."
+          "description": "Additional read-confidentiality paths or globs whose contents a run must not read."
+        },
+        "confidentialDefaults": {
+          "type": "boolean",
+          "description": "Whether runs include SparkWright's built-in conservative confidential path defaults. Defaults to true."
         },
         "write": {
           "type": "object",

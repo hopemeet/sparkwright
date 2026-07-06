@@ -175,7 +175,11 @@
   约束。完成 2026-07-06:① 已写入 `docs/guides/CONFIGURATION.md` 与
   `docs/guides/USER_MANUAL.md`;源码复核发现②的保守默认已在当前 main
   通过 `DEFAULT_CONFIDENTIAL_PATHS` 接入 host/direct-core policy,后续代码项需
-  先重验是否仍需小 PR。**
+  先重验是否仍需小 PR。完成 2026-07-06 C13-②:已补
+  `confidentialDefaults` 显式覆盖开关,host/direct-core/run resume/workflow
+  resume 均通过 `resolveRunConfidentialPaths()` 解析保守默认+
+  `confidentialPaths`;默认拒绝沿用 `workspace.read.denied` trace 与
+  `READ_SCOPE_DENIED`;QA fixture 名称核对未发现 credential 类误伤。**
 
 ### 丙组 — 已定未做完(不需要裁决,需要排期认领)
 
@@ -263,7 +267,7 @@
 小 PR 批次(认领即做):
   C9 三处 atomic-write 迁移(file-notifications/cron 先行)
   C10 Tier 3(capabilities inspect inline agents 先行)
-  C8-bundles 删除;C13-② confidentialPaths 保守默认小项
+  C8-bundles 删除;C13-② confidentialPaths 保守默认小项(完成 2026-07-06)
 挂触发器(不排期):
   C11(下一个 workflow store PR 带 lease TTL);C4 三闸门;C5 web_*;
   C3 P1;C1 A-Phase 4(与 3b 合并评审)

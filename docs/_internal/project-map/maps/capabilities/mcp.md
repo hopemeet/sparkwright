@@ -83,6 +83,17 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: host runtime policy construction now carries
+  `confidentialDefaults`, but MCP server preparation, wrapped tool execution,
+  cwd handling, workspace-cwd disclosure, and diagnostic payloads are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/config.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: not run for MCP-specific behavior; C13 focused validation ran in
+  core/host/CLI/protocol.
+
+- Status: Read-only
 - Date: 2026-07-06T20:12:52+0800
 - Scope: C10 route check for HostRuntime capability-inspection profile
   inventory. MCP server preparation, tool execution wrapping, cwd handling,

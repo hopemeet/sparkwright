@@ -1,11 +1,11 @@
 import {
   createPermissionModePolicy,
   createLayeredPolicy,
-  DEFAULT_CONFIDENTIAL_PATHS,
   createRun,
   createSessionRunStoreFactory,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
+  resolveRunConfidentialPaths,
   FileSessionStore,
   type ContextItem,
   type ModelAdapter,
@@ -58,6 +58,7 @@ export interface DirectCoreRunInput {
   sessionRootDir: string;
   targetPath: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   shouldWrite: boolean;
   approveAll: boolean;
   approveEdits?: boolean;
@@ -89,6 +90,7 @@ export async function startDirectCoreRun(
     sessionRootDir,
     targetPath,
     confidentialPaths,
+    confidentialDefaults,
     shouldWrite,
     approveAll,
     approveEdits,
@@ -133,10 +135,10 @@ export async function startDirectCoreRun(
       allowDeletions: writeGuardrails?.allowDeletions ?? false,
     }),
     createWorkspaceReadScopePolicy({
-      confidentialPaths: [
-        ...DEFAULT_CONFIDENTIAL_PATHS,
-        ...(confidentialPaths ?? []),
-      ],
+      confidentialPaths: resolveRunConfidentialPaths({
+        confidentialDefaults,
+        confidentialPaths,
+      }),
     }),
   ]);
   const tools = await createConfiguredCliTools(workspaceRoot, env);

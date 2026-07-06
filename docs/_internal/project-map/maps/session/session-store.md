@@ -104,6 +104,16 @@ Manual compact
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: protocol and CLI resume payloads gained a
+  read-policy override, but session file layout, session events, compaction
+  artifacts, and replay consumers are unchanged.
+- Read: `packages/protocol/src/index.ts`, `packages/cli/src/cli.ts`,
+  `packages/host/src/runtime.ts`, `packages/core/src/session.ts`.
+- Tests: not run for session-store-specific behavior; C13 focused validation
+  ran in core/host/CLI/protocol.
+
 - Status: Verified
 - Date: 2026-07-06T19:24:51+0800
 - Scope: C9 S1 migration: `FileSessionStore.writeSession()` now composes core
