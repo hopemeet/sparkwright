@@ -35,7 +35,8 @@ cron config/state
   `~/.local/state/sparkwright/cron`) with no legacy config-root migration.
 - `CronCommandService` owns schema-normalized command behavior for create,
   update, list, status, pause, resume, and remove. `CronStore` remains the
-  persistence/atomic mutation layer.
+  persistence/atomic mutation layer and composes `agent-runtime` `doc-store`
+  atomic writes for durable store saves.
 - Cron jobs can reference skills and run goals on a schedule.
 - Schedule delay input accepts both compact (`1h`) and display (`in 1h`) forms.
 - Updating a completed/error job's schedule reactivates it, clears
@@ -100,6 +101,21 @@ cron config/state
   tool, verification, mutation, or denial signal exists.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T18:44:10+0800
+- Scope: C9 S1 migration: `CronStore.save()` now uses the shared
+  `doc-store` `atomicWriteText()` for `jobs.json`, retiring
+  `packages/cron/src/store.ts`'s private tmp+fsync+rename+directory-fsync
+  write flow without changing the `sparkwright-cron.v1` store schema or cron
+  command/tool contracts.
+- Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
+  `npm --workspace @sparkwright/cron run typecheck`; `npm run
+  check:package-boundaries`; `npm run check:workspace-lock`.
 
 - Status: Read-only
 - Date: 2026-07-06T14:45:00+0800

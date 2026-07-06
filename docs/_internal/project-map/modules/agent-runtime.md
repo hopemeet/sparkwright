@@ -42,8 +42,8 @@ Does not own:
   stores: atomic text/JSON document writes with Windows rename retry cleanup,
   corrupt-entry-tolerant JSON directory/log scans with diagnostics, JSONL
   append-log helpers, and token-entry single-writer leases. Feature stores such
-  as tasks/workflows compose these primitives instead of carrying their own
-  atomic-write or append-log copies.
+  as tasks/workflows/cron compose these primitives instead of carrying their
+  own atomic-write or append-log copies.
 - `task_create` can start external work; read-only task tools inspect state/output.
 - `TaskManager.registeredKinds()` exposes live runner keys for model-facing
   diagnostics; `createTaskCreate()` can accept optional
@@ -277,6 +277,21 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T18:44:10+0800
+- Scope: C9 S1 migration: `CronStore.save()` now consumes the exported
+  `doc-store` `atomicWriteText()` through `@sparkwright/agent-runtime`,
+  retiring `packages/cron/src/store.ts`'s private tmp+fsync+rename write flow
+  while preserving the cron `jobs.json` format and durability intent.
+- Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
+  `packages/agent-runtime/src/index.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
+  `npm --workspace @sparkwright/cron run typecheck`; `npm run
+  check:package-boundaries`; `npm run check:workspace-lock`.
 
 - Status: Verified
 - Date: 2026-07-06T14:45:00+0800

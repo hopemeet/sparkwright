@@ -189,7 +189,10 @@
   `packages/agent-runtime/src/tasks/file-notifications.ts` 已迁到
   `agent-runtime/src/doc-store` 的 `atomicWriteTextSync()`,退役该文件私有
   tmp-write + rename helper;剩余 `core/src/session.ts` 与
-  `cron/src/store.ts`。**
+  `cron/src/store.ts`。完成 2026-07-06 C9-②:
+  `packages/cron/src/store.ts` 私有 `save()` 已迁到
+  `agent-runtime/src/doc-store` 的 `atomicWriteText()`,退役该文件私有
+  tmp+fsync+rename+目录 fsync 写入流程;剩余 `core/src/session.ts`。**
 - **C10|Tier 3 删除清单**:ACP 入口缺 `--session-root`(写进工作区)、
   `capabilities inspect` 少报 inline-config agents(capability-upgrade
   Phase 1 留尾同源)、`detectSkillLearnTarget` 旁路未删。
