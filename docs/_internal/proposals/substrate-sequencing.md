@@ -8,10 +8,11 @@
 > proposals stop re-stating (and re-inventing) the same substrates.
 >
 > Active proposals covered: `workflow-runtime-v1.md`,
-> `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`, and
-> `qa-convergence-plan.md` (stub home created 2026-07-06 from C12). Evidence
-> lines below were verified against the `feat/background-agent-jobs` working
-> tree on 2026-07-04 unless a later line states otherwise.
+> `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`,
+> `session-agent-host-coordinator.md`, and `qa-convergence-plan.md` (stub home
+> created 2026-07-06 from C12). Evidence lines below were verified against the
+> `feat/background-agent-jobs` working tree on 2026-07-04 unless a later line
+> states otherwise.
 
 ## The problem this page solves
 
@@ -247,7 +248,8 @@ checkboxes, a recorded date/commit. No process theater.
 | --- | --- | --- |
 | Hook producers 3+ → 2 → 1 | workflow P1.5 (+ decision 19 ordering, P0 assembly-order test) | P1.5/D25 local state: user-configured rules + host-owned projection family; verification/documented-command are built-in invariant projections, selected workflow assets are linear workflow projections, the old live gate producers are deleted, the dead `verification.stopGate` config surface is removed, and P1.5 release gate passed. Future 2 → 1 convergence folds todo doctrine and plan mode in as workflow collections (decision 18, self-hosting pilots). |
 | Run-chain drivers 3 → 1 | workflow decision 18 (gate before actor episode spawning) | one run-chain driver; supervisor todo chain expressible as degenerate workflow before episodes ship |
-| Skill/MCP/Agent/Delegate → one substrate | skill-runtime-v1-redesign convergence addendum | DelegationLedgerKey already unified; `mcp_call` alignment outstanding |
+| Session turn ownership / "next execution" boundary | session-agent-host-coordinator.md C3 P0 matrix | core owns in-run command consumption, workflow owns workflow episode advancement, `TaskManager` owns task terminal/revival facts, and future `SessionTurnScheduler` owns only session queueing plus active-turn selection; per-connection `HostRuntime` remains a compatibility adapter, not the target coordination owner |
+| Skill/MCP/Agent/Delegate → one substrate | skill-runtime-v1-redesign convergence addendum | C1 accepted A-Phase 1-3 on 2026-07-06: Agent indexed exposure is the baseline, Agent index structuring follows, and MCP alignment (`mcp_call`, name-level deferral, `pinnedTools`) is opt-in first; A-Phase 4 shared routing is deferred to the capability-upgrade Phase 3b rank-before-hide review |
 | Shell/task/sub-agent lifecycle | background-task-lifecycle (in flight on `feat/background-agent-jobs`) | one fg→promote→bg + revival spine; one background-execution semantics |
 
 ## Tier 3 — pure deletions / fork-closing (small PRs, no design needed)

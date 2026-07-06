@@ -53,7 +53,9 @@
   定性。建议:**批 A-Phase 1–3**;A-Phase 4(shared routing)与
   capability-upgrade Phase 3 是同一件事,合并评审(见 C-dup-1)。
   **→ 裁决 2026-07-06:批 A-Phase 1–3;缓 A-Phase 4(与 3b 合并后
-  再评)。**
+  再评)。完成 2026-07-06:`skill-runtime-v1-redesign.md` addendum
+  已标记 A-Phase 1–3 accepted、A-Phase 4 deferred;`substrate-sequencing.md`
+  已同步 Skill/MCP/Agent/Delegate 基座排期。**
 - **C2|能力面词汇拆三层,各设唯一 owner。**
   `agent-access-config-redesign.md` 子提案 #2/#3 与
   `builtin-tool-surface-consolidation.md` 的 selector 面 + 别名层交叠,
@@ -83,7 +85,10 @@
   主线告一段落;5 个 open questions 中"per-connection HostRuntime
   兼容路径"一条其实触及 P0 矩阵,随 P0 一并写死,其余随 P1。
   **→ 裁决 2026-07-06:批 P0(边界矩阵文档);缓 P1(scheduler 实现,
-  等 workflow 主线缓下来)。**
+  等 workflow 主线缓下来)。完成 2026-07-06:
+  `session-agent-host-coordinator.md` 已落 P0 边界矩阵,并冻结
+  per-connection `HostRuntime` 为兼容路径;`substrate-sequencing.md`
+  已同步"下一次执行"owner 边界。**
 - **C4|workflow 三道未接线闸门的重开条件(定条件,不定排期)。**
   owner: `workflow-runtime-v1.md`。
   - D26 spawn/`workflow_start`:维持关闭;重开条件 = 统一任务生命周期
@@ -131,7 +136,10 @@
   它们的改写结果、`advance` 类效果是否仍被 D19 拒绝。两提案目前互不
   知情,agent-md 提案成文早于 P10a。
   **→ 裁决 2026-07-06:批合并(access-config 出 schema,authoring 出
-  hooks 载体与切片;验收必须按 P10a 两阶段规则补测试)。**
+  hooks 载体与切片;验收必须按 P10a 两阶段规则补测试)。完成
+  2026-07-06:两提案已互设 owner 边界;access-config #4 保持 schema
+  owner,authoring 提案保持 hooks 载体/切片 owner,并写入 P10a
+  两阶段 `PreToolUse` 验收项。**
 - **C8|skill-runtime 4 个 open questions**:archived 是否进
   `skill_index`、`allowedTools` 是否由 host 强制、CLI `skills create`
   直写去留、bundles 去留。建议:bundles 按 rule zero 处置——没有产品
@@ -140,7 +148,9 @@
   **→ 裁决 2026-07-06:archived 不进 model-visible index(仅
   inspect/doctor);`allowedTools` 不授权只声明需求(host/config/
   policy 是唯一强制边界);CLI 直写保留给人类,模型侧仍走 proposal;
-  bundles 杀(无明确客户,按 rule zero)。**
+  bundles 杀(无明确客户,按 rule zero)。完成 2026-07-06:
+  `skill-runtime-v1-redesign.md` 已改为 resolved decisions;bundles 标为
+  批次 3 no-customer audit 后删除。**
 
 - **C13|read-scope 残留(安全语义,单独拍,不与 cleanup 混批)**:读
   机密层**已存在**——`createWorkspaceReadScopePolicy`
