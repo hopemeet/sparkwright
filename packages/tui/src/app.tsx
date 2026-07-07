@@ -40,27 +40,13 @@ import {
   createCapability,
   type CreateCapabilityDraft,
 } from "./lib/create-capability.js";
-import {
-  createTuiSkillProposal,
-  createTuiSkillProposalFromInput,
-  applyTuiSkillReviewProposal,
-  formatTuiSkillProposalResult,
-  loadTuiSkillReview,
-  rejectTuiSkillReviewProposal,
-  type TuiSkillReviewDetail,
-  type TuiSkillProposalInput,
-  updateTuiSkillProposal,
-  updateTuiSkillProposalFromInput,
-} from "./lib/skill-evolution.js";
+import { useSkillActions } from "./state/use-skill-actions.js";
 import {
   applySkillLearnDraftProposal,
   createSkillLearnDraftProposal,
   detectSkillLearnNotice,
   detectSkillLearnTarget,
-  formatSkillLearnStatus,
-  parseSkillLearnMode,
   readSkillLearnStatus,
-  setProjectSkillLearnMode,
 } from "./lib/skill-learn.js";
 import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
 import {
@@ -325,10 +311,6 @@ function AppReady(
     Record<string, TaskOutputChunkSnapshot[]>
   >({});
   const [loadingTasks, setLoadingTasks] = useState(false);
-  const [skillReviewSnapshot, setSkillReviewSnapshot] =
-    useState<TuiSkillReviewDetail | null>(null);
-  const [loadingSkillReview, setLoadingSkillReview] = useState(false);
-  const [skillReviewRest, setSkillReviewRest] = useState("");
   const [labels, setLabels] = useState<Record<string, string>>({});
   const labelsRef = useRef<SessionLabels | null>(null);
   // Ctrl+C behaves like a safe escape hatch: first press cancels/backs out,
@@ -650,6 +632,16 @@ function AppReady(
     }
   }
 
+  // Skill Evolution actions + the review-panel state they drive live in a
+  // dedicated hook so App carries the wiring, not the proposal/review/learn
+  // toast plumbing.
+  const skillActions = useSkillActions({
+    workspaceRoot: resolved.workspaceRoot,
+    toasts,
+    layers,
+    reloadConfig,
+  });
+
   useEffect(() => {
     const dispose = watchTuiConfig(props.initialCwd, () => {
       void reloadConfig(true);
@@ -761,236 +753,6 @@ function AppReady(
       });
   }
 
-  function createSkillProposalFromSlash(rest: string): void {
-    void createTuiSkillProposal(resolved.workspaceRoot, rest)
-      .then((proposal) => {
-        toasts.push({
-          variant: "success",
-          title: "skill proposal",
-          message: formatTuiSkillProposalResult(proposal),
-        });
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-create failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function openSkillCreateProposal(rest = ""): void {
-    if (rest.trim().length > 0) {
-      createSkillProposalFromSlash(rest);
-      return;
-    }
-    layers.push("skill-create");
-  }
-
-  function handleCreateSkillProposal(draft: TuiSkillProposalInput): void {
-    void createTuiSkillProposalFromInput(resolved.workspaceRoot, draft)
-      .then((proposal) => {
-        layers.pop("skill-create");
-        toasts.push({
-          variant: "success",
-          title: "skill proposal",
-          message: formatTuiSkillProposalResult(proposal),
-        });
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-create failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function updateSkillProposalFromSlash(rest: string): void {
-    void updateTuiSkillProposal(resolved.workspaceRoot, rest)
-      .then((proposal) => {
-        toasts.push({
-          variant: "success",
-          title: "skill proposal",
-          message: formatTuiSkillProposalResult(proposal),
-        });
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-update failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function openSkillUpdateProposal(rest = ""): void {
-    const trimmed = rest.trim();
-    if (!trimmed) {
-      layers.push("skill-update");
-      return;
-    }
-    if (/^[a-z0-9][a-z0-9-]{0,63}$/.test(trimmed)) {
-      layers.push("skill-update", { name: trimmed });
-      return;
-    }
-    updateSkillProposalFromSlash(rest);
-  }
-
-  function handleUpdateSkillProposal(draft: TuiSkillProposalInput): void {
-    void updateTuiSkillProposalFromInput(resolved.workspaceRoot, draft)
-      .then((proposal) => {
-        layers.pop("skill-update");
-        toasts.push({
-          variant: "success",
-          title: "skill proposal",
-          message: formatTuiSkillProposalResult(proposal),
-        });
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-update failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function reviewSkillProposalsFromSlash(rest: string): void {
-    setSkillReviewRest(rest);
-    setLoadingSkillReview(true);
-    setSkillReviewSnapshot(null);
-    layers.push("skill-review");
-    void loadTuiSkillReview(resolved.workspaceRoot, rest)
-      .then((review) => {
-        setSkillReviewSnapshot(review);
-        setLoadingSkillReview(false);
-      })
-      .catch((error: unknown) => {
-        setLoadingSkillReview(false);
-        toasts.push({
-          variant: "error",
-          title: "/skill-review failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function refreshSkillReview(): void {
-    setLoadingSkillReview(true);
-    void loadTuiSkillReview(resolved.workspaceRoot, skillReviewRest)
-      .then((review) => {
-        setSkillReviewSnapshot(review);
-        setLoadingSkillReview(false);
-      })
-      .catch((error: unknown) => {
-        setLoadingSkillReview(false);
-        toasts.push({
-          variant: "error",
-          title: "/skill-review refresh failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
-  function applySkillReviewProposal(proposalId: string): void {
-    void applyTuiSkillReviewProposal(resolved.workspaceRoot, proposalId)
-      .then((result) => {
-        toasts.push({
-          variant: "success",
-          title: "skill proposal applied",
-          message: `${result.id} -> ${result.historyId ?? "history"}`,
-          durationMs: 7000,
-        });
-        refreshSkillReview();
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "skill proposal apply failed",
-          message: error instanceof Error ? error.message : String(error),
-          durationMs: 9000,
-        });
-      });
-  }
-
-  function rejectSkillReviewProposal(proposalId: string): void {
-    void rejectTuiSkillReviewProposal(resolved.workspaceRoot, proposalId)
-      .then((result) => {
-        toasts.push({
-          variant: "success",
-          title: "skill proposal rejected",
-          message: `${result.id} ${result.skillName}`,
-          durationMs: 7000,
-        });
-        refreshSkillReview();
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "skill proposal reject failed",
-          message: error instanceof Error ? error.message : String(error),
-          durationMs: 9000,
-        });
-      });
-  }
-
-  function handleSkillLearn(rest = ""): void {
-    let mode: ReturnType<typeof parseSkillLearnMode>;
-    try {
-      mode = parseSkillLearnMode(rest);
-    } catch (error) {
-      toasts.push({
-        variant: "error",
-        title: "/skill-learn failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-
-    if (!mode) {
-      void readSkillLearnStatus(resolved.workspaceRoot)
-        .then((status) => {
-          toasts.push({
-            variant: "info",
-            title: "skill learn",
-            message: formatSkillLearnStatus(status),
-          });
-        })
-        .catch((error: unknown) => {
-          toasts.push({
-            variant: "error",
-            title: "/skill-learn failed",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        });
-      return;
-    }
-
-    void setProjectSkillLearnMode(resolved.workspaceRoot, mode)
-      .then((result) => {
-        toasts.push({
-          variant: "success",
-          title: "skill learn",
-          message: `${result.mode} -> ${formatWorkspaceDisplayPath(
-            result.path,
-            {
-              workspaceRoot: resolved.workspaceRoot,
-              maxCols: 72,
-            },
-          )}`,
-        });
-        void reloadConfig(true);
-      })
-      .catch((error: unknown) => {
-        toasts.push({
-          variant: "error",
-          title: "/skill-learn failed",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-  }
-
   // Build the command registry once per controller. App-level handlers are
   // closed over here and invoked later via slash input.
   const registry = useMemo(() => {
@@ -1084,23 +846,17 @@ function AppReady(
       category: "session",
       run: () => void openSessionList(),
     });
-    reg.register({
-      name: "events",
-      title: "Open Activity Events",
-      description: "Open the activity drawer on the event stream.",
-      category: "view",
-      hint: formatBinding(resolved.bindings["events.open"]) || undefined,
-      aliases: ["inspect", "inspector"],
-      run: () => openActivity("events"),
-    });
-    reg.register({
-      name: "tasks",
-      title: "Open Background Tasks",
-      description: "Open the activity drawer on durable background tasks.",
-      category: "view",
-      hint: formatBinding(resolved.bindings["activity.open"]) || undefined,
-      run: () => openActivity("tasks"),
-    });
+    for (const spec of ACTIVITY_COMMANDS) {
+      reg.register({
+        name: spec.name,
+        title: spec.title,
+        description: spec.description,
+        category: "view",
+        hint: formatBinding(resolved.bindings[spec.hintBinding]) || undefined,
+        ...(spec.aliases ? { aliases: spec.aliases } : {}),
+        run: () => openActivity(spec.tab),
+      });
+    }
     reg.register({
       name: "config",
       title: "Show resolved config",
@@ -1108,15 +864,17 @@ function AppReady(
       category: "config",
       run: () => layers.toggle("config"),
     });
-    reg.register({
-      name: "capabilities",
-      title: "Browse available capabilities",
-      description:
-        "Discover tools, Skills, MCP servers, agents, and cron support.",
-      category: "view",
-      aliases: ["caps"],
-      run: () => void openCapabilities("all"),
-    });
+    for (const spec of CAPABILITY_VIEW_COMMANDS) {
+      reg.register({
+        name: spec.name,
+        title: spec.title,
+        description: spec.description,
+        category: "view",
+        ...(spec.aliases ? { aliases: spec.aliases } : {}),
+        ...(spec.hiddenByDefault ? { hiddenByDefault: true } : {}),
+        run: () => void openCapabilities(spec.view),
+      });
+    }
     reg.register({
       name: "create",
       title: "Create capability",
@@ -1128,30 +886,14 @@ function AppReady(
       runRaw: (rest) => openCreateCapability(rest),
     });
     reg.register({
-      name: "tools",
-      title: "Browse tools",
-      description: "Show prepared tools, risk, and origin.",
-      category: "view",
-      hiddenByDefault: true,
-      run: () => void openCapabilities("tools"),
-    });
-    reg.register({
-      name: "skills",
-      title: "Browse Skills",
-      description: "Show Skills SparkWright can discover or load.",
-      category: "view",
-      hiddenByDefault: true,
-      run: () => void openCapabilities("skills"),
-    });
-    reg.register({
       name: "skill-create",
       title: "Draft Skill proposal",
       description:
         "Create a project Skill proposal interactively or from arguments.",
       category: "capability",
       hiddenByDefault: true,
-      run: () => openSkillCreateProposal(),
-      runRaw: openSkillCreateProposal,
+      run: () => skillActions.openSkillCreateProposal(),
+      runRaw: skillActions.openSkillCreateProposal,
     });
     reg.register({
       name: "skill-update",
@@ -1160,8 +902,8 @@ function AppReady(
         "Create a hash-gated update/fork proposal interactively or from arguments.",
       category: "capability",
       hiddenByDefault: true,
-      run: () => openSkillUpdateProposal(),
-      runRaw: openSkillUpdateProposal,
+      run: () => skillActions.openSkillUpdateProposal(),
+      runRaw: skillActions.openSkillUpdateProposal,
     });
     reg.register({
       name: "skill-review",
@@ -1170,8 +912,8 @@ function AppReady(
         "Summarize recent Skill proposals; optionally pass a state like draft.",
       category: "capability",
       hiddenByDefault: true,
-      run: () => reviewSkillProposalsFromSlash(""),
-      runRaw: reviewSkillProposalsFromSlash,
+      run: () => skillActions.reviewSkillProposalsFromSlash(""),
+      runRaw: skillActions.reviewSkillProposalsFromSlash,
     });
     reg.register({
       name: "skill-learn",
@@ -1180,32 +922,8 @@ function AppReady(
         "Show or set Skill Evolution mode: off, notice, draft, apply.",
       category: "capability",
       hiddenByDefault: true,
-      run: () => handleSkillLearn(""),
-      runRaw: handleSkillLearn,
-    });
-    reg.register({
-      name: "agents",
-      title: "Browse agents",
-      description: "Show configured agent profiles.",
-      category: "view",
-      hiddenByDefault: true,
-      run: () => void openCapabilities("agents"),
-    });
-    reg.register({
-      name: "mcp",
-      title: "Browse MCP servers",
-      description: "Show configured MCP servers and their exposed tools.",
-      category: "view",
-      hiddenByDefault: true,
-      run: () => void openCapabilities("mcp"),
-    });
-    reg.register({
-      name: "cron",
-      title: "Browse automation status",
-      description: "Show cron jobs and durable background task state.",
-      category: "view",
-      hiddenByDefault: true,
-      run: () => void openCapabilities("cron"),
+      run: () => skillActions.handleSkillLearn(""),
+      runRaw: skillActions.handleSkillLearn,
     });
     reg.register({
       name: "model",
@@ -1665,8 +1383,8 @@ function AppReady(
     loadingDiagnosticsFor,
     capabilitySnapshot,
     loadingCapabilities,
-    skillReviewSnapshot,
-    loadingSkillReview,
+    skillReviewSnapshot: skillActions.skillReviewSnapshot,
+    loadingSkillReview: skillActions.loadingSkillReview,
     onActivityTabChange: handleActivityTabChange,
     onRefreshTasks: () => void refreshTaskSnapshots(),
     onStopTask: stopActivityTask,
@@ -1720,10 +1438,10 @@ function AppReady(
       controller.resolveApproval(d),
     onCreateCapability: (draft: CreateCapabilityDraft) =>
       void handleCreateCapability(draft),
-    onCreateSkillProposal: handleCreateSkillProposal,
-    onUpdateSkillProposal: handleUpdateSkillProposal,
-    onApplySkillReviewProposal: applySkillReviewProposal,
-    onRejectSkillReviewProposal: rejectSkillReviewProposal,
+    onCreateSkillProposal: skillActions.handleCreateSkillProposal,
+    onUpdateSkillProposal: skillActions.handleUpdateSkillProposal,
+    onApplySkillReviewProposal: skillActions.applySkillReviewProposal,
+    onRejectSkillReviewProposal: skillActions.rejectSkillReviewProposal,
   } satisfies Omit<React.ComponentProps<typeof LayerRenderer>, "entry">;
 
   if (topLayer?.name === "events") {
@@ -1912,6 +1630,95 @@ function AppReady(
     </ThemeProvider>
   );
 }
+
+/**
+ * The capability browser is one panel (`openCapabilities`) reached through
+ * several named entrypoints that differ only by which view they preselect.
+ * Expressed as data so the registry loop registers them uniformly instead of
+ * six near-identical `reg.register` blocks.
+ */
+const CAPABILITY_VIEW_COMMANDS: ReadonlyArray<{
+  name: string;
+  view: CapabilityView;
+  title: string;
+  description: string;
+  aliases?: string[];
+  hiddenByDefault?: boolean;
+}> = [
+  {
+    name: "capabilities",
+    view: "all",
+    title: "Browse available capabilities",
+    description:
+      "Discover tools, Skills, MCP servers, agents, and cron support.",
+    aliases: ["caps"],
+  },
+  {
+    name: "tools",
+    view: "tools",
+    title: "Browse tools",
+    description: "Show prepared tools, risk, and origin.",
+    hiddenByDefault: true,
+  },
+  {
+    name: "skills",
+    view: "skills",
+    title: "Browse Skills",
+    description: "Show Skills SparkWright can discover or load.",
+    hiddenByDefault: true,
+  },
+  {
+    name: "agents",
+    view: "agents",
+    title: "Browse agents",
+    description: "Show configured agent profiles.",
+    hiddenByDefault: true,
+  },
+  {
+    name: "mcp",
+    view: "mcp",
+    title: "Browse MCP servers",
+    description: "Show configured MCP servers and their exposed tools.",
+    hiddenByDefault: true,
+  },
+  {
+    name: "cron",
+    view: "cron",
+    title: "Browse automation status",
+    description: "Show cron jobs and durable background task state.",
+    hiddenByDefault: true,
+  },
+];
+
+/**
+ * The activity drawer is one panel (`openActivity`) with two named entrypoints
+ * that differ only by which tab they open. Data-driven for the same reason as
+ * CAPABILITY_VIEW_COMMANDS above.
+ */
+const ACTIVITY_COMMANDS: ReadonlyArray<{
+  name: string;
+  tab: ActivityTab;
+  title: string;
+  description: string;
+  aliases?: string[];
+  hintBinding: keyof Bindings;
+}> = [
+  {
+    name: "events",
+    tab: "events",
+    title: "Open Activity Events",
+    description: "Open the activity drawer on the event stream.",
+    aliases: ["inspect", "inspector"],
+    hintBinding: "events.open",
+  },
+  {
+    name: "tasks",
+    tab: "tasks",
+    title: "Open Background Tasks",
+    description: "Open the activity drawer on durable background tasks.",
+    hintBinding: "activity.open",
+  },
+];
 
 /**
  * Stable listener for App-level hotkeys. Defined at module scope so its type
