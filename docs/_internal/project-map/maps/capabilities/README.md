@@ -78,8 +78,8 @@ config + workspace capability roots
   projection. Their declared capabilities map to host access clamps at
   instantiation time; scripts do not receive capability objects, do not write
   trace, and can perform side effects only by calling host node API methods over
-  stdio JSON-RPC. Built-in dogfood workflows are ordinary workflow assets and
-  should not be special-cased by capability inventory consumers.
+  stdio JSON-RPC. Internal smoke/dogfood workflows should live in test fixtures
+  or explicit dev-only roots, not the default builtin runtime catalog.
   P5 `parallel` / `join` nodes extend the workflow asset grammar and durable
   workflow run state, not capability inventory. All-delegate workflow fan-out
   reuses the existing opt-in `delegate_parallel` tool when available and is
@@ -199,6 +199,21 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: internal smoke capability layering cleanup: `workflow-runtime-p4-smoke`,
+  `release-check-focused`, and `spark-tester` moved out of builtin roots into
+  host test fixtures; default capability inventories should not load them.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/test/fixtures/workflows`,
+  `packages/host/test/fixtures/skills`,
+  `docs/_internal/CAPABILITY_LAYERING.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-distill.test.ts
+  test/workflow-shadow.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Read-only
 - Date: 2026-07-06T21:18:25+0800

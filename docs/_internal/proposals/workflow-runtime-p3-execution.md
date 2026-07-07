@@ -332,8 +332,9 @@ Implementation note (2026-07-05): `WorkflowNodeExecuteKind` now includes
 `script`; host asset parsing accepts asset-local script paths, args/cwd/env/
 stdin/timeout/output limits, capability declarations, and stores
 `sourceDir/sourcePath` on the pinned definition snapshot for resume. Parser
-tests cover script parsing and asset escape rejection. Two builtin dogfood
-assets landed: `release-check-focused` and `workflow-runtime-p4-smoke`.
+tests cover script parsing and asset escape rejection. Two internal dogfood
+assets live as host test fixtures: `release-check-focused` and
+`workflow-runtime-p4-smoke`.
 
 ### Step 2 — stdio JSON-RPC node API
 

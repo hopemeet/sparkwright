@@ -471,6 +471,10 @@ describe("host tools", () => {
     expect(byName.get("task")).toMatchObject({ source: "task" });
     expect(byName.get("task")?.definition.inputSchema).toMatchObject({
       properties: {
+        action: {
+          type: "string",
+          enum: ["list", "get", "output", "wait", "stop"],
+        },
         taskId: { type: "string", minLength: 1 },
         ids: {
           type: "array",
@@ -478,17 +482,16 @@ describe("host tools", () => {
           items: { type: "string", minLength: 1 },
         },
       },
-      oneOf: expect.arrayContaining([
-        expect.objectContaining({
-          properties: { action: { enum: ["get", "output", "stop"] } },
-          required: ["action", "taskId"],
-        }),
-        expect.objectContaining({
-          properties: { action: { enum: ["wait"] } },
-          anyOf: [{ required: ["taskId"] }, { required: ["ids"] }],
-        }),
-      ]),
     });
+    expect(
+      byName.get("task")?.definition.inputSchema as Record<string, unknown>,
+    ).not.toHaveProperty("oneOf");
+    expect(
+      byName.get("task")?.definition.inputSchema as Record<string, unknown>,
+    ).not.toHaveProperty("anyOf");
+    expect(
+      byName.get("task")?.definition.inputSchema as Record<string, unknown>,
+    ).not.toHaveProperty("allOf");
     expect(byName.get("todo_write")).toMatchObject({ source: "todo" });
     expect(byName.get("spawn_agent")).toMatchObject({ source: "agent" });
     expect(byName.get("create_skill")?.definition.deferLoading).toBe(true);
@@ -2828,6 +2831,67 @@ describe("host tools", () => {
         }),
       ]),
     );
+    await expect(
+      readFile(
+        join(
+          ctx.workspaceRoot,
+          ".sparkwright",
+          "skills",
+          "repo-review",
+          "SKILL.md",
+        ),
+        "utf8",
+      ),
+    ).resolves.toContain("Review changes.");
+  });
+
+  it("fills missing update_skill body description from the tool description", async () => {
+    const ctx = await createWorkspace({
+      ".sparkwright/skills/repo-review/SKILL.md": [
+        "---",
+        "name: repo-review",
+        "description: review repository changes",
+        "---",
+        "",
+        "Review changes.",
+        "",
+      ].join("\n"),
+    });
+    const tool = createSkillUpdateTool(ctx.workspaceRoot, undefined);
+
+    const drafted = await tool.execute(
+      {
+        action: "draft",
+        name: "repo-review",
+        description: "Add missing-test guidance.",
+        body: [
+          "---",
+          "name: repo-review",
+          "---",
+          "",
+          "# repo-review",
+          "",
+          "Review changes and missing test coverage.",
+          "",
+        ].join("\n"),
+      },
+      ctx,
+    );
+
+    expect(drafted).toMatchObject({
+      action: "draft",
+      changed: true,
+      kind: "update",
+      skillName: "repo-review",
+      contentMode: "authored",
+    });
+    const proposal = drafted as { proposalPath: string };
+    await expect(
+      readFile(
+        join(proposal.proposalPath, "after", "repo-review", "SKILL.md"),
+        "utf8",
+      ),
+    ).resolves.toContain("description: Add missing-test guidance.");
     await expect(
       readFile(
         join(

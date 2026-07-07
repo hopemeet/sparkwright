@@ -83,6 +83,17 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help and offline workflow observation filtering do not
+  change MCP preparation, wrapped MCP tool execution, server cwd handling,
+  capability inspection, or diagnostic payloads.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `docs/_internal/project-map/maps/capabilities/mcp.md`.
+- Tests: MCP-specific tests were not run; focused CLI/host workflow tests
+  covered the changed paths.
+
+- Status: Read-only
 - Date: 2026-07-06T21:18:25+0800
 - Scope: C13-② post-acceptance routed-page check: host-loaded confidential
   read config now feeds run policy construction, but MCP server preparation,

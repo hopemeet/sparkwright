@@ -567,6 +567,20 @@ describe("workflow assets", () => {
     ]);
   });
 
+  it("keeps internal smoke workflows out of the default builtin catalog", async () => {
+    const workspace = await tempWorkspace();
+    const report = await loadLayeredWorkflowAssets(workspace, {
+      XDG_CONFIG_HOME: join(workspace, "xdg"),
+    });
+
+    expect(report.assets.map((asset) => asset.assetName)).not.toEqual(
+      expect.arrayContaining([
+        "release-check-focused",
+        "workflow-runtime-p4-smoke",
+      ]),
+    );
+  });
+
   it("exposes workflow assets through capability snapshots", async () => {
     const workspace = await tempWorkspace();
     await writeWorkflow(
@@ -883,6 +897,148 @@ describe("workflow assets", () => {
           episodeDriver: "workflow_actor",
           episodeKind: "run_start",
           episodeAllowedTools: ["read_anchored_text"],
+        },
+      });
+    } finally {
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+    }
+  });
+
+  it("blocks parent catalog tools after a script node transitions to a narrowed model node", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_script_catalog_clamp";
+    await writeFile(join(workspace, "README.md"), "# Demo\n", "utf8");
+    await writeWorkflow(
+      workspace,
+      "script-catalog",
+      [
+        "---",
+        "nodes:",
+        "  - id: prep",
+        "    execute: script",
+        "    script:",
+        "      path: scripts/pass.mjs",
+        "      capabilities: [read]",
+        "    onPass: summarize",
+        "  - id: summarize",
+        "    execute: model",
+        "    tools: [read]",
+        "---",
+        "## prep",
+        "Pass through to the model node.",
+        "",
+        "## summarize",
+        "Only read tools are available.",
+      ].join("\n"),
+    );
+    await mkdir(
+      join(workspace, ".sparkwright", "workflows", "script-catalog", "scripts"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        workspace,
+        ".sparkwright",
+        "workflows",
+        "script-catalog",
+        "scripts",
+        "pass.mjs",
+      ),
+      [
+        'import readline from "node:readline";',
+        "const pending = new Map();",
+        "let nextId = 1;",
+        "const rl = readline.createInterface({ input: process.stdin });",
+        'rl.on("line", (line) => {',
+        "  const response = JSON.parse(line);",
+        "  const waiter = pending.get(response.id);",
+        "  if (!waiter) return;",
+        "  pending.delete(response.id);",
+        "  if (response.error) waiter.reject(new Error(response.error.message));",
+        "  else waiter.resolve(response.result);",
+        "});",
+        "function request(method, params = {}) {",
+        "  const id = nextId++;",
+        '  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\\n");',
+        "  return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));",
+        "}",
+        "await request('initialize');",
+        "await request('complete', { result: { ok: true } });",
+        "rl.close();",
+      ].join("\n"),
+      "utf8",
+    );
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          {
+            toolName: "tool_search",
+            arguments: { query: "select:task,glob,grep" },
+          },
+          {
+            toolName: "task",
+            arguments: { action: "list" },
+          },
+          {
+            toolName: "glob",
+            arguments: { patterns: ["**/*"] },
+          },
+          {
+            toolName: "grep",
+            arguments: { pattern: "Demo" },
+          },
+        ],
+      },
+      { message: "done" },
+    ]);
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "scripted",
+      emit: (event) => events.push(event),
+    });
+
+    try {
+      const started = await runtime.startRun({
+        goal: "run script catalog workflow",
+        sessionId,
+        workflow: "script-catalog",
+      });
+
+      expect(started).toMatchObject({ ok: true });
+      await waitForHostEvent(events, (event) => event.kind === "run.completed");
+      for (const toolName of ["tool_search", "task", "glob", "grep"]) {
+        const failure = events
+          .map(runEventPayload)
+          .map((event) => toolRunEventPayload(event, "tool.failed", toolName))
+          .find((payload) => payload !== undefined);
+        expect(failure).toMatchObject({
+          toolName,
+          error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
+        });
+        const completed = events
+          .map(runEventPayload)
+          .map((event) =>
+            toolRunEventPayload(event, "tool.completed", toolName),
+          )
+          .find((payload) => payload !== undefined);
+        expect(completed).toBeUndefined();
+      }
+      const record = await waitForWorkflowRecord(
+        workflowStoreRoot(workspace, sessionId),
+      );
+      expect(record).toMatchObject({
+        status: "completed",
+        metadata: {
+          workflowEpisode: expect.objectContaining({
+            nodeId: "summarize",
+          }),
+          episodeAllowedTools: ["read"],
         },
       });
     } finally {

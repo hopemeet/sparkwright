@@ -73,7 +73,7 @@ describe("workflow distill", () => {
           status: "completed",
           exitCode: 0,
         }),
-        event(9, "run.completed", { state: "completed" }),
+        event(9, "run.completed"),
       ],
     });
 
@@ -117,6 +117,37 @@ describe("workflow distill", () => {
     );
   });
 
+  it("does not distill workflow-blocked tool attempts into the draft", () => {
+    const report = distillWorkflowFromEvents({
+      sessionId: "session_distill",
+      tracePath: "/tmp/session_distill/trace.jsonl",
+      events: [
+        event(1, "run.created", { goal: "summarize fixture" }),
+        event(2, "tool.requested", {
+          id: "read_1",
+          toolName: "read",
+          arguments: { path: "package.json" },
+        }),
+        event(3, "workspace.read", { path: "package.json" }),
+        event(4, "tool.requested", {
+          id: "glob_1",
+          toolName: "glob",
+          arguments: { pattern: "**/*.js" },
+        }),
+        event(5, "tool.failed", {
+          toolCallId: "glob_1",
+          toolName: "glob",
+          error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
+        }),
+        event(6, "run.completed"),
+      ],
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.observed.tools).toEqual(["read"]);
+    expect(report.markdown).not.toContain("glob");
+  });
+
   it("loads traces from a safe session id", async () => {
     const root = await tempSessionRoot();
     await mkdir(join(root, "session_distill"), { recursive: true });
@@ -124,7 +155,7 @@ describe("workflow distill", () => {
       join(root, "session_distill", "trace.jsonl"),
       [
         JSON.stringify(event(1, "run.created", { goal: "inspect" })),
-        JSON.stringify(event(2, "run.completed", { state: "completed" })),
+        JSON.stringify(event(2, "run.completed")),
       ].join("\n") + "\n",
       "utf8",
     );

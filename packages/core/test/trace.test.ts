@@ -2452,6 +2452,249 @@ describe("trace", () => {
     );
   });
 
+  it("reports equivalent task_create calls after a prior task completed", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const taskPayload = {
+      goal: "inspect agent skill failures",
+      prompt: "find root cause",
+    };
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "debug repeated tasks" }),
+      log.emit("tool.requested", {
+        id: "create_1",
+        toolName: "task_create",
+        arguments: {
+          kind: "agent",
+          mode: "awaited",
+          payload: taskPayload,
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "create_1",
+        toolName: "task_create",
+        output: {
+          taskId: "task_1",
+          mode: "awaited",
+          awaited: true,
+          nextAction: {
+            tool: "task",
+            taskId: "task_1",
+            action: "wait",
+          },
+        },
+      }),
+      log.emit("task.completed", {
+        taskId: "task_1",
+        status: "completed",
+      }),
+      log.emit("tool.requested", {
+        id: "create_2",
+        toolName: "task_create",
+        arguments: {
+          kind: "agent",
+          mode: "background",
+          payload: taskPayload,
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "create_2",
+        toolName: "task_create",
+        output: {
+          taskId: "task_2",
+          mode: "background",
+          awaited: false,
+          nextAction: {
+            tool: "task",
+            taskId: "task_2",
+            action: "get",
+          },
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "REPEATED_TASK_CREATE_LIFECYCLE",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("task_create kind=agent"),
+            "prior task_create returned nextAction",
+            expect.stringContaining("task task_1 completed"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("reports equivalent task_create calls after a prior agent-task subagent completed", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const taskPayload = {
+      goal: "inspect agent skill failures",
+      prompt: "find root cause",
+    };
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "debug repeated agent tasks" }),
+      log.emit("tool.requested", {
+        id: "create_1",
+        toolName: "task_create",
+        arguments: {
+          kind: "agent",
+          mode: "awaited",
+          payload: taskPayload,
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "create_1",
+        toolName: "task_create",
+        output: {
+          taskId: "task_1",
+          mode: "awaited",
+          awaited: true,
+          nextAction: {
+            tool: "task",
+            taskId: "task_1",
+            action: "wait",
+          },
+        },
+      }),
+      log.emit(
+        "subagent.completed",
+        {
+          taskId: "task_1",
+          childRunId: "run_child_1",
+          parentRunId: run.id,
+          terminalState: "completed",
+          finality: "complete",
+        },
+        {
+          taskId: "task_1",
+          childAgentId: "dynamic_task_reader",
+          entrypoint: "agent_task",
+        },
+      ),
+      log.emit("tool.requested", {
+        id: "create_2",
+        toolName: "task_create",
+        arguments: {
+          kind: "agent",
+          mode: "awaited",
+          payload: taskPayload,
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "create_2",
+        toolName: "task_create",
+        output: {
+          taskId: "task_2",
+          mode: "awaited",
+          awaited: true,
+          nextAction: {
+            tool: "task",
+            taskId: "task_2",
+            action: "wait",
+          },
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          code: "REPEATED_TASK_CREATE_LIFECYCLE",
+          evidence: expect.arrayContaining([
+            expect.stringContaining("task_create kind=agent"),
+            expect.stringContaining("task task_1 completed via sub-agent"),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("does not report repeated task_create lifecycle when the prior task failed", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const taskPayload = {
+      goal: "inspect agent skill failures",
+      prompt: "find root cause",
+    };
+    const events: SparkwrightEvent[] = [
+      log.emit("run.created", { goal: "debug failed repeated tasks" }),
+      log.emit("tool.requested", {
+        id: "create_1",
+        toolName: "task_create",
+        arguments: {
+          kind: "agent",
+          payload: taskPayload,
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "create_1",
+        toolName: "task_create",
+        output: {
+          taskId: "task_1",
+          mode: "awaited",
+          awaited: true,
+          nextAction: {
+            tool: "task",
+            taskId: "task_1",
+            action: "wait",
+          },
+        },
+      }),
+      log.emit("task.failed", {
+        taskId: "task_1",
+        status: "failed",
+      }),
+      log.emit("tool.requested", {
+        id: "create_2",
+        toolName: "task_create",
+        arguments: {
+          kind: "agent",
+          payload: taskPayload,
+        },
+      }),
+      log.emit("tool.completed", {
+        toolCallId: "create_2",
+        toolName: "task_create",
+        output: {
+          taskId: "task_2",
+          mode: "awaited",
+          awaited: true,
+          nextAction: {
+            tool: "task",
+            taskId: "task_2",
+            action: "wait",
+          },
+        },
+      }),
+      log.emit("run.completed", { state: "completed" }),
+    ];
+
+    const report = buildTraceReportJsonl(
+      events.map(serializeEventJsonl).join(""),
+    );
+
+    expect(
+      report.findings.some(
+        (finding) => finding.code === "REPEATED_TASK_CREATE_LIFECYCLE",
+      ),
+    ).toBe(false);
+  });
+
   it("reports low net progress for the child run that actually crossed the threshold", () => {
     const parent = createRunRecord();
     const child = createRunRecord();
@@ -3341,6 +3584,80 @@ describe("trace", () => {
       unresolved: 1,
       lastCommand: "npm test",
       lastExitCode: 1,
+    });
+  });
+
+  it("counts verifier-launched workflow command failures from persisted fact ledgers", () => {
+    const run = createRunRecord();
+    const log = new EventLog(run.id);
+    const standardJsonl = [
+      log.emit(
+        "run.created",
+        { goal: "run workflow verifier" },
+        { sessionId: "s1" },
+      ),
+      log.emit("run.completed", {
+        reason: "final_answer",
+        factLedger: {
+          schemaVersion: "fact-ledger.v1",
+          writeEpoch: 0,
+          commands: [
+            {
+              id: "cmd:workflow:2:focused",
+              source: "workflow_hook",
+              initiator: "verifier-launched",
+              sequence: 2,
+              writeEpoch: 0,
+              stale: false,
+              hookName: "workflow:release-check-focused",
+              nodeId: "verify",
+              verifierId: "focused",
+              verificationSource: "workflow_command",
+              command: "npm run test:focused",
+              commandKey: "npm run test:focused",
+              exitCode: 1,
+              timedOut: false,
+              verificationRelevant: true,
+            },
+          ],
+          verificationResults: [
+            {
+              id: "verification:focused",
+              commandFactId: "cmd:workflow:2:focused",
+              sequence: 2,
+              writeEpoch: 0,
+              stale: false,
+              hookName: "workflow:release-check-focused",
+              nodeId: "verify",
+              verifierId: "focused",
+              verificationSource: "workflow_command",
+              expect: { exitCode: 0 },
+              satisfied: false,
+              exitCode: 1,
+              timedOut: false,
+            },
+          ],
+          writes: [],
+        },
+      }),
+    ]
+      .map((event) => filterTraceEvent(event, "standard"))
+      .map(serializeEventJsonl)
+      .join("");
+
+    const summary = summarizeTraceJsonl(standardJsonl);
+
+    expect(summary.commandFailures).toMatchObject({
+      total: 1,
+      byExitCode: { "1": 1 },
+      verification: {
+        total: 1,
+        unresolved: 1,
+        lastCommand: "npm run test:focused",
+        lastExitCode: 1,
+        lastFailureCommand: "npm run test:focused",
+        lastFailureExitCode: 1,
+      },
     });
   });
 

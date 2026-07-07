@@ -105,6 +105,18 @@ Manual compact
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help now exits before workflow subcommand execution;
+  `workflow resume --help` and other workflow help paths do not create session
+  roots, traces, workflow-run records, or compaction artifacts.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/session/session-store.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`; manual
+  `node packages/cli/dist/index.js workflow
+  list|inspect|resume|distill|shadow --help`.
+
+- Status: Read-only
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② routed-page check: protocol and CLI resume payloads gained a
   read-policy override, but session file layout, session events, compaction

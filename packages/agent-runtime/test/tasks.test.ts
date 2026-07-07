@@ -21,6 +21,7 @@ import {
   InMemoryTaskStore,
   TaskManager,
   TaskWatchdog,
+  createTaskId,
   createTaskTools,
   isNonRetryableActorNotificationError,
   notificationFromRecord,
@@ -1052,10 +1053,22 @@ describe("task tools", () => {
     const manager = makeManager();
     manager.registerKind("hello", async () => "hi");
     const tools = makeTools(manager);
-    const created = await exec<{ taskId: string }>(tools.taskCreate, {
+    const created = await exec<{
+      taskId: string;
+      nextAction: {
+        action: string;
+        taskId: string;
+        duplicateAvoidance: string;
+      };
+    }>(tools.taskCreate, {
       kind: "hello",
       awaited: false,
     });
+    expect(created.nextAction).toMatchObject({
+      action: "get",
+      taskId: created.taskId,
+    });
+    expect(created.nextAction.duplicateAvoidance).toContain("task_create");
     await manager.handle(created.taskId as TaskId)?.wait();
     expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(false);
   });
@@ -1068,11 +1081,25 @@ describe("task tools", () => {
       taskId: string;
       mode: string;
       awaited: boolean;
+      nextAction: {
+        action: string;
+        taskId: string;
+        instruction: string;
+        outputInstruction: string;
+        duplicateAvoidance: string;
+      };
     }>(tools.taskCreate, {
       kind: "hello",
       mode: "awaited",
     });
     expect(created).toMatchObject({ mode: "awaited", awaited: true });
+    expect(created.nextAction).toMatchObject({
+      action: "wait",
+      taskId: created.taskId,
+    });
+    expect(created.nextAction.instruction).toContain(created.taskId);
+    expect(created.nextAction.outputInstruction).toContain('action="output"');
+    expect(created.nextAction.duplicateAvoidance).toContain("same goal");
     await manager.handle(created.taskId as TaskId)?.wait();
     expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(true);
   });
@@ -1120,12 +1147,22 @@ describe("task tools", () => {
       mode: string;
       promoted: boolean;
       awaited: boolean;
+      nextAction: {
+        action: string;
+        taskId: string;
+        duplicateAvoidance: string;
+      };
     }>(tools.taskCreate, { kind: "slow" });
     expect(created).toMatchObject({
       mode: "foreground",
       promoted: true,
       awaited: true,
     });
+    expect(created.nextAction).toMatchObject({
+      action: "wait",
+      taskId: created.taskId,
+    });
+    expect(created.nextAction.duplicateAvoidance).toContain("task_create");
     const terminal = await manager.handle(created.taskId as TaskId)?.wait();
     expect(terminal?.status).toBe("completed");
     expect(manager.store.get(created.taskId as TaskId)?.awaited).toBe(true);
@@ -1331,6 +1368,8 @@ describe("task tools", () => {
     const schema = tools.task.inputSchema as {
       properties: Record<string, unknown>;
       oneOf?: unknown[];
+      anyOf?: unknown[];
+      allOf?: unknown[];
     };
 
     expect(schema.properties.taskId).toMatchObject({
@@ -1346,18 +1385,9 @@ describe("task tools", () => {
       type: "string",
       enum: ["run", "all"],
     });
-    expect(schema.oneOf).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          properties: { action: { enum: ["get", "output", "stop"] } },
-          required: ["action", "taskId"],
-        }),
-        expect.objectContaining({
-          properties: { action: { enum: ["wait"] } },
-          anyOf: [{ required: ["taskId"] }, { required: ["ids"] }],
-        }),
-      ]),
-    );
+    expect(schema.oneOf).toBeUndefined();
+    expect(schema.anyOf).toBeUndefined();
+    expect(schema.allOf).toBeUndefined();
   });
 
   it("task action wrapper rejects empty placeholder task ids", async () => {
@@ -1557,11 +1587,74 @@ describe("task tools", () => {
       mode: "any",
     });
 
-    expect(waited).toMatchObject({ mode: "any", complete: false });
+    expect(waited).toMatchObject({ mode: "any", complete: true });
     expect(waited.terminalTaskIds).toEqual([first.taskId]);
     expect(manager.store.get(first.taskId as TaskId)?.awaited).toBe(false);
     expect(manager.store.get(second.taskId as TaskId)?.awaited).toBe(true);
     await manager.handle(second.taskId as TaskId)?.wait();
+  });
+
+  it("task action wait defaults to complete for one terminal task", async () => {
+    const manager = makeManager();
+    manager.registerKind("done", async () => "done");
+    const tools = makeTools(manager);
+    const task = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "done",
+      mode: "awaited",
+    });
+    await manager.handle(task.taskId as TaskId)?.wait();
+
+    const waited = await exec<{
+      mode: string;
+      complete: boolean;
+      terminalTaskIds: string[];
+      completed: number;
+    }>(tools.task, {
+      action: "wait",
+      taskId: task.taskId,
+    });
+
+    expect(waited).toMatchObject({
+      mode: "any",
+      complete: true,
+      completed: 1,
+    });
+    expect(waited.terminalTaskIds).toEqual([task.taskId]);
+    expect(manager.store.get(task.taskId as TaskId)?.awaited).toBe(false);
+  });
+
+  it("task action wait does not mark orphaned non-terminal records complete", async () => {
+    const manager = makeManager();
+    const orphan = manager.store.create({
+      id: createTaskId(),
+      parentRunId: PARENT_RUN_ID,
+      kind: "orphan",
+      awaited: true,
+    });
+    manager.store.update(orphan.id, { status: "running" });
+    const tools = makeTools(manager);
+
+    const waited = await exec<{
+      mode: string;
+      complete: boolean;
+      terminalTaskIds: string[];
+      completed: number;
+      failed: number;
+      cancelled: number;
+    }>(tools.task, {
+      action: "wait",
+      taskId: orphan.id,
+    });
+
+    expect(waited).toMatchObject({
+      mode: "any",
+      complete: false,
+      terminalTaskIds: [],
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    });
+    expect(manager.store.get(orphan.id)?.awaited).toBe(true);
   });
 
   it("task_output drains buffered chunks", async () => {

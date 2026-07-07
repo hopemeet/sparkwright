@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-06-28
+- Last reviewed: 2026-07-07
 - Evidence source: 2026-06-23 focused host Skill evolution,
   capability-package mutation, inline-shell, TUI skill review, and
   `@sparkwright/skills` package tests passed. Real `openai/gpt-5.4-nano`
@@ -52,6 +52,40 @@
   the real mini rerun passed with tools `tool_search,list_skills,update_skill`.
   See
   [../failures/real-skill-regression-list-skills-prompt.md](../failures/real-skill-regression-list-skills-prompt.md).
+- 2026-07-07 real `anthropic/claude-sonnet-4-6`
+  `regression:real-skill-capabilities` passed: disabled-shell capability
+  inspection preserved managed Skill tools, bash managed-package bypass was
+  blocked, real `create_skill` drafted one proposal with no direct workspace
+  writes, and real `update_skill` drafted one proposal after `list_skills`
+  without applying it. See
+  [../runs/2026-07-07-real-sonnet-skill-agent-qa.md](../runs/2026-07-07-real-sonnet-skill-agent-qa.md).
+- 2026-07-07 real Sonnet legacy project Skill loading passed in a combined
+  Skill + `spawn_agent` fixture: `tool_search` loaded `skill_load` /
+  `spawn_agent`, `skill_load` loaded the Skill body and reference file, the
+  child agent confirmed `LEGACY_SKILL_AGENT_SENTINEL`, and trace
+  report/verify/session check all passed.
+- 2026-07-07 post-fix Sonnet canary confirmed the deferred `task` wrapper can
+  be loaded after `tool_search` without Anthropic schema rejection. Full
+  combined Skill + background-agent-task prompts should remain in rotation, but
+  the prior provider-schema blocker is fixed.
+- 2026-07-07 real `openai/gpt-5.4-mini` broad QA reran
+  `regression:real-skill-capabilities`. The first run found that
+  `update_skill` failed when mini authored a full `SKILL.md` body whose
+  frontmatter had `name` but omitted `description`; post-fix, update_skill
+  fills the missing frontmatter description from the tool description, created
+  one draft proposal, emitted capability mutation events, left the source Skill
+  unchanged, and passed trace report/verify/session check. See
+  [../runs/2026-07-07-real-mini-broad-trace-qa.md](../runs/2026-07-07-real-mini-broad-trace-qa.md)
+  and
+  [../failures/real-skill-update-frontmatter-description.md](../failures/real-skill-update-frontmatter-description.md).
+- 2026-07-07 real `openai/gpt-5.4-mini` Agent + Skill multidirection QA loaded
+  project Skills before dynamic `spawn_agent`, configured
+  `delegate_agent(agentId)`, and awaited background-agent task routes. Body
+  loads emitted `skill.loaded`; reference loads returned `status:"resource"`.
+  Mini can still guess a shortened reference path such as `task.md`, but the
+  `skill_load` failure listed the available `references/task.md` path and the
+  model recovered. See
+  [../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md](../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md).
 
 ## Weak Or Untested
 
@@ -70,6 +104,17 @@
 - Real regression script prompts must be at least as strict as their assertions
   when checking exact tool calls; otherwise healthy real runs can fail because
   "as needed" allowed the model to skip a mandatory harness tool.
+- Combined Skill + background-agent task canaries using Anthropic are no longer
+  blocked by the deferred `task` schema. They remain prompt-sensitive and
+  should assert Skill load evidence, concrete task ids/results, and clean
+  trace/session checks rather than exact final prose.
+- Authored Skill body normalization now fills missing `description` for both
+  `create_skill` and `update_skill`; frontmatter `name` mismatches should remain
+  fail-closed and covered by focused tests rather than real-model route
+  assertions.
+- Skill reference resource assertions should use the exact path surfaced in
+  `<skill_files>` / `resourceFiles`. A recovered wrong-path `skill_load`
+  failure is prompt/model variance when the later exact resource load succeeds.
 
 ## Focused Route
 
@@ -111,3 +156,5 @@ The stale canary issue was fixed on 2026-06-28; see
 
 - [../failures/prompt-induced-tool-loop.md](../failures/prompt-induced-tool-loop.md)
 - [../failures/real-skill-regression-list-skills-prompt.md](../failures/real-skill-regression-list-skills-prompt.md)
+- [../failures/anthropic-deferred-task-schema-oneof.md](../failures/anthropic-deferred-task-schema-oneof.md)
+- [../failures/real-skill-update-frontmatter-description.md](../failures/real-skill-update-frontmatter-description.md)

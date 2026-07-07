@@ -108,7 +108,8 @@ EventLog emits full event
   managed `workspace.write.*` events and summarized to the parent on
   `subagent.*` payloads. Sub-agent lifecycle metadata carries additive audit
   fields (`subagentDepth`, `agentId`, `delegateTool`, `entrypoint`, consistent
-  parent/child run ids). SparkWright child-run terminal payloads carry
+  parent/child run ids, and `taskId` when the child is owned by an
+  `agent_task`). SparkWright child-run terminal payloads carry
   `terminalState` and `stepLimitReached`/`truncated` when derived from the child
   `run.*` outcome; external-process parent events must not invent those fields
   without a child `run.*` source.
@@ -197,6 +198,36 @@ EventLog emits full event
   double-spilling tool-owned artifacts and honor `resultSize.neverPersist`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T16:15:00+0800
+- Scope: `agent_task` child terminal trace attribution now projects the owning
+  task id onto parent-visible `subagent.*` payloads and metadata, so raw trace
+  diagnostics can join `task_create` outputs to completed child-run evidence.
+- Read: `packages/agent-runtime/src/index.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/project-map/maps/trace/raw-trace.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/index.test.ts -t "multi-agent facts"`; `npm --workspace @sparkwright/host
+  test -- test/protocol.test.ts -t "background agent through the real
+  task_create"`; real mini trace
+  `session_mradiara7baut36j` reported `REPEATED_TASK_CREATE_LIFECYCLE` with
+  `trace verify` and `session check` `ok`.
+
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow distill/shadow filters blocked tool attempts only in offline
+  observation. Raw traces still record the original `tool.requested` and
+  terminal `tool.failed` evidence; event families, JSONL layout, trace levels,
+  and raw workflow lifecycle contracts are unchanged.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `docs/_internal/project-map/maps/trace/raw-trace.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; real Sonnet
+  trace `session_mr9fmua899dimnc2` replayed through `workflow shadow` and
+  `workflow distill`.
 
 - Status: Verified
 - Date: 2026-07-06T21:18:25+0800

@@ -111,6 +111,43 @@ export function createConfiguredWorkflowHooks(
     });
 }
 
+export function createPartialSubagentFinalityDisclosureHook(): WorkflowHook {
+  const advancedRuns = new Set<string>();
+  return {
+    name: "runtime:partial_subagent_finality_disclosure",
+    description:
+      "Requires final answers to disclose partial, truncated, or step-limited sub-agent results.",
+    hook: "Stop",
+    handle(input) {
+      if (advancedRuns.has(input.run.id)) return;
+      const payload = isRecord(input.payload) ? input.payload : {};
+      const message = stringValue(payload.message) ?? "";
+      const events = Array.isArray(payload.events)
+        ? (payload.events as SparkwrightEvent[])
+        : [];
+      const partialSubagents = collectPartialSubagentFinality(events);
+      if (partialSubagents.length === 0) return;
+      if (finalAnswerMentionsPartialSubagentFinality(message)) return;
+
+      advancedRuns.add(input.run.id);
+      return {
+        status: "advance",
+        reason: "partial sub-agent finality must be disclosed",
+        context: [
+          partialSubagentFinalityContextItem(partialSubagents, input.step),
+        ],
+        metadata: {
+          partialSubagentFinality: true,
+          childCount: partialSubagents.length,
+          childRunIds: partialSubagents
+            .map((item) => item.childRunId)
+            .filter((value): value is string => typeof value === "string"),
+        },
+      };
+    },
+  };
+}
+
 export interface BindConfiguredEventHooksOptions extends CommonHookActionOptions {
   hooks?: CapabilityEventHookConfig[];
   run: RunHandle;
@@ -1242,8 +1279,186 @@ function escapeRegExp(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 }
 
+interface PartialSubagentFinality {
+  label: string;
+  reason: string;
+  childRunId?: string;
+}
+
+function collectPartialSubagentFinality(
+  events: readonly SparkwrightEvent[],
+): PartialSubagentFinality[] {
+  const byKey = new Map<string, PartialSubagentFinality>();
+  for (const event of events) {
+    const item = partialSubagentFinalityFromEvent(event);
+    if (!item) continue;
+    byKey.set(item.childRunId ?? item.label, item);
+  }
+  return [...byKey.values()];
+}
+
+function partialSubagentFinalityFromEvent(
+  event: SparkwrightEvent,
+): PartialSubagentFinality | undefined {
+  if (!isRecord(event.payload)) return;
+
+  if (event.type === "subagent.completed" || event.type === "subagent.failed") {
+    return partialSubagentFinalityFromRecord(
+      event.payload,
+      event.metadata,
+      event.type === "subagent.failed",
+    );
+  }
+
+  if (event.type !== "tool.completed" && event.type !== "tool.failed") {
+    return;
+  }
+  const toolName =
+    stringValue(event.payload.toolName) ?? stringValue(event.payload.name);
+  if (toolName !== "spawn_agent") return;
+  const output = isRecord(event.payload.output) ? event.payload.output : {};
+  return partialSubagentFinalityFromRecord(
+    output,
+    event.metadata,
+    event.type === "tool.failed",
+  );
+}
+
+function partialSubagentFinalityFromRecord(
+  record: Record<string, unknown>,
+  metadata: Record<string, unknown> | undefined,
+  defaultPartial = false,
+): PartialSubagentFinality | undefined {
+  const terminalState =
+    stringValue(record.terminalState) ??
+    stringValue(record.status) ??
+    findNestedString(record, "terminalState");
+  const finality =
+    stringValue(record.finality) ?? findNestedString(record, "finality");
+  const stepLimitReached =
+    booleanValue(record.stepLimitReached) ??
+    booleanValue(record.metadata, "stepLimitReached") ??
+    false;
+  const truncated =
+    booleanValue(record.truncated) ??
+    booleanValue(record.metadata, "truncated") ??
+    false;
+  const partial =
+    defaultPartial ||
+    finality === "partial" ||
+    stepLimitReached ||
+    truncated ||
+    terminalState === "step_limit" ||
+    terminalState === "truncated";
+  if (!partial) return;
+
+  const childRunId =
+    stringValue(record.childRunId) ??
+    findNestedString(record, "childRunId") ??
+    stringValue(metadata?.childRunId);
+  const label =
+    stringValue(record.agentName) ??
+    stringValue(record.agentProfileId) ??
+    stringValue(record.agentId) ??
+    stringValue(metadata?.agentName) ??
+    stringValue(metadata?.childAgentId) ??
+    stringValue(metadata?.agentProfileId) ??
+    childRunId ??
+    "sub-agent";
+  return {
+    label,
+    reason: partialSubagentReason({
+      finality,
+      terminalState,
+      stepLimitReached,
+      truncated,
+    }),
+    ...(childRunId ? { childRunId } : {}),
+  };
+}
+
+function partialSubagentReason(input: {
+  finality?: string;
+  terminalState?: string;
+  stepLimitReached: boolean;
+  truncated: boolean;
+}): string {
+  if (input.truncated || input.terminalState === "truncated") {
+    return "truncated";
+  }
+  if (input.stepLimitReached || input.terminalState === "step_limit") {
+    return "step limit reached";
+  }
+  if (input.terminalState && input.terminalState !== "completed") {
+    return input.terminalState;
+  }
+  return input.finality === "partial" ? "partial" : "possibly partial";
+}
+
+function partialSubagentFinalityContextItem(
+  items: readonly PartialSubagentFinality[],
+  step: number | undefined,
+): ContextItem {
+  const lines = items.slice(0, 5).map((item) => {
+    const child = item.childRunId ? ` (${item.childRunId})` : "";
+    return `- ${item.label}${child}: ${item.reason}`;
+  });
+  return {
+    id: createContextItemId(),
+    type: "system",
+    source: { kind: "runtime" },
+    content: [
+      "A sub-agent result used in this run is partial.",
+      "Before finalizing, revise the final answer to explicitly disclose the affected child result as partial, truncated, or step-limited, and do not present conclusions based on it as exhaustive.",
+      "Partial sub-agent evidence:",
+      ...lines,
+    ].join("\n"),
+    metadata: {
+      layer: "runtime",
+      stability: "turn",
+      required: true,
+      priority: 90,
+      partialSubagentFinality: true,
+      ...(step !== undefined ? { step } : {}),
+    },
+  };
+}
+
+function finalAnswerMentionsPartialSubagentFinality(message: string): boolean {
+  if (message.trim().length === 0) return false;
+  const lower = message.toLowerCase();
+  return (
+    /\b(partial|partially|incomplete|not complete|truncat(?:ed|ion)?|step[-\s]?limit|step budget|max steps?|not exhaustive|not definitive)\b/.test(
+      lower,
+    ) ||
+    /(不完整|未完成|部分|截断|步数|预算|限制|不全面|不穷尽|不能完全|并非完整)/.test(
+      message,
+    )
+  );
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function booleanValue(value: unknown, key?: string): boolean | undefined {
+  if (key !== undefined) {
+    if (!isRecord(value)) return undefined;
+    return typeof value[key] === "boolean" ? value[key] : undefined;
+  }
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function findNestedString(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const direct = stringValue(value[key]);
+  if (direct) return direct;
+  for (const child of Object.values(value)) {
+    if (!isRecord(child)) continue;
+    const nested = findNestedString(child, key);
+    if (nested) return nested;
+  }
+  return undefined;
 }
 
 function hasHeader(headers: Record<string, string>, name: string): boolean {

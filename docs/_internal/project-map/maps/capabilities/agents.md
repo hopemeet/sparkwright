@@ -140,14 +140,23 @@ configured profiles/delegates
 - Background `agent` tasks call the same dynamic-spawn path through
   `runHostAgentTask()`, with the task controller signal bound to the child run
   so `task_stop` cancels the background child instead of only stopping the
-  foreground parent turn.
+  foreground parent turn. Parent-visible `subagent.*` events for this
+  `entrypoint:"agent_task"` path carry the owning `taskId` in payload and
+  metadata so trace diagnostics can join child terminal evidence back to
+  `task_create`.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
   required child-agent payload fields so real models can create background
-  agent tasks without guessing runner kind names from roles. Post-create task
-  monitoring remains a separate prompt/model-sensitive behavior. Its
+  agent tasks without guessing runner kind names from roles. Detached/promoted
+  create results carry concrete `nextAction` guidance, and host terminal task
+  notifications surface bounded child result summaries in body text so the
+  parent can monitor or retrieve output without creating equivalent work. Its
   model-facing `maxSteps` guidance intentionally matches `spawn_agent`: omit
   the field to inherit the parent run's effective budget, and use enough turns
   for read/search plus final synthesis.
+- Trace report has a task-specific lifecycle finding for equivalent repeated
+  `task_create(kind:"agent")` calls after a prior same-payload task completed,
+  so maintainers can distinguish monitor/reuse failures from normal independent
+  child-agent review.
 - Deferred `task` monitoring of background agent tasks advertises
   action-specific non-empty id requirements and is runtime-validated before
   policy/approval/execution. Empty same-turn placeholders can be recovered in
@@ -162,6 +171,10 @@ configured profiles/delegates
   the output must carry `stepLimitReached: true`, `truncated: true`,
   `finality: "partial"`, and a warning-prefixed message so the parent and
   context compaction do not treat the child answer as complete.
+- Host installs a built-in Stop hook that requires the parent final answer to
+  disclose partial/truncated/step-limited/failed child finality before
+  finishing. The hook is a final-answer guard, not a trace-only report, and
+  ignores ordinary truncated non-agent tool output.
 - Raw child finality is audit evidence and must not be overwritten because the
   parent later succeeded. Trace report can downgrade `SUBAGENT_INCOMPLETE`
   severity only as a derived finding when it records `verifiedAfterChildWrite`
@@ -270,6 +283,80 @@ configured profiles/delegates
   or mtime prefilters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T16:15:00+0800
+- Scope: background `agent` task trace attribution; `task_create(kind:"agent")`
+  now threads the task id into dynamic-spawn metadata and parent-visible
+  `subagent.*` events.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/index.ts`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "background agent through the real task_create"`;
+  `npm --workspace @sparkwright/host test -- test/agent-task-runner.test.ts
+  test/spawn-agent.test.ts -t "agent task|task_create|background"`; real mini
+  trace `session_mradiara7baut36j`.
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: agent capability follow-ups after real mini QA: parent final answers
+  now get a built-in Stop-hook disclosure guard for partial child finality, and
+  trace report has a task-specific finding for completed same-payload repeated
+  background-agent task creation.
+- Read: `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/core/src/trace-diagnostics.ts`,
+  `packages/host/test/workflow-hooks.test.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/core test --
+  test/trace.test.ts`; `npm --workspace @sparkwright/host run typecheck`;
+  `npm --workspace @sparkwright/core run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-07T14:43:43+0800
+- Scope: real mini Agent + Skill QA root-cause fix: main-run
+  `task_create(kind:"agent")` now returns concrete post-create `nextAction`
+  guidance, and injected task notifications expose terminal child result
+  summaries in model-visible body text.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/task-revival.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`,
+  `docs/_internal/project-map/modules/agent-runtime.md`,
+  `docs/_internal/project-map/modules/host.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/tasks.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/host test --
+  test/task-revival.test.ts test/spawn-agent.test.ts`; `npm --workspace
+  @sparkwright/host run typecheck`; `npm run build --workspace
+  @sparkwright/host`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-07T12:30:00+0800
+- Scope: real Sonnet nested-agent QA: `allowNestedBackgroundTasks` is parsed
+  from config, dynamic `spawn_agent` exposes `task_create` only under that
+  opt-in, and nested-only `task_create(mode:"awaited", kind:"agent")` now waits
+  for the spawned agent task and returns the terminal task record/result to the
+  child agent. This prevents a child with only `task_create` from receiving only
+  a task id, repeating the same call, and failing through the repeated-tool
+  doom-loop.
+- Read: `packages/host/src/config.ts`, `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/host/test/config.test.ts`,
+  `packages/host/test/spawn-agent.test.ts`,
+  `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/config.test.ts -t
+  "nested background task opt-in|agent selectors and maxDepth"`; `npm
+  --workspace @sparkwright/host test -- test/spawn-agent.test.ts -t "allows
+  opt-in depth-bounded sub-agents|keeps nested background agent spawning
+  bounded"`; `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "creates, lists, and validates workspace agents|preserves agent runtime
+  options"`; real Sonnet CLI nested-agent run plus `trace report` /
+  `trace verify` clean.
 
 - Status: Verified
 - Date: 2026-07-06T19:48:49+0800

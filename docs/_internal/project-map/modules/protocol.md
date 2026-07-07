@@ -186,6 +186,21 @@ Does not own:
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow distill/shadow observation now filters failed or hook-blocked
+  tool attempts offline, and CLI workflow nested help exits earlier. No
+  protocol request/response, capability snapshot, host event, schema, or
+  workflow list/resume payload shape changed.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `docs/_internal/project-map/modules/protocol.md`.
+- Tests: host distill/shadow focused tests and CLI nested-help focused tests;
+  protocol-specific tests were not run because this slice has no wire/schema
+  surface change.
+
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② protocol 1.4 reserves the optional

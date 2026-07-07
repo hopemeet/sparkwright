@@ -99,6 +99,17 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help exits before workflow resume adoption, host run
+  setup, checkpoint lookup, or session replay. Resume/replay storage and
+  workflow record adoption semantics are unchanged by this fix.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`; manual
+  `node packages/cli/dist/index.js workflow resume --help`.
+
 - Status: Verified
 - Date: 2026-07-06T21:18:25+0800
 - Scope: C13-② post-acceptance resume policy fix: `run.resume` and

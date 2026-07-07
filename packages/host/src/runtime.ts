@@ -244,6 +244,7 @@ import {
 import {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  createPartialSubagentFinalityDisclosureHook,
   type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
@@ -273,6 +274,9 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env.SPARKWRIGHT_DEV_SKILLS;
   return value === "1" || value === "true";
 }
+
+const WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN =
+  "@sparkwright/host.workflow-scoped-tool-search";
 
 function createHostRunPolicy(input: {
   permissionMode: PermissionMode;
@@ -547,6 +551,7 @@ export function assembleRuntimeWorkflowHooks(
     ...verificationHooks,
     ...documentedCommandHooks,
     ...projectionHooks,
+    createPartialSubagentFinalityDisclosureHook(),
   ];
 }
 
@@ -865,6 +870,7 @@ export async function runHostAgentTask(
     allowNestedBackgroundTasks: deps.allowNestedBackgroundTasks,
     createTaskRevivalBridge: deps.createTaskRevivalBridge,
     registerSubagentRun: deps.registerSubagentRun,
+    taskId: String(controller.taskId),
   });
   const ctx: RuntimeContext = {
     run: parent.record,
@@ -2081,9 +2087,10 @@ export class HostRuntime {
             ),
             taskTool: tools.find((tool) => tool.name === "task_create"),
             isToolAvailable: (toolName) =>
-              toolsForWorkflowRecord(tools, workflowRecord).some(
-                (tool) =>
-                  canonicalToolName(tool.name) === canonicalToolName(toolName),
+              parentRunRef.current?.tools.get(toolName) !== undefined,
+            isScopedToolSearchAvailable: () =>
+              isWorkflowScopedToolSearch(
+                parentRunRef.current?.tools.get(DISCOVERY_TOOL_NAME),
               ),
           })
         : undefined;
@@ -5017,10 +5024,18 @@ function pendingNotificationFromTask(
   notification: TaskNotification,
 ): PendingNotification {
   const title = notification.title ?? notification.kind;
+  const resultSummary =
+    notification.result !== undefined
+      ? summarizeNotificationValue(notification.result)
+      : undefined;
   return {
     content: [
       `Task ${notification.taskId} (${title}) ${notification.status}.`,
       notification.summary,
+      resultSummary ? `Result summary: ${resultSummary}` : undefined,
+      notification.outputRef
+        ? `Output ref: ${notification.outputRef}`
+        : undefined,
       notification.error ? `Error: ${notification.error.message}` : undefined,
     ]
       .filter(Boolean)
@@ -5037,9 +5052,7 @@ function pendingNotificationFromTask(
         : {}),
       deliveredAt: notification.deliveredAt,
       ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
-      ...(notification.result !== undefined
-        ? { resultSummary: summarizeNotificationValue(notification.result) }
-        : {}),
+      ...(resultSummary !== undefined ? { resultSummary } : {}),
       ...(notification.error
         ? {
             errorCode: notification.error.code,
@@ -6578,6 +6591,7 @@ export function createDynamicSpawnAgentTool(input: {
   abortSignal?: AbortSignal;
   entrypoint?: "spawn_agent" | "agent_task";
   delegateToolName?: string;
+  taskId?: string;
   /**
    * When set with `taskManager`, inline spawn_agent runs in foreground up to
    * this budget and then promotes the same child run into an awaited task.
@@ -6819,6 +6833,7 @@ export function createDynamicSpawnAgentTool(input: {
           agentName: parsed.role,
           delegateTool: input.delegateToolName ?? "spawn_agent",
           entrypoint: input.entrypoint ?? "spawn_agent",
+          ...(input.taskId ? { taskId: input.taskId } : {}),
           allowedTools: childTools.map((tool) => tool.name),
         },
       });
@@ -7181,6 +7196,31 @@ function createNestedAgentTaskCreateTool(input: {
   return {
     ...tool,
     policy: { risk: "safe", requiresApproval: false },
+    async execute(args: unknown, ctx): Promise<unknown> {
+      const output = await tool.execute(args, ctx);
+      const record = previewRecord(output);
+      if (record.mode !== "awaited" || typeof record.taskId !== "string") {
+        return output;
+      }
+
+      const taskId = record.taskId as unknown as TaskId;
+      const task =
+        (await input.manager.handle(taskId)?.wait()) ??
+        input.manager.store.get(taskId);
+      if (!task) return output;
+      if (isTerminalTaskStatus(task.status)) {
+        input.manager.store.update(task.id, { awaited: false });
+      }
+      const latest = input.manager.store.get(task.id) ?? task;
+      return {
+        ...record,
+        task: latest,
+        status: latest.status,
+        complete: isTerminalTaskStatus(latest.status),
+        result: latest.result,
+        error: latest.error,
+      };
+    },
   };
 }
 
@@ -8200,11 +8240,29 @@ function workflowScopedToolSearch(
   tools: readonly ToolDefinition[],
 ): ToolDefinition {
   const descriptors = tools.map(workflowToolDescriptor);
-  return createToolSearchTool({
+  const toolSearch = createToolSearchTool({
     source: {
       listDescriptors: () => descriptors,
     },
   });
+  return {
+    ...toolSearch,
+    governance: {
+      ...toolSearch.governance,
+      origin: {
+        kind: "local",
+        name: WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN,
+        metadata: { workflowScoped: true },
+      },
+    },
+  };
+}
+
+function isWorkflowScopedToolSearch(tool: ToolDefinition | undefined): boolean {
+  return (
+    tool?.governance?.origin?.kind === "local" &&
+    tool.governance.origin.name === WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN
+  );
 }
 
 function workflowToolDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -8502,6 +8560,11 @@ function persistWorkflowProjectionSnapshot(
         metadata: snapshot.failure.metadata,
       } satisfies WorkflowRunFailure)
     : undefined;
+  const projectionEpisodeMetadata = workflowProjectionEpisodeMetadata(
+    record,
+    snapshot,
+  );
+  const projectionAllowedTools = workflowProjectionAllowedTools(snapshot);
   return store.update(record.id, {
     status,
     currentNodeId: state.currentNodeId,
@@ -8520,9 +8583,58 @@ function persistWorkflowProjectionSnapshot(
     ...(failure ? { failure } : {}),
     metadata: {
       lastProjectionPhase: snapshot.phase,
+      ...(projectionEpisodeMetadata
+        ? { workflowEpisode: projectionEpisodeMetadata }
+        : {}),
+      ...(projectionAllowedTools
+        ? { episodeAllowedTools: projectionAllowedTools.normalized }
+        : {}),
       ...(snapshot.metadata ? { projectionMetadata: snapshot.metadata } : {}),
     },
   });
+}
+
+function workflowProjectionEpisodeMetadata(
+  record: WorkflowRunRecord,
+  snapshot: WorkflowProjectionStateSnapshot,
+): Record<string, unknown> | undefined {
+  const node = workflowProjectionModelNode(snapshot);
+  if (!node) return undefined;
+  const previous = isPlainRecord(record.metadata.workflowEpisode)
+    ? cloneJsonLike(record.metadata.workflowEpisode)
+    : {};
+  const nodeModelRef = workflowNodeModelRef(snapshot.definition, node);
+  return {
+    ...previous,
+    ...(nodeModelRef ? { modelRef: nodeModelRef } : {}),
+    nodeId: node.id,
+    attempt: snapshot.attempt ?? snapshot.state.attempts[node.id] ?? 1,
+    ...(node.runBudget ? { runBudget: { ...node.runBudget } } : {}),
+  };
+}
+
+function workflowProjectionAllowedTools(
+  snapshot: WorkflowProjectionStateSnapshot,
+): { nodeId: string; normalized: string[] } | undefined {
+  const node = workflowProjectionModelNode(snapshot);
+  if (!node?.tools || node.tools.length === 0) return undefined;
+  return {
+    nodeId: node.id,
+    normalized: [...new Set(node.tools.map(canonicalToolName))],
+  };
+}
+
+function workflowProjectionModelNode(
+  snapshot: WorkflowProjectionStateSnapshot,
+): WorkflowNodeDefinition | undefined {
+  if (snapshot.phase !== "node_started" || !snapshot.nodeId) return undefined;
+  const node = snapshot.definition.nodes.find(
+    (candidate) => candidate.id === snapshot.nodeId,
+  );
+  if (!node || (node.execute !== undefined && node.execute !== "model")) {
+    return undefined;
+  }
+  return node;
 }
 
 function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {

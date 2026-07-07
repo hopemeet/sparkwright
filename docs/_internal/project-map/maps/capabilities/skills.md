@@ -89,6 +89,10 @@ skill roots
   events, usage sidecar, or trace surfaces.
 - Skill create/update tools are managed capability mutations, not raw shell
   writes; successful managed mutations emit `capability.mutation.completed`.
+  Their model-authored `body` content is proposal-first: `create_skill` wraps
+  instructions-only content, and both `create_skill` and `update_skill`
+  normalize full `SKILL.md` bodies by filling a missing frontmatter
+  `description` from the tool description while rejecting mismatched names.
 - File-backed Skill usage recorders reload the current sidecar before reads and
   mutations so multiple recorder instances in one process do not overwrite each
   other's latest records. Host runtime now writes successful `skill.loaded`
@@ -122,6 +126,23 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T13:18:00+0800
+- Scope: Skill mutation tool contract update after real mini QA: `update_skill`
+  authored bodies now share frontmatter description normalization with
+  `create_skill`; managed mutation events, proposal-first behavior, and source
+  package non-application were verified.
+- Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/skills.md`,
+  `docs/_internal/project-map/maps/capabilities/skill-evolution.md`,
+  `docs/_internal/test-map/coverage/skills.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "update_skill|create_skill|Skill"`; `npm --workspace @sparkwright/host
+  test -- test/tools.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run build --workspace @sparkwright/host`; `npm run
+  check:dist-fresh`; `SPARKWRIGHT_REAL_MODEL=openai/gpt-5.4-mini
+  SPARKWRIGHT_KEEP_REAL_REGRESSION=1 npm run regression:real-skill-capabilities`.
 
 - Status: Verified
 - Date: 2026-07-06T20:08:48+0800

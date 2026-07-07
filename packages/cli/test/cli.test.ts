@@ -232,6 +232,43 @@ describe("runCli", () => {
     expect(output.stderrText()).toBe("");
   });
 
+  it("prints workflow nested help before config or session setup", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-help-"));
+    tempDirs.push(configDir);
+    const badConfig = join(configDir, "config.yaml");
+    await writeFile(badConfig, "model: [\n");
+
+    for (const subcommand of [
+      "list",
+      "inspect",
+      "resume",
+      "distill",
+      "shadow",
+    ]) {
+      const output = createOutputCapture();
+      const result = await runCli(
+        ["workflow", subcommand, "--help", "--workspace", workspace],
+        {
+          env: { ...process.env, SPARKWRIGHT_CONFIG: badConfig },
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(output.stdoutText()).toContain("Usage: sparkwright workflow list");
+      expect(output.stdoutText()).not.toContain("workflow assets");
+      expect(output.stderrText()).toBe("");
+      expect(existsSync(join(workspace, ".sparkwright", "sessions"))).toBe(
+        false,
+      );
+    }
+  });
+
   it("reports missing image attachments before starting a run", async () => {
     const output = createOutputCapture();
 
@@ -6192,6 +6229,68 @@ describe("runCli", () => {
       errors: unknown[];
     };
     expect(report.errors).toEqual([]);
+  });
+
+  it("preserves agent runtime options when creating workspace agents", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              spawnModel: "openai/gpt-5.4-mini",
+              delegateModel: "anthropic/claude-sonnet-4-6",
+              maxDepth: 2,
+              allowNestedBackgroundTasks: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const created = await runCli(
+      [
+        "agents",
+        "create",
+        "reader",
+        "--prompt",
+        "Read things carefully.",
+        "--workspace",
+        workspace,
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(created.exitCode).toBe(0);
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+      capabilities?: {
+        agents?: {
+          spawnModel?: string;
+          delegateModel?: string;
+          maxDepth?: number;
+          allowNestedBackgroundTasks?: boolean;
+          profiles?: Array<{ id?: string }>;
+        };
+      };
+    };
+    expect(parsed.capabilities?.agents).toMatchObject({
+      spawnModel: "openai/gpt-5.4-mini",
+      delegateModel: "anthropic/claude-sonnet-4-6",
+      maxDepth: 2,
+      allowNestedBackgroundTasks: true,
+    });
+    expect(parsed.capabilities?.agents?.profiles).toEqual([
+      expect.objectContaining({ id: "reader" }),
+    ]);
   });
 
   it("reports agent validation errors", async () => {

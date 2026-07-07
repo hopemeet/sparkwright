@@ -3757,14 +3757,15 @@ describe("host protocol", () => {
             (event.payload as { toolName?: string }).toolName === "task_create",
         ),
       ).toBe(true);
-      expect(
-        runEvents.some(
-          (event) =>
-            event.type === "subagent.completed" &&
-            (event.metadata as { entrypoint?: string }).entrypoint ===
-              "agent_task",
-        ),
-      ).toBe(true);
+      const completedSubagent = runEvents.find(
+        (event) =>
+          event.type === "subagent.completed" &&
+          (event.metadata as { entrypoint?: string }).entrypoint ===
+            "agent_task",
+      );
+      expect(completedSubagent).toBeDefined();
+      expect(completedSubagent?.payload).toMatchObject({ taskId: task.id });
+      expect(completedSubagent?.metadata).toMatchObject({ taskId: task.id });
     } finally {
       if (previousScript === undefined) {
         delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;

@@ -3936,6 +3936,15 @@ function validateCapabilityAgents(
       errors,
     );
   }
+  if (raw.allowNestedBackgroundTasks !== undefined) {
+    const parsed = validateOptionalBoolean(
+      raw.allowNestedBackgroundTasks,
+      "capabilities.agents.allowNestedBackgroundTasks",
+      filePath,
+      errors,
+    );
+    if (parsed !== undefined) out.allowNestedBackgroundTasks = parsed;
+  }
   return out;
 }
 

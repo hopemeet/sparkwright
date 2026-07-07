@@ -91,6 +91,17 @@ tool proposes write
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help and offline observation filtering do not change
+  workspace-write policy, managed write event pairing, untracked
+  write-capable-boundary semantics, or MCP write attribution.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `docs/_internal/project-map/maps/safety/workspace-writes.md`.
+- Tests: workspace-write-specific tests were not run; focused CLI/host workflow
+  tests covered the changed paths.
+
 - Status: Verified
 - Date: 2026-07-06T21:18:25+0800
 - Scope: C13-② post-acceptance routed-page check: host-loaded

@@ -97,6 +97,11 @@ Does not own:
   failed, keys invariant results by `hookName + verifierId`, and keeps
   `verification:<profile>:<id>` hookName parsing only for old-trace
   compatibility.
+- Command outcome projections from FactLedger include non-stale
+  `model-initiated` commands and verification-relevant `verifier-launched`
+  commands. Generic hook-launched command facts stay out unless marked
+  verification-relevant, but workflow command verifier failures must appear in
+  `commandFailures.verification` and completed-run verification outcome checks.
 - Concurrent tool batches preserve real-time event emission and after-tool hook
   execution, while deferring only the next-turn `tool_result` context append so
   model observations are ordered by the original tool-call order.
@@ -181,6 +186,12 @@ Does not own:
   read noise is also attributed through existing `spanId` / `parentSpanId`
   tool spans so grep-style scan reads can be distinguished from explicit
   read-like tool calls without changing raw `workspace.read` payloads.
+- Trace reports also include a task-lifecycle advisory for repeated equivalent
+  `task_create` calls inside one run. Equivalence is `kind` plus stable
+  `payload` fingerprint, while scheduling fields such as `mode`/`awaited` are
+  ignored. The finding requires evidence that a prior task id reached a
+  reusable completed terminal state before the later create request, and skips
+  failed, cancelled, partial, or truncated prior tasks.
 - The run loop subscribes `RunHealthAnalyzer` to its event log and appends
   model-visible `run.health` context when `read_file`/read-like tools return the
   same unchanged file window again; workspace writes clear prior read snapshots
@@ -312,6 +323,28 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: trace report added `REPEATED_TASK_CREATE_LIFECYCLE` for completed
+  same-payload repeated `task_create` lifecycle misuse while skipping failed
+  prior tasks.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: FactLedger command outcome projection fix: workflow command verifier
+  facts with `initiator:"verifier-launched"` and `verificationRelevant:true` now
+  count in verification command summaries while stale and unrelated hook commands
+  remain excluded.
+- Read: `packages/core/src/run-outcome.ts`,
+  `packages/core/src/fact-ledger.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800

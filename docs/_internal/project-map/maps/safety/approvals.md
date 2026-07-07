@@ -88,6 +88,16 @@ policy requires approval
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help exits before config/model/host setup, so it does
+  not enter approval policy or pending approval flows. Approval request,
+  resolution, and denial semantics are unchanged.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`.
+
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800
 - Scope: C13-② routed-page check: confidential read denials remain policy

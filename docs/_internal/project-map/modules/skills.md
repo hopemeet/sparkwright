@@ -107,8 +107,11 @@ Does not own:
   `create_skill` and `update_skill` only draft proposals; model tools can
   provide `body` content, with `create_skill` accepting either full `SKILL.md`
   or instructions-only content that the host wraps with `name` and
-  `description`; proposal metadata records whether content is authored, a
-  generated create template, or an intent-only update stub. Apply, reject,
+  `description`. For full `SKILL.md` bodies supplied to either `create_skill`
+  or `update_skill`, host fills a missing frontmatter `description` from the
+  tool description and still rejects mismatched frontmatter names. Proposal
+  metadata records whether content is authored, a generated create template, or
+  an intent-only update stub. Apply, reject,
   supersede, prune, and restore are human-only CLI/TUI surfaces, never model
   tools. Manual CLI `sparkwright skills create` remains a direct project Skill
   management command. Applied proposal changes snapshot to history; `skills
@@ -148,6 +151,24 @@ Does not own:
   [../maps/capabilities/skill-evolution.md](../maps/capabilities/skill-evolution.md#known-debts).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T13:18:00+0800
+- Scope: real-mini Skill update proposal fix kept evolution actor boundaries
+  unchanged while extending authored-body frontmatter normalization to
+  `update_skill`: missing `description` is filled from the tool description,
+  mismatched names remain fail-closed, and source Skill packages are not applied
+  by model-facing tools.
+- Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/skill-evolution.md`,
+  `docs/_internal/project-map/modules/skills.md`,
+  `docs/_internal/test-map/runs/2026-07-07-real-mini-broad-trace-qa.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "update_skill|create_skill|Skill"`; `npm --workspace @sparkwright/host
+  test -- test/tools.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run build --workspace @sparkwright/host`; `npm run
+  check:dist-fresh`; `SPARKWRIGHT_REAL_MODEL=openai/gpt-5.4-mini
+  SPARKWRIGHT_KEEP_REAL_REGRESSION=1 npm run regression:real-skill-capabilities`.
 
 - Status: Verified
 - Date: 2026-07-06T20:08:48+0800

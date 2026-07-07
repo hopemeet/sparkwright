@@ -63,6 +63,7 @@ export interface CreateWorkflowProjectionHooksOptions extends Omit<
   readTodoLedger?: () => TodoLedger | Promise<TodoLedger>;
   allowScriptWrite?: boolean;
   isToolAvailable?: (toolName: string) => boolean;
+  isScopedToolSearchAvailable?: () => boolean;
   /** @internal Test-only fault injection for D23 fail-closed gate assertions. */
   faultInjection?: Partial<Record<WorkflowHookName, string>>;
 }
@@ -1165,15 +1166,19 @@ export function createWorkflowProjectionHooks(
           return { status: "continue", metadata: { workflowRunId } };
         }
         const toolName = toolNameFromPayload(input.payload);
+        const toolCanonical = toolName
+          ? canonicalToolName(toolName)
+          : undefined;
+        const allowedCanonical = new Set(allowed.map(canonicalToolName));
         if (
           !toolName ||
-          allowed.map(canonicalToolName).includes(canonicalToolName(toolName))
+          (toolCanonical !== undefined && allowedCanonical.has(toolCanonical))
         ) {
           return { status: "continue", metadata: { workflowRunId } };
         }
         if (
-          toolName === "tool_search" &&
-          options.isToolAvailable?.(toolName) === true
+          toolCanonical === "tool_search" &&
+          options.isScopedToolSearchAvailable?.() === true
         ) {
           return { status: "continue", metadata: { workflowRunId } };
         }

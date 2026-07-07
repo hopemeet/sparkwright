@@ -5398,11 +5398,14 @@ interface AgentDelegateToolConfigShape {
 interface AgentsConfigShape {
   profiles: AgentProfileConfigShape[];
   delegateTools: AgentDelegateToolConfigShape[];
+  spawnModel?: string;
+  delegateModel?: string;
   exposure?: "indexed" | "all";
   pinnedDelegates?: string[];
   exposeChildrenAsDelegates?: boolean;
   enableParallelDelegates?: boolean;
   maxDepth?: number;
+  allowNestedBackgroundTasks?: boolean;
 }
 
 interface AgentValidationError {
@@ -5573,6 +5576,12 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
     delegateTools: Array.isArray(agents.delegateTools)
       ? agents.delegateTools.filter(isPlainObject).map(recordToDelegateTool)
       : [],
+    ...(typeof agents.spawnModel === "string"
+      ? { spawnModel: agents.spawnModel }
+      : {}),
+    ...(typeof agents.delegateModel === "string"
+      ? { delegateModel: agents.delegateModel }
+      : {}),
     ...(agents.exposure === "indexed" || agents.exposure === "all"
       ? { exposure: agents.exposure }
       : {}),
@@ -5591,6 +5600,9 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
       : {}),
     ...(typeof agents.maxDepth === "number" && Number.isFinite(agents.maxDepth)
       ? { maxDepth: agents.maxDepth }
+      : {}),
+    ...(typeof agents.allowNestedBackgroundTasks === "boolean"
+      ? { allowNestedBackgroundTasks: agents.allowNestedBackgroundTasks }
       : {}),
   };
 }
@@ -5619,6 +5631,12 @@ function setAgentsConfig(
     ...(agents.delegateTools.length > 0
       ? { delegateTools: agents.delegateTools }
       : {}),
+    ...(agents.spawnModel !== undefined
+      ? { spawnModel: agents.spawnModel }
+      : {}),
+    ...(agents.delegateModel !== undefined
+      ? { delegateModel: agents.delegateModel }
+      : {}),
     ...(agents.exposure !== undefined ? { exposure: agents.exposure } : {}),
     ...(agents.pinnedDelegates !== undefined
       ? { pinnedDelegates: agents.pinnedDelegates }
@@ -5630,6 +5648,9 @@ function setAgentsConfig(
       ? { enableParallelDelegates: agents.enableParallelDelegates }
       : {}),
     ...(agents.maxDepth !== undefined ? { maxDepth: agents.maxDepth } : {}),
+    ...(agents.allowNestedBackgroundTasks !== undefined
+      ? { allowNestedBackgroundTasks: agents.allowNestedBackgroundTasks }
+      : {}),
   };
   config.capabilities = capabilities;
 }
@@ -6271,6 +6292,7 @@ function helpForArgs(
     "tasks",
     "tools",
     "trace",
+    "workflow",
   ]);
   if (
     !isHelpArg(argv[1]) &&

@@ -443,7 +443,13 @@ export function analyzeCommandOutcomesFromFactLedger(
   const byExitCode: Record<string, number> = {};
 
   for (const fact of snapshot.commands) {
-    if (fact.stale || fact.initiator !== "model-initiated") continue;
+    if (
+      fact.stale ||
+      (fact.initiator !== "model-initiated" &&
+        !(fact.initiator === "verifier-launched" && fact.verificationRelevant))
+    ) {
+      continue;
+    }
     if (fact.exitCode === 0 && !fact.timedOut) {
       successes.push({
         toolCallId: fact.toolCallId,

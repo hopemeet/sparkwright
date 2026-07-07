@@ -261,9 +261,10 @@ constraints. Substrate references (S1–S4) resolve to
   `complete`, `fail`) and D16 rejects declared write capability in read-only
   runs. The deletion payoff is the shared progress sampler in
   `traced-process-runner.ts`, consumed by external command delegates and the
-  script path instead of an `external-command-agent` private copy. Two builtin
-  dogfood assets (`release-check-focused`, `workflow-runtime-p4-smoke`) now
-  provide real internal focused-gate pipelines.
+  script path instead of an `external-command-agent` private copy. Two dogfood
+  fixture assets (`release-check-focused`, `workflow-runtime-p4-smoke`) now
+  provide real internal focused-gate pipelines without entering the default
+  builtin runtime catalog.
 
 ## Purpose
 
@@ -1611,6 +1612,36 @@ gate.
       surface remains closed until the unified task-lifecycle birth contract,
       recursive depth control, and access-mode authorization clamp are all
       first-class inputs to the instantiation envelope.
+
+27. **Instantiation inputs schema — decision 4's instantiation face,
+    filled in.** (2026-07-07 job-session / runbook review round, pending
+    user confirmation like the rest; first customer is the Runbook Mode
+    entry described in workflow-job-session-review-context.md §3.6.)
+    Workflow assets may declare typed scalar inputs — `string` / `enum` /
+    `boolean` / `number`, with `required` / `default` — validated at
+    instantiation; validation failure rejects the start before any run
+    exists. Constraints:
+    - *Data schema, never a language.* Follows decision 4 verbatim:
+      instantiation-time binding only; no expressions, no conditionals,
+      no derived/computed values — ever. An input is a value, not a
+      program.
+    - *Binding shape follows decision 16's precedent.* A bound input
+      replaces a **whole argv token** (declared placeholder token), never
+      substring interpolation inside a token. Destinations: verifier
+      `command` argv (decision 16's original customer — the
+      `{{failing_test}}` sketch), `command` / `script` node argv, and
+      goal text. Nothing else.
+    - *Inputs are job identity.* Bound values freeze into the
+      instantiation-time snapshot on the `WorkflowRunRecord` — the same
+      snapshot that carries the authorization prefill for resume. Resume
+      never re-asks for inputs and never permits changing them; contrast
+      authorization, which re-settles per resume under decision 16.
+    - *One schema, three faces.* The same declaration drives CLI flag
+      parsing, the TUI confirm form, and the future suggestion-chip
+      envelope payload — no per-surface parameter vocabulary.
+    - *Named deletion.* Retires "parameters stuffed into goal prose" as
+      the untyped, unvalidated, gate-invisible parameter channel for
+      templated workflows.
 
 ## Review Prompt
 

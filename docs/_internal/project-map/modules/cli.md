@@ -59,8 +59,9 @@ Does not own:
   includes status, artifact path, source/through run ids, counts, measurement
   and warning/fingerprint metadata, recent events, and event/artifact
   consistency, but not the compacted summary body.
-- Nested command help such as `sparkwright capabilities inspect --help` prints
-  the subcommand usage without executing the subcommand.
+- Nested command help such as `sparkwright capabilities inspect --help` or
+  `sparkwright workflow shadow --help` prints usage without executing the
+  subcommand, loading config, or creating session traces.
 - `sparkwright workflow list` prints both durable workflow run snapshots from
   the session root and host-owned workflow assets. JSON output preserves the old
   top-level asset report fields and adds `workflowRuns` /
@@ -287,6 +288,21 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help for `workflow
+  list|inspect|resume|distill|shadow --help` now exits through the early help
+  path before config parsing, workflow lookup, host setup, or session trace
+  creation.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`; manual
+  `node packages/cli/dist/index.js workflow
+  list|inspect|resume|distill|shadow --help`; `npm --workspace
+  @sparkwright/cli run build`; `npm run check:dist-fresh`.
 
 - Status: Verified
 - Date: 2026-07-06T20:47:10+0800

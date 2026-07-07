@@ -1014,8 +1014,10 @@ Non-`main` profiles that omit `mode` default to child/delegate agents, while
 `id: main` or `mode: primary` marks the primary profile. `allowedTools` remains
 an advanced concrete-name allowlist and only narrows the tools selected by
 `use`. `capabilities.agents.maxDepth` can cap nested child/delegate spawning
-globally. Advanced fields such as policy and run budget should stay in the
-config file.
+globally. `capabilities.agents.allowNestedBackgroundTasks: true` lets
+sub-agents create depth-bounded background agent tasks when they are explicitly
+granted `task_create`. Advanced fields such as policy and run budget should stay
+in the config file.
 
 Profile `hooks` attach workflow hooks to configured in-process child/delegate
 runs only. They are useful for per-agent guardrails such as validating a
