@@ -18,7 +18,6 @@ import { EventStream } from "./components/event-stream.js";
 import { InputBox } from "./components/input-box.js";
 import { StreamingMessage } from "./components/streaming-message.js";
 import { ToastView } from "./components/toast.js";
-import { loadSessionLabels, type SessionLabels } from "./lib/session-labels.js";
 import { ThemeProvider } from "./lib/theme-context.js";
 import { resolveTheme, type Theme } from "./lib/theme.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
@@ -29,18 +28,12 @@ import { StatusBar } from "./components/status-bar.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
-import type {
-  CapabilitySnapshot,
-  TaskOutputChunkSnapshot,
-  TaskRecordSnapshot,
-} from "@sparkwright/protocol";
 import { AttentionManager } from "./lib/attention.js";
 import { CommandRegistry } from "./lib/commands.js";
-import {
-  createCapability,
-  type CreateCapabilityDraft,
-} from "./lib/create-capability.js";
 import { useSkillActions } from "./state/use-skill-actions.js";
+import { useCapabilityActions } from "./state/use-capability-actions.js";
+import { useSessionActions } from "./state/use-session-actions.js";
+import { useTaskActions } from "./state/use-task-actions.js";
 import {
   applySkillLearnDraftProposal,
   createSkillLearnDraftProposal,
@@ -61,11 +54,7 @@ import {
   DEFAULTS as DEFAULT_BINDINGS,
   type Bindings,
 } from "./lib/keybindings.js";
-import type { SessionDiagnostics, SessionSummary } from "./lib/sessions.js";
-import {
-  createKindFromRest,
-  type CapabilityView,
-} from "./lib/layer-payload.js";
+import type { CapabilityView } from "./lib/layer-payload.js";
 import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
 import {
   loadTuiConfig,
@@ -75,17 +64,13 @@ import {
   type TuiConfigFile,
   type ValidationError,
 } from "./lib/config.js";
-import { formatWorkspaceDisplayPath } from "./lib/path-display.js";
 import {
   clampTuiPermissionMode,
   nextAllowedTuiPermissionMode,
   toCoreRunFields,
   type TuiPermissionMode,
 } from "./lib/permission.js";
-import {
-  summarizeTaskActivity,
-  type ActivityTab,
-} from "./lib/task-activity.js";
+import type { ActivityTab } from "./lib/task-activity.js";
 
 export interface CliOverrides {
   workspaceRoot?: string;
@@ -297,31 +282,10 @@ function AppReady(
   );
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const [focused, setFocused] = useState(true);
-  const [sessionList, setSessionList] = useState<SessionSummary[]>([]);
-  const [sessionDiagnostics, setSessionDiagnostics] =
-    useState<SessionDiagnostics | null>(null);
-  const [loadingDiagnosticsFor, setLoadingDiagnosticsFor] = useState<
-    string | null
-  >(null);
-  const [capabilitySnapshot, setCapabilitySnapshot] =
-    useState<CapabilitySnapshot | null>(null);
-  const [loadingCapabilities, setLoadingCapabilities] = useState(false);
-  const [taskRecords, setTaskRecords] = useState<TaskRecordSnapshot[]>([]);
-  const [taskOutputs, setTaskOutputs] = useState<
-    Record<string, TaskOutputChunkSnapshot[]>
-  >({});
-  const [loadingTasks, setLoadingTasks] = useState(false);
-  const [labels, setLabels] = useState<Record<string, string>>({});
-  const labelsRef = useRef<SessionLabels | null>(null);
-  // Ctrl+C behaves like a safe escape hatch: first press cancels/backs out,
-  // second press exits when idle with no layer open.
-  const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const theme = resolved.theme;
   // Todo band: collapsed by default (active items only); ctrl+t expands to show
   // completed items too.
   const [todoExpanded, setTodoExpanded] = useState(false);
-  const [lastActivityTab, setLastActivityTab] = useState<ActivityTab>("tasks");
-  const [lastSeenTaskSequence, setLastSeenTaskSequence] = useState(0);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
   const inputHandleRef = useRef<InputBoxHandle | null>(null);
@@ -377,19 +341,6 @@ function AppReady(
     if (state.pendingApproval) layers.push("approval", state.pendingApproval);
     else layers.pop("approval");
   }, [state.pendingApproval, layers]);
-
-  // Load session labels once per workspace.
-  useEffect(() => {
-    let cancelled = false;
-    void loadSessionLabels(resolved.workspaceRoot).then((store) => {
-      if (cancelled) return;
-      labelsRef.current = store;
-      setLabels(store.get());
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [resolved.workspaceRoot]);
 
   // Load the prompt stash once per workspace so the InputBox can restore a
   // crashed/abandoned draft on mount.
@@ -642,75 +593,39 @@ function AppReady(
     reloadConfig,
   });
 
+  // Capability browser + creation flow (panel snapshot state + handlers).
+  const capActions = useCapabilityActions({
+    workspaceRoot: resolved.workspaceRoot,
+    controller,
+    toasts,
+    layers,
+  });
+
+  // Session browsing / diagnostics / labels / rename / fork / export.
+  const sessionActions = useSessionActions({
+    workspaceRoot: resolved.workspaceRoot,
+    sessionId: state.sessionId,
+    controller,
+    store,
+    toasts,
+    layers,
+    inputHandleRef,
+  });
+
+  // Background-task activity: snapshots, unread counts, and drawer handlers.
+  const taskActions = useTaskActions({
+    controller,
+    toasts,
+    layers,
+    events: state.events,
+  });
+
   useEffect(() => {
     const dispose = watchTuiConfig(props.initialCwd, () => {
       void reloadConfig(true);
     });
     return dispose;
   }, [props.initialCwd]);
-
-  async function openSessionList(): Promise<void> {
-    const sessions = await controller.listSessions();
-    setSessionDiagnostics(null);
-    setLoadingDiagnosticsFor(null);
-    setSessionList(sessions);
-    layers.push("sessions");
-  }
-
-  async function inspectSession(id: string): Promise<void> {
-    setLoadingDiagnosticsFor(id);
-    const diagnostics = await controller.inspectSession(id);
-    setLoadingDiagnosticsFor(null);
-    if (diagnostics) setSessionDiagnostics(diagnostics);
-  }
-
-  async function openCapabilities(view: CapabilityView = "all"): Promise<void> {
-    setLoadingCapabilities(true);
-    layers.push("capabilities", { view });
-    const snapshot = await controller.inspectCapabilities();
-    setLoadingCapabilities(false);
-    if (snapshot) setCapabilitySnapshot(snapshot);
-  }
-
-  function openCreateCapability(rest = ""): void {
-    const kind = createKindFromRest(rest);
-    if (rest.trim() && !kind) {
-      toasts.push({
-        variant: "error",
-        title: "create",
-        message: "use /create skill|agent|cron|command|mcp",
-      });
-      return;
-    }
-    layers.push("create", { kind });
-  }
-
-  async function handleCreateCapability(
-    draft: CreateCapabilityDraft,
-  ): Promise<void> {
-    try {
-      const result = await createCapability(draft, resolved.workspaceRoot);
-      layers.pop("create");
-      toasts.push({
-        variant: "success",
-        title: "created",
-        message: result.path
-          ? `${result.message} · ${formatWorkspaceDisplayPath(result.path, {
-              workspaceRoot: resolved.workspaceRoot,
-              maxCols: 72,
-            })}`
-          : result.message,
-      });
-      const snapshot = await controller.inspectCapabilities();
-      if (snapshot) setCapabilitySnapshot(snapshot);
-    } catch (error) {
-      toasts.push({
-        variant: "error",
-        title: "create failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
 
   // File-authored slash commands discovered from .sparkwright/command/*.md.
   // Loaded async after mount; the registry memo below folds them in.
@@ -844,7 +759,7 @@ function AppReady(
       title: "Browse past sessions",
       description: "List, inspect diagnostics, resume.",
       category: "session",
-      run: () => void openSessionList(),
+      run: () => void sessionActions.openSessionList(),
     });
     for (const spec of ACTIVITY_COMMANDS) {
       reg.register({
@@ -854,7 +769,7 @@ function AppReady(
         category: "view",
         hint: formatBinding(resolved.bindings[spec.hintBinding]) || undefined,
         ...(spec.aliases ? { aliases: spec.aliases } : {}),
-        run: () => openActivity(spec.tab),
+        run: () => taskActions.openActivity(spec.tab),
       });
     }
     reg.register({
@@ -872,7 +787,7 @@ function AppReady(
         category: "view",
         ...(spec.aliases ? { aliases: spec.aliases } : {}),
         ...(spec.hiddenByDefault ? { hiddenByDefault: true } : {}),
-        run: () => void openCapabilities(spec.view),
+        run: () => void capActions.openCapabilities(spec.view),
       });
     }
     reg.register({
@@ -882,8 +797,8 @@ function AppReady(
         "Create a Skill, agent, cron job, slash command, or MCP server.",
       category: "capability",
       hiddenByDefault: true,
-      run: () => openCreateCapability(),
-      runRaw: (rest) => openCreateCapability(rest),
+      run: () => capActions.openCreateCapability(),
+      runRaw: (rest) => capActions.openCreateCapability(rest),
     });
     reg.register({
       name: "skill-create",
@@ -991,35 +906,14 @@ function AppReady(
       description:
         "Render the current session as markdown to .sparkwright/exports/.",
       category: "session",
-      run: () => {
-        controller
-          .exportTranscript()
-          .then((path) => {
-            store.appendTranscriptExport(path);
-            toasts.push({
-              variant: "success",
-              title: "transcript exported",
-              message: path,
-            });
-          })
-          .catch((err) =>
-            toasts.push({
-              variant: "error",
-              title: "export failed",
-              message: String(err),
-            }),
-          );
-      },
+      run: () => sessionActions.exportTranscript(),
     });
     reg.register({
       name: "rename",
       title: "Rename current session",
       description: "Give the current session a human-friendly label.",
       category: "session",
-      run: () => {
-        if (state.sessionId) setRenameTarget(state.sessionId);
-        layers.push("session-rename");
-      },
+      run: () => sessionActions.renameCurrentSession(),
     });
     reg.register({
       name: "quit",
@@ -1169,11 +1063,11 @@ function AppReady(
       top?.name !== "approval" &&
       b["activity.open"].some((c) => chordMatches(c, key, input))
     ) {
-      openActivity();
+      taskActions.openActivity();
       return;
     }
     if (!top && b["events.open"].some((c) => chordMatches(c, key, input))) {
-      openActivity("events");
+      taskActions.openActivity("events");
       return;
     }
     if (
@@ -1210,112 +1104,6 @@ function AppReady(
   }
 
   const modelLabel = effModel ?? "deterministic";
-  const taskActivity = useMemo(
-    () => summarizeTaskActivity(state.events, taskRecords, taskOutputs),
-    [state.events, taskRecords, taskOutputs],
-  );
-  const unreadTaskCount = taskActivity.tasks.filter(
-    (task) =>
-      task.lastSequence > lastSeenTaskSequence &&
-      (task.status === "completed" ||
-        task.status === "failed" ||
-        task.status === "cancelled"),
-  ).length;
-  const unreadFailedTaskCount = taskActivity.tasks.filter(
-    (task) =>
-      task.lastSequence > lastSeenTaskSequence &&
-      (task.status === "failed" || task.status === "cancelled"),
-  ).length;
-
-  async function refreshTaskSnapshots(): Promise<void> {
-    setLoadingTasks(true);
-    try {
-      const records = await loadSessionTaskRecords();
-      const outputEntries = await Promise.all(
-        records
-          .slice(0, 12)
-          .map(
-            async (record): Promise<[string, TaskOutputChunkSnapshot[]]> => [
-              record.id,
-              await controller.readTaskOutput(record.id, 200),
-            ],
-          ),
-      );
-      const outputs: Record<string, TaskOutputChunkSnapshot[]> =
-        Object.fromEntries(outputEntries);
-      setTaskRecords(records);
-      setTaskOutputs(outputs);
-    } finally {
-      setLoadingTasks(false);
-    }
-  }
-
-  async function loadSessionTaskRecords(): Promise<TaskRecordSnapshot[]> {
-    const runIds = runIdsFromEvents(state.events);
-    if (runIds.length === 0) return [];
-    const batches = await Promise.all(
-      runIds.map((parentRunId) =>
-        controller.listTasks({ parentRunId, limit: 50 }),
-      ),
-    );
-    return mergeTaskRecords(batches.flat()).slice(0, 50);
-  }
-
-  function handleActivityTabChange(tab: ActivityTab): void {
-    setLastActivityTab(tab);
-    if (tab === "tasks") void refreshTaskSnapshots();
-  }
-
-  function stopActivityTask(taskId: string): void {
-    void controller.stopTask(taskId).then((cancelled) => {
-      toasts.push({
-        variant: cancelled ? "success" : "warning",
-        title: cancelled ? "task stopped" : "task not stopped",
-        message: taskId,
-      });
-      void refreshTaskSnapshots();
-    });
-  }
-
-  function joinActivityTask(taskId: string): void {
-    void controller.joinTask(taskId).then((joined) => {
-      toasts.push({
-        variant: joined ? "success" : "warning",
-        title: joined ? "task joined" : "task not joined",
-        message: taskId,
-      });
-      void refreshTaskSnapshots();
-    });
-  }
-
-  function promoteActivityTask(taskId: string): void {
-    void controller.promoteTask(taskId).then((promoted) => {
-      toasts.push({
-        variant: promoted ? "success" : "info",
-        title: promoted ? "task promoted" : "task marked awaited",
-        message: taskId,
-      });
-      void refreshTaskSnapshots();
-    });
-  }
-
-  function openActivity(tab?: ActivityTab): void {
-    if (layers.has("activity") && !tab) {
-      layers.pop("activity");
-      return;
-    }
-    const nextTab =
-      tab ?? (taskActivity.running > 0 ? "tasks" : lastActivityTab);
-    setLastActivityTab(nextTab);
-    if (nextTab === "tasks") void refreshTaskSnapshots();
-    setLastSeenTaskSequence(
-      taskActivity.tasks.reduce(
-        (max, task) => Math.max(max, task.lastSequence),
-        lastSeenTaskSequence,
-      ),
-    );
-    layers.push("activity", { tab: nextTab });
-  }
 
   function cyclePermissionMode(): void {
     const next = nextAllowedTuiPermissionMode(
@@ -1359,7 +1147,8 @@ function AppReady(
     if (topLayer.name === "events") {
       toasts.push({ variant: "info", message: "closed events" });
     }
-    if (topLayer.name === "session-rename") setRenameTarget(null);
+    if (topLayer.name === "session-rename")
+      sessionActions.setRenameTarget(null);
   }
 
   // Props shared by both LayerRenderer mount points — the full-screen `events`
@@ -1369,75 +1158,37 @@ function AppReady(
   const layerProps = {
     registry,
     resolved: effectiveResolved,
-    sessionList,
+    sessionList: sessionActions.sessionList,
     sessionRootLabel: resolved.sessionRootLabel,
     events: state.events,
-    taskRecords,
-    taskOutputs,
-    loadingTasks,
-    labels,
-    renameTarget,
+    taskRecords: taskActions.taskRecords,
+    taskOutputs: taskActions.taskOutputs,
+    loadingTasks: taskActions.loadingTasks,
+    labels: sessionActions.labels,
+    renameTarget: sessionActions.renameTarget,
     effModel,
     modelCandidates: modelCandidates(resolved.providers),
-    sessionDiagnostics,
-    loadingDiagnosticsFor,
-    capabilitySnapshot,
-    loadingCapabilities,
+    sessionDiagnostics: sessionActions.sessionDiagnostics,
+    loadingDiagnosticsFor: sessionActions.loadingDiagnosticsFor,
+    capabilitySnapshot: capActions.capabilitySnapshot,
+    loadingCapabilities: capActions.loadingCapabilities,
     skillReviewSnapshot: skillActions.skillReviewSnapshot,
     loadingSkillReview: skillActions.loadingSkillReview,
-    onActivityTabChange: handleActivityTabChange,
-    onRefreshTasks: () => void refreshTaskSnapshots(),
-    onStopTask: stopActivityTask,
-    onJoinTask: joinActivityTask,
-    onPromoteTask: promoteActivityTask,
+    onActivityTabChange: taskActions.handleActivityTabChange,
+    onRefreshTasks: () => void taskActions.refreshTaskSnapshots(),
+    onStopTask: taskActions.stopActivityTask,
+    onJoinTask: taskActions.joinActivityTask,
+    onPromoteTask: taskActions.promoteActivityTask,
     onCommitModel: commitModelSelection,
-    onFork: (seq, label, edit) => {
-      const src = state.sessionId;
-      layers.pop("fork");
-      if (!src) return;
-      void controller.forkSession(src, seq).then((res) => {
-        if (!res) return;
-        // Switch to the fork AND load its (copied) history so the branched
-        // conversation is visible, not a blank screen.
-        void controller.switchSession(res.forkedSessionId);
-        if (edit && label) inputHandleRef.current?.setValue(label);
-        toasts.push({
-          variant: "success",
-          title: edit ? "forked — edit & resend" : "forked",
-          message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
-        });
-      });
-    },
+    onFork: sessionActions.forkSession,
     onCloseTop: closeTopLayer,
-    onInspectSession: (id: string) => void inspectSession(id),
-    onPickSession: (id: string) => {
-      void controller.switchSession(id);
-      layers.pop("sessions");
-      toasts.push({
-        variant: "success",
-        message: `switched to session ${id}`,
-      });
-    },
-    onRequestRename: (id: string) => {
-      setRenameTarget(id);
-      layers.push("session-rename");
-    },
-    onCommitRename: (id: string, label: string) => {
-      void labelsRef.current?.set(id, label).then(() => {
-        setLabels(labelsRef.current?.get() ?? {});
-        toasts.push({
-          variant: "success",
-          title: label ? "renamed" : "cleared",
-          message: id,
-        });
-      });
-      layers.pop("session-rename");
-      setRenameTarget(null);
-    },
+    onInspectSession: (id: string) => void sessionActions.inspectSession(id),
+    onPickSession: sessionActions.pickSession,
+    onRequestRename: sessionActions.requestRename,
+    onCommitRename: sessionActions.commitRename,
     onApprovalDecision: (d: "approved" | "denied") =>
       controller.resolveApproval(d),
-    onCreateCapability: (draft: CreateCapabilityDraft) =>
-      void handleCreateCapability(draft),
+    onCreateCapability: capActions.handleCreateCapability,
     onCreateSkillProposal: skillActions.handleCreateSkillProposal,
     onUpdateSkillProposal: skillActions.handleUpdateSkillProposal,
     onApplySkillReviewProposal: skillActions.applySkillReviewProposal,
@@ -1478,8 +1229,8 @@ function AppReady(
           /model switch leaves a scrollback line). */}
         {state.status === "running" ||
         state.status === "awaiting-approval" ||
-        taskActivity.running > 0 ||
-        unreadTaskCount > 0 ? (
+        taskActions.taskActivity.running > 0 ||
+        taskActions.unreadTaskCount > 0 ? (
           <StatusBar
             state={state}
             modelLabel={modelLabel}
@@ -1487,9 +1238,9 @@ function AppReady(
             focused={focused}
             unreadCompletedTasks={Math.max(
               0,
-              unreadTaskCount - unreadFailedTaskCount,
+              taskActions.unreadTaskCount - taskActions.unreadFailedTaskCount,
             )}
-            unreadFailedTasks={unreadFailedTaskCount}
+            unreadFailedTasks={taskActions.unreadFailedTaskCount}
           />
         ) : null}
 
@@ -1732,54 +1483,6 @@ function HotkeysListener(props: {
 }): null {
   useInput((input, key) => props.onInput(input, key));
   return null;
-}
-
-function runIdsFromEvents(events: readonly unknown[]): string[] {
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const event of events) {
-    const id = runIdFromEvent(event);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
-function runIdFromEvent(event: unknown): string | undefined {
-  if (!event || typeof event !== "object" || Array.isArray(event)) {
-    return undefined;
-  }
-  const record = event as Record<string, unknown>;
-  if (typeof record.runId === "string") return record.runId;
-  const payload = record.payload;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return undefined;
-  }
-  const payloadRecord = payload as Record<string, unknown>;
-  return typeof payloadRecord.runId === "string"
-    ? payloadRecord.runId
-    : undefined;
-}
-
-function mergeTaskRecords(
-  records: readonly TaskRecordSnapshot[],
-): TaskRecordSnapshot[] {
-  const byId = new Map<string, TaskRecordSnapshot>();
-  for (const record of records) byId.set(record.id, record);
-  return [...byId.values()].sort((a, b) =>
-    taskRecordSortTime(b).localeCompare(taskRecordSortTime(a)),
-  );
-}
-
-function taskRecordSortTime(task: TaskRecordSnapshot): string {
-  return (
-    task.completedAt ??
-    task.lastOutputAt ??
-    task.startedAt ??
-    task.createdAt ??
-    ""
-  );
 }
 
 export function inputFooterLines(bindings: Bindings, width = 100): string[] {
