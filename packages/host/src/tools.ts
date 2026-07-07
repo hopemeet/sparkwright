@@ -1222,8 +1222,17 @@ function skillDraftToolOutput(
       : {}),
     summary: changed
       ? proposal.summary
-      : `${proposal.summary} Existing draft proposal returned; no new proposal was created.`,
+      : `${proposal.summary} This draft already exists for the current run; the same proposal was returned unchanged.`,
     existing: !changed,
+    // Lifecycle contract, stated so the model stops here instead of retrying or
+    // trying to load a skill that does not exist yet. A draft is a proposal,
+    // not a live skill: it is not indexed and cannot be skill_load'ed until a
+    // human applies it.
+    nextStep:
+      "Done — the draft proposal is recorded. Do NOT call create_skill again " +
+      "for this skill and do NOT skill_load it: a draft is not a live, " +
+      "loadable skill until a human reviews and applies the proposal. Report " +
+      "the proposalId to the user and stop.",
   };
 }
 

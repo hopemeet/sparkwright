@@ -632,6 +632,11 @@ export function createSkillLoaderTool(
           status: "not_found",
           requestedName: args.name,
           availableSkills: [...byName.keys()].sort(),
+          hint:
+            "This name is not a loadable skill. If you just drafted it with " +
+            "create_skill it exists only as a proposal and is NOT loadable " +
+            "until a human applies it — do not retry skill_load for it. " +
+            "Otherwise pick a name from availableSkills.",
         };
       }
 
@@ -677,7 +682,9 @@ export function createSkillLoaderTool(
   });
 }
 
-export function createSkillIndexContext(skills: SkillIndexEntry[]): ContextItem {
+export function createSkillIndexContext(
+  skills: SkillIndexEntry[],
+): ContextItem {
   return {
     id: createContextItemId(),
     type: "system",
