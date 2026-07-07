@@ -1606,7 +1606,7 @@ function formatCapabilityDelta(tools: ToolDescriptor[]): string {
   const categories = formatDeferredToolCategories(tools);
   return [
     "Capability delta:",
-    "Advanced and infrastructure tools may be available through tool_search. Use free-text discovery for skills, agents, delegates, cron, tasks, todo, MCP, or verified anchored edits; fetch a full schema before calling a deferred tool.",
+    "Advanced and infrastructure tools may be available through tool_search. Use free-text discovery for the management tools of agents, delegates, cron, tasks, todo, MCP, skill authoring, or verified anchored edits; fetch a full schema before calling a deferred tool. (To use a skill's own instructions, load it with skill_load per the skill index — that is separate from tool discovery.)",
     "For verified anchored edits, discover and use the pair together: first read anchors, then apply anchored edits with those anchors.",
     ...(categories.length > 0
       ? [`Deferred categories this turn: ${categories.join(", ")}.`]
@@ -1752,7 +1752,7 @@ function isSkillIndexContextItem(item: ContextItem): boolean {
 function formatSkillIndexItems(items: ContextItem[]): string {
   const lines = [
     "Skill index:",
-    "Skills are available as on-demand instructions. Load a matching skill before relying on details about that skill's own workflow, commands, flags, or recovery steps.",
+    "Skills are on-demand instruction packs. When a task plausibly falls within a skill's described scope, load it with skill_load and follow it — prefer this over searching the workspace yourself. This is required, not optional, for questions about a skill's own subject (its commands, flags, paths, config, or recovery steps): load the matching skill and answer from it, not from memory, and do not invent commands or flags. Judge relevance from each skill's description below; the list order is only a weak hint, so do not skip a skill because it appears lower.",
   ];
   for (const item of items) {
     const rendered = renderSkillIndexItem(item);
@@ -1773,9 +1773,7 @@ function renderSkillIndexItem(item: ContextItem): string | undefined {
         typeof skill.description === "string" && skill.description.trim()
           ? `: ${skill.description.trim()}`
           : "";
-      const relevance =
-        typeof skill.relevance === "string" ? ` [${skill.relevance}]` : "";
-      return `- ${skill.name}${relevance}${description}`;
+      return `- ${skill.name}${description}`;
     })
     .filter((line): line is string => line !== undefined)
     .join("\n");

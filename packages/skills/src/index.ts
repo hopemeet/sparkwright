@@ -220,7 +220,6 @@ export async function prepareSkillsForRun(
           contentHash: entry.contentHash,
           packageHash: entry.packageHash,
           layer: skillLayer(entry.metadata),
-          relevance: entry.relevance,
         })),
         skillRoots: options.skillRoots,
       },
@@ -469,17 +468,26 @@ function scoreSkillAgainstGoal(
 }
 
 /**
- * Order the on-demand skill index by deterministic relevance to the goal and
- * tag each entry. Unlike {@link selectSkills} this drops nothing — the model
- * still sees every skill — but it surfaces the likely-relevant ones first and
- * flags the rest as `low` so a weak model is less prone to grabbing an
- * out-of-domain skill. Falls back to a fully `low`-tagged list (name-ordered)
- * when the goal yields no tokens (e.g. an unsupported script).
+ * Order the on-demand skill index for presentation. Ordering is a *hint only*:
+ * nothing is dropped — the model sees every skill and decides what to load from
+ * each skill's own description.
+ *
+ * We deliberately do NOT tag entries `relevant`/`low`. The lexical scorer is a
+ * weak, monolingual keyword matcher: a Chinese goal never intersects English
+ * triggers, shared nouns like the product name light up every skill, and the
+ * `skill`/`agent` stop-words strip the one surface an intent like "新建 skill"
+ * would match. A binary relevance label built on that was wrong often enough to
+ * actively mislead — it told the model to skip the right skill (scored 0 → low)
+ * or flattened every candidate to `relevant` so the real match carried no
+ * signal. The model reads the same name+description the scorer scored, and
+ * reads it better, so relevance is left to the reader. The score now only
+ * breaks presentation order (a plausible match floats up in a long list); when
+ * the goal yields no matchable tokens it degrades to a stable name order.
  */
 export function rankIndexedSkillsByGoal(
   skills: SkillIndexEntry[],
   goal: string,
-): Array<SkillIndexEntry & { relevance: "relevant" | "low" }> {
+): SkillIndexEntry[] {
   const goalTokens = tokenize(goal);
   return skills
     .map((skill) => ({
@@ -497,10 +505,7 @@ export function rankIndexedSkillsByGoal(
         right.score - left.score ||
         left.skill.name.localeCompare(right.skill.name),
     )
-    .map(({ skill, score }) => ({
-      ...skill,
-      relevance: score > 0 ? ("relevant" as const) : ("low" as const),
-    }));
+    .map(({ skill }) => skill);
 }
 
 export function filterSkillsForAgent(
@@ -672,10 +677,7 @@ export function createSkillLoaderTool(
   });
 }
 
-export function createSkillIndexContext(
-  skills: Array<SkillIndexEntry & { relevance?: "relevant" | "low" }>,
-): ContextItem {
-  const hasRelevance = skills.some((skill) => skill.relevance !== undefined);
+export function createSkillIndexContext(skills: SkillIndexEntry[]): ContextItem {
   return {
     id: createContextItemId(),
     type: "system",
@@ -685,21 +687,10 @@ export function createSkillIndexContext(
     content: JSON.stringify(
       {
         kind: "skill_index",
-        ...(hasRelevance
-          ? {
-              // Ordering is a hint, never a gate: the keyword ranker is a weak
-              // lexical matcher and routinely misses skills the model would
-              // recognize as relevant. Load whenever the task plausibly falls
-              // in a skill's scope, and never answer about a skill's own
-              // subject from memory.
-              note: "Skills are listed most-relevant-first for the current goal, but this order is only a weak hint — do not skip a skill just because it appears lower. Load a skill via skill_load whenever the task plausibly falls within its described scope. Never answer questions about a skill's own subject (e.g. this tool's own commands, flags, config, or recovery steps) from memory: load the matching skill and verify against it first, and do not invent commands or flags.",
-            }
-          : {}),
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
           version: skill.version,
-          relevance: skill.relevance,
         })),
       },
       null,
