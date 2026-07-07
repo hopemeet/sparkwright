@@ -20,6 +20,7 @@ See [../../modules/skills.md](../../modules/skills.md).
 - `packages/skills/src/guard.ts` (`inspectSkill` trust × severity; wired at draft + apply)
 - `packages/host/src/skill-doctor.ts` (`runSkillDoctor` structural validation)
 - `packages/cli/src/cli.ts` (`skills proposals|history|restore`)
+- `packages/tui/src/app.tsx` (`/skill-learn` automatic notice/draft/apply trigger)
 - `packages/tui/src/lib/skill-evolution.ts`, `packages/tui/src/lib/skill-learn.ts`
 - `packages/host/test/skill-evolution.test.ts`, `packages/cli/test/cli.test.ts`
 
@@ -67,8 +68,9 @@ history kinds:   create | update | restore
   model-facing `create_skill` and `update_skill` tools both expose a `body`
   param. `create_skill.body` may be full `SKILL.md` content or only authored
   instructions; the host wraps instructions-only bodies with `name` and
-  `description`, fills a missing `description` frontmatter field from the tool
-  argument, and still rejects mismatched frontmatter names. When
+  `description`. For both `create_skill.body` and `update_skill.body`, a full
+  `SKILL.md` body with frontmatter missing `description` is normalized from the
+  tool `description`, while mismatched frontmatter names still fail closed. When
   `create_skill.body` is omitted, the create proposal uses a generated template;
   when `update_skill.body` is omitted, the after body is a
   `## Proposed Evolution` intent stub derived from `description`. Proposal
@@ -106,6 +108,10 @@ history kinds:   create | update | restore
   Reverse-lookup: `skills proposals list --run <id>` / `--session <id>` filters
   by provenance (`--session` is the global flag, read from `parsed.sessionId`).
   CLI-authored proposals have none.
+- **TUI automatic learning target:** `/skill-learn` notice/draft/apply uses
+  only conservative reuse-signal evidence plus the active session id. It does
+  not infer a target Skill name from prompt text; named Skill updates are
+  explicit `/skill-update` or caller-supplied `targetSkillName` paths.
 - **Run-scoped draft idempotency:** during a model run, repeated `create_skill`
   or `update_skill` drafts for the same skill and run id return the existing
   draft proposal (`changed:false`, `existing:true`) instead of creating another
@@ -156,6 +162,34 @@ history kinds:   create | update | restore
   there is no persisted run→proposals index (a scan, not an index).
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T13:18:00+0800
+- Scope: real-mini update_skill authored-body regression: model-authored
+  update bodies now share Skill frontmatter normalization with create_skill,
+  filling missing `description` while keeping name mismatches fail-closed and
+  preserving proposal-only mutation boundaries.
+- Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/skill-evolution.md`,
+  `docs/_internal/project-map/modules/skills.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "update_skill|create_skill|Skill"`; `npm --workspace @sparkwright/host
+  test -- test/tools.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run build --workspace @sparkwright/host`; `npm run
+  check:dist-fresh`; `SPARKWRIGHT_REAL_MODEL=openai/gpt-5.4-mini
+  SPARKWRIGHT_KEEP_REAL_REGRESSION=1 npm run regression:real-skill-capabilities`.
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 removed the TUI prompt-text target detector for automatic
+  `/skill-learn` drafts while preserving explicit target support in the proposal
+  helper.
+- Read: `packages/tui/src/app.tsx`, `packages/tui/src/lib/skill-learn.ts`,
+  `packages/tui/test/skill-evolution.test.ts`,
+  `docs/reference/SKILLS.md`,
+  `docs/_internal/proposals/skill-runtime-v1-redesign.md`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/skill-evolution.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-03T12:53:49+0800

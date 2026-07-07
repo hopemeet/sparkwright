@@ -83,6 +83,52 @@ host config MCP servers
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help and offline workflow observation filtering do not
+  change MCP preparation, wrapped MCP tool execution, server cwd handling,
+  capability inspection, or diagnostic payloads.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `docs/_internal/project-map/maps/capabilities/mcp.md`.
+- Tests: MCP-specific tests were not run; focused CLI/host workflow tests
+  covered the changed paths.
+
+- Status: Read-only
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance routed-page check: host-loaded confidential
+  read config now feeds run policy construction, but MCP server preparation,
+  wrapped tool execution, cwd handling, workspace-cwd disclosure, and
+  diagnostic payloads are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `docs/_internal/project-map/maps/capabilities/mcp.md`.
+- Tests: no MCP-specific tests run; host confidential protocol tests ran for
+  the changed policy path.
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: host runtime policy construction now carries
+  `confidentialDefaults`, but MCP server preparation, wrapped tool execution,
+  cwd handling, workspace-cwd disclosure, and diagnostic payloads are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/src/config.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: not run for MCP-specific behavior; C13 focused validation ran in
+  core/host/CLI/protocol.
+
+- Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for HostRuntime capability-inspection profile
+  inventory. MCP server preparation, tool execution wrapping, cwd handling,
+  workspace-cwd disclosure, and diagnostic payloads are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "inspect reports inline agent profiles"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`; `npm run release:check`.
+
+- Status: Read-only
 - Date: 2026-07-05T23:09:50+0800
 - Scope: workflow-runtime-v1 P9a D5 routed-page check: workspace-root workflow
   run storage does not change MCP preparation, wrapped tool execution, server

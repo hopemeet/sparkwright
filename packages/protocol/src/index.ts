@@ -10,7 +10,7 @@
  * the full specification, lifecycle, and error semantics.
  */
 
-export const PROTOCOL_VERSION = "1.3" as const;
+export const PROTOCOL_VERSION = "1.4" as const;
 
 export const PERMISSION_MODES = [
   "plan",
@@ -312,6 +312,8 @@ export interface RunStartRequestPayload {
   targetPath?: string;
   /** Workspace-relative paths/globs whose contents this run must not read. */
   confidentialPaths?: string[];
+  /** Whether built-in conservative confidential path defaults are included. */
+  confidentialDefaults?: boolean;
   /** Whether this run is allowed to request workspace writes. */
   shouldWrite?: boolean;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
@@ -340,6 +342,8 @@ export interface RunResumeRequestPayload {
   targetPath?: string;
   /** Workspace-relative paths/globs whose contents this run must not read. */
   confidentialPaths?: string[];
+  /** Whether built-in conservative confidential path defaults are included. */
+  confidentialDefaults?: boolean;
   /** Whether the resumed run is allowed to request workspace writes. */
   shouldWrite?: boolean;
   /** Reconstruct a best-effort checkpoint from trace.jsonl when checkpoint.json is absent. */
@@ -372,6 +376,7 @@ export interface WorkflowResumeRequestPayload {
   sessionId?: string;
   targetPath?: string;
   confidentialPaths?: string[];
+  confidentialDefaults?: boolean;
   shouldWrite?: boolean;
   model?: string;
   accessMode?: RunAccessMode;

@@ -55,6 +55,7 @@ export interface HostRunInput {
   sessionId: string;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   traceLevel: TraceLevel;
   input?: RunInputPayload;
   verbose?: boolean;
@@ -76,6 +77,7 @@ export interface HostResumeInput {
   sessionId?: string;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   traceLevel: TraceLevel;
   fromTrace: boolean;
   force: boolean;
@@ -97,6 +99,7 @@ export interface HostWorkflowResumeInput {
   sessionId?: string;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   traceLevel: TraceLevel;
   verbose?: boolean;
 }
@@ -151,6 +154,7 @@ async function runHostLifecycle(
     modelName,
     targetPath,
     confidentialPaths,
+    confidentialDefaults,
     traceLevel,
   } = input;
   const workflowName = "workflowName" in input ? input.workflowName : undefined;
@@ -323,6 +327,7 @@ async function runHostLifecycle(
             modelNameSource: "request",
             workflowName,
             confidentialPaths,
+            confidentialDefaults,
             shouldWrite,
             metadata,
             input: input.input,
@@ -352,6 +357,7 @@ async function runHostLifecycle(
             modelName,
             modelNameSource: "request",
             confidentialPaths,
+            confidentialDefaults,
             shouldWrite,
             metadata,
           }),
@@ -382,6 +388,7 @@ async function runHostLifecycle(
             modelName,
             modelNameSource: "request",
             confidentialPaths,
+            confidentialDefaults,
             shouldWrite,
             metadata,
           }),

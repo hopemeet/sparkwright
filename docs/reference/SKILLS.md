@@ -22,7 +22,7 @@ my-skill/
 ```
 
 `SKILL.md` is the only required file. Bundled resources may be listed or loaded
-through governed helper paths, but bundled scripts should not execute merely
+through governed helper paths, but Skill-authored scripts should not execute merely
 because a Skill was discovered.
 
 ## Inline Shell Preprocessing
@@ -222,22 +222,22 @@ this", "next time", or equivalent workflow corrections. The notice only
 suggests `/skill-create` or `/skill-update`; it does not create proposals
 automatically.
 
-In `draft` mode, the same conservative signal creates a draft proposal. If the
-user explicitly names a Skill, for example `skill code-reviewer` or
-`code-reviewer skill`, the proposal targets that Skill. Otherwise it targets the
-project Skill `session-learnings`. This still does not write current Skills or
-apply the proposal automatically; review it with `sparkwright skills proposals
-show <proposal-id>` and apply it through the CLI when appropriate.
+In `draft` mode, the same conservative signal creates a draft proposal for the
+project Skill `session-learnings`. The TUI does not infer a target Skill name
+from the prompt; use `/skill-update <skill-name>` or the CLI proposal commands
+for named Skill updates. This still does not write current Skills or apply the
+proposal automatically; review it with `sparkwright skills proposals show
+<proposal-id>` and apply it through the CLI when appropriate.
 Automatic learning proposals include deterministic evidence and safety notes;
 they do not use tool output, logs, webpages, or command output as learning
 evidence.
 
 In `apply` mode, only an auto-generated `session-learnings` proposal may be
-auto-applied. Proposals for explicitly named Skills remain drafts. Auto-apply
-still goes through the proposal apply path with package hash checks, doctor
-checks, history capture, and rollback on failure. If any gate fails, the draft
-proposal is left for manual review. Manual edits are protected by the same hash
-gates: if a target Skill appears or changes after proposal creation, apply marks
+auto-applied. Auto-apply still goes through the proposal apply path with package
+hash checks, doctor checks, history capture, and rollback on failure. If any gate
+fails, the draft proposal is left for manual review. Manual edits are protected
+by the same hash gates: if a target Skill appears or changes after proposal
+creation, apply marks
 the proposal stale instead of overwriting the current Skill.
 
 A proposal contains:

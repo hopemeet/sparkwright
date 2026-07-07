@@ -106,7 +106,7 @@ metadata:
 
 Skills are context and capability hints, not authority.
 
-This package does not execute bundled scripts directly. Any side effect should
+This package does not execute Skill-authored scripts directly. Any side effect should
 be represented as a Sparkwright `ToolDefinition` so policy, approval,
 validation, and trace remain in control.
 

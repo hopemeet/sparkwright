@@ -70,6 +70,17 @@ export interface WorkspaceReadScopePolicyOptions {
   confidentialPaths: readonly string[];
 }
 
+export interface RunConfidentialPathsOptions {
+  /**
+   * Whether to prepend SparkWright's built-in conservative confidential path
+   * set. Defaults to true at run boundaries; set false only when the embedder
+   * intentionally owns the full read-confidentiality list.
+   */
+  confidentialDefaults?: boolean;
+  /** Additional workspace-relative paths or globs to deny for this run. */
+  confidentialPaths?: readonly string[];
+}
+
 export const DEFAULT_CONFIDENTIAL_PATHS = [
   ".env",
   ".env.*",
@@ -84,13 +95,26 @@ export const DEFAULT_CONFIDENTIAL_PATHS = [
   ".azure",
 ] as const;
 
+export function resolveRunConfidentialPaths(
+  options: RunConfidentialPathsOptions = {},
+): string[] {
+  const paths = [
+    ...(options.confidentialDefaults === false
+      ? []
+      : DEFAULT_CONFIDENTIAL_PATHS),
+    ...(options.confidentialPaths ?? []),
+  ];
+  return [...new Set(paths)];
+}
+
 /**
  * Read-confidentiality layer. The workspace path policy enforces the workspace
  * *boundary* (path-escape) but nothing scopes reads of sensitive files *inside*
  * the root — so a prompt can induce the model to read a secrets file and the
  * only thing stopping disclosure is the model's own discretion. This layer
- * closes that gap: it is opt-in (empty `confidentialPaths` is a no-op) and
- * denies `workspace.read` of any matching file at the tool layer.
+ * closes that gap. This low-level policy denies `workspace.read` of any
+ * matching file at the tool layer; callers that want SparkWright's conservative
+ * default deny set should pass `resolveRunConfidentialPaths()`.
  */
 export function createWorkspaceReadScopePolicy(
   options: WorkspaceReadScopePolicyOptions,

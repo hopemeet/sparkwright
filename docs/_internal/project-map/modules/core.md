@@ -21,6 +21,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md),
 - `packages/core/src/trace-diagnostics.ts`
 - `packages/core/src/trace-session-consistency.ts`
 - `packages/core/src/trace-store.ts`
+- `packages/core/src/file-atomic.ts`
 - `packages/core/src/path-display.ts`
 - `packages/core/src/session.ts`
 - `packages/core/src/events.ts`
@@ -96,6 +97,11 @@ Does not own:
   failed, keys invariant results by `hookName + verifierId`, and keeps
   `verification:<profile>:<id>` hookName parsing only for old-trace
   compatibility.
+- Command outcome projections from FactLedger include non-stale
+  `model-initiated` commands and verification-relevant `verifier-launched`
+  commands. Generic hook-launched command facts stay out unless marked
+  verification-relevant, but workflow command verifier failures must appear in
+  `commandFailures.verification` and completed-run verification outcome checks.
 - Concurrent tool batches preserve real-time event emission and after-tool hook
   execution, while deferring only the next-turn `tool_result` context append so
   model observations are ordered by the original tool-call order.
@@ -180,6 +186,12 @@ Does not own:
   read noise is also attributed through existing `spanId` / `parentSpanId`
   tool spans so grep-style scan reads can be distinguished from explicit
   read-like tool calls without changing raw `workspace.read` payloads.
+- Trace reports also include a task-lifecycle advisory for repeated equivalent
+  `task_create` calls inside one run. Equivalence is `kind` plus stable
+  `payload` fingerprint, while scheduling fields such as `mode`/`awaited` are
+  ignored. The finding requires evidence that a prior task id reached a
+  reusable completed terminal state before the later create request, and skips
+  failed, cancelled, partial, or truncated prior tasks.
 - The run loop subscribes `RunHealthAnalyzer` to its event log and appends
   model-visible `run.health` context when `read_file`/read-like tools return the
   same unchanged file window again; workspace writes clear prior read snapshots
@@ -228,6 +240,12 @@ Does not own:
   actions are denied before approval. Write-enabled runs still route managed
   workspace mutations through the `workspace.write` diff approval path and
   write guardrails.
+- Read-confidentiality is a separate workspace-read policy layer.
+  `resolveRunConfidentialPaths()` is the run-boundary helper that prepends
+  SparkWright's conservative defaults unless `confidentialDefaults:false` is
+  explicitly supplied, then appends caller `confidentialPaths`. Matching reads
+  emit `workspace.read.denied` and fail the tool with `READ_SCOPE_DENIED`;
+  successful reads still emit `workspace.read`.
 - `WorkflowHook` is the deterministic project-facing rule layer. Current public
   lifecycle values are canonical-only: `RunStart`, `TurnStart`, `ModelOutput`,
   `PreToolUse`, `PostToolUse`, `Stop`, `RunEnd`, and `RuntimeSignal`. Core no
@@ -267,6 +285,10 @@ Does not own:
 - `session.ts` owns the `session-compact.v2` artifact parser/writer; artifacts
   require top-level `freedChars` and are ignored when the schema or
   `throughRunId` anchor is invalid.
+- `file-atomic.ts` owns the package-bottom atomic text writer used by
+  core-owned stores and by the `agent-runtime` doc-store public wrapper. Core
+  must not import `agent-runtime`; shared file atomics live below runtime
+  packages to preserve package boundaries.
 - `session-compaction.ts` owns deterministic session-turn extraction and
   old-turn eviction over completed user/assistant turns; it also exposes the
   `SessionSummarizer` seam, deterministic summarizer preview, trace-derived
@@ -301,6 +323,59 @@ Does not own:
   guard and trace diagnostics.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: trace report added `REPEATED_TASK_CREATE_LIFECYCLE` for completed
+  same-payload repeated `task_create` lifecycle misuse while skipping failed
+  prior tasks.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: FactLedger command outcome projection fix: workflow command verifier
+  facts with `initiator:"verifier-launched"` and `verificationRelevant:true` now
+  count in verification command summaries while stale and unrelated hook commands
+  remain excluded.
+- Read: `packages/core/src/run-outcome.ts`,
+  `packages/core/src/fact-ledger.ts`,
+  `packages/core/test/trace.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② read-confidentiality defaults: core owns the shared
+  `resolveRunConfidentialPaths()` resolver and the read-scope policy still
+  emits `workspace.read.denied` / `READ_SCOPE_DENIED` without changing write
+  gates or approval semantics.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
+  `packages/core/test/policy.test.ts`, `packages/core/test/workspace.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration: core gained `file-atomic.ts` as the lower-level
+  atomic text writer so `FileSessionStore.writeSession()` and
+  `agent-runtime` doc-store share one implementation without making core
+  depend on runtime packages. Session file format, event ordering, and
+  compaction contracts are unchanged.
+- Read: `packages/core/src/file-atomic.ts`, `packages/core/src/session.ts`,
+  `packages/core/src/internal.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `scripts/check-internal-imports.mjs`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`; `npm run
+  check:internal-imports`; `npm run check:package-boundaries`.
 
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800

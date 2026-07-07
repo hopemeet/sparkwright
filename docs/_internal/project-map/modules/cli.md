@@ -59,8 +59,9 @@ Does not own:
   includes status, artifact path, source/through run ids, counts, measurement
   and warning/fingerprint metadata, recent events, and event/artifact
   consistency, but not the compacted summary body.
-- Nested command help such as `sparkwright capabilities inspect --help` prints
-  the subcommand usage without executing the subcommand.
+- Nested command help such as `sparkwright capabilities inspect --help` or
+  `sparkwright workflow shadow --help` prints usage without executing the
+  subcommand, loading config, or creating session traces.
 - `sparkwright workflow list` prints both durable workflow run snapshots from
   the session root and host-owned workflow assets. JSON output preserves the old
   top-level asset report fields and adds `workflowRuns` /
@@ -106,6 +107,10 @@ Does not own:
   delegate inventory. Snapshot-less fallback uses the host-resolved delegate
   list so inline profile `delegateTool` hints and explicit delegate config stay
   aligned.
+- CLI JSON preserves both views: `agents.profiles` is the layered/config report,
+  and `runtime.agents.profiles` comes from host `CapabilitySnapshot` and must
+  include inline-config profiles even when they are primary/non-delegate
+  diagnostics rather than callable delegate tools.
 - `doctor paths` reports installation, install version/current target, CLI/TUI/ACP
   entrypoints, user config/capability roots, user state including host crash
   logs, and workspace state without starting a run.
@@ -146,6 +151,11 @@ Does not own:
   `run.start` / `run.resume` requests and surfaces `backgroundTasks` /
   `backgroundTasksCeiling` in config inspection. There is not currently a
   separate CLI flag; host owns validation, clamping, and execution behavior.
+- CLI run/config plumbing also carries config-derived `confidentialDefaults`
+  into host requests and direct-core diagnostics. The CLI config template keeps
+  it under `policy`; `confidentialDefaults:false` is an explicit opt-out from
+  built-in read-confidentiality defaults, not a write-scope or `--target`
+  control.
 - CLI cron state commands route create/update/list/status/pause/resume/remove
   through `@sparkwright/cron` `CronCommandService`; `CronStore` is not the
   product-surface contract. `cron create` keeps the created job JSON on stdout
@@ -278,6 +288,56 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help for `workflow
+  list|inspect|resume|distill|shadow --help` now exits through the early help
+  path before config parsing, workflow lookup, host setup, or session trace
+  creation.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`; manual
+  `node packages/cli/dist/index.js workflow
+  list|inspect|resume|distill|shadow --help`; `npm --workspace
+  @sparkwright/cli run build`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② CLI propagation for read-confidentiality defaults: host runs,
+  run resume, workflow resume, direct-core resume, config inspection, and the
+  starter template carry `confidentialDefaults` consistently.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/cli/src/runners/direct-core-runner.ts`,
+  `packages/cli/src/runners/host-runner.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "confidential"`; `npm --workspace @sparkwright/cli run typecheck`; `npm
+  --workspace @sparkwright/cli run build`.
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 CLI capability inspection now verifies that runtime snapshots
+  include inline-config profiles that are not delegate-derived; host remains
+  the runtime snapshot source.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `packages/host/src/runtime.ts`, `docs/_internal/project-map/modules/cli.md`.
+- Tests: `npm --workspace @sparkwright/host run build`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "capabilities inspect|capability inspect|inline-config profiles"`.
+
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 cron persistence migration changed `CronStore.save()` to use
+  the shared atomic writer. CLI cron command parsing, text/JSON response
+  shapes, `cron tick`, and `cron run <ref>` behavior are unchanged.
+- Read: `packages/cron/src/store.ts`, `packages/cron/src/commands.ts`,
+  `packages/cli/src/cli.ts`, `docs/_internal/project-map/maps/capabilities/cron.md`.
+- Tests: cron storage/schedule-focused `npm --workspace @sparkwright/cron test
+  -- test/schedule.test.ts`; CLI-specific tests not rerun for this persistence
+  implementation-only change.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

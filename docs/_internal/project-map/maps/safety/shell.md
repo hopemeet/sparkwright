@@ -115,6 +115,20 @@ model calls shell tool
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow observation now ignores failed or hook-blocked tool attempts
+  when producing offline distill/shadow reports. Shell execution, command
+  parsing, sandboxing, promotion, approval, and shell trace lifecycle contracts
+  are unchanged.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `docs/_internal/project-map/maps/safety/shell.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; shell-specific
+  tests were not run because no shell runner or policy code changed.
+
 - Status: Verified
 - Date: 2026-07-05T23:09:50+0800
 - Scope: workflow-runtime-v1 P9a D5 safety boundary: workspace mutation audit

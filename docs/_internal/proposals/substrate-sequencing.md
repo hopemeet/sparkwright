@@ -8,9 +8,11 @@
 > proposals stop re-stating (and re-inventing) the same substrates.
 >
 > Active proposals covered: `workflow-runtime-v1.md`,
-> `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`, and the
-> QA convergence plan. Evidence lines below were verified against the
-> `feat/background-agent-jobs` working tree on 2026-07-04.
+> `background-task-lifecycle.md`, `skill-runtime-v1-redesign.md`,
+> `session-agent-host-coordinator.md`, and `qa-convergence-plan.md` (stub home
+> created 2026-07-06 from C12). Evidence lines below were verified against the
+> `feat/background-agent-jobs` working tree on 2026-07-04 unless a later line
+> states otherwise.
 
 ## The problem this page solves
 
@@ -33,7 +35,8 @@ version of the shared substrate they need. Verified dispersion as of
   store classes** — and Windows rename EPERM is a recurring CI failure
   class, so every copy is an independent Windows bug surface.
 - **≥4 markdown/frontmatter asset parsers** (skills
-  bundles/preprocess/manifest, `host/agent-profiles.ts`,
+  preprocess/manifest, retired skill bundle parser,
+  `host/agent-profiles.ts`,
   `project-commands`, frontmatter handling in `host/tools.ts`) — the
   workflow asset folder would be the fifth.
 - **3+ workflow-hook producers** assembled with no ordering contract
@@ -103,8 +106,18 @@ listed below.
   First migration: `FileTaskStore` record writes now use the shared
   primitive, retiring its private
   `packages/agent-runtime/src/tasks/file-store.ts` `atomicWriteTextSync()`
-  copy. Remaining known atomic-write copies include
-  `tasks/file-notifications.ts`, `core/src/session.ts`, and `cron/src/store.ts`.
+  copy. Second migration (2026-07-06, C9-①):
+  `FileTaskNotificationOutbox` entry writes now use the shared primitive,
+  retiring `packages/agent-runtime/src/tasks/file-notifications.ts`'s private
+  `atomicWriteTextSync()` copy. Third migration (2026-07-06, C9-②):
+  `CronStore` saves now use the shared primitive, retiring
+  `packages/cron/src/store.ts`'s private tmp+fsync+rename+directory-fsync
+  write flow. Fourth migration (2026-07-06, C9-③): `FileSessionStore`
+  `session.json` saves now share the same atomic writer by lowering the
+  implementation to `packages/core/src/file-atomic.ts` and keeping
+  `agent-runtime/src/doc-store` as the public wrapper, retiring
+  `packages/core/src/session.ts`'s private tmp+retry+rename copy. No known C9
+  atomic-write copies remain.
 - **Customers:** FileTaskStore + FileTaskNotificationOutbox
   (background-task), FileWorkflowStore (workflow P2), CronStore,
   FileMemoryStore, FileSessionStore/FileRunStore (opportunistic),
@@ -185,6 +198,30 @@ listed below.
   primitive only if the same PR migrates at least one existing copy
   (agent-profiles is the smallest).
 
+### S5. Run-boundary read-confidentiality defaults
+
+- **Owner:** core for the path-default primitive, host/CLI/protocol for run
+  boundary plumbing.
+- **Status:** implemented 2026-07-06 from C13-②. `packages/core/src/policy.ts`
+  now exposes `resolveRunConfidentialPaths()` as the one helper that combines
+  the built-in conservative deny set (`.env`, secret/token/credential patterns,
+  `.ssh`, `.aws`, `.gcp`, `.azure`) with caller-supplied
+  `confidentialPaths`. Host start/resume/workflow resume and CLI direct-core
+  runs use it; protocol 1.4 carries optional `confidentialDefaults:false` so
+  embedders can intentionally own the full list. Post-acceptance fix
+  2026-07-06: host-loaded workspace config is merged into the prepared run
+  policy before start/resume/workflow-resume episodes are built, so protocol
+  clients that omit those fields still honor project config. Denials keep the
+  existing `workspace.read.denied` trace event and `READ_SCOPE_DENIED` tool
+  failure.
+- **Customers:** host runs, CLI direct-core diagnostics, host protocol clients,
+  TUI config compatibility.
+- **Retired mechanism:** the prior "config absent means workspace reads are
+  fully open unless a caller manually prepended defaults" boundary is retired
+  in favor of one configurable run-boundary resolver.
+- **Scope guard:** this is a read-confidentiality gate only. `--target` remains
+  write-scoped and must not become an implicit read sandbox.
+
 ## S3 annex — budget end-state one-pager (drafted 2026-07-04, ratified 2026-07-04)
 
 The merge is tractable only with a three-way altitude split; every prior
@@ -246,18 +283,21 @@ checkboxes, a recorded date/commit. No process theater.
 | --- | --- | --- |
 | Hook producers 3+ → 2 → 1 | workflow P1.5 (+ decision 19 ordering, P0 assembly-order test) | P1.5/D25 local state: user-configured rules + host-owned projection family; verification/documented-command are built-in invariant projections, selected workflow assets are linear workflow projections, the old live gate producers are deleted, the dead `verification.stopGate` config surface is removed, and P1.5 release gate passed. Future 2 → 1 convergence folds todo doctrine and plan mode in as workflow collections (decision 18, self-hosting pilots). |
 | Run-chain drivers 3 → 1 | workflow decision 18 (gate before actor episode spawning) | one run-chain driver; supervisor todo chain expressible as degenerate workflow before episodes ship |
-| Skill/MCP/Agent/Delegate → one substrate | skill-runtime-v1-redesign convergence addendum | DelegationLedgerKey already unified; `mcp_call` alignment outstanding |
+| Session turn ownership / "next execution" boundary | session-agent-host-coordinator.md C3 P0 matrix | core owns in-run command consumption, workflow owns workflow episode advancement, `TaskManager` owns task terminal/revival facts, and future `SessionTurnScheduler` owns only session queueing plus active-turn selection; per-connection `HostRuntime` remains a compatibility adapter, not the target coordination owner |
+| Skill/MCP/Agent/Delegate → one substrate | skill-runtime-v1-redesign convergence addendum | C1 accepted A-Phase 1-3 on 2026-07-06: Agent indexed exposure is the baseline, Agent index structuring follows, and MCP alignment (`mcp_call`, name-level deferral, `pinnedTools`) is opt-in first; A-Phase 4 shared routing is deferred to the capability-upgrade Phase 3b rank-before-hide review |
 | Shell/task/sub-agent lifecycle | background-task-lifecycle (in flight on `feat/background-agent-jobs`) | one fg→promote→bg + revival spine; one background-execution semantics |
 
 ## Tier 3 — pure deletions / fork-closing (small PRs, no design needed)
 
 - ACP entrypoint lacks `--session-root` and writes into the workspace —
-  close the entrypoint fork.
-- `capabilities inspect` under-reports inline-config agents — close the
-  reporting fork.
-- Sweep for neutralized-but-not-deleted code (e.g. the
-  `detectSkillLearnTarget` detector that is bypassed at
-  `createSkillLearnDraftProposal`) and delete rather than bypass.
+  closed in the current baseline: ACP parses `--session-root` and passes it to
+  `HostRuntime`.
+- `capabilities inspect` under-reports inline-config agents — closed
+  2026-07-06 by reporting all resolved profiles in host runtime snapshots,
+  including inline-config profiles that are not delegate-derived.
+- Sweep for neutralized-but-not-deleted code — closed 2026-07-06 for the
+  `detectSkillLearnTarget` detector: the TUI no longer guesses target Skill
+  names from prompts before calling `createSkillLearnDraftProposal`.
 - **Explicit non-goal:** the two run loops (`core.createRun` vs the
   streaming-runtime loop) stay separate. No equivalence work until a real
   convergence customer exists — declared non-convergence is also

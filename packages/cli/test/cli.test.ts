@@ -232,6 +232,43 @@ describe("runCli", () => {
     expect(output.stderrText()).toBe("");
   });
 
+  it("prints workflow nested help before config or session setup", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const configDir = await mkdtemp(join(tmpdir(), "sparkwright-help-"));
+    tempDirs.push(configDir);
+    const badConfig = join(configDir, "config.yaml");
+    await writeFile(badConfig, "model: [\n");
+
+    for (const subcommand of [
+      "list",
+      "inspect",
+      "resume",
+      "distill",
+      "shadow",
+    ]) {
+      const output = createOutputCapture();
+      const result = await runCli(
+        ["workflow", subcommand, "--help", "--workspace", workspace],
+        {
+          env: { ...process.env, SPARKWRIGHT_CONFIG: badConfig },
+          io: {
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdinIsTTY: false,
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(output.stdoutText()).toContain("Usage: sparkwright workflow list");
+      expect(output.stdoutText()).not.toContain("workflow assets");
+      expect(output.stderrText()).toBe("");
+      expect(existsSync(join(workspace, ".sparkwright", "sessions"))).toBe(
+        false,
+      );
+    }
+  });
+
   it("reports missing image attachments before starting a run", async () => {
     const output = createOutputCapture();
 
@@ -1385,6 +1422,129 @@ describe("runCli", () => {
     );
   });
 
+  it("denies built-in confidential reads by default in host runs", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await writeFile(join(workspace, ".env"), "API_TOKEN=abc\n", "utf8");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "read env",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "attempt confidential read",
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: ".env" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    // Read-scope policy denials are expected-by-policy outcomes, so they do
+    // not fail the whole run when the model continues with a final answer. The
+    // safety contract is the trace gate: no `workspace.read` is emitted.
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(
+      events.find((event) => event.type === "workspace.read.denied")?.payload,
+    ).toMatchObject({ path: ".env" });
+    expect(
+      events.find(
+        (event) =>
+          event.type === "tool.failed" &&
+          (event.payload?.error as { code?: string } | undefined)?.code ===
+            "READ_SCOPE_DENIED",
+      ),
+    ).toBeTruthy();
+    expect(
+      events.find(
+        (event) =>
+          event.type === "workspace.read" && event.payload?.path === ".env",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("allows config to override built-in confidential defaults", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(join(workspace, ".env"), "API_TOKEN=abc\n", "utf8");
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({ confidentialDefaults: false }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "run",
+        "read env",
+        "--workspace",
+        workspace,
+        "--model",
+        "scripted",
+        "--trace-level",
+        "debug",
+      ],
+      {
+        env: {
+          ...process.env,
+          SPARKWRIGHT_SCRIPTED_MODEL_JSON: JSON.stringify([
+            {
+              message: "read env",
+              toolCalls: [
+                {
+                  toolName: "read",
+                  arguments: { path: ".env" },
+                },
+              ],
+            },
+            { message: "done" },
+          ]),
+        },
+        io: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          stdinIsTTY: false,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const events = await readTrace(result.tracePath);
+    expect(
+      events.find(
+        (event) =>
+          event.type === "workspace.read" && event.payload?.path === ".env",
+      ),
+    ).toBeTruthy();
+    expect(
+      events.find((event) => event.type === "workspace.read.denied"),
+    ).toBeUndefined();
+  });
+
   it("writes host run sessions under --session-root", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const sessionRoot = await mkdtemp(join(tmpdir(), "sparkwright-sessions-"));
@@ -2202,6 +2362,60 @@ describe("runCli", () => {
     expect(report.command.dirs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ layer: "project", exists: true }),
+      ]),
+    );
+  });
+
+  it("reports inline-config profiles in runtime capability inspect snapshots", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    await writeFile(
+      join(workspace, ".sparkwright", "config.json"),
+      JSON.stringify({
+        capabilities: {
+          agents: {
+            profiles: [
+              { id: "main", mode: "primary" },
+              { id: "reviewer", name: "Reviewer", mode: "child" },
+              { id: "auditor", name: "Auditor", mode: "primary" },
+            ],
+          },
+        },
+      }),
+      "utf8",
+    );
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      ["capabilities", "inspect", "--workspace", workspace, "--format", "json"],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(output.stdoutText()) as {
+      runtime?: {
+        agents: {
+          profiles: Array<{ id: string; name?: string; mode?: string }>;
+        };
+      };
+      agents: {
+        profiles: Array<{ id: string; layer: string }>;
+      };
+    };
+    expect(report.agents.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "auditor", layer: "config" }),
+      ]),
+    );
+    expect(report.runtime?.agents.profiles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "auditor",
+          name: "Auditor",
+          mode: "primary",
+        }),
       ]),
     );
   });
@@ -6015,6 +6229,68 @@ describe("runCli", () => {
       errors: unknown[];
     };
     expect(report.errors).toEqual([]);
+  });
+
+  it("preserves agent runtime options when creating workspace agents", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+    const configPath = join(workspace, ".sparkwright", "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          capabilities: {
+            agents: {
+              spawnModel: "openai/gpt-5.4-mini",
+              delegateModel: "anthropic/claude-sonnet-4-6",
+              maxDepth: 2,
+              allowNestedBackgroundTasks: true,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const created = await runCli(
+      [
+        "agents",
+        "create",
+        "reader",
+        "--prompt",
+        "Read things carefully.",
+        "--workspace",
+        workspace,
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(created.exitCode).toBe(0);
+    const parsed = JSON.parse(await readFile(configPath, "utf8")) as {
+      capabilities?: {
+        agents?: {
+          spawnModel?: string;
+          delegateModel?: string;
+          maxDepth?: number;
+          allowNestedBackgroundTasks?: boolean;
+          profiles?: Array<{ id?: string }>;
+        };
+      };
+    };
+    expect(parsed.capabilities?.agents).toMatchObject({
+      spawnModel: "openai/gpt-5.4-mini",
+      delegateModel: "anthropic/claude-sonnet-4-6",
+      maxDepth: 2,
+      allowNestedBackgroundTasks: true,
+    });
+    expect(parsed.capabilities?.agents?.profiles).toEqual([
+      expect.objectContaining({ id: "reader" }),
+    ]);
   });
 
   it("reports agent validation errors", async () => {

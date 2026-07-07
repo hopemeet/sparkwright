@@ -14,11 +14,10 @@ import {
   mkdir,
   readFile,
   readdir,
-  rename,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { atomicWriteText } from "./file-atomic.js";
 import {
   asSessionId,
   createId,
@@ -518,36 +517,6 @@ export class FileSessionStore implements AppendOnlySessionStore {
       metadata: { ...event.metadata },
     };
   }
-}
-
-async function atomicWriteText(path: string, content: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = join(
-    dirname(path),
-    `.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
-  await writeFile(tmp, content, "utf8");
-  // POSIX rename-over-existing is atomic, but Windows transiently rejects it
-  // with EPERM/EACCES when another handle briefly holds the destination (a
-  // concurrent reader, antivirus, or an overlapping append from the same run).
-  // Retry with small backoff before giving up, and clean up the temp file on
-  // final failure so we don't leak `.tmp-*` droppings.
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    try {
-      await rename(tmp, path);
-      return;
-    } catch (error) {
-      lastError = error;
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EPERM" && code !== "EACCES" && code !== "EEXIST") {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-    }
-  }
-  await rm(tmp, { force: true }).catch(() => {});
-  throw lastError;
 }
 
 export interface RunStoreReplayPayload {

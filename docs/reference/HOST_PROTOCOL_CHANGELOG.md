@@ -9,6 +9,10 @@ major; breaking changes bump the major.
 - Add optional `accessMode` to `run.start` and `run.resume` payloads as the
   preferred high-level run autonomy field. Hosts compile it to legacy
   `permissionMode`/`shouldWrite` and record conflicts in metadata.
+- Add optional `confidentialPaths` and `confidentialDefaults` to `run.start`,
+  `run.resume`, and `workflow.resume` payloads so clients can add per-run
+  read-confidentiality deny globs and explicitly opt out of the built-in
+  conservative confidential path defaults.
 - Add optional `traceLevel` to `run.start` and `run.resume` payloads.
 - Add optional `autoApproved` to `approval.resolve` so clients can mark
   policy/flag-driven approvals structurally.

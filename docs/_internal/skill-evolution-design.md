@@ -687,7 +687,9 @@ Done. evolution mode config: /skill-learn off|notice|draft|apply
 Done. /skill-learn notice conservative TUI prompt
 Done. /skill-learn draft conservative proposal creation
 Done. narrow auto apply for auto-generated session-learnings proposals
-Done. deterministic target Skill recognition for explicit Skill names
+Retired 2026-07-06 (C10). deterministic target Skill recognition for explicit
+Skill names was removed from TUI automatic `/skill-learn`; named updates are
+explicit `/skill-update` / proposal-helper target paths.
 Done. automatic learning evidence and safety notes
 Done. manual edit protection via proposal hash gates and stale state
 ```

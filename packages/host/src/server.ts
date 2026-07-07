@@ -412,6 +412,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "sessionId",
           "targetPath",
           "confidentialPaths",
+          "confidentialDefaults",
           "shouldWrite",
           "model",
           "accessMode",
@@ -425,6 +426,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
+        optionalBoolean(req.payload, "confidentialDefaults") ??
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
@@ -443,6 +445,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "sessionId",
           "targetPath",
           "confidentialPaths",
+          "confidentialDefaults",
           "shouldWrite",
           "fromTrace",
           "force",
@@ -457,6 +460,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
+        optionalBoolean(req.payload, "confidentialDefaults") ??
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalBoolean(req.payload, "fromTrace") ??
         optionalBoolean(req.payload, "force") ??
@@ -575,6 +579,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
           "sessionId",
           "targetPath",
           "confidentialPaths",
+          "confidentialDefaults",
           "shouldWrite",
           "model",
           "accessMode",
@@ -587,6 +592,7 @@ function validateRequestPayload(req: HostRequest): string | undefined {
         optionalString(req.payload, "sessionId") ??
         optionalString(req.payload, "targetPath") ??
         optionalStringArray(req.payload, "confidentialPaths") ??
+        optionalBoolean(req.payload, "confidentialDefaults") ??
         optionalBoolean(req.payload, "shouldWrite") ??
         optionalString(req.payload, "model") ??
         optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??

@@ -88,6 +88,7 @@ const KNOWN_KEYS = new Set([
   // Host-only flat fields the TUI does not consume but must tolerate (the
   // grouped form normalizes into these). Listed so they are not flagged as
   // unknown; the host loader owns their validation.
+  "confidentialDefaults",
   "confidentialPaths",
   "write",
   "shell",

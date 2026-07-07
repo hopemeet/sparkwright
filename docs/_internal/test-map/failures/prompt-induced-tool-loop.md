@@ -5,12 +5,12 @@
 - Pattern ID: `prompt-induced-tool-loop`
 - Status: `watch`
 - First seen: 2026-06-22
-- Last seen: 2026-07-01
-- Recorded count: 8
+- Last seen: 2026-07-07
+- Recorded count: 9
 
 | Cause | Count |
 | --- | ---: |
-| `product_bug` | 2 |
+| `product_bug` | 3 |
 | `test_bug` | 1 |
 | `prompt_underspecified` | 3 |
 | `model_variance` | 2 |
@@ -87,6 +87,20 @@ as a separate model/capability-monitoring loop, not as a background task runner
 or payload-schema failure. Trace:
 `/tmp/sparkwright-mini-qa-20260701-task-agent-fixed/session_mr1lz0xua6sedleb/trace.jsonl`.
 
+On 2026-07-07, a current-source real `openai/gpt-5.4-mini` Agent + Skill
+prompt explicitly requested exactly one awaited `task_create(kind:"agent")`
+after loading a project Skill and its reference. The model first guessed the
+wrong Skill resource path (`task.md` instead of `references/task.md`), recovered
+from the loader's available-file hint, then spawned three equivalent awaited
+agent tasks instead of monitoring with `task(action:"wait")` / `output`. The
+children completed useful read-only work and trace verify/session check were
+ok, while trace report surfaced `LOW_NET_PROGRESS` plus the recovered
+`SKILL_LOAD_FAILED`. Follow-up root-cause inspection reclassified this instance
+as a product feedback issue: detached `task_create` returned no next-action
+hint, and terminal task notifications did not put the child result in body
+text. Trace:
+`/tmp/sparkwright-agent-skill-bg.JCm3sJ/.sparkwright/sessions/session_mra7xnvxy6d8rxwi/trace.jsonl`.
+
 ## Diagnostic Move
 
 Classify the repeated calls:
@@ -140,3 +154,5 @@ Then check whether the prompt gave a clear stopping condition.
 - Run note: [../runs/2026-06-29-real-mini-tool-surface-qa.md](../runs/2026-06-29-real-mini-tool-surface-qa.md)
 - Run note: [../runs/2026-07-01-real-nano-dci-grep-partial.md](../runs/2026-07-01-real-nano-dci-grep-partial.md)
 - Run note: [../runs/2026-07-01-real-mini-background-task-qa.md](../runs/2026-07-01-real-mini-background-task-qa.md)
+- Run note: [../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md](../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md)
+- Root-cause pattern: [task-create-agent-low-signal-result-feedback.md](task-create-agent-low-signal-result-feedback.md)

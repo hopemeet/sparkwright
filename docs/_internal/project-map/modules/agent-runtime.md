@@ -38,12 +38,15 @@ Does not own:
 ## Contracts
 
 - Task events are trace-visible through core when executed as tools.
-- `doc-store/` owns workflow-agnostic file-backed primitives for session-root
-  stores: atomic text/JSON document writes with Windows rename retry cleanup,
+- `doc-store/` owns the public workflow-agnostic file-backed primitive surface
+  for session-root stores: atomic text/JSON document writes with Windows
+  rename retry cleanup,
   corrupt-entry-tolerant JSON directory/log scans with diagnostics, JSONL
   append-log helpers, and token-entry single-writer leases. Feature stores such
-  as tasks/workflows compose these primitives instead of carrying their own
-  atomic-write or append-log copies.
+  as tasks/workflows/cron compose these primitives instead of carrying their
+  own atomic-write or append-log copies. The atomic text writer delegates to
+  core's `file-atomic` helper so core-owned session stores can share the
+  implementation without a reverse dependency on `agent-runtime`.
 - `task_create` can start external work; read-only task tools inspect state/output.
 - `TaskManager.registeredKinds()` exposes live runner keys for model-facing
   diagnostics; `createTaskCreate()` can accept optional
@@ -185,13 +188,15 @@ Does not own:
 - `FileTaskNotificationOutbox` is the durable counterpart for terminal task
   notifications. It supports non-consuming `peek()`/`waitUntilAvailable()` and
   predicate `drain()` so hosts can replay only notifications for the resumed
-  run. Its actor adapter derives inbox-scoped monotonic sequence from stable
-  file ordering with an in-process high-water mark, without changing the
-  existing `task-notifications/*.json` format. Because that format stores
-  legacy `TaskNotification` entries, the file-backed actor sink accepts only
-  terminal task actor notifications that can round-trip through that shape; it
-  rejects workflow/progress/output inputs and actor-only envelope fields with a
-  typed non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. It stores
+  run. Its JSON entry writes compose the shared `doc-store`
+  `atomicWriteTextSync()` primitive, while preserving the existing
+  `task-notifications/*.json` format. Its actor adapter derives inbox-scoped
+  monotonic sequence from stable file ordering with an in-process high-water
+  mark, without changing the existing format. Because that format stores legacy
+  `TaskNotification` entries, the file-backed actor sink accepts only terminal
+  task actor notifications that can round-trip through that shape; it rejects
+  workflow/progress/output inputs and actor-only envelope fields with a typed
+  non-retryable `UNSUPPORTED_ACTOR_NOTIFICATION`. It stores
   notifications, not task execution. The actor inbox view skips unreadable or
   actor-invalid file entries and exposes them through `invalidActorEntries()`
   so a single stale/bad file cannot wedge actor `peek()`/`drain()`/readiness
@@ -218,6 +223,11 @@ Does not own:
   task; explicit `mode`/`awaited` conflicts are rejected as recoverable argument
   errors; global/per-kind concurrency caps fail as recoverable tool errors
   rather than queueing internally.
+- Detached or promoted `task_create` results include a model-visible
+  `nextAction` object with the concrete task id, recommended `task` monitor
+  action, output retrieval hint, and duplicate-avoidance guidance. Keep this
+  corrective enough that a parent can reuse the existing task id instead of
+  spawning equivalent work.
 - Foreground `task_create` waits race both the foreground budget timer and
   `TaskManager.requestPromotion(taskId)`, so host/TUI manual promote controls
   can return the same promoted task ticket without waiting for timeout.
@@ -239,6 +249,10 @@ Does not own:
   work such as shell streams and dynamic `spawn_agent` children; embedders own
   the running promise/controller and task-runtime owns store/cancel/notification
   bookkeeping.
+- `spawnSubAgent()` treats host-supplied `metadata.taskId` as audit metadata
+  for task-owned children and copies it onto parent-visible `subagent.*`
+  payloads and metadata. Trace diagnostics rely on this to join
+  `task_create` results to terminal `agent_task` child runs.
 - `RunHandle.maxSteps` is public read-only child-spawn context. Child agents
   inherit the parent run's effective `maxSteps` when no child/profile override
   is provided; explicit child `maxSteps` still wins, while `runBudget` remains
@@ -275,6 +289,111 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T16:15:00+0800
+- Scope: task-owned subagent trace attribution; `spawnSubAgent()` now projects
+  host-provided `metadata.taskId` onto parent-visible lifecycle payloads and
+  metadata.
+- Read: `packages/agent-runtime/src/index.ts`,
+  `packages/agent-runtime/test/index.test.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/index.test.ts -t "multi-agent facts"`; `npm --workspace @sparkwright/host
+  test -- test/protocol.test.ts -t "background agent through the real
+  task_create"`; `npm run build --workspace @sparkwright/agent-runtime`; `npm
+  run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-07T14:43:43+0800
+- Scope: task feedback hardening after real mini Agent + Skill QA: detached
+  and promoted `task_create` results now return `nextAction` guidance so the
+  parent model sees the concrete follow-up `task` action and duplicate-avoidance
+  instruction.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/test/task-revival.test.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`,
+  `docs/_internal/project-map/maps/runtime/tool-orchestration.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/tasks.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm run build --workspace @sparkwright/agent-runtime`; `npm
+  --workspace @sparkwright/host test -- test/task-revival.test.ts
+  test/spawn-agent.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run build --workspace @sparkwright/host`; `npm run
+  check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-07T12:30:00+0800
+- Scope: real-model nested-agent QA follow-up: `task` action schema is now a
+  single object without top-level `oneOf` / `anyOf` so Anthropic can accept
+  deferred `task`; action-specific requirements stay in `validateInput()`.
+  `task(action:"wait")` now reports `complete:true` when the requested any/all
+  barrier is satisfied, derives `terminalTaskIds` only from terminal records,
+  and clears `awaited` only for terminal tasks consumed by the wait.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/test/spawn-agent.test.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/tasks.test.ts -t "task action wrapper|task action wait"`; `npm
+  --workspace @sparkwright/agent-runtime run typecheck`; `npm --workspace
+  @sparkwright/host test -- test/spawn-agent.test.ts -t "allows opt-in
+  depth-bounded sub-agents|keeps nested background agent spawning bounded"`;
+  real Sonnet CLI nested-agent regression with trace report/verify clean.
+
+- Status: Verified
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration: `agent-runtime` doc-store kept its public
+  `atomicWriteText()` / `atomicWriteTextSync()` surface while delegating the
+  implementation to core's internal `file-atomic` helper. This lets
+  `FileSessionStore` retire its private copy without violating the `core`
+  package-boundary rule.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/test/doc-store.test.ts`,
+  `packages/core/src/file-atomic.ts`, `packages/core/src/session.ts`,
+  `packages/core/src/internal.ts`, `scripts/check-internal-imports.mjs`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; `npm --workspace @sparkwright/core test --
+  test/session.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/core run typecheck`; `npm run
+  check:internal-imports`; `npm run check:package-boundaries`.
+
+- Status: Verified
+- Date: 2026-07-06T18:44:10+0800
+- Scope: C9 S1 migration: `CronStore.save()` now consumes the exported
+  `doc-store` `atomicWriteText()` through `@sparkwright/agent-runtime`,
+  retiring `packages/cron/src/store.ts`'s private tmp+fsync+rename write flow
+  while preserving the cron `jobs.json` format and durability intent.
+- Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
+  `packages/agent-runtime/src/index.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
+  `npm --workspace @sparkwright/cron run typecheck`; `npm run
+  check:package-boundaries`; `npm run check:workspace-lock`.
+
+- Status: Verified
+- Date: 2026-07-06T14:45:00+0800
+- Scope: C9 S1 migration: `FileTaskNotificationOutbox` now uses the shared
+  `doc-store` `atomicWriteTextSync()` for `task-notifications/*.json` entry
+  writes, retiring its private tmp-write + rename helper without changing the
+  file format or actor-inbox semantics.
+- Read: `packages/agent-runtime/src/tasks/file-notifications.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `packages/agent-runtime/test/doc-store.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts test/tasks.test.ts`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

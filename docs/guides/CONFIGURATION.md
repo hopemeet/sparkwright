@@ -63,9 +63,11 @@ The `providers` map is merged by provider key. The security boundaries —
 `run.accessMode`, `confidentialPaths`, `write`, and `shell.sandbox` — merge
 conservatively. Project `run.accessMode` is the workspace access ceiling, and
 requests above it are clamped; the other boundaries cannot be weakened by a
-later layer. Most other fields are replaced wholesale by the later source. In
-particular, `capabilities` is not deep-merged across files; put related project
-capability settings in the same project config file when possible.
+later layer. `confidentialDefaults` is the explicit override for whether the
+built-in confidential path set is active. Most other fields are replaced
+wholesale by the later source. In particular, `capabilities` is not deep-merged
+across files; put related project capability settings in the same project config
+file when possible.
 
 Precedence, weak to strong:
 
@@ -723,11 +725,20 @@ Put user arguments in prompt text instead.
   stricter mode but cannot exceed the project ceiling.
 - `workspace`: default workspace root. Relative paths resolve from the config
   file that defines them.
-- `confidentialPaths`: opt-in read-confidentiality globs. Unions across layers
-  (a later layer can only add entries, never drop them).
+- `confidentialDefaults`: whether SparkWright includes its built-in conservative
+  confidential read defaults (`.env`, common credential/token/secret names, and
+  cloud credential folders). Defaults to `true`; set `false` only when the
+  config intentionally owns the full confidential read list.
+- `confidentialPaths`: additional read-confidentiality globs layered on top of
+  SparkWright's built-in confidential defaults unless `confidentialDefaults` is
+  `false`. Unions across layers (a later layer can only add entries, never drop
+  them).
 - `write`: workspace write guardrails (`maxFiles`, `maxDiffLines`,
   `allowDeletions`) that override the runtime defaults. Merges conservatively —
   the smaller `maxFiles`/`maxDiffLines` wins and `allowDeletions: false` wins.
+  CLI `--target` is part of this write boundary: it narrows workspace writes and
+  write budgets, but it is not a read sandbox. Workspace reads are governed by
+  the workspace boundary and confidential read policy, not by `--target`.
 - `shell.foregroundTimeoutMs`: foreground shell budget before background
   promotion or no-task-manager kill. Later layers override this scalar.
 - `shell.sandbox`: OS-level sandbox for the host shell executor. Merges
@@ -782,6 +793,7 @@ the layering intent obvious:
 {
   "identity": { "model": "openai/gpt-x", "providers": { "openai": {} } },
   "policy": {
+    "confidentialDefaults": true,
     "confidentialPaths": ["secrets/**"],
     "write": { "maxFiles": 1 },
     "sandbox": { "mode": "warn" }
@@ -797,8 +809,10 @@ the layering intent obvious:
 ```
 
 - `identity` → `model`, `providers` (belongs in the user config).
-- `policy` → `confidentialPaths`, `write`, and `sandbox` (maps to
-  `shell.sandbox`) — the conservatively-merged security boundaries.
+- `policy` → `confidentialDefaults`, `confidentialPaths`, `write`, and
+  `sandbox` (maps to `shell.sandbox`) — the security boundaries. `confidentialPaths`
+  unions conservatively; `confidentialDefaults` is the explicit override for the
+  built-in confidential path set.
 - `run` → `accessMode`, `runBudget` (as `budget`), `maxSteps`, `traceLevel`,
   `approvals`.
 - `ui` → `theme`, `mouse`, `keybindings`.
@@ -1000,8 +1014,10 @@ Non-`main` profiles that omit `mode` default to child/delegate agents, while
 `id: main` or `mode: primary` marks the primary profile. `allowedTools` remains
 an advanced concrete-name allowlist and only narrows the tools selected by
 `use`. `capabilities.agents.maxDepth` can cap nested child/delegate spawning
-globally. Advanced fields such as policy and run budget should stay in the
-config file.
+globally. `capabilities.agents.allowNestedBackgroundTasks: true` lets
+sub-agents create depth-bounded background agent tasks when they are explicitly
+granted `task_create`. Advanced fields such as policy and run budget should stay
+in the config file.
 
 Profile `hooks` attach workflow hooks to configured in-process child/delegate
 runs only. They are useful for per-agent guardrails such as validating a
@@ -1141,7 +1157,8 @@ SparkWright treats config and project capabilities as user-owned assets:
   fields other than `providers` are replaced wholesale — except the security
   boundaries (`accessMode`, `confidentialPaths`, `write`, `shell.sandbox`),
   which merge conservatively. Project `accessMode` is a ceiling; requests above
-  it are clamped.
+  it are clamped. `confidentialDefaults` is the explicit later-layer override
+  for the built-in confidential deny set.
 - If an MCP server cannot start, verify `cwd`, command path, timeout, and
   whether `enabled` is false.
 

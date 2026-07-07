@@ -77,7 +77,7 @@ function observedEditTrace() {
       toolName: "bash",
       status: "completed",
     }),
-    event(9, "run.completed", { state: "completed" }),
+    event(9, "run.completed"),
   ];
 }
 
@@ -226,6 +226,54 @@ describe("workflow shadow", () => {
         expect.objectContaining({ id: "tool:grep:unobserved" }),
         expect.objectContaining({ id: "command:lint:unobserved" }),
         expect.objectContaining({ id: "todo_clear:todos:unobserved" }),
+      ]),
+    );
+  });
+
+  it("does not count workflow-blocked tool attempts as observed coverage", () => {
+    const report = shadowWorkflowFromEvents({
+      workflow: workflow(
+        [
+          "---",
+          "nodes:",
+          "  - id: summarize",
+          "    execute: model",
+          "    tools: [read]",
+          "---",
+          "## summarize",
+          "Summarize.",
+        ].join("\n"),
+      ),
+      sessionId: "session_shadow",
+      tracePath: "/tmp/session_shadow/trace.jsonl",
+      events: [
+        event(1, "run.created", { goal: "summarize fixture" }),
+        event(2, "tool.requested", {
+          id: "read_1",
+          toolName: "read",
+          arguments: { path: "package.json" },
+        }),
+        event(3, "workspace.read", { path: "package.json" }),
+        event(4, "tool.requested", {
+          id: "glob_1",
+          toolName: "glob",
+          arguments: { pattern: "**/*.js" },
+        }),
+        event(5, "tool.failed", {
+          toolCallId: "glob_1",
+          toolName: "glob",
+          error: { code: "TOOL_BLOCKED_BY_WORKFLOW_HOOK" },
+        }),
+        event(6, "run.completed"),
+      ],
+    });
+
+    expect(report.ok).toBe(true);
+    expect(report.summary.missing).toBe(0);
+    expect(report.observed.tools).toEqual(["read"]);
+    expect(report.checks).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "tool:glob", status: "missing" }),
       ]),
     );
   });

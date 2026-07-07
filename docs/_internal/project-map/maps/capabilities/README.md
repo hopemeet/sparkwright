@@ -78,8 +78,8 @@ config + workspace capability roots
   projection. Their declared capabilities map to host access clamps at
   instantiation time; scripts do not receive capability objects, do not write
   trace, and can perform side effects only by calling host node API methods over
-  stdio JSON-RPC. Built-in dogfood workflows are ordinary workflow assets and
-  should not be special-cased by capability inventory consumers.
+  stdio JSON-RPC. Internal smoke/dogfood workflows should live in test fixtures
+  or explicit dev-only roots, not the default builtin runtime catalog.
   P5 `parallel` / `join` nodes extend the workflow asset grammar and durable
   workflow run state, not capability inventory. All-delegate workflow fan-out
   reuses the existing opt-in `delegate_parallel` tool when available and is
@@ -95,6 +95,10 @@ config + workspace capability roots
   parsing, same-layer conflict diagnostics, and serialization helpers; CLI/TUI
   and managed capability tools should reuse those helpers when mutating config.
 - `capability.inspect` should report runtime tools from the host catalog so sources/deferred flags match the actual run surface.
+- `CapabilitySnapshot.agents.profiles` is the resolved profile inventory
+  (Agent.md plus inline config) and is broader than configured-delegate
+  callability. Non-delegate or primary profiles can appear in the profile list
+  without appearing as `delegate_*` tools.
 - `CapabilitySnapshot.model.pricing` reports the selected model's cost
   availability before a run finishes. Host model resolution owns the status:
   explicit provider `cost` wins, built-in pricing is second, and otherwise
@@ -195,6 +199,58 @@ config + workspace capability roots
 - Do not add one-off direct-core/cron tools for capability smokes; exercise the same coding tools used by host runs.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: internal smoke capability layering cleanup: `workflow-runtime-p4-smoke`,
+  `release-check-focused`, and `spark-tester` moved out of builtin roots into
+  host test fixtures; default capability inventories should not load them.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflows.ts`,
+  `packages/host/test/fixtures/workflows`,
+  `packages/host/test/fixtures/skills`,
+  `docs/_internal/CAPABILITY_LAYERING.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-distill.test.ts
+  test/workflow-shadow.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance routed-page check: merging host-loaded
+  confidential read config into runtime policies does not change capability
+  snapshots, tool availability, workflow/event rule descriptors, MCP
+  resolution, or agent profile inventory.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/README.md`.
+- Tests: no capability-specific tests run; host confidential protocol tests
+  ran for the changed policy path.
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: read-confidentiality defaults are run policy
+  plumbing, not capability inventory. Capability snapshots, tool availability,
+  workflow/event rule descriptors, and MCP resolution behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config.ts`, `packages/host/src/config-zod-schema.ts`,
+  `packages/cli/src/cli.ts`.
+- Tests: not run for capability-specific behavior; C13 focused validation ran
+  in core/host/CLI/protocol.
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 capability inspection profile inventory: host snapshots and CLI
+  JSON now include resolved inline-config profiles that are not delegate-derived;
+  delegate descriptors remain separate.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "capability inspect|capability inspection"`;
+  `npm --workspace @sparkwright/host run build`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "capabilities inspect|capability inspect|inline-config profiles"`.
 
 - Status: Verified
 - Date: 2026-07-05T23:09:50+0800

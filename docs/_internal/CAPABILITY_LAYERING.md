@@ -131,7 +131,7 @@ Implemented in host and consumed by CLI/TUI diagnostics.
 5. Sync docs/examples/schema: HOST_PROTOCOL, manual configuration.md, `examples/*` workspaces, `schemas/`.
 
 ### Phase 3 — ship builtin product skills (fixes the missing-from-tarball gap)
-1. Put `sparkwright-manual` / `spark-tester` in `packages/host/builtin/skills/`.
+1. Put product skills such as `sparkwright-manual` in `packages/host/builtin/skills/`; keep smoke/test skills such as `spark-tester` in test fixtures or explicit dev-only roots.
 2. Add `builtin` to the publishing package's `files` (cli currently `["dist"]` → builtin must be in whichever package ships it; if host, host's `files`).
 3. builtin root injected read-only + `trust:"builtin"` via the resolver.
 4. Verify: `npm pack` contains builtin; install to a temp project; `sparkwright skills list --source` shows builtin origin.

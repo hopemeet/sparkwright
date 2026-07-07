@@ -59,6 +59,9 @@ Does not own:
   `accept-edits` preserve their mode semantics. `RunController` snapshots this
   projected permission mode at run start, so runtime mode switches affect the
   next run without changing auto-approval behavior for the active run.
+- TUI config compatibility accepts the shared `confidentialDefaults` config key
+  but does not own a separate UI surface for read-confidentiality defaults; host
+  config/runtime own validation and enforcement.
 - `shift+tab` (`cycle-permission-mode`) cycles the runtime permission mode in
   read-only -> ask -> accept-edits -> bypass order, skipping modes above the
   project access ceiling. The switch is runtime-local, updates the
@@ -196,6 +199,10 @@ Does not own:
 - Capability panels, Skill review metadata, and Skill learn toasts render host
   paths through the shared display-path projection: workspace paths become
   relative and external absolute paths collapse to non-host locators.
+- TUI automatic `/skill-learn` drafts use the conservative notice evidence and
+  active session id only; they no longer infer a target Skill name from prompt
+  text before calling the proposal helper. Named Skill updates stay on explicit
+  `/skill-update` / review flows.
 - `ApprovalPrompt` displays the policy reason when the approval payload does
   not carry a separate human reason, so write-gate escalation explains why the
   user is being asked.
@@ -221,6 +228,38 @@ Does not own:
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② TUI routed-page check: `packages/tui/src/lib/config.ts` now
+  tolerates the shared `confidentialDefaults` config key. No run-controller,
+  approval, or UI contract changed.
+- Read: `packages/tui/src/lib/config.ts`,
+  `packages/host/src/config-zod-schema.ts`, `packages/host/src/config.ts`.
+- Tests: not run for TUI; C13 focused validation ran in core/host/CLI/protocol.
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 deleted the TUI `detectSkillLearnTarget` automatic target guesser;
+  `/skill-learn` draft/apply automation now writes only the session-learning
+  proposal path unless an explicit caller supplies a target.
+- Read: `packages/tui/src/app.tsx`, `packages/tui/src/lib/skill-learn.ts`,
+  `packages/tui/test/skill-evolution.test.ts`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/skill-evolution.test.ts`.
+
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 cron persistence migration changed `CronStore.save()` only.
+  TUI cron capability creation, session replay, activity rendering, and
+  permission-mode UI behavior are unchanged.
+- Read: `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/maps/capabilities/cron.md`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: cron storage/schedule-focused `npm --workspace @sparkwright/cron test
+  -- test/schedule.test.ts`; TUI-specific tests not rerun for this persistence
+  implementation-only change.
 
 - Status: Verified
 - Date: 2026-07-04T12:43:33+0800

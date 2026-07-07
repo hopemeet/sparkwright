@@ -223,6 +223,7 @@ export type {
   PolicyDecision,
   Policy,
   PermissionModePolicyOptions,
+  RunConfidentialPathsOptions,
   ToolGovernancePolicyOptions,
   WorkspaceMutationPolicyOptions,
   WorkspaceReadScopePolicyOptions,
@@ -235,6 +236,7 @@ export {
   createToolGovernancePolicy,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
+  resolveRunConfidentialPaths,
 } from "./policy.js";
 export type {
   BackgroundTaskPolicy,

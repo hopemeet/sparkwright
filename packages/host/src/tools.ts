@@ -498,7 +498,8 @@ export function createSkillManagerTool(
       }
       const name = input.name;
       const description = input.description;
-      const content = normalizeCreateSkillBody({
+      const content = normalizeSkillBody({
+        toolName: "create_skill",
         name,
         description,
         ...(input.body ? { body: input.body } : {}),
@@ -537,7 +538,8 @@ export function createSkillUpdateTool(
       "Draft an evolution proposal for an existing skill. Creates a proposal only; " +
       "it does not apply the update. Use list_skills first to find the skill. " +
       "Pass `body` with the full revised SKILL.md to propose real authored " +
-      "content; omit it to record only the intent as a stub.",
+      "content; if frontmatter omits `description`, the host fills it from " +
+      "`description`; omit `body` to record only the intent as a stub.",
     deferLoading: true,
     inputSchema: {
       type: "object",
@@ -556,8 +558,9 @@ export function createSkillUpdateTool(
           type: "string",
           description:
             "Full revised SKILL.md content (frontmatter + body). Its frontmatter " +
-            "name must match `name`. When provided, this becomes the proposed " +
-            "content instead of an intent stub.",
+            "name must match `name`; if frontmatter omits `description`, the " +
+            "host uses the tool `description`. When provided, this becomes the " +
+            "proposed content instead of an intent stub.",
         },
       },
       required: ["action", "name", "description"],
@@ -580,7 +583,12 @@ export function createSkillUpdateTool(
     async execute(args: unknown, ctx) {
       const input = parseSkillUpdateArgs(args);
       const roots = resolveSkillRoots(workspaceRoot, configuredRoots);
-      const body = input.body;
+      const body = normalizeSkillBody({
+        toolName: "update_skill",
+        name: input.name,
+        description: input.description,
+        ...(input.body ? { body: input.body } : {}),
+      });
       const provenance = skillProposalProvenanceFromContext(
         ctx,
         input.description,
@@ -1068,14 +1076,15 @@ function parseSkillManagerArgs(args: unknown): {
   };
 }
 
-function normalizeCreateSkillBody(input: {
+function normalizeSkillBody(input: {
+  toolName: "create_skill" | "update_skill";
   name: string;
   description: string;
   body?: string;
 }): string | undefined {
   const body = input.body?.trim();
   if (!body) return undefined;
-  const frontmatter = parseLeadingFrontmatter(body);
+  const frontmatter = parseLeadingFrontmatter(body, input.toolName);
   if (!frontmatter) {
     return [
       "---",
@@ -1098,7 +1107,7 @@ function normalizeCreateSkillBody(input: {
     );
     if (parsedName !== input.name) {
       throw new Error(
-        `create_skill body frontmatter name must match requested name: ${input.name}`,
+        `${input.toolName} body frontmatter name must match requested name: ${input.name}`,
       );
     }
   } else {
@@ -1127,6 +1136,7 @@ function normalizeCreateSkillBody(input: {
 
 function parseLeadingFrontmatter(
   content: string,
+  toolName: "create_skill" | "update_skill",
 ): { header: string; rest: string } | undefined {
   if (!content.startsWith("---")) return undefined;
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u.exec(
@@ -1134,7 +1144,7 @@ function parseLeadingFrontmatter(
   );
   if (!match) {
     throw new Error(
-      "create_skill body frontmatter must be closed with a second --- line.",
+      `${toolName} body frontmatter must be closed with a second --- line.`,
     );
   }
   return { header: match[1] ?? "", rest: match[2] ?? "" };

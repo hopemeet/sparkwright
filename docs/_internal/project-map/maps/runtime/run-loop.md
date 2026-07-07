@@ -49,6 +49,10 @@ createRun/resumeRunFromCheckpoint
   context into the synthetic `REPEATED_TOOL_CALL_SKIPPED` result. Policy and
   approval denials keep their expected-denial category through the guard; other
   repeated calls keep the normal argument/runtime failure classification.
+- Completed-run outcome treats read-confidentiality denials as expected policy
+  denials. A run can still complete successfully after a denied confidential
+  read if the model produces a final answer; the denial remains visible through
+  `workspace.read.denied` and `tool.failed`.
 - Before emitting `tool.requested`, the run loop asks the concrete
   `ToolDefinition.previewArgs()` for bounded display text and stores it on the
   event payload as `preview`; this is presentation metadata and does not affect
@@ -72,11 +76,12 @@ createRun/resumeRunFromCheckpoint
   `policyForArgs()` exceptions keep their existing `phase: "policyForArgs"`
   metadata.
 - Host assembles workflow hooks in configured hooks, built-in verification
-  invariant hooks, built-in documented-command invariant hooks, then selected
-  workflow asset projection order before passing them to core. This is an
-  assembly invariant, not a new run-loop execution path; P1.5/D25 removes the
-  old verification/documented-command gate producers and keeps run-level
-  invariants outside the linear workflow state machine.
+  invariant hooks, built-in documented-command invariant hooks, selected
+  workflow asset projection hooks, then the built-in partial sub-agent finality
+  disclosure Stop hook before passing them to core. This is an assembly
+  invariant, not a new run-loop execution path; P1.5/D25 removes the old
+  verification/documented-command gate producers and keeps run-level invariants
+  outside the linear workflow state machine.
 - Deferred tool calls are not hard-blocked solely because their schema was not
   model-loaded. When schema validation fails for an unloaded deferred tool, the
   run loop emits the normal requested -> failed span and adds recovery metadata
@@ -191,7 +196,11 @@ createRun/resumeRunFromCheckpoint
   and forced-continuation budget events. The script stdio node API reads prior
   node evidence through host-owned `getEvidence(nodeId)`; there is no expression
   language, no direct trace writer in the script, and no node-boundary
-  compaction trigger in this slice.
+  compaction trigger in this slice. Because the core worker run may already exist
+  before a script drain reaches the next model node, the host PreToolUse clamp is
+  the execution fallback for node-tool allowlists in that same run, and workflow
+  record metadata is refreshed from projection snapshots rather than implying a
+  new physical worker episode was started.
 - P5 bounded `parallel` / `join` also stays outside core loop semantics. Host
   projection drains the non-model parallel node, records branch verdict/evidence
   in `WorkflowRunRecord.parallelBranches`, preserves branch runtime errors as
@@ -229,6 +238,70 @@ createRun/resumeRunFromCheckpoint
   handling can still be noisy.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: host hook assembly order now includes the built-in partial sub-agent
+  finality disclosure Stop hook after configured, invariant, and projection
+  hooks; core still consumes it through ordinary Stop advance semantics.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflow-hooks.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: workflow-runtime P4 script-transition boundary: core remains
+  workflow-unaware when script drains enter later model nodes inside an existing
+  run; host fallback clamps actual tool execution and updates workflow record
+  projection metadata.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-node-api.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-distill.test.ts
+  test/workflow-shadow.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance run-policy fix: host-loaded
+  `confidentialDefaults`/`confidentialPaths` now seed every start/resume
+  episode policy before `createRun`/`resumeRunFromCheckpoint()`. Core
+  scheduling, hook ordering, continuation budgeting, and completed-with-policy-
+  denial outcome semantics are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/core/src/run.ts`,
+  `packages/core/src/run-outcome.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② run-loop outcome check: confidential read policy denials stay
+  expected-by-policy and do not force a failed run when followed by a final
+  answer.
+- Read: `packages/core/src/run-outcome.ts`, `packages/core/src/policy.ts`,
+  `packages/core/src/workspace.ts`, `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
+
+- Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for HostRuntime capability-inspection profile
+  inventory. Runtime turn creation, continuation, hook ordering, tool execution,
+  approval flow, and wakeup behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/core/src/run.ts`, `packages/core/src/workflow-hooks.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "inspect reports inline agent profiles"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800

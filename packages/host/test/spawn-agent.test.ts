@@ -636,7 +636,7 @@ describe("host spawn_agent wiring", () => {
     expect(nestedTasks).toHaveLength(1);
     expect(nestedTasks[0]).toMatchObject({
       status: "completed",
-      awaited: true,
+      awaited: false,
     });
     expect(nestedTasks[0]?.parentRunId).not.toBe(parent.record.id);
   });

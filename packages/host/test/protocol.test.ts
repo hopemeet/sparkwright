@@ -680,6 +680,194 @@ describe("host protocol", () => {
     }
   });
 
+  it("applies workspace confidentialDefaults config to protocol run.start", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-confidential-defaults-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [{ toolName: "read_file", arguments: { path: ".env" } }],
+      },
+      { message: "read completed" },
+    ]);
+
+    try {
+      await writeFile(join(workspace, ".env"), "TOKEN=allowed\n", "utf8");
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({ confidentialDefaults: false }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "start",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "read .env",
+          model: "scripted",
+          sessionId: "session_confidential_defaults",
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "start" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const events = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "workspace.read" &&
+            (event.payload as { path?: string }).path === ".env",
+        ),
+      ).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "workspace.read.denied" &&
+            (event.payload as { path?: string }).path === ".env",
+        ),
+      ).toBe(false);
+    } finally {
+      pair.close();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps configured confidentialPaths when defaults are disabled", async () => {
+    const workspace = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-confidential-paths-"),
+    );
+    const pair = createConnectionPair();
+    const previousScript = process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+    process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = JSON.stringify([
+      {
+        toolCalls: [
+          { toolName: "read_file", arguments: { path: ".env" } },
+          {
+            toolName: "read_file",
+            arguments: { path: "secrets/token.txt" },
+          },
+        ],
+      },
+      { message: "read completed with denial" },
+    ]);
+
+    try {
+      await writeFile(join(workspace, ".env"), "TOKEN=allowed\n", "utf8");
+      await mkdir(join(workspace, "secrets"), { recursive: true });
+      await writeFile(
+        join(workspace, "secrets", "token.txt"),
+        "TOKEN=denied\n",
+        "utf8",
+      );
+      await mkdir(join(workspace, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(workspace, ".sparkwright", "config.json"),
+        JSON.stringify({
+          confidentialDefaults: false,
+          confidentialPaths: ["secrets/**"],
+        }),
+        "utf8",
+      );
+
+      serveConnection(pair.hostSide, {
+        workspaceRoot: workspace,
+        defaultModel: "scripted",
+      });
+      pair.clientSend({
+        envelope: "request",
+        id: "h",
+        kind: "handshake",
+        timestamp: TIMESTAMP,
+        payload: {
+          protocolVersion: PROTOCOL_VERSION,
+          client: { name: "test", version: "0.0.0" },
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "h" && m.ok,
+      );
+      pair.clientSend({
+        envelope: "request",
+        id: "start",
+        kind: "run.start",
+        timestamp: TIMESTAMP,
+        payload: {
+          goal: "read configured confidential paths",
+          model: "scripted",
+          sessionId: "session_confidential_paths",
+        },
+      });
+      await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "start" && m.ok,
+      );
+      await pair.waitFor(
+        (m) => m.envelope === "event" && m.kind === "run.completed",
+      );
+
+      const events = pair
+        .clientMessages()
+        .filter((m) => m.envelope === "event" && m.kind === "run.event")
+        .map((m) => m.payload.event as SparkwrightEvent);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "workspace.read" &&
+            (event.payload as { path?: string }).path === ".env",
+        ),
+      ).toBe(true);
+      expect(
+        events.some(
+          (event) =>
+            event.type === "workspace.read.denied" &&
+            (event.payload as { path?: string }).path === "secrets/token.txt",
+        ),
+      ).toBe(true);
+      expect(JSON.stringify(events)).not.toContain("TOKEN=denied");
+    } finally {
+      pair.close();
+      if (previousScript === undefined) {
+        delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;
+      } else {
+        process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON = previousScript;
+      }
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("does not resolve a configured delegateModel during parent run preparation", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "sparkwright-host-lazy-delegate-model-"),
@@ -2519,6 +2707,7 @@ describe("host protocol", () => {
               profiles: [
                 { id: "main", mode: "primary" },
                 { id: "reviewer", name: "Reviewer", mode: "child" },
+                { id: "auditor", name: "Auditor", mode: "primary" },
               ],
               delegateTools: [
                 {
@@ -2606,6 +2795,7 @@ describe("host protocol", () => {
             profiles: [
               { id: "main", mode: "primary" },
               { id: "reviewer", name: "Reviewer", mode: "child" },
+              { id: "auditor", name: "Auditor", mode: "primary" },
             ],
             delegateTools: [
               {
@@ -3567,14 +3757,15 @@ describe("host protocol", () => {
             (event.payload as { toolName?: string }).toolName === "task_create",
         ),
       ).toBe(true);
-      expect(
-        runEvents.some(
-          (event) =>
-            event.type === "subagent.completed" &&
-            (event.metadata as { entrypoint?: string }).entrypoint ===
-              "agent_task",
-        ),
-      ).toBe(true);
+      const completedSubagent = runEvents.find(
+        (event) =>
+          event.type === "subagent.completed" &&
+          (event.metadata as { entrypoint?: string }).entrypoint ===
+            "agent_task",
+      );
+      expect(completedSubagent).toBeDefined();
+      expect(completedSubagent?.payload).toMatchObject({ taskId: task.id });
+      expect(completedSubagent?.metadata).toMatchObject({ taskId: task.id });
     } finally {
       if (previousScript === undefined) {
         delete process.env.SPARKWRIGHT_SCRIPTED_MODEL_JSON;

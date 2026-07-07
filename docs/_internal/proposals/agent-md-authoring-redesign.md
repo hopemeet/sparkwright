@@ -56,10 +56,35 @@ Core goals:
 - `hooks` can be authored in Agent.md and apply only to that agent's own child
   run.
 
+## C7 Merge Boundary (Frozen 2026-07-06)
+
+C7 merges this proposal with sub-proposal #4 in
+[`agent-access-config-redesign.md`](agent-access-config-redesign.md). The split
+is:
+
+- `agent-access-config-redesign.md` owns the schema layer: where agent
+  definitions live, which frontmatter fields exist, how `toolset`, `delegate`,
+  and advanced `capabilities.agents.delegates[]` compile, and how those fields
+  interact with access-mode and selector policy.
+- This proposal owns the authoring and hook-carrier slice: examples, recommended
+  writing style, the neutral `AgentProfile` hook carrier in `agent-runtime`, and
+  host compilation of per-agent hooks into child-run workflow hooks.
+
+Do not keep a second competing Agent.md schema here. When schema shape changes,
+update the access-config proposal first and reference it from this document.
+
+C7 source recheck on 2026-07-06 against current main: the neutral hook carrier,
+markdown parser, `workflowHooks` forwarding, and in-process delegate resolver
+baseline are already present. The remaining design requirement is convergence
+of ownership plus an explicit P10a acceptance test for Agent.md-authored
+`PreToolUse`: rewrite-stage hooks apply first, and governance/clamp hooks see
+the rewritten arguments.
+
 ## Current code reality (verified)
 
-These are the load-bearing facts the design depends on; each was confirmed
-against the tree on `feat/access-mode`.
+These are the load-bearing facts the design depends on. The original facts were
+confirmed against `feat/access-mode`; C7 hook facts below were refreshed against
+current main on 2026-07-06.
 
 - **`mode === undefined` is already treated as child in most places.**
   - `deriveConfiguredAgents` already accepts `undefined | child | all`
@@ -78,14 +103,13 @@ against the tree on `feat/access-mode`.
   (`packages/host/src/runtime.ts:3773`). So documenting "both together = the
   intersection" is accurate.
 
-- **Workflow hooks are first-class on a run, but `spawnSubAgent` does not
-  forward them.** Core `CreateRunOptions` accepts `workflowHooks?: WorkflowHook[]`
-  and the run loop executes them natively (`packages/core/src/run.ts:222`,
-  `runWorkflowHookPhase`). The main run wires them at
-  `packages/host/src/runtime.ts:1217`. But `spawnSubAgent` only forwards the
-  lower-level `hooks?: RunHook[]` (`packages/agent-runtime/src/index.ts:613`,
-  `:781`) — it has **no `workflowHooks` passthrough**. This is the single most
-  important correction below.
+- **Workflow hooks are first-class on a run, and current main forwards them
+  through in-process sub-agent spawns.** Core `CreateRunOptions` accepts
+  `workflowHooks?: WorkflowHook[]` and the run loop executes them natively.
+  `SpawnSubAgentInput.workflowHooks` is forwarded into child run creation in
+  `packages/agent-runtime/src/index.ts`, and host compiles Agent.md hook
+  carriers through `createInProcessDelegateHooksResolver()` in
+  `packages/host/src/runtime.ts`. This closes the original P2-a plumbing gap.
 
 - **Per-profile model is already done and is the architectural template for
   hooks.** `profile.model` parses (`packages/host/src/agent-profiles.ts:234`),
@@ -194,21 +218,18 @@ the spawn site. Do **not** smuggle hooks through `metadata` or a `cast`.
 **Key correction vs the original sketch.** The sketch said "pass profile hooks
 into `spawnSubAgent({ hooks })`". That is the wrong field/type: Agent.md hooks
 are *workflow* hooks (`WorkflowHook[]`), while `spawnSubAgent.hooks` is the
-lower-level `RunHook[]`. The correct path is:
+lower-level `RunHook[]`. Current main follows the corrected path:
 
-1. **agent-runtime:** add `workflowHooks?: WorkflowHook[]` to
-   `SpawnSubAgentInput` and forward it into `createOptions.workflowHooks`
-   (currently absent at `index.ts:781`). Prerequisite for everything else.
-2. **agent-profiles:** parse the `hooks` sugar into `CapabilityWorkflowHookConfig[]`,
-   validating/dropping malformed entries in place (mirror the late-validation
-   discipline of `runBudgetRecord` / `profileModelRef`, because markdown
-   frontmatter is not zod-checked).
-3. **host:** compile at the spawn site, because `createConfiguredWorkflowHooks`
-   needs child-run context (`workspaceRoot`, `sandbox`, `http`, and
-   `getRun: () => childRun`, **not** the parent). Build this as
-   `createInProcessDelegateHooksResolver`, a direct mirror of
-   `createInProcessDelegateModelResolver`, **reusing its `inProcessProfileIds`
-   discrimination** so ACP / external-command are excluded for free.
+1. **agent-runtime:** `AgentProfile` has a neutral hook carrier and
+   `SpawnSubAgentInput.workflowHooks` forwards into child run creation. This
+   keeps `agent-runtime` free of a reverse dependency on host config types.
+2. **agent-profiles:** markdown frontmatter parses `hooks` sugar into the
+   neutral carrier, with the restricted action subset and late-validation
+   discipline.
+3. **host:** `createInProcessDelegateHooksResolver()` compiles the carrier at
+   the child spawn site, where child-run context (`workspaceRoot`, `sandbox`,
+   `http`, and `getRun: () => childRun`) exists, and it reuses
+   `inProcessProfileIds` so ACP / external-command delegates are excluded.
 
 Consistency requirement: hooks must fire regardless of which in-process
 entrypoint invoked the agent (named delegate, `delegate_parallel`, and the
@@ -233,10 +254,11 @@ entrypoint and is skipped for ACP / external-command.
 |---|---|---|
 | P0 | `delegate-capability.ts:450` exclude `id===MAIN_AGENT_ID \|\| mode==="primary"` + regression tests + drop `mode: child` from docs | Default-child; smallest slice |
 | P1 | Docs converge to `use`-only; add `model` to lead example; move `allowedTools` to advanced/legacy | No code change |
-| P2-a | agent-runtime: `SpawnSubAgentInput.workflowHooks` → `createOptions.workflowHooks`, + neutral hooks carrier on `AgentProfile` | Prerequisite plumbing; no reverse dep on host |
-| P2-b | agent-profiles: parse `hooks` sugar (restricted action subset) + in-place validation | Mirror `runBudgetRecord` discipline |
-| P2-c | host: `createInProcessDelegateHooksResolver` mirroring the model resolver; compile carrier → `CapabilityWorkflowHookConfig[]`; reuse `inProcessProfileIds`; apply at all in-process spawn sites | ACP/external excluded for free |
+| P2-a | agent-runtime: `SpawnSubAgentInput.workflowHooks` → `createOptions.workflowHooks`, + neutral hooks carrier on `AgentProfile` | Baseline landed on current main; keep as carrier owner |
+| P2-b | agent-profiles: parse `hooks` sugar (restricted action subset) + in-place validation | Baseline landed on current main; mirror `runBudgetRecord` discipline |
+| P2-c | host: `createInProcessDelegateHooksResolver` mirroring the model resolver; compile carrier → `CapabilityWorkflowHookConfig[]`; reuse `inProcessProfileIds`; apply at all in-process spawn sites | Baseline landed on current main; ACP/external excluded for free |
 | P2-d | schema (strict field on `agentProfileConfigSchema` + external JSON Schema ref) + tests | `schema:check` will fail without the ref update |
+| P2-e | C7/P10a acceptance: Agent.md `PreToolUse` rewrite runs before governance/clamp, and governance sees rewritten args | Must exercise Agent.md/profile-authored hooks, not only configured workflow hooks |
 
 ## Test plan
 
@@ -268,6 +290,10 @@ Targeted cases:
   via a named delegate or the indexed `delegate_agent`.
 - ACP/external-command: Agent.md hooks are not applied; inspect ideally flags
   them as ignored.
+- P10a two-stage `PreToolUse`: an Agent.md/profile-authored rewrite hook runs in
+  the rewrite pass; a governance/block hook or workflow clamp then observes the
+  rewritten arguments; `advance` / governance-only effects remain rejected in
+  disallowed phases.
 
 ## Acceptance criteria
 
@@ -277,6 +303,9 @@ Targeted cases:
 - `allowedTools` / `tools` still work but are not the recommended path.
 - Agent.md `hooks.PreToolUse` runs the validation command before that agent's
   `shell` call, and never affects the main agent or other agents.
+- Agent.md-authored `PreToolUse` obeys the P10a two-stage rule: rewrite-stage
+  output is applied first, governance/clamp runs on rewritten arguments, and
+  forbidden governance/rewrite effects still fail closed.
 
 ## Open questions
 

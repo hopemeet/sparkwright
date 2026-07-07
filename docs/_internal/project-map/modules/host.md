@@ -142,6 +142,11 @@ Does not own:
   (`shouldWrite: false`) keep the hard-deny write gate; interactive TUI clients
   that need write approvals send `shouldWrite: true` with an approval-oriented
   `permissionMode`.
+- Host start/resume/workflow-resume run policies pass `confidentialPaths` and
+  `confidentialDefaults` through core `resolveRunConfidentialPaths()`.
+  `confidentialDefaults` defaults to true and may be set false by config or
+  protocol clients to opt out of SparkWright's built-in conservative read-deny
+  list while retaining any explicit `confidentialPaths`.
 - `run.accessMode` is the single user-facing run autonomy knob. The protocol
   `RunStart`/`RunResume` payloads accept optional `accessMode`
   (`read-only`/`ask`/`accept-edits`/`bypass`); `host/src/run-access.ts`
@@ -204,7 +209,10 @@ Does not own:
   `FileTaskNotificationOutbox` that backs per-run core notification/revival
   sources. All terminal task notifications for the run can be injected through
   `run.notification.injected`; only awaited tasks wake core's internal
-  `waiting_tasks` state. Host does not synthesize a new user turn. On
+  `waiting_tasks` state. Injected terminal task notification body text includes
+  a bounded `Result summary: ...` when a task result is present, because the
+  model-facing body must carry child-result evidence rather than relying only
+  on notification metadata. Host does not synthesize a new user turn. On
   `run.resume`, pending/running task records for the resumed run that do not
   have a current-process live runner are failed explicitly as orphaned
   in-process tasks.
@@ -249,14 +257,16 @@ Does not own:
 - P3 Step 4b.1 narrows worker-entry tool catalogs for model nodes with
   `node.tools`: `runtime.ts` filters the `ToolDefinition[]` passed to
   `createRun()` and records `episodeAllowedTools`. `workflow-projection.ts`
-  keeps the PreToolUse clamp as a fallback for mid-run transitions, but stands
-  down when the actor's current worker catalog does not contain the requested
-  tool so core can surface `TOOL_NOT_FOUND`. If the narrowed catalog contains
-  deferred tools, host appends a scoped `tool_search` whose descriptor source is
-  the narrowed catalog only; PreToolUse allows that available infrastructure
-  tool without reopening the parent catalog. The clamp compares allowed tool
-  names canonically, so legacy declarations such as `tools: [read_file]` still
-  allow the canonical worker tool `read`.
+  keeps the PreToolUse clamp as a fallback for mid-run transitions, including a
+  non-model/script drain that reaches a later model node inside an already-created
+  core run. That fallback checks the actual current worker registry before
+  standing down for core `TOOL_NOT_FOUND`; it must not use the ideal workflow
+  allowlist as a proxy for physical availability. If the narrowed catalog
+  contains deferred tools, host appends a scoped `tool_search` whose descriptor
+  source is the narrowed catalog only; PreToolUse allows only that marked scoped
+  tool_search without reopening the parent catalog. The clamp compares allowed
+  tool names canonically, so legacy declarations such as `tools: [read_file]`
+  still allow the canonical worker tool `read`.
 - P3 Step 4b.2 routes active model-node `model` and `runBudget` at worker
   entry: `workflows.ts` parses the node fields, `runtime.ts` resolves model
   refs through the configured model-tier surface, passes the selected adapter
@@ -264,6 +274,10 @@ Does not own:
   per-episode usage snapshots, and aggregate `workflowUsage` on
   `WorkflowRunRecord.metadata`. Retry escalation inside one core run is not
   implemented until model-node boundaries become separate worker episodes.
+  Projection snapshots refresh `workflowEpisode.nodeId` and
+  `episodeAllowedTools` when a mid-run non-model drain reaches a model node, so
+  durable workflow records reflect the current model boundary even though the
+  core worker run was created before the drain.
 - P3 Step 4b.3 resolves D11 by not shipping a model-facing `workflow_start`
   tool in P3. Host workflow instantiation remains limited to CLI/config/
   protocol request surfaces (`run --workflow` / `run.start.workflow`), and
@@ -315,15 +329,19 @@ Does not own:
 - P7a `workflow-distill.ts` is a read-only deterministic session-trace
   distiller. It consumes existing trace events, derives observed tools/paths/
   post-write verification commands, and renders a review-first workflow draft.
-  It does not write workflow assets, create skill-evolution proposals, mutate
-  traces, or add protocol/TUI runtime behavior.
+  Failed or hook-blocked tool requests are not treated as observed productive
+  tools, and read-only drafts no longer pre-seed `grep`/`glob` unless those
+  tools were actually observed. It does not write workflow assets, create
+  skill-evolution proposals, mutate traces, or add protocol/TUI runtime
+  behavior.
 - P8a `workflow-shadow.ts` is a read-only deterministic offline coverage
   reporter. It compares an existing workflow asset against an existing session
   trace using the shared `workflow-trace-observation.ts` extraction path and
-  reports matched/missing/unobserved coverage for observed tools, writes,
-  `diff_scope`, command-verifier-like shell commands, and `todo_clear`. It does
-  not instantiate workflows, write workflow-run records, mutate traces, execute
-  nodes, or add live protocol/TUI shadow telemetry.
+  reports matched/missing/unobserved coverage for successful observed tools,
+  writes, `diff_scope`, command-verifier-like shell commands, and `todo_clear`.
+  Failed or hook-blocked tool requests stay out of coverage requirements. It
+  does not instantiate workflows, write workflow-run records, mutate traces,
+  execute nodes, or add live protocol/TUI shadow telemetry.
 - `TracedProcessRunner` owns the shared bounded progress head/tail sampler used
   by stdio JSON-RPC process progress and by the external-command delegate. Keep
   future process integrations on this shared runner/sampler path rather than
@@ -396,7 +414,10 @@ Does not own:
   default when the user opted in without a ceiling).
 - Background `agent` tasks use the shared `runHostAgentTask()` helper. The task
   controller signal is the child run's abort owner, so `task_stop` cancels the
-  child lifecycle independently of the foreground parent turn.
+  child lifecycle independently of the foreground parent turn. The helper also
+  threads the controller task id into dynamic-spawn metadata so parent-visible
+  `subagent.*` terminal events for `entrypoint:"agent_task"` can be joined back
+  to `task_create` outputs.
 - Dynamic `spawn_agent` and configured in-process delegate children inherit the
   parent run's effective `maxSteps` by default. Explicit child/delegate/profile
   `maxSteps` values still override, but host no longer applies the previous
@@ -508,6 +529,11 @@ Does not own:
   in-process delegates in `agents.delegateTools`; CLI and TUI consume that
   snapshot descriptor instead of maintaining a local in-process delegate
   inventory.
+- `CapabilitySnapshot.agents.profiles` reports the full resolved agent profile
+  inventory from layered Agent.md files plus inline config. It is diagnostic
+  inventory, not callability: primary/non-delegate profiles remain visible here
+  even when only child/all profiles become `delegate_agent` targets or direct
+  `delegate_*` aliases.
 - `capability.inspect` also exposes host-owned `rules.workflow` descriptors for
   configured workflow hooks, verification invariants, and the documented-command
   built-in invariant, plus `rules.events` descriptors for configured
@@ -530,6 +556,13 @@ Does not own:
   Result-producing configured `PreToolUse` hooks are tagged for the rewrite
   pass, static block/context hooks for the governance pass, and the workflow
   projection tool clamp also runs in governance so it sees rewritten arguments.
+- Host runtime hook assembly also includes the built-in
+  `runtime:partial_subagent_finality_disclosure` Stop hook after configured,
+  verification/documented-command, and workflow projection hooks. It advances at
+  most once per run when the pending final answer omits a caveat but raw events
+  show `subagent.*` or `spawn_agent` child finality was partial, step-limited,
+  truncated, or failed. It must not treat ordinary truncated read/tool output as
+  child-finality evidence.
 - Workflow action results are gated by `enforceWorkflowHookEffect`, which rejects
   lifecycle-illegal effects before they reach core: `rewrite` only at
   `PreToolUse`, `advance` only at `ModelOutput` / `Stop`, `block` at every
@@ -699,6 +732,166 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T16:15:00+0800
+- Scope: background `agent` task trace attribution; host now passes the
+  controller `taskId` into the dynamic spawn tool for `agent_task` children.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/agent-runtime/src/index.ts`,
+  `docs/_internal/project-map/modules/host.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "background agent through the real task_create"`;
+  `npm --workspace @sparkwright/host test -- test/agent-task-runner.test.ts
+  test/spawn-agent.test.ts -t "agent task|task_create|background"`; `npm run
+  build --workspace @sparkwright/host`; `npm run check:dist-fresh`; real mini
+  trace `session_mradiara7baut36j`.
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: host runtime hook assembly now includes the built-in partial
+  sub-agent finality disclosure Stop hook; focused coverage verifies it
+  advances once on omitted child-finality caveats, passes already-caveated final
+  answers, and ignores ordinary truncated non-agent tool output.
+- Read: `packages/host/src/workflow-hooks.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/src/index.ts`,
+  `packages/host/test/workflow-hooks.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-hooks.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-07T14:43:43+0800
+- Scope: host task revival notification hardening after real mini Agent +
+  Skill QA: terminal task result summaries are now included in injected
+  notification body text, complementing agent-runtime `task_create.nextAction`
+  guidance.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/task-revival.test.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `docs/_internal/project-map/modules/host.md`,
+  `docs/_internal/project-map/modules/agent-runtime.md`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/task-revival.test.ts`; `npm --workspace @sparkwright/host test --
+  test/task-revival.test.ts test/spawn-agent.test.ts`; `npm --workspace
+  @sparkwright/host run typecheck`; `npm run build --workspace
+  @sparkwright/host`; `npm --workspace @sparkwright/agent-runtime test --
+  test/tasks.test.ts`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-07T13:18:00+0800
+- Scope: host-owned Skill mutation tool fix: `update_skill` now reuses the
+  Skill body frontmatter normalization path used by `create_skill`, filling
+  missing authored-body `description` while preserving the proposal-only
+  boundary, run-scoped draft behavior, approval routing, and capability
+  mutation reporting.
+- Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
+  `docs/_internal/project-map/modules/host.md`,
+  `docs/_internal/project-map/modules/skills.md`,
+  `docs/_internal/project-map/maps/capabilities/skill-evolution.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "update_skill|create_skill|Skill"`; `npm --workspace @sparkwright/host
+  test -- test/tools.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run build --workspace @sparkwright/host`; `npm run
+  check:dist-fresh`; `SPARKWRIGHT_REAL_MODEL=openai/gpt-5.4-mini
+  SPARKWRIGHT_KEEP_REAL_REGRESSION=1 npm run regression:real-skill-capabilities`.
+
+- Status: Verified
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow distill/shadow observation now filters failed or
+  hook-blocked tool-call ids before deriving observed tools or `todo_write`
+  evidence. Distill read-only drafts keep `read` as the baseline inspection
+  tool and only add `grep`/`glob` when those tools were actually observed.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/cli/src/cli.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; `npm
+  --workspace @sparkwright/host run build`; real Sonnet trace
+  `session_mr9fmua899dimnc2` replayed through `workflow shadow` and
+  `workflow distill`, with blocked `glob` excluded.
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: workflow-runtime P4 regression fix: script/non-model drain into a
+  narrowed model node now blocks parent-catalog tools against the actual active
+  run registry, marks scoped workflow `tool_search`, refreshes workflow record
+  episode metadata, and moves internal smoke assets out of builtin roots.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `packages/host/test/workflow-shadow.test.ts`,
+  `packages/host/test/fixtures/workflows`,
+  `packages/host/test/fixtures/skills`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-distill.test.ts
+  test/workflow-shadow.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance fix: `prepareHostRunEnvironment()` now merges
+  host-loaded `confidentialPaths`/`confidentialDefaults` with per-request
+  protocol payloads before constructing start/resume/workflow-resume run
+  policies, so TUI/ACP/SDK-style clients that omit those fields still honor
+  workspace config.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `packages/host/src/client-run.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/host/test/client-run.test.ts`,
+  `docs/reference/HOST_PROTOCOL_CHANGELOG.md`,
+  `docs/guides/CONFIGURATION.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/client-run.test.ts`; `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`; `npm run schema:generate`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② host config/protocol plumbing for read-confidentiality defaults:
+  config accepts `confidentialDefaults`, host clients only serialize false as
+  an explicit override, and runtime policies use core's resolver for
+  start/resume/workflow-resume.
+- Read: `packages/host/src/config.ts`,
+  `packages/host/src/config-zod-schema.ts`,
+  `packages/host/src/client-run.ts`, `packages/host/src/server.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/test/config.test.ts`,
+  `packages/host/test/client-run.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/config.test.ts
+  test/client-run.test.ts`; `npm --workspace @sparkwright/host run build`.
+
+- Status: Verified
+- Date: 2026-07-06T19:48:49+0800
+- Scope: C10 capability inspection: host runtime snapshots now report all
+  resolved inline/file agent profiles in `agents.profiles`, while
+  `agents.delegateTools` remains the separate callability/delegation descriptor
+  list. The ACP `--session-root` path was checked in source and already existed.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/acp-adapter/src/main.ts`, `packages/acp-adapter/src/session.ts`,
+  `packages/acp-adapter/src/agent.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "capability inspect|capability inspection"`;
+  `npm --workspace @sparkwright/host run build`.
+
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 cron persistence migration changed `CronStore.save()` to use
+  the shared atomic writer. Host capability preparation, cron tool catalog
+  exposure, session roots, and protocol payloads are unchanged.
+- Read: `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/maps/capabilities/cron.md`,
+  `docs/_internal/project-map/modules/host.md`.
+- Tests: cron storage/schedule-focused `npm --workspace @sparkwright/cron test
+  -- test/schedule.test.ts`; host-specific tests not rerun for this persistence
+  implementation-only change.
 
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800

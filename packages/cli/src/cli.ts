@@ -19,9 +19,9 @@ import {
   buildTraceTimelineFile,
   createSessionId,
   createLayeredPolicy,
-  DEFAULT_CONFIDENTIAL_PATHS,
   createPermissionModePolicy,
   createWorkspaceReadScopePolicy,
+  resolveRunConfidentialPaths,
   createContextItemId,
   createRunId,
   FileSessionStore,
@@ -195,6 +195,8 @@ interface ParsedArgs {
   targetPathSource: "default" | "cli";
   /** Workspace-relative paths/globs whose contents the run must not read. */
   confidentialPaths: string[];
+  /** Whether the built-in conservative confidential path defaults are active. */
+  confidentialDefaults: boolean;
   imagePaths: string[];
   accessMode?: RunAccessMode;
   backgroundTasks?: BackgroundTaskPolicy;
@@ -284,6 +286,7 @@ export async function runCli(
         ? (cfg.config.approvals?.cronMode ?? cfg.config.permissionMode)
         : cfg.config.permissionMode,
     workspace: cfg.config.workspace,
+    confidentialDefaults: cfg.config.confidentialDefaults,
     confidentialPaths: cfg.config.confidentialPaths,
     traceLevel: cfg.config.traceLevel,
     approveAll: cfg.config.approvals?.all,
@@ -718,6 +721,7 @@ interface ConfigDefaults {
   permissionMode?: PermissionMode;
   workspace?: string;
   confidentialPaths?: string[];
+  confidentialDefaults?: boolean;
   traceLevel?: TraceLevel;
   approveAll?: boolean;
   approveEdits?: boolean;
@@ -788,6 +792,7 @@ function parseArgs(
   let targetPath = "README.md";
   let targetPathSource: ParsedArgs["targetPathSource"] = "default";
   const confidentialPaths: string[] = [...(defaults.confidentialPaths ?? [])];
+  const confidentialDefaults = defaults.confidentialDefaults ?? true;
   const imagePaths: string[] = [];
   let accessMode = defaults.accessMode;
   const backgroundTasks = defaults.backgroundTasks;
@@ -1434,6 +1439,7 @@ function parseArgs(
       targetPath,
       targetPathSource,
       confidentialPaths,
+      confidentialDefaults,
       imagePaths,
       accessMode,
       backgroundTasks,
@@ -1808,6 +1814,7 @@ async function handleWorkflowCommand(
           sessionId: parsed.sessionId,
           targetPath: parsed.targetPath,
           confidentialPaths: parsed.confidentialPaths,
+          confidentialDefaults: parsed.confidentialDefaults,
           traceLevel: parsed.traceLevel,
           verbose: parsed.verbose,
         },
@@ -5136,6 +5143,11 @@ function describeConfigFields(
     config.backgroundTasksCeiling,
   );
   add("workspace", sources.workspace, config.workspace);
+  add(
+    "confidentialDefaults",
+    sources.confidentialDefaults,
+    config.confidentialDefaults,
+  );
   add("confidentialPaths", sources.confidentialPaths, config.confidentialPaths);
   add("write", sources.write, config.write);
   add("shell", sources.shell, config.shell);
@@ -5386,11 +5398,14 @@ interface AgentDelegateToolConfigShape {
 interface AgentsConfigShape {
   profiles: AgentProfileConfigShape[];
   delegateTools: AgentDelegateToolConfigShape[];
+  spawnModel?: string;
+  delegateModel?: string;
   exposure?: "indexed" | "all";
   pinnedDelegates?: string[];
   exposeChildrenAsDelegates?: boolean;
   enableParallelDelegates?: boolean;
   maxDepth?: number;
+  allowNestedBackgroundTasks?: boolean;
 }
 
 interface AgentValidationError {
@@ -5561,6 +5576,12 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
     delegateTools: Array.isArray(agents.delegateTools)
       ? agents.delegateTools.filter(isPlainObject).map(recordToDelegateTool)
       : [],
+    ...(typeof agents.spawnModel === "string"
+      ? { spawnModel: agents.spawnModel }
+      : {}),
+    ...(typeof agents.delegateModel === "string"
+      ? { delegateModel: agents.delegateModel }
+      : {}),
     ...(agents.exposure === "indexed" || agents.exposure === "all"
       ? { exposure: agents.exposure }
       : {}),
@@ -5579,6 +5600,9 @@ function getAgentsConfig(config: Record<string, unknown>): AgentsConfigShape {
       : {}),
     ...(typeof agents.maxDepth === "number" && Number.isFinite(agents.maxDepth)
       ? { maxDepth: agents.maxDepth }
+      : {}),
+    ...(typeof agents.allowNestedBackgroundTasks === "boolean"
+      ? { allowNestedBackgroundTasks: agents.allowNestedBackgroundTasks }
       : {}),
   };
 }
@@ -5607,6 +5631,12 @@ function setAgentsConfig(
     ...(agents.delegateTools.length > 0
       ? { delegateTools: agents.delegateTools }
       : {}),
+    ...(agents.spawnModel !== undefined
+      ? { spawnModel: agents.spawnModel }
+      : {}),
+    ...(agents.delegateModel !== undefined
+      ? { delegateModel: agents.delegateModel }
+      : {}),
     ...(agents.exposure !== undefined ? { exposure: agents.exposure } : {}),
     ...(agents.pinnedDelegates !== undefined
       ? { pinnedDelegates: agents.pinnedDelegates }
@@ -5618,6 +5648,9 @@ function setAgentsConfig(
       ? { enableParallelDelegates: agents.enableParallelDelegates }
       : {}),
     ...(agents.maxDepth !== undefined ? { maxDepth: agents.maxDepth } : {}),
+    ...(agents.allowNestedBackgroundTasks !== undefined
+      ? { allowNestedBackgroundTasks: agents.allowNestedBackgroundTasks }
+      : {}),
   };
   config.capabilities = capabilities;
 }
@@ -6259,6 +6292,7 @@ function helpForArgs(
     "tasks",
     "tools",
     "trace",
+    "workflow",
   ]);
   if (
     !isHelpArg(argv[1]) &&
@@ -6620,6 +6654,7 @@ async function handleRunResumeCommand(
         targetPath:
           parsed.targetPathSource === "cli" ? parsed.targetPath : undefined,
         confidentialPaths: parsed.confidentialPaths,
+        confidentialDefaults: parsed.confidentialDefaults,
         traceLevel: parsed.traceLevel,
         fromTrace: parsed.fromTrace,
         force: parsed.force,
@@ -6739,10 +6774,10 @@ async function handleRunResumeCommand(
   const policy = createLayeredPolicy([
     createPermissionModePolicy({ mode: parsed.permissionMode }),
     createWorkspaceReadScopePolicy({
-      confidentialPaths: [
-        ...DEFAULT_CONFIDENTIAL_PATHS,
-        ...parsed.confidentialPaths,
-      ],
+      confidentialPaths: resolveRunConfidentialPaths({
+        confidentialDefaults: parsed.confidentialDefaults,
+        confidentialPaths: parsed.confidentialPaths,
+      }),
     }),
   ]);
   const tools = await createConfiguredCliTools(parsed.workspaceRoot, env);
@@ -7203,6 +7238,7 @@ function renderUserConfigTemplate(): string {
     "    #     gemini-3-flash: {}",
     "",
     "# policy:",
+    "#   confidentialDefaults: true",
     "#   write:",
     "#     maxFiles: 10",
     "#     allowDeletions: true",
