@@ -12,6 +12,12 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — `run.start`, `run.resume`, and
+  `workflow.resume` accept optional `confidentialPaths` plus
+  `confidentialDefaults`. Migration: omit `confidentialDefaults` to keep the
+  conservative built-in confidential path deny set; send `false` only when a
+  client intentionally owns the full confidential path list.
+
 - `event.schema.json`: additive — new `run.budget.exceeded` event type for
   per-source forced-continuation budget exhaustion. Payloads carry `signal`,
   `family`, `source`, `used`, `limit`, and optional `step` / `reason`.

@@ -102,6 +102,7 @@ follow the active maps below for the current contract.
 - `packages/core/src/context.ts` or `packages/core/src/path-display.ts`: [modules/core.md](modules/core.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/events.ts` or `packages/core/src/workflow-hooks.ts`: [modules/core.md](modules/core.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
 - `packages/core/src/fact-ledger.ts`, `packages/core/src/fact-classifier.ts`, or `packages/core/src/run-outcome.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/trace/raw-trace.md](maps/trace/raw-trace.md), [maps/trace/summary-timeline-verify.md](maps/trace/summary-timeline-verify.md)
+- `packages/core/src/file-atomic.ts`: [modules/core.md](modules/core.md), [modules/agent-runtime.md](modules/agent-runtime.md), [maps/session/session-store.md](maps/session/session-store.md)
 - `packages/core/src/session.ts`: [modules/core.md](modules/core.md), [maps/session/session-store.md](maps/session/session-store.md), [maps/session/resume-replay.md](maps/session/resume-replay.md), [maps/runtime/context-compaction.md](maps/runtime/context-compaction.md)
 - `packages/core/src/run.ts`: [modules/core.md](modules/core.md), [maps/runtime/run-loop.md](maps/runtime/run-loop.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md), [maps/safety/approvals.md](maps/safety/approvals.md)
 - `packages/core/src/policy.ts` or `packages/core/src/approval-policy.ts`: [modules/core.md](modules/core.md), [maps/safety/approvals.md](maps/safety/approvals.md), [maps/safety/workspace-writes.md](maps/safety/workspace-writes.md), [maps/runtime/tool-orchestration.md](maps/runtime/tool-orchestration.md)
@@ -159,6 +160,41 @@ TUI events; it is not a trace diagnostic report and must not replace
 trace/session inspection.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② route update: read-confidentiality defaults now route through
+  core policy, host config/runtime/protocol, CLI run plumbing, TUI config
+  compatibility, safety/tool/trace maps, and resume/session routed pages. No
+  new hot-path source file needed a root routing entry.
+- Read: `packages/core/src/policy.ts`, `packages/host/src/config.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`,
+  `packages/protocol/src/index.ts`, `packages/tui/src/lib/config.ts`,
+  `docs/_internal/project-map/modules/core.md`,
+  `docs/_internal/project-map/modules/host.md`,
+  `docs/_internal/project-map/modules/cli.md`,
+  `docs/_internal/project-map/modules/protocol.md`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/host test --
+  test/config.test.ts test/client-run.test.ts`; `npm --workspace
+  @sparkwright/protocol test`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`; `npm run schema:check`.
+
+- Status: Verified
+- Date: 2026-07-06T20:08:48+0800
+- Scope: C8-bundles deletion kept Skill routing on the package/capability maps
+  and recorded that `packages/skills/src/bundles.ts` plus its tests were
+  retired rather than remaining routed hot spots.
+- Read: `packages/skills/src/index.ts`, deleted
+  `packages/skills/src/bundles.ts`, deleted
+  `packages/skills/test/bundles.test.ts`,
+  `docs/_internal/project-map/modules/skills.md`,
+  `docs/_internal/project-map/maps/capabilities/skills.md`.
+- Tests: `npm --workspace @sparkwright/skills test`;
+  `npm --workspace @sparkwright/skills run typecheck`;
+  `npm --workspace @sparkwright/skills run build`;
+  `npm run check:dist-fresh`.
 
 - Status: Verified
 - Date: 2026-07-05T22:20:59+0800
@@ -770,13 +806,14 @@ test/capabilities-panel-render.test.tsx -t "workflow rule summaries"`;
   `packages/host/src/tool-catalog.ts`, `packages/host/src/agent-profiles.ts`,
   `packages/host/src/agent-report.ts`, `packages/host/src/server.ts`,
   `packages/host/src/skill-evolution.ts`,
-  `packages/skills/src/loader.ts`, `packages/skills/src/bundles.ts`.
+  `packages/skills/src/loader.ts`, `packages/skills/src/bundles.ts`
+  (deleted later by C8-bundles).
 - Tests: `npm --workspace @sparkwright/host run typecheck`;
   `npm --workspace @sparkwright/skills run typecheck`;
   `npm --workspace @sparkwright/host test --
 test/agent-profiles.test.ts test/skill-evolution.test.ts
 test/protocol.test.ts`; `npm --workspace @sparkwright/skills test --
-test/skills.test.ts test/index.test.ts test/bundles.test.ts`;
+test/skills.test.ts test/index.test.ts test/bundles.test.ts` (historical);
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "filters
 proposals|agents|capabilities inspect"`.
 - Prior verification — Date: 2026-06-27T18:53:34+0800

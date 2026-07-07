@@ -43,6 +43,10 @@ model tool calls
   expected policy/approval denials non-failing. This rule is category-based,
   not tool-specific; do not special-case shell/bash when adding future guarded
   tools.
+- Read-family tools execute through the controlled workspace guard. A
+  confidential read denied by the run policy emits `workspace.read.denied` and
+  a `tool.failed` with `READ_SCOPE_DENIED`; it must not also emit
+  `workspace.read` for the denied path.
 - Tool target identity for capability calls (cron/agent/task) keys on the
   top-level `ref` via the shared `stableRefTarget` helper
   (`packages/core/src/run-outcome.ts`). Both the doom-loop guard
@@ -73,7 +77,15 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   promote on budget timeout when policy allows it. Explicit `mode`/`awaited`
   conflicts reject as recoverable argument errors. Global/per-kind concurrency
   caps fail as recoverable tool errors. `task(action:"wait", ids,
-  mode:"any"|"all")` is the join surface.
+  mode:"any"|"all")` is the join surface. Detached/promoted create results
+  include concrete `nextAction` guidance so the model has a task id and monitor
+  action to reuse instead of issuing an equivalent `task_create`.
+- Trace report derives a task-specific repeated-create advisory from
+  `task_create` lifecycle events when a later same-run create has the same
+  `kind` + stable payload fingerprint after an earlier same-payload task
+  completed. This diagnostic intentionally ignores scheduling-only differences
+  such as `mode`/`awaited` and skips failed, cancelled, partial, or truncated
+  prior tasks.
 - Deferred `task` action monitoring is guarded in both model guidance and
   runtime validation: the schema advertises action-specific non-empty
   `taskId`/`ids` requirements, while the tool-owned `validateInput()` enforces
@@ -132,10 +144,14 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   time when the actor is positioned on a model node with `node.tools`.
   This is a physical `ToolDefinition[]` narrowing for that worker entry, not a
   dynamic mid-run catalog mutation. The workflow PreToolUse clamp remains a
-  fallback for transitions that occur inside an existing worker run. When the
-  narrowed catalog contains deferred tools, host appends a scoped `tool_search`
-  over the narrowed catalog only, so deferred schema loading still works without
-  exposing disallowed parent-catalog tools. The clamp canonicalizes tool-name
+  fallback for transitions that occur inside an existing worker run. The
+  fallback's availability check is over the actual active run registry, while
+  allowed-tool comparison is over the active workflow node. That distinction
+  prevents a script/non-model drain into a narrowed model node from treating a
+  parent-catalog tool as "not found" just because the ideal workflow allowlist
+  excludes it. When the narrowed catalog contains deferred tools, host appends a
+  scoped `tool_search` over the narrowed catalog only, and the clamp permits only
+  that marked scoped discovery tool. The clamp canonicalizes tool-name
   comparisons, so legacy declarations such as `tools: [read_file]` permit the
   canonical worker tool `read`. In the P10a two-stage `PreToolUse` path, the
   clamp runs in the governance pass after configured argument rewrites, so
@@ -262,6 +278,77 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: trace report now flags completed same-payload repeated `task_create`
+  lifecycle misuse while retaining the existing task next-action/body-summary
+  feedback contracts.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/test/trace.test.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
+
+- Status: Verified
+- Date: 2026-07-07T14:43:43+0800
+- Scope: task orchestration feedback hardening after real mini Agent + Skill
+  QA: detached/promoted `task_create` outputs now carry concrete monitor
+  guidance, and host task notification injection exposes terminal result
+  summaries in model-visible body text.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/agent-runtime/test/tasks.test.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/task-revival.test.ts`,
+  `docs/_internal/project-map/maps/runtime/tool-orchestration.md`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/tasks.test.ts`; `npm --workspace @sparkwright/agent-runtime run
+  typecheck`; `npm --workspace @sparkwright/host test --
+  test/task-revival.test.ts test/spawn-agent.test.ts`; `npm --workspace
+  @sparkwright/host run typecheck`; `npm run build --workspace
+  @sparkwright/host`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: workflow-runtime P4 catalog-clamp regression: mid-run script-to-model
+  transitions now block actual parent-catalog tools, while model-node worker-entry
+  narrowing still stands down to core `TOOL_NOT_FOUND` when the active registry
+  truly lacks the tool. Scoped workflow `tool_search` is explicitly marked and
+  remains the only discovery exception.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/workflow-projection.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflows.test.ts test/workflow-distill.test.ts
+  test/workflow-shadow.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`.
+
+- Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance read-tool policy fix: protocol runs that rely
+  on workspace config now reach the same effective read-scope policy as CLI-
+  supplied runs. Tool catalog/filtering and `tool.requested`/`tool.failed`
+  orchestration are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/host/src/tools.ts`,
+  `packages/core/src/workspace.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② read tool orchestration check: built-in confidential read
+  defaults are enforced inside the normal tool execution path, preserving
+  `tool.requested`/`tool.failed` pairing and avoiding `workspace.read` on
+  denied paths.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
+  `packages/host/src/tools.ts`, `packages/host/src/runtime.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
 
 - Status: Verified
 - Date: 2026-07-05T23:08:34+0800

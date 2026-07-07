@@ -19,7 +19,7 @@ import {
   type CommandOutcomeSnapshot,
   type ToolOutcomeSnapshot,
 } from "./run-outcome.js";
-import { isShellToolName } from "./fact-classifier.js";
+import { isShellToolName, stableDiagnosticJson } from "./fact-classifier.js";
 import {
   factLedgerSnapshotFromUnknown,
   type FactLedgerSnapshot,
@@ -236,6 +236,7 @@ interface TraceReportFacts {
   topRepeatedReadWindows: Record<string, number>;
   topTools: Record<string, number>;
   repeatedToolRequestRuns: RepeatedToolRequestRunFacts[];
+  repeatedTaskCreateLifecycleRuns: RepeatedTaskCreateLifecycleRunFacts[];
   lowNetProgressRuns: LowNetProgressRunFacts[];
   repeatedCommandFailures: Array<{ label: string; count: number }>;
   trajectory: ReturnType<typeof evaluateTrajectory>;
@@ -262,6 +263,18 @@ interface RepeatedToolRequestRunFacts {
   runId?: string;
   agentId?: string;
   repeatedToolRequests: RepeatedToolRequest[];
+}
+
+interface RepeatedTaskCreateLifecycleRunFacts {
+  runId?: string;
+  agentId?: string;
+  repeats: RepeatedTaskCreateLifecycleRepeat[];
+}
+
+interface RepeatedTaskCreateLifecycleRepeat {
+  label: string;
+  count: number;
+  evidence: string[];
 }
 
 interface RunEventGroup {
@@ -338,6 +351,8 @@ function collectTraceReportFacts(
   );
   const topTools = firstEntries(summary.toolCalls, 8);
   const repeatedToolRequestRuns = collectRepeatedToolRequestRunFacts(events);
+  const repeatedTaskCreateLifecycleRuns =
+    collectRepeatedTaskCreateLifecycleRunFacts(events);
   const lowNetProgressRuns = collectLowNetProgressRunFacts(events);
   const repeatedCommandFailures = collectRepeatedCommandFailures(events);
   const trajectory = evaluateTrajectory([...events]);
@@ -364,6 +379,7 @@ function collectTraceReportFacts(
     topRepeatedReadWindows,
     topTools,
     repeatedToolRequestRuns,
+    repeatedTaskCreateLifecycleRuns,
     lowNetProgressRuns,
     repeatedCommandFailures,
     trajectory,
@@ -616,6 +632,7 @@ function analyzeEfficiency({
     topDuplicateReads,
     topTools,
     repeatedToolRequestRuns,
+    repeatedTaskCreateLifecycleRuns,
     lowNetProgressRuns,
     largestDuplicateRead,
   } = facts;
@@ -693,6 +710,24 @@ function analyzeEfficiency({
     });
   }
 
+  for (const runFacts of repeatedTaskCreateLifecycleRuns) {
+    if (runFacts.repeats.length === 0) continue;
+    findings.push({
+      severity: "medium",
+      code: "REPEATED_TASK_CREATE_LIFECYCLE",
+      title: "Equivalent tasks were created after prior task results",
+      evidence: [
+        ...runScopeEvidence(runFacts, repeatedTaskCreateLifecycleRuns.length),
+        ...runFacts.repeats.flatMap((item) => [
+          `${item.count}x ${item.label}`,
+          ...item.evidence.slice(0, 3),
+        ]),
+      ].slice(0, 8),
+      recommendation:
+        "Reuse the prior task id with task wait/get or the delivered task notification instead of creating an equivalent task again.",
+    });
+  }
+
   for (const runFacts of lowNetProgressRuns) {
     const lowNetProgress = analyzeLowNetProgress(runFacts.input);
     if (!lowNetProgress) continue;
@@ -723,6 +758,303 @@ function collectRepeatedToolRequestRunFacts(
       repeatedToolRequests: collectRepeatedToolRequests(group.events),
     };
   });
+}
+
+function collectRepeatedTaskCreateLifecycleRunFacts(
+  events: readonly SparkwrightEvent[],
+): RepeatedTaskCreateLifecycleRunFacts[] {
+  return collectRunEventGroups(events).map((group) => {
+    const agentId = dominantAgentId(group.events);
+    return {
+      ...(group.runId ? { runId: group.runId } : {}),
+      ...(agentId ? { agentId } : {}),
+      repeats: collectRepeatedTaskCreateLifecycleRepeats(group.events),
+    };
+  });
+}
+
+interface TaskCreateRequestFingerprint {
+  key: string;
+  label: string;
+}
+
+interface TaskCreateObservation {
+  key: string;
+  label: string;
+  requestIndex: number;
+  completedIndex: number;
+  taskId?: string;
+  hasNextAction: boolean;
+  terminal?: TaskTerminalEvidence;
+}
+
+interface PendingTaskCreateRequest {
+  fingerprint: TaskCreateRequestFingerprint;
+  requestIndex: number;
+}
+
+interface TaskTerminalEvidence {
+  taskId: string;
+  index: number;
+  status: string;
+  partial: boolean;
+  label: string;
+}
+
+function collectRepeatedTaskCreateLifecycleRepeats(
+  events: readonly SparkwrightEvent[],
+): RepeatedTaskCreateLifecycleRepeat[] {
+  const requestsByCallId = new Map<string, PendingTaskCreateRequest>();
+  const observations: TaskCreateObservation[] = [];
+  const terminalEvidence: TaskTerminalEvidence[] = [];
+
+  events.forEach((event, index) => {
+    if (!isRecord(event.payload)) return;
+
+    if (event.type === "tool.requested") {
+      const toolName = stringValue(event.payload.toolName);
+      if (toolName !== "task_create") return;
+      const callId = stringValue(event.payload.id, event.payload.toolCallId);
+      const args = recordValue(event.payload.arguments);
+      const fingerprint = taskCreateRequestFingerprint(args);
+      if (!callId || !fingerprint) return;
+      requestsByCallId.set(callId, { fingerprint, requestIndex: index });
+      return;
+    }
+
+    const terminals = taskTerminalEvidenceFromEvent(event, index);
+    terminalEvidence.push(...terminals);
+
+    if (event.type !== "tool.completed") return;
+    const toolName = stringValue(event.payload.toolName);
+    if (toolName !== "task_create") return;
+    const callId = stringValue(event.payload.toolCallId, event.payload.id);
+    const pending = callId ? requestsByCallId.get(callId) : undefined;
+    const fingerprint =
+      pending?.fingerprint ??
+      taskCreateRequestFingerprint(recordValue(event.payload.arguments));
+    if (!fingerprint) return;
+    const output = recordValue(event.payload.output);
+    const taskId = stringValue(output?.taskId, output?.id);
+    observations.push({
+      key: fingerprint.key,
+      label: fingerprint.label,
+      requestIndex: pending?.requestIndex ?? index,
+      completedIndex: index,
+      ...(taskId ? { taskId } : {}),
+      hasNextAction: isRecord(output?.nextAction),
+    });
+  });
+
+  for (const observation of observations) {
+    if (!observation.taskId) continue;
+    observation.terminal = terminalEvidence
+      .filter(
+        (item) =>
+          item.taskId === observation.taskId &&
+          item.index >= observation.completedIndex &&
+          item.status === "completed" &&
+          item.partial !== true,
+      )
+      .sort((a, b) => a.index - b.index)[0];
+  }
+
+  const byKey = new Map<string, TaskCreateObservation[]>();
+  for (const observation of observations) {
+    const list = byKey.get(observation.key);
+    if (list) list.push(observation);
+    else byKey.set(observation.key, [observation]);
+  }
+
+  const repeats: RepeatedTaskCreateLifecycleRepeat[] = [];
+  for (const group of byKey.values()) {
+    const sorted = group.sort((a, b) => a.requestIndex - b.requestIndex);
+    const repeatEvidence: string[] = [];
+    let repeatCount = 0;
+    let firstPrior: TaskCreateObservation | undefined;
+    for (let index = 1; index < sorted.length; index += 1) {
+      const current = sorted[index]!;
+      const prior = findReusablePriorTaskCreate(sorted, index, current);
+      if (!prior) continue;
+      firstPrior ??= prior;
+      repeatCount += 1;
+      repeatEvidence.push(
+        `recreated after ${prior.terminal?.label ?? `task ${prior.taskId ?? "unknown"}`} before event ${eventOrdinal(events[current.requestIndex], current.requestIndex)}`,
+      );
+    }
+    if (repeatCount === 0 || !firstPrior) continue;
+    const taskSuffix = firstPrior.taskId
+      ? ` after task ${firstPrior.taskId}`
+      : "";
+    repeats.push({
+      label: truncateDiagnostic(`${sorted[0]!.label}${taskSuffix}`, 180),
+      count: repeatCount,
+      evidence: [
+        ...(firstPrior.hasNextAction
+          ? ["prior task_create returned nextAction"]
+          : []),
+        ...repeatEvidence,
+      ],
+    });
+  }
+
+  return repeats.sort(
+    (a, b) => b.count - a.count || a.label.localeCompare(b.label),
+  );
+}
+
+function findReusablePriorTaskCreate(
+  sorted: readonly TaskCreateObservation[],
+  beforeIndex: number,
+  current: TaskCreateObservation,
+): TaskCreateObservation | undefined {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const prior = sorted[index]!;
+    if (!prior.taskId || !prior.terminal) continue;
+    if (prior.terminal.index >= current.requestIndex) continue;
+    return prior;
+  }
+  return undefined;
+}
+
+function taskCreateRequestFingerprint(
+  args: Record<string, unknown> | undefined,
+): TaskCreateRequestFingerprint | undefined {
+  if (!args) return undefined;
+  const kind = stringValue(args.kind);
+  if (!kind) return undefined;
+  const payload = "payload" in args ? args.payload : {};
+  const payloadFingerprint = stableDiagnosticJson(payload ?? {});
+  return {
+    key: stableDiagnosticJson({ kind, payload: payload ?? {} }),
+    label: truncateDiagnostic(
+      `task_create kind=${kind} payload=${payloadFingerprint}`,
+      180,
+    ),
+  };
+}
+
+function taskTerminalEvidenceFromEvent(
+  event: SparkwrightEvent,
+  index: number,
+): TaskTerminalEvidence[] {
+  if (!isRecord(event.payload)) return [];
+  if (event.type === "task.completed" || event.type === "task.failed") {
+    const taskId = stringValue(event.payload.taskId, event.payload.id);
+    if (!taskId) return [];
+    const status =
+      event.type === "task.completed"
+        ? "completed"
+        : (stringValue(event.payload.status) ?? "failed");
+    return [
+      {
+        taskId,
+        index,
+        status,
+        partial: taskTerminalIsPartial(event.payload),
+        label: `task ${taskId} ${status} at event ${eventOrdinal(event, index)}`,
+      },
+    ];
+  }
+
+  if (event.type === "subagent.completed" || event.type === "subagent.failed") {
+    const taskId = stringValue(event.payload.taskId, event.metadata.taskId);
+    if (!taskId) return [];
+    const status = event.type === "subagent.completed" ? "completed" : "failed";
+    return [
+      {
+        taskId,
+        index,
+        status,
+        partial: taskTerminalIsPartial(event.payload),
+        label: `task ${taskId} ${status} via sub-agent at event ${eventOrdinal(event, index)}`,
+      },
+    ];
+  }
+
+  if (event.type !== "tool.completed") return [];
+  const toolName = stringValue(event.payload.toolName, event.payload.name);
+  if (!isTaskLifecycleTraceTool(toolName)) return [];
+  return collectTerminalTaskRecords(
+    recordValue(event.payload.output),
+    index,
+    event,
+  );
+}
+
+function isTaskLifecycleTraceTool(toolName: string | undefined): boolean {
+  return (
+    toolName === "task_create" ||
+    toolName === "task" ||
+    toolName === "task_wait" ||
+    toolName === "task_get" ||
+    toolName === "task_list"
+  );
+}
+
+function collectTerminalTaskRecords(
+  value: unknown,
+  index: number,
+  event: SparkwrightEvent,
+): TaskTerminalEvidence[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) =>
+      collectTerminalTaskRecords(item, index, event),
+    );
+  }
+  if (!isRecord(value)) return [];
+
+  const out: TaskTerminalEvidence[] = [];
+  const taskId = stringValue(value.taskId, value.id);
+  const status = stringValue(value.status);
+  if (taskId && status && taskStatusIsTerminal(status)) {
+    out.push({
+      taskId,
+      index,
+      status,
+      partial: taskTerminalIsPartial(value),
+      label: `task ${taskId} ${status} at event ${eventOrdinal(event, index)}`,
+    });
+  }
+
+  for (const key of [
+    "task",
+    "tasks",
+    "completed",
+    "record",
+    "records",
+    "result",
+  ]) {
+    if (!(key in value)) continue;
+    out.push(...collectTerminalTaskRecords(value[key], index, event));
+  }
+  return out;
+}
+
+function taskStatusIsTerminal(status: string): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "canceled"
+  );
+}
+
+function taskTerminalIsPartial(record: Record<string, unknown>): boolean {
+  return (
+    record.finality === "partial" ||
+    record.stepLimitReached === true ||
+    record.truncated === true ||
+    record.terminalState === "step_limit" ||
+    record.terminalState === "truncated"
+  );
+}
+
+function eventOrdinal(
+  event: SparkwrightEvent | undefined,
+  index: number,
+): number {
+  return typeof event?.sequence === "number" ? event.sequence : index + 1;
 }
 
 function collectLowNetProgressRunFacts(

@@ -96,6 +96,11 @@ Does not own:
 - `shouldWrite` is the run start/resume write-capability gate. When it is
   `false`, write-capable requests are denied by policy rather than represented
   as a separate read-only approval-escalation protocol field.
+- Protocol 1.4 run start/resume/workflow-resume payloads may include
+  `confidentialPaths` plus optional `confidentialDefaults:false`. Omitted
+  `confidentialDefaults` means host defaults apply; false is the only wire
+  value that disables SparkWright's built-in conservative read-confidentiality
+  list for that run boundary.
 - `INTERNAL_TRANSCRIPT_EVENT_TYPES` / `isInternalTranscriptEventType()` are the
   shared low-signal event filter used by TUI live transcript rendering and
   `/export`; this is product transcript visibility, not raw trace semantics.
@@ -180,6 +185,34 @@ Does not own:
 - Protocol and file trace contracts are related but separate; avoid documenting one as the other.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow distill/shadow observation now filters failed or hook-blocked
+  tool attempts offline, and CLI workflow nested help exits earlier. No
+  protocol request/response, capability snapshot, host event, schema, or
+  workflow list/resume payload shape changed.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `packages/cli/src/cli.ts`,
+  `docs/_internal/project-map/modules/protocol.md`.
+- Tests: host distill/shadow focused tests and CLI nested-help focused tests;
+  protocol-specific tests were not run because this slice has no wire/schema
+  surface change.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② protocol 1.4 reserves the optional
+  `confidentialDefaults:false` run-boundary override and aligns
+  host-message schema/fixture/reference docs.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/protocol/test/index.test.ts`,
+  `schemas/host-message.schema.json`,
+  `schemas/fixtures/host-message.request.run-start.json`,
+  `docs/reference/HOST_PROTOCOL.md`, `docs/reference/PROTOCOL_CHANGELOG.md`.
+- Tests: `npm --workspace @sparkwright/protocol test`; `npm run
+  schema:check`; `npm --workspace @sparkwright/protocol run build`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:37:13+0800

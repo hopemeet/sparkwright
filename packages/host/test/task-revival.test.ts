@@ -43,6 +43,7 @@ describe("host task revival bridge", () => {
       (await bridge.notificationSource.drain()) as PendingNotification[];
 
     expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.content).toContain('Result summary: {"ok":true}');
     expect(notifications[0]).toMatchObject({
       source: { kind: "task", uri: `task:${handle.record.id}` },
       metadata: {
@@ -51,6 +52,7 @@ describe("host task revival bridge", () => {
         status: "completed",
         kind: "detached-test",
         title: "detached notification",
+        resultSummary: '{"ok":true}',
       },
     });
     await expect(

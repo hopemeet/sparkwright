@@ -56,6 +56,10 @@ tool proposes write
   writes and avoid saying "no workspace changes" when an untracked
   write-capable boundary occurred; the summary still must not claim a specific
   file mutation from this marker alone.
+- Read-confidentiality is adjacent but separate from workspace-write safety.
+  `workspace.read.denied` is the audit event for denied confidential reads; it
+  does not consume or imply the managed `workspace.write.*` path, and `--target`
+  remains write-scoped rather than a read sandbox.
 - MCP tools are normal external tools. If they write files without using
   managed `workspace.write.*`, those writes are not counted as managed
   workspace writes; stdio MCP servers default to neutral cwd to avoid accidental
@@ -86,6 +90,56 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help and offline observation filtering do not change
+  workspace-write policy, managed write event pairing, untracked
+  write-capable-boundary semantics, or MCP write attribution.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `docs/_internal/project-map/maps/safety/workspace-writes.md`.
+- Tests: workspace-write-specific tests were not run; focused CLI/host workflow
+  tests covered the changed paths.
+
+- Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance routed-page check: host-loaded
+  confidential read config now feeds the read-scope policy for protocol runs,
+  while workspace-write policy, write event pairing, untracked write-capable
+  markers, and `--target` write scope remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/core/src/workspace.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/guides/CONFIGURATION.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: read-confidentiality defaults changed the
+  read-scope policy boundary only. Managed workspace-write policy, write event
+  pairing, untracked write-capable markers, and `--target` write scope are
+  unchanged.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/workspace.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/src/cli.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
+
+- Status: Read-only
+- Date: 2026-07-06T20:12:52+0800
+- Scope: C10 route check for HostRuntime capability-inspection profile
+  inventory. Workspace write policy, managed write event pairing, shell mutation
+  audits, and workspace-read denial behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`, `packages/host/test/protocol.test.ts`,
+  `packages/host/src/workspace-snapshot.ts`, `packages/host/src/tools.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "inspect reports inline agent profiles"`;
+  `npm --workspace @sparkwright/host run typecheck`; `npm --workspace
+  @sparkwright/host run build`; `npm run release:check`.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

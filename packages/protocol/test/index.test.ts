@@ -17,7 +17,7 @@ import {
 
 describe("@sparkwright/protocol", () => {
   it("exports the current host protocol version", () => {
-    expect(PROTOCOL_VERSION).toBe("1.3");
+    expect(PROTOCOL_VERSION).toBe("1.4");
   });
 
   it("exports stable permission mode and trace level guards", () => {

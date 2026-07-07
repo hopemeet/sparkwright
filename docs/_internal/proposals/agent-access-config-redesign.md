@@ -25,6 +25,25 @@ after this config shape is agreed. Because there is no released user base, there
 is no migration story to preserve: legacy fields are removed outright, not
 aliased.
 
+## Consolidation Ownership Boundary
+
+C2 ratified a three-layer split on 2026-07-06. This proposal owns only the
+selector/toolset compilation vocabulary: the names users write in toolsets, the
+no-alias selector grammar, and how those selectors expand into concrete tool
+visibility.
+
+Built-in tool identity is a separate layer. Canonical tool names, legacy tool
+aliases, and default exposure tiers are sourced from
+`packages/host/src/tool-identities.ts` and recorded in
+[`builtin-tool-surface-consolidation.md`](builtin-tool-surface-consolidation.md).
+This proposal may reference that layer when explaining examples, but it must not
+redefine the alias or tier table.
+
+The product default public/advanced/infrastructure surface is also owned by
+[`builtin-tool-surface-consolidation.md`](builtin-tool-surface-consolidation.md).
+Access config consumes that surface through selectors and policy; it does not
+own which built-in tools are public by default.
+
 ## Design Direction
 
 - Keep generated config files short. Generated files should contain chosen
@@ -72,7 +91,10 @@ aliased.
 
 ## Capability Selectors
 
-Selectors are the single capability vocabulary. There are no broad aliases.
+Selectors are the single toolset compilation vocabulary. There are no broad
+aliases at this layer. Legacy built-in tool aliases such as `read_file` ->
+`read` are tool-identity facts, not selector syntax; see the consolidation
+ownership boundary above.
 
 ```txt
 workspace.read
@@ -440,6 +462,11 @@ advanced bindings in commented form.
   multi-binding and external/ACP transports; simple in-process delegates stay in
   agent frontmatter. `toolName` is unique across both sources; a collision is a
   hard error with diagnostics.
+- C7 merge boundary: this proposal owns the Agent definition schema and
+  delegate fields; [`agent-md-authoring-redesign.md`](agent-md-authoring-redesign.md)
+  owns the authoring examples plus the hooks carrier/slice plan. Agent.md hooks
+  acceptance must cover the P10a two-stage `PreToolUse` rule: rewrite first,
+  governance/clamp after rewritten arguments.
 - The `tasks` capability selector is `tasks.run`, disambiguated from the
   top-level `tasks` config group.
 - No legacy/compat/migration layer: there are no released users, so legacy
@@ -470,6 +497,14 @@ invariants and regression tests, rather than one atomic change:
 4. **Agent definitions + delegates** — `.sparkwright/agents/<id>.md` /
    `AGENT.md` as the profile source of truth, frontmatter `delegate`, and the
    advanced `capabilities.agents.delegates[]` escape hatch.
+
+   C7 consolidation note (2026-07-06): sub-proposal #4 owns the schema contract
+   for definition files and delegates only. It does not duplicate the
+   authoring/hook-carrier design from
+   [`agent-md-authoring-redesign.md`](agent-md-authoring-redesign.md). The
+   merged acceptance bar includes an Agent.md/profile-authored `PreToolUse`
+   regression for the P10a rule: rewrite-stage hooks apply first, then
+   governance/clamp sees the rewritten arguments.
 
 ## Companion Implementation Analysis
 

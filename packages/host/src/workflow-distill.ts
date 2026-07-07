@@ -120,7 +120,7 @@ function renderWorkflowDraft(input: {
 }): string {
   const hasWrites = input.writePaths.length > 0;
   const inspectTools = uniqueStrings(
-    ["read", "grep", "glob", ...input.tools].filter((tool) =>
+    ["read", ...input.tools].filter((tool) =>
       ["read", "grep", "glob", "todo_write"].includes(tool),
     ),
   );

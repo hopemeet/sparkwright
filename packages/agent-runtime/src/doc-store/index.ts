@@ -10,8 +10,6 @@ import {
   openSync,
   readFileSync,
   readdirSync,
-  renameSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import {
@@ -20,11 +18,13 @@ import {
   open,
   readFile,
   readdir,
-  rename,
   rm,
   stat,
-  writeFile,
 } from "node:fs/promises";
+import {
+  atomicWriteText as atomicWriteTextCore,
+  atomicWriteTextSync as atomicWriteTextSyncCore,
+} from "@sparkwright/core/internal";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import process from "node:process";
@@ -220,40 +220,12 @@ export interface FileDocumentLease {
   release(): Promise<boolean>;
 }
 
-const DEFAULT_RENAME_ATTEMPTS = 10;
-const DEFAULT_RENAME_RETRY_DELAY_MS = 20;
-
 export async function atomicWriteText(
   path: string,
   content: string,
   options: AtomicDocumentWriteOptions = {},
 ): Promise<void> {
-  const target = resolve(path);
-  const dir = dirname(target);
-  await mkdir(dir, { recursive: true });
-  const tmp = temporaryPath(target);
-  try {
-    if (options.durable) {
-      const handle = await open(tmp, "w", options.mode);
-      try {
-        await handle.writeFile(content, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-    } else if (options.mode !== undefined) {
-      await writeFile(tmp, content, { encoding: "utf8", mode: options.mode });
-    } else {
-      await writeFile(tmp, content, "utf8");
-    }
-    await renameWithRetry(tmp, target, options);
-    if (options.durable) {
-      await syncDirectoryBestEffort(dir);
-    }
-  } catch (cause) {
-    await rm(tmp, { force: true }).catch(() => undefined);
-    throw cause;
-  }
+  await atomicWriteTextCore(path, content, options);
 }
 
 export function atomicWriteTextSync(
@@ -261,38 +233,7 @@ export function atomicWriteTextSync(
   content: string,
   options: AtomicDocumentWriteOptions = {},
 ): void {
-  const target = resolve(path);
-  const dir = dirname(target);
-  mkdirSync(dir, { recursive: true });
-  const tmp = temporaryPath(target);
-  let fd: number | undefined;
-  try {
-    if (options.durable) {
-      fd = openSync(tmp, "w", options.mode);
-      writeFileSync(fd, content, "utf8");
-      fsyncSync(fd);
-      closeSync(fd);
-      fd = undefined;
-    } else if (options.mode !== undefined) {
-      writeFileSync(tmp, content, { encoding: "utf8", mode: options.mode });
-    } else {
-      writeFileSync(tmp, content, "utf8");
-    }
-    renameWithRetrySync(tmp, target, options);
-    if (options.durable) {
-      syncDirectoryBestEffortSync(dir);
-    }
-  } catch (cause) {
-    if (fd !== undefined) {
-      try {
-        closeSync(fd);
-      } catch {
-        // Ignore close failures while preserving the original write error.
-      }
-    }
-    rmSync(tmp, { force: true });
-    throw cause;
-  }
+  atomicWriteTextSyncCore(path, content, options);
 }
 
 export async function writeJsonDocument(
@@ -792,70 +733,6 @@ function jsonDocumentReadFailedEntry(
   return { path, code: "read_failed", reason };
 }
 
-async function renameWithRetry(
-  tmp: string,
-  target: string,
-  options: AtomicDocumentWriteOptions,
-): Promise<void> {
-  let lastError: unknown;
-  const attempts = options.renameAttempts ?? DEFAULT_RENAME_ATTEMPTS;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      await rename(tmp, target);
-      return;
-    } catch (cause) {
-      lastError = cause;
-      if (!isRetryableRenameError(cause)) break;
-      await delay(renameDelayMs(attempt, options));
-    }
-  }
-  throw lastError;
-}
-
-function renameWithRetrySync(
-  tmp: string,
-  target: string,
-  options: AtomicDocumentWriteOptions,
-): void {
-  let lastError: unknown;
-  const attempts = options.renameAttempts ?? DEFAULT_RENAME_ATTEMPTS;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      renameSync(tmp, target);
-      return;
-    } catch (cause) {
-      lastError = cause;
-      if (!isRetryableRenameError(cause)) break;
-      sleepSync(renameDelayMs(attempt, options));
-    }
-  }
-  throw lastError;
-}
-
-function renameDelayMs(
-  attempt: number,
-  options: AtomicDocumentWriteOptions,
-): number {
-  return (
-    (options.renameRetryDelayMs ?? DEFAULT_RENAME_RETRY_DELAY_MS) *
-    (attempt + 1)
-  );
-}
-
-function isRetryableRenameError(cause: unknown): boolean {
-  const code = (cause as NodeJS.ErrnoException).code;
-  return code === "EPERM" || code === "EACCES" || code === "EEXIST";
-}
-
-function temporaryPath(target: string): string {
-  return join(
-    dirname(target),
-    `.tmp-${process.pid}-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2)}.tmp`,
-  );
-}
-
 function isTemporaryDocumentFile(fileName: string): boolean {
   return fileName.startsWith(".tmp-");
 }
@@ -885,12 +762,4 @@ function syncDirectoryBestEffortSync(dir: string): void {
       closeSync(fd);
     }
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }

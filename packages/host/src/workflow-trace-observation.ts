@@ -36,14 +36,22 @@ export function observeWorkflowTraceEvents(
   const terminalState = [...events]
     .reverse()
     .map((event) =>
-      event.type === "run.completed" || event.type === "run.failed"
-        ? (stringValue(recordValue(event.payload)?.state) ?? event.type)
+      event.type === "run.completed" ||
+      event.type === "run.failed" ||
+      event.type === "run.cancelled"
+        ? terminalStateFromEvent(event.type, recordValue(event.payload))
         : undefined,
     )
     .find((value): value is string => value !== undefined);
+  const failedToolCallIds = failedToolCallIdSet(events);
   const tools = uniqueStrings(
     events
       .filter((event) => event.type === "tool.requested")
+      .filter((event) => {
+        const payload = recordValue(event.payload);
+        const id = stringValue(payload?.id) ?? stringValue(payload?.toolCallId);
+        return !id || !failedToolCallIds.has(id);
+      })
       .map((event) => eventToolName(recordValue(event.payload)))
       .filter((value): value is string => value !== undefined)
       .map(normalizeWorkflowToolName)
@@ -73,8 +81,11 @@ export function observeWorkflowTraceEvents(
   });
   const sawTodoWrite = events.some((event) => {
     const payload = recordValue(event.payload);
+    const id = stringValue(payload?.id) ?? stringValue(payload?.toolCallId);
     return (
-      event.type === "tool.requested" && eventToolName(payload) === "todo_write"
+      event.type === "tool.requested" &&
+      (!id || !failedToolCallIds.has(id)) &&
+      eventToolName(payload) === "todo_write"
     );
   });
 
@@ -126,6 +137,25 @@ function collectVerificationCommands(input: {
     });
   }
   return commands;
+}
+
+function failedToolCallIdSet(events: readonly SparkwrightEvent[]): Set<string> {
+  const failed = new Set<string>();
+  for (const event of events) {
+    const payload = recordValue(event.payload);
+    if (
+      event.type !== "tool.failed" &&
+      !(
+        event.type === "tool.completed" &&
+        stringValue(payload?.status) === "failed"
+      )
+    ) {
+      continue;
+    }
+    const id = stringValue(payload?.toolCallId) ?? stringValue(payload?.id);
+    if (id) failed.add(id);
+  }
+  return failed;
 }
 
 function requestedToolMap(
@@ -210,6 +240,24 @@ function isVerificationLikeCommand(command: string): boolean {
 
 function uniqueStrings(values: Iterable<string>): string[] {
   return [...new Set([...values].filter((value) => value.length > 0))];
+}
+
+function terminalStateFromEvent(
+  type: SparkwrightEvent["type"],
+  payload: Record<string, unknown> | undefined,
+): string | undefined {
+  const explicit = stringValue(payload?.state);
+  if (explicit) return explicit;
+  switch (type) {
+    case "run.completed":
+      return "completed";
+    case "run.failed":
+      return "failed";
+    case "run.cancelled":
+      return "cancelled";
+    default:
+      return undefined;
+  }
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

@@ -781,6 +781,7 @@ interface MultiAgentFacts {
   parentRunId: string;
   childRunId: string;
   spanId: string;
+  taskId?: string;
   childAgentId?: string;
   agentId?: string;
   agentProfileId?: string;
@@ -882,17 +883,20 @@ export function spawnSubAgent(input: SpawnSubAgentInput): SpawnedSubAgent {
   // terminal events bridge from the child's own EventLog. The requested →
   // started gap is observable when the embedder queues `.start()` behind a
   // concurrency limit.
+  const taskId = stringMetadata(input.metadata, "taskId");
   const subagentBase = {
     childRunId: child.record.id,
     parentRunId: parent.record.id,
     spanId,
     goal: input.goal,
+    ...(taskId ? { taskId } : {}),
   };
   const facts: MultiAgentFacts = removeUndefinedMetadata({
     sessionId,
     parentRunId: parent.record.id,
     childRunId: child.record.id,
     spanId,
+    taskId,
     agentId: parentAgentId,
     childAgentId,
     agentProfileId: input.childAgentProfile?.id,
@@ -984,6 +988,7 @@ function multiAgentMetadata(facts: MultiAgentFacts): Record<string, unknown> {
   return removeUndefinedMetadata({
     sessionId: facts.sessionId,
     agentId: facts.agentId,
+    taskId: facts.taskId,
     childAgentId: facts.childAgentId,
     agentProfileId: facts.agentProfileId,
     agentName: facts.agentName,

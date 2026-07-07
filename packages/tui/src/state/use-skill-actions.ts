@@ -16,7 +16,6 @@ import {
   applySkillLearnDraftProposal,
   createSkillLearnDraftProposal,
   detectSkillLearnNotice,
-  detectSkillLearnTarget,
   formatSkillLearnStatus,
   parseSkillLearnMode,
   readSkillLearnStatus,
@@ -334,7 +333,6 @@ export function runSkillLearnAutoNotice(deps: {
   const notice = detectSkillLearnNotice(goals);
   if (!notice || goals.length <= noticeCount) return;
   const goalCount = goals.length;
-  const targetSkillName = detectSkillLearnTarget(goals);
   void readSkillLearnStatus(workspaceRoot)
     .then((status) => {
       if (status.mode === "off") return;
@@ -349,7 +347,6 @@ export function runSkillLearnAutoNotice(deps: {
         return;
       }
       void createSkillLearnDraftProposal(workspaceRoot, notice, {
-        ...(targetSkillName ? { targetSkillName } : {}),
         ...(sessionId ? { sessionId } : {}),
       })
         .then((proposal) => {

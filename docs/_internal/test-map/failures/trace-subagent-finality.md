@@ -47,6 +47,10 @@ answer that lacks ordered evidence.
 
 - Keep raw trace facts literal.
 - Add derived report fields only when they can cite event-order evidence.
+- Keep runtime final-answer disclosure separate from trace severity: host now
+  uses a built-in Stop hook to ask for a caveat when final prose omits
+  partial/truncated/step-limited child finality, while report severity still
+  depends on ordered trace evidence.
 - Use scripted tests for exact event ordering and real-model runs only as
   canaries.
 

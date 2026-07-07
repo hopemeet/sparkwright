@@ -101,6 +101,21 @@ Observed implementation shape:
    doctor, and apply gates, but should not be injected into provider prompts or
    model-visible `skill_load` output.
 
+## C8 Resolved Decisions (2026-07-06)
+
+C8 closes the four remaining v1 open questions:
+
+- Archived Skills do not enter the model-visible `skill_index`. They may appear
+  in human diagnostics such as inspect, doctor, stats, or review surfaces.
+- `allowedTools` is a declaration of expected tool needs, not an authorization
+  grant. Host/config/policy/toolset compilation remain the only enforcement
+  boundary, and loading a Skill must not widen tool visibility.
+- Manual CLI `sparkwright skills create` remains a human direct-write management
+  command. Model-facing Skill creation and updates remain on the proposal path.
+- Bundles are not part of the product/runtime surface for v1. The batch-3
+  no-customer audit found no host/CLI/TUI/runtime product consumers, and C8
+  removed the package-level bundle helpers, slash resolution, and tests.
+
 ## Target Architecture
 
 ```txt
@@ -128,7 +143,7 @@ skill roots
 - **SkillRegistry / SkillIndex**
   Holds effective manifests by name and computes deterministic relevance. The
   model-visible index includes `name`, `description`, `version`, `triggers`, and
-  weak relevance hints only.
+  weak relevance hints only. Archived Skills are excluded from this index.
 
 - **SkillRuntimePreparer**
   Replaces the current dual-purpose `prepareSkillsForRun` internals. It turns
@@ -155,7 +170,8 @@ skill roots
 
 - **SkillEvolution**
   Owns proposal, apply, reject, supersede, prune, history, and restore. Model
-  tools may draft proposals only.
+  tools may draft proposals only; manual CLI direct writes remain a human
+  management surface.
 
 ## Canonical Manifest
 
@@ -291,15 +307,14 @@ Recommended change:
 
 Current bundle/capability helpers should not remain ambiguous.
 
-Decision for v1:
+C8 decision for v1: bundles are killed from the SparkWright product/runtime
+surface. Batch 3 verified there were no host/CLI/TUI/runtime product customers
+and removed `bundles.ts`, slash resolution, and the package-level tests.
 
-- Either wire bundles into host/TUI/CLI as a real callable grouping mechanism;
-- or explicitly mark `bundles.ts`, slash resolution, and capability projection
-  as package-level experimental helpers not used by SparkWright runtime.
-
-Do not expose bundle behavior in user-facing docs until host behavior exists.
-If bundles are kept, bundle invocation should still use the same `skill_load`
-and usage/trace path rather than injecting untracked bodies.
+Do not reintroduce bundle behavior in user-facing docs unless a future host
+behavior exists. If a future product need revives bundle-like behavior, it must
+use the same `skill_load` and usage/trace path rather than injecting untracked
+bodies.
 
 ## Doctor Upgrades
 
@@ -388,33 +403,30 @@ Doctor should stay deterministic. It should not call a model.
 - Preserve guard, doctor, hash, rollback, and history behavior.
 - Tests: model create/update draft only; CLI apply writes; restore still works.
 
-### Phase 5: Experimental surface decision
+### Phase 5: Delete experimental bundle surface
 
-- Decide whether bundles become real runtime behavior.
-- If yes, wire through host/CLI/TUI with trace and usage.
-- If no, hide from user-facing docs and mark as internal experimental. Do not
-  remove exported APIs in the same change unless downstream usage has been
-  audited.
+- C8 outcome: bundles are not promoted to runtime behavior.
+- Implemented 2026-07-06: Batch 3 no-customer audit found no product
+  consumers, then deleted bundle helpers, slash resolution, exports, and tests.
 
 ## Non-Goals
 
 - No background auto-writer by default.
 - No semantic/vector retrieval requirement.
 - No broad YAML parser unless a real use case requires it.
-- No direct execution of bundled scripts during discovery.
+- No direct execution of Skill-authored scripts during discovery.
 - No automatic mutation of user, builtin, or legacy Skill roots.
 - No claim that associated run failures were caused by loaded Skills.
 
-## Open Questions
+## Resolved Questions
 
-- Should archived Skills be excluded by default from `skill_index`, or listed as
-  low-priority with state metadata hidden from the model?
-- Should `allowedTools` remain advisory, or should host policy optionally
-  intersect tool visibility after a Skill is loaded?
-- Should manual CLI `skills create` continue to be direct-write long term, or
-  should it eventually default to proposal creation too?
-- Are bundles worth integrating, or should they be removed until a product
-  surface needs them?
+- Archived Skills are excluded from model-visible `skill_index` and visible only
+  to human diagnostics.
+- `allowedTools` remains declarative and does not authorize tools.
+- Manual CLI `skills create` remains direct-write for humans; model paths draft
+  proposals.
+- Bundles are pending deletion unless the batch-3 no-customer audit finds a real
+  product consumer.
 
 ## Review Decision: 2026-07-03 Source Check
 
@@ -483,10 +495,12 @@ Source-check clarifications:
   from an explicit user instruction to persistent loadable Skill text without a
   separate review click. Capability inspection and docs should say that
   clearly.
-- `session-learnings` is the default sink, but learned drafts can target an
-  existing named Skill when the prompt mentions one and that Skill resolves.
-  There is still no lifecycle that clusters accumulated learnings, proposes
-  promotion into a new named Skill, or archives stale learnings.
+- `session-learnings` is the TUI automatic-learning sink. C10 deleted the
+  prompt-text `detectSkillLearnTarget` guesser, so automatic `/skill-learn`
+  drafts no longer infer an existing named Skill from prose; explicit update
+  paths can still pass a target name into the proposal helper. There is still no
+  lifecycle that clusters accumulated learnings, proposes promotion into a new
+  named Skill, or archives stale learnings.
 
 ## Review Prompt
 
@@ -519,7 +533,7 @@ approve, approve with changes, or redesign needed.
 
 # Addendum: Capability Exposure Convergence (Skill / MCP / Agent / Delegate)
 
-Status: Draft for review
+Status: Accepted for A-Phase 1-3; A-Phase 4 deferred to shared-routing review
 Date: 2026-06-27
 
 > This addendum widens the lens. The body above redesigns the Skill subsystem
@@ -530,6 +544,22 @@ Date: 2026-06-27
 > exists in `@sparkwright/core`. The Agent surface has already been refactored to
 > this model (working tree, uncommitted on `feat/access-mode`); this addendum
 > records that landing and proposes carrying the same pattern to MCP.
+
+## C1 Disposition (2026-07-06)
+
+C1 accepts the addendum direction through A-Phase 3 and defers A-Phase 4. Source
+recheck on 2026-07-06 confirmed that the Agent indexed exposure baseline is on
+current main (`delegate_agent`, `pinnedDelegates`, shared configured-delegate
+ledger), while `mcp_call` / `pinnedTools` remain proposal-only.
+
+Accepted sequence:
+
+- A-Phase 1 records and stabilizes the Agent landing.
+- A-Phase 2 structures the Agent index.
+- A-Phase 3 aligns MCP to the indexed model with `mcp_call`, name-level
+  deferral, and `pinnedTools`, opt-in first.
+- A-Phase 4 shared routing is deferred and must be reviewed together with the
+  capability-upgrade Phase 3b rank-before-hide routing work.
 
 ## A.0 The governing principle: load-cost vs invoke-cost asymmetry
 
@@ -690,6 +720,10 @@ Review decision #5 (2026-06-27):
 ```
 
 ## A.7 Delivery plan
+
+C1 decision: A-Phase 1-3 are accepted as the next capability-exposure sequence;
+A-Phase 4 is deferred to the shared-routing / capability-upgrade Phase 3b
+review.
 
 - **A-Phase 1 — record + stabilize the Agent landing.** Tests asserting
   single→parallel cross-entrypoint dedup (same ledger key), per-target policy

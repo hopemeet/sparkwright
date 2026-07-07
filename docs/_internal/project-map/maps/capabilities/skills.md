@@ -83,8 +83,16 @@ skill roots
 - Capability snapshots and CLI `capabilities inspect` expose a path-free
   `skills.inlineShell` policy summary (`enabled`, `writePolicy`,
   `sandboxMode`, `failClosed`, timeout/output caps).
+- Skill bundles are not a v1 runtime capability. The experimental package-level
+  bundle registry, `.bundle.json` loader, and slash-command resolver were
+  removed; grouped Skill behavior must not bypass the governed `skill_load`
+  events, usage sidecar, or trace surfaces.
 - Skill create/update tools are managed capability mutations, not raw shell
   writes; successful managed mutations emit `capability.mutation.completed`.
+  Their model-authored `body` content is proposal-first: `create_skill` wraps
+  instructions-only content, and both `create_skill` and `update_skill`
+  normalize full `SKILL.md` bodies by filling a missing frontmatter
+  `description` from the tool description while rejecting mismatched names.
 - File-backed Skill usage recorders reload the current sidecar before reads and
   mutations so multiple recorder instances in one process do not overwrite each
   other's latest records. Host runtime now writes successful `skill.loaded`
@@ -118,6 +126,37 @@ skill roots
 - Self-evolution design exists, but automatic learning should remain clearly opt-in/reviewed.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T13:18:00+0800
+- Scope: Skill mutation tool contract update after real mini QA: `update_skill`
+  authored bodies now share frontmatter description normalization with
+  `create_skill`; managed mutation events, proposal-first behavior, and source
+  package non-application were verified.
+- Read: `packages/host/src/tools.ts`, `packages/host/test/tools.test.ts`,
+  `docs/_internal/project-map/maps/capabilities/skills.md`,
+  `docs/_internal/project-map/maps/capabilities/skill-evolution.md`,
+  `docs/_internal/test-map/coverage/skills.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/tools.test.ts -t
+  "update_skill|create_skill|Skill"`; `npm --workspace @sparkwright/host
+  test -- test/tools.test.ts`; `npm --workspace @sparkwright/host run
+  typecheck`; `npm run build --workspace @sparkwright/host`; `npm run
+  check:dist-fresh`; `SPARKWRIGHT_REAL_MODEL=openai/gpt-5.4-mini
+  SPARKWRIGHT_KEEP_REAL_REGRESSION=1 npm run regression:real-skill-capabilities`.
+
+- Status: Verified
+- Date: 2026-07-06T20:08:48+0800
+- Scope: C8-bundles deletion removed the experimental package-level bundle
+  capability surface after confirming no product customers; Skill loading and
+  evolution remain the supported capability paths.
+- Read: `packages/skills/src/index.ts`, deleted
+  `packages/skills/src/bundles.ts`, deleted
+  `packages/skills/test/bundles.test.ts`, `packages/skills/README.md`,
+  `docs/_internal/project-map/maps/capabilities/skills.md`.
+- Tests: `npm --workspace @sparkwright/skills test`;
+  `npm --workspace @sparkwright/skills run typecheck`;
+  `npm --workspace @sparkwright/skills run build`;
+  `npm run check:dist-fresh`.
 
 - Status: Verified
 - Date: 2026-07-03T12:53:49+0800
@@ -160,16 +199,17 @@ skill roots
   proposals"`; `npm --workspace @sparkwright/cli run build`.
 - Prior verification — Date: 2026-06-27T19:27:28+0800
 - Scope: confirmed loader/bundle cleanup did not change skill loading,
-  on-demand load, or bundle behavior.
+  on-demand load, or then-current bundle behavior. Superseded by C8-bundles
+  deletion on 2026-07-06.
 - Read: `packages/skills/src/loader.ts`,
-  `packages/skills/src/bundles.ts`,
+  `packages/skills/src/bundles.ts` (deleted later by C8-bundles),
   `packages/skills/src/index.ts`,
   `packages/skills/test/index.test.ts`,
   `packages/skills/test/skills.test.ts`,
-  `packages/skills/test/bundles.test.ts`.
+  `packages/skills/test/bundles.test.ts` (deleted later by C8-bundles).
 - Tests: `npm --workspace @sparkwright/skills run typecheck`;
   `npm --workspace @sparkwright/skills test -- test/skills.test.ts
-  test/index.test.ts test/bundles.test.ts`.
+  test/index.test.ts test/bundles.test.ts` (historical).
 - Prior verification — Date: 2026-06-27T17:52:04+0800
 - Scope: recorded Phase 1 Skill parser/manifest unification and compatibility
   adapter behavior for the loading capability.

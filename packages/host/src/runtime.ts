@@ -9,7 +9,6 @@ import {
   createRunId,
   createDefaultPolicy,
   createLayeredPolicy,
-  DEFAULT_CONFIDENTIAL_PATHS,
   createSessionId,
   createSessionRunStoreFactory,
   loadSessionCompactArtifact,
@@ -19,6 +18,7 @@ import {
   createToolSearchTool,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
+  resolveRunConfidentialPaths,
   defineTool,
   FileSessionStore,
   EventLog,
@@ -244,6 +244,7 @@ import {
 import {
   bindConfiguredEventHooks,
   createConfiguredWorkflowHooks,
+  createPartialSubagentFinalityDisclosureHook,
   type CreateConfiguredWorkflowHooksOptions,
 } from "./workflow-hooks.js";
 import { createVerificationWorkflowHooks } from "./verification.js";
@@ -274,11 +275,15 @@ function devSkillsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return value === "1" || value === "true";
 }
 
+const WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN =
+  "@sparkwright/host.workflow-scoped-tool-search";
+
 function createHostRunPolicy(input: {
   permissionMode: PermissionMode;
   shouldWrite: boolean;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   writeGuardrails?: WriteGuardrailsConfig;
 }): Policy {
   // Config write guardrails override the built-in defaults when present. The
@@ -296,15 +301,20 @@ function createHostRunPolicy(input: {
       maxDiffLines: input.writeGuardrails?.maxDiffLines ?? 200,
       allowDeletions: input.writeGuardrails?.allowDeletions ?? true,
     }),
-    // Opt-in read-confidentiality. Empty list is a no-op, so default runs are
-    // unaffected; when set, reads of matching files are denied at the tool layer.
     createWorkspaceReadScopePolicy({
-      confidentialPaths: [
-        ...DEFAULT_CONFIDENTIAL_PATHS,
-        ...(input.confidentialPaths ?? []),
-      ],
+      confidentialPaths: resolveRunConfidentialPaths({
+        confidentialDefaults: input.confidentialDefaults,
+        confidentialPaths: input.confidentialPaths,
+      }),
     }),
   ]);
+}
+
+function mergeConfidentialPaths(
+  ...groups: Array<readonly string[] | undefined>
+): string[] | undefined {
+  const merged = groups.flatMap((group) => group ?? []);
+  return merged.length > 0 ? [...new Set(merged)] : undefined;
 }
 
 type RuntimeMcpConfig = Omit<CapabilityMcpConfig, "servers"> & {
@@ -496,6 +506,8 @@ interface PreparedHostRunEnvironment {
   parentRunRef: { current?: ReturnType<typeof createRun> };
   traceLevel: TraceLevel;
   writeGuardrails?: WriteGuardrailsConfig;
+  confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   runMetadata: Record<string, unknown>;
   runStoreMetadata: Record<string, unknown>;
 }
@@ -539,6 +551,7 @@ export function assembleRuntimeWorkflowHooks(
     ...verificationHooks,
     ...documentedCommandHooks,
     ...projectionHooks,
+    createPartialSubagentFinalityDisclosureHook(),
   ];
 }
 
@@ -857,6 +870,7 @@ export async function runHostAgentTask(
     allowNestedBackgroundTasks: deps.allowNestedBackgroundTasks,
     createTaskRevivalBridge: deps.createTaskRevivalBridge,
     registerSubagentRun: deps.registerSubagentRun,
+    taskId: String(controller.taskId),
   });
   const ctx: RuntimeContext = {
     run: parent.record,
@@ -1593,6 +1607,7 @@ export class HostRuntime {
     sessionId: string;
     targetPath?: string;
     confidentialPaths?: readonly string[];
+    confidentialDefaults?: boolean;
     traceLevel?: TraceLevel;
     workflowName?: string;
     workflowStore?: FileWorkflowStore;
@@ -1637,6 +1652,12 @@ export class HostRuntime {
     );
     const agentConfig = loadedConfig.config.capabilities?.agents;
     const writeGuardrails = loadedConfig.config.write;
+    const confidentialPaths = mergeConfidentialPaths(
+      loadedConfig.config.confidentialPaths,
+      input.confidentialPaths,
+    );
+    const confidentialDefaults =
+      input.confidentialDefaults ?? loadedConfig.config.confidentialDefaults;
     const skillRoots = resolveSkillRootsForRuntime(
       workspaceRoot,
       skillConfig?.roots,
@@ -1767,7 +1788,8 @@ export class HostRuntime {
       permissionMode: input.permissionMode,
       shouldWrite: input.shouldWrite,
       targetPath: input.targetPath,
-      confidentialPaths: input.confidentialPaths,
+      confidentialPaths,
+      confidentialDefaults,
       writeGuardrails,
     });
     const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
@@ -2065,9 +2087,10 @@ export class HostRuntime {
             ),
             taskTool: tools.find((tool) => tool.name === "task_create"),
             isToolAvailable: (toolName) =>
-              toolsForWorkflowRecord(tools, workflowRecord).some(
-                (tool) =>
-                  canonicalToolName(tool.name) === canonicalToolName(toolName),
+              parentRunRef.current?.tools.get(toolName) !== undefined,
+            isScopedToolSearchAvailable: () =>
+              isWorkflowScopedToolSearch(
+                parentRunRef.current?.tools.get(DISCOVERY_TOOL_NAME),
               ),
           })
         : undefined;
@@ -2165,10 +2188,10 @@ export class HostRuntime {
       ),
       mcpStatuses: preparedMcp?.statuses ?? {},
       mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
-      agentProfiles: [
+      agentProfiles: capabilitySnapshotAgentProfiles(
         mainAgent,
-        ...derivedAgents.map((agent) => agent.effectiveProfile),
-      ],
+        resolvedProfiles,
+      ),
       delegateTools: delegateDescriptors,
       shellSandbox,
       shellForegroundTimeoutMs:
@@ -2269,6 +2292,8 @@ export class HostRuntime {
         parentRunRef,
         traceLevel,
         writeGuardrails,
+        confidentialPaths,
+        confidentialDefaults,
         runMetadata,
         runStoreMetadata,
       },
@@ -2746,6 +2771,7 @@ export class HostRuntime {
       sessionId: resumeSessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
+      confidentialDefaults: payload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -2788,7 +2814,8 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
-          confidentialPaths: payload.confidentialPaths,
+          confidentialPaths: env.confidentialPaths,
+          confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -2864,7 +2891,8 @@ export class HostRuntime {
                   permissionMode,
                   shouldWrite,
                   targetPath: payload.targetPath,
-                  confidentialPaths: payload.confidentialPaths,
+                  confidentialPaths: env.confidentialPaths,
+                  confidentialDefaults: env.confidentialDefaults,
                   writeGuardrails: env.writeGuardrails,
                 }),
                 promptBuilder: buildAgentPromptBuilder({
@@ -3025,6 +3053,7 @@ export class HostRuntime {
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
+      confidentialDefaults: payload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -3078,7 +3107,8 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
-          confidentialPaths: payload.confidentialPaths,
+          confidentialPaths: env.confidentialPaths,
+          confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -3288,6 +3318,7 @@ export class HostRuntime {
       sessionId,
       targetPath: payload.targetPath,
       confidentialPaths: payload.confidentialPaths,
+      confidentialDefaults: payload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
         ...payload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
@@ -3356,7 +3387,8 @@ export class HostRuntime {
           permissionMode,
           shouldWrite,
           targetPath: payload.targetPath,
-          confidentialPaths: payload.confidentialPaths,
+          confidentialPaths: env.confidentialPaths,
+          confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
         }),
         promptBuilder: buildAgentPromptBuilder({
@@ -3891,10 +3923,10 @@ export class HostRuntime {
             ]),
           ),
         mcpToolNameMap: preparedMcp?.toolNameMap ?? [],
-        agentProfiles: [
+        agentProfiles: capabilitySnapshotAgentProfiles(
           mainAgent,
-          ...derivedAgents.map((agent) => agent.effectiveProfile),
-        ],
+          resolvedProfiles,
+        ),
         delegateTools: describeConfiguredDelegateTools({
           delegates: delegationTargets,
           derivedAgents,
@@ -4992,10 +5024,18 @@ function pendingNotificationFromTask(
   notification: TaskNotification,
 ): PendingNotification {
   const title = notification.title ?? notification.kind;
+  const resultSummary =
+    notification.result !== undefined
+      ? summarizeNotificationValue(notification.result)
+      : undefined;
   return {
     content: [
       `Task ${notification.taskId} (${title}) ${notification.status}.`,
       notification.summary,
+      resultSummary ? `Result summary: ${resultSummary}` : undefined,
+      notification.outputRef
+        ? `Output ref: ${notification.outputRef}`
+        : undefined,
       notification.error ? `Error: ${notification.error.message}` : undefined,
     ]
       .filter(Boolean)
@@ -5012,9 +5052,7 @@ function pendingNotificationFromTask(
         : {}),
       deliveredAt: notification.deliveredAt,
       ...(notification.outputRef ? { outputRef: notification.outputRef } : {}),
-      ...(notification.result !== undefined
-        ? { resultSummary: summarizeNotificationValue(notification.result) }
-        : {}),
+      ...(resultSummary !== undefined ? { resultSummary } : {}),
       ...(notification.error
         ? {
             errorCode: notification.error.code,
@@ -5109,6 +5147,16 @@ function mainAgentProfile(profiles: AgentProfile[] | undefined): AgentProfile {
       (profile) => profile.id === MAIN_AGENT_ID || profile.mode === "primary",
     ) ?? { id: MAIN_AGENT_ID, mode: "primary" }
   );
+}
+
+function capabilitySnapshotAgentProfiles(
+  mainAgent: AgentProfile,
+  profiles: readonly AgentProfile[],
+): AgentProfile[] {
+  const byId = new Map<string, AgentProfile>();
+  byId.set(mainAgent.id, mainAgent);
+  for (const profile of profiles) byId.set(profile.id, profile);
+  return [...byId.values()];
 }
 
 function emitAgentProfileCollisionWarnings(
@@ -6543,6 +6591,7 @@ export function createDynamicSpawnAgentTool(input: {
   abortSignal?: AbortSignal;
   entrypoint?: "spawn_agent" | "agent_task";
   delegateToolName?: string;
+  taskId?: string;
   /**
    * When set with `taskManager`, inline spawn_agent runs in foreground up to
    * this budget and then promotes the same child run into an awaited task.
@@ -6784,6 +6833,7 @@ export function createDynamicSpawnAgentTool(input: {
           agentName: parsed.role,
           delegateTool: input.delegateToolName ?? "spawn_agent",
           entrypoint: input.entrypoint ?? "spawn_agent",
+          ...(input.taskId ? { taskId: input.taskId } : {}),
           allowedTools: childTools.map((tool) => tool.name),
         },
       });
@@ -7146,6 +7196,31 @@ function createNestedAgentTaskCreateTool(input: {
   return {
     ...tool,
     policy: { risk: "safe", requiresApproval: false },
+    async execute(args: unknown, ctx): Promise<unknown> {
+      const output = await tool.execute(args, ctx);
+      const record = previewRecord(output);
+      if (record.mode !== "awaited" || typeof record.taskId !== "string") {
+        return output;
+      }
+
+      const taskId = record.taskId as unknown as TaskId;
+      const task =
+        (await input.manager.handle(taskId)?.wait()) ??
+        input.manager.store.get(taskId);
+      if (!task) return output;
+      if (isTerminalTaskStatus(task.status)) {
+        input.manager.store.update(task.id, { awaited: false });
+      }
+      const latest = input.manager.store.get(task.id) ?? task;
+      return {
+        ...record,
+        task: latest,
+        status: latest.status,
+        complete: isTerminalTaskStatus(latest.status),
+        result: latest.result,
+        error: latest.error,
+      };
+    },
   };
 }
 
@@ -8165,11 +8240,29 @@ function workflowScopedToolSearch(
   tools: readonly ToolDefinition[],
 ): ToolDefinition {
   const descriptors = tools.map(workflowToolDescriptor);
-  return createToolSearchTool({
+  const toolSearch = createToolSearchTool({
     source: {
       listDescriptors: () => descriptors,
     },
   });
+  return {
+    ...toolSearch,
+    governance: {
+      ...toolSearch.governance,
+      origin: {
+        kind: "local",
+        name: WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN,
+        metadata: { workflowScoped: true },
+      },
+    },
+  };
+}
+
+function isWorkflowScopedToolSearch(tool: ToolDefinition | undefined): boolean {
+  return (
+    tool?.governance?.origin?.kind === "local" &&
+    tool.governance.origin.name === WORKFLOW_SCOPED_TOOL_SEARCH_ORIGIN
+  );
 }
 
 function workflowToolDescriptor(tool: ToolDefinition): ToolDescriptor {
@@ -8467,6 +8560,11 @@ function persistWorkflowProjectionSnapshot(
         metadata: snapshot.failure.metadata,
       } satisfies WorkflowRunFailure)
     : undefined;
+  const projectionEpisodeMetadata = workflowProjectionEpisodeMetadata(
+    record,
+    snapshot,
+  );
+  const projectionAllowedTools = workflowProjectionAllowedTools(snapshot);
   return store.update(record.id, {
     status,
     currentNodeId: state.currentNodeId,
@@ -8485,9 +8583,58 @@ function persistWorkflowProjectionSnapshot(
     ...(failure ? { failure } : {}),
     metadata: {
       lastProjectionPhase: snapshot.phase,
+      ...(projectionEpisodeMetadata
+        ? { workflowEpisode: projectionEpisodeMetadata }
+        : {}),
+      ...(projectionAllowedTools
+        ? { episodeAllowedTools: projectionAllowedTools.normalized }
+        : {}),
       ...(snapshot.metadata ? { projectionMetadata: snapshot.metadata } : {}),
     },
   });
+}
+
+function workflowProjectionEpisodeMetadata(
+  record: WorkflowRunRecord,
+  snapshot: WorkflowProjectionStateSnapshot,
+): Record<string, unknown> | undefined {
+  const node = workflowProjectionModelNode(snapshot);
+  if (!node) return undefined;
+  const previous = isPlainRecord(record.metadata.workflowEpisode)
+    ? cloneJsonLike(record.metadata.workflowEpisode)
+    : {};
+  const nodeModelRef = workflowNodeModelRef(snapshot.definition, node);
+  return {
+    ...previous,
+    ...(nodeModelRef ? { modelRef: nodeModelRef } : {}),
+    nodeId: node.id,
+    attempt: snapshot.attempt ?? snapshot.state.attempts[node.id] ?? 1,
+    ...(node.runBudget ? { runBudget: { ...node.runBudget } } : {}),
+  };
+}
+
+function workflowProjectionAllowedTools(
+  snapshot: WorkflowProjectionStateSnapshot,
+): { nodeId: string; normalized: string[] } | undefined {
+  const node = workflowProjectionModelNode(snapshot);
+  if (!node?.tools || node.tools.length === 0) return undefined;
+  return {
+    nodeId: node.id,
+    normalized: [...new Set(node.tools.map(canonicalToolName))],
+  };
+}
+
+function workflowProjectionModelNode(
+  snapshot: WorkflowProjectionStateSnapshot,
+): WorkflowNodeDefinition | undefined {
+  if (snapshot.phase !== "node_started" || !snapshot.nodeId) return undefined;
+  const node = snapshot.definition.nodes.find(
+    (candidate) => candidate.id === snapshot.nodeId,
+  );
+  if (!node || (node.execute !== undefined && node.execute !== "model")) {
+    return undefined;
+  }
+  return node;
 }
 
 function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {

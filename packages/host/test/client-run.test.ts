@@ -13,6 +13,7 @@ import {
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
+  createHostWorkflowResumeRequest,
   resolveHostRequestModel,
   tracePathForSession,
 } from "../src/client-run.js";
@@ -78,6 +79,7 @@ describe("host client run request helpers", () => {
         traceLevel: "debug",
         targetPath: "README.md",
         confidentialPaths: ["secret*"],
+        confidentialDefaults: false,
         shouldWrite: true,
         metadata,
       }),
@@ -90,6 +92,7 @@ describe("host client run request helpers", () => {
       traceLevel: "debug",
       targetPath: "README.md",
       confidentialPaths: ["secret*"],
+      confidentialDefaults: false,
       shouldWrite: true,
       metadata,
     });
@@ -102,6 +105,8 @@ describe("host client run request helpers", () => {
         modelName: "openai/requested",
         modelNameSource: "request",
         traceLevel: "standard",
+        confidentialPaths: ["secret*"],
+        confidentialDefaults: false,
         shouldWrite: false,
         metadata,
       }),
@@ -113,6 +118,33 @@ describe("host client run request helpers", () => {
       permissionMode: undefined,
       traceLevel: "standard",
       targetPath: undefined,
+      confidentialPaths: ["secret*"],
+      confidentialDefaults: false,
+      shouldWrite: false,
+      metadata,
+    });
+
+    expect(
+      createHostWorkflowResumeRequest({
+        workflowRunId: "workflow_1",
+        sessionId: "session_1",
+        modelName: "openai/requested",
+        modelNameSource: "request",
+        traceLevel: "standard",
+        confidentialPaths: ["secret*"],
+        confidentialDefaults: false,
+        shouldWrite: false,
+        metadata,
+      }),
+    ).toEqual({
+      workflowRunId: "workflow_1",
+      sessionId: "session_1",
+      model: "openai/requested",
+      permissionMode: undefined,
+      traceLevel: "standard",
+      targetPath: undefined,
+      confidentialPaths: ["secret*"],
+      confidentialDefaults: false,
       shouldWrite: false,
       metadata,
     });

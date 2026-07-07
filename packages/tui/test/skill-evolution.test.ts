@@ -23,7 +23,6 @@ import {
   applySkillLearnDraftProposal,
   createSkillLearnDraftProposal,
   detectSkillLearnNotice,
-  detectSkillLearnTarget,
   formatSkillLearnStatus,
   parseSkillLearnMode,
   readSkillLearnStatus,
@@ -145,22 +144,6 @@ describe("tui skill evolution commands", () => {
       ]),
     ).toBeNull();
     expect(detectSkillLearnNotice(["Summarize this one-off task."])).toBeNull();
-    expect(
-      detectSkillLearnTarget([
-        "Remember this: skill code-reviewer should mention verification.",
-      ]),
-    ).toBe("code-reviewer");
-    expect(
-      detectSkillLearnTarget([
-        "Next time update the code-reviewer skill with this workflow.",
-      ]),
-    ).toBe("code-reviewer");
-    expect(
-      detectSkillLearnTarget([
-        "Remember this: skill code-reviewer should mention verification.",
-        "Summarize this one-off task.",
-      ]),
-    ).toBeUndefined();
   });
 
   it("creates a skill learn draft proposal without writing current skills", async () => {

@@ -59,6 +59,9 @@ Manual compact
   `transcript.jsonl`, `agents/<agent-id>/trace.jsonl`, per-run `run.json` /
   `result.json`, and `trace-pointer.json` files that point from each run
   directory back to the aggregate session and agent traces.
+- `FileSessionStore` writes `session.json` through core `file-atomic`, the same
+  lower-level atomic text writer wrapped by `agent-runtime` doc-store, because
+  core cannot depend upward on runtime packages.
 - Fresh workflow records live under workspace-level
   `.sparkwright/workflow-runs/`; each record retains `sessionId` so session
   filters and resume context remain available. Legacy
@@ -100,6 +103,45 @@ Manual compact
 - Session metadata should make terminal run state easier to inspect.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help now exits before workflow subcommand execution;
+  `workflow resume --help` and other workflow help paths do not create session
+  roots, traces, workflow-run records, or compaction artifacts.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/session/session-store.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`; manual
+  `node packages/cli/dist/index.js workflow
+  list|inspect|resume|distill|shadow --help`.
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: protocol and CLI resume payloads gained a
+  read-policy override, but session file layout, session events, compaction
+  artifacts, and replay consumers are unchanged.
+- Read: `packages/protocol/src/index.ts`, `packages/cli/src/cli.ts`,
+  `packages/host/src/runtime.ts`, `packages/core/src/session.ts`.
+- Tests: not run for session-store-specific behavior; C13 focused validation
+  ran in core/host/CLI/protocol.
+
+- Status: Verified
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration: `FileSessionStore.writeSession()` now composes core
+  `file-atomic` for `session.json` writes, retiring the private
+  `packages/core/src/session.ts` tmp+retry+rename copy. Session layout,
+  `SessionEvent.sequence`, compaction artifacts, and replay consumers are
+  unchanged.
+- Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
+  `packages/core/src/internal.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/session.test.ts`;
+  `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-05T22:37:13+0800

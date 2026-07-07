@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { atomicWriteText } from "@sparkwright/agent-runtime";
 import type {
   CreateJobInput,
   CronJob,
@@ -284,27 +285,9 @@ export class CronStore {
   private async save(data: CronStoreData): Promise<void> {
     await mkdir(this.rootDir, { recursive: true });
     await chmodIfPossible(this.rootDir, 0o700);
-    const tmp = join(this.rootDir, `.jobs.${process.pid}.${Date.now()}.tmp`);
     const json = `${JSON.stringify(data, null, 2)}\n`;
-    const handle = await open(tmp, "w", 0o600);
-    try {
-      await handle.writeFile(json, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(tmp, this.jobsPath);
+    await atomicWriteText(this.jobsPath, json, { durable: true, mode: 0o600 });
     await chmodIfPossible(this.jobsPath, 0o600);
-    try {
-      const dirHandle = await open(this.rootDir, "r");
-      try {
-        await dirHandle.sync();
-      } finally {
-        await dirHandle.close();
-      }
-    } catch {
-      // Directory fsync is not available on every platform/filesystem.
-    }
   }
 }
 

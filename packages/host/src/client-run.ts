@@ -70,6 +70,7 @@ export function createHostStartRunRequest(input: {
   traceLevel: TraceLevel;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   shouldWrite: boolean;
   metadata: Record<string, unknown>;
   input?: RunInputPayload;
@@ -87,6 +88,9 @@ export function createHostStartRunRequest(input: {
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
       ? { confidentialPaths: [...input.confidentialPaths] }
+      : {}),
+    ...(input.confidentialDefaults === false
+      ? { confidentialDefaults: false }
       : {}),
     shouldWrite: input.shouldWrite,
     metadata: input.metadata,
@@ -106,6 +110,7 @@ export function createHostResumeRunRequest(input: {
   traceLevel: TraceLevel;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   shouldWrite: boolean;
   metadata: Record<string, unknown>;
 }): RunResumeRequestPayload {
@@ -122,6 +127,9 @@ export function createHostResumeRunRequest(input: {
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
       ? { confidentialPaths: [...input.confidentialPaths] }
+      : {}),
+    ...(input.confidentialDefaults === false
+      ? { confidentialDefaults: false }
       : {}),
     shouldWrite: input.shouldWrite,
     metadata: input.metadata,
@@ -151,6 +159,7 @@ export function createHostWorkflowResumeRequest(input: {
   traceLevel: TraceLevel;
   targetPath?: string;
   confidentialPaths?: readonly string[];
+  confidentialDefaults?: boolean;
   shouldWrite: boolean;
   metadata: Record<string, unknown>;
 }): WorkflowResumeRequestPayload {
@@ -165,6 +174,9 @@ export function createHostWorkflowResumeRequest(input: {
     targetPath: input.targetPath,
     ...(input.confidentialPaths && input.confidentialPaths.length > 0
       ? { confidentialPaths: [...input.confidentialPaths] }
+      : {}),
+    ...(input.confidentialDefaults === false
+      ? { confidentialDefaults: false }
       : {}),
     shouldWrite: input.shouldWrite,
     metadata: input.metadata,

@@ -161,6 +161,7 @@ export function createTaskCreate(
           taskId: handle.record.id,
           mode,
           awaited: parsed.awaited,
+          nextAction: taskCreateNextAction(handle.record.id, parsed.awaited),
         };
       }
 
@@ -186,6 +187,7 @@ export function createTaskCreate(
           mode: "foreground",
           promoted: true,
           awaited: true,
+          nextAction: taskCreateNextAction(handle.record.id, true),
         };
       }
 
@@ -206,11 +208,13 @@ export type TaskCreateResult =
       mode: "foreground";
       promoted: true;
       awaited: true;
+      nextAction: TaskCreateNextAction;
     }
   | {
       taskId: TaskId;
       mode: "awaited" | "background";
       awaited: boolean;
+      nextAction: TaskCreateNextAction;
     }
   | {
       taskId: TaskId;
@@ -221,6 +225,36 @@ export type TaskCreateResult =
       result?: unknown;
       error?: TaskRecord["error"];
     };
+
+export interface TaskCreateNextAction {
+  tool: "task";
+  taskId: TaskId;
+  action: "wait" | "get";
+  /** @reserved Public task-create output field consumed by model-visible tool results. */
+  instruction: string;
+  /** @reserved Public task-create output field consumed by model-visible tool results. */
+  outputInstruction?: string;
+  /** @reserved Public task-create output field consumed by model-visible tool results. */
+  duplicateAvoidance: string;
+}
+
+function taskCreateNextAction(
+  taskId: TaskId,
+  awaited: boolean,
+): TaskCreateNextAction {
+  return {
+    tool: "task",
+    taskId,
+    action: awaited ? "wait" : "get",
+    instruction: awaited
+      ? `Call task with action="wait" and taskId="${taskId}" to wait for this task before creating another task for the same goal.`
+      : `Call task with action="get" and taskId="${taskId}" to inspect this background task if you need its status.`,
+    outputInstruction:
+      'After the task is terminal, call task with action="output" and the same taskId if you need buffered output that was not included in the task result.',
+    duplicateAvoidance:
+      "Do not call task_create again for the same goal; use this taskId to wait, inspect, or retrieve output.",
+  };
+}
 
 function taskCreateKindDescriptors(
   options: CreateTaskToolsOptions,
@@ -386,6 +420,8 @@ function taskControlInputSchema(): JsonSchemaObject {
       action: {
         type: "string",
         enum: ["list", "get", "output", "wait", "stop"],
+        description:
+          "list inspects tasks, get/output/stop require taskId, and wait requires taskId or ids.",
       },
       taskId: {
         type: "string",
@@ -419,20 +455,6 @@ function taskControlInputSchema(): JsonSchemaObject {
     },
     required: ["action"],
     additionalProperties: false,
-    oneOf: [
-      {
-        properties: { action: { enum: ["list"] } },
-      },
-      {
-        properties: { action: { enum: ["get", "output", "stop"] } },
-        required: ["action", "taskId"],
-      },
-      {
-        properties: { action: { enum: ["wait"] } },
-        required: ["action"],
-        anyOf: [{ required: ["taskId"] }, { required: ["ids"] }],
-      },
-    ],
   };
 }
 
@@ -753,25 +775,33 @@ function createTaskWait(options: CreateTaskToolsOptions): ToolDefinition {
           ? await waitForAllTasks(options.manager, records)
           : await waitForAnyTask(options.manager, records);
 
-      const terminalIds = new Set(waitRecord.map((record) => record.id));
-      for (const record of waitRecord) {
+      const terminalRecords = waitRecord.filter((record) =>
+        isTerminal(record.status),
+      );
+      const terminalIds = new Set(terminalRecords.map((record) => record.id));
+      for (const record of terminalRecords) {
         options.manager.store.update(record.id, { awaited: false });
       }
 
       return {
         mode: parsed.mode,
-        complete: parsed.mode === "all",
+        complete:
+          parsed.mode === "all"
+            ? terminalRecords.length === parsed.ids.length
+            : terminalRecords.length > 0,
         taskIds: parsed.ids,
         terminalTaskIds: [...terminalIds],
         tasks: waitRecord.map(
           (record) => options.manager.store.get(record.id) ?? record,
         ),
-        completed: waitRecord.filter((record) => record.status === "completed")
+        completed: terminalRecords.filter(
+          (record) => record.status === "completed",
+        ).length,
+        failed: terminalRecords.filter((record) => record.status === "failed")
           .length,
-        failed: waitRecord.filter((record) => record.status === "failed")
-          .length,
-        cancelled: waitRecord.filter((record) => record.status === "cancelled")
-          .length,
+        cancelled: terminalRecords.filter(
+          (record) => record.status === "cancelled",
+        ).length,
       };
     },
   });

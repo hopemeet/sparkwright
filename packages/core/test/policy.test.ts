@@ -7,6 +7,7 @@ import {
   createToolGovernancePolicy,
   createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
+  resolveRunConfidentialPaths,
   type Policy,
 } from "../src/policy.js";
 
@@ -485,6 +486,24 @@ describe("createWorkspaceMutationPolicy", () => {
 });
 
 describe("createWorkspaceReadScopePolicy", () => {
+  it("resolves conservative default confidential paths unless explicitly disabled", () => {
+    expect(resolveRunConfidentialPaths()).toEqual([
+      ...DEFAULT_CONFIDENTIAL_PATHS,
+    ]);
+    expect(
+      resolveRunConfidentialPaths({ confidentialPaths: [".env", "secrets"] }),
+    ).toEqual([...DEFAULT_CONFIDENTIAL_PATHS, "secrets"]);
+    expect(
+      resolveRunConfidentialPaths({
+        confidentialDefaults: false,
+        confidentialPaths: ["secrets"],
+      }),
+    ).toEqual(["secrets"]);
+    expect(
+      resolveRunConfidentialPaths({ confidentialDefaults: false }),
+    ).toEqual([]);
+  });
+
   it("is a no-op when no confidential paths are configured", async () => {
     const policy = createWorkspaceReadScopePolicy({ confidentialPaths: [] });
 

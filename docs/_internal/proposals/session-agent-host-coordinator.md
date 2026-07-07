@@ -270,6 +270,22 @@ Provider package registration can be process-global, but resolved model config
 and model adapters may be workspace- or run-sensitive because workspace config,
 model override, pricing, and credentials can differ.
 
+## P0 Boundary Matrix (Frozen 2026-07-06)
+
+This matrix is the C3 P0 deliverable. It freezes ownership before any
+`SessionTurnScheduler` implementation so the coordinator does not become a
+fourth ambiguous owner of "the next execution".
+
+| Boundary | Frozen owner | Current / compatibility path | Rule |
+| --- | --- | --- | --- |
+| Create a session turn | `server-runtime` `SessionTurnScheduler` allocates `queueEntryId` / `turnId`; host-owned `SessionTurnFactory` assembles the logical turn/run-chain. | Per-connection `HostRuntime.startRun()` may continue to create runs directly until the coordinator path becomes default. | Core creates runs, not session turns. Once P1 is default, new durable session turns enter through the scheduler. |
+| Continue execution inside an active turn | Core owns in-run command consumption and continuation. Workflow owns workflow episode advancement. `TaskManager` owns task terminal/revival signals. Scheduler owns only selecting the next queued session turn after the active turn is terminal. | Existing todo-supervised continuations and child/delegate runs remain host run-chain behavior wrapped by one future `SessionTurnHandle`. | No component outside the active turn may drain the session queue or declare the turn terminal. |
+| Inject user commands/messages | `SessionTurnScheduler` routes same-session messages to the active `SessionTurnHandle`; the handle delegates to the current/root `RunHandle.injectUserMessage()`. | Current `HostRuntime.injectRunMessage()` checks the active run id and calls core's command queue directly. | Do not create a second in-run command queue in server-runtime. Injection reuses core `enqueueCommand()`. |
+| Emit terminal and wakeup notifications | Core emits run terminal facts; task/workflow outboxes emit task/workflow terminal and wakeup facts; host/coordinator routes and fans out those facts. | Current host runtime forwards buffered run, task, and workflow notifications to the connected client. | Coordinator may wake parked queues and subscribers, but it must not invent terminal facts. |
+| Hold workspace lock and resource pool | Host owns `WorkspaceResourcePool` and workspace write-lock implementation; scheduler holds a logical lease while a turn is runnable/active. | Current per-connection host runtime resolves workspace-scoped config, stores, MCP, sandbox, and write policy inline. | Pool key is workspace root plus config fingerprint; write-lock scope is workspace root only. Leases release on turn terminal/cancel. |
+| Coordinate across processes | No P0/P1 component coordinates across processes. P3 owns DB/Redis-backed queues, locks, leases, stores, and outboxes. | File stores remain best-effort and must not be treated as multi-process-safe. | In-process success is not evidence of distributed safety. Cross-process coordination requires a dedicated store/lock backend. |
+| Preserve per-connection `HostRuntime` | Host keeps per-connection `HostRuntime` as the compatibility adapter while the scheduler rolls out. | `serveConnection()` still creates a fresh `HostRuntime`; one connection has one active runtime/run-chain. | Compatibility mode may bypass cross-session coordination. It is not the target owner and must not be cited as P1 completion. |
+
 ## SessionTurnFactory Port
 
 `server-runtime` needs a turn creation port because it cannot import host, and
@@ -846,6 +862,8 @@ drop IM/user-submitted work.
 ### P0: Document And Freeze The Boundary
 
 - Land this v3 proposal.
+- Land the P0 boundary matrix above, including the per-connection
+  `HostRuntime` compatibility path.
 - Record in project map that `server-runtime` is the intended session
   coordination center, with a turn/run-chain scheduler rather than a
   single-run scheduler, but is not yet wired into host/CLI.
@@ -983,8 +1001,9 @@ P3/P4 tests:
   commands?
 - Should event fan-out default to all linked sources, only subscribed links, or
   only the source that initiated the current turn?
-- Should host keep current per-connection `HostRuntime` as a compatibility path
-  after coordinator becomes default?
+- Resolved by C3 P0 on 2026-07-06: host keeps the current per-connection
+  `HostRuntime` as a compatibility adapter, but it is not the target
+  coordination owner and may bypass cross-session scheduling.
 - What is the smallest useful DB-backed store: Postgres-only first, or an
   interface plus file/SQLite/Postgres implementations?
 

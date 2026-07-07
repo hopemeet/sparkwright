@@ -161,24 +161,6 @@ function condenseEvidence(text: string): string {
   return collapsed.length > 280 ? `${collapsed.slice(0, 277)}...` : collapsed;
 }
 
-export function detectSkillLearnTarget(
-  goals: readonly string[],
-): string | undefined {
-  const goal = latestGoal(goals);
-  if (!goal) return undefined;
-  const combined = goal.toLowerCase();
-  const patterns = [
-    /\bskill\s+([a-z0-9][a-z0-9-]{0,63})\b/u,
-    /\b([a-z0-9][a-z0-9-]{0,63})\s+skill\b/u,
-  ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(combined);
-    const name = match?.[1];
-    if (name && !isReservedSkillTarget(name)) return name;
-  }
-  return undefined;
-}
-
 function latestGoal(goals: readonly string[]): string | undefined {
   for (let i = goals.length - 1; i >= 0; i -= 1) {
     const goal = goals[i]?.trim();
@@ -343,21 +325,6 @@ function appendLearning(beforeContent: string, evidence: string): string {
     return `${trimmed}\n${bullet}\n`;
   }
   return [trimmed, "", "## Learnings", "", bullet, ""].join("\n");
-}
-
-function isReservedSkillTarget(name: string): boolean {
-  return new Set([
-    "a",
-    "an",
-    "the",
-    "this",
-    "that",
-    "with",
-    "for",
-    "from",
-    "next",
-    "current",
-  ]).has(name);
 }
 
 async function readJsonObject(path: string): Promise<Record<string, unknown>> {

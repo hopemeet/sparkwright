@@ -43,6 +43,8 @@ export type {
 } from "./trace.js";
 export { LocalWorkspace, ControlledWorkspace } from "./workspace.js";
 export type { ControlledWorkspaceOptions } from "./workspace.js";
+export { atomicWriteText, atomicWriteTextSync } from "./file-atomic.js";
+export type { AtomicTextWriteOptions } from "./file-atomic.js";
 export {
   DefaultObservationFormatter,
   DefaultContextAssembler,

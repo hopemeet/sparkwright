@@ -99,6 +99,57 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help exits before workflow resume adoption, host run
+  setup, checkpoint lookup, or session replay. Resume/replay storage and
+  workflow record adoption semantics are unchanged by this fix.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`; manual
+  `node packages/cli/dist/index.js workflow resume --help`.
+
+- Status: Verified
+- Date: 2026-07-06T21:18:25+0800
+- Scope: C13-② post-acceptance resume policy fix: `run.resume` and
+  `workflow.resume` continuation episodes now reuse the prepared environment's
+  effective confidential read policy, including workspace config values when
+  protocol payload fields are omitted. Checkpoint lookup, from-trace replay,
+  and workflow adoption semantics are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/client-run.ts`,
+  `packages/host/test/client-run.test.ts`,
+  `packages/host/test/protocol.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/client-run.test.ts`; `npm --workspace @sparkwright/host test --
+  test/protocol.test.ts -t "confidential"`.
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: run resume and workflow resume now pass
+  `confidentialDefaults` to host policy construction. Checkpoint replay,
+  from-trace reconstruction, session replay projection, and workflow state
+  adoption semantics are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/cli/src/runners/host-runner.ts`, `packages/cli/src/cli.ts`,
+  `packages/protocol/src/index.ts`.
+- Tests: not run for resume-specific behavior; C13 focused validation ran in
+  core/host/CLI/protocol.
+
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration touched only the atomic writer used for
+  `FileSessionStore` `session.json` saves. Checkpoint resume, from-trace
+  reconstruction, session replay projection, workflow resume discovery, and TUI
+  replay semantics are unchanged.
+- Read: `packages/core/src/session.ts`, `packages/core/src/file-atomic.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`.
+- Tests: storage-focused `npm --workspace @sparkwright/core test --
+  test/session.test.ts` and `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; resume-specific tests not run for this storage-only
+  change.
+
 - Status: Verified
 - Date: 2026-07-05T23:09:50+0800
 - Scope: workflow-runtime-v1 P9a D5 store boundary: fresh workflow runs now

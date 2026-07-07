@@ -786,6 +786,33 @@ describe("loadHostConfig", () => {
     }
   });
 
+  it("lets config explicitly disable built-in confidential defaults", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, { confidentialDefaults: true });
+      await mkdir(join(cwd, ".sparkwright"), { recursive: true });
+      await writeFile(
+        join(cwd, ".sparkwright", "config.json"),
+        JSON.stringify({
+          policy: { confidentialDefaults: false },
+          confidentialPaths: ["internal/**"],
+        }),
+        "utf8",
+      );
+
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(loaded.config.confidentialDefaults).toBe(false);
+      expect(loaded.sources.confidentialDefaults).toContain("project");
+      expect(loaded.config.confidentialPaths).toEqual(["internal/**"]);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("merges write guardrails conservatively so project config can only tighten", async () => {
     const xdg = await makeTempDir();
     const cwd = await makeTempDir();
@@ -1034,6 +1061,59 @@ describe("loadHostConfig", () => {
           }),
         ]),
       );
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("parses nested background task opt-in for agents", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            maxDepth: 2,
+            allowNestedBackgroundTasks: true,
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(loaded.errors).toEqual([]);
+      expect(
+        loaded.config.capabilities?.agents?.allowNestedBackgroundTasks,
+      ).toBe(true);
+      expect(loaded.config.capabilities?.agents?.maxDepth).toBe(2);
+    } finally {
+      await rm(xdg, { recursive: true, force: true });
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects invalid nested background task opt-in values", async () => {
+    const xdg = await makeTempDir();
+    const cwd = await makeTempDir();
+    try {
+      await writeUserConfig(xdg, {
+        capabilities: {
+          agents: {
+            allowNestedBackgroundTasks: "yes",
+          },
+        },
+      });
+      const loaded = await loadHostConfig(cwd, { XDG_CONFIG_HOME: xdg });
+
+      expect(
+        loaded.config.capabilities?.agents?.allowNestedBackgroundTasks,
+      ).toBeUndefined();
+      expect(loaded.errors).toEqual([
+        expect.objectContaining({
+          field: "capabilities.agents.allowNestedBackgroundTasks",
+          message: "must be a boolean",
+        }),
+      ]);
     } finally {
       await rm(xdg, { recursive: true, force: true });
       await rm(cwd, { recursive: true, force: true });
@@ -2161,6 +2241,7 @@ describe("loadHostConfig", () => {
         providers: "nope",
         accessMode: "always",
         workspace: "",
+        confidentialDefaults: "false",
         confidentialPaths: ["secrets/**", ""],
         maxSteps: 0,
       });
@@ -2169,6 +2250,7 @@ describe("loadHostConfig", () => {
       expect(loaded.config.accessMode).toBeUndefined();
       expect(loaded.config.permissionMode).toBeUndefined();
       expect(loaded.config.workspace).toBeUndefined();
+      expect(loaded.config.confidentialDefaults).toBeUndefined();
       expect(loaded.config.confidentialPaths).toBeUndefined();
       expect(loaded.config.maxSteps).toBeUndefined();
       expect(loaded.errors).toEqual(
@@ -2177,6 +2259,7 @@ describe("loadHostConfig", () => {
           expect.objectContaining({ field: "providers" }),
           expect.objectContaining({ field: "accessMode" }),
           expect.objectContaining({ field: "workspace" }),
+          expect.objectContaining({ field: "confidentialDefaults" }),
           expect.objectContaining({ field: "confidentialPaths" }),
           expect.objectContaining({ field: "maxSteps" }),
         ]),

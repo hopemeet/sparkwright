@@ -1,6 +1,12 @@
 # 设计提案:TUI 权限收归单一模式轴
 
-> 状态:草案,已经过一轮 map-driven review(2026-06-25),findings 已折入下文。本提案只改 TUI 的用户可见面与请求边界派生,**不改 core 策略结构**;headless 入口(CLI run / cron / ACP)零影响。
+> 状态:implemented(2026-07-06 源码复核)。`tuiPermissionMode` 已在 TUI 配置、
+> run-controller、config panel 等路径落地;`allowWorkspaceWriteApproval` 在
+> `packages/*/src` 零命中,只剩本提案历史文字与测试中的不存在断言。本提案只改 TUI
+> 的用户可见面与请求边界派生,**不改 core 策略结构**;headless 入口(CLI run /
+> cron / ACP)零影响。
+>
+> 收尾口径:下方残余产品问题不再由本提案推进,统一并入 C2/access-mode 裁决面。
 
 ## 修订记录
 
@@ -149,14 +155,20 @@ config 合并契约(`packages/host/src/config-zod-schema.ts` 顶部说明)把 `p
 - [ ] **headless 入口零回归**:CLI run / cron / ACP 的 `--yes*` + `shouldWrite` + `dont_ask` 行为不变(跑 `npm run release:check` 的回归套件 MCP/SESSION/DELEGATE/PROMOTE/NO_TASKMGR/SPAWN_FINAL/ACP/CONSIST)。
 - [x] 删除 `allowWorkspaceWriteApproval` 后:协议 schema / HOST_PROTOCOL 文档 / 上述 **8 个** project map 页一致(含 tool-orchestration.md、coding-tools.md 两处概念页),`client-run` / policy 测试更新。
 
-## 待作者确认的开放问题
+## 残余开放问题(并入 C2/access-mode 裁决)
 
-1. **已决:不保留"能力 read-only + 单点提权"这一姿态。** `allowWorkspaceWriteApproval` 因 Unreleased 已按首选方案直接删除。
-2. **`config.approvals.*` 在 TUI 的处理**:完全忽略,还是读一次作为初始 TUI mode、之后以 TUI mode 为准?(§3)
-3. **`--yes-shell-safe` / `config.approvals.shellSafe` 的归宿**:并入 `accept-edits`,还是单列一档/子选项?
-4. **`dont_ask` 是否对 TUI 完全隐藏**(倾向是,纯 headless 概念)。
-5. **配置默认档**:TUI 默认 `ask`(可写但每次问)还是 `read-only`(更保守,需手动提权)?这关系到"开箱即用 vs 最小权限"的取向。
-6. **`read-only` 的语义边界**:接受"不写、其余风险动作照常问"即可,还是需要 core 增设"零副作用"能力?(§方案 1 注)
+1. **已决:不保留"能力 read-only + 单点提权"这一姿态。**
+   `allowWorkspaceWriteApproval` 因 Unreleased 已按首选方案直接删除。
+2. **并入 C2/access-mode:** `config.approvals.*` 在 TUI 的处理:完全忽略,
+   还是读一次作为初始 TUI mode、之后以 TUI mode 为准?(§3)
+3. **并入 C2/access-mode:** `--yes-shell-safe` /
+   `config.approvals.shellSafe` 的归宿:并入 `accept-edits`,还是单列一档/子选项?
+4. **并入 C2/access-mode:** `dont_ask` 是否对 TUI 完全隐藏(倾向是,纯
+   headless 概念)。
+5. **并入 C2/access-mode:** 配置默认档:TUI 默认 `ask`(可写但每次问)
+   还是 `read-only`(更保守,需手动提权)?这关系到"开箱即用 vs 最小权限"的取向。
+6. **并入 C2/access-mode:** `read-only` 的语义边界:接受"不写、其余风险动作照常问"即可,
+   还是需要 core 增设"零副作用"能力?(§方案 1 注)
 
 ## 分期(已按 review 重排)
 

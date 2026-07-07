@@ -63,6 +63,10 @@ policy requires approval
   with the parent run, so child workspace-write and shell gates still resolve
   through the same CLI/TUI approval and trace path. They do not receive an
   interaction channel for arbitrary user questions.
+- Read-confidentiality denials are policy denials, not approval prompts.
+  `workspace.read.denied` plus `tool.failed` `READ_SCOPE_DENIED` is the audit
+  path; a model may continue and complete the run without a CLI failure if it
+  produces a final answer after the expected denial.
 
 ## Consumers
 
@@ -83,6 +87,27 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow nested help exits before config/model/host setup, so it does
+  not enter approval policy or pending approval flows. Approval request,
+  resolution, and denial semantics are unchanged.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow nested help|nested command help"`.
+
+- Status: Verified
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: confidential read denials remain policy
+  denials and do not introduce approval requests or approval resolver changes.
+- Read: `packages/core/src/policy.ts`, `packages/core/src/run-outcome.ts`,
+  `packages/host/src/runtime.ts`, `packages/cli/test/cli.test.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/policy.test.ts
+  test/workspace.test.ts`; `npm --workspace @sparkwright/cli test --
+  test/cli.test.ts -t "confidential"`.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

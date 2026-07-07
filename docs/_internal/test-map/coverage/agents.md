@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-03
+- Last reviewed: 2026-07-07
 - Evidence source: 2026-06-22 focused host/agent tests passed and real
   `openai/gpt-5.4-mini` read-only dynamic `spawn_agent` canaries produced valid
   trace/session structure. A configured read/write delegate canary wrote through
@@ -30,6 +30,11 @@
   Later 2026-07-02 fix verification covered action-specific `task` schema,
   semantic validation for empty monitor placeholders, recovered trace outcome
   classification, and a clean real mini rerun using concrete task ids.
+  2026-07-07 real Sonnet QA covered skill-managed agent creation, indexed
+  delegation, legacy Skill + dynamic spawn, Anthropic deferred `task` schema
+  compatibility, nested background-agent opt-in parsing, `task wait`
+  completion semantics, and nested awaited `task_create(kind:"agent")`
+  result delivery.
 
 ## Covered
 
@@ -189,6 +194,53 @@
   output contained both sentinels, and trace report/verify/session check all
   passed. See
   [../failures/task-create-agent-maxsteps-underallocation.md](../failures/task-create-agent-maxsteps-underallocation.md).
+- 2026-07-07 real `anthropic/claude-sonnet-4-6`
+  `regression:real-agents` passed: Sonnet created a callable
+  `mini_reviewer` profile through `tool_search,create_agent`, then used the
+  default indexed `delegate_agent(agentId:"mini_reviewer")` route with
+  separated parent/child attribution and clean trace/session checks. See
+  [../runs/2026-07-07-real-sonnet-skill-agent-qa.md](../runs/2026-07-07-real-sonnet-skill-agent-qa.md).
+- 2026-07-07 real Sonnet legacy Skill + `spawn_agent` fixture passed with
+  `skill_load` body/reference loads, one dynamic child
+  `dynamic_sentinel-checker`, child `glob`/`grep`, `subagent.completed`
+  `finality:"complete"`, zero writes, zero approvals, and clean trace
+  report/verify/session check.
+- 2026-07-07 fix verification flattened the built-in deferred `task` schema so
+  real Anthropic no longer rejects it after `tool_search`. A Sonnet smoke run
+  loaded `task`, called `task(action:"list", scope:"all")`, and passed trace
+  report with no findings. Deterministic coverage asserts the model-facing
+  schema has no top-level `oneOf` / `anyOf` / `allOf` while runtime
+  `validateInput()` still enforces action-specific ids.
+- 2026-07-07 nested background-agent fix verification covered
+  `capabilities.agents.allowNestedBackgroundTasks` parsing, CLI `agents create`
+  preservation of sibling runtime options, `task(action:"wait")` terminal-only
+  complete semantics, and a real Sonnet nested run where child
+  `task_create(mode:"awaited", kind:"agent")` returned the completed task
+  record/result to the child. Trace report and trace verify passed with no
+  findings.
+- 2026-07-07 fix verification added a host built-in Stop hook that advances
+  once when a final answer omits disclosure of partial/truncated/step-limited or
+  failed child finality. Focused host coverage asserts the hook triggers on
+  `subagent.completed` step-limit evidence, passes when the answer already
+  caveats partial child results, and ignores ordinary truncated non-agent tool
+  output.
+- 2026-07-07 real `openai/gpt-5.4-mini` Agent + Skill multidirection QA
+  covered current-source Skill-loaded dynamic `spawn_agent`, Skill-loaded
+  configured indexed `delegate_agent(agentId:"static_reader")`, Skill-loaded
+  awaited `task_create(kind:"agent")`, dynamic child write-boundary safety, and
+  both reusable real agent/Skill regressions. Dynamic spawn and configured
+  delegate traces completed with child finality `complete`, zero writes, and
+  clean trace report/verify/session checks. The write-boundary route prevented
+  writes but correctly reported child `finality:"partial"` / `step_limit`; the
+  parent final prose did not relay that warning. See
+  [../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md](../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md).
+- 2026-07-07 root-cause fix for the real mini awaited Agent + Skill run:
+  detached/promoted `task_create` results now carry concrete `nextAction`
+  guidance (`taskId`, `task` action, output retrieval hint, duplicate-avoidance
+  text), and host task notifications include `Result summary: ...` in
+  model-visible body text. Focused agent-runtime/host tests, typecheck, builds,
+  and `check:dist-fresh` passed. See
+  [../failures/task-create-agent-low-signal-result-feedback.md](../failures/task-create-agent-low-signal-result-feedback.md).
 
 ## Weak Or Untested
 
@@ -219,6 +271,16 @@
   [../runs/2026-07-01-real-mini-background-task-qa.md](../runs/2026-07-01-real-mini-background-task-qa.md),
   [../failures/task-create-agent-kind-payload-contract.md](../failures/task-create-agent-kind-payload-contract.md),
   and [../failures/prompt-induced-tool-loop.md](../failures/prompt-induced-tool-loop.md).
+- Pre-fix 2026-07-07 current-source Skill + awaited background-agent rerun
+  reproduced the same family under a stronger "exactly one" prompt: the parent
+  created three equivalent awaited agent tasks after recovering a wrong Skill
+  reference path. The children completed useful read-only work. Post-fix,
+  diagnose any recurrence by first checking whether `task_create.nextAction`
+  and notification body result summaries reached the prompt.
+- Parent final prose can omit a `spawn_agent` partial/finality warning even
+  when `tool.completed spawn_agent` and `trace report` clearly flag child
+  `step_limit`. Assertions for child write-boundary canaries should inspect
+  `subagent.completed.finality` and trace report, not prose alone.
 - Real mini can still make prompt-sensitive choices around when to monitor a
   task, but empty-id `task wait` / `task output` placeholders are now guided by
   action-specific schema, rejected by semantic validation, and recovered in
@@ -245,6 +307,27 @@
   any similar future finding as a trace diagnostics regression before blaming
   agent runtime. See
   [../failures/trace-background-agent-low-progress.md](../failures/trace-background-agent-low-progress.md).
+- Provider-specific schema compatibility for external MCP or future deferred
+  tools with arbitrary top-level combinators remains a residual risk. The
+  built-in deferred `task` wrapper is fixed and covered by deterministic schema
+  checks plus a real Sonnet canary. See
+  [../failures/anthropic-deferred-task-schema-oneof.md](../failures/anthropic-deferred-task-schema-oneof.md).
+- Nested `task_create(mode:"awaited")` now waits inline only for the opt-in
+  nested-agent surface so the child receives a usable terminal result. Keep
+  truly long-running nested tasks in rotation because this changes UX from
+  "return id immediately" to "return when the awaited child task finishes" for
+  that nested-only path.
+- 2026-07-07 real mini follow-up confirmed the normal awaited agent-task reuse
+  path is clean when mini loads the deferred `task` schema and waits on the
+  returned task id. An intentional repeated agent-task diagnostic exposed a raw
+  trace metadata gap: terminal `subagent.completed` events for `agent_task`
+  lacked `taskId`, so trace diagnostics could not classify completed
+  same-payload repeats as `REPEATED_TASK_CREATE_LIFECYCLE`. See
+  [../failures/agent-task-terminal-trace-missing-task-id.md](../failures/agent-task-terminal-trace-missing-task-id.md).
+- Post-fix verification on the same date confirmed `agent_task`
+  `subagent.completed` now carries the originating task id and trace report
+  classifies the repeated same-payload agent task as
+  `REPEATED_TASK_CREATE_LIFECYCLE`.
 
 ## Focused Route
 
@@ -294,3 +377,4 @@ npm --workspace @sparkwright/tui test -- test/event-stream-render.test.ts test/c
 - [../failures/task-action-empty-id-recovery.md](../failures/task-action-empty-id-recovery.md)
 - [../failures/task-list-resume-run-scope.md](../failures/task-list-resume-run-scope.md)
 - [../failures/trace-background-agent-low-progress.md](../failures/trace-background-agent-low-progress.md)
+- [../failures/anthropic-deferred-task-schema-oneof.md](../failures/anthropic-deferred-task-schema-oneof.md)

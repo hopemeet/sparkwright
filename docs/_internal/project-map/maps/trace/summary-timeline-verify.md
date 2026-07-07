@@ -66,7 +66,8 @@ trace.jsonl
 - Report turns summary/raw-event evidence into a concise verdict and findings
   for unresolved verification command failures, efficiency, run-scoped low net
   file progress across many model/tool cycles, repeated reads, repeated
-  identical tool requests, repeated command failures,
+  identical tool requests, repeated task-create lifecycle misuse,
+  repeated command failures,
   recovered/unresolved failures, safety posture, and cost-reporting gaps.
 - Completed-run verification profile summaries prefer terminal FactLedger
   verification-result snapshots, including `verificationSource:"profile"`;
@@ -84,6 +85,11 @@ trace.jsonl
   `runId` so parent and child/sub-agent runs are not summed into false repeated
   request or low-progress findings. CLI text/JSON output must not depend on
   analyzer declaration order.
+- `REPEATED_TASK_CREATE_LIFECYCLE` is a report-only medium finding for same-run
+  equivalent `task_create` calls after a prior same `kind` + payload task has
+  completed and exposed a reusable task id. It intentionally ignores
+  failed/cancelled/partial/truncated prior tasks and uses stable payload
+  fingerprints rather than matching incidental scheduling fields.
 - The internal `TraceReportFacts` aggregate is report-specific and private to
   `trace-diagnostics.ts`; it is not a public/general `TraceFacts` contract.
   `SessionTraceFacts` remains a separate session-compaction/oracle signal model.
@@ -152,8 +158,12 @@ trace.jsonl
 - When `run.completed.factLedger` is present, trace summary command-failure
   diagnostics prefer each run's ledger projection over legacy `commandOutcome`
   and raw-event recompute. Multi-run traces aggregate per-run projections so a
-  clean later ledger cannot mask an earlier run's failures. Older runs without a
-  ledger keep the existing `commandOutcome`/offline recompute compatibility path.
+  clean later ledger cannot mask an earlier run's failures. The ledger projection
+  includes non-stale model-initiated command facts plus verification-relevant
+  verifier-launched command facts, so workflow command verifiers are visible in
+  `commandFailures.verification` even when they did not originate from a model
+  shell tool call. Older runs without a ledger keep the existing
+  `commandOutcome`/offline recompute compatibility path.
 - Completed-run outcome projection treats host-emitted `workflow.failed` events
   as failing workflow evidence for the enclosing P1 workflow run. Core does not
   synthesize those events; the projection is over raw trace facts emitted by
@@ -221,6 +231,61 @@ trace.jsonl
   guard.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-07T15:21:23+0800
+- Scope: trace report added `REPEATED_TASK_CREATE_LIFECYCLE` for completed
+  same-payload repeated task creation and keeps failed prior tasks out of that
+  finding.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/test/trace.test.ts`,
+  `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-07T00:55:52+0800
+- Scope: workflow distill/shadow now filters blocked tool attempts in
+  `workflow-trace-observation.ts`; raw trace summary, timeline, report, verify,
+  and host session inspection diagnostics remain unchanged. A real Sonnet trace
+  still records the blocked `glob` request/failure, while offline workflow
+  observation no longer promotes it into required coverage or distill tools.
+- Read: `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/src/workflow-distill.ts`,
+  `packages/host/src/workflow-shadow.ts`,
+  `docs/_internal/project-map/maps/trace/summary-timeline-verify.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/workflow-shadow.test.ts test/workflow-distill.test.ts`; manual
+  `workflow shadow` / `workflow distill` replay of
+  `session_mr9fmua899dimnc2`.
+
+- Status: Verified
+- Date: 2026-07-06T23:31:01+0800
+- Scope: workflow verifier trace summary fix: persisted FactLedger projection now
+  counts verification-relevant `verifier-launched` command failures; workflow
+  distill/shadow observation also normalizes bare `run.completed` events to
+  `completed`.
+- Read: `packages/core/src/run-outcome.ts`,
+  `packages/core/test/trace.test.ts`,
+  `packages/host/src/workflow-trace-observation.ts`,
+  `packages/host/test/workflow-distill.test.ts`,
+  `packages/host/test/workflow-shadow.test.ts`.
+- Tests: `npm --workspace @sparkwright/core test -- test/trace.test.ts`;
+  `npm --workspace @sparkwright/core run typecheck`; `npm --workspace
+  @sparkwright/host test -- test/workflows.test.ts
+  test/workflow-distill.test.ts test/workflow-shadow.test.ts`; `npm --workspace
+  @sparkwright/host run typecheck`.
+
+- Status: Read-only
+- Date: 2026-07-06T20:47:10+0800
+- Scope: C13-② routed-page check: confidential read denials remain existing raw
+  `workspace.read.denied` / `tool.failed` evidence. Trace summary, timeline,
+  report, verify, and host session inspection derivations were not changed.
+- Read: `packages/core/src/trace-diagnostics.ts`,
+  `packages/core/src/workspace.ts`, `packages/core/src/policy.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: not run for trace diagnostic commands; C13 focused validation ran in
+  core/host/CLI/protocol.
 
 - Status: Read-only
 - Date: 2026-07-05T22:20:59+0800

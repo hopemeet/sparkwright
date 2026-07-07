@@ -35,7 +35,8 @@ cron config/state
   `~/.local/state/sparkwright/cron`) with no legacy config-root migration.
 - `CronCommandService` owns schema-normalized command behavior for create,
   update, list, status, pause, resume, and remove. `CronStore` remains the
-  persistence/atomic mutation layer.
+  persistence/atomic mutation layer and composes `agent-runtime` `doc-store`
+  atomic writes for durable store saves.
 - Cron jobs can reference skills and run goals on a schedule.
 - Schedule delay input accepts both compact (`1h`) and display (`in 1h`) forms.
 - Updating a completed/error job's schedule reactivates it, clears
@@ -100,6 +101,79 @@ cron config/state
   tool, verification, mutation, or denial signal exists.
 
 ## Last Verified
+
+- Status: Read-only
+- Date: 2026-07-07T14:43:43+0800
+- Scope: real mini Agent + Skill QA follow-up changed detached/promoted
+  `task_create` result guidance and host terminal task notification body text
+  only. Cron state, `CronStore`, cron tool schemas, scheduler semantics, and
+  cron run success derivation are unchanged.
+- Read: `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`,
+  `docs/_internal/project-map/maps/capabilities/cron.md`.
+- Tests: cron-specific behavior not rerun for this agent-task feedback fix;
+  focused task/agent tests and host task revival tests covered the changed
+  paths.
+
+- Status: Read-only
+- Date: 2026-07-07T12:30:00+0800
+- Scope: real Sonnet nested-agent/task QA changed host nested-agent task
+  wrapping and agent-runtime task monitor semantics only. Cron state,
+  `CronStore`, cron tool schemas, scheduler semantics, and cron run success
+  derivation are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`,
+  `docs/_internal/project-map/maps/capabilities/agents.md`,
+  `docs/_internal/project-map/maps/capabilities/cron.md`.
+- Tests: cron-specific behavior not rerun for this agent-task fix; focused
+  task/agent tests and real Sonnet trace report/verify covered the changed
+  paths.
+
+- Status: Read-only
+- Date: 2026-07-06T19:24:51+0800
+- Scope: C9 S1 migration moved the shared atomic writer implementation under
+  core `file-atomic` while preserving the `agent-runtime` doc-store public
+  wrapper used by `CronStore.save()`. Cron schema, command/tool contracts,
+  scheduler semantics, and run success derivation are unchanged.
+- Read: `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/core/src/file-atomic.ts`, `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`.
+- Tests: storage-focused `npm --workspace @sparkwright/agent-runtime test --
+  test/doc-store.test.ts`; cron behavior not rerun for this implementation-only
+  doc-store wrapper change.
+
+- Status: Verified
+- Date: 2026-07-06T18:44:10+0800
+- Scope: C9 S1 migration: `CronStore.save()` now uses the shared
+  `doc-store` `atomicWriteText()` for `jobs.json`, retiring
+  `packages/cron/src/store.ts`'s private tmp+fsync+rename+directory-fsync
+  write flow without changing the `sparkwright-cron.v1` store schema or cron
+  command/tool contracts.
+- Read: `packages/cron/src/store.ts`, `packages/cron/package.json`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `docs/_internal/proposals/consolidation-agenda.md`,
+  `docs/_internal/proposals/substrate-sequencing.md`.
+- Tests: `npm --workspace @sparkwright/cron test -- test/schedule.test.ts`;
+  `npm --workspace @sparkwright/cron run typecheck`; `npm run
+  check:package-boundaries`; `npm run check:workspace-lock`.
+
+- Status: Read-only
+- Date: 2026-07-06T14:45:00+0800
+- Scope: C9 S1 migration touched task-notification persistence only. Cron state,
+  `CronStore`, cron tool schemas, scheduler semantics, and cron run success
+  derivation are unchanged; `packages/cron/src/store.ts` remains a named
+  remaining atomic-write migration candidate.
+- Read: `packages/agent-runtime/src/tasks/file-notifications.ts`,
+  `packages/agent-runtime/src/doc-store/index.ts`,
+  `packages/cron/src/store.ts`,
+  `docs/_internal/project-map/modules/agent-runtime.md`.
+- Tests: cron-specific behavior not run separately; storage-focused
+  `npm --workspace @sparkwright/agent-runtime test -- test/doc-store.test.ts
+  test/tasks.test.ts` and `npm --workspace @sparkwright/agent-runtime run
+  typecheck` passed.
 
 - Status: Read-only
 - Date: 2026-07-05T23:09:50+0800

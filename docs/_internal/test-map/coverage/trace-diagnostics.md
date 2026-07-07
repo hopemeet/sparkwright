@@ -3,7 +3,7 @@
 ## Current Confidence
 
 - Status: `Partially Verified`
-- Last reviewed: 2026-07-02
+- Last reviewed: 2026-07-07
 - Evidence source: 2026-06-22 core trace tests and CLI trace fixture tests
   passed; a deterministic CLI debug trace was also checked with summary,
   timeline, report, verify, and session check. Live real-model subagent canaries
@@ -79,6 +79,32 @@
   `/tmp/sparkwright-real-mini-spawn-read-repeat.FKfRMP/.sparkwright/sessions/session_mr4teseeiusb206j/trace.jsonl`
   now reports `ok`. See
   [../failures/trace-cross-run-repeated-tool-requests.md](../failures/trace-cross-run-repeated-tool-requests.md).
+- 2026-07-07 current-source real mini workflow canary confirmed workflow
+  trace observation now normalizes real-shaped terminal events: a trace with
+  `run.completed` and no `payload.state` reported `terminal: completed` in
+  both `workflow shadow` and `workflow distill`, with trace report/verify and
+  session check `ok`. See
+  [../runs/2026-07-07-real-mini-broad-trace-qa.md](../runs/2026-07-07-real-mini-broad-trace-qa.md)
+  and
+  [../failures/workflow-distill-shadow-terminal-state.md](../failures/workflow-distill-shadow-terminal-state.md).
+- 2026-07-07 real mini Agent + Skill multidirection QA confirmed current-source
+  multi-run traces stay clean for successful Skill-loaded dynamic
+  `spawn_agent` and configured indexed `delegate_agent` routes, while trace
+  report still surfaces problematic variants: `LOW_NET_PROGRESS` on repeated
+  equivalent awaited `task_create(kind:"agent")` and `SUBAGENT_INCOMPLETE` when
+  a dynamic child hits `step_limit`. See
+  [../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md](../runs/2026-07-07-real-mini-agent-skill-multidirection-qa.md).
+- 2026-07-07 follow-up root-cause inspection found the repeated
+  `task_create(kind:"agent")` trace was not just model variance: task feedback
+  was too low-signal. The fix adds model-visible next-action guidance to
+  detached task results and result summaries to terminal notification body
+  text. See
+  [../failures/task-create-agent-low-signal-result-feedback.md](../failures/task-create-agent-low-signal-result-feedback.md).
+- 2026-07-07 fix verification added medium-severity
+  `REPEATED_TASK_CREATE_LIFECYCLE` for same-run equivalent `task_create` after
+  a prior same-payload task completed with reusable task evidence. Focused core
+  coverage asserts the finding ignores failed prior tasks and keys equivalence
+  on `kind` plus stable payload fingerprint rather than scheduling fields.
 
 ## Weak Or Untested
 
@@ -117,7 +143,17 @@
   from normal independent child/sub-agent review. Cross-run repeated reads are
   not sufficient evidence by themselves; this is now covered for
   `REPEATED_TOOL_REQUESTS`.
-
+- 2026-07-07 real mini follow-up showed an active trace evidence gap for the
+  new `REPEATED_TASK_CREATE_LIFECYCLE` diagnostic: an intentional repeated
+  awaited agent-task trace had concrete `taskId` values in `task_create`
+  outputs and prompt-injected task summaries, but no raw `task.completed` event
+  and no `taskId` on `subagent.completed`, so report only emitted the
+  unresolved `TASK_CONCURRENCY_LIMIT`. See
+  [../failures/agent-task-terminal-trace-missing-task-id.md](../failures/agent-task-terminal-trace-missing-task-id.md).
+- Post-fix 2026-07-07 real mini verification confirmed terminal
+  `agent_task` `subagent.completed` events now carry `taskId` in payload and
+  metadata, allowing the same intentional repeated task canary to emit medium
+  `REPEATED_TASK_CREATE_LIFECYCLE` with clean trace verify/session check.
 ## Focused Route
 
 ```bash
@@ -165,3 +201,5 @@ npm run release:check
 - [../failures/node-e-probe-verification-misclassified.md](../failures/node-e-probe-verification-misclassified.md)
 - [../failures/task-action-empty-id-recovery.md](../failures/task-action-empty-id-recovery.md)
 - [../failures/repeated-expected-denial-outcome.md](../failures/repeated-expected-denial-outcome.md)
+- [../failures/workflow-observation-blocked-tool-requests.md](../failures/workflow-observation-blocked-tool-requests.md)
+- [../failures/workflow-distill-shadow-terminal-state.md](../failures/workflow-distill-shadow-terminal-state.md)

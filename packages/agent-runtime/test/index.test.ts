@@ -1211,6 +1211,7 @@ describe("createAgentTool / mountAgentTool", () => {
       metadata: {
         delegateTool: "delegate_reviewer",
         entrypoint: "delegate",
+        taskId: "task_delegate_review",
       },
     });
     await spawned.run.start();
@@ -1224,6 +1225,7 @@ describe("createAgentTool / mountAgentTool", () => {
       expect(event?.metadata, type).toMatchObject({
         childRunId: spawned.childRunId,
         parentRunId: parent.record.id,
+        taskId: "task_delegate_review",
         agentId: "main",
         childAgentId: "reviewer",
         agentName: "Reviewer",
@@ -1238,6 +1240,7 @@ describe("createAgentTool / mountAgentTool", () => {
       .find((event) => event.type === "subagent.completed");
     expect(completed?.payload).toMatchObject({
       childRunId: spawned.childRunId,
+      taskId: "task_delegate_review",
       stopReason: "final_answer",
       terminalState: "completed",
     });
