@@ -1320,6 +1320,12 @@ describe("read-only child goal guard (F2)", () => {
       detectReadOnlyChildIntent("Summarize the runtime and list every export"),
     ).toBeNull();
     expect(detectReadOnlyChildIntent("grep for TODO comments")).toBeNull();
+    // A background *delivery* mode is not execution intent: the work here is
+    // read-only inspection, which a read-only child can legitimately do.
+    expect(
+      detectReadOnlyChildIntent("Inspect the repository in the background."),
+    ).toBeNull();
+    expect(detectReadOnlyChildIntent("在后台分析这个仓库的结构")).toBeNull();
   });
 
   it("throws when a read-only child is asked to execute", () => {

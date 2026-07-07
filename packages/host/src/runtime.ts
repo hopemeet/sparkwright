@@ -6593,48 +6593,51 @@ export function detectReadOnlyChildIntent(
   text: string,
 ): "execute" | "write" | null {
   const haystack = text.toLowerCase();
-  const executePhrases = [
-    // English: launching / running a process
-    "run in background",
-    "run in the background",
-    "background task",
-    "background job",
-    "run it",
-    "run this",
-    "run the ",
-    "run a ",
-    "run my ",
-    "execute the",
-    "execute this",
-    "execute it",
-    "launch the",
-    "launch a",
-    "start the process",
-    "start a background",
-    "start the server",
-    "keep running",
-    "in the background",
-    // Chinese: 运行/执行/启动/跑 as verbs, and explicit background phrasing
-    "后台运行",
-    "后台执行",
-    "后台启动",
-    "后台跑",
-    "在后台",
-    "运行任务",
-    "执行任务",
-    "启动任务",
-    "运行脚本",
-    "执行脚本",
-    "启动脚本",
-    "跑脚本",
-    "运行这个",
-    "执行这个",
-    "运行程序",
-    "执行程序",
-    "运行python",
-    "执行python",
-    "跑起来",
+  // Execution intent needs an action *verb* (run/execute/launch/start) paired
+  // with something runnable or a background framing. Keying on "background"
+  // alone is wrong: "inspect the repo in the background" is a legitimate
+  // read-only job — the delivery mode is not the work. Likewise the Chinese
+  // verbs only count alongside a runnable object/mode, so "运行日志"/"runtime"
+  // (noun uses) do not trip.
+  const executeVerbs = [
+    "run ",
+    "runs ",
+    "running ",
+    "execute",
+    "launch",
+    "spawn ",
+    "start ",
+    "starts ",
+    "starting ",
+    "运行",
+    "执行",
+    "启动",
+    "跑",
   ];
+  const runnableObjects = [
+    "script",
+    "program",
+    "command",
+    "process",
+    "server",
+    "daemon",
+    "binary",
+    "python",
+    "node ",
+    "脚本",
+    "程序",
+    "命令",
+    "进程",
+    "服务",
+    "任务",
+  ];
+  const modeWords = ["后台", "background", "detached", "nohup"];
+  const hasExecuteVerb = executeVerbs.some((verb) => haystack.includes(verb));
+  const hasRunnable = runnableObjects.some((obj) => haystack.includes(obj));
+  const hasMode = modeWords.some((mode) => haystack.includes(mode));
+  if (hasExecuteVerb && (hasRunnable || hasMode)) {
+    return "execute";
+  }
   const writePhrases = [
     "write to a file",
     "write to file",
@@ -6653,9 +6656,6 @@ export function detectReadOnlyChildIntent(
     "创建文件",
     "写进文件",
   ];
-  if (executePhrases.some((phrase) => haystack.includes(phrase))) {
-    return "execute";
-  }
   if (writePhrases.some((phrase) => haystack.includes(phrase))) {
     return "write";
   }
