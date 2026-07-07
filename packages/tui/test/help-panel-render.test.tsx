@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import React from "react";
 import { render } from "ink";
 import { CommandRegistry } from "../src/lib/commands.js";
+import { DEFAULTS } from "../src/lib/keybindings.js";
 import { HelpPanel } from "../src/components/help-panel.js";
 
 async function renderToText(element: React.ReactElement): Promise<string> {
@@ -64,11 +65,12 @@ describe("HelpPanel rendering", () => {
     });
 
     const text = await renderToText(
-      <HelpPanel registry={registry} onClose={() => {}} />,
+      <HelpPanel registry={registry} bindings={DEFAULTS} onClose={() => {}} />,
     );
 
     expect(text).toContain("/sessions");
     expect(text).not.toContain("/tools");
     expect(text).toContain("search for more");
+    expect(text).toContain("global keys");
   });
 });

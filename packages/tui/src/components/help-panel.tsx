@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { CommandRegistry } from "../lib/commands.js";
+import { formatBinding, type Bindings } from "../lib/keybindings.js";
 import { DialogFrame } from "./dialog-frame.js";
 
 // Input editing affordances live inside InputBox (readline-style), so they have
@@ -16,8 +17,24 @@ const INPUT_HELP: ReadonlyArray<{ keys: string; what: string }> = [
   { keys: "alt+d", what: "delete word forward" },
 ];
 
+// App-level chords with no /command entry (or worth calling out here). This is
+// the home for what the pinned input footer used to show, now that the footer
+// is gone.
+const GLOBAL_KEYS: ReadonlyArray<{ binding: keyof Bindings; what: string }> = [
+  {
+    binding: "cycle-permission-mode",
+    what: "cycle permission mode (next run)",
+  },
+  { binding: "activity.open", what: "background tasks / activity drawer" },
+  { binding: "events.open", what: "event inspector" },
+  { binding: "todo.toggle", what: "expand / collapse the todo band" },
+  { binding: "cancel.run", what: "cancel the running goal" },
+  { binding: "quit.app", what: "back out · press twice to quit" },
+];
+
 export function HelpPanel(props: {
   registry: CommandRegistry;
+  bindings: Bindings;
   onClose: () => void;
 }): React.ReactElement {
   const { stdout } = useStdout();
@@ -59,6 +76,29 @@ export function HelpPanel(props: {
           <Text> </Text>
           <Text>{command.title}</Text>
           {command.hint ? <Text dimColor> [{command.hint}]</Text> : null}
+        </Box>,
+      );
+    }
+  }
+  // Global chords last: the command list is what people scan for first, so the
+  // key reference sits at the bottom rather than pushing commands below the fold.
+  const globalKeyRows = GLOBAL_KEYS.map((k) => ({
+    keys: formatBinding(props.bindings[k.binding]),
+    what: k.what,
+  })).filter((row) => row.keys);
+  if (globalKeyRows.length > 0) {
+    rows.push(<Text key="space-global"> </Text>);
+    rows.push(
+      <Text key="global-heading" bold>
+        global keys
+      </Text>,
+    );
+    for (const row of globalKeyRows) {
+      rows.push(
+        <Box key={`global-${row.keys}`}>
+          <Text color="cyan">{row.keys}</Text>
+          <Text> </Text>
+          <Text>{row.what}</Text>
         </Box>,
       );
     }

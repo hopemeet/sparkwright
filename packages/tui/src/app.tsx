@@ -45,7 +45,6 @@ import {
 import {
   chordMatches,
   ctrlCPressCount,
-  formatBinding,
   DEFAULTS as DEFAULT_BINDINGS,
   type Bindings,
 } from "./lib/keybindings.js";
@@ -418,19 +417,15 @@ function AppReady(
       (state.status === "done" || state.status === "error")
     ) {
       if (state.status === "error") {
+        // Errors have a single, persistent surface: the pinned red line below
+        // the stream (kept until the next run clears state.lastError). We only
+        // ring the bell here — no error toast on top of that line, which was
+        // the redundant double-surface.
         attention.notify("run failed");
-        toasts.push({
-          variant: "error",
-          title: "run failed",
-          message: state.lastError ?? "unknown error",
-        });
       } else {
         const cancelledRun =
           state.stopReason === "manual_cancelled" ||
           state.stopReason === "user_cancelled";
-        if (cancelledRun && toastSnapshot.current?.variant === "error") {
-          toasts.dismiss();
-        }
         attention.notify(cancelledRun ? "run cancelled" : "run done");
         toasts.push({
           variant: cancelledRun ? "info" : "success",
@@ -827,6 +822,7 @@ function AppReady(
   // site (both currently pass `topLayer`).
   const layerProps = {
     registry,
+    bindings: resolved.bindings,
     resolved: effectiveResolved,
     sessionList: sessionActions.sessionList,
     sessionRootLabel: resolved.sessionRootLabel,
@@ -1039,14 +1035,6 @@ function AppReady(
             </Text>
           </Box>
         )}
-
-        <Box paddingX={1} flexDirection="column">
-          {inputFooterLines(resolved.bindings, cols - 2).map((line, index) => (
-            <Text key={index} dimColor>
-              {line}
-            </Text>
-          ))}
-        </Box>
       </Box>
     </ThemeProvider>
   );
@@ -1064,36 +1052,4 @@ function HotkeysListener(props: {
 }): null {
   useInput((input, key) => props.onInput(input, key));
   return null;
-}
-
-export function inputFooterLines(bindings: Bindings, width = 100): string[] {
-  const items = ["enter run", "\\↵ newline", "/ commands", "@ files"];
-  for (const [name, label] of [
-    ["cycle-permission-mode", "mode"],
-    ["history.search", "search"],
-    ["activity.open", "activity"],
-    ["events.open", "inspector"],
-    ["cancel.run", "cancel"],
-    ["quit.app", "quit x2"],
-  ] as const) {
-    const binding = formatBinding(bindings[name]);
-    if (binding) items.push(`${binding} ${label}`);
-  }
-  return wrapFooterItems(items, Math.max(24, width));
-}
-
-function wrapFooterItems(items: string[], width: number): string[] {
-  const lines: string[] = [];
-  let current = "";
-  for (const item of items) {
-    const next = current ? `${current} · ${item}` : item;
-    if (next.length <= width || !current) {
-      current = next;
-      continue;
-    }
-    lines.push(current);
-    current = item;
-  }
-  if (current) lines.push(current);
-  return lines;
 }
