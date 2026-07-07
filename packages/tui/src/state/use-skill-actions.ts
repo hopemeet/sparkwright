@@ -13,6 +13,10 @@ import {
   updateTuiSkillProposalFromInput,
 } from "../lib/skill-evolution.js";
 import {
+  applySkillLearnDraftProposal,
+  createSkillLearnDraftProposal,
+  detectSkillLearnNotice,
+  detectSkillLearnTarget,
   formatSkillLearnStatus,
   parseSkillLearnMode,
   readSkillLearnStatus,
@@ -301,4 +305,102 @@ export function useSkillActions(deps: {
     rejectSkillReviewProposal,
     handleSkillLearn,
   };
+}
+
+/**
+ * On run completion, inspect the session's goals for a Skill-learning signal
+ * and, depending on the project's skill-learn mode, surface a notice / draft a
+ * proposal / apply it automatically. Extracted verbatim from App's
+ * run-completion effect; the `sessionId` guard mirrors the original captured
+ * value (the effect closure compared the captured id to itself), so a stale
+ * async resolve is a no-op just as before.
+ */
+export function runSkillLearnAutoNotice(deps: {
+  workspaceRoot: string;
+  toasts: ToastStore;
+  goals: string[];
+  sessionId: string | null;
+  noticeCount: number;
+  setNoticeCount: (n: number) => void;
+}): void {
+  const {
+    workspaceRoot,
+    toasts,
+    goals,
+    sessionId,
+    noticeCount,
+    setNoticeCount,
+  } = deps;
+  const notice = detectSkillLearnNotice(goals);
+  if (!notice || goals.length <= noticeCount) return;
+  const goalCount = goals.length;
+  const targetSkillName = detectSkillLearnTarget(goals);
+  void readSkillLearnStatus(workspaceRoot)
+    .then((status) => {
+      if (status.mode === "off") return;
+      if (status.mode === "notice") {
+        setNoticeCount(goalCount);
+        toasts.push({
+          variant: "info",
+          title: "skill learn",
+          message: `${notice.reason}. Run /skill-create or /skill-update <skill-name>.`,
+          durationMs: 9000,
+        });
+        return;
+      }
+      void createSkillLearnDraftProposal(workspaceRoot, notice, {
+        ...(targetSkillName ? { targetSkillName } : {}),
+        ...(sessionId ? { sessionId } : {}),
+      })
+        .then((proposal) => {
+          if (status.mode === "draft") {
+            setNoticeCount(goalCount);
+            toasts.push({
+              variant: "success",
+              title: "skill learn draft",
+              message: `${proposal.kind} ${proposal.skillName} -> ${proposal.id}`,
+              durationMs: 9000,
+            });
+            return;
+          }
+          void applySkillLearnDraftProposal(workspaceRoot, proposal)
+            .then((applied) => {
+              setNoticeCount(goalCount);
+              // Apply mode writes automatically (the user opted in), so the
+              // toast must be transparent: show what was learned, the version
+              // written, and how to inspect/undo. (We point to `skills history`
+              // rather than a `restore --version` one-liner: restoring to the
+              // just-written version is a no-op, and the first apply has no
+              // prior version.)
+              const learned =
+                notice.evidence.length > 80
+                  ? `${notice.evidence.slice(0, 77)}...`
+                  : notice.evidence;
+              toasts.push({
+                variant: "success",
+                title: "skill learn applied",
+                message: `learned "${learned}" → ${proposal.skillName} (v ${applied.historyId}). undo: skills history ${proposal.skillName}`,
+                durationMs: 14000,
+              });
+            })
+            .catch((error: unknown) => {
+              setNoticeCount(goalCount);
+              toasts.push({
+                variant: "warning",
+                title: "skill learn draft",
+                message: `left draft ${proposal.id}: ${error instanceof Error ? error.message : String(error)}`,
+                durationMs: 9000,
+              });
+            });
+        })
+        .catch((error: unknown) => {
+          toasts.push({
+            variant: "error",
+            title: "skill learn draft failed",
+            message: error instanceof Error ? error.message : String(error),
+            durationMs: 9000,
+          });
+        });
+    })
+    .catch(() => {});
 }
