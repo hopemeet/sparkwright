@@ -1681,6 +1681,79 @@ describe("task tools", () => {
     expect(drained.complete).toBe(true);
     expect(drained.status).toBe("completed");
   });
+
+  it("task_create dedups a duplicate active background task by kind+title (F3)", async () => {
+    const manager = makeManager();
+    let release!: () => void;
+    manager.registerKind(
+      "runner",
+      () => new Promise<string>((resolve) => (release = () => resolve("done"))),
+    );
+    const tools = makeTools(manager);
+
+    const first = await exec<{ taskId: string; deduplicated?: true }>(
+      tools.taskCreate,
+      {
+        kind: "runner",
+        mode: "background",
+        title: "后台执行：打印数字1-20的python任务",
+      },
+    );
+    expect(first.deduplicated).toBeUndefined();
+
+    // Same goal, title differs only in case — the model re-issuing.
+    const second = await exec<{ taskId: string; deduplicated?: true }>(
+      tools.taskCreate,
+      {
+        kind: "runner",
+        mode: "background",
+        title: "后台执行：打印数字1-20的Python任务",
+      },
+    );
+    expect(second.deduplicated).toBe(true);
+    expect(second.taskId).toBe(first.taskId);
+    expect(manager.store.list({ parentRunId: PARENT_RUN_ID })).toHaveLength(1);
+
+    // Once the first task is terminal, the same title may start a fresh task.
+    release();
+    await manager.handle(first.taskId as TaskId)?.wait();
+    const third = await exec<{ taskId: string; deduplicated?: true }>(
+      tools.taskCreate,
+      {
+        kind: "runner",
+        mode: "background",
+        title: "后台执行：打印数字1-20的python任务",
+      },
+    );
+    expect(third.deduplicated).toBeUndefined();
+    expect(third.taskId).not.toBe(first.taskId);
+  });
+
+  it("task_create does not dedup across different kinds or titles (F3)", async () => {
+    const manager = makeManager();
+    manager.registerKind("runner", () => new Promise<string>(() => {}));
+    manager.registerKind("other", () => new Promise<string>(() => {}));
+    const tools = makeTools(manager);
+
+    const a = await exec<{ taskId: string }>(tools.taskCreate, {
+      kind: "runner",
+      mode: "background",
+      title: "task one",
+    });
+    const differentTitle = await exec<{ taskId: string; deduplicated?: true }>(
+      tools.taskCreate,
+      { kind: "runner", mode: "background", title: "task two" },
+    );
+    const differentKind = await exec<{ taskId: string; deduplicated?: true }>(
+      tools.taskCreate,
+      { kind: "other", mode: "background", title: "task one" },
+    );
+    expect(differentTitle.deduplicated).toBeUndefined();
+    expect(differentKind.deduplicated).toBeUndefined();
+    expect(
+      new Set([a.taskId, differentTitle.taskId, differentKind.taskId]).size,
+    ).toBe(3);
+  });
 });
 
 describe("TaskManager retention", () => {

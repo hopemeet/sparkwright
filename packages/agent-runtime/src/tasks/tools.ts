@@ -148,6 +148,30 @@ export function createTaskCreate(
         );
       }
       const parentRunId = options.getParentRunId(ctx);
+      // Collapse an accidental duplicate onto the still-active task instead of
+      // leaking a second one. Models re-issue task_create for the same goal
+      // (observed: two background tasks for one "run in background" request, the
+      // second never joined). Key on kind + case-folded title within the run;
+      // only dedup detached work, since a foreground caller waits inline anyway.
+      const dedupeTitle = normalizeTaskTitle(parsed.title);
+      if (mode !== "foreground" && dedupeTitle) {
+        const existing = options.manager.store
+          .list({ parentRunId, kind: parsed.kind })
+          .find(
+            (task) =>
+              !isTerminal(task.status) &&
+              normalizeTaskTitle(task.title) === dedupeTitle,
+          );
+        if (existing) {
+          return {
+            taskId: existing.id,
+            mode,
+            awaited: existing.awaited,
+            deduplicated: true,
+            nextAction: taskCreateNextAction(existing.id, existing.awaited),
+          };
+        }
+      }
       enforceConcurrencyLimit(options, parentRunId, parsed.kind);
       const handle = options.manager.spawn({
         parentRunId,
@@ -214,6 +238,12 @@ export type TaskCreateResult =
       taskId: TaskId;
       mode: "awaited" | "background";
       awaited: boolean;
+      /**
+       * Set when this call was collapsed onto an already-active task with the
+       * same kind+title in the same run, instead of spawning a duplicate. The
+       * returned taskId is the pre-existing task.
+       */
+      deduplicated?: true;
       nextAction: TaskCreateNextAction;
     }
   | {
@@ -1122,6 +1152,15 @@ function isTerminal(status: TaskStatus): boolean {
   return (
     status === "completed" || status === "failed" || status === "cancelled"
   );
+}
+
+/**
+ * Case- and whitespace-folded task title used as the duplicate key. Returns the
+ * empty string when there is no usable title, which callers treat as "cannot
+ * dedup" (do not collapse untitled tasks onto each other).
+ */
+function normalizeTaskTitle(title: string | undefined): string {
+  return (title ?? "").trim().replace(/\s+/gu, " ").toLowerCase();
 }
 
 interface ToolError extends Error {
