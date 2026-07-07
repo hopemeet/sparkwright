@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { join } from "node:path";
 import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
+import type { Key } from "ink";
 import { EventStore } from "./state/event-store.js";
 import { RunController } from "./state/run-controller.js";
 import { ToastStore } from "./state/toast-store.js";
@@ -1432,59 +1433,62 @@ function AppReady(
   // step back so they don't double-handle keys. Each binding is resolved
   // through `resolved.bindings`, so user config overrides take effect after
   // the config watcher reloads.
-  function Hotkeys(): null {
+  //
+  // This is only the per-render closure; the `useInput` listener lives in the
+  // module-scope `HotkeysListener` below. Keeping the listener component's
+  // identity stable across renders is deliberate — a component defined inline
+  // in App is a fresh type each render, so Ink unmounts/remounts it every time
+  // and its `useInput` can drop a keystroke mid-stream.
+  function handleHotkey(input: string, key: Key): void {
     const b = resolved.bindings;
-    useInput((input, key) => {
-      const top = layers.top();
-      if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
-        if (!top) return;
-        requestQuit(Math.max(1, ctrlCPressCount(input)));
-        return;
-      }
-      if (
-        top?.name !== "approval" &&
-        b["activity.open"].some((c) => chordMatches(c, key, input))
-      ) {
-        openActivity();
-        return;
-      }
-      if (!top && b["events.open"].some((c) => chordMatches(c, key, input))) {
-        openActivity("events");
-        return;
-      }
-      if (
-        !top &&
-        state.status !== "running" &&
-        b["help.open"].some((c) => chordMatches(c, key, input))
-      ) {
-        layers.toggle("help");
-        return;
-      }
-      if (
-        !top &&
-        b["cycle-permission-mode"].some((c) => chordMatches(c, key, input))
-      ) {
-        cyclePermissionMode();
-        return;
-      }
-      if (
-        !top &&
-        state.todoItems.length > 0 &&
-        b["todo.toggle"].some((c) => chordMatches(c, key, input))
-      ) {
-        setTodoExpanded((v) => !v);
-        return;
-      }
-      if (
-        !top &&
-        state.status === "running" &&
-        b["cancel.run"].some((c) => chordMatches(c, key, input))
-      ) {
-        if (controller.cancel())
-          toasts.push({ variant: "info", message: "cancelling…" });
-      }
-    });
-    return null;
+    const top = layers.top();
+    if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
+      if (!top) return;
+      requestQuit(Math.max(1, ctrlCPressCount(input)));
+      return;
+    }
+    if (
+      top?.name !== "approval" &&
+      b["activity.open"].some((c) => chordMatches(c, key, input))
+    ) {
+      openActivity();
+      return;
+    }
+    if (!top && b["events.open"].some((c) => chordMatches(c, key, input))) {
+      openActivity("events");
+      return;
+    }
+    if (
+      !top &&
+      state.status !== "running" &&
+      b["help.open"].some((c) => chordMatches(c, key, input))
+    ) {
+      layers.toggle("help");
+      return;
+    }
+    if (
+      !top &&
+      b["cycle-permission-mode"].some((c) => chordMatches(c, key, input))
+    ) {
+      cyclePermissionMode();
+      return;
+    }
+    if (
+      !top &&
+      state.todoItems.length > 0 &&
+      b["todo.toggle"].some((c) => chordMatches(c, key, input))
+    ) {
+      setTodoExpanded((v) => !v);
+      return;
+    }
+    if (
+      !top &&
+      state.status === "running" &&
+      b["cancel.run"].some((c) => chordMatches(c, key, input))
+    ) {
+      if (controller.cancel())
+        toasts.push({ variant: "info", message: "cancelling…" });
+    }
   }
 
   const modelLabel = effModel ?? "deterministic";
@@ -1640,84 +1644,93 @@ function AppReady(
     if (topLayer.name === "session-rename") setRenameTarget(null);
   }
 
+  // Props shared by both LayerRenderer mount points — the full-screen `events`
+  // drawer (early return below) and the inline layer above the input. Assembled
+  // once so the two call sites can't drift apart. `entry` is supplied per call
+  // site (both currently pass `topLayer`).
+  const layerProps = {
+    registry,
+    resolved: effectiveResolved,
+    sessionList,
+    sessionRootLabel: resolved.sessionRootLabel,
+    events: state.events,
+    taskRecords,
+    taskOutputs,
+    loadingTasks,
+    labels,
+    renameTarget,
+    effModel,
+    modelCandidates: modelCandidates(resolved.providers),
+    sessionDiagnostics,
+    loadingDiagnosticsFor,
+    capabilitySnapshot,
+    loadingCapabilities,
+    skillReviewSnapshot,
+    loadingSkillReview,
+    onActivityTabChange: handleActivityTabChange,
+    onRefreshTasks: () => void refreshTaskSnapshots(),
+    onStopTask: stopActivityTask,
+    onJoinTask: joinActivityTask,
+    onPromoteTask: promoteActivityTask,
+    onCommitModel: commitModelSelection,
+    onFork: (seq, label, edit) => {
+      const src = state.sessionId;
+      layers.pop("fork");
+      if (!src) return;
+      void controller.forkSession(src, seq).then((res) => {
+        if (!res) return;
+        // Switch to the fork AND load its (copied) history so the branched
+        // conversation is visible, not a blank screen.
+        void controller.switchSession(res.forkedSessionId);
+        if (edit && label) inputHandleRef.current?.setValue(label);
+        toasts.push({
+          variant: "success",
+          title: edit ? "forked — edit & resend" : "forked",
+          message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
+        });
+      });
+    },
+    onCloseTop: closeTopLayer,
+    onInspectSession: (id: string) => void inspectSession(id),
+    onPickSession: (id: string) => {
+      void controller.switchSession(id);
+      layers.pop("sessions");
+      toasts.push({
+        variant: "success",
+        message: `switched to session ${id}`,
+      });
+    },
+    onRequestRename: (id: string) => {
+      setRenameTarget(id);
+      layers.push("session-rename");
+    },
+    onCommitRename: (id: string, label: string) => {
+      void labelsRef.current?.set(id, label).then(() => {
+        setLabels(labelsRef.current?.get() ?? {});
+        toasts.push({
+          variant: "success",
+          title: label ? "renamed" : "cleared",
+          message: id,
+        });
+      });
+      layers.pop("session-rename");
+      setRenameTarget(null);
+    },
+    onApprovalDecision: (d: "approved" | "denied") =>
+      controller.resolveApproval(d),
+    onCreateCapability: (draft: CreateCapabilityDraft) =>
+      void handleCreateCapability(draft),
+    onCreateSkillProposal: handleCreateSkillProposal,
+    onUpdateSkillProposal: handleUpdateSkillProposal,
+    onApplySkillReviewProposal: applySkillReviewProposal,
+    onRejectSkillReviewProposal: rejectSkillReviewProposal,
+  } satisfies Omit<React.ComponentProps<typeof LayerRenderer>, "entry">;
+
   if (topLayer?.name === "events") {
     return (
       <ThemeProvider theme={theme}>
         <Box flexDirection="column">
-          <LayerRenderer
-            entry={topLayer}
-            registry={registry}
-            resolved={effectiveResolved}
-            sessionList={sessionList}
-            sessionRootLabel={resolved.sessionRootLabel}
-            events={state.events}
-            taskRecords={taskRecords}
-            taskOutputs={taskOutputs}
-            loadingTasks={loadingTasks}
-            labels={labels}
-            renameTarget={renameTarget}
-            effModel={effModel}
-            modelCandidates={modelCandidates(resolved.providers)}
-            sessionDiagnostics={sessionDiagnostics}
-            loadingDiagnosticsFor={loadingDiagnosticsFor}
-            capabilitySnapshot={capabilitySnapshot}
-            loadingCapabilities={loadingCapabilities}
-            skillReviewSnapshot={skillReviewSnapshot}
-            loadingSkillReview={loadingSkillReview}
-            onActivityTabChange={handleActivityTabChange}
-            onRefreshTasks={() => void refreshTaskSnapshots()}
-            onStopTask={stopActivityTask}
-            onJoinTask={joinActivityTask}
-            onPromoteTask={promoteActivityTask}
-            onCommitModel={commitModelSelection}
-            onFork={(seq, label, edit) => {
-              const src = state.sessionId;
-              layers.pop("fork");
-              if (!src) return;
-              void controller.forkSession(src, seq).then((res) => {
-                if (!res) return;
-                void controller.switchSession(res.forkedSessionId);
-                if (edit && label) inputHandleRef.current?.setValue(label);
-                toasts.push({
-                  variant: "success",
-                  title: edit ? "forked — edit & resend" : "forked",
-                  message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
-                });
-              });
-            }}
-            onCloseTop={closeTopLayer}
-            onInspectSession={(id) => void inspectSession(id)}
-            onPickSession={(id) => {
-              void controller.switchSession(id);
-              layers.pop("sessions");
-              toasts.push({
-                variant: "success",
-                message: `switched to session ${id}`,
-              });
-            }}
-            onRequestRename={(id) => {
-              setRenameTarget(id);
-              layers.push("session-rename");
-            }}
-            onCommitRename={(id, label) => {
-              void labelsRef.current?.set(id, label).then(() => {
-                setLabels(labelsRef.current?.get() ?? {});
-                toasts.push({
-                  variant: "success",
-                  title: label ? "renamed" : "cleared",
-                  message: id,
-                });
-              });
-              layers.pop("session-rename");
-              setRenameTarget(null);
-            }}
-            onApprovalDecision={(d) => controller.resolveApproval(d)}
-            onCreateCapability={(draft) => void handleCreateCapability(draft)}
-            onCreateSkillProposal={handleCreateSkillProposal}
-            onUpdateSkillProposal={handleUpdateSkillProposal}
-            onApplySkillReviewProposal={applySkillReviewProposal}
-            onRejectSkillReviewProposal={rejectSkillReviewProposal}
-          />
+          <LayerRenderer entry={topLayer} {...layerProps} />
         </Box>
       </ThemeProvider>
     );
@@ -1726,7 +1739,7 @@ function AppReady(
   return (
     <ThemeProvider theme={theme}>
       <Box flexDirection="column">
-        {isRawModeSupported ? <Hotkeys /> : null}
+        {isRawModeSupported ? <HotkeysListener onInput={handleHotkey} /> : null}
 
         {/* Committed transcript → terminal scrollback, led by a one-time session
           header at the top. Keyed on clearGeneration so /clear and /new remount
@@ -1843,84 +1856,7 @@ function AppReady(
 
         {/* Layer rendering — only the topmost layer owns input. */}
         {topLayer ? (
-          <LayerRenderer
-            entry={topLayer}
-            registry={registry}
-            resolved={effectiveResolved}
-            sessionList={sessionList}
-            sessionRootLabel={resolved.sessionRootLabel}
-            events={state.events}
-            taskRecords={taskRecords}
-            taskOutputs={taskOutputs}
-            loadingTasks={loadingTasks}
-            labels={labels}
-            renameTarget={renameTarget}
-            effModel={effModel}
-            modelCandidates={modelCandidates(resolved.providers)}
-            sessionDiagnostics={sessionDiagnostics}
-            loadingDiagnosticsFor={loadingDiagnosticsFor}
-            capabilitySnapshot={capabilitySnapshot}
-            loadingCapabilities={loadingCapabilities}
-            skillReviewSnapshot={skillReviewSnapshot}
-            loadingSkillReview={loadingSkillReview}
-            onActivityTabChange={handleActivityTabChange}
-            onRefreshTasks={() => void refreshTaskSnapshots()}
-            onStopTask={stopActivityTask}
-            onJoinTask={joinActivityTask}
-            onPromoteTask={promoteActivityTask}
-            onCommitModel={commitModelSelection}
-            onFork={(seq, label, edit) => {
-              const src = state.sessionId;
-              layers.pop("fork");
-              if (!src) return;
-              void controller.forkSession(src, seq).then((res) => {
-                if (!res) return;
-                // Switch to the fork AND load its (copied) history so the
-                // branched conversation is visible, not a blank screen.
-                void controller.switchSession(res.forkedSessionId);
-                if (edit && label) inputHandleRef.current?.setValue(label);
-                toasts.push({
-                  variant: "success",
-                  title: edit ? "forked — edit & resend" : "forked",
-                  message: `${res.forkedSessionId} (${res.copiedEventCount} events copied)`,
-                });
-              });
-            }}
-            onCloseTop={() => {
-              closeTopLayer();
-            }}
-            onInspectSession={(id) => void inspectSession(id)}
-            onPickSession={(id) => {
-              void controller.switchSession(id);
-              layers.pop("sessions");
-              toasts.push({
-                variant: "success",
-                message: `switched to session ${id}`,
-              });
-            }}
-            onRequestRename={(id) => {
-              setRenameTarget(id);
-              layers.push("session-rename");
-            }}
-            onCommitRename={(id, label) => {
-              void labelsRef.current?.set(id, label).then(() => {
-                setLabels(labelsRef.current?.get() ?? {});
-                toasts.push({
-                  variant: "success",
-                  title: label ? "renamed" : "cleared",
-                  message: id,
-                });
-              });
-              layers.pop("session-rename");
-              setRenameTarget(null);
-            }}
-            onApprovalDecision={(d) => controller.resolveApproval(d)}
-            onCreateCapability={(draft) => void handleCreateCapability(draft)}
-            onCreateSkillProposal={handleCreateSkillProposal}
-            onUpdateSkillProposal={handleUpdateSkillProposal}
-            onApplySkillReviewProposal={applySkillReviewProposal}
-            onRejectSkillReviewProposal={rejectSkillReviewProposal}
-          />
+          <LayerRenderer entry={topLayer} {...layerProps} />
         ) : isRawModeSupported ? (
           <InputBox
             // Stay editable while a run is in flight: submissions are queued
@@ -1975,6 +1911,20 @@ function AppReady(
       </Box>
     </ThemeProvider>
   );
+}
+
+/**
+ * Stable listener for App-level hotkeys. Defined at module scope so its type
+ * identity never changes across App renders — a component defined inline in App
+ * is a fresh type each render, so Ink unmounts/remounts it every time and its
+ * `useInput` can drop a keystroke mid-stream. Only the `onInput` closure changes
+ * per render, which Ink handles fine (same pattern as InputBox).
+ */
+function HotkeysListener(props: {
+  onInput: (input: string, key: Key) => void;
+}): null {
+  useInput((input, key) => props.onInput(input, key));
+  return null;
 }
 
 function runIdsFromEvents(events: readonly unknown[]): string[] {
