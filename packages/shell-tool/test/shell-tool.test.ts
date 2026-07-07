@@ -822,6 +822,53 @@ describe("foreground→background promotion", () => {
       "foreground timeout reached; process killed because promotion unavailable",
     );
   });
+
+  it("background:true launches directly as a background task (F1a)", async () => {
+    const environment = streamingEnv({
+      stdoutChunks: ["partial\n"],
+      stderrChunks: [],
+      completeAfterMs: 500,
+      exitCode: 0,
+    });
+    const promotions: ShellPromotionRequest[] = [];
+    const tool = createShellTool({
+      environment,
+      // A generous foreground budget would normally keep this inline; background
+      // must promote immediately regardless.
+      foregroundTimeoutMs: 5 * 60 * 1000,
+      onPromote: (req) => {
+        promotions.push(req);
+        return { taskId: "task_bg" };
+      },
+    });
+    const result = await tool.execute(
+      { command: "sleep 1", background: true },
+      runtimeContext(),
+    );
+    expect(result.promoted).toBe(true);
+    expect(result.taskId).toBe("task_bg");
+    expect(result.exitCode).toBeNull();
+    expect(result.foregroundTimeoutMs).toBe(0);
+    expect(promotions).toHaveLength(1);
+  });
+
+  it("background:true fails loud when promotion is unavailable (F1a)", async () => {
+    const environment = streamingEnv({
+      stdoutChunks: ["x\n"],
+      stderrChunks: [],
+      completeAfterMs: 5,
+      exitCode: 0,
+    });
+    const tool = createShellTool({
+      environment,
+      foregroundTimeoutMs: 1000,
+      promotionAvailable: false,
+      onPromote: () => ({ taskId: "should-not-fire" }),
+    });
+    await expect(
+      tool.execute({ command: "sleep 1", background: true }, runtimeContext()),
+    ).rejects.toThrow(/background tasks to be enabled/i);
+  });
 });
 
 interface StreamingEnvOptions {

@@ -6689,7 +6689,7 @@ export function assertReadOnlyChildCanSatisfyGoal(input: {
   if (intent === "write" && hasWriter) return;
   const remedy =
     intent === "execute"
-      ? 'run it yourself with the `bash` tool, or start a background shell task with task_create(kind:"shell")'
+      ? "run it yourself with the `bash` tool (pass background:true to launch it as a non-blocking background task)"
       : "perform the write yourself with the `write`/`edit` tools";
   throw Object.assign(
     new Error(
