@@ -6577,6 +6577,131 @@ function childToolsForAgentProfile(
 }
 
 /**
+ * @internal Detect when a spawned/agent-task goal asks the child to *run* a
+ * process or *write* to the filesystem — capabilities a read-only child agent
+ * (read/glob/grep/list_dir/task_create only) can never satisfy. Returns the
+ * kind of unsatisfiable intent, or `null` when the goal is inspection/reasoning
+ * that a read-only child can legitimately do.
+ *
+ * Phrase-based on purpose: bare tokens like `运行`/`run` collide with nouns
+ * (`运行日志`, "run log"), so we only match multi-word execution/launch and
+ * filesystem-write phrases. "Write code / a program / a script" is deliberately
+ * NOT a write signal — that is code *production*, which a read-only child does
+ * by returning text.
+ */
+export function detectReadOnlyChildIntent(
+  text: string,
+): "execute" | "write" | null {
+  const haystack = text.toLowerCase();
+  // Execution intent needs an action *verb* (run/execute/launch/start) paired
+  // with something runnable or a background framing. Keying on "background"
+  // alone is wrong: "inspect the repo in the background" is a legitimate
+  // read-only job — the delivery mode is not the work. Likewise the Chinese
+  // verbs only count alongside a runnable object/mode, so "运行日志"/"runtime"
+  // (noun uses) do not trip.
+  const executeVerbs = [
+    "run ",
+    "runs ",
+    "running ",
+    "execute",
+    "launch",
+    "spawn ",
+    "start ",
+    "starts ",
+    "starting ",
+    "运行",
+    "执行",
+    "启动",
+    "跑",
+  ];
+  const runnableObjects = [
+    "script",
+    "program",
+    "command",
+    "process",
+    "server",
+    "daemon",
+    "binary",
+    "python",
+    "node ",
+    "脚本",
+    "程序",
+    "命令",
+    "进程",
+    "服务",
+    "任务",
+  ];
+  const modeWords = ["后台", "background", "detached", "nohup"];
+  const hasExecuteVerb = executeVerbs.some((verb) => haystack.includes(verb));
+  const hasRunnable = runnableObjects.some((obj) => haystack.includes(obj));
+  const hasMode = modeWords.some((mode) => haystack.includes(mode));
+  if (hasExecuteVerb && (hasRunnable || hasMode)) {
+    return "execute";
+  }
+  const writePhrases = [
+    "write to a file",
+    "write to file",
+    "write it to",
+    "save to disk",
+    "save it to",
+    "save the file",
+    "create the file",
+    "write the file",
+    "write to disk",
+    "写入文件",
+    "写到文件",
+    "写入磁盘",
+    "保存到",
+    "落盘",
+    "创建文件",
+    "写进文件",
+  ];
+  if (writePhrases.some((phrase) => haystack.includes(phrase))) {
+    return "write";
+  }
+  return null;
+}
+
+/**
+ * @internal Fail loud when a read-only child agent is handed a goal it can
+ * never fulfill. A read-only child that "completes" an execution/write goal
+ * having done nothing produces a false success that the parent then rationalizes
+ * (often by hallucinating an error). Throwing here forces the parent to route
+ * execution through `bash` / a background shell task instead.
+ */
+export function assertReadOnlyChildCanSatisfyGoal(input: {
+  goal: string;
+  prompt: string;
+  childTools: readonly Pick<ToolDefinition, "name">[];
+  entrypoint: "spawn_agent" | "agent_task";
+}): void {
+  const canonicalChildTools = new Set(
+    input.childTools.map((tool) => canonicalToolName(tool.name)),
+  );
+  const hasExecutor = canonicalChildTools.has("bash");
+  const hasWriter =
+    canonicalChildTools.has("write") ||
+    canonicalChildTools.has("edit") ||
+    canonicalChildTools.has("edit_anchored_text");
+  const intent = detectReadOnlyChildIntent(`${input.goal}\n${input.prompt}`);
+  if (intent === null) return;
+  if (intent === "execute" && hasExecutor) return;
+  if (intent === "write" && hasWriter) return;
+  const remedy =
+    intent === "execute"
+      ? "run it yourself with the `bash` tool (pass background:true to launch it as a non-blocking background task)"
+      : "perform the write yourself with the `write`/`edit` tools";
+  throw Object.assign(
+    new Error(
+      `${input.entrypoint} child agents are read-only and cannot ` +
+        `${intent === "execute" ? "run processes or shell commands" : "write to the filesystem"}. ` +
+        `To satisfy this goal, ${remedy} — do not delegate it to a read-only child.`,
+    ),
+    { code: "READONLY_CHILD_INTENT_UNSATISFIABLE" },
+  );
+}
+
+/**
  * @internal Exported for host regression tests that assert the spawn path
  * threads `runStore` + `parentUsageTracker` into the child run. Not part of the
  * public host API.
@@ -6752,6 +6877,13 @@ export function createDynamicSpawnAgentTool(input: {
           "spawn_agent requires at least one enabled child tool.",
         );
       }
+
+      assertReadOnlyChildCanSatisfyGoal({
+        goal: parsed.goal,
+        prompt: parsed.prompt,
+        childTools,
+        entrypoint: input.entrypoint ?? "spawn_agent",
+      });
 
       // Strip any leading `dynamic_` the role already carries so a re-used
       // agent id (models sometimes pass a prior child's `dynamic_<role>` id

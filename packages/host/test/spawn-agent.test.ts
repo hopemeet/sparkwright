@@ -24,7 +24,9 @@ import {
   type TaskNotification,
 } from "@sparkwright/agent-runtime";
 import {
+  assertReadOnlyChildCanSatisfyGoal,
   createDynamicSpawnAgentTool,
+  detectReadOnlyChildIntent,
   runHostAgentTask,
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
@@ -1279,5 +1281,83 @@ describe("host spawn_agent wiring", () => {
         retryDelay: 50,
       });
     }
+  });
+});
+
+describe("read-only child goal guard (F2)", () => {
+  it("flags execution intent in English and Chinese", () => {
+    expect(detectReadOnlyChildIntent("Run this in the background")).toBe(
+      "execute",
+    );
+    expect(detectReadOnlyChildIntent("在后台执行这个 python 脚本")).toBe(
+      "execute",
+    );
+    expect(detectReadOnlyChildIntent("后台运行任务，每秒打印一个数字")).toBe(
+      "execute",
+    );
+    expect(
+      detectReadOnlyChildIntent("launch the server and keep running"),
+    ).toBe("execute");
+  });
+
+  it("flags filesystem-write intent but not code production", () => {
+    expect(detectReadOnlyChildIntent("write it to a file on disk")).toBe(
+      "write",
+    );
+    expect(detectReadOnlyChildIntent("把脚本保存到 out.py")).toBe("write");
+    // Producing code as text is NOT a filesystem write.
+    expect(
+      detectReadOnlyChildIntent("Write a Python program that prints 1..20"),
+    ).toBeNull();
+    expect(
+      detectReadOnlyChildIntent("用 sub agent 去写一个 python 任务"),
+    ).toBeNull();
+  });
+
+  it("does not flag inspection/reasoning goals (no noun false positives)", () => {
+    expect(detectReadOnlyChildIntent("分析运行日志里的错误")).toBeNull();
+    expect(
+      detectReadOnlyChildIntent("Summarize the runtime and list every export"),
+    ).toBeNull();
+    expect(detectReadOnlyChildIntent("grep for TODO comments")).toBeNull();
+    // A background *delivery* mode is not execution intent: the work here is
+    // read-only inspection, which a read-only child can legitimately do.
+    expect(
+      detectReadOnlyChildIntent("Inspect the repository in the background."),
+    ).toBeNull();
+    expect(detectReadOnlyChildIntent("在后台分析这个仓库的结构")).toBeNull();
+  });
+
+  it("throws when a read-only child is asked to execute", () => {
+    expect(() =>
+      assertReadOnlyChildCanSatisfyGoal({
+        goal: "在后台启动一个 Python 脚本：每1秒打印一个数字",
+        prompt: "",
+        childTools: [{ name: "read" }, { name: "grep" }],
+        entrypoint: "agent_task",
+      }),
+    ).toThrowError(/read-only and cannot run processes/i);
+  });
+
+  it("permits an execution goal when the child actually has bash", () => {
+    expect(() =>
+      assertReadOnlyChildCanSatisfyGoal({
+        goal: "run the script in the background",
+        prompt: "",
+        childTools: [{ name: "read" }, { name: "bash" }],
+        entrypoint: "spawn_agent",
+      }),
+    ).not.toThrow();
+  });
+
+  it("permits inspection goals for a read-only child", () => {
+    expect(() =>
+      assertReadOnlyChildCanSatisfyGoal({
+        goal: "Write a Python program that prints 1..20 and give the code",
+        prompt: "Provide only the code.",
+        childTools: [{ name: "read" }, { name: "glob" }, { name: "grep" }],
+        entrypoint: "spawn_agent",
+      }),
+    ).not.toThrow();
   });
 });
