@@ -53,6 +53,11 @@ Does not own:
   `TaskCreateKindDescriptor` hints so embedders describe registered kinds and
   kind-specific payload schemas without moving execution out of the live
   `TaskManager` registry.
+- `TaskCreateKindDescriptor` may also provide `policyForPayload` and
+  `approvalSummaryForPayload` hooks. The generic `task_create` tool still owns
+  task lifecycle execution, but embedders can classify kind-specific payload
+  grants (for example host `agent` workspace-write grants) before approval
+  without moving kind execution into agent-runtime.
 - Host-owned promoted shell tasks keep durable output in `TaskStore`; host trace
   integration mirrors task output/events without making agent-runtime depend on
   host process runners.

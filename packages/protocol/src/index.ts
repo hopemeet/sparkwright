@@ -578,12 +578,23 @@ export interface TaskPromoteRequestPayload {
 
 export interface CapabilityInspectRequestPayload {
   /**
-   * Reserved for future scoped inspection. Omit to inspect the host/session
-   * capability state known to this connection.
+   * Optional session scope for clients that tie capability diagnostics to an
+   * active interaction.
    */
   sessionId?: string;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   model?: string;
+  /** Whether this inspection should describe workspace-write-capable runs. */
+  shouldWrite?: boolean;
+  /**
+   * High-level run autonomy preset used to scope diagnostics. Preferred over
+   * `permissionMode` and `shouldWrite` when present.
+   */
+  accessMode?: RunAccessMode;
+  /** Session-level foreground/background task policy used to scope diagnostics. */
+  backgroundTasks?: BackgroundTaskPolicy;
+  /** Legacy approval mode used when `accessMode` is absent. */
+  permissionMode?: PermissionMode;
 }
 
 export type HostRequest =
@@ -962,6 +973,7 @@ export interface CapabilityWorkflowAssetErrorSummary {
 }
 
 export interface CapabilitySnapshot {
+  access?: CapabilityRunAccessSummary;
   model?: CapabilityModelSummary;
   tools: CapabilityToolSummary[];
   skills: {
@@ -990,6 +1002,18 @@ export interface CapabilitySnapshot {
     errors?: CapabilityWorkflowAssetErrorSummary[];
   };
   automation?: CapabilityAutomationSummary;
+}
+
+export interface CapabilityRunAccessSummary {
+  permissionMode: PermissionMode;
+  shouldWrite: boolean;
+  backgroundTasks: BackgroundTaskPolicy;
+  accessMode?: RunAccessMode;
+  requestedAccessMode?: RunAccessMode;
+  accessModeCeiling?: RunAccessMode;
+  requestedBackgroundTasks?: BackgroundTaskPolicy;
+  backgroundTasksCeiling?: BackgroundTaskPolicy;
+  overriddenLegacyFields?: string[];
 }
 
 export interface CapabilitySkillInlineShellSummary {

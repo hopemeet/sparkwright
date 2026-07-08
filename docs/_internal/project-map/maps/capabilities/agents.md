@@ -11,6 +11,7 @@ See [../../modules/agent-runtime.md](../../modules/agent-runtime.md) and [../../
 ## Main Files
 
 - `packages/host/src/runtime.ts`
+- `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/agent-profiles.ts`
 - `packages/host/src/delegate-runner.ts`
 - `packages/host/src/delegate-capability.ts`
@@ -130,8 +131,16 @@ configured profiles/delegates
 - TUI capability views exclude the built-in primary `main` profile from the
   configured-agent count/list; child/configured profiles and delegate tools
   remain visible.
-- Dynamic `spawn_agent` children stay read-only and use the read-only child
-  catalog (`read_file`, `glob`, `grep`, `list_dir`).
+- Dynamic `spawn_agent` children default to read-only (`read`, `glob`, `grep`,
+  optional `list_dir`) and use the dynamic child catalog. A tool call can
+  request `grant.workspaceWrite: true`, or request one of the managed write
+  tools (`write`, `edit`, `edit_anchored_text`) as sugar for that grant. The
+  parent run approves this at spawn time through the normal tool approval path;
+  the child then receives a scoped approval resolver that auto-approves only
+  child `workspace.write` requests covered by the grant. The grant never exposes
+  `bash`, never bypasses `shouldWrite:false` or target/write budgets in the
+  parent run policy, and cannot resurrect tools removed by `tools.allowed` /
+  `tools.disabled` / `tools.use`.
 - Dynamic `spawn_agent` runs foreground by default and may promote to an
   awaited background task after the foreground budget when
   `backgroundTasks=enabled`. Promotion preserves the same spawned child run,
@@ -143,16 +152,18 @@ configured profiles/delegates
   foreground parent turn. Parent-visible `subagent.*` events for this
   `entrypoint:"agent_task"` path carry the owning `taskId` in payload and
   metadata so trace diagnostics can join child terminal evidence back to
-  `task_create`.
+  `task_create`. `task_create(kind:"agent")` uses the same workspace-write
+  grant parsing and child grant consumption as inline `spawn_agent`.
 - Main-run `task_create` advertises the host-registered `agent` kind and its
   required child-agent payload fields so real models can create background
   agent tasks without guessing runner kind names from roles. Detached/promoted
   create results carry concrete `nextAction` guidance, and host terminal task
   notifications surface bounded child result summaries in body text so the
   parent can monitor or retrieve output without creating equivalent work. Its
-  model-facing `maxSteps` guidance intentionally matches `spawn_agent`: omit
-  the field to inherit the parent run's effective budget, and use enough turns
-  for read/search plus final synthesis.
+  model-facing payload and `maxSteps` guidance intentionally match
+  `spawn_agent`, including optional workspace-write grants: omit the field to
+  inherit the parent run's effective budget, and use enough turns for
+  read/search plus final synthesis.
 - Trace report has a task-specific lifecycle finding for equivalent repeated
   `task_create(kind:"agent")` calls after a prior same-payload task completed,
   so maintainers can distinguish monitor/reuse failures from normal independent
@@ -224,17 +235,19 @@ configured profiles/delegates
   delegation can return the previous child result with `alreadyCompleted: true`
   instead of spawning a duplicate child. The ledger does not reuse failed,
   step-limited, or truncated children.
-- In-process delegate workspace writes are surfaced to the parent run-end
-  summary by rolling up the child run's own `workspace.write.completed` events
-  onto the parent-visible `subagent.completed`/`subagent.failed` payload
-  (`workspaceWrites` count), bridged in `spawnSubAgent`. This replaced an earlier
-  parent-side full-workspace filesystem snapshot diff: rollup keeps a single
-  source of truth (the child's write events), attributes writes to the actor
-  that made them (no time-window misattribution under concurrency), and avoids
-  representing one change as two event families. It is sound because the delegate
-  child catalog has no untracked writer — `shell` rolls back unmanaged file
-  mutations and the child catalog excludes MCP; if MCP is ever added to the
-  delegate child catalog, wrap those MCP tools inside the child instead.
+- In-process delegate and granted dynamic-spawn workspace writes are surfaced
+  to the parent run-end summary by rolling up the child run's own
+  `workspace.write.completed` events onto the parent-visible
+  `subagent.completed`/`subagent.failed` payload (`workspaceWrites` count),
+  bridged in `spawnSubAgent`. This replaced an earlier parent-side
+  full-workspace filesystem snapshot diff: rollup keeps a single source of
+  truth (the child's write events), attributes writes to the actor that made
+  them (no time-window misattribution under concurrency), and avoids
+  representing one change as two event families. It is sound because child
+  catalogs with managed writes have no untracked writer — dynamic spawn never
+  receives shell, configured delegate shell rolls back unmanaged file
+  mutations, and child catalogs exclude MCP; if MCP is ever added to a child
+  catalog, wrap those MCP tools inside the child instead.
   The CLI summary counts `workspaceWrites` via `summarizeWorkspaceMutations`
   (`subagentWrites`).
 - `capabilities.agents.maxDepth` is a global nested-spawn ceiling enforced
@@ -283,6 +296,40 @@ configured profiles/delegates
   or mtime prefilters.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-08T23:46:48+0800
+- Scope: post-review hardening for dynamic spawn workspace-write grants:
+  approval summaries now name the child rather than the tool source, read-only
+  write-intent failures route parents toward `grant.workspaceWrite`, explicit
+  unusable grants fail argument policy, and parent run-loop tests cover
+  approval-before-child-creation, bypass auto-approval, approval denial,
+  read-only gate denial, and `task_create(kind:"agent")` gate parity.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/test/spawn-agent.test.ts`,
+  `packages/host/test/tools.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/spawn-agent.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/tools.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-08T14:42:08+0800
+- Scope: dynamic spawn-time workspace-write grants for `spawn_agent` and
+  `task_create(kind:"agent")`: default dynamic children remain read-only,
+  granted children can use managed write tools without shell, child writes roll
+  up through `subagent.*.workspaceWrites`, and read-only parent write gates
+  still deny.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/tool-catalog.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`,
+  `packages/core/src/run.ts`.
+- Tests: `npm run typecheck -w @sparkwright/core`;
+  `npm run typecheck -w @sparkwright/agent-runtime`;
+  `npm run typecheck -w @sparkwright/host`;
+  `npm test -w @sparkwright/core -- run.test.ts`;
+  `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-07T16:15:00+0800

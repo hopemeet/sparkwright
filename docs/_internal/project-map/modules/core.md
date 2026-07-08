@@ -64,6 +64,11 @@ Does not own:
   The run loop calls it before execution and stores bounded text on
   `tool.requested.payload.preview`, so product UIs do not need to know every
   tool's argument shape.
+- `ToolDefinition.approvalSummaryForArgs()` is the tool-owned approval-summary
+  contract for argument-dependent capability grants. When a tool gate requests
+  approval, the run loop uses this bounded summary before falling back to
+  `Run tool <name>`. The hook must be pure and must tolerate invalid model
+  arguments by throwing or returning undefined.
 - `ToolDefinition.validateInput()` is the small runtime-level semantic input
   validation seam. Core calls it after JSON schema validation and before
   `policyForArgs()` / policy / approval. It must validate only, not mutate

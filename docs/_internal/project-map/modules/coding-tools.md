@@ -80,7 +80,12 @@ Does not own:
 - Project-context `todo_planning` is the model-visible authority for when to
   use `todo_write`: it appears only when `todo_write` is in the live inventory,
   while the tool schema carries only structural/status/evidence rules.
-- Main, read-only child, and CLI diagnostic coding tool exposure should flow through the host tool catalog before reaching runtime, direct-core/cron runs, and capability snapshots.
+- Main, dynamic child, configured delegate child, and CLI diagnostic coding
+  tool exposure should flow through the host tool catalog before reaching
+  runtime, direct-core/cron runs, and capability snapshots. Dynamic children
+  default to read-only tools; managed write tools are present in the dynamic
+  child catalog only for explicit spawn-time workspace-write grants and still
+  flow through normal tool filtering.
 - Top-level `tools.use` filters the catalog by source/capability selectors
   before model-facing descriptors are built; `tools.allowed` and
   `tools.disabled` then filter concrete tool names, and `tools.defer` only
@@ -110,6 +115,18 @@ Does not own:
   smokes should use `write`, `edit_anchored_text`, or `edit`.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-08T14:42:08+0800
+- Scope: dynamic child catalog now includes managed write tools for
+  spawn-time grants while default dynamic child requests remain read-only and
+  still pass through host tool filtering.
+- Read: `packages/host/src/tool-catalog.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/coding-tools/src/index.ts`.
+- Tests: `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;
+  `npm run typecheck -w @sparkwright/host`.
 
 - Status: Verified
 - Date: 2026-07-05T21:40:16+0800

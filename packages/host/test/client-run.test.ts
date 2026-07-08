@@ -9,11 +9,14 @@ import {
   runInputMetadataRecord,
 } from "../src/client-input.js";
 import {
+  clampHostClientAccessMode,
   createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostResumeRunRequest,
   createHostStartRunRequest,
   createHostWorkflowResumeRequest,
+  nextHostClientAccessMode,
+  resolveHostClientRunAccess,
   resolveHostRequestModel,
   tracePathForSession,
 } from "../src/client-run.js";
@@ -182,6 +185,50 @@ describe("host client run request helpers", () => {
     });
   });
 
+  it("resolves client run access fields with metadata for request builders", () => {
+    const access = resolveHostClientRunAccess({
+      accessMode: "bypass",
+      accessModeCeiling: "ask",
+      backgroundTasks: "enabled",
+      backgroundTasksCeiling: "foreground-only",
+      permissionMode: "bypass_permissions",
+      shouldWrite: true,
+    });
+
+    expect(access).toEqual({
+      permissionMode: "default",
+      shouldWrite: true,
+      backgroundTasks: "foreground-only",
+      requestedBackgroundTasks: "enabled",
+      backgroundTasksCeiling: "foreground-only",
+      accessMode: "ask",
+      requestedAccessMode: "bypass",
+      accessModeCeiling: "ask",
+      overriddenLegacyFields: ["permissionMode"],
+      metadata: {
+        accessMode: "ask",
+        requestedAccessMode: "bypass",
+        accessModeCeiling: "ask",
+        accessModeOverrodeLegacyFields: ["permissionMode"],
+        backgroundTasks: "foreground-only",
+        requestedBackgroundTasks: "enabled",
+        backgroundTasksCeiling: "foreground-only",
+      },
+    });
+  });
+
+  it("cycles access modes using the shared host-client access order", () => {
+    expect(nextHostClientAccessMode("read-only")).toBe("ask");
+    expect(nextHostClientAccessMode("ask")).toBe("accept-edits");
+    expect(nextHostClientAccessMode("accept-edits")).toBe("bypass");
+    expect(nextHostClientAccessMode("bypass")).toBe("read-only");
+
+    expect(clampHostClientAccessMode("ask", "bypass")).toBe("ask");
+    expect(nextHostClientAccessMode("ask", "ask")).toBe("read-only");
+    expect(nextHostClientAccessMode("read-only", "ask")).toBe("ask");
+    expect(nextHostClientAccessMode("bypass", "ask")).toBe("read-only");
+  });
+
   it("builds capability inspect payloads with the active request model", () => {
     expect(
       createHostCapabilityInspectRequest({
@@ -199,10 +246,16 @@ describe("host client run request helpers", () => {
         sessionId: "session_1",
         modelName: "openai/requested",
         modelNameSource: "request",
+        accessMode: "ask",
+        backgroundTasks: "foreground-only",
+        shouldWrite: true,
       }),
     ).toEqual({
       sessionId: "session_1",
       model: "openai/requested",
+      accessMode: "ask",
+      backgroundTasks: "foreground-only",
+      shouldWrite: true,
     });
   });
 

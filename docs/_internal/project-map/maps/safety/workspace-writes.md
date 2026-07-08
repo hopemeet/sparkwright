@@ -40,6 +40,13 @@ tool proposes write
   still leave trace evidence. In-process delegate child writes are surfaced to
   the parent summary by rolling up the child run's own
   `workspace.write.completed` events onto `subagent.*` payloads.
+- Dynamic `spawn_agent` and `task_create(kind:"agent")` children may receive
+  managed workspace write tools only through a spawn-time workspace-write grant.
+  That grant is approved at the parent tool boundary, then consumed by a
+  child-local resolver that approves only `workspace.write` requests. The
+  parent run policy is still layered into the child, so `shouldWrite:false`,
+  target-path restrictions, file budgets, and diff budgets deny before the
+  grant resolver can approve.
 - Trace report may lower the severity of an incomplete child only at the
   report layer, and only when raw events prove the ordered chain: child
   `workspace.write.completed`, parent-visible `subagent.*.workspaceWrites > 0`,
@@ -90,6 +97,37 @@ tool proposes write
   from managed workspace writes.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-08T23:46:48+0800
+- Scope: post-review workspace-write grant hardening confirmed the parent
+  `shouldWrite:false` gate denies spawn-time write grants before approval, while
+  approved child grants remain layered under the parent workspace mutation
+  envelope so target-path, file-count, and diff-budget limits deny at child
+  `workspace.write` consumption time before the grant resolver can approve.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/core/src/policy.ts`,
+  `packages/host/test/spawn-agent.test.ts`,
+  `docs/_internal/proposals/spawn-time-capability-grant.md`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/spawn-agent.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/tools.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-08T14:42:08+0800
+- Scope: spawn-time workspace-write grants let dynamic child agents use only
+  managed workspace write tools, roll completed child writes up through
+  `subagent.*.workspaceWrites`, and still respect parent `shouldWrite:false`
+  and workspace mutation guardrails before child grant approval.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/tool-catalog.ts`,
+  `packages/core/src/workspace.ts`,
+  `packages/core/src/policy.ts`.
+- Tests: `npm test -w @sparkwright/host -- spawn-agent.test.ts`;
+  `npm test -w @sparkwright/host -- tools.test.ts`;
+  typechecks for core, agent-runtime, and host.
 
 - Status: Read-only
 - Date: 2026-07-07T00:55:52+0800
@@ -216,3 +254,17 @@ tool proposes write
   `npm --workspace @sparkwright/tui test -- test/permission.test.ts test/sdk-cutover.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`;
   `npm run schema:check`; `npm run build`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: permission/access consolidation did not change managed workspace-write
+  policy. `capability.inspect` now reports whether the inspected run view has
+  effective `shouldWrite`, but actual mutations remain governed by the normal
+  runtime policy and approval path.
+- Read: `packages/host/src/run-access.ts`,
+  `packages/host/src/runtime.ts`, `packages/host/src/server.ts`,
+  `packages/cli/src/cli.ts`,
+  `docs/_internal/project-map/maps/safety/workspace-writes.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/run-access.test.ts test/client-run.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/protocol.test.ts -t "capability inspect|capability inspection|capability inspect payloads"`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capability inspect"`.

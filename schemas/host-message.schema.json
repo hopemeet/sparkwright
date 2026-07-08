@@ -836,6 +836,80 @@
           "type": "string",
           "minLength": 1,
           "description": "Model reference in provider/model form, or the reserved deterministic model."
+        },
+        "shouldWrite": {
+          "type": "boolean",
+          "description": "Whether this inspection should describe workspace-write-capable runs."
+        },
+        "accessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"],
+          "description": "High-level run autonomy preset used to scope diagnostics. Preferred over permissionMode and shouldWrite when present."
+        },
+        "backgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"],
+          "description": "Session-level foreground/background task policy used to scope diagnostics."
+        },
+        "permissionMode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "default",
+            "accept_edits",
+            "dont_ask",
+            "bypass_permissions"
+          ],
+          "description": "Legacy approval mode used when accessMode is absent."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CapabilityRunAccessSummary": {
+      "type": "object",
+      "required": ["permissionMode", "shouldWrite", "backgroundTasks"],
+      "properties": {
+        "permissionMode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "default",
+            "accept_edits",
+            "dont_ask",
+            "bypass_permissions"
+          ]
+        },
+        "shouldWrite": { "type": "boolean" },
+        "backgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"]
+        },
+        "accessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"]
+        },
+        "requestedAccessMode": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"]
+        },
+        "accessModeCeiling": {
+          "type": "string",
+          "enum": ["read-only", "ask", "accept-edits", "bypass"]
+        },
+        "requestedBackgroundTasks": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"]
+        },
+        "backgroundTasksCeiling": {
+          "type": "string",
+          "enum": ["disabled", "foreground-only", "enabled"]
+        },
+        "overriddenLegacyFields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["permissionMode", "shouldWrite"]
+          }
         }
       },
       "additionalProperties": false
@@ -844,6 +918,7 @@
       "type": "object",
       "required": ["tools", "skills", "mcp", "agents"],
       "properties": {
+        "access": { "$ref": "#/$defs/CapabilityRunAccessSummary" },
         "model": { "$ref": "#/$defs/CapabilityModelSummary" },
         "tools": {
           "type": "array",

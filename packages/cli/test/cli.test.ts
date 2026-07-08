@@ -2436,6 +2436,9 @@ describe("runCli", () => {
       "tools: use=(all); allowed=(all); disabled=(none); defer=(none)",
     );
     expect(output.stdoutText()).toContain("runtime tools:");
+    expect(output.stdoutText()).toContain(
+      "runtime access: permissionMode=default; shouldWrite=false; backgroundTasks=enabled",
+    );
     expect(output.stdoutText()).toContain("tool: list_dir");
     expect(output.stdoutText()).toContain("diagnostic tools:");
     expect(output.stdoutText()).toContain("tool: bash");
@@ -2443,6 +2446,32 @@ describe("runCli", () => {
     expect(output.stdoutText()).toContain("tool: list_skills");
     // append_file was retired in favor of edit_anchored_text / apply_patch.
     expect(output.stdoutText()).not.toContain("tool: append_file");
+  });
+
+  it("scopes capability inspect to CLI access-mode overrides", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    const output = createOutputCapture();
+
+    const result = await runCli(
+      [
+        "capabilities",
+        "inspect",
+        "--workspace",
+        workspace,
+        "--access-mode",
+        "bypass",
+        "--format",
+        "text",
+      ],
+      {
+        io: { stdout: output.stdout, stderr: output.stderr },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(output.stdoutText()).toContain(
+      "runtime access: accessMode=bypass; permissionMode=bypass_permissions; shouldWrite=true; backgroundTasks=enabled",
+    );
   });
 
   it("shows workflow and event rules in capability inspect text output", async () => {

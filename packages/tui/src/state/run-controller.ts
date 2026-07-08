@@ -435,6 +435,7 @@ export class RunController {
           sessionId: this.sessionId,
           modelName: this.opts.modelName,
           modelNameSource: this.opts.modelNameSource,
+          accessMode: this.tuiPermissionMode(),
         }),
       );
     } catch (err) {

@@ -364,9 +364,7 @@ async function handleRequest(
       return false;
     }
     case "capability.inspect": {
-      const r = await runtime.inspectCapabilities({
-        modelRef: req.payload.model,
-      });
+      const r = await runtime.inspectCapabilities(req.payload);
       if (r.ok)
         respondOk(
           conn,
@@ -605,9 +603,22 @@ function validateRequestPayload(req: HostRequest): string | undefined {
       );
     case "capability.inspect":
       return (
-        requireOnly(req.payload, ["sessionId", "model"]) ??
+        requireOnly(req.payload, [
+          "sessionId",
+          "model",
+          "shouldWrite",
+          "accessMode",
+          "backgroundTasks",
+          "permissionMode",
+        ]) ??
         optionalString(req.payload, "sessionId") ??
-        optionalString(req.payload, "model")
+        optionalString(req.payload, "model") ??
+        optionalBoolean(req.payload, "shouldWrite") ??
+        optionalEnum(req.payload, "accessMode", [...ACCESS_MODES]) ??
+        optionalEnum(req.payload, "backgroundTasks", [
+          ...BACKGROUND_TASK_POLICIES,
+        ]) ??
+        optionalEnum(req.payload, "permissionMode", [...PERMISSION_MODES])
       );
   }
 }

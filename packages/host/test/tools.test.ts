@@ -4,6 +4,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,7 +13,9 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   createDefaultPolicy,
+  createLayeredPolicy,
   createRun,
+  createWorkspaceMutationPolicy,
   defineTool,
   createRunId,
   EventLog,
@@ -46,6 +49,7 @@ import {
   catalogEntryOrigin,
   createCliDiagnosticToolCatalog,
   createConfiguredDelegateChildToolCatalog,
+  createDynamicChildToolCatalog,
   createMainHostToolCatalog,
   createReadOnlyChildToolCatalog,
   resolveConfiguredToolAllowlist,
@@ -728,6 +732,177 @@ describe("host tools", () => {
       "glob",
       "grep",
     ]);
+  });
+
+  it("builds dynamic child tools with managed writes but no shell", () => {
+    const entries = createDynamicChildToolCatalog({
+      workspaceRoot: "/tmp/ws",
+    });
+
+    expect(entries.map((entry) => entry.definition.name)).toEqual([
+      "read",
+      "glob",
+      "grep",
+      "list_dir",
+      "write",
+      "edit_anchored_text",
+      "edit",
+      "tool_search",
+    ]);
+    expect(entries.map((entry) => entry.definition.name)).not.toContain("bash");
+
+    const writeOnly = createDynamicChildToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      toolConfig: { use: ["workspace.write"] },
+    });
+    expect(writeOnly.map((entry) => entry.definition.name)).toEqual([
+      "write",
+      "edit_anchored_text",
+      "edit",
+      "tool_search",
+    ]);
+  });
+
+  it("classifies agent task_create workspace write grants", () => {
+    const manager = new TaskManager({ store: new InMemoryTaskStore() });
+    const taskCreate = createMainHostToolCatalog({
+      workspaceRoot: "/tmp/ws",
+      skillRoots: [],
+      taskManager: manager,
+      getParentRunId: () => createRunId(),
+      todoPath: "/tmp/ws/.sparkwright/sessions/test/todo.md",
+      shell: { sandbox: { mode: "off" } },
+    }).find((entry) => entry.definition.name === "task_create")?.definition;
+
+    expect(
+      taskCreate?.policyForArgs?.({
+        kind: "agent",
+        payload: {
+          goal: "write a file",
+          role: "writer",
+          prompt: "Write a file.",
+          allowedTools: ["write"],
+        },
+      }),
+    ).toMatchObject({
+      policy: { risk: "risky", requiresApproval: true },
+      governance: {
+        sideEffects: expect.arrayContaining(["write", "external"]),
+      },
+    });
+    expect(
+      taskCreate?.approvalSummaryForArgs?.(
+        {
+          kind: "agent",
+          payload: {
+            goal: "write a file",
+            role: "writer",
+            prompt: "Write a file.",
+            allowedTools: ["write"],
+          },
+        },
+        { maxChars: 200 },
+      ),
+    ).toContain('Grant workspace write to child "writer"');
+    expect(() =>
+      taskCreate?.policyForArgs?.({
+        kind: "agent",
+        payload: {
+          goal: "write a file",
+          role: "writer",
+          prompt: "Write a file.",
+          allowedTools: ["read"],
+          grant: { workspaceWrite: true },
+        },
+      }),
+    ).toThrow(/allowedTools does not include workspace write tools/);
+  });
+
+  it("gates agent task_create workspace write grants before creating a task", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-task-create-gate-"),
+    );
+    try {
+      const manager = new TaskManager({ store: new InMemoryTaskStore() });
+      manager.registerKind("agent", async () => ({ message: "agent done" }));
+      const taskCreate = createMainHostToolCatalog({
+        workspaceRoot: root,
+        skillRoots: [],
+        taskManager: manager,
+        getParentRunId: (ctx) => {
+          if (!ctx) throw new Error("task_create requires runtime context.");
+          return ctx.run.id;
+        },
+        todoPath: join(root, ".sparkwright", "sessions", "test", "todo.md"),
+        shell: { sandbox: { mode: "off" } },
+      }).find((entry) => entry.definition.name === "task_create")?.definition;
+      expect(taskCreate).toBeDefined();
+
+      const policy = createLayeredPolicy([
+        createDefaultPolicy(),
+        createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+      ]);
+      let modelCalls = 0;
+      let approvalCalls = 0;
+      let approvedBeforeTaskCreated = false;
+      const run = createRun({
+        goal: "create a writer agent task",
+        workspace: new LocalWorkspace(root),
+        tools: [taskCreate!],
+        policy,
+        maxSteps: 4,
+        approvalResolver(request) {
+          approvalCalls += 1;
+          approvedBeforeTaskCreated = manager.store.list().length === 0;
+          expect(request.summary).toContain(
+            'Grant workspace write to child "writer"',
+          );
+          return {
+            approvalId: request.id,
+            decision: "approved",
+            message: "approved",
+          };
+        },
+        model: {
+          async complete() {
+            modelCalls += 1;
+            return modelCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "task_create",
+                      arguments: {
+                        kind: "agent",
+                        mode: "foreground",
+                        title: "writer",
+                        payload: {
+                          goal: "write a file",
+                          role: "writer",
+                          prompt: "Write a file.",
+                          allowedTools: ["write"],
+                          maxSteps: 3,
+                        },
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent done" };
+          },
+        },
+      });
+
+      await run.start();
+
+      expect(approvalCalls).toBe(1);
+      expect(approvedBeforeTaskCreated).toBe(true);
+      expect(manager.store.list({ kind: "agent" })).toHaveLength(1);
+      expect(
+        run.events.all().filter((event) => event.type === "approval.requested"),
+      ).toHaveLength(1);
+      expect(run.record.state).toBe("completed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("builds configured delegate child tools from the writable coding catalog", () => {

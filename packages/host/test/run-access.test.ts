@@ -126,7 +126,54 @@ describe("run access resolution", () => {
     });
   });
 
-  it("builds inspectable access metadata only when an access mode is set", () => {
+  it("reports only provided legacy fields when a ceiling clamps legacy access", () => {
+    expect(
+      resolveRunAccessFields(
+        { goal: "g", permissionMode: "bypass_permissions" },
+        { accessModeCeiling: "read-only" },
+      ),
+    ).toEqual({
+      permissionMode: "plan",
+      shouldWrite: false,
+      backgroundTasks: "enabled",
+      accessMode: "read-only",
+      requestedAccessMode: "bypass",
+      accessModeCeiling: "read-only",
+      overriddenLegacyFields: ["permissionMode"],
+    });
+  });
+
+  it("clamps dont_ask workspace writes to a configured read-only ceiling", () => {
+    const omitted = resolveRunAccessFields(
+      { goal: "g", permissionMode: "dont_ask" },
+      { accessModeCeiling: "read-only" },
+    );
+    expect(omitted).toEqual({
+      permissionMode: "dont_ask",
+      shouldWrite: false,
+      backgroundTasks: "enabled",
+      accessModeCeiling: "read-only",
+      overriddenLegacyFields: [],
+    });
+    expect(buildAccessMetadata(omitted)).toEqual({
+      accessModeCeiling: "read-only",
+    });
+
+    expect(
+      resolveRunAccessFields(
+        { goal: "g", permissionMode: "dont_ask", shouldWrite: true },
+        { accessModeCeiling: "read-only" },
+      ),
+    ).toEqual({
+      permissionMode: "dont_ask",
+      shouldWrite: false,
+      backgroundTasks: "enabled",
+      accessModeCeiling: "read-only",
+      overriddenLegacyFields: ["shouldWrite"],
+    });
+  });
+
+  it("builds inspectable access metadata when access scope details are set", () => {
     expect(
       buildAccessMetadata({
         permissionMode: "default",

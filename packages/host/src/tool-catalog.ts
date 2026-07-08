@@ -12,6 +12,7 @@ import {
   type BackgroundTaskPolicy,
   type EventEmitter,
   type RunId,
+  type RuntimeContext,
   type ToolDefinition,
   type ToolDescriptor,
   type ToolOrigin,
@@ -45,10 +46,16 @@ import {
   applyBuiltinToolIdentity,
   normalizeToolNameList,
 } from "./tool-identities.js";
+import {
+  AGENT_READ_ONLY_CHILD_TOOLS,
+  AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  agentWorkspaceWriteGrantApprovalSummaryForPayload,
+  agentWorkspaceWriteGrantPolicyForPayload,
+} from "./agent-spawn-grants.js";
 
 const MAIN_TODO_MAX_WRITES_PER_RUN = 4;
 export const AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION =
-  "required object with goal, role, and prompt; optional allowedTools, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
+  "required object with goal, role, and prompt; optional allowedTools, grant, metadata, and maxSteps. Omit maxSteps unless you need an explicit child turn cap; low values can make read-and-answer tasks partial.";
 export const AGENT_TASK_MAX_STEPS_DESCRIPTION =
   "Optional child step (model turn) limit; allocate by sub-task complexity. Defaults to the parent run's effective maxSteps when omitted. A read-and-answer task usually needs 4+; a multi-step search (glob, read, refine, conclude) typically needs 6+.";
 export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
@@ -72,11 +79,27 @@ export const AGENT_TASK_CREATE_PAYLOAD_SCHEMA = {
     allowedTools: {
       type: "array",
       description:
-        "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir.",
+        "Optional subset of child tools. Supported: read, glob, grep, list_dir, write, edit, edit_anchored_text. Requesting a write tool implies grant.workspaceWrite=true.",
       items: {
         type: "string",
-        enum: ["read", "glob", "grep", "list_dir"],
+        enum: [
+          ...AGENT_READ_ONLY_CHILD_TOOLS,
+          ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+        ],
       },
+    },
+    grant: {
+      type: "object",
+      description:
+        "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
+      properties: {
+        workspaceWrite: {
+          type: "boolean",
+          description:
+            "Allow the child to perform managed workspace writes through write/edit tools.",
+        },
+      },
+      additionalProperties: false,
     },
     maxSteps: {
       type: "integer",
@@ -131,6 +154,27 @@ export function createReadOnlyChildToolCatalog(input: {
   );
 }
 
+export function createDynamicChildToolCatalog(input: {
+  workspaceRoot: string;
+  toolConfig?: CapabilityToolsConfig;
+}): HostToolCatalogEntry[] {
+  return withDeferredToolSearch(
+    applyToolConfigToCatalog(
+      [
+        catalogEntry(createReadFileTool(), "coding"),
+        catalogEntry(createGlobPathsTool(input.workspaceRoot), "coding"),
+        catalogEntry(createGrepTextTool(input.workspaceRoot), "coding"),
+        catalogEntry(createListDirTool(input.workspaceRoot), "coding"),
+        catalogEntry(createWriteFileTool(), "coding"),
+        catalogEntry(createEditAnchoredTextTool(), "coding"),
+        catalogEntry(createApplyPatchTool(), "coding"),
+      ],
+      input.toolConfig,
+    ),
+    input.toolConfig,
+  );
+}
+
 export function createConfiguredDelegateChildToolCatalog(input: {
   workspaceRoot: string;
   toolConfig?: CapabilityToolsConfig;
@@ -176,7 +220,7 @@ export function createMainHostToolCatalog(input: {
   skillRoots: SkillRoot[];
   toolConfig?: CapabilityToolsConfig;
   taskManager: TaskManager;
-  getParentRunId: () => RunId;
+  getParentRunId: (ctx?: RuntimeContext) => RunId;
   getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
@@ -266,7 +310,7 @@ function createMainHostToolCatalogList(input: {
   workspaceRoot: string;
   skillRoots: SkillRoot[];
   taskManager: TaskManager;
-  getParentRunId: () => RunId;
+  getParentRunId: (ctx?: RuntimeContext) => RunId;
   getRunEvents?: () => EventEmitter | undefined;
   todoPath: string;
   preparedSkills?: PreparedToolSource | null;
@@ -318,10 +362,22 @@ function createMainHostToolCatalogList(input: {
           {
             kind: "agent",
             description:
-              "start a read-only background child agent owned by the task lifecycle",
+              "start a background child agent owned by the task lifecycle",
             payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
             payloadSchema: AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
             requiresPayload: true,
+            policyForPayload: (payload) =>
+              agentWorkspaceWriteGrantPolicyForPayload(
+                payload,
+                "task_create(agent)",
+                ["external"],
+              ),
+            approvalSummaryForPayload: (payload, _call, options) =>
+              agentWorkspaceWriteGrantApprovalSummaryForPayload(
+                payload,
+                "task_create(agent)",
+                options,
+              ),
           },
         ],
       }),

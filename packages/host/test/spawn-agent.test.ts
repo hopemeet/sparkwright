@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createDefaultPolicy,
+  createLayeredPolicy,
+  createPermissionModePolicy,
   createRun,
   createSessionFileRunStoreFactory,
   createSessionRunStoreFactory,
+  createWorkspaceMutationPolicy,
   createWorkspaceReadScopePolicy,
   defineTool,
   FileSessionStore,
@@ -30,6 +33,7 @@ import {
   runHostAgentTask,
 } from "../src/runtime.js";
 import { createReadFileTool } from "../src/tools.js";
+import { createDynamicChildToolCatalog } from "../src/tool-catalog.js";
 
 /**
  * The session run store flushes to disk asynchronously, so a trace/session file
@@ -276,6 +280,764 @@ describe("host spawn_agent wiring", () => {
     // may poll for a while on a loaded CI runner (windows-latest has been seen
     // taking >5s). The test budget must exceed the helper's own 12s deadline.
   }, 20000);
+
+  it("gates dynamic workspace write grants through the parent run before spawning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-gate-"));
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "write",
+                  arguments: {
+                    path: "child.txt",
+                    content: "written after approval\n",
+                    reason: "spawn gate regression",
+                  },
+                },
+              ],
+            };
+          }
+          return { message: "child wrote the file" };
+        },
+      };
+      const policy = createLayeredPolicy([
+        createDefaultPolicy(),
+        createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+      ]);
+      const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const childTools = createDynamicChildToolCatalog({
+        workspaceRoot: root,
+      }).map((entry) => entry.definition);
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parentRef.current,
+        model: childModel,
+        childTools,
+        parentRunPolicy: policy,
+        childRunStoreFactory: () => undefined as never,
+      });
+      let parentCalls = 0;
+      let approvalCalls = 0;
+      let approvedBeforeChildStarted = false;
+      const parent = (parentRef.current = createRun({
+        goal: "spawn a writer",
+        workspace: new LocalWorkspace(root),
+        tools: [spawnTool],
+        policy,
+        maxSteps: 5,
+        approvalResolver(request) {
+          approvalCalls += 1;
+          approvedBeforeChildStarted = childCalls === 0;
+          expect(request.summary).toContain(
+            'Grant workspace write to child "writer"',
+          );
+          return {
+            approvalId: request.id,
+            decision: "approved",
+            message: "approved",
+          };
+        },
+        model: {
+          async complete() {
+            parentCalls += 1;
+            return parentCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "spawn_agent",
+                      arguments: {
+                        goal: "write child.txt",
+                        role: "writer",
+                        prompt: "Write child.txt.",
+                        grant: { workspaceWrite: true },
+                        maxSteps: 3,
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent done" };
+          },
+        },
+      }));
+
+      await parent.start();
+
+      expect(approvalCalls).toBe(1);
+      expect(approvedBeforeChildStarted).toBe(true);
+      expect(
+        parent.events
+          .all()
+          .filter((event) => event.type === "approval.requested"),
+      ).toHaveLength(1);
+      await expect(readFile(join(root, "child.txt"), "utf8")).resolves.toBe(
+        "written after approval\n",
+      );
+      expect(parent.record.state).toBe("completed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records auto-approved spawn write grants in bypass-style runs", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-bypass-gate-"),
+    );
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "write",
+                  arguments: {
+                    path: "child.txt",
+                    content: "written by bypass grant\n",
+                    reason: "spawn bypass grant regression",
+                  },
+                },
+              ],
+            };
+          }
+          return { message: "child wrote the file" };
+        },
+      };
+      const policy = createLayeredPolicy([
+        createPermissionModePolicy({ mode: "bypass_permissions" }),
+        createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+      ]);
+      const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parentRef.current,
+        model: childModel,
+        childTools: createDynamicChildToolCatalog({
+          workspaceRoot: root,
+        }).map((entry) => entry.definition),
+        parentRunPolicy: policy,
+        childRunStoreFactory: () => undefined as never,
+      });
+      let parentCalls = 0;
+      const parent = (parentRef.current = createRun({
+        goal: "spawn a bypass writer",
+        workspace: new LocalWorkspace(root),
+        tools: [spawnTool],
+        policy,
+        maxSteps: 5,
+        approvalResolver(request) {
+          expect(request.summary).toContain(
+            'Grant workspace write to child "writer"',
+          );
+          return {
+            approvalId: request.id,
+            decision: "approved",
+            message: "Auto-approved by bypass_permissions.",
+            autoApproved: true,
+          };
+        },
+        model: {
+          async complete() {
+            parentCalls += 1;
+            return parentCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "spawn_agent",
+                      arguments: {
+                        goal: "write child.txt",
+                        role: "writer",
+                        prompt: "Write child.txt.",
+                        grant: { workspaceWrite: true },
+                        maxSteps: 3,
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent done" };
+          },
+        },
+      }));
+
+      await parent.start();
+
+      expect(
+        parent.events.all().find((event) => event.type === "approval.resolved")
+          ?.payload,
+      ).toMatchObject({
+        decision: "approved",
+        autoApproved: true,
+      });
+      await expect(readFile(join(root, "child.txt"), "utf8")).resolves.toBe(
+        "written by bypass grant\n",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not spawn a child when the parent denies the write grant approval", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-denied-approval-"),
+    );
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          return { message: "unexpected child start" };
+        },
+      };
+      const policy = createLayeredPolicy([
+        createDefaultPolicy(),
+        createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+      ]);
+      const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parentRef.current,
+        model: childModel,
+        childTools: createDynamicChildToolCatalog({
+          workspaceRoot: root,
+        }).map((entry) => entry.definition),
+        parentRunPolicy: policy,
+        childRunStoreFactory: () => undefined as never,
+      });
+      let parentCalls = 0;
+      const parent = (parentRef.current = createRun({
+        goal: "spawn a denied writer",
+        workspace: new LocalWorkspace(root),
+        tools: [spawnTool],
+        policy,
+        maxSteps: 3,
+        approvalResolver(request) {
+          return {
+            approvalId: request.id,
+            decision: "denied",
+            message: "denied",
+          };
+        },
+        model: {
+          async complete() {
+            parentCalls += 1;
+            return parentCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "spawn_agent",
+                      arguments: {
+                        goal: "write blocked.txt",
+                        role: "writer",
+                        prompt: "Write blocked.txt.",
+                        grant: { workspaceWrite: true },
+                        maxSteps: 3,
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent saw denial" };
+          },
+        },
+      }));
+
+      await parent.start();
+
+      expect(childCalls).toBe(0);
+      expect(
+        parent.events.all().find((event) => event.type === "tool.failed")
+          ?.payload,
+      ).toMatchObject({
+        toolName: "spawn_agent",
+        error: { code: "TOOL_APPROVAL_DENIED" },
+      });
+      await expect(
+        readFile(join(root, "blocked.txt"), "utf8"),
+      ).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies spawn write grants in read-only parent runs before approval", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-readonly-gate-"),
+    );
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          return { message: "unexpected child start" };
+        },
+      };
+      const policy = createWorkspaceMutationPolicy({
+        allowWorkspaceWrites: false,
+      });
+      const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parentRef.current,
+        model: childModel,
+        childTools: createDynamicChildToolCatalog({
+          workspaceRoot: root,
+        }).map((entry) => entry.definition),
+        parentRunPolicy: policy,
+        childRunStoreFactory: () => undefined as never,
+      });
+      let parentCalls = 0;
+      const parent = (parentRef.current = createRun({
+        goal: "spawn a read-only writer",
+        workspace: new LocalWorkspace(root),
+        tools: [spawnTool],
+        policy,
+        maxSteps: 3,
+        approvalResolver() {
+          throw new Error("read-only grant denial must happen before approval");
+        },
+        model: {
+          async complete() {
+            parentCalls += 1;
+            return parentCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "spawn_agent",
+                      arguments: {
+                        goal: "write blocked.txt",
+                        role: "writer",
+                        prompt: "Write blocked.txt.",
+                        grant: { workspaceWrite: true },
+                        maxSteps: 3,
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent saw read-only denial" };
+          },
+        },
+      }));
+
+      await parent.start();
+
+      expect(childCalls).toBe(0);
+      expect(
+        parent.events
+          .all()
+          .some((event) => event.type === "approval.requested"),
+      ).toBe(false);
+      expect(
+        parent.events.all().find((event) => event.type === "tool.failed")
+          ?.payload,
+      ).toMatchObject({
+        toolName: "spawn_agent",
+        error: {
+          code: "TOOL_DENIED",
+          message:
+            "Tools with write side effects require an explicit write-enabled run.",
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps default read-only spawn calls approval-free", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-readonly-default-"),
+    );
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          return { message: "child inspected" };
+        },
+      };
+      const policy = createWorkspaceMutationPolicy({
+        allowWorkspaceWrites: false,
+      });
+      const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parentRef.current,
+        model: childModel,
+        childTools: createDynamicChildToolCatalog({
+          workspaceRoot: root,
+        }).map((entry) => entry.definition),
+        parentRunPolicy: policy,
+        childRunStoreFactory: () => undefined as never,
+      });
+      let parentCalls = 0;
+      const parent = (parentRef.current = createRun({
+        goal: "spawn a reader",
+        workspace: new LocalWorkspace(root),
+        tools: [spawnTool],
+        policy,
+        maxSteps: 3,
+        approvalResolver() {
+          throw new Error("default read-only spawn must not request approval");
+        },
+        model: {
+          async complete() {
+            parentCalls += 1;
+            return parentCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "spawn_agent",
+                      arguments: {
+                        goal: "inspect README",
+                        role: "reader",
+                        prompt: "Inspect README and report.",
+                        maxSteps: 1,
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent done" };
+          },
+        },
+      }));
+
+      await parent.start();
+
+      expect(childCalls).toBe(1);
+      expect(
+        parent.events
+          .all()
+          .some((event) => event.type === "approval.requested"),
+      ).toBe(false);
+      expect(parent.record.state).toBe("completed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("grants managed workspace writes to a dynamic child at spawn time", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-write-"));
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete() {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "write",
+                  arguments: {
+                    path: "child.txt",
+                    content: "written by child\n",
+                    reason: "spawn grant regression",
+                  },
+                },
+              ],
+            };
+          }
+          return { message: "child wrote the file" };
+        },
+      };
+      const parent = createRun({
+        goal: "ask a child to write",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        workspace: new LocalWorkspace(root),
+        maxSteps: 1,
+      });
+      const childTools = createDynamicChildToolCatalog({
+        workspaceRoot: root,
+      }).map((entry) => entry.definition);
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools,
+        parentRunPolicy: createLayeredPolicy([
+          createDefaultPolicy(),
+          createWorkspaceMutationPolicy({ allowWorkspaceWrites: true }),
+        ]),
+        childRunStoreFactory: () => undefined as never,
+      });
+
+      expect(
+        spawnTool.policyForArgs?.({
+          goal: "write child.txt",
+          role: "writer",
+          prompt: "Write child.txt.",
+          grant: { workspaceWrite: true },
+        }),
+      ).toMatchObject({
+        policy: { risk: "risky", requiresApproval: true },
+        governance: { sideEffects: ["write"] },
+      });
+      expect(
+        spawnTool.approvalSummaryForArgs?.(
+          {
+            goal: "write child.txt",
+            role: "writer",
+            prompt: "Write child.txt.",
+            grant: { workspaceWrite: true },
+          },
+          { maxChars: 200 },
+        ),
+      ).toContain('Grant workspace write to child "writer"');
+      expect(() =>
+        spawnTool.policyForArgs?.({
+          goal: "write child.txt",
+          role: "writer",
+          prompt: "Write child.txt.",
+          allowedTools: ["read"],
+          grant: { workspaceWrite: true },
+        }),
+      ).toThrow(/allowedTools does not include workspace write tools/);
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "write child.txt",
+          role: "writer",
+          prompt: "Write child.txt.",
+          grant: { workspaceWrite: true },
+          maxSteps: 3,
+        },
+        { run: parent.record } as never,
+      )) as { signal: string; message?: string };
+
+      expect(output).toMatchObject({
+        signal: "completed",
+        message: "child wrote the file",
+      });
+      await expect(readFile(join(root, "child.txt"), "utf8")).resolves.toBe(
+        "written by child\n",
+      );
+      expect(
+        parent.events.all().find((event) => event.type === "subagent.completed")
+          ?.payload,
+      ).toMatchObject({
+        workspaceWrites: 1,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let a spawn write grant bypass a read-only parent policy", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sparkwright-host-spawn-deny-"));
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete(input) {
+          childCalls += 1;
+          if (childCalls === 1) {
+            return {
+              toolCalls: [
+                {
+                  toolName: "write",
+                  arguments: {
+                    path: "blocked.txt",
+                    content: "should not be written\n",
+                    reason: "spawn grant deny regression",
+                  },
+                },
+              ],
+            };
+          }
+          const contextText = input.context
+            .map((item) =>
+              typeof item.content === "string"
+                ? item.content
+                : JSON.stringify(item.content),
+            )
+            .join("\n");
+          const sawDeny =
+            contextText.includes("TOOL_DENIED") ||
+            contextText.includes("workspace write") ||
+            contextText.includes("write side effect");
+          return { message: sawDeny ? "write denied" : "unexpected" };
+        },
+      };
+      const parent = createRun({
+        goal: "ask a child to write in read-only mode",
+        model: {
+          async complete() {
+            return { message: "parent done" };
+          },
+        },
+        workspace: new LocalWorkspace(root),
+        maxSteps: 1,
+      });
+      const childTools = createDynamicChildToolCatalog({
+        workspaceRoot: root,
+      }).map((entry) => entry.definition);
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parent,
+        model: childModel,
+        childTools,
+        parentRunPolicy: createWorkspaceMutationPolicy({
+          allowWorkspaceWrites: false,
+        }),
+        childRunStoreFactory: () => undefined as never,
+      });
+
+      const output = (await spawnTool.execute(
+        {
+          goal: "write blocked.txt",
+          role: "writer",
+          prompt: "Write blocked.txt.",
+          grant: { workspaceWrite: true },
+          maxSteps: 3,
+        },
+        { run: parent.record } as never,
+      )) as { signal: string; message?: string };
+
+      expect(output).toMatchObject({
+        signal: "completed",
+        message: "write denied",
+      });
+      await expect(
+        readFile(join(root, "blocked.txt"), "utf8"),
+      ).rejects.toThrow();
+      expect(
+        parent.events.all().find((event) => event.type === "subagent.completed")
+          ?.payload,
+      ).not.toMatchObject({
+        workspaceWrites: expect.any(Number),
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows a spawn write grant in a --target run but clamps the child to the target scope", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "sparkwright-host-spawn-target-"),
+    );
+    try {
+      let childCalls = 0;
+      const childModel: ModelAdapter = {
+        async complete(input) {
+          childCalls += 1;
+          if (childCalls === 1) {
+            // In-target write is inside the clamped envelope and succeeds.
+            return {
+              toolCalls: [
+                {
+                  toolName: "write",
+                  arguments: {
+                    path: "target.txt",
+                    content: "in-target write\n",
+                    reason: "target scope regression",
+                  },
+                },
+              ],
+            };
+          }
+          if (childCalls === 2) {
+            // Out-of-target write must be denied even with the grant.
+            return {
+              toolCalls: [
+                {
+                  toolName: "write",
+                  arguments: {
+                    path: "off-target.txt",
+                    content: "should be clamped\n",
+                    reason: "target scope regression",
+                  },
+                },
+              ],
+            };
+          }
+          const contextText = input.context
+            .map((item) =>
+              typeof item.content === "string"
+                ? item.content
+                : JSON.stringify(item.content),
+            )
+            .join("\n");
+          const sawDeny =
+            contextText.includes("TOOL_DENIED") ||
+            contextText.includes("allowed target scope");
+          return {
+            message: sawDeny ? "off-target write denied" : "unexpected",
+          };
+        },
+      };
+      const policy = createLayeredPolicy([
+        createDefaultPolicy(),
+        createWorkspaceMutationPolicy({
+          allowWorkspaceWrites: true,
+          allowedPaths: ["target.txt"],
+          maxWriteFiles: 1,
+        }),
+      ]);
+      const parentRef: { current?: ReturnType<typeof createRun> } = {};
+      const spawnTool = createDynamicSpawnAgentTool({
+        getParent: () => parentRef.current,
+        model: childModel,
+        childTools: createDynamicChildToolCatalog({
+          workspaceRoot: root,
+        }).map((entry) => entry.definition),
+        parentRunPolicy: policy,
+        childRunStoreFactory: () => undefined as never,
+      });
+      let parentCalls = 0;
+      let approvalCalls = 0;
+      const parent = (parentRef.current = createRun({
+        goal: "spawn a target-scoped writer",
+        workspace: new LocalWorkspace(root),
+        tools: [spawnTool],
+        policy,
+        maxSteps: 5,
+        approvalResolver(request) {
+          approvalCalls += 1;
+          return {
+            approvalId: request.id,
+            decision: "approved",
+            message: "approved",
+          };
+        },
+        model: {
+          async complete() {
+            parentCalls += 1;
+            return parentCalls === 1
+              ? {
+                  toolCalls: [
+                    {
+                      toolName: "spawn_agent",
+                      arguments: {
+                        goal: "write within the target scope",
+                        role: "writer",
+                        prompt: "Write files.",
+                        grant: { workspaceWrite: true },
+                        maxSteps: 4,
+                      },
+                    },
+                  ],
+                }
+              : { message: "parent done" };
+          },
+        },
+      }));
+
+      await parent.start();
+
+      // The grant is honored at the spawn gate (approved once), not denied.
+      expect(approvalCalls).toBe(1);
+      // In-target write lands; the out-of-target write is clamped by the
+      // parent envelope, so the grant never exceeds the --target scope.
+      await expect(readFile(join(root, "target.txt"), "utf8")).resolves.toBe(
+        "in-target write\n",
+      );
+      await expect(
+        readFile(join(root, "off-target.txt"), "utf8"),
+      ).rejects.toThrow();
+      expect(parent.record.state).toBe("completed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it("promotes slow dynamic spawn_agent work while preserving projection and ledger", async () => {
     const sink = new InMemoryTaskNotificationQueue();
@@ -1337,6 +2099,17 @@ describe("read-only child goal guard (F2)", () => {
         entrypoint: "agent_task",
       }),
     ).toThrowError(/read-only and cannot run processes/i);
+  });
+
+  it("routes write-required read-only children toward a workspace write grant", () => {
+    expect(() =>
+      assertReadOnlyChildCanSatisfyGoal({
+        goal: "write the file child.txt",
+        prompt: "",
+        childTools: [{ name: "read" }, { name: "grep" }],
+        entrypoint: "spawn_agent",
+      }),
+    ).toThrowError(/grant: \{ workspaceWrite: true \}/i);
   });
 
   it("permits an execution goal when the child actually has bash", () => {

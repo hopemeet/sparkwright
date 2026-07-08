@@ -14,6 +14,7 @@ See also [../maps/runtime/run-loop.md](../maps/runtime/run-loop.md) and
 - `packages/host/src/runtime.ts`
 - `packages/host/src/server.ts`
 - `packages/host/src/connection.ts`
+- `packages/host/src/agent-spawn-grants.ts`
 - `packages/host/src/tool-catalog.ts`
 - `packages/host/src/tool-identities.ts`
 - `packages/host/src/tools.ts`
@@ -187,20 +188,27 @@ Does not own:
   for tools that remain. The effective config canonicalizes legacy selector and
   tool aliases.
 - Main, dynamic-spawn child, configured-delegate child, and diagnostic tool
-  lists are derived from `tool-catalog.ts`; dynamic `spawn_agent` uses the
-  read-only child catalog, while configured in-process delegates use a separate
-  profile-aware child catalog for workspace read/write coding tools plus
-  `bash` when selected. Catalog entries keep tool definition, source, and
-  stable identity metadata; callers that need bare `ToolDefinition[]` flatten
-  catalog entries with `catalogToolDefinitions()`.
+  lists are derived from `tool-catalog.ts`; dynamic `spawn_agent` uses a
+  dynamic child catalog that defaults to read-only tools but can expose managed
+  workspace write tools (`write`, `edit`, `edit_anchored_text`) only when the
+  tool call requests a spawn-time workspace-write grant. It never exposes
+  `bash`. Configured in-process delegates use a separate profile-aware child
+  catalog for workspace read/write coding tools plus `bash` when selected.
+  Catalog entries keep tool definition, source, and stable identity metadata;
+  callers that need bare `ToolDefinition[]` flatten catalog entries with
+  `catalogToolDefinitions()`.
 - The main host catalog exposes `task_create` as an eager task tool when the
   background task surface is enabled. Host owns the `agent` kind descriptor and
   its model-facing payload schema (`goal`, `role`, `prompt`, optional
-  `allowedTools`, `maxSteps`, `metadata`); execution still dispatches through
-  the `TaskManager` runner registered by `HostRuntime`. The `maxSteps` payload
-  guidance mirrors dynamic `spawn_agent`: omit it to inherit the parent run's
-  effective step budget, and allocate enough turns for read/search plus final
-  synthesis instead of using very low caps.
+  `allowedTools`, `grant`, `maxSteps`, `metadata`); execution still dispatches
+  through the `TaskManager` runner registered by `HostRuntime`. For
+  `grant.workspaceWrite: true` or explicit write tools, the descriptor supplies
+  grant-aware policy/governance and approval summary metadata before the task
+  starts, while the background child consumes the same scoped grant as
+  `spawn_agent`. The `maxSteps` payload guidance mirrors dynamic `spawn_agent`:
+  omit it to inherit the parent run's effective step budget, and allocate
+  enough turns for read/search plus final synthesis instead of using very low
+  caps.
 - The main host catalog preserves the shared deferred `task` action schema from
   agent-runtime, including action-specific non-empty id constraints, so
   `tool_search select:task` gives the provider the same guidance the runtime
@@ -732,6 +740,26 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-08T23:46:48+0800
+- Scope: post-review hardening for host access/grant plumbing: legacy
+  `permissionMode:"dont_ask"` is clamped by `accessModeCeiling` for effective
+  writes, legacy override diagnostics report only provided conflicting fields,
+  dynamic spawn grant summaries/F2 guidance were corrected, unusable explicit
+  write grants fail argument policy, and parent run-loop tests now cover
+  `spawn_agent`/`task_create(kind:"agent")` gate timing plus bypass
+  auto-approval.
+- Read: `packages/host/src/run-access.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/test/run-access.test.ts`,
+  `packages/host/test/spawn-agent.test.ts`,
+  `packages/host/test/tools.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/run-access.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/spawn-agent.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/tools.test.ts`.
 
 - Status: Verified
 - Date: 2026-07-07T16:15:00+0800
@@ -1967,3 +1995,24 @@ test/cli.test.ts -t "filters proposals|agents|capabilities inspect"`.
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "runs a configured external command delegate directly"`;
   `npm run regression:real-agents`; `npm run check:dist-fresh`;
   `npm run typecheck`; `npm run typecheck:test`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: run access consolidation now has shared host/client helpers for
+  resolving `accessMode`/legacy `permissionMode`/`shouldWrite`, and
+  `capability.inspect` accepts optional access fields and returns an
+  access-scoped snapshot summary. `ask` and `bypass` remain supported access
+  presets; legacy `permissionMode` remains a compatibility input when
+  `accessMode` is absent.
+- Read: `packages/host/src/run-access.ts`,
+  `packages/host/src/client-run.ts`, `packages/host/src/runtime.ts`,
+  `packages/host/src/server.ts`, `packages/host/src/index.ts`,
+  `packages/host/test/client-run.test.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/protocol/src/index.ts`, `schemas/host-message.schema.json`,
+  `docs/reference/HOST_PROTOCOL.md`,
+  `docs/_internal/project-map/modules/host.md`.
+- Tests: `npm --workspace @sparkwright/host run typecheck`;
+  `npm --workspace @sparkwright/host test -- test/run-access.test.ts test/client-run.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/protocol.test.ts -t "capability inspect|capability inspection|capability inspect payloads"`;
+  `npm --workspace @sparkwright/host run build`; `npm run schema:check`.

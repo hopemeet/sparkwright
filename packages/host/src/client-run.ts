@@ -11,9 +11,27 @@ import type {
   WorkflowListRequestPayload,
   WorkflowResumeRequestPayload,
 } from "@sparkwright/protocol";
+import { ACCESS_MODES } from "@sparkwright/protocol";
+import {
+  buildAccessMetadata,
+  resolveRunAccessFields,
+  type ResolvedRunAccess,
+  type RunAccessResolutionOptions,
+} from "./run-access.js";
 
 export type HostClientSource = "cli" | "tui" | "acp" | string;
 export type HostClientModelSource = "config" | "request" | "cli";
+
+export interface HostClientRunAccessInput extends RunAccessResolutionOptions {
+  accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
+  permissionMode?: PermissionMode;
+  shouldWrite?: boolean;
+}
+
+export interface HostClientResolvedRunAccess extends ResolvedRunAccess {
+  metadata: Record<string, unknown>;
+}
 
 export interface HostClientRunMetadataInput {
   source: HostClientSource;
@@ -34,6 +52,59 @@ export function resolveHostRequestModel(input: {
   modelNameSource?: HostClientModelSource;
 }): string | undefined {
   return input.modelNameSource === "config" ? undefined : input.modelName;
+}
+
+export function resolveHostClientRunAccess(
+  input: HostClientRunAccessInput,
+): HostClientResolvedRunAccess {
+  const resolved = resolveRunAccessFields(
+    {
+      accessMode: input.accessMode,
+      backgroundTasks: input.backgroundTasks,
+      permissionMode: input.permissionMode,
+      shouldWrite: input.shouldWrite,
+    },
+    {
+      defaultAccessMode: input.defaultAccessMode,
+      accessModeCeiling: input.accessModeCeiling,
+      defaultBackgroundTasks: input.defaultBackgroundTasks,
+      backgroundTasksCeiling: input.backgroundTasksCeiling,
+      defaultPermissionMode: input.defaultPermissionMode,
+      defaultShouldWrite: input.defaultShouldWrite,
+    },
+  );
+  return {
+    ...resolved,
+    metadata: buildAccessMetadata(resolved),
+  };
+}
+
+export function clampHostClientAccessMode(
+  ceiling: RunAccessMode | undefined,
+  requested: RunAccessMode,
+): RunAccessMode {
+  return (
+    resolveHostClientRunAccess({
+      accessMode: requested,
+      accessModeCeiling: ceiling,
+    }).accessMode ?? requested
+  );
+}
+
+export function nextHostClientAccessMode(
+  mode: RunAccessMode,
+  ceiling?: RunAccessMode,
+): RunAccessMode {
+  const allowed =
+    ceiling === undefined
+      ? [...ACCESS_MODES]
+      : ACCESS_MODES.filter(
+          (candidate) =>
+            clampHostClientAccessMode(ceiling, candidate) === candidate,
+        );
+  const current = clampHostClientAccessMode(ceiling, mode);
+  const index = allowed.indexOf(current);
+  return allowed[(index + 1) % allowed.length] ?? allowed[0]!;
 }
 
 export function createHostClientRunMetadata(
@@ -187,10 +258,24 @@ export function createHostCapabilityInspectRequest(input: {
   sessionId?: string;
   modelName?: string;
   modelNameSource?: HostClientModelSource;
+  accessMode?: RunAccessMode;
+  backgroundTasks?: BackgroundTaskPolicy;
+  permissionMode?: PermissionMode;
+  shouldWrite?: boolean;
 }): CapabilityInspectRequestPayload {
   return {
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     model: resolveHostRequestModel(input),
+    ...(input.accessMode ? { accessMode: input.accessMode } : {}),
+    ...(input.backgroundTasks
+      ? { backgroundTasks: input.backgroundTasks }
+      : {}),
+    ...(!input.accessMode && input.permissionMode
+      ? { permissionMode: input.permissionMode }
+      : {}),
+    ...(input.shouldWrite !== undefined
+      ? { shouldWrite: input.shouldWrite }
+      : {}),
   };
 }
 

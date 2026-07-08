@@ -14,6 +14,7 @@ import {
   type BackgroundTaskPolicy,
   type RuntimeContext,
   type ToolDefinition,
+  type ToolRequestPreviewOptions,
 } from "@sparkwright/core";
 import type { RunId } from "@sparkwright/core";
 import type { TaskManager } from "./manager.js";
@@ -32,6 +33,26 @@ export interface TaskCreateKindDescriptor {
   payloadDescription?: string;
   payloadSchema?: JsonSchemaObject;
   requiresPayload?: boolean;
+  policyForPayload?(
+    payload: Record<string, unknown> | undefined,
+    call: TaskCreateKindCall,
+  ):
+    | {
+        policy?: ToolDefinition["policy"];
+        governance?: ToolDefinition["governance"];
+      }
+    | undefined;
+  approvalSummaryForPayload?(
+    payload: Record<string, unknown> | undefined,
+    call: TaskCreateKindCall,
+    options: ToolRequestPreviewOptions,
+  ): string | undefined;
+}
+
+export interface TaskCreateKindCall {
+  title?: string;
+  mode: TaskCreateMode;
+  awaited: boolean;
 }
 
 /**
@@ -113,6 +134,7 @@ export function createTaskCreate(
   options: CreateTaskToolsOptions,
 ): ToolDefinition {
   const kinds = taskCreateKindDescriptors(options);
+  const kindsByName = new Map(kinds.map((kind) => [kind.kind, kind]));
   const limits = mergeConcurrencyLimits(
     DEFAULT_CONCURRENCY_LIMITS,
     options.concurrencyLimits,
@@ -124,6 +146,29 @@ export function createTaskCreate(
     deferLoading: false,
     policy: { risk: "risky", requiresApproval: false },
     governance: { sideEffects: ["external"] },
+    policyForArgs(args: unknown) {
+      const parsed = tryParseCreateArgs(args);
+      if (!parsed) return {};
+      return (
+        kindsByName
+          .get(parsed.kind)
+          ?.policyForPayload?.(parsed.payload, taskCreateKindCall(parsed)) ?? {}
+      );
+    },
+    approvalSummaryForArgs(
+      args: unknown,
+      previewOptions: ToolRequestPreviewOptions,
+    ) {
+      const parsed = tryParseCreateArgs(args);
+      if (!parsed) return undefined;
+      return kindsByName
+        .get(parsed.kind)
+        ?.approvalSummaryForPayload?.(
+          parsed.payload,
+          taskCreateKindCall(parsed),
+          previewOptions,
+        );
+    },
     async execute(args: unknown, ctx): Promise<TaskCreateResult> {
       const parsed = parseCreateArgs(args);
       const backgroundTasks = options.backgroundTasks ?? "enabled";
@@ -283,6 +328,14 @@ function taskCreateNextAction(
       'After the task is terminal, call task with action="output" and the same taskId if you need buffered output that was not included in the task result.',
     duplicateAvoidance:
       "Do not call task_create again for the same goal; use this taskId to wait, inspect, or retrieve output.",
+  };
+}
+
+function taskCreateKindCall(parsed: CreateArgs): TaskCreateKindCall {
+  return {
+    ...(parsed.title ? { title: parsed.title } : {}),
+    mode: parsed.mode,
+    awaited: parsed.awaited,
   };
 }
 
@@ -877,6 +930,14 @@ function parseCreateArgs(args: unknown): CreateArgs {
       ? (record.payload as Record<string, unknown>)
       : undefined;
   return { kind, title, mode, awaited, payload };
+}
+
+function tryParseCreateArgs(args: unknown): CreateArgs | undefined {
+  try {
+    return parseCreateArgs(args);
+  } catch {
+    return undefined;
+  }
 }
 
 function parseTaskCreateMode(

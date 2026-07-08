@@ -97,6 +97,7 @@ export type {
   ToolProgressUpdate,
   ToolRequestPreviewFormatter,
   ToolRequestPreviewOptions,
+  ToolApprovalSummaryFormatter,
   ToolOrigin,
   ToolGovernance,
   ToolInputSchema,
