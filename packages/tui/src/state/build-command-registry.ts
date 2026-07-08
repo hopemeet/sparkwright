@@ -102,7 +102,7 @@ const ACTIVITY_COMMANDS: ReadonlyArray<{
   },
 ];
 
-export interface BuildCommandRegistryDeps {
+interface BuildCommandRegistryDeps {
   bindings: Bindings;
   layers: LayerStack;
   store: EventStore;
