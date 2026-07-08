@@ -22,6 +22,7 @@ import { SkillProposalDialog } from "./skill-proposal-dialog.js";
 import { SkillReviewDialog } from "./skill-review-dialog.js";
 import { ForkDialog } from "./fork-dialog.js";
 import type { CommandRegistry } from "../lib/commands.js";
+import type { Bindings } from "../lib/keybindings.js";
 import type { CreateCapabilityDraft } from "../lib/create-capability.js";
 import type { RunEvent } from "../lib/event-type.js";
 import {
@@ -39,6 +40,7 @@ import type { LayerEntry } from "../state/layer-stack.js";
 export function LayerRenderer(props: {
   entry: LayerEntry;
   registry: CommandRegistry;
+  bindings: Bindings;
   resolved: ConfigPanelResolved;
   sessionList: SessionSummary[];
   sessionRootLabel?: string;
@@ -153,7 +155,13 @@ export function LayerRenderer(props: {
         />
       );
     case "help":
-      return <HelpPanel registry={props.registry} onClose={props.onCloseTop} />;
+      return (
+        <HelpPanel
+          registry={props.registry}
+          bindings={props.bindings}
+          onClose={props.onCloseTop}
+        />
+      );
     case "config":
       return (
         <ConfigPanel resolved={props.resolved} onClose={props.onCloseTop} />

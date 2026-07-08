@@ -938,11 +938,14 @@ describe("rankIndexedSkillsByGoal", () => {
     }),
   ];
 
-  it("orders relevant skills first and tags relevance for a CJK goal", () => {
+  it("floats the plausible match to the top for a CJK goal (order-only hint)", () => {
     const ranked = rankIndexedSkillsByGoal(index, "帮我测试登录功能");
     expect(ranked[0]?.name).toBe("login-tester");
-    expect(ranked[0]?.relevance).toBe("relevant");
-    expect(ranked.find((s) => s.name === "manual")?.relevance).toBe("low");
+  });
+
+  it("never tags relevance — the label is gone, relevance is the reader's call", () => {
+    const ranked = rankIndexedSkillsByGoal(index, "帮我测试登录功能");
+    expect(ranked.every((s) => !("relevance" in s))).toBe(true);
   });
 
   it("drops nothing — every indexed skill survives ranking", () => {
@@ -953,13 +956,12 @@ describe("rankIndexedSkillsByGoal", () => {
     ]);
   });
 
-  it("tags all skills low and orders by name when the goal has no tokens", () => {
+  it("orders by name when the goal has no matchable tokens", () => {
     const ranked = rankIndexedSkillsByGoal(index, "!!! ???");
     expect(ranked.map((s) => s.name)).toEqual(["login-tester", "manual"]);
-    expect(ranked.every((s) => s.relevance === "low")).toBe(true);
   });
 
-  it("scores triggers so a description-only miss still ranks relevant", () => {
+  it("scores triggers so a description-only miss still floats to the top", () => {
     const withTriggers: SkillIndexEntry[] = [
       entry({
         name: "manual",
@@ -974,6 +976,5 @@ describe("rankIndexedSkillsByGoal", () => {
       "trace 文件坏了怎么修复、怎么 resume session？",
     );
     expect(ranked[0]?.name).toBe("manual");
-    expect(ranked[0]?.relevance).toBe("relevant");
   });
 });

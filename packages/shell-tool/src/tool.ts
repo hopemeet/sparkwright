@@ -168,6 +168,14 @@ export interface ShellToolInput {
    */
   timeoutMs?: number;
   cwd?: string;
+  /**
+   * Start the command directly as a background task instead of waiting for it
+   * inline. Equivalent to promoting at a zero foreground budget: the process is
+   * launched, immediately handed to a durable background task, and its taskId is
+   * returned so the run does not block. Requires promotion (background tasks) to
+   * be available; otherwise the call fails rather than silently running inline.
+   */
+  background?: boolean;
 }
 
 /**
@@ -254,7 +262,10 @@ export interface ShellToolSandboxOutput {
 
 const DEFAULT_NAME = "shell";
 const DEFAULT_DESCRIPTION =
-  "Execute a shell command after safety classification and policy approval.";
+  "Execute a shell command after safety classification and policy approval. " +
+  "Pass background:true to launch it directly as a non-blocking background task " +
+  "(returns a taskId); otherwise it runs inline and auto-promotes to a background " +
+  "task only if the foreground budget is exceeded.";
 const SHELL_ORIGIN = {
   kind: "local",
   name: "@sparkwright/shell-tool",
@@ -301,6 +312,11 @@ export function createShellTool(
         foregroundTimeoutMs: { type: "integer" },
         timeoutMs: { type: "integer" },
         cwd: { type: "string" },
+        background: {
+          type: "boolean",
+          description:
+            "Start the command directly as a background task and return its taskId immediately instead of blocking; use for long-running or fire-and-forget processes.",
+        },
       },
       required: ["command"],
       additionalProperties: false,
@@ -392,6 +408,12 @@ export function createShellTool(
     isConcurrencySafe: () => false,
     async execute(args, ctx) {
       const input = normalizeShellInput(args, options.foregroundTimeoutMs);
+      if (input.background && (options.promotionAvailable ?? true) === false) {
+        throw new Error(
+          "background:true requires background tasks to be enabled; " +
+            "this session cannot promote a shell command to a background task.",
+        );
+      }
       const scopedCwd = await assertShellPathScope(input, options);
       const verdict: ShellSafetyResult = evaluateShellSafety(
         input.command,
@@ -822,30 +844,38 @@ function normalizeShellInput(
     foregroundTimeoutMs: number;
     timeoutMsAliasUsed: boolean;
     timeoutAliasWarning?: string;
+    background: boolean;
   } {
   assertRecord(args, "shell input");
   const command = readString(args, "command");
   const cwd =
     typeof args.cwd === "string" && args.cwd.length > 0 ? args.cwd : undefined;
+  const background = args.background === true;
   const timeoutMs = readOptionalPositiveInteger(args, "timeoutMs");
   const explicitForegroundTimeoutMs = readOptionalPositiveInteger(
     args,
     "foregroundTimeoutMs",
   );
-  const foregroundTimeoutMs =
-    explicitForegroundTimeoutMs ?? timeoutMs ?? defaultForegroundTimeoutMs;
+  // background:true forces immediate promotion — the process is launched and
+  // handed straight to a durable task, so the foreground budget collapses to 0.
+  const foregroundTimeoutMs = background
+    ? 0
+    : (explicitForegroundTimeoutMs ?? timeoutMs ?? defaultForegroundTimeoutMs);
   if (foregroundTimeoutMs > MAX_FOREGROUND_TIMEOUT_MS) {
     throw new Error(
       `foregroundTimeoutMs must be <= ${MAX_FOREGROUND_TIMEOUT_MS}.`,
     );
   }
   const timeoutMsAliasUsed =
-    explicitForegroundTimeoutMs === undefined && timeoutMs !== undefined;
+    !background &&
+    explicitForegroundTimeoutMs === undefined &&
+    timeoutMs !== undefined;
   return {
     command,
     cwd,
     foregroundTimeoutMs,
     timeoutMsAliasUsed,
+    background,
     ...(timeoutMs !== undefined
       ? {
           timeoutAliasWarning:

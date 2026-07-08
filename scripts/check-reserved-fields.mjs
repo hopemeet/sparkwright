@@ -34,7 +34,7 @@ async function* walk(dir) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       yield* walk(full);
-    } else if (entry.isFile() && /\.ts$/.test(entry.name)) {
+    } else if (entry.isFile() && /\.tsx?$/.test(entry.name)) {
       yield full;
     }
   }
@@ -198,6 +198,7 @@ const PROPERTY_IGNORE = new Set([
 
 // Collect source files first so the reference scan only happens once.
 const sources = [];
+const refOnlySources = [];
 for (const pkg of await readdir(packagesDir)) {
   const srcDir = path.join(packagesDir, pkg, "src");
   try {
@@ -208,7 +209,14 @@ for (const pkg of await readdir(packagesDir)) {
   }
   for await (const file of walk(srcDir)) {
     const content = await readFile(file, "utf8");
-    sources.push({ pkg, file, content });
+    // Declarations are parsed from .ts only (ScriptKind.TS chokes on JSX), but
+    // .tsx files are kept for the reference scan below — a field read only from
+    // a .tsx component (e.g. app.tsx) would otherwise look unreferenced.
+    if (file.endsWith(".tsx")) {
+      refOnlySources.push({ pkg, file, content });
+    } else {
+      sources.push({ pkg, file, content });
+    }
   }
 }
 
@@ -307,7 +315,10 @@ for (const { pkg, file, content } of sources) {
 // Reference scan: count occurrences of `.name` or `["name"]` / `['name']`
 // across all collected sources. We deliberately scan the same source set we
 // pulled declarations from — same blast radius as the protocol surface.
-const allText = sources.map((s) => s.content).join("\n");
+const allText = sources
+  .concat(refOnlySources)
+  .map((s) => s.content)
+  .join("\n");
 
 const refCache = new Map();
 function refCount(name) {
