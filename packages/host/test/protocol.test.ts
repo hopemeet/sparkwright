@@ -2844,6 +2844,44 @@ describe("host protocol", () => {
         );
         expect(tools.some((tool) => tool.name === "shell")).toBe(false);
       }
+
+      pair.clientSend({
+        envelope: "request",
+        id: "cap-write",
+        kind: "capability.inspect",
+        timestamp: TIMESTAMP,
+        payload: {
+          accessMode: "bypass",
+          backgroundTasks: "disabled",
+        },
+      });
+      const scoped = await pair.waitFor(
+        (m) => m.envelope === "response" && m.id === "cap-write",
+      );
+      expect(scoped).toMatchObject({
+        envelope: "response",
+        ok: true,
+        result: {
+          access: {
+            accessMode: "bypass",
+            permissionMode: "bypass_permissions",
+            shouldWrite: true,
+            backgroundTasks: "disabled",
+          },
+          shell: {
+            promotionAvailable: false,
+          },
+          agents: {
+            delegateTools: [
+              expect.objectContaining({
+                toolName: "delegate_reviewer",
+                gatedByRunWrite: false,
+                approvalRunOptions: { shouldWrite: true },
+              }),
+            ],
+          },
+        },
+      });
     } finally {
       pair.close();
       await rm(workspace, { recursive: true, force: true });

@@ -691,3 +691,20 @@ test/cli.test.ts -t "filters proposals|agents|capabilities inspect"`.
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`;
   `npm --workspace @sparkwright/tui test -- test/sdk-cutover.test.ts`;
   `npm run build`; `npm run check:dist-fresh`; `npm run schema:check`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: capability inspection is now access-scoped. Host protocol,
+  in-process CLI inspection, and TUI inspection can pass active access fields;
+  snapshots include `access`, delegate diagnostics use the effective
+  `shouldWrite`, and shell promotion visibility follows effective
+  `backgroundTasks`.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/src/server.ts`, `packages/host/src/client-run.ts`,
+  `packages/protocol/src/index.ts`, `packages/cli/src/cli.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `schemas/host-message.schema.json`,
+  `docs/_internal/project-map/maps/capabilities/README.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/protocol.test.ts -t "capability inspect|capability inspection|capability inspect payloads"`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capability inspect"`;
+  `npm run schema:check`.

@@ -108,6 +108,7 @@ import type { WorkspaceCheckpointStore } from "./workspace-checkpoint.js";
 import {
   createToolCall,
   executeTool,
+  formatToolApprovalSummary,
   formatToolRequestPreview,
   normalizeToolError,
   ToolRegistry,
@@ -4039,7 +4040,8 @@ export class SparkwrightRun implements RunHandle {
       try {
         approved = await this.requestApproval({
           action: "tool.execute",
-          summary: `Run tool ${toolName}`,
+          summary:
+            formatToolApprovalSummary(tool, args) ?? `Run tool ${toolName}`,
           details: {
             ...metadata,
             arguments: args,

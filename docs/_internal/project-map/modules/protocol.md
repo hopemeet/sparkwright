@@ -560,3 +560,19 @@ command|documented-command|workflow rule"`.
   `npm --workspace @sparkwright/tui test -- test/permission.test.ts test/sdk-cutover.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`;
   `npm run build`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: `capability.inspect` payloads now accept optional
+  `accessMode`, `backgroundTasks`, `permissionMode`, and `shouldWrite`; host
+  responses may include `CapabilitySnapshot.access` with the effective scoped
+  access summary. This is additive; clients may omit the new fields.
+- Read: `packages/protocol/src/index.ts`,
+  `schemas/host-message.schema.json`,
+  `docs/reference/HOST_PROTOCOL.md`,
+  `docs/reference/PROTOCOL_CHANGELOG.md`,
+  `docs/_internal/project-map/modules/protocol.md`.
+- Tests: `npm --workspace @sparkwright/protocol run typecheck`;
+  `npm --workspace @sparkwright/protocol run build`;
+  `npm run schema:check`;
+  `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/protocol.test.ts -t "capability inspect|capability inspection|capability inspect payloads"`.

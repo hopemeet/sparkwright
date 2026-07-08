@@ -675,15 +675,25 @@ scanning files or interpreting local config.
 
 **Payload**
 
-| Field       | Type   | Required | Notes                                                                                            |
-| ----------- | ------ | -------- | ------------------------------------------------------------------------------------------------ |
-| `sessionId` | string | no       | Reserved for future scoped views.                                                                |
-| `model`     | string | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
+| Field             | Type    | Required | Notes                                                                                            |
+| ----------------- | ------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `sessionId`       | string  | no       | Optional session scope for clients that tie diagnostics to an active interaction.                |
+| `model`           | string  | no       | Runtime model to inspect, using `provider/model` or `deterministic`; omitted means host default. |
+| `accessMode`      | string  | no       | High-level run autonomy preset used to scope diagnostics. Preferred over legacy fields.          |
+| `backgroundTasks` | string  | no       | Foreground/background task policy used to scope diagnostics.                                     |
+| `permissionMode`  | string  | no       | Legacy approval mode used when `accessMode` is absent.                                           |
+| `shouldWrite`     | boolean | no       | Legacy workspace-write flag used when `accessMode` is absent.                                    |
 
 **Response result**
 
 ```json
 {
+  "access": {
+    "accessMode": "ask",
+    "permissionMode": "default",
+    "shouldWrite": true,
+    "backgroundTasks": "enabled"
+  },
   "model": {
     "modelRef": "openai/gpt-5.4-mini",
     "providerKey": "openai",

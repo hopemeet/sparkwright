@@ -447,3 +447,16 @@ Does not own:
 - Tests: `npm --workspace @sparkwright/tui run typecheck`;
   `npm --workspace @sparkwright/tui test -- test/config.test.ts test/permission.test.ts test/sdk-cutover.test.ts`;
   `npm run build`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: TUI permission mode helpers now delegate access-mode ordering,
+  clamping, and core-field projection to host client run-access helpers.
+  Capability inspection sends the active TUI access mode to the host so the
+  panel snapshot is scoped to the current run mode.
+- Read: `packages/tui/src/lib/permission.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/test/permission.test.ts`,
+  `docs/_internal/project-map/modules/tui.md`.
+- Tests: `npm --workspace @sparkwright/tui test -- test/permission.test.ts`;
+  `npm --workspace @sparkwright/tui run typecheck`.

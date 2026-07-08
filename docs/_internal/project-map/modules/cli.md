@@ -687,3 +687,19 @@ Does not own:
 - Tests: `npm --workspace @sparkwright/cli run typecheck`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "init scaffolds|first interactive"`;
   `npm run build`; `npm run check:dist-fresh`; `git diff --check`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: CLI run access plumbing now groups effective access fields as
+  `runAccess` and approval shortcuts as `approvalOptions` before handing off
+  to host/direct-core runners. `capabilities inspect` passes the same access
+  object into the host runtime and prints the resulting `runtime access` line.
+- Read: `packages/cli/src/cli.ts`, `packages/cli/src/run-access.ts`,
+  `packages/cli/src/runners/host-runner.ts`,
+  `packages/cli/src/runners/direct-core-runner.ts`,
+  `packages/cli/test/cli.test.ts`,
+  `docs/_internal/project-map/modules/cli.md`.
+- Tests: `npm --workspace @sparkwright/cli run typecheck`;
+  `npm --workspace @sparkwright/cli test -- test/cli-approval.test.ts test/entry-parity.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "clamps CLI access-mode overrides|allows safe read tools without approval in read-only access mode|clarifies that --yes without --write|auto-approves writes with --yes|run resume through the host preserves trace level and metadata|resumes workflow runs through the host actor episode driver"`;
+  `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t "capability inspect"`.

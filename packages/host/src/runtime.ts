@@ -60,6 +60,7 @@ import {
   type ToolDefinition,
   type ToolDescriptor,
   type ToolOrigin,
+  type ToolRequestPreviewOptions,
   type WorkflowHook,
 } from "@sparkwright/core";
 import {
@@ -155,6 +156,7 @@ import {
   type TraceLevel,
   type HostEvent,
   type ProtocolError,
+  type CapabilityInspectRequestPayload,
   type RunFailureEnvelope,
   type RunResumeRequestPayload,
   type RunStartRequestPayload,
@@ -187,7 +189,11 @@ import {
   type AgentProfileCollision,
 } from "./agent-profiles.js";
 import { MAIN_AGENT_ID } from "./agent-constants.js";
-import { buildAccessMetadata, resolveRunAccessFields } from "./run-access.js";
+import {
+  buildAccessMetadata,
+  resolveRunAccessFields,
+  type ResolvedRunAccess,
+} from "./run-access.js";
 import {
   existingSkillRoots,
   resolveSkillRootsForRuntime,
@@ -200,15 +206,24 @@ import {
 } from "./model-factory.js";
 import { createModelSessionSummarizer } from "./session-summarizer.js";
 import {
-  AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
   AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
   catalogEntryOrigin,
   catalogToolDefinitions,
   createConfiguredDelegateChildToolCatalog,
+  createDynamicChildToolCatalog,
   createMainHostToolCatalog,
-  createReadOnlyChildToolCatalog,
   type HostToolCatalogEntry,
 } from "./tool-catalog.js";
+import {
+  AGENT_READ_ONLY_CHILD_TOOLS,
+  AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
+  agentWorkspaceWriteGrantApprovalSummaryForPayload,
+  agentWorkspaceWriteGrantPolicyForPayload,
+  parseAgentAllowedToolsFromRecord,
+  parseAgentWorkspaceWriteGrantFromRecord,
+  resolveAgentSpawnToolRequest,
+  type AgentWorkspaceWriteGrant,
+} from "./agent-spawn-grants.js";
 import { canonicalToolName } from "./tool-identities.js";
 import {
   acpConfigFromAgentProfile,
@@ -1422,13 +1437,24 @@ export class HostRuntime {
   }
 
   async inspectCapabilities(
-    input: { modelRef?: string } = {},
+    input: CapabilityInspectRequestPayload & { modelRef?: string } = {},
   ): Promise<
     | { ok: true; snapshot: CapabilitySnapshot }
     | { ok: false; error: ProtocolError }
   > {
     try {
-      const configured = await this.inspectConfiguredCapabilities(input);
+      const access = resolveRunAccessFields(input, {
+        defaultAccessMode: this.opts.defaultAccessMode,
+        accessModeCeiling: this.opts.accessModeCeiling,
+        defaultBackgroundTasks: this.opts.defaultBackgroundTasks,
+        backgroundTasksCeiling: this.opts.backgroundTasksCeiling,
+        defaultPermissionMode: this.opts.defaultPermissionMode,
+        defaultShouldWrite: this.opts.defaultShouldWrite ?? false,
+      });
+      const configured = await this.inspectConfiguredCapabilities({
+        modelRef: input.model ?? input.modelRef,
+        access,
+      });
       return {
         ok: true,
         snapshot: mergeCapabilitySnapshots(
@@ -1601,6 +1627,7 @@ export class HostRuntime {
   private async prepareHostRunEnvironment(input: {
     goal: string;
     modelRef?: string;
+    access?: ResolvedRunAccess;
     permissionMode: PermissionMode;
     shouldWrite: boolean;
     backgroundTasks: BackgroundTaskPolicy;
@@ -1792,7 +1819,7 @@ export class HostRuntime {
       confidentialDefaults,
       writeGuardrails,
     });
-    const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
+    const dynamicChildToolCatalog = createDynamicChildToolCatalog({
       workspaceRoot,
       toolConfig,
     });
@@ -1822,7 +1849,7 @@ export class HostRuntime {
         }),
         metadata: { source: "host" },
       });
-    const readOnlyChildTools = catalogToolDefinitions(readOnlyChildToolCatalog);
+    const dynamicChildTools = catalogToolDefinitions(dynamicChildToolCatalog);
     const delegateChildTools = catalogToolDefinitions(delegateChildToolCatalog);
     const dynamicSpawnModel = createLazyModelAdapterResolver({
       modelRef: agentConfig?.spawnModel,
@@ -1924,7 +1951,7 @@ export class HostRuntime {
       getParent: () => parentRunRef.current,
       model: model.adapter,
       modelForSpawn: dynamicSpawnModel,
-      childTools: readOnlyChildTools,
+      childTools: dynamicChildTools,
       parentRunPolicy,
       childRunStoreFactory,
       maxDepth: subagentMaxDepth,
@@ -1941,13 +1968,13 @@ export class HostRuntime {
       },
     });
     // Publish spawn deps for the registered `agent` background task kind so a
-    // `task_create(kind:"agent")` call can drive a read-only child run that the
-    // task — not the foreground turn — owns the lifecycle of.
+    // `task_create(kind:"agent")` call can drive a child run that the task,
+    // not the foreground turn, owns the lifecycle of.
     this.agentSpawnDeps = {
       getParent: () => parentRunRef.current,
       model: model.adapter,
       modelForSpawn: dynamicSpawnModel,
-      childTools: readOnlyChildTools,
+      childTools: dynamicChildTools,
       parentRunPolicy,
       childRunStoreFactory,
       maxDepth: subagentMaxDepth,
@@ -2179,6 +2206,7 @@ export class HostRuntime {
     });
     this.lastCapabilitySnapshot = buildCapabilitySnapshot({
       model: modelCapabilitySummary(model.resolved),
+      access: input.access,
       toolCatalog,
       indexedSkills: preparedSkills?.indexedSkills ?? [],
       loadedSkills: preparedSkills?.loadedSkills ?? [],
@@ -2765,6 +2793,7 @@ export class HostRuntime {
     const prepared = await this.prepareHostRunEnvironment({
       goal: checkpoint.run.goal,
       modelRef,
+      access,
       permissionMode,
       shouldWrite,
       backgroundTasks: access.backgroundTasks,
@@ -3047,6 +3076,7 @@ export class HostRuntime {
           ? record.metadata.goal
           : `Resume workflow ${record.assetName}`,
       modelRef: payload.model ?? this.opts.defaultModel,
+      access,
       permissionMode,
       shouldWrite,
       backgroundTasks: access.backgroundTasks,
@@ -3312,6 +3342,7 @@ export class HostRuntime {
     const prepared = await this.prepareHostRunEnvironment({
       goal: payload.goal,
       modelRef,
+      access,
       permissionMode,
       shouldWrite,
       backgroundTasks: access.backgroundTasks,
@@ -3721,6 +3752,7 @@ export class HostRuntime {
 
   private async inspectConfiguredCapabilities(input: {
     modelRef?: string;
+    access: ResolvedRunAccess;
   }): Promise<CapabilitySnapshot> {
     const loadedConfig = await loadHostConfig(this.opts.workspaceRoot);
     const baseToolConfig = loadedConfig.config.tools;
@@ -3789,7 +3821,7 @@ export class HostRuntime {
     try {
       const mainAgent = mainAgentProfile(resolvedProfiles);
       const toolConfig = applyMainAgentToolUse(baseToolConfig, mainAgent);
-      const readOnlyChildToolCatalog = createReadOnlyChildToolCatalog({
+      const dynamicChildToolCatalog = createDynamicChildToolCatalog({
         workspaceRoot: this.opts.workspaceRoot,
         toolConfig,
       });
@@ -3807,9 +3839,7 @@ export class HostRuntime {
         resolvedProfiles,
         delegateChildToolCatalog,
       );
-      const readOnlyChildTools = catalogToolDefinitions(
-        readOnlyChildToolCatalog,
-      );
+      const dynamicChildTools = catalogToolDefinitions(dynamicChildToolCatalog);
       const delegateChildTools = catalogToolDefinitions(
         delegateChildToolCatalog,
       );
@@ -3828,7 +3858,7 @@ export class HostRuntime {
         sandbox: shellConfig?.sandbox,
         skillRoots: skillRoots.map((root) => root.root),
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
-        allowReadWriteWorkspaceAccess: false,
+        allowReadWriteWorkspaceAccess: input.access.shouldWrite,
         maxDepth: agentConfig?.maxDepth,
         // Snapshot only describes the tool; its body never runs here
         // (getParent returns undefined and the tool throws first).
@@ -3866,7 +3896,7 @@ export class HostRuntime {
             childTools: delegateChildTools,
             parentRunPolicy: createDefaultPolicy(),
             childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
-            allowReadWriteWorkspaceAccess: false,
+            allowReadWriteWorkspaceAccess: input.access.shouldWrite,
             maxDepth: agentConfig?.maxDepth,
           })
         : undefined;
@@ -3877,7 +3907,7 @@ export class HostRuntime {
             return { message: "" };
           },
         },
-        childTools: readOnlyChildTools,
+        childTools: dynamicChildTools,
         parentRunPolicy: createDefaultPolicy(),
         childRunStoreFactory: snapshotOnlyChildRunStoreFactory,
         maxDepth: agentConfig?.maxDepth,
@@ -3901,10 +3931,12 @@ export class HostRuntime {
         delegateParallelTool,
         dynamicSpawnTool,
         shell: shellConfig,
+        backgroundTasks: input.access.backgroundTasks,
         configPaths: loadedConfig.attempted.map((entry) => entry.path),
       });
       return buildCapabilitySnapshot({
         ...(model.ok ? { model: modelCapabilitySummary(model.resolved) } : {}),
+        access: input.access,
         toolCatalog,
         indexedSkills: preparedSkills?.indexedSkills ?? [],
         loadedSkills: [],
@@ -3931,12 +3963,12 @@ export class HostRuntime {
           delegates: delegationTargets,
           derivedAgents,
           delegateChildToolCatalog,
-          allowReadWriteWorkspaceAccess: false,
+          allowReadWriteWorkspaceAccess: input.access.shouldWrite,
         }),
         shellSandbox,
         shellForegroundTimeoutMs:
           shellConfig?.foregroundTimeoutMs ?? RECOMMENDED_FOREGROUND_TIMEOUT_MS,
-        shellPromotionAvailable: true,
+        shellPromotionAvailable: input.access.backgroundTasks === "enabled",
         workflowRules: describeActiveWorkflowRules({
           workflowHooks: loadedConfig.config.capabilities?.hooks?.workflow,
           verification: loadedConfig.config.capabilities?.verification,
@@ -4691,6 +4723,7 @@ export class HostRuntime {
 
 function buildCapabilitySnapshot(input: {
   model?: CapabilityModelSummary;
+  access?: ResolvedRunAccess;
   toolCatalog: HostToolCatalogEntry[];
   indexedSkills: SkillIndexEntry[];
   loadedSkills: LoadedSkill[];
@@ -4711,6 +4744,7 @@ function buildCapabilitySnapshot(input: {
   automation?: CapabilityAutomationSummary;
 }): CapabilitySnapshot {
   return {
+    ...(input.access ? { access: capabilityAccessSummary(input.access) } : {}),
     ...(input.model ? { model: input.model } : {}),
     tools: input.toolCatalog.map((entry) => ({
       name: entry.definition.name,
@@ -4819,6 +4853,32 @@ function buildCapabilitySnapshot(input: {
       : {}),
     ...(input.workflows ? { workflows: input.workflows } : {}),
     automation: input.automation,
+  };
+}
+
+function capabilityAccessSummary(
+  access: ResolvedRunAccess,
+): NonNullable<CapabilitySnapshot["access"]> {
+  return {
+    permissionMode: access.permissionMode,
+    shouldWrite: access.shouldWrite,
+    backgroundTasks: access.backgroundTasks,
+    ...(access.accessMode ? { accessMode: access.accessMode } : {}),
+    ...(access.requestedAccessMode
+      ? { requestedAccessMode: access.requestedAccessMode }
+      : {}),
+    ...(access.accessModeCeiling
+      ? { accessModeCeiling: access.accessModeCeiling }
+      : {}),
+    ...(access.requestedBackgroundTasks
+      ? { requestedBackgroundTasks: access.requestedBackgroundTasks }
+      : {}),
+    ...(access.backgroundTasksCeiling
+      ? { backgroundTasksCeiling: access.backgroundTasksCeiling }
+      : {}),
+    ...(access.overriddenLegacyFields.length > 0
+      ? { overriddenLegacyFields: access.overriddenLegacyFields }
+      : {}),
   };
 }
 
@@ -6667,7 +6727,7 @@ export function detectReadOnlyChildIntent(
  * never fulfill. A read-only child that "completes" an execution/write goal
  * having done nothing produces a false success that the parent then rationalizes
  * (often by hallucinating an error). Throwing here forces the parent to route
- * execution through `bash` / a background shell task instead.
+ * the work through a grant-capable spawn or an execution-capable tool.
  */
 export function assertReadOnlyChildCanSatisfyGoal(input: {
   goal: string;
@@ -6689,13 +6749,13 @@ export function assertReadOnlyChildCanSatisfyGoal(input: {
   if (intent === "write" && hasWriter) return;
   const remedy =
     intent === "execute"
-      ? "run it yourself with the `bash` tool (pass background:true to launch it as a non-blocking background task)"
-      : "perform the write yourself with the `write`/`edit` tools";
+      ? "route execution through the parent `bash` tool (pass background:true to launch it as a non-blocking background task) or a configured delegate with shell access"
+      : "re-spawn the child with `grant: { workspaceWrite: true }` or include a managed write tool such as `write` in `allowedTools` so the parent can approve the grant before the child starts";
   throw Object.assign(
     new Error(
       `${input.entrypoint} child agents are read-only and cannot ` +
         `${intent === "execute" ? "run processes or shell commands" : "write to the filesystem"}. ` +
-        `To satisfy this goal, ${remedy} — do not delegate it to a read-only child.`,
+        `To satisfy this goal, ${remedy}; do not delegate it to a read-only child.`,
     ),
     { code: "READONLY_CHILD_INTENT_UNSATISFIABLE" },
   );
@@ -6738,8 +6798,8 @@ export function createDynamicSpawnAgentTool(input: {
   return defineTool({
     name: "spawn_agent",
     description: input.allowNestedBackgroundTasks
-      ? "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files and, when explicitly granted task_create, may create depth-bounded background agent tasks; it cannot write or run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool."
-      : "Spawn a bounded, read-only child agent for one focused sub-task. The child may inspect files but cannot write, run shell commands, or spawn further agents. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
+      ? "Spawn a bounded child agent for one focused sub-task. By default the child is read-only. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. When explicitly granted task_create, it may create depth-bounded background agent tasks. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool."
+      : "Spawn a bounded child agent for one focused sub-task. By default the child may inspect files but cannot write, run shell commands, or spawn further agents. With grant.workspaceWrite=true, or by requesting a managed write tool, the child may use managed workspace write tools after parent approval; it still cannot run shell commands. Use this for temporary roles; if the same role becomes useful repeatedly, create a stable profile with create_agent and delegate to it through a delegate_* tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6759,17 +6819,28 @@ export function createDynamicSpawnAgentTool(input: {
         allowedTools: {
           type: "array",
           description:
-            "Optional subset of read-only tools to expose. Supported: read, glob, grep, list_dir. Defaults to read, glob, and grep. Use grep to find a symbol by name (glob only matches paths, not contents).",
+            "Optional subset of child tools to expose. Supported: read, glob, grep, list_dir, write, edit, edit_anchored_text. Defaults to read, glob, and grep; with grant.workspaceWrite=true and no allowedTools, also exposes write, edit, and edit_anchored_text. Use grep to find a symbol by name (glob only matches paths, not contents).",
           items: {
             type: "string",
             enum: [
-              "read",
-              "glob",
-              "grep",
-              "list_dir",
+              ...AGENT_READ_ONLY_CHILD_TOOLS,
+              ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
               ...(input.allowNestedBackgroundTasks ? ["task_create"] : []),
             ],
           },
+        },
+        grant: {
+          type: "object",
+          description:
+            "Optional capability grant requested at spawn time. Set workspaceWrite=true to let the child use managed workspace write tools after parent approval.",
+          properties: {
+            workspaceWrite: {
+              type: "boolean",
+              description:
+                "Allow the child to perform managed workspace writes through write/edit tools.",
+            },
+          },
+          additionalProperties: false,
         },
         maxSteps: {
           type: "integer",
@@ -6789,6 +6860,21 @@ export function createDynamicSpawnAgentTool(input: {
       origin: { kind: "local", name: "sparkwright" },
       sideEffects: ["read"],
       idempotency: "conditional",
+    },
+    policyForArgs(args: unknown) {
+      return (
+        agentWorkspaceWriteGrantPolicyForPayload(
+          args,
+          input.entrypoint ?? "spawn_agent",
+        ) ?? {}
+      );
+    },
+    approvalSummaryForArgs(args: unknown, options: ToolRequestPreviewOptions) {
+      return agentWorkspaceWriteGrantApprovalSummaryForPayload(
+        args,
+        input.entrypoint ?? "spawn_agent",
+        options,
+      );
     },
     previewArgs(args) {
       const r = previewRecord(args);
@@ -6830,15 +6916,16 @@ export function createDynamicSpawnAgentTool(input: {
             })
           : undefined;
       const supportedTools = new Set([
-        "read",
-        "glob",
-        "grep",
-        "list_dir",
+        ...AGENT_READ_ONLY_CHILD_TOOLS,
+        ...AGENT_WORKSPACE_WRITE_CHILD_TOOLS,
         ...(nestedTaskCreateTool ? ["task_create"] : []),
       ]);
-      const requestedTools = (
-        parsed.allowedTools ?? ["read", "glob", "grep"]
-      ).map(canonicalToolName);
+      const toolRequest = resolveAgentSpawnToolRequest({
+        allowedTools: parsed.allowedTools,
+        grant: parsed.grant,
+        toolName: input.entrypoint ?? "spawn_agent",
+      });
+      const requestedTools = toolRequest.requestedTools.map(canonicalToolName);
       const availableTools = new Map(
         [
           ...input.childTools,
@@ -6850,7 +6937,7 @@ export function createDynamicSpawnAgentTool(input: {
       );
       if (invalidTools.length > 0) {
         throw new Error(
-          `spawn_agent only supports enabled read-only child tools: ${invalidTools.join(
+          `spawn_agent only supports enabled child tools: ${invalidTools.join(
             ", ",
           )}`,
         );
@@ -6941,6 +7028,11 @@ export function createDynamicSpawnAgentTool(input: {
           input.parentRunPolicy,
           createAgentProfilePolicy(profile),
         ]),
+        approvalResolver: createAgentWorkspaceWriteGrantResolver({
+          enabled: toolRequest.workspaceWriteGrant,
+          source: input.entrypoint ?? "spawn_agent",
+          role: parsed.role,
+        }),
         maxSteps: childMaxSteps,
         abortSignal: childAbort.controller.signal,
         interactionChannel: null,
@@ -6967,6 +7059,9 @@ export function createDynamicSpawnAgentTool(input: {
           entrypoint: input.entrypoint ?? "spawn_agent",
           ...(input.taskId ? { taskId: input.taskId } : {}),
           allowedTools: childTools.map((tool) => tool.name),
+          capabilityGrants: {
+            workspaceWrite: toolRequest.workspaceWriteGrant,
+          },
         },
       });
       childRunRef.id = spawned.childRunId as RunId;
@@ -7257,6 +7352,29 @@ function createLinkedAbortController(parentSignal?: AbortSignal): {
   };
 }
 
+function createAgentWorkspaceWriteGrantResolver(input: {
+  enabled: boolean;
+  source: string;
+  role: string;
+}): ApprovalResolver | undefined {
+  if (!input.enabled) return undefined;
+  return (request) => {
+    if (request.action === "workspace.write") {
+      return {
+        approvalId: request.id,
+        decision: "approved",
+        message: `Auto-approved by ${input.source} workspaceWrite grant for ${input.role}.`,
+        autoApproved: true,
+      };
+    }
+    return {
+      approvalId: request.id,
+      decision: "denied",
+      message: `Approval request is outside the ${input.source} workspaceWrite grant.`,
+    };
+  };
+}
+
 function taskErrorFromCause(cause: unknown): {
   code: string;
   message: string;
@@ -7304,23 +7422,9 @@ function createNestedAgentTaskCreateTool(input: {
         kind: "agent",
         description:
           "start a bounded background child agent from this sub-agent",
-        payloadDescription: AGENT_TASK_CREATE_PAYLOAD_DESCRIPTION,
-        payloadSchema: {
-          ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
-          properties: {
-            ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties,
-            allowedTools: {
-              ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties.allowedTools,
-              type: "array",
-              description:
-                "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir, task_create.",
-              items: {
-                type: "string",
-                enum: ["read", "glob", "grep", "list_dir", "task_create"],
-              },
-            },
-          },
-        },
+        payloadDescription:
+          "required object with goal, role, and prompt; optional read-only allowedTools, metadata, and maxSteps.",
+        payloadSchema: nestedAgentTaskCreatePayloadSchema(),
         requiresPayload: true,
       },
     ],
@@ -7353,6 +7457,27 @@ function createNestedAgentTaskCreateTool(input: {
         error: latest.error,
       };
     },
+  };
+}
+
+function nestedAgentTaskCreatePayloadSchema(): Record<string, unknown> {
+  const properties: Record<string, unknown> = {
+    ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties,
+  };
+  delete properties.grant;
+  properties.allowedTools = {
+    ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA.properties.allowedTools,
+    type: "array",
+    description:
+      "Optional subset of read-only tools for the child. Supported: read, glob, grep, list_dir, task_create.",
+    items: {
+      type: "string",
+      enum: ["read", "glob", "grep", "list_dir", "task_create"],
+    },
+  };
+  return {
+    ...AGENT_TASK_CREATE_PAYLOAD_SCHEMA,
+    properties,
   };
 }
 
@@ -7649,6 +7774,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   role: string;
   prompt: string;
   allowedTools?: string[];
+  grant: AgentWorkspaceWriteGrant;
   maxSteps?: number;
   metadata?: Record<string, unknown>;
 } {
@@ -7659,17 +7785,8 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
   const goal = stringField(record, "goal");
   const role = stringField(record, "role");
   const prompt = stringField(record, "prompt");
-  const allowedTools = Array.isArray(record.allowedTools)
-    ? record.allowedTools.map((value) => {
-        if (typeof value !== "string" || !value.trim()) {
-          throw new Error("spawn_agent allowedTools must contain strings.");
-        }
-        return canonicalToolName(value.trim());
-      })
-    : undefined;
-  if (allowedTools && new Set(allowedTools).size !== allowedTools.length) {
-    throw new Error("spawn_agent allowedTools must not contain duplicates.");
-  }
+  const allowedTools = parseAgentAllowedToolsFromRecord(record, "spawn_agent");
+  const grant = parseAgentWorkspaceWriteGrantFromRecord(record, "spawn_agent");
   let maxSteps: number | undefined;
   if (record.maxSteps !== undefined) {
     maxSteps = integerField(record, "maxSteps");
@@ -7684,6 +7801,7 @@ function parseDynamicSpawnAgentArgs(args: unknown): {
     role,
     prompt,
     allowedTools,
+    grant,
     maxSteps,
     metadata,
   };
@@ -8912,6 +9030,7 @@ function mergeCapabilitySnapshots(
 ): CapabilitySnapshot {
   if (!last) return configured;
   return {
+    access: configured.access ?? last.access,
     model: configured.model ?? last.model,
     tools: mergeByName(configured.tools, last.tools),
     skills: {

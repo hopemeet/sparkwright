@@ -1,12 +1,6 @@
 import { existsSync } from "node:fs";
 import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
-import type {
-  BackgroundTaskPolicy,
-  PermissionMode,
-  RunInputPayload,
-  RunAccessMode,
-  TraceLevel,
-} from "@sparkwright/protocol";
+import type { RunInputPayload, TraceLevel } from "@sparkwright/protocol";
 import { getRunFailure, runFailureMessage } from "@sparkwright/protocol";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
@@ -22,6 +16,7 @@ import { createCliApprovalResolver } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
+import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
 import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
@@ -43,13 +38,8 @@ export interface HostRunInput {
   goal: string;
   workspaceRoot: string;
   sessionRootDir: string;
-  shouldWrite: boolean;
-  approveAll: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  accessMode?: RunAccessMode;
-  backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode: PermissionMode;
+  runAccess: CliRunAccess;
+  approvalOptions: CliApprovalOptions;
   modelName?: string;
   workflowName?: string;
   sessionId: string;
@@ -65,13 +55,8 @@ export interface HostResumeInput {
   runId: string;
   workspaceRoot: string;
   sessionRootDir: string;
-  shouldWrite: boolean;
-  approveAll: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  accessMode?: RunAccessMode;
-  backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode: PermissionMode;
+  runAccess: CliRunAccess;
+  approvalOptions: CliApprovalOptions;
   modelName?: string;
   workflowName?: string;
   sessionId?: string;
@@ -88,13 +73,8 @@ export interface HostWorkflowResumeInput {
   workflowRunId: string;
   workspaceRoot: string;
   sessionRootDir: string;
-  shouldWrite: boolean;
-  approveAll: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  accessMode?: RunAccessMode;
-  backgroundTasks?: BackgroundTaskPolicy;
-  permissionMode: PermissionMode;
+  runAccess: CliRunAccess;
+  approvalOptions: CliApprovalOptions;
   modelName?: string;
   sessionId?: string;
   targetPath?: string;
@@ -144,19 +124,17 @@ async function runHostLifecycle(
   const {
     workspaceRoot,
     sessionRootDir,
-    shouldWrite,
-    approveAll,
-    approveEdits,
-    approveShellSafe,
-    accessMode,
-    backgroundTasks,
-    permissionMode,
+    runAccess,
+    approvalOptions,
     modelName,
     targetPath,
     confidentialPaths,
     confidentialDefaults,
     traceLevel,
   } = input;
+  const { shouldWrite, accessMode, backgroundTasks, permissionMode } =
+    runAccess;
+  const { approveAll, approveEdits, approveShellSafe } = approvalOptions;
   const workflowName = "workflowName" in input ? input.workflowName : undefined;
 
   let client: Client | undefined;
@@ -419,7 +397,7 @@ async function runHostLifecycle(
         runId,
         traceLevel: input.traceLevel,
         targetPath: input.targetPath,
-        shouldWrite: input.shouldWrite,
+        shouldWrite,
       });
       sessionId = failureTrace.sessionId;
       runId = failureTrace.runId;

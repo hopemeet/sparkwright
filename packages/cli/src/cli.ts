@@ -160,6 +160,7 @@ import { createCliApprovalResolver } from "./cli-approval.js";
 import { createLiveEventFormatter, formatEvent } from "./event-format.js";
 import type { CliIO } from "./io.js";
 import { writeLine } from "./io.js";
+import type { CliApprovalOptions, CliRunAccess } from "./run-access.js";
 import {
   createCliModel,
   createConfiguredCliTools,
@@ -205,6 +206,8 @@ interface ParsedArgs {
   approveEdits: boolean;
   approveShellSafe: boolean;
   permissionMode: PermissionMode;
+  runAccess: CliRunAccess;
+  approvalOptions: CliApprovalOptions;
   /** Model reference in "provider/model" form, or the reserved "deterministic". */
   modelName?: string;
   modelNameSource?: "config" | "cli";
@@ -596,9 +599,9 @@ async function validateCliRunInput(
     workspaceRoot: parsed.workspaceRoot,
     targetPath: parsed.targetPath,
     requireTargetExists: parsed.targetPathSource === "cli",
-    approveAll: parsed.approveAll,
-    approveShellSafe: parsed.approveShellSafe,
-    shouldWrite: parsed.shouldWrite,
+    approveAll: parsed.approvalOptions.approveAll,
+    approveShellSafe: parsed.approvalOptions.approveShellSafe,
+    shouldWrite: parsed.runAccess.shouldWrite,
     modelName: parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
     validateModel: parsed.modelNameSource === "cli",
     env,
@@ -1424,6 +1427,18 @@ function parseArgs(
       ? resolve(cwd, sessionRootDir)
       : join(workspaceRoot, ".sparkwright", "sessions");
 
+  const runAccess: CliRunAccess = {
+    accessMode,
+    backgroundTasks,
+    shouldWrite,
+    permissionMode,
+  };
+  const approvalOptions: CliApprovalOptions = {
+    approveAll,
+    approveEdits,
+    approveShellSafe,
+  };
+
   return {
     ok: true,
     value: {
@@ -1448,6 +1463,8 @@ function parseArgs(
       approveEdits,
       approveShellSafe,
       permissionMode,
+      runAccess,
+      approvalOptions,
       modelName,
       modelNameSource,
       workflowName,
@@ -1803,13 +1820,8 @@ async function handleWorkflowCommand(
           workflowRunId,
           workspaceRoot: parsed.workspaceRoot,
           sessionRootDir: parsed.sessionRootDir,
-          shouldWrite: parsed.shouldWrite,
-          approveAll: parsed.approveAll,
-          approveEdits: parsed.approveEdits,
-          approveShellSafe: parsed.approveShellSafe,
-          accessMode: parsed.accessMode,
-          backgroundTasks: parsed.backgroundTasks,
-          permissionMode: parsed.permissionMode,
+          runAccess: parsed.runAccess,
+          approvalOptions: parsed.approvalOptions,
           modelName: parsed.modelName,
           sessionId: parsed.sessionId,
           targetPath: parsed.targetPath,
@@ -1876,8 +1888,8 @@ async function handleWorkflowCommand(
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
         defaultModel: parsed.modelName,
-        defaultPermissionMode: parsed.permissionMode,
-        defaultShouldWrite: parsed.shouldWrite,
+        defaultPermissionMode: parsed.runAccess.permissionMode,
+        defaultShouldWrite: parsed.runAccess.shouldWrite,
         defaultTraceLevel: parsed.traceLevel,
         emit: () => {},
       });
@@ -2306,6 +2318,7 @@ async function handleCapabilitiesCommand(
       {
         resolveMcp: parsed.resolveMcp,
         modelName: parsed.modelName,
+        runAccess: parsed.runAccess,
       },
     );
     writeLine(
@@ -2350,13 +2363,13 @@ async function handleDelegatesCommand(
     sessionId: parsed.sessionId ?? createSessionId(),
     traceLevel: parsed.traceLevel,
     approvalResolver: createCliApprovalResolver({
-      approveAll: parsed.approveAll,
-      approveEdits: parsed.approveEdits,
-      approveShellSafe: parsed.approveShellSafe,
-      permissionMode: parsed.permissionMode,
+      approveAll: parsed.approvalOptions.approveAll,
+      approveEdits: parsed.approvalOptions.approveEdits,
+      approveShellSafe: parsed.approvalOptions.approveShellSafe,
+      permissionMode: parsed.runAccess.permissionMode,
       io,
     }),
-    shouldWrite: parsed.shouldWrite,
+    shouldWrite: parsed.runAccess.shouldWrite,
   });
 
   if (!result.ok) {
@@ -2421,7 +2434,11 @@ function formatDelegateRunResult(
 async function loadCapabilityInspectReport(
   workspaceRoot: string,
   env: Record<string, string | undefined>,
-  options: { resolveMcp?: boolean; modelName?: string } = {},
+  options: {
+    resolveMcp?: boolean;
+    modelName?: string;
+    runAccess?: CliRunAccess;
+  } = {},
 ): Promise<CapabilityInspectReport> {
   const loaded = await loadHostConfig(workspaceRoot, env);
   const capabilities = loaded.config.capabilities;
@@ -2552,6 +2569,7 @@ async function loadCapabilityInspectReport(
   );
   const runtime = await inspectRuntimeCapabilities(workspaceRoot, {
     modelName: options.modelName,
+    runAccess: options.runAccess,
   });
   const delegateDescriptors =
     runtime?.agents.delegateTools ?? externalDelegateDescriptors;
@@ -2617,14 +2635,20 @@ async function loadCapabilityInspectReport(
 
 async function inspectRuntimeCapabilities(
   workspaceRoot: string,
-  options: { modelName?: string } = {},
+  options: { modelName?: string; runAccess?: CliRunAccess } = {},
 ): Promise<CapabilitySnapshot | undefined> {
   const runtime = new HostRuntime({
     workspaceRoot,
     defaultModel: options.modelName,
     emit: () => {},
   });
-  const inspected = await runtime.inspectCapabilities();
+  const inspected = await runtime.inspectCapabilities({
+    model: options.modelName,
+    accessMode: options.runAccess?.accessMode,
+    backgroundTasks: options.runAccess?.backgroundTasks,
+    permissionMode: options.runAccess?.permissionMode,
+    shouldWrite: options.runAccess?.shouldWrite,
+  });
   return inspected.ok ? inspected.snapshot : undefined;
 }
 
@@ -2917,6 +2941,7 @@ function formatCapabilityInspectReport(
   const lines = [
     `workspace: ${report.workspace}`,
     `model: ${formatCapabilityModelLine(report.runtime?.model)}`,
+    `runtime access: ${formatCapabilityAccessLine(report.runtime?.access)}`,
     `tools: use=${formatPatternList(report.tools.use, "(all)")}; allowed=${formatPatternList(report.tools.allowed, "(all)")}; disabled=${formatPatternList(report.tools.disabled, "(none)")}; defer=${formatPatternList(report.tools.defer, "(none)")}`,
     `shell foreground: timeoutMs=${report.shell.foregroundTimeoutMs}; promotionAvailable=${String(report.shell.promotionAvailable)}`,
     `shell sandbox: mode=${report.shell.sandbox.mode}; effective=${report.shell.sandbox.effective}; runtime=${report.shell.sandbox.runtimeId}; available=${String(report.shell.sandbox.available)}; network=${report.shell.sandbox.networkMode}; fs=${report.shell.sandbox.filesystemIsolation}`,
@@ -3074,6 +3099,31 @@ function formatCapabilityInspectReport(
     }
   }
   return lines.join("\n");
+}
+
+function formatCapabilityAccessLine(
+  access: CapabilitySnapshot["access"] | undefined,
+): string {
+  if (!access) return "unavailable";
+  const parts = [
+    access.accessMode ? `accessMode=${access.accessMode}` : undefined,
+    `permissionMode=${access.permissionMode}`,
+    `shouldWrite=${String(access.shouldWrite)}`,
+    `backgroundTasks=${access.backgroundTasks}`,
+    access.requestedAccessMode
+      ? `requestedAccessMode=${access.requestedAccessMode}`
+      : undefined,
+    access.accessModeCeiling
+      ? `accessModeCeiling=${access.accessModeCeiling}`
+      : undefined,
+    access.requestedBackgroundTasks
+      ? `requestedBackgroundTasks=${access.requestedBackgroundTasks}`
+      : undefined,
+    access.backgroundTasksCeiling
+      ? `backgroundTasksCeiling=${access.backgroundTasksCeiling}`
+      : undefined,
+  ].filter((part): part is string => typeof part === "string");
+  return parts.join("; ");
 }
 
 function formatCapabilityModelLine(
@@ -5975,7 +6025,7 @@ async function handleCronCommand(
         cwd: parsed.workspaceRoot,
         env,
         targetPath: parsed.targetPath,
-        shouldWrite: parsed.shouldWrite,
+        shouldWrite: parsed.runAccess.shouldWrite,
         goal: `cron run ${ref}`,
       });
       if (!model.ok) {
@@ -5989,13 +6039,13 @@ async function handleCronCommand(
         workspaceRoot: parsed.workspaceRoot,
         tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
         approvalResolver: createCliApprovalResolver({
-          approveAll: parsed.approveAll,
-          approveEdits: parsed.approveEdits,
-          approveShellSafe: parsed.approveShellSafe,
-          permissionMode: parsed.permissionMode,
+          approveAll: parsed.approvalOptions.approveAll,
+          approveEdits: parsed.approvalOptions.approveEdits,
+          approveShellSafe: parsed.approvalOptions.approveShellSafe,
+          permissionMode: parsed.runAccess.permissionMode,
           io,
         }),
-        permissionMode: parsed.permissionMode,
+        permissionMode: parsed.runAccess.permissionMode,
         skillRoots: cron.value.skillRoots,
       });
       writeLine(
@@ -6010,7 +6060,7 @@ async function handleCronCommand(
       cwd: parsed.workspaceRoot,
       env,
       targetPath: parsed.targetPath,
-      shouldWrite: parsed.shouldWrite,
+      shouldWrite: parsed.runAccess.shouldWrite,
       goal: "cron tick",
     };
     const model = await createCliModel(cronTickModelInput);
@@ -6029,13 +6079,13 @@ async function handleCronCommand(
       },
       tools: await createConfiguredCliTools(parsed.workspaceRoot, env),
       approvalResolver: createCliApprovalResolver({
-        approveAll: parsed.approveAll,
-        approveEdits: parsed.approveEdits,
-        approveShellSafe: parsed.approveShellSafe,
-        permissionMode: parsed.permissionMode,
+        approveAll: parsed.approvalOptions.approveAll,
+        approveEdits: parsed.approvalOptions.approveEdits,
+        approveShellSafe: parsed.approvalOptions.approveShellSafe,
+        permissionMode: parsed.runAccess.permissionMode,
         io,
       }),
-      permissionMode: parsed.permissionMode,
+      permissionMode: parsed.runAccess.permissionMode,
       skillRoots: cron.value.skillRoots,
     });
     writeLine(io.stdout, JSON.stringify(result, null, 2));
@@ -6643,11 +6693,8 @@ async function handleRunResumeCommand(
         runId: parsed.runId,
         workspaceRoot: parsed.workspaceRoot,
         sessionRootDir: parsed.sessionRootDir,
-        shouldWrite: parsed.shouldWrite,
-        approveAll: parsed.approveAll,
-        approveEdits: parsed.approveEdits,
-        approveShellSafe: parsed.approveShellSafe,
-        permissionMode: parsed.permissionMode,
+        runAccess: parsed.runAccess,
+        approvalOptions: parsed.approvalOptions,
         modelName:
           parsed.modelNameSource === "cli" ? parsed.modelName : undefined,
         sessionId: parsed.sessionId,
@@ -6755,7 +6802,7 @@ async function handleRunResumeCommand(
     cwd: parsed.workspaceRoot,
     env,
     targetPath: parsed.targetPath,
-    shouldWrite: parsed.shouldWrite,
+    shouldWrite: parsed.runAccess.shouldWrite,
     goal: checkpoint.run.goal,
   });
   if (!model.ok) {
@@ -6765,14 +6812,14 @@ async function handleRunResumeCommand(
 
   const workspace = new LocalWorkspace(parsed.workspaceRoot);
   const approvalResolver = createCliApprovalResolver({
-    approveAll: parsed.approveAll,
-    approveEdits: parsed.approveEdits,
-    approveShellSafe: parsed.approveShellSafe,
-    permissionMode: parsed.permissionMode,
+    approveAll: parsed.approvalOptions.approveAll,
+    approveEdits: parsed.approvalOptions.approveEdits,
+    approveShellSafe: parsed.approvalOptions.approveShellSafe,
+    permissionMode: parsed.runAccess.permissionMode,
     io,
   });
   const policy = createLayeredPolicy([
-    createPermissionModePolicy({ mode: parsed.permissionMode }),
+    createPermissionModePolicy({ mode: parsed.runAccess.permissionMode }),
     createWorkspaceReadScopePolicy({
       confidentialPaths: resolveRunConfidentialPaths({
         confidentialDefaults: parsed.confidentialDefaults,

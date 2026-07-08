@@ -2790,6 +2790,57 @@ describe("SparkwrightRun", () => {
     expect(run.record.state).toBe("completed");
   });
 
+  it("uses tool-owned approval summaries for argument-dependent approvals", async () => {
+    const tool = defineTool({
+      name: "granting_tool",
+      description: "Approval summary test tool.",
+      inputSchema: { type: "object" },
+      policy: { risk: "safe", requiresApproval: true },
+      approvalSummaryForArgs(args: { target?: string }) {
+        return `Grant access to ${args.target ?? "unknown"}`;
+      },
+      execute() {
+        return { ok: true };
+      },
+    });
+
+    const run = createRun({
+      goal: "approve custom summary",
+      tools: [tool],
+      approvalResolver(request) {
+        expect(request.summary).toBe("Grant access to workspace");
+        return {
+          approvalId: request.id,
+          decision: "approved",
+        };
+      },
+      model: {
+        async complete(input) {
+          return input.step === 1
+            ? {
+                toolCalls: [
+                  {
+                    toolName: "granting_tool",
+                    arguments: { target: "workspace" },
+                  },
+                ],
+              }
+            : { message: "done" };
+        },
+      },
+    });
+
+    await run.start();
+
+    expect(
+      run.events.all().find((event) => event.type === "approval.requested")
+        ?.payload,
+    ).toMatchObject({
+      summary: "Grant access to workspace",
+    });
+    expect(run.record.state).toBe("completed");
+  });
+
   it("passes tool governance origin to policy and approval metadata", async () => {
     const seenPolicyMetadata: Record<string, unknown>[] = [];
 

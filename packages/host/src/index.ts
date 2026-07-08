@@ -317,10 +317,15 @@ export {
   createHostStartRunRequest,
   createHostWorkflowListRequest,
   createHostWorkflowResumeRequest,
+  clampHostClientAccessMode,
+  nextHostClientAccessMode,
+  resolveHostClientRunAccess,
   resolveHostRequestModel,
   tracePathForSession,
 } from "./client-run.js";
 export type {
+  HostClientResolvedRunAccess,
+  HostClientRunAccessInput,
   HostClientModelSource,
   HostClientRunMetadataInput,
   HostClientSource,

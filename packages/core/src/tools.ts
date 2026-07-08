@@ -108,6 +108,11 @@ export type ToolRequestPreviewFormatter<TArgs = unknown> = (
   options: ToolRequestPreviewOptions,
 ) => string | undefined;
 
+export type ToolApprovalSummaryFormatter<TArgs = unknown> = (
+  args: TArgs,
+  options: ToolRequestPreviewOptions,
+) => string | undefined;
+
 export type ToolInputValidationResult =
   | { ok: true }
   | {
@@ -244,6 +249,14 @@ export interface ToolDefinition<TArgs = unknown, TResult = unknown> {
    * switch statement for every tool name.
    */
   previewArgs?(
+    args: TArgs,
+    options: ToolRequestPreviewOptions,
+  ): string | undefined;
+  /**
+   * Tool-owned approval summary for argument-dependent capability grants. When
+   * omitted, the run loop keeps the generic "Run tool <name>" summary.
+   */
+  approvalSummaryForArgs?(
     args: TArgs,
     options: ToolRequestPreviewOptions,
   ): string | undefined;
@@ -544,6 +557,22 @@ export function formatToolRequestPreview(
   try {
     return boundToolRequestPreview(
       tool.previewArgs(args, { maxChars }),
+      maxChars,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+export function formatToolApprovalSummary(
+  tool: ToolDefinition | undefined,
+  args: unknown,
+  maxChars = 200,
+): string | undefined {
+  if (!tool?.approvalSummaryForArgs || maxChars < 8) return undefined;
+  try {
+    return boundToolRequestPreview(
+      tool.approvalSummaryForArgs(args, { maxChars }),
       maxChars,
     );
   } catch {

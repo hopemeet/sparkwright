@@ -12,6 +12,13 @@ Conventions:
 
 ## Unreleased
 
+- `host-message.schema.json`: additive — `capability.inspect` accepts optional
+  `accessMode`, `backgroundTasks`, `permissionMode`, and `shouldWrite` fields,
+  and `CapabilitySnapshot` may include an `access` summary. Migration: clients
+  that already inspect capabilities can omit these fields to keep the
+  conservative no-write diagnostic view; clients with an active run mode should
+  send the same access fields used for `run.start`.
+
 - `host-message.schema.json`: additive — `run.start`, `run.resume`, and
   `workflow.resume` accept optional `confidentialPaths` plus
   `confidentialDefaults`. Migration: omit `confidentialDefaults` to keep the

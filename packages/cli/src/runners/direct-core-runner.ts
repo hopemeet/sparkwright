@@ -9,7 +9,6 @@ import {
   FileSessionStore,
   type ContextItem,
   type ModelAdapter,
-  type PermissionMode,
   type SparkwrightEvent,
   type TraceLevel,
 } from "@sparkwright/core";
@@ -36,6 +35,7 @@ import { createCliApprovalResolver } from "../cli-approval.js";
 import { createLiveEventFormatter } from "../event-format.js";
 import type { CliIO } from "../io.js";
 import { writeLine } from "../io.js";
+import type { CliApprovalOptions, CliRunAccess } from "../run-access.js";
 import {
   cliExitCodeForRun,
   completedRunHasCliIssues,
@@ -59,11 +59,8 @@ export interface DirectCoreRunInput {
   targetPath: string;
   confidentialPaths?: readonly string[];
   confidentialDefaults?: boolean;
-  shouldWrite: boolean;
-  approveAll: boolean;
-  approveEdits?: boolean;
-  approveShellSafe?: boolean;
-  permissionMode: PermissionMode;
+  runAccess: CliRunAccess;
+  approvalOptions: CliApprovalOptions;
   modelName?: string;
   sessionId: string;
   contextItems?: ContextItem[];
@@ -91,14 +88,13 @@ export async function startDirectCoreRun(
     targetPath,
     confidentialPaths,
     confidentialDefaults,
-    shouldWrite,
-    approveAll,
-    approveEdits,
-    approveShellSafe,
-    permissionMode,
+    runAccess,
+    approvalOptions,
     modelName,
     sessionId,
   } = parsed;
+  const { shouldWrite, permissionMode } = runAccess;
+  const { approveAll, approveEdits, approveShellSafe } = approvalOptions;
   const model = await createCliModel({
     modelRef: modelName,
     cwd: workspaceRoot,

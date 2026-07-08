@@ -63,6 +63,14 @@ policy requires approval
   with the parent run, so child workspace-write and shell gates still resolve
   through the same CLI/TUI approval and trace path. They do not receive an
   interaction channel for arbitrary user questions.
+- Dynamic `spawn_agent` and host `task_create(kind:"agent")` can request a
+  spawn-time workspace-write grant through `grant.workspaceWrite: true` or an
+  explicit managed write tool in `allowedTools`. The parent tool approval uses
+  a grant-aware summary and write side-effect governance; once approved, the
+  child gets a scoped resolver that auto-approves only child
+  `workspace.write` requests. The child does not prompt the user again for the
+  same grant, and grant consumption cannot approve unrelated tool execution or
+  shell access.
 - Read-confidentiality denials are policy denials, not approval prompts.
   `workspace.read.denied` plus `tool.failed` `READ_SCOPE_DENIED` is the audit
   path; a model may continue and complete the run without a CLI failure if it
@@ -87,6 +95,36 @@ policy requires approval
 - Approval UX and diagnostic reporting are split across CLI, TUI, host, and core trace.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-08T23:46:48+0800
+- Scope: post-review grant approval hardening: `spawn_agent` and
+  `task_create(kind:"agent")` workspace-write grant summaries now identify the
+  child, parent run-loop tests prove approval happens before child/task
+  creation, bypass-style resolvers record auto-approved grants, denial prevents
+  creation, and read-only parent policy denies write-side-effect grant requests
+  before approval.
+- Read: `packages/core/src/run.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/test/spawn-agent.test.ts`,
+  `packages/host/test/tools.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/spawn-agent.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/tools.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-08T14:42:08+0800
+- Scope: dynamic `spawn_agent` and `task_create(kind:"agent")` workspace-write
+  grants use argument-dependent approval summaries at the parent tool gate and
+  child-local scoped approval resolvers for `workspace.write` consumption.
+- Read: `packages/core/src/run.ts`, `packages/core/src/tools.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/agent-runtime/src/tasks/tools.ts`.
+- Tests: `npm test -w @sparkwright/core -- run.test.ts`;
+  `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;
+  typechecks for core, agent-runtime, and host.
 
 - Status: Read-only
 - Date: 2026-07-07T00:55:52+0800
@@ -213,3 +251,21 @@ policy requires approval
   `npm --workspace @sparkwright/tui test -- test/permission.test.ts test/sdk-cutover.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`;
   `npm run schema:check`; `npm run build`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: approval access consolidation preserved `ask` and `bypass` as
+  user-facing access presets and kept legacy `permissionMode` fields for
+  compatibility. New helper surfaces centralize client-side access projection;
+  `capability.inspect` uses scoped diagnostics only and does not grant or
+  remove approval authority.
+- Read: `packages/host/src/run-access.ts`,
+  `packages/host/src/client-run.ts`,
+  `packages/cli/src/run-access.ts`, `packages/cli/src/cli.ts`,
+  `packages/tui/src/lib/permission.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/project-map/maps/safety/approvals.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/run-access.test.ts test/client-run.test.ts`;
+  `npm --workspace @sparkwright/cli test -- test/cli-approval.test.ts test/entry-parity.test.ts`;
+  `npm --workspace @sparkwright/tui test -- test/permission.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/protocol.test.ts -t "capability inspect|capability inspection|capability inspect payloads"`.

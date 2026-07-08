@@ -37,6 +37,11 @@ model tool calls
   display. Core writes its bounded output to `tool.requested.payload.preview`;
   TUI/transcript renderers consume that field before falling back to legacy
   name-based formatting for old traces.
+- `ToolDefinition.approvalSummaryForArgs()` is the source of truth for
+  argument-dependent approval summaries. Core uses it when a tool gate requests
+  approval, then falls back to `Run tool <name>`. This keeps capability-grant
+  approvals such as `spawn_agent` workspace write grants specific without adding
+  tool-name switches in the run loop.
 - Workspace writes must produce request, approval/policy evidence, artifact/write terminal events.
 - Repeated idempotent/no-op calls should not invent false failures.
 - Repeated calls inherit enough prior same-target failure context to keep
@@ -108,8 +113,10 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   deferred tools implicitly retain `tool_search`, and discovery results include
   required/related tool closures outside max-result truncation.
 - Child-agent tool orchestration uses catalog selector paths before child tool
-  descriptors or delegate tools are created. Dynamic `spawn_agent` is
-  intentionally limited to the read-only child catalog; configured in-process
+  descriptors or delegate tools are created. Dynamic `spawn_agent` uses a
+  dynamic child catalog that defaults to read-only tools but can expose managed
+  workspace write tools at spawn time when the tool call requests a
+  workspace-write grant; it still never exposes `bash`. Configured in-process
   delegates use the configured delegate child catalog so child-profile
   `use`/`allowedTools` can expose workspace write tools and `bash` while still
   layering parent run policy and approvals. The configured delegate child run
@@ -278,6 +285,36 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 - TUI live rendering and transcript export now share presentation summaries, but trace/model-context result compaction is still a separate backend concern.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-08T23:46:48+0800
+- Scope: post-review grant orchestration hardening: per-argument grant policy
+  rejects unusable explicit workspace-write grants, approval summaries are
+  child-oriented, and run-loop tests cover approval/denial timing for
+  `spawn_agent` and `task_create(kind:"agent")`, including bypass
+  auto-approval, before their execute paths create children or tasks.
+- Read: `packages/core/src/run.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/spawn-agent.test.ts`,
+  `packages/host/test/tools.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test --
+  test/spawn-agent.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/tools.test.ts`.
+
+- Status: Verified
+- Date: 2026-07-08T14:42:08+0800
+- Scope: tool approval summaries now support tool-owned
+  `approvalSummaryForArgs`; dynamic child catalog defaults to read-only but can
+  expose managed workspace write tools through spawn-time grants; configured
+  delegate catalog behavior is unchanged.
+- Read: `packages/core/src/tools.ts`, `packages/core/src/run.ts`,
+  `packages/host/src/tool-catalog.ts`,
+  `packages/host/src/agent-spawn-grants.ts`,
+  `packages/host/src/runtime.ts`.
+- Tests: `npm test -w @sparkwright/core -- run.test.ts`;
+  `npm test -w @sparkwright/host -- tools.test.ts spawn-agent.test.ts`;
+  typechecks for core, agent-runtime, and host.
 
 - Status: Verified
 - Date: 2026-07-07T15:21:23+0800
@@ -720,3 +757,18 @@ test/protocol.test.ts`.
   `npm --workspace @sparkwright/host test -- test/run-access.test.ts test/protocol.test.ts`;
   `npm --workspace @sparkwright/cli test -- test/cli.test.ts`;
   `npm run schema:check`; `npm run build`; `npm run check:dist-fresh`.
+
+- Status: Verified
+- Date: 2026-07-08T20:41:34+0800
+- Scope: run access resolution is now shared by host client request helpers and
+  host runtime capability inspection. Tool catalog membership is unchanged;
+  capability inspect reports scoped diagnostics (`access`, delegate
+  `approvalRunOptions`, shell promotion) without bypassing runtime policy.
+- Read: `packages/host/src/run-access.ts`,
+  `packages/host/src/client-run.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/src/tool-catalog.ts`,
+  `docs/_internal/project-map/maps/runtime/tool-orchestration.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/run-access.test.ts test/client-run.test.ts`;
+  `npm --workspace @sparkwright/host test -- test/client-run.test.ts test/protocol.test.ts -t "capability inspect|capability inspection|capability inspect payloads"`;
+  `npm --workspace @sparkwright/host run typecheck`.
