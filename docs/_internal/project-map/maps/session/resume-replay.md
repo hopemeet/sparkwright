@@ -37,6 +37,7 @@ Workflow resume
   -> locate workspace .sparkwright/workflow-runs/<workflowRunId>.json
      or legacy session workflow-runs/<workflowRunId>.json
   -> acquire single-writer lease
+  -> prepare host run environment
   -> consume input waits at the actor boundary when status is waiting
   -> start a transient worker run with the pinned workflow definition
   -> re-run verifier nodes whose latest verdict passed when verifyOnResume is true
@@ -61,10 +62,15 @@ Future run in compacted session
   stored compiled definition snapshot rather than the live asset folder, and
   defaults `verifyOnResume` to true so completed verifier nodes whose latest
   verdict passed are rechecked before trusting the stored position.
+- `workflow resume` must not consume a durable waiting input unless the resumed
+  worker run can be prepared. If a pre-run failure happens after consuming the
+  wait, host restores the previous waiting record before returning the error.
 - Fresh workflow runs now persist their durable `WorkflowRunRecord` under the
   workspace-level `.sparkwright/workflow-runs/` root. Resume and list still
-  discover legacy session-local `workflow-runs/` records for compatibility, and
-  resume continues to pass the located store back into the host projection.
+  discover legacy session-local `workflow-runs/` records for compatibility;
+  workspace records are preferred over matching legacy copies for the same
+  workflow/session, and resume continues to pass the located store back into
+  the host projection.
 - Session compact artifacts seed future context only when `throughRunId` can be
   matched to completed turns. A mismatch produces an explicit
   conversation-layer warning item and falls back to replaying completed turns.
@@ -98,6 +104,21 @@ Future run in compacted session
   run-loop integration.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T21:52:00+0800
+- Scope: Workflow Job Session post-QA fix: workflow resume now keeps waiting
+  input durable until host preparation succeeds and restores the prior waiting
+  record on pre-run failure; matching workspace records take precedence over
+  legacy session-local copies during resume lookup.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "waiting notifications|prepare a run|legacy session copies|terminal
+  workflow|unsafe workflow"`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-09T21:28:00+0800

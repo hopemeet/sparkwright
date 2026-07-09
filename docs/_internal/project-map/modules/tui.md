@@ -149,6 +149,15 @@ Does not own:
 - `StatusBar` surfaces currently running background tasks with a Ctrl+O hint
   and an "untracked writes possible" disclosure when the promoted-shell boundary
   marker is present.
+- Workflow job status in `StatusBar` is derived from durable workflow snapshots
+  plus current TUI-owned waiting jobs. `/workflow stop` is limited to TUI-owned
+  live job connections and matches durable workflow ids, active run ids,
+  historical run ids, and pre-adoption owned run ids. The workflow panel keeps a
+  local keyboard cursor after attach/start focus so users can browse other jobs.
+- Workflow job background refresh and TUI config watching only run when stdin
+  supports raw mode. Non-TTY startup renders the initial frame and exits on the
+  next tick, keeping startup smoke/regression probes finite without spawning
+  workflow polling intervals.
 - Live event rendering and `/export` also share `isInternalTranscriptEvent()`
   from `lib/event-type.ts`; that wrapper delegates to protocol
   `isInternalTranscriptEventType()` so low-signal runtime machinery stays
@@ -260,6 +269,21 @@ Does not own:
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T21:52:00+0800
+- Scope: Workflow Job Session post-QA fix: workflow panel keyboard navigation
+  now moves away from the attached row, `/workflow stop` resolves owned jobs by
+  workflow id or run id including connecting jobs, and live workflow job clients
+  are closed on hook unmount.
+- Read: `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/components/workflow-panel.tsx`,
+  `packages/tui/test/workflow-actions.test.ts`,
+  `packages/tui/test/workflow-panel-render.test.tsx`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/workflow-actions.test.ts test/workflow-panel-render.test.tsx
+  test/workflow-display.test.ts`; `npm --workspace @sparkwright/tui run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-09T21:28:00+0800

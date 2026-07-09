@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { WorkflowRunSnapshot } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
@@ -31,8 +31,16 @@ export function useWorkflowActions(deps: {
   toasts: ToastStore;
   layers: LayerStack;
   layerOpen: boolean;
+  enableBackgroundRefresh?: boolean;
 }): WorkflowActions {
-  const { controller, store, toasts, layers, layerOpen } = deps;
+  const {
+    controller,
+    store,
+    toasts,
+    layers,
+    layerOpen,
+    enableBackgroundRefresh = true,
+  } = deps;
   const [workflows, setWorkflows] = useState<WorkflowRunSnapshot[]>([]);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<
@@ -41,6 +49,7 @@ export function useWorkflowActions(deps: {
   const [ownedJobs, setOwnedJobs] = useState<Record<string, OwnedWorkflowJob>>(
     {},
   );
+  const ownedJobsRef = useRef(ownedJobs);
 
   async function refreshWorkflows(): Promise<WorkflowRunSnapshot[]> {
     setLoadingWorkflows(true);
@@ -213,10 +222,13 @@ export function useWorkflowActions(deps: {
       return;
     }
     const next = await refreshWorkflows();
-    const workflow = next.find(
-      (item) => item.id === trimmed || item.id.endsWith(trimmed),
-    );
-    if (!workflow) {
+    const workflow = findWorkflowByIdOrRun(next, trimmed);
+    const liveJob = findOwnedLiveJob({
+      ownedJobs,
+      workflow,
+      id: trimmed,
+    });
+    if (!workflow && !liveJob) {
       toasts.push({
         variant: "warning",
         title: "workflow not found",
@@ -224,21 +236,16 @@ export function useWorkflowActions(deps: {
       });
       return;
     }
-    const liveJob = Object.values(ownedJobs).find(
-      (job) =>
-        job.workflowRunId === workflow.id ||
-        (workflow.activeRunId && job.runId === workflow.activeRunId),
-    );
     if (
       !liveJob ||
-      workflow.status === "waiting" ||
+      workflow?.status === "waiting" ||
       liveJob.status === "waiting" ||
       liveJob.status === "completed" ||
       liveJob.status === "failed" ||
       liveJob.status === "cancelled"
     ) {
       store.appendNotice(
-        `workflow stop not available for ${workflow.id}: not in the current live connection; resume it or stop it from the owner`,
+        `workflow stop not available for ${workflow?.id ?? trimmed}: not in the current live connection; resume it or stop it from the owner`,
       );
       return;
     }
@@ -248,7 +255,7 @@ export function useWorkflowActions(deps: {
         reason: "workflow stop",
       });
       store.appendNotice(
-        `workflow stop requested: ${workflow.id} (stopping is terminal and cannot be resumed)`,
+        `workflow stop requested: ${workflow?.id ?? liveJob.workflowRunId ?? liveJob.runId} (stopping is terminal and cannot be resumed)`,
       );
     } catch (error) {
       store.appendNotice(
@@ -262,6 +269,34 @@ export function useWorkflowActions(deps: {
   }
 
   useEffect(() => {
+    ownedJobsRef.current = ownedJobs;
+  }, [ownedJobs]);
+
+  useEffect(() => {
+    return () => {
+      for (const job of Object.values(ownedJobsRef.current)) {
+        if (job.status === "connecting" || job.status === "running") {
+          job.handle.close();
+        }
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!enableBackgroundRefresh) return;
+    let cancelled = false;
+    const interval = setInterval(() => {
+      if (!cancelled) void refreshWorkflows().then(() => undefined);
+    }, 5000);
+    void refreshWorkflows().then(() => undefined);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [enableBackgroundRefresh]);
+
+  useEffect(() => {
+    if (!enableBackgroundRefresh) return;
     if (!layerOpen) return;
     let cancelled = false;
     const tick = (): void => {
@@ -275,12 +310,24 @@ export function useWorkflowActions(deps: {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [layerOpen, selectedWorkflowId]);
+  }, [enableBackgroundRefresh, layerOpen, selectedWorkflowId]);
 
-  const waitingWorkflowCount = useMemo(
-    () => workflows.filter((workflow) => workflow.status === "waiting").length,
-    [workflows],
-  );
+  const waitingWorkflowCount = useMemo(() => {
+    const waitingWorkflowIds = new Set(
+      workflows
+        .filter((workflow) => workflow.status === "waiting")
+        .map((workflow) => workflow.id),
+    );
+    let count = waitingWorkflowIds.size;
+    for (const job of Object.values(ownedJobs)) {
+      if (job.status !== "waiting") continue;
+      if (job.workflowRunId && waitingWorkflowIds.has(job.workflowRunId)) {
+        continue;
+      }
+      count += 1;
+    }
+    return count;
+  }, [ownedJobs, workflows]);
   const ownedWorkflowRunIds = useMemo(
     () =>
       new Set(
@@ -312,7 +359,7 @@ export function useWorkflowActions(deps: {
   };
 }
 
-type OwnedWorkflowJobStatus =
+export type OwnedWorkflowJobStatus =
   | "connecting"
   | "running"
   | "waiting"
@@ -321,7 +368,7 @@ type OwnedWorkflowJobStatus =
   | "cancelled"
   | "disconnected";
 
-interface OwnedWorkflowJob {
+export interface OwnedWorkflowJob {
   runId: string;
   workflowRunId?: string;
   workflowName: string;
@@ -347,6 +394,45 @@ function parseWorkflowStartArgs(
   const goal = filtered.join(" ").trim();
   if (!workflowName || !goal) return null;
   return { workflowName, goal, focus };
+}
+
+export function findWorkflowByIdOrRun(
+  workflows: readonly WorkflowRunSnapshot[],
+  id: string,
+): WorkflowRunSnapshot | undefined {
+  return workflows.find(
+    (item) =>
+      item.id === id ||
+      item.id.endsWith(id) ||
+      item.activeRunId === id ||
+      Boolean(item.activeRunId?.endsWith(id)) ||
+      item.runIds.includes(id) ||
+      item.runIds.some((runId) => runId.endsWith(id)),
+  );
+}
+
+export function findOwnedLiveJob(input: {
+  ownedJobs: Record<string, OwnedWorkflowJob>;
+  workflow?: WorkflowRunSnapshot;
+  id: string;
+}): OwnedWorkflowJob | undefined {
+  return Object.values(input.ownedJobs).find((job) => {
+    if (job.status !== "connecting" && job.status !== "running") return false;
+    if (job.runId === input.id || job.runId.endsWith(input.id)) return true;
+    if (
+      job.workflowRunId &&
+      (job.workflowRunId === input.id || job.workflowRunId.endsWith(input.id))
+    ) {
+      return true;
+    }
+    if (!input.workflow) return false;
+    return (
+      job.workflowRunId === input.workflow.id ||
+      (input.workflow.activeRunId &&
+        job.runId === input.workflow.activeRunId) ||
+      input.workflow.runIds.includes(job.runId)
+    );
+  });
 }
 
 function wireWorkflowJob(

@@ -523,14 +523,22 @@ function AppReady(
     toasts,
     layers,
     layerOpen: layerSnapshot.some((layer) => layer.name === "workflow"),
+    enableBackgroundRefresh: isRawModeSupported,
   });
 
   useEffect(() => {
+    if (isRawModeSupported) return;
+    const id = setTimeout(() => exit(), 0);
+    return () => clearTimeout(id);
+  }, [exit, isRawModeSupported]);
+
+  useEffect(() => {
+    if (!isRawModeSupported) return;
     const dispose = watchTuiConfig(props.initialCwd, () => {
       void reloadConfig(true);
     });
     return dispose;
-  }, [props.initialCwd]);
+  }, [isRawModeSupported, props.initialCwd]);
 
   // File-authored slash commands discovered from .sparkwright/command/*.md.
   // Loaded async after mount; the registry memo below folds them in.

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useInput, useStdout } from "ink";
 import type { WorkflowRunSnapshot } from "@sparkwright/protocol";
 import { DialogFrame } from "./dialog-frame.js";
@@ -19,11 +19,13 @@ export function WorkflowPanel(props: {
 }): React.ReactElement {
   const { stdout } = useStdout();
   const [cursor, setCursor] = useState(0);
-  const selectedIndex = Math.max(
-    0,
-    props.workflows.findIndex((item) => item.id === props.selectedWorkflowId),
+  const selectedIndex = props.workflows.findIndex(
+    (item) => item.id === props.selectedWorkflowId,
   );
-  const effectiveCursor = props.selectedWorkflowId ? selectedIndex : cursor;
+  const effectiveCursor =
+    props.workflows.length === 0
+      ? 0
+      : Math.min(Math.max(cursor, 0), props.workflows.length - 1);
   const selected = props.workflows[effectiveCursor];
   const viewport = Math.max(6, (stdout?.rows ?? 30) - 13);
   const listWindow = useMemo(() => {
@@ -33,6 +35,18 @@ export function WorkflowPanel(props: {
       index: start + i,
     }));
   }, [props.workflows, effectiveCursor, viewport]);
+
+  useEffect(() => {
+    if (selectedIndex >= 0) setCursor(selectedIndex);
+  }, [selectedIndex]);
+
+  useEffect(() => {
+    setCursor((value) =>
+      props.workflows.length === 0
+        ? 0
+        : Math.min(value, props.workflows.length - 1),
+    );
+  }, [props.workflows.length]);
 
   useInput((input, key) => {
     if (key.escape || input === "q") return props.onClose();

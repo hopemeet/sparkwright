@@ -90,6 +90,10 @@ export interface WorkflowStore {
   get(id: WorkflowRunId): WorkflowRunRecord | undefined;
   list(): WorkflowStoreListResult;
   update(id: WorkflowRunId, patch: WorkflowRunRecordPatch): WorkflowRunRecord;
+  restore(
+    record: WorkflowRunRecord,
+    options?: { metadata?: Record<string, unknown>; now?: () => string },
+  ): WorkflowRunRecord;
   appendEvent(event: WorkflowStoreEvent): void;
   /** @reserved Public workflow-store log reader consumed by future workflow diagnostics/resume UIs. */
   eventLog(id: WorkflowRunId): WorkflowStoreEventLogResult;
@@ -293,6 +297,41 @@ export class FileWorkflowStore implements WorkflowStore {
     return cloneRecord(updated);
   }
 
+  restore(
+    record: WorkflowRunRecord,
+    options: { metadata?: Record<string, unknown>; now?: () => string } = {},
+  ): WorkflowRunRecord {
+    assertSafeWorkflowRunId(record.id);
+    const restored = cloneRecord(record);
+    const at = options.now?.() ?? new Date().toISOString();
+    this.records.set(record.id, restored);
+    this.writeRecord(restored);
+    this.appendEvent({
+      at,
+      type:
+        restored.status === "completed"
+          ? "completed"
+          : restored.status === "failed"
+            ? "failed"
+            : restored.status === "cancelled"
+              ? "cancelled"
+              : restored.status === "waiting"
+                ? "waiting"
+                : "updated",
+      workflowRunId: restored.id,
+      parentRunId: restored.parentRunId,
+      status: restored.status,
+      metadata: {
+        restored: true,
+        currentNodeId: restored.currentNodeId,
+        wait: restored.wait,
+        failure: restored.failure,
+        ...(options.metadata ?? {}),
+      },
+    });
+    return cloneRecord(restored);
+  }
+
   appendEvent(event: WorkflowStoreEvent): void {
     assertSafeWorkflowRunId(event.workflowRunId);
     appendJsonDocumentLogSync(this.eventLogPath(event.workflowRunId), event);
@@ -471,13 +510,7 @@ function parseWorkflowRunRecord(raw: unknown): WorkflowRunRecord {
       verifyOnResume:
         !isRecord(raw.resume) || raw.resume.verifyOnResume !== false,
     },
-    ...(isRecord(raw.authorizationSnapshot)
-      ? {
-          authorizationSnapshot: parseAuthorizationSnapshot(
-            raw.authorizationSnapshot,
-          ),
-        }
-      : {}),
+    ...parseOptionalAuthorizationSnapshot(raw.authorizationSnapshot),
     ...(isRecord(raw.definitionSnapshot)
       ? {
           definitionSnapshot: cloneJsonLike(
@@ -568,22 +601,35 @@ function cloneRecord(record: WorkflowRunRecord): WorkflowRunRecord {
   };
 }
 
+function parseOptionalAuthorizationSnapshot(
+  raw: unknown,
+): Pick<WorkflowRunRecord, "authorizationSnapshot"> {
+  if (!isRecord(raw)) return {};
+  const snapshot = parseAuthorizationSnapshot(raw);
+  return snapshot ? { authorizationSnapshot: snapshot } : {};
+}
+
 function parseAuthorizationSnapshot(
   raw: Record<string, unknown>,
-): WorkflowRunRecord["authorizationSnapshot"] {
+): WorkflowRunRecord["authorizationSnapshot"] | undefined {
+  if (
+    !Array.isArray(raw.confidentialPaths) ||
+    !raw.confidentialPaths.every(optionalString) ||
+    typeof raw.confidentialDefaults !== "boolean" ||
+    typeof raw.shouldWrite !== "boolean" ||
+    !isWorkflowBackgroundTaskPolicy(raw.backgroundTasks)
+  ) {
+    return undefined;
+  }
   return {
     ...(optionalString(raw.targetPath) ? { targetPath: raw.targetPath } : {}),
-    confidentialPaths: Array.isArray(raw.confidentialPaths)
-      ? raw.confidentialPaths.filter(optionalString)
-      : [],
-    confidentialDefaults: raw.confidentialDefaults !== false,
-    shouldWrite: raw.shouldWrite === true,
+    confidentialPaths: [...raw.confidentialPaths],
+    confidentialDefaults: raw.confidentialDefaults,
+    shouldWrite: raw.shouldWrite,
     ...(isWorkflowRunAccessMode(raw.accessMode)
       ? { accessMode: raw.accessMode }
       : {}),
-    backgroundTasks: isWorkflowBackgroundTaskPolicy(raw.backgroundTasks)
-      ? raw.backgroundTasks
-      : "enabled",
+    backgroundTasks: raw.backgroundTasks,
   };
 }
 

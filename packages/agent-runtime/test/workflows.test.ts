@@ -414,6 +414,96 @@ describe("FileWorkflowStore", () => {
     ).toBeUndefined();
   });
 
+  it("treats partial authorization snapshots as absent instead of defaulting privileges", async () => {
+    const root = await tempDir();
+    await writeFile(
+      join(root, "workflow_partial_auth.json"),
+      JSON.stringify(
+        {
+          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+          id: "workflow_partial_auth",
+          assetName: "legacy",
+          contentHash: "hash",
+          runIds: [],
+          status: "running",
+          attempts: {},
+          evidenceRefs: [],
+          verdictLog: [],
+          transitionLog: [],
+          resume: { verifyOnResume: true },
+          authorizationSnapshot: {},
+          createdAt: "2026-07-04T00:00:00.000Z",
+          metadata: {},
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const reopened = new FileWorkflowStore({
+      rootDir: root,
+      createRoot: false,
+    });
+
+    expect(
+      reopened.get("workflow_partial_auth" as WorkflowRunId)
+        ?.authorizationSnapshot,
+    ).toBeUndefined();
+  });
+
+  it("can restore a workflow record snapshot after a failed adoption attempt", async () => {
+    const root = await tempDir();
+    const store = new FileWorkflowStore({ rootDir: root });
+    const id = "workflow_restore" as WorkflowRunId;
+    const original = store.create({
+      id,
+      assetName: "restore",
+      contentHash: "hash",
+      currentNodeId: "review",
+      attempts: { review: 1 },
+      definitionSnapshot: workflow([
+        { id: "review", execute: "human", body: "Review." },
+      ]),
+    });
+    const waiting = store.update(original.id, {
+      status: "waiting",
+      wait: { kind: "input", reason: "Need input." },
+    });
+    store.update(original.id, {
+      status: "running",
+      clearWait: true,
+      currentNodeId: "finish",
+      attempts: { review: 1, finish: 1 },
+      verdictLog: [
+        {
+          at: "2026-07-04T00:00:01.000Z",
+          nodeId: "review",
+          attempt: 1,
+          verdict: { status: "passed" },
+        },
+      ],
+    });
+
+    const restored = store.restore(waiting, {
+      now: () => "2026-07-04T00:00:02.000Z",
+      metadata: { rollbackReason: "test" },
+    });
+
+    expect(restored).toMatchObject({
+      status: "waiting",
+      currentNodeId: "review",
+      wait: { kind: "input", reason: "Need input." },
+      attempts: { review: 1 },
+      verdictLog: [],
+    });
+    expect(store.get(id)).toMatchObject({
+      status: "waiting",
+      currentNodeId: "review",
+      wait: { kind: "input", reason: "Need input." },
+    });
+  });
+
   it("lists valid records while reporting corrupt entries", async () => {
     const root = await tempDir();
     const store = new FileWorkflowStore({ rootDir: root });

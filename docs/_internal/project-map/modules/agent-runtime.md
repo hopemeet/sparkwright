@@ -93,10 +93,13 @@ Does not own:
 - Workflow types in agent-runtime are portable runtime/store declarations.
   `WorkflowRunRecord` is now a durable P2 state document with five-value
   status, version pinning, attempts, evidence refs, verdict/transition logs,
-  resume policy, and optional `wait.kind`. `FileWorkflowStore` composes the
-  shared doc-store primitives for per-session `workflow-runs/` records, JSONL
-  events, corrupt-entry diagnostics, waiting-state invariants, and single-writer
-  leases; host owns parsing, projection, and run-loop execution.
+  resume policy, optional `wait.kind`, and optional resolved authorization
+  snapshots. Malformed present authorization snapshots are treated as absent
+  rather than defaulted. `FileWorkflowStore` composes the shared doc-store
+  primitives for per-session `workflow-runs/` records, JSONL events,
+  corrupt-entry diagnostics, waiting-state invariants, restore-after-adoption
+  rollback, and single-writer leases; host owns parsing, projection, and
+  run-loop execution.
 - Workflow P1 runtime state transitions are also portable and model/config
   free. `advanceWorkflowState()` evaluates `(state, verdict) -> transition`
   for linear model-node workflows with `retry`, `goto`, `fail`, and terminal
@@ -294,6 +297,20 @@ Does not own:
 - Task/todo behavior spans host, CLI, TUI replay, and trace diagnostics; ownership can be easy to blur.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T21:52:00+0800
+- Scope: Workflow Job Session post-QA fix: workflow records now support
+  restoring a prior snapshot after failed resume adoption, and partial
+  `authorizationSnapshot` objects parse as absent instead of silently
+  defaulting resolved authorization values.
+- Read: `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/agent-runtime/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/agent-runtime test --
+  test/workflows.test.ts -t "authorization snapshots|legacy workflow
+  records|partial authorization|restore"`; `npm --workspace
+  @sparkwright/agent-runtime run typecheck`; `npm --workspace
+  @sparkwright/agent-runtime run build`.
 
 - Status: Verified
 - Date: 2026-07-07T16:15:00+0800

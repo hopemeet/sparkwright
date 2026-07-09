@@ -1252,6 +1252,66 @@ describe("workflow assets", () => {
     });
   });
 
+  it("keeps waiting input intact when workflow resume cannot prepare a run", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_resume_prepare_failure";
+    const definition: WorkflowDefinition = {
+      assetName: "human-gate",
+      contentHash: "hash-human-gate",
+      nodes: [
+        {
+          id: "review",
+          execute: "human",
+          body: "Review.",
+          human: {
+            wait: { kind: "input", reason: "Need human review." },
+          },
+          onPass: "finish",
+        },
+        { id: "finish", body: "Finish after review." },
+      ],
+    };
+    const store = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace, sessionId),
+    });
+    const workflowRunId = "workflow_prepare_failure" as WorkflowRunId;
+    const created = store.create({
+      id: workflowRunId,
+      sessionId,
+      assetName: definition.assetName,
+      contentHash: definition.contentHash,
+      currentNodeId: "review",
+      attempts: { review: 1 },
+      definitionSnapshot: definition,
+      metadata: { goal: "resume human-gate" },
+    });
+    const waiting = store.update(created.id, {
+      status: "waiting",
+      wait: { kind: "input", reason: "Need human review." },
+    });
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: () => {},
+    });
+
+    const resumed = await runtime.resumeWorkflowRun({
+      workflowRunId,
+      sessionId,
+      model: "missing-provider/model",
+    });
+
+    expect(resumed).toMatchObject({ ok: false });
+    expect(store.get(workflowRunId)).toMatchObject({
+      status: "waiting",
+      currentNodeId: "review",
+      wait: { kind: "input", reason: "Need human review." },
+      attempts: waiting.attempts,
+      verdictLog: waiting.verdictLog,
+      transitionLog: waiting.transitionLog,
+    });
+  });
+
   it("holds a workflow lease for fresh run records", async () => {
     const workspace = await tempWorkspace();
     const sessionId = "sess_workflow_fresh_lease";
@@ -1553,6 +1613,67 @@ describe("workflow assets", () => {
     await expect(readFile(marker, "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("prefers workspace workflow records over matching legacy session copies on resume", async () => {
+    const workspace = await tempWorkspace();
+    const sessionId = "sess_workflow_workspace_legacy_duplicate";
+    const definition: WorkflowDefinition = {
+      assetName: "pinned",
+      contentHash: "hash-pinned",
+      nodes: [{ id: "main", body: "Resume from workspace record." }],
+    };
+    const workflowRunId = "workflow_workspace_duplicate" as WorkflowRunId;
+    const workspaceStore = new FileWorkflowStore({
+      rootDir: workflowStoreRoot(workspace, sessionId),
+    });
+    workspaceStore.create({
+      id: workflowRunId,
+      sessionId,
+      assetName: definition.assetName,
+      contentHash: definition.contentHash,
+      currentNodeId: "main",
+      definitionSnapshot: definition,
+      metadata: { goal: "resume duplicate workflow" },
+    });
+    const legacyStore = new FileWorkflowStore({
+      rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+    });
+    legacyStore.create({
+      id: workflowRunId,
+      sessionId,
+      assetName: definition.assetName,
+      contentHash: definition.contentHash,
+      currentNodeId: "main",
+      definitionSnapshot: definition,
+      metadata: { goal: "resume duplicate workflow" },
+    });
+    const events: HostEvent[] = [];
+    const runtime = new HostRuntime({
+      workspaceRoot: workspace,
+      defaultModel: "deterministic",
+      emit: (event) => events.push(event),
+    });
+
+    const resumed = await runtime.resumeWorkflowRun({
+      workflowRunId,
+      sessionId,
+    });
+
+    expect(resumed).toMatchObject({ ok: true });
+    await waitForHostEvent(events, (event) => event.kind === "run.completed");
+    expect(
+      new FileWorkflowStore({
+        rootDir: workflowStoreRoot(workspace, sessionId),
+        createRoot: false,
+      }).get(workflowRunId)?.runIds,
+    ).toHaveLength(1);
+    expect(
+      new FileWorkflowStore({
+        rootDir: legacyWorkflowStoreRoot(workspace, sessionId),
+        createRoot: false,
+      }).get(workflowRunId)?.runIds,
+    ).toHaveLength(0);
   });
 
   it("rejects terminal workflow records instead of force-resuming them", async () => {

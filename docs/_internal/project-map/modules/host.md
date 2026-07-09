@@ -248,8 +248,12 @@ Does not own:
   lease while the run chain is active, and releases the lease on terminal/
   rejected paths. `workflow resume` uses the pinned definition and the located
   store, not the live asset folder or a reconstructed session-root store;
-  `verifyOnResume` re-runs verifier nodes whose latest stored verdict is passed
-  before trusting the stored position.
+  workspace-level records are preferred over matching legacy session-local
+  copies for the same `workflowRunId`/`sessionId`; `verifyOnResume` re-runs
+  verifier nodes whose latest stored verdict is passed before trusting the
+  stored position. Waiting-input resume does not consume the durable wait until
+  host run preparation has succeeded; if a later pre-run failure occurs, host
+  restores the prior waiting record before returning the error.
 - Host delivers completed/failed workflow terminal notifications and P3
   `waiting` notifications through the workflow actor inbox with
   `payload.workflowId === WorkflowRunRecord.id`; waiting notifications are
@@ -740,6 +744,20 @@ Does not own:
 - Capability snapshot fields are useful but can become stale if new tools bypass `tool-catalog.ts`; direct-core/cron should add tools by catalog profile, not local factories.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T21:52:00+0800
+- Scope: Workflow Job Session post-QA fix: `workflow.resume` now preserves
+  waiting records when run preparation fails, restores consumed wait snapshots
+  on pre-run failure, and prefers workspace workflow records over matching
+  legacy session-local copies.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/host/test/workflows.test.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "waiting notifications|prepare a run|legacy session copies|terminal
+  workflow|unsafe workflow"`; `npm --workspace @sparkwright/host run
+  typecheck`.
 
 - Status: Verified
 - Date: 2026-07-09T21:22:00+0800

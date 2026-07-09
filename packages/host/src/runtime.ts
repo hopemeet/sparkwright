@@ -1640,6 +1640,7 @@ export class HostRuntime {
     workflowStore?: FileWorkflowStore;
     workflowRecord?: WorkflowRunRecord;
     workflowLease?: FileDocumentLease;
+    workflowWaitingInputMetadata?: Record<string, unknown>;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
   }): Promise<
@@ -2065,10 +2066,40 @@ export class HostRuntime {
     let workflowRecord = input.workflowRecord;
     let workflowLease = input.workflowLease;
     let acquiredWorkflowLease = false;
+    let workflowRollbackRecord: WorkflowRunRecord | undefined;
     let workflowProjection:
       | ReturnType<typeof createWorkflowProjectionHooks>
       | undefined;
     try {
+      if (
+        workflowStore &&
+        workflowRecord?.status === "waiting" &&
+        input.workflowWaitingInputMetadata !== undefined
+      ) {
+        workflowRollbackRecord = workflowRecord;
+        workflowRecord = consumeWorkflowActorWaitingInput(
+          workflowStore,
+          workflowRecord,
+          { metadata: input.workflowWaitingInputMetadata },
+        );
+        if (isTerminalWorkflowRunStatus(workflowRecord.status)) {
+          const terminalStatus = workflowRecord.status;
+          const rollbackWorkflowRunId = workflowRollbackRecord.id;
+          workflowRecord = workflowStore.restore(workflowRollbackRecord, {
+            metadata: {
+              rollbackReason: "workflow_resume_terminal_after_input",
+            },
+          });
+          workflowRollbackRecord = undefined;
+          return {
+            ok: false,
+            error: {
+              code: "invalid_payload",
+              message: `Workflow run ${rollbackWorkflowRunId} would reach ${terminalStatus} while consuming waiting input.`,
+            },
+          };
+        }
+      }
       workflowProjection = workflowDefinition
         ? createWorkflowProjectionHooks({
             definition: workflowDefinition,
@@ -2177,6 +2208,11 @@ export class HostRuntime {
         }
       }
     } catch (error) {
+      if (workflowRollbackRecord && workflowStore) {
+        workflowRecord = workflowStore.restore(workflowRollbackRecord, {
+          metadata: { rollbackReason: "workflow_resume_prepare_failed" },
+        });
+      }
       if (acquiredWorkflowLease) {
         await workflowLease?.release().catch(() => {});
         workflowLease = undefined;
@@ -3009,7 +3045,7 @@ export class HostRuntime {
       payload.sessionId,
     );
     if (!located.ok) return located;
-    let { record } = located;
+    const { record } = located;
     const { store, sessionId } = located;
     if (isTerminalWorkflowRunStatus(record.status)) {
       return {
@@ -3042,34 +3078,6 @@ export class HostRuntime {
         },
       };
     }
-    if (record.status === "waiting") {
-      try {
-        record = consumeWorkflowActorWaitingInput(store, record, {
-          metadata: payload.metadata,
-        });
-      } catch (error) {
-        await lease.release();
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
-      if (isTerminalWorkflowRunStatus(record.status)) {
-        this.deliverWorkflowNotification(record);
-        await lease.release();
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: `Workflow run ${record.id} reached ${record.status} while consuming waiting input.`,
-          },
-        };
-      }
-    }
-
     const authorizationSnapshot = record.authorizationSnapshot;
     const effectiveResumePayload: WorkflowResumeRequestPayload = {
       ...payload,
@@ -3118,6 +3126,8 @@ export class HostRuntime {
       workflowStore: store,
       workflowRecord: record,
       workflowLease: lease,
+      workflowWaitingInputMetadata:
+        record.status === "waiting" ? (payload.metadata ?? {}) : undefined,
       runMetadata: {
         resumedWorkflowRunId: record.id,
         verifyOnResume: record.resume.verifyOnResume,
@@ -3220,6 +3230,11 @@ export class HostRuntime {
             ),
     });
     if (!started.ok) {
+      if (record.status === "waiting") {
+        store.restore(record, {
+          metadata: { rollbackReason: "workflow_resume_start_failed" },
+        });
+      }
       await lease.release();
       return started;
     }
@@ -3281,6 +3296,7 @@ export class HostRuntime {
       createRoot: false,
     });
     const workspaceRecord = workspaceStore.get(workflowRunId);
+    let workspaceLocatedSessionId: string | undefined;
     if (
       workspaceRecord &&
       (!sessionId || workspaceRecord.sessionId === sessionId)
@@ -3300,6 +3316,7 @@ export class HostRuntime {
         store: workspaceStore,
         sessionId: locatedSessionId,
       });
+      workspaceLocatedSessionId = locatedSessionId;
     }
     for (const candidateSessionId of sessions) {
       const store = new FileWorkflowStore({
@@ -3310,6 +3327,14 @@ export class HostRuntime {
         createRoot: false,
       });
       const record = store.get(workflowRunId);
+      if (
+        record &&
+        workspaceRecord &&
+        workspaceLocatedSessionId &&
+        (record.sessionId ?? candidateSessionId) === workspaceLocatedSessionId
+      ) {
+        continue;
+      }
       if (record)
         matches.push({ record, store, sessionId: candidateSessionId });
     }
