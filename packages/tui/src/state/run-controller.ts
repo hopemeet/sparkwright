@@ -6,6 +6,7 @@ import {
   createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostStartRunRequest,
+  createHostWorkflowResumeRequest,
   createRunInputPayloadFromParts,
   imageMediaTypeForPath,
   recordHostClientStartFailure,
@@ -24,6 +25,8 @@ import type {
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
   TraceLevel,
+  WorkflowListRequestPayload,
+  WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
@@ -49,6 +52,12 @@ export interface RunControllerOptions {
   store: EventStore;
   /** If provided, runs accumulate into this session id. */
   initialSessionId?: string;
+}
+
+export interface WorkflowJobHandle {
+  runId: string;
+  client: Client;
+  close: () => void;
 }
 
 type ApprovalDecision = "approved" | "denied";
@@ -454,6 +463,114 @@ export class RunController {
     } catch (err) {
       this.store.setError(formatError(err));
       return [];
+    }
+  }
+
+  async listWorkflowRuns(
+    payload: WorkflowListRequestPayload = { limit: 100 },
+  ): Promise<WorkflowRunSnapshot[]> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.listWorkflowRuns(payload);
+      return result.workflows;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return [];
+    }
+  }
+
+  async startWorkflowJob(input: {
+    workflowName: string;
+    goal: string;
+  }): Promise<WorkflowJobHandle | null> {
+    const client = await createClient({
+      spawn: resolveHostStdioSpawn({
+        workspaceRoot: this.opts.workspaceRoot,
+        sessionRootDir: this.sessionRootDir(),
+        permissionMode: this.coreRunFields().permissionMode,
+      }),
+      client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+    });
+    try {
+      const traceLevel = this.opts.traceLevel ?? "standard";
+      const permissions = this.coreRunFields();
+      const { runId } = await client.startRun(
+        createHostStartRunRequest({
+          goal: input.goal,
+          sessionId: this.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+          workflowName: input.workflowName,
+          accessMode: this.tuiPermissionMode(),
+          permissionMode: permissions.permissionMode,
+          traceLevel,
+          shouldWrite: permissions.shouldWrite,
+          metadata: {
+            ...this.runRequestMetadata({ traceLevel }),
+            workflowStartSource: "tui",
+          },
+        }),
+      );
+      return {
+        runId,
+        client,
+        close: () => client.close(),
+      };
+    } catch (err) {
+      client.close();
+      this.store.setError(formatError(err));
+      return null;
+    }
+  }
+
+  async resumeWorkflowJob(input: {
+    workflow: WorkflowRunSnapshot;
+  }): Promise<WorkflowJobHandle | null> {
+    const authorization = input.workflow.authorizationSnapshot;
+    if (!authorization) {
+      this.store.setError(
+        "workflow resume requires an authorization snapshot; older records must be resumed from the CLI with explicit options",
+      );
+      return null;
+    }
+    const client = await createClient({
+      spawn: resolveHostStdioSpawn({
+        workspaceRoot: this.opts.workspaceRoot,
+        sessionRootDir: this.sessionRootDir(),
+        permissionMode: this.coreRunFields().permissionMode,
+      }),
+      client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+    });
+    try {
+      const traceLevel = this.opts.traceLevel ?? "standard";
+      const { runId } = await client.resumeWorkflowRun(
+        createHostWorkflowResumeRequest({
+          workflowRunId: input.workflow.id,
+          sessionId: input.workflow.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+          accessMode: authorization.accessMode,
+          backgroundTasks: authorization.backgroundTasks,
+          traceLevel,
+          targetPath: authorization.targetPath,
+          confidentialPaths: authorization.confidentialPaths,
+          confidentialDefaults: authorization.confidentialDefaults,
+          shouldWrite: authorization.shouldWrite,
+          metadata: {
+            ...this.runRequestMetadata({ traceLevel }),
+            workflowResumeSource: "tui",
+          },
+        }),
+      );
+      return {
+        runId,
+        client,
+        close: () => client.close(),
+      };
+    } catch (err) {
+      client.close();
+      this.store.setError(formatError(err));
+      return null;
     }
   }
 

@@ -1640,6 +1640,7 @@ export class HostRuntime {
     workflowStore?: FileWorkflowStore;
     workflowRecord?: WorkflowRunRecord;
     workflowLease?: FileDocumentLease;
+    workflowWaitingInputMetadata?: Record<string, unknown>;
     runMetadata?: Record<string, unknown>;
     runStoreMetadata?: Record<string, unknown>;
   }): Promise<
@@ -2065,10 +2066,40 @@ export class HostRuntime {
     let workflowRecord = input.workflowRecord;
     let workflowLease = input.workflowLease;
     let acquiredWorkflowLease = false;
+    let workflowRollbackRecord: WorkflowRunRecord | undefined;
     let workflowProjection:
       | ReturnType<typeof createWorkflowProjectionHooks>
       | undefined;
     try {
+      if (
+        workflowStore &&
+        workflowRecord?.status === "waiting" &&
+        input.workflowWaitingInputMetadata !== undefined
+      ) {
+        workflowRollbackRecord = workflowRecord;
+        workflowRecord = consumeWorkflowActorWaitingInput(
+          workflowStore,
+          workflowRecord,
+          { metadata: input.workflowWaitingInputMetadata },
+        );
+        if (isTerminalWorkflowRunStatus(workflowRecord.status)) {
+          const terminalStatus = workflowRecord.status;
+          const rollbackWorkflowRunId = workflowRollbackRecord.id;
+          workflowRecord = workflowStore.restore(workflowRollbackRecord, {
+            metadata: {
+              rollbackReason: "workflow_resume_terminal_after_input",
+            },
+          });
+          workflowRollbackRecord = undefined;
+          return {
+            ok: false,
+            error: {
+              code: "invalid_payload",
+              message: `Workflow run ${rollbackWorkflowRunId} would reach ${terminalStatus} while consuming waiting input.`,
+            },
+          };
+        }
+      }
       workflowProjection = workflowDefinition
         ? createWorkflowProjectionHooks({
             definition: workflowDefinition,
@@ -2155,6 +2186,19 @@ export class HostRuntime {
             currentNodeId: projectedState.currentNodeId,
             attempts: projectedState.attempts,
             transitionLog: projectedState.transitionLog,
+            authorizationSnapshot: {
+              ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+              confidentialPaths: [...(confidentialPaths ?? [])],
+              confidentialDefaults: confidentialDefaults ?? true,
+              shouldWrite: input.shouldWrite,
+              accessMode:
+                input.access?.accessMode ??
+                accessModeFromResolvedFields(
+                  input.permissionMode,
+                  input.shouldWrite,
+                ),
+              backgroundTasks: input.backgroundTasks,
+            },
             definitionSnapshot: workflowDefinition,
             metadata: {
               goal: input.goal,
@@ -2164,6 +2208,11 @@ export class HostRuntime {
         }
       }
     } catch (error) {
+      if (workflowRollbackRecord && workflowStore) {
+        workflowRecord = workflowStore.restore(workflowRollbackRecord, {
+          metadata: { rollbackReason: "workflow_resume_prepare_failed" },
+        });
+      }
       if (acquiredWorkflowLease) {
         await workflowLease?.release().catch(() => {});
         workflowLease = undefined;
@@ -2996,7 +3045,7 @@ export class HostRuntime {
       payload.sessionId,
     );
     if (!located.ok) return located;
-    let { record } = located;
+    const { record } = located;
     const { store, sessionId } = located;
     if (isTerminalWorkflowRunStatus(record.status)) {
       return {
@@ -3029,36 +3078,22 @@ export class HostRuntime {
         },
       };
     }
-    if (record.status === "waiting") {
-      try {
-        record = consumeWorkflowActorWaitingInput(store, record, {
-          metadata: payload.metadata,
-        });
-      } catch (error) {
-        await lease.release();
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: error instanceof Error ? error.message : String(error),
-          },
-        };
-      }
-      if (isTerminalWorkflowRunStatus(record.status)) {
-        this.deliverWorkflowNotification(record);
-        await lease.release();
-        return {
-          ok: false,
-          error: {
-            code: "invalid_payload",
-            message: `Workflow run ${record.id} reached ${record.status} while consuming waiting input.`,
-          },
-        };
-      }
-    }
-
+    const authorizationSnapshot = record.authorizationSnapshot;
+    const effectiveResumePayload: WorkflowResumeRequestPayload = {
+      ...payload,
+      targetPath: payload.targetPath ?? authorizationSnapshot?.targetPath,
+      confidentialPaths:
+        payload.confidentialPaths ?? authorizationSnapshot?.confidentialPaths,
+      confidentialDefaults:
+        payload.confidentialDefaults ??
+        authorizationSnapshot?.confidentialDefaults,
+      shouldWrite: payload.shouldWrite ?? authorizationSnapshot?.shouldWrite,
+      accessMode: payload.accessMode ?? authorizationSnapshot?.accessMode,
+      backgroundTasks:
+        payload.backgroundTasks ?? authorizationSnapshot?.backgroundTasks,
+    };
     const access = resolveRunAccessFields(
-      payload as unknown as RunStartRequestPayload,
+      effectiveResumePayload as unknown as RunStartRequestPayload,
       {
         defaultAccessMode: this.opts.defaultAccessMode,
         accessModeCeiling: this.opts.accessModeCeiling,
@@ -3081,16 +3116,18 @@ export class HostRuntime {
       shouldWrite,
       backgroundTasks: access.backgroundTasks,
       sessionId,
-      targetPath: payload.targetPath,
-      confidentialPaths: payload.confidentialPaths,
-      confidentialDefaults: payload.confidentialDefaults,
+      targetPath: effectiveResumePayload.targetPath,
+      confidentialPaths: effectiveResumePayload.confidentialPaths,
+      confidentialDefaults: effectiveResumePayload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
-        ...payload,
+        ...effectiveResumePayload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
       }),
       workflowStore: store,
       workflowRecord: record,
       workflowLease: lease,
+      workflowWaitingInputMetadata:
+        record.status === "waiting" ? (payload.metadata ?? {}) : undefined,
       runMetadata: {
         resumedWorkflowRunId: record.id,
         verifyOnResume: record.resume.verifyOnResume,
@@ -3136,7 +3173,7 @@ export class HostRuntime {
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
-          targetPath: payload.targetPath,
+          targetPath: effectiveResumePayload.targetPath,
           confidentialPaths: env.confidentialPaths,
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
@@ -3193,6 +3230,11 @@ export class HostRuntime {
             ),
     });
     if (!started.ok) {
+      if (record.status === "waiting") {
+        store.restore(record, {
+          metadata: { rollbackReason: "workflow_resume_start_failed" },
+        });
+      }
       await lease.release();
       return started;
     }
@@ -3254,6 +3296,7 @@ export class HostRuntime {
       createRoot: false,
     });
     const workspaceRecord = workspaceStore.get(workflowRunId);
+    let workspaceLocatedSessionId: string | undefined;
     if (
       workspaceRecord &&
       (!sessionId || workspaceRecord.sessionId === sessionId)
@@ -3273,6 +3316,7 @@ export class HostRuntime {
         store: workspaceStore,
         sessionId: locatedSessionId,
       });
+      workspaceLocatedSessionId = locatedSessionId;
     }
     for (const candidateSessionId of sessions) {
       const store = new FileWorkflowStore({
@@ -3283,6 +3327,14 @@ export class HostRuntime {
         createRoot: false,
       });
       const record = store.get(workflowRunId);
+      if (
+        record &&
+        workspaceRecord &&
+        workspaceLocatedSessionId &&
+        (record.sessionId ?? candidateSessionId) === workspaceLocatedSessionId
+      ) {
+        continue;
+      }
       if (record)
         matches.push({ record, store, sessionId: candidateSessionId });
     }
@@ -8734,6 +8786,19 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
     runIds: record.runIds.map(String),
     ...(record.currentNodeId ? { currentNodeId: record.currentNodeId } : {}),
     attempts: { ...record.attempts },
+    ...(record.verdictLog.length > 0
+      ? {
+          latestVerdict: (() => {
+            const latest = record.verdictLog[record.verdictLog.length - 1]!;
+            return {
+              nodeId: latest.nodeId,
+              attempt: latest.attempt,
+              verdict: cloneJsonLike(latest.verdict) as Record<string, unknown>,
+              ...(latest.at ? { at: latest.at } : {}),
+            };
+          })(),
+        }
+      : {}),
     ...(record.wait
       ? {
           wait: {
@@ -8755,11 +8820,31 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
         }
       : {}),
     resume: { ...record.resume },
+    ...(record.authorizationSnapshot
+      ? {
+          authorizationSnapshot: {
+            ...record.authorizationSnapshot,
+            confidentialPaths: [
+              ...record.authorizationSnapshot.confidentialPaths,
+            ],
+          },
+        }
+      : {}),
     createdAt: record.createdAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
     ...(record.completedAt ? { completedAt: record.completedAt } : {}),
     metadata: { ...record.metadata },
   };
+}
+
+function accessModeFromResolvedFields(
+  permissionMode: PermissionMode,
+  shouldWrite: boolean,
+): RunAccessMode {
+  if (!shouldWrite) return "read-only";
+  if (permissionMode === "accept_edits") return "accept-edits";
+  if (permissionMode === "bypass_permissions") return "bypass";
+  return "ask";
 }
 
 function persistWorkflowProjectionSnapshot(

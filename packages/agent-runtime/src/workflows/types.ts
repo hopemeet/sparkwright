@@ -52,6 +52,26 @@ export interface WorkflowResumePolicy {
   verifyOnResume: boolean;
 }
 
+export type WorkflowRunAccessMode =
+  | "read-only"
+  | "ask"
+  | "accept-edits"
+  | "bypass";
+
+export type WorkflowBackgroundTaskPolicy =
+  | "disabled"
+  | "foreground-only"
+  | "enabled";
+
+export interface WorkflowRunAuthorizationSnapshot {
+  targetPath?: string;
+  confidentialPaths: string[];
+  confidentialDefaults: boolean;
+  shouldWrite: boolean;
+  accessMode?: WorkflowRunAccessMode;
+  backgroundTasks: WorkflowBackgroundTaskPolicy;
+}
+
 export interface WorkflowRunRecord extends WorkflowAssetPin {
   schemaVersion: typeof WORKFLOW_RUN_RECORD_SCHEMA_VERSION;
   id: WorkflowRunId;
@@ -70,6 +90,7 @@ export interface WorkflowRunRecord extends WorkflowAssetPin {
   transitionLog: WorkflowTransitionLogEntry[];
   failure?: WorkflowRunFailure;
   resume: WorkflowResumePolicy;
+  authorizationSnapshot?: WorkflowRunAuthorizationSnapshot;
   definitionSnapshot?: WorkflowDefinition;
   createdAt: string;
   updatedAt?: string;

@@ -46,6 +46,7 @@ export interface CreateWorkflowRunRecordInput extends WorkflowAssetPin {
   verdictLog?: WorkflowNodeVerdictLogEntry[];
   transitionLog?: WorkflowTransitionLogEntry[];
   resume?: Partial<WorkflowResumePolicy>;
+  authorizationSnapshot?: WorkflowRunRecord["authorizationSnapshot"];
   definitionSnapshot?: WorkflowDefinition;
   metadata?: Record<string, unknown>;
   now?: () => string;
@@ -67,6 +68,7 @@ export interface WorkflowRunRecordPatch {
   transitionLog?: WorkflowTransitionLogEntry[];
   failure?: WorkflowRunFailure;
   resume?: Partial<WorkflowResumePolicy>;
+  authorizationSnapshot?: WorkflowRunRecord["authorizationSnapshot"];
   definitionSnapshot?: WorkflowDefinition;
   metadata?: Record<string, unknown>;
   completedAt?: string;
@@ -88,6 +90,10 @@ export interface WorkflowStore {
   get(id: WorkflowRunId): WorkflowRunRecord | undefined;
   list(): WorkflowStoreListResult;
   update(id: WorkflowRunId, patch: WorkflowRunRecordPatch): WorkflowRunRecord;
+  restore(
+    record: WorkflowRunRecord,
+    options?: { metadata?: Record<string, unknown>; now?: () => string },
+  ): WorkflowRunRecord;
   appendEvent(event: WorkflowStoreEvent): void;
   /** @reserved Public workflow-store log reader consumed by future workflow diagnostics/resume UIs. */
   eventLog(id: WorkflowRunId): WorkflowStoreEventLogResult;
@@ -145,6 +151,13 @@ export class FileWorkflowStore implements WorkflowStore {
       verdictLog: [...(input.verdictLog ?? [])],
       transitionLog: [...(input.transitionLog ?? [])],
       resume: { verifyOnResume: input.resume?.verifyOnResume ?? true },
+      ...(input.authorizationSnapshot
+        ? {
+            authorizationSnapshot: cloneAuthorizationSnapshot(
+              input.authorizationSnapshot,
+            ),
+          }
+        : {}),
       ...(input.definitionSnapshot
         ? { definitionSnapshot: cloneJsonLike(input.definitionSnapshot) }
         : {}),
@@ -242,6 +255,13 @@ export class FileWorkflowStore implements WorkflowStore {
             },
           }
         : {}),
+      ...(patch.authorizationSnapshot
+        ? {
+            authorizationSnapshot: cloneAuthorizationSnapshot(
+              patch.authorizationSnapshot,
+            ),
+          }
+        : {}),
       ...(patch.definitionSnapshot
         ? { definitionSnapshot: cloneJsonLike(patch.definitionSnapshot) }
         : {}),
@@ -275,6 +295,41 @@ export class FileWorkflowStore implements WorkflowStore {
       },
     });
     return cloneRecord(updated);
+  }
+
+  restore(
+    record: WorkflowRunRecord,
+    options: { metadata?: Record<string, unknown>; now?: () => string } = {},
+  ): WorkflowRunRecord {
+    assertSafeWorkflowRunId(record.id);
+    const restored = cloneRecord(record);
+    const at = options.now?.() ?? new Date().toISOString();
+    this.records.set(record.id, restored);
+    this.writeRecord(restored);
+    this.appendEvent({
+      at,
+      type:
+        restored.status === "completed"
+          ? "completed"
+          : restored.status === "failed"
+            ? "failed"
+            : restored.status === "cancelled"
+              ? "cancelled"
+              : restored.status === "waiting"
+                ? "waiting"
+                : "updated",
+      workflowRunId: restored.id,
+      parentRunId: restored.parentRunId,
+      status: restored.status,
+      metadata: {
+        restored: true,
+        currentNodeId: restored.currentNodeId,
+        wait: restored.wait,
+        failure: restored.failure,
+        ...(options.metadata ?? {}),
+      },
+    });
+    return cloneRecord(restored);
   }
 
   appendEvent(event: WorkflowStoreEvent): void {
@@ -455,6 +510,7 @@ function parseWorkflowRunRecord(raw: unknown): WorkflowRunRecord {
       verifyOnResume:
         !isRecord(raw.resume) || raw.resume.verifyOnResume !== false,
     },
+    ...parseOptionalAuthorizationSnapshot(raw.authorizationSnapshot),
     ...(isRecord(raw.definitionSnapshot)
       ? {
           definitionSnapshot: cloneJsonLike(
@@ -535,11 +591,78 @@ function cloneRecord(record: WorkflowRunRecord): WorkflowRunRecord {
     wait: record.wait ? cloneWait(record.wait) : undefined,
     failure: record.failure ? cloneFailure(record.failure) : undefined,
     resume: { ...record.resume },
+    authorizationSnapshot: record.authorizationSnapshot
+      ? cloneAuthorizationSnapshot(record.authorizationSnapshot)
+      : undefined,
     definitionSnapshot: record.definitionSnapshot
       ? cloneJsonLike(record.definitionSnapshot)
       : undefined,
     metadata: { ...record.metadata },
   };
+}
+
+function parseOptionalAuthorizationSnapshot(
+  raw: unknown,
+): Pick<WorkflowRunRecord, "authorizationSnapshot"> {
+  if (!isRecord(raw)) return {};
+  const snapshot = parseAuthorizationSnapshot(raw);
+  return snapshot ? { authorizationSnapshot: snapshot } : {};
+}
+
+function parseAuthorizationSnapshot(
+  raw: Record<string, unknown>,
+): WorkflowRunRecord["authorizationSnapshot"] | undefined {
+  if (
+    !Array.isArray(raw.confidentialPaths) ||
+    !raw.confidentialPaths.every(optionalString) ||
+    typeof raw.confidentialDefaults !== "boolean" ||
+    typeof raw.shouldWrite !== "boolean" ||
+    !isWorkflowBackgroundTaskPolicy(raw.backgroundTasks)
+  ) {
+    return undefined;
+  }
+  return {
+    ...(optionalString(raw.targetPath) ? { targetPath: raw.targetPath } : {}),
+    confidentialPaths: [...raw.confidentialPaths],
+    confidentialDefaults: raw.confidentialDefaults,
+    shouldWrite: raw.shouldWrite,
+    ...(isWorkflowRunAccessMode(raw.accessMode)
+      ? { accessMode: raw.accessMode }
+      : {}),
+    backgroundTasks: raw.backgroundTasks,
+  };
+}
+
+function cloneAuthorizationSnapshot(
+  snapshot: NonNullable<WorkflowRunRecord["authorizationSnapshot"]>,
+): NonNullable<WorkflowRunRecord["authorizationSnapshot"]> {
+  return {
+    ...snapshot,
+    confidentialPaths: [...snapshot.confidentialPaths],
+  };
+}
+
+function isWorkflowRunAccessMode(
+  value: unknown,
+): value is NonNullable<
+  WorkflowRunRecord["authorizationSnapshot"]
+>["accessMode"] {
+  return (
+    value === "read-only" ||
+    value === "ask" ||
+    value === "accept-edits" ||
+    value === "bypass"
+  );
+}
+
+function isWorkflowBackgroundTaskPolicy(
+  value: unknown,
+): value is NonNullable<
+  WorkflowRunRecord["authorizationSnapshot"]
+>["backgroundTasks"] {
+  return (
+    value === "disabled" || value === "foreground-only" || value === "enabled"
+  );
 }
 
 function cloneWait(wait: WorkflowWaitState): WorkflowWaitState {

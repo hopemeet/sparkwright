@@ -2670,6 +2670,75 @@ describe("runCli", () => {
     ]);
   });
 
+  it("starts workflow runs through the workflow start alias", async () => {
+    const workspace = await createWorkspace("# Demo\n");
+    await mkdir(join(workspace, ".sparkwright", "workflows", "human-gate"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspace, ".sparkwright", "workflows", "human-gate", "workflow.md"),
+      [
+        "---",
+        "nodes:",
+        "  - id: draft",
+        "    execute: model",
+        "    onPass: review",
+        "  - id: review",
+        "    execute: human",
+        "    wait:",
+        "      kind: input",
+        "      reason: Need human review.",
+        "---",
+        "## draft",
+        "Draft the change.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = createOutputCapture();
+    const result = await runCli(
+      [
+        "workflow",
+        "start",
+        "human-gate",
+        "run",
+        "human",
+        "gated",
+        "workflow",
+        "--workspace",
+        workspace,
+        "--model",
+        "deterministic",
+      ],
+      { io: { stdout: output.stdout, stderr: output.stderr } },
+    );
+
+    expect(result.exitCode).toBe(42);
+    expect(output.stderrText()).toContain("Workflow ");
+    expect(output.stderrText()).toContain(
+      "is waiting (input: Need human review.)",
+    );
+    expect(output.stderrText()).toContain("sparkwright workflow resume");
+    const store = new FileWorkflowStore({
+      rootDir: join(workspace, ".sparkwright", "workflow-runs"),
+      createRoot: false,
+    });
+    expect(store.list().records).toEqual([
+      expect.objectContaining({
+        assetName: "human-gate",
+        status: "waiting",
+        currentNodeId: "review",
+        metadata: expect.objectContaining({
+          goal: "run human gated workflow",
+        }),
+        wait: expect.objectContaining({
+          kind: "input",
+          reason: "Need human review.",
+        }),
+      }),
+    ]);
+  });
+
   it("distills a session trace into a workflow draft", async () => {
     const workspace = await createWorkspace("# Demo\n");
     const sessionId = "session_cli_distill";

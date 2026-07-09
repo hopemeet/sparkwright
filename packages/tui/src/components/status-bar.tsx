@@ -18,6 +18,7 @@ export function StatusBar(props: {
   focused: boolean;
   unreadCompletedTasks?: number;
   unreadFailedTasks?: number;
+  waitingWorkflowCount?: number;
 }): React.ReactElement {
   const theme = useTheme();
   const { stdout } = useStdout();
@@ -58,6 +59,7 @@ export function StatusBar(props: {
     unreadCompleted > 0 ? `${unreadCompleted} completed unread` : "",
     tasks.failed > 0 && unreadFailed === 0 ? `${tasks.failed} failed` : "",
   ].filter(Boolean);
+  const waitingWorkflowCount = props.waitingWorkflowCount ?? 0;
   // Single compact line pinned above the input. Only the fields you actually
   // watch while working live here; static context (cwd, session id) is shown
   // once in the welcome area and via /config, so it doesn't squat on-screen.
@@ -92,6 +94,12 @@ export function StatusBar(props: {
           · tasks: {taskParts.join(", ")}
           {tasks.untrackedWritePossible ? " · untracked writes possible" : ""}
           {" · ctrl+o"}
+        </Text>
+      ) : null}
+      {waitingWorkflowCount > 0 ? (
+        <Text color={theme.statusAwaiting}>
+          {" "}
+          · workflows: {waitingWorkflowCount} waiting · /workflow
         </Text>
       ) : null}
       <Box flexGrow={1} />

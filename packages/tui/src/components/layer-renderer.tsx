@@ -3,6 +3,7 @@ import type {
   CapabilitySnapshot,
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
+  WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import {
   ActivityPanel,
@@ -19,6 +20,7 @@ import { SessionListDialog } from "./session-list-dialog.js";
 import { SessionRenameDialog } from "./session-rename-dialog.js";
 import { SkillProposalDialog } from "./skill-proposal-dialog.js";
 import { SkillReviewDialog } from "./skill-review-dialog.js";
+import { WorkflowPanel } from "./workflow-panel.js";
 import { ForkDialog } from "./fork-dialog.js";
 import type { CommandRegistry } from "../lib/commands.js";
 import type { Bindings } from "../lib/keybindings.js";
@@ -47,6 +49,11 @@ export function LayerRenderer(props: {
   taskRecords?: readonly TaskRecordSnapshot[];
   taskOutputs?: Readonly<Record<string, readonly TaskOutputChunkSnapshot[]>>;
   loadingTasks?: boolean;
+  workflows?: readonly WorkflowRunSnapshot[];
+  loadingWorkflows?: boolean;
+  selectedWorkflowId?: string;
+  ownedWorkflowRunIds?: ReadonlySet<string>;
+  ownedRunIds?: ReadonlySet<string>;
   labels: Record<string, string>;
   renameTarget: string | null;
   effModel?: string;
@@ -63,6 +70,8 @@ export function LayerRenderer(props: {
   onStopTask?: (taskId: string) => void;
   onJoinTask?: (taskId: string) => void;
   onPromoteTask?: (taskId: string) => void;
+  onRefreshWorkflows?: () => void;
+  onSelectWorkflow?: (id: string) => void;
   onInspectSession: (id: string) => void;
   onPickSession: (id: string) => void;
   onRequestRename: (id: string) => void;
@@ -139,6 +148,19 @@ export function LayerRenderer(props: {
           candidates={props.modelCandidates}
           onCancel={props.onCloseTop}
           onCommit={props.onCommitModel}
+        />
+      );
+    case "workflow":
+      return (
+        <WorkflowPanel
+          workflows={props.workflows ?? []}
+          selectedWorkflowId={props.selectedWorkflowId}
+          loading={Boolean(props.loadingWorkflows)}
+          ownedWorkflowRunIds={props.ownedWorkflowRunIds}
+          ownedRunIds={props.ownedRunIds}
+          onClose={props.onCloseTop}
+          onRefresh={() => props.onRefreshWorkflows?.()}
+          onSelect={(id) => props.onSelectWorkflow?.(id)}
         />
       );
     case "fork":

@@ -731,6 +731,12 @@ export interface WorkflowRunSnapshot {
   runIds: string[];
   currentNodeId?: string;
   attempts: Record<string, number>;
+  latestVerdict?: {
+    nodeId: string;
+    attempt: number;
+    verdict: Record<string, unknown>;
+    at?: string;
+  };
   wait?: {
     kind: "input" | "task" | "approval";
     reason?: string;
@@ -746,6 +752,14 @@ export interface WorkflowRunSnapshot {
     metadata?: Record<string, unknown>;
   };
   resume: { verifyOnResume: boolean };
+  authorizationSnapshot?: {
+    targetPath?: string;
+    confidentialPaths: string[];
+    confidentialDefaults: boolean;
+    shouldWrite: boolean;
+    accessMode?: RunAccessMode;
+    backgroundTasks: BackgroundTaskPolicy;
+  };
   createdAt: string;
   updatedAt?: string;
   completedAt?: string;

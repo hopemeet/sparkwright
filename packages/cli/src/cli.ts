@@ -1306,6 +1306,7 @@ function parseArgs(
   if (
     command === "workflow" &&
     subcommand !== "list" &&
+    subcommand !== "start" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
@@ -1796,6 +1797,7 @@ async function handleWorkflowCommand(
   const subcommand = parsed.subcommand;
   if (
     subcommand !== "list" &&
+    subcommand !== "start" &&
     subcommand !== "inspect" &&
     subcommand !== "resume" &&
     subcommand !== "distill" &&
@@ -1806,6 +1808,38 @@ async function handleWorkflowCommand(
   }
 
   try {
+    if (subcommand === "start") {
+      const [workflowName, ...goalParts] = splitCliWords(parsed.goal);
+      const goal = goalParts.join(" ").trim();
+      if (!workflowName || !goal) {
+        writeLine(
+          io.stderr,
+          "Usage: sparkwright workflow start <workflow-name> <goal...>",
+        );
+        return { exitCode: 1 };
+      }
+      return startHostRun(
+        {
+          goal,
+          workspaceRoot: parsed.workspaceRoot,
+          sessionRootDir: parsed.sessionRootDir,
+          runAccess: parsed.runAccess,
+          approvalOptions: parsed.approvalOptions,
+          modelName: parsed.modelName,
+          workflowName,
+          sessionId: parsed.sessionId ?? `session_${Date.now().toString(36)}`,
+          targetPath: parsed.targetPath,
+          confidentialPaths: parsed.confidentialPaths,
+          confidentialDefaults: parsed.confidentialDefaults,
+          traceLevel: parsed.traceLevel,
+          input: undefined,
+          verbose: parsed.verbose,
+        },
+        io,
+        env,
+      );
+    }
+
     if (subcommand === "resume") {
       const workflowRunId = firstCliWord(parsed.goal);
       if (!workflowRunId) {
@@ -7517,7 +7551,7 @@ function usage(_env: Record<string, string | undefined>): string {
     '       sparkwright cron create --schedule "every 1h" --prompt "task" [--name name]',
     "       sparkwright cron list|status|run|tick",
     "       sparkwright tasks list|get|output [--workspace path] [--root-dir path]",
-    "       sparkwright workflow list|inspect|resume|distill [workflow-name-or-run-id] [--workspace path] [--format json|text]",
+    "       sparkwright workflow list|start|inspect|resume|distill [workflow-name-or-run-id] [--workspace path] [--format json|text]",
     '       sparkwright delegates run <external-delegate-tool> "goal" [--workspace path] [--write] [--yes-edits] [--yes-shell-safe] [--yes|--yes-all] [--session-id id] [--trace-level standard|debug] [--format json|text]',
     "       sparkwright tools allow|disable|defer <tool-name...> [--workspace path]",
     "       sparkwright skills list|validate|review|restore [--workspace path] [--format json|text]",
@@ -7560,6 +7594,7 @@ function tasksUsage(): string {
 function workflowUsage(): string {
   return [
     "Usage: sparkwright workflow list [--workspace path] [--format json|text]",
+    "       sparkwright workflow start <workflow-name> <goal...> [--workspace path] [--model provider/model]",
     "       sparkwright workflow inspect <workflow-name> [--workspace path] [--format json|text]",
     "       sparkwright workflow resume <workflow-run-id> [--workspace path] [--session <session-id>] [--model provider/model]",
     "       sparkwright workflow distill <session-id> [--workspace path] [--session-root path] [--format json|text]",

@@ -30,6 +30,7 @@ import {
 import { useCapabilityActions } from "./state/use-capability-actions.js";
 import { useSessionActions } from "./state/use-session-actions.js";
 import { useTaskActions } from "./state/use-task-actions.js";
+import { useWorkflowActions } from "./state/use-workflow-actions.js";
 import { buildCommandRegistry } from "./state/build-command-registry.js";
 import type { ProjectCommandDescriptor } from "@sparkwright/project-commands";
 import {
@@ -516,12 +517,28 @@ function AppReady(
     events: state.events,
   });
 
+  const workflowActions = useWorkflowActions({
+    controller,
+    store,
+    toasts,
+    layers,
+    layerOpen: layerSnapshot.some((layer) => layer.name === "workflow"),
+    enableBackgroundRefresh: isRawModeSupported,
+  });
+
   useEffect(() => {
+    if (isRawModeSupported) return;
+    const id = setTimeout(() => exit(), 0);
+    return () => clearTimeout(id);
+  }, [exit, isRawModeSupported]);
+
+  useEffect(() => {
+    if (!isRawModeSupported) return;
     const dispose = watchTuiConfig(props.initialCwd, () => {
       void reloadConfig(true);
     });
     return dispose;
-  }, [props.initialCwd]);
+  }, [isRawModeSupported, props.initialCwd]);
 
   // File-authored slash commands discovered from .sparkwright/command/*.md.
   // Loaded async after mount; the registry memo below folds them in.
@@ -582,6 +599,7 @@ function AppReady(
         capActions,
         sessionActions,
         taskActions,
+        workflowActions,
         projectCommands,
         runProjectCommand,
       }),
@@ -593,6 +611,7 @@ function AppReady(
       resolved.bindings,
       resolved.workspaceRoot,
       projectCommands,
+      workflowActions,
     ],
   );
 
@@ -837,6 +856,11 @@ function AppReady(
     taskRecords: taskActions.taskRecords,
     taskOutputs: taskActions.taskOutputs,
     loadingTasks: taskActions.loadingTasks,
+    workflows: workflowActions.workflows,
+    loadingWorkflows: workflowActions.loadingWorkflows,
+    selectedWorkflowId: workflowActions.selectedWorkflowId,
+    ownedWorkflowRunIds: workflowActions.ownedWorkflowRunIds,
+    ownedRunIds: workflowActions.ownedRunIds,
     labels: sessionActions.labels,
     renameTarget: sessionActions.renameTarget,
     effModel,
@@ -852,6 +876,8 @@ function AppReady(
     onStopTask: taskActions.stopActivityTask,
     onJoinTask: taskActions.joinActivityTask,
     onPromoteTask: taskActions.promoteActivityTask,
+    onRefreshWorkflows: () => void workflowActions.refreshWorkflows(),
+    onSelectWorkflow: workflowActions.selectWorkflow,
     onCommitModel: commitModelSelection,
     onFork: sessionActions.forkSession,
     onCloseTop: closeTopLayer,
@@ -894,6 +920,7 @@ function AppReady(
           runningTaskCount={taskActions.taskActivity.running}
           unreadTaskCount={taskActions.unreadTaskCount}
           unreadFailedTaskCount={taskActions.unreadFailedTaskCount}
+          waitingWorkflowCount={workflowActions.waitingWorkflowCount}
           streamingMax={streamingMax}
           sidebarWidth={sidebarWidth}
           columns={cols}
