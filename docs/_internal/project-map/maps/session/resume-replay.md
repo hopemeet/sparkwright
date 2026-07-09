@@ -100,18 +100,25 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Read-only
-- Date: 2026-07-09T08:56:34+0800
-- Scope: route check for TUI input/layer cleanup. Prompt draft preservation,
-  printable hotkey arbitration, Esc cancel dispatch, and standalone events layer
-  deletion do not change session switch replay, persisted session traces,
-  checkpoint resume, or workflow resume semantics.
+- Date: 2026-07-09T10:08:47+0800
+- Scope: route check for TUI input P0-P2 work. Prompt draft preservation,
+  printable hotkey arbitration, Esc cancel dispatch, InputBox hook extraction,
+  LiveFrame extraction, hidden help command discovery, slash command frecency,
+  and standalone events layer deletion do not change session switch replay,
+  persisted session traces, checkpoint resume, or workflow resume semantics.
 - Read: `packages/tui/src/app.tsx`,
   `packages/tui/src/components/input-box.tsx`,
+  `packages/tui/src/components/use-input-buffer.ts`,
+  `packages/tui/src/components/use-input-history.ts`,
+  `packages/tui/src/components/live-frame.tsx`,
+  `packages/tui/src/components/help-panel.tsx`,
+  `packages/tui/src/lib/commands.ts`,
   `packages/tui/src/lib/keybindings.ts`,
   `packages/tui/src/components/activity-panel.tsx`,
   `docs/_internal/project-map/maps/session/resume-replay.md`.
-- Tests: TUI-focused validation ran via `npm --workspace @sparkwright/tui
-  test`; `npm --workspace @sparkwright/tui run typecheck`. No resume/replay
+- Tests: `npm --workspace @sparkwright/tui test`;
+  `npm --workspace @sparkwright/tui run typecheck`;
+  `npm run typecheck:test`; final `npm run release:check`. No resume/replay
   contract change was made.
 
 - Status: Read-only

@@ -11,11 +11,17 @@ See also [../maps/trace/export-diagnostics.md](../maps/trace/export-diagnostics.
 ## Main Files
 
 - `packages/tui/src/app.tsx`
+- `packages/tui/src/components/input-box.tsx`
+- `packages/tui/src/components/use-input-buffer.ts`
+- `packages/tui/src/components/use-input-history.ts`
+- `packages/tui/src/components/live-frame.tsx`
 - `packages/tui/src/components/activity-panel.tsx`
 - `packages/tui/src/components/event-stream.tsx`
+- `packages/tui/src/components/help-panel.tsx`
 - `packages/tui/src/components/status-bar.tsx`
 - `packages/tui/src/state/run-controller.ts`
 - `packages/tui/src/state/event-store.ts`
+- `packages/tui/src/lib/commands.ts`
 - `packages/tui/src/lib/task-activity.ts`
 - `packages/tui/src/lib/tool-display.ts`
 - `packages/tui/src/lib/event-type.ts`
@@ -107,6 +113,17 @@ Does not own:
   opening and closing layers preserves short and fast-typed drafts without
   relying on the persisted stash debounce. The persisted stash remains the
   process-restart recovery path.
+- `InputBox` keeps buffer/draft persistence in `use-input-buffer.ts` and
+  prompt history plus Ctrl+R reverse-search in `use-input-history.ts`; the
+  component body owns key routing and rendering, not stash/history storage.
+- Slash command suggestions use `CommandRegistry.search(query, frecencyScores)`.
+  Frecency only breaks ties within the same match class and uses
+  `command:<name>` keys so command picks do not collide with @file picks. Empty
+  slash suggestions still hide `hiddenByDefault` commands.
+- The help panel lists visible commands by category and then exposes
+  `hiddenByDefault` commands under a `more commands` section, so advanced
+  capability entrypoints remain discoverable without crowding the empty slash
+  picker.
 - Plain Esc run cancellation is owned by the input editor when `cancel.run`
   includes an unmodified `esc`; App-level cancel handling covers non-Esc
   configured chords so the default Esc path does not double-dispatch.
@@ -207,6 +224,10 @@ Does not own:
   model/tool/subagent/validation lifecycle events. Streamed assistant text takes
   precedence over the phase hint; the phase projection is TUI state only and
   does not change transcript filtering or raw trace semantics.
+- `components/live-frame.tsx` owns the pinned live surface below committed
+  scrollback: status bar, streaming answer, modified-file sidebar, todo band,
+  usage/error/toast/config-error rows, and queued prompt display. `app.tsx`
+  keeps run/session/layer orchestration and input ownership.
 - Capability panels, Skill review metadata, and Skill learn toasts render host
   paths through the shared display-path projection: workspace paths become
   relative and external absolute paths collapse to non-host locators.
@@ -241,14 +262,21 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
-- Date: 2026-07-09T08:56:34+0800
-- Scope: TUI input-layer cleanup: printable single-character global hotkeys now
-  yield to non-empty prompt drafts, short drafts survive layer unmount/remount
-  through an App-owned in-memory snapshot, default Esc run cancellation no
-  longer double-dispatches, and the dead standalone `events` layer was removed
-  while `/events` continues to open the Activity Drawer Events tab.
+- Date: 2026-07-09T10:08:47+0800
+- Scope: TUI input P0-P2 sequence: printable single-character global hotkeys
+  yield to non-empty prompt drafts, short drafts survive layer unmount/remount,
+  default Esc run cancellation no longer double-dispatches, the dead standalone
+  `events` layer is gone, InputBox buffer/history logic moved into focused
+  hooks, App live-frame rendering moved into `components/live-frame.tsx`, help
+  exposes hidden commands, and slash suggestions use command frecency
+  tie-breaking.
 - Read: `packages/tui/src/app.tsx`,
   `packages/tui/src/components/input-box.tsx`,
+  `packages/tui/src/components/use-input-buffer.ts`,
+  `packages/tui/src/components/use-input-history.ts`,
+  `packages/tui/src/components/live-frame.tsx`,
+  `packages/tui/src/components/help-panel.tsx`,
+  `packages/tui/src/lib/commands.ts`,
   `packages/tui/src/lib/keybindings.ts`,
   `packages/tui/src/lib/event-inspector.ts`,
   `packages/tui/src/components/activity-panel.tsx`,
@@ -256,12 +284,13 @@ Does not own:
   `packages/tui/src/state/layer-stack.ts`,
   `docs/_internal/project-map/maps/trace/export-diagnostics.md`,
   `docs/_internal/project-map/maps/session/resume-replay.md`.
-- Tests: `npm --workspace @sparkwright/tui test --
-  test/keybindings.test.ts`; `npm --workspace @sparkwright/tui test --
-  test/input-box.test.ts`; `npm --workspace @sparkwright/tui test --
-  test/event-detail.test.ts test/activity-panel-render.test.tsx
-  test/layer-stack.test.ts`; `npm --workspace @sparkwright/tui run
-  typecheck`; final full `npm --workspace @sparkwright/tui test`.
+- Tests: focused phase checks with `npm --workspace @sparkwright/tui test --
+  test/input-box.test.ts test/keybindings.test.ts`; P2 focused checks with
+  `npm --workspace @sparkwright/tui test -- test/input-box.test.ts
+  test/keybindings.test.ts test/commands.test.ts
+  test/help-panel-render.test.tsx test/frecency.test.ts
+  test/files-frecency.test.ts`; `npm --workspace @sparkwright/tui run
+  typecheck`; final `npm run release:check`.
 
 - Status: Read-only
 - Date: 2026-07-06T20:47:10+0800

@@ -15,16 +15,11 @@ import { QueueStore } from "./state/queue-store.js";
 import { LayerStack } from "./state/layer-stack.js";
 import { EventStream } from "./components/event-stream.js";
 import { InputBox } from "./components/input-box.js";
-import { StreamingMessage } from "./components/streaming-message.js";
-import { ToastView } from "./components/toast.js";
 import { ThemeProvider } from "./lib/theme-context.js";
 import { resolveTheme, type Theme } from "./lib/theme.js";
 import { loadStash, type StashFile } from "./lib/stash.js";
 import type { InputBoxHandle } from "./components/input-box.js";
-import { Sidebar, UsageSummaryLine } from "./components/sidebar.js";
-import { TodoBand } from "./components/todo-band.js";
-import { StatusBar } from "./components/status-bar.js";
-import { QueuedMessages } from "./components/queued-messages.js";
+import { LiveFrame } from "./components/live-frame.js";
 import { LayerRenderer } from "./components/layer-renderer.js";
 import { resolveDialogColumns } from "./components/dialog-frame.js";
 import { AttentionManager } from "./lib/attention.js";
@@ -891,105 +886,24 @@ function AppReady(
           }}
         />
 
-        {/* Live frame: pinned below the scrollback. The status line only shows
-          while there's active work to watch — idle/done/error leave just the
-          input (run completion/failure already surfaces as a toast, and a
-          /model switch leaves a scrollback line). */}
-        {state.status === "running" ||
-        state.status === "awaiting-approval" ||
-        taskActions.taskActivity.running > 0 ||
-        taskActions.unreadTaskCount > 0 ? (
-          <StatusBar
-            state={state}
-            modelLabel={modelLabel}
-            permissionMode={effTuiPermissionMode}
-            focused={focused}
-            unreadCompletedTasks={Math.max(
-              0,
-              taskActions.unreadTaskCount - taskActions.unreadFailedTaskCount,
-            )}
-            unreadFailedTasks={taskActions.unreadFailedTaskCount}
-          />
-        ) : null}
-
-        <Box flexDirection="row">
-          <Box flexDirection="column" flexGrow={1}>
-            {/* The streamed answer itself. The "what phase am I in" hint is not
-              a second spinner line here — it rides the StatusBar label above
-              (e.g. "thinking" / "running shell" / "agent reviewer") so there's
-              one spinner, not two competing ones. */}
-            {state.streamingText || state.reasoningText ? (
-              <StreamingMessage
-                text={state.streamingText}
-                reasoning={state.reasoningText}
-                maxLines={streamingMax}
-              />
-            ) : null}
-          </Box>
-          {sidebarWidth > 0 ? (
-            <Sidebar files={state.modifiedFiles} width={sidebarWidth} />
-          ) : null}
-        </Box>
-
-        {/* Todo ledger as a full-width band, pinned above the input. Shown
-          while a run is active, and also kept after it ends when items remain
-          unfinished — so a handoff's residual pending/in_progress stays visible
-          instead of vanishing the moment the run stops. Collapses to a single
-          line while the model streams a long answer so it does not dominate the
-          frame. */}
-        {state.todoItems.length > 0 &&
-        (state.status === "running" ||
-          state.status === "awaiting-approval" ||
-          state.todoItems.some((t) => t.status !== "completed")) ? (
-          <TodoBand
-            todos={state.todoItems}
-            width={cols}
-            compact={Boolean(state.streamingText)}
-            expanded={todoExpanded}
-          />
-        ) : null}
-
-        {state.status !== "running" &&
-        state.status !== "awaiting-approval" &&
-        state.usage ? (
-          <UsageSummaryLine usage={state.usage} />
-        ) : null}
-
-        {state.lastError ? (
-          <Box paddingX={1}>
-            <Text color={theme.error}>error: {state.lastError}</Text>
-          </Box>
-        ) : null}
-
-        <ToastView
+        <LiveFrame
+          state={state}
+          modelLabel={modelLabel}
+          permissionMode={effTuiPermissionMode}
+          focused={focused}
+          runningTaskCount={taskActions.taskActivity.running}
+          unreadTaskCount={taskActions.unreadTaskCount}
+          unreadFailedTaskCount={taskActions.unreadFailedTaskCount}
+          streamingMax={streamingMax}
+          sidebarWidth={sidebarWidth}
+          columns={cols}
+          todoExpanded={todoExpanded}
           toast={toastSnapshot.current}
-          queueDepth={toastSnapshot.queueDepth}
+          toastQueueDepth={toastSnapshot.queueDepth}
+          errors={resolved.errors}
+          queued={queued}
+          showQueued={!topLayer}
         />
-
-        {resolved.errors.length > 0 ? (
-          <Box
-            flexDirection="column"
-            borderStyle="single"
-            borderColor="red"
-            paddingX={1}
-          >
-            <Text color="red" bold>
-              config errors ({resolved.errors.length})
-            </Text>
-            {resolved.errors.map((e, i) => (
-              <Text key={`${e.file}:${e.field}:${i}`}>
-                <Text dimColor>{e.file}</Text>
-                <Text> </Text>
-                <Text color="red">{e.field}</Text>
-                <Text> </Text>
-                <Text>{e.message}</Text>
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-
-        {/* Prompts queued during an in-flight run, shown above the input. */}
-        {!topLayer ? <QueuedMessages items={queued} /> : null}
 
         {/* Layer rendering — only the topmost layer owns input. */}
         {topLayer ? (

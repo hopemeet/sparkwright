@@ -9,7 +9,7 @@ async function renderToText(element: React.ReactElement): Promise<string> {
   const writes: string[] = [];
   const fakeStdout = {
     columns: 90,
-    rows: 24,
+    rows: 40,
     write: (s: string) => {
       writes.push(s);
       return true;
@@ -46,7 +46,7 @@ async function renderToText(element: React.ReactElement): Promise<string> {
 }
 
 describe("HelpPanel rendering", () => {
-  it("keeps advanced hidden commands out of the default help list", async () => {
+  it("shows advanced hidden commands in a discoverable section", async () => {
     const registry = new CommandRegistry();
     registry.register({
       name: "sessions",
@@ -69,7 +69,8 @@ describe("HelpPanel rendering", () => {
     );
 
     expect(text).toContain("/sessions");
-    expect(text).not.toContain("/tools");
+    expect(text).toContain("more commands");
+    expect(text).toContain("/tools");
     expect(text).toContain("search for more");
     expect(text).toContain("global keys");
   });

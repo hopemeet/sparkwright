@@ -297,8 +297,8 @@ true` records a mutation index for its target (`mutatedByTarget`). A
   `packages/tui/src/lib/tool-display.ts`,
   `docs/_internal/project-map/maps/runtime/tool-orchestration.md`.
 - Tests: TUI-focused validation ran via `npm --workspace @sparkwright/tui
-  test`; `npm --workspace @sparkwright/tui run typecheck`. No tool
-  orchestration contract change was made.
+  test`; `npm --workspace @sparkwright/tui run typecheck`; final
+  `npm run release:check`. No tool orchestration contract change was made.
 
 - Status: Verified
 - Date: 2026-07-08T23:46:48+0800
