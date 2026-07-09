@@ -52,6 +52,8 @@ export function LayerRenderer(props: {
   workflows?: readonly WorkflowRunSnapshot[];
   loadingWorkflows?: boolean;
   selectedWorkflowId?: string;
+  ownedWorkflowRunIds?: ReadonlySet<string>;
+  ownedRunIds?: ReadonlySet<string>;
   labels: Record<string, string>;
   renameTarget: string | null;
   effModel?: string;
@@ -154,6 +156,8 @@ export function LayerRenderer(props: {
           workflows={props.workflows ?? []}
           selectedWorkflowId={props.selectedWorkflowId}
           loading={Boolean(props.loadingWorkflows)}
+          ownedWorkflowRunIds={props.ownedWorkflowRunIds}
+          ownedRunIds={props.ownedRunIds}
           onClose={props.onCloseTop}
           onRefresh={() => props.onRefreshWorkflows?.()}
           onSelect={(id) => props.onSelectWorkflow?.(id)}

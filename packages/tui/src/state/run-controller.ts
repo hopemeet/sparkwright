@@ -53,6 +53,12 @@ export interface RunControllerOptions {
   initialSessionId?: string;
 }
 
+export interface WorkflowJobHandle {
+  runId: string;
+  client: Client;
+  close: () => void;
+}
+
 type ApprovalDecision = "approved" | "denied";
 
 /**
@@ -469,6 +475,50 @@ export class RunController {
     } catch (err) {
       this.store.setError(formatError(err));
       return [];
+    }
+  }
+
+  async startWorkflowJob(input: {
+    workflowName: string;
+    goal: string;
+  }): Promise<WorkflowJobHandle | null> {
+    const client = await createClient({
+      spawn: resolveHostStdioSpawn({
+        workspaceRoot: this.opts.workspaceRoot,
+        sessionRootDir: this.sessionRootDir(),
+        permissionMode: this.coreRunFields().permissionMode,
+      }),
+      client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+    });
+    try {
+      const traceLevel = this.opts.traceLevel ?? "standard";
+      const permissions = this.coreRunFields();
+      const { runId } = await client.startRun(
+        createHostStartRunRequest({
+          goal: input.goal,
+          sessionId: this.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+          workflowName: input.workflowName,
+          accessMode: this.tuiPermissionMode(),
+          permissionMode: permissions.permissionMode,
+          traceLevel,
+          shouldWrite: permissions.shouldWrite,
+          metadata: {
+            ...this.runRequestMetadata({ traceLevel }),
+            workflowStartSource: "tui",
+          },
+        }),
+      );
+      return {
+        runId,
+        client,
+        close: () => client.close(),
+      };
+    } catch (err) {
+      client.close();
+      this.store.setError(formatError(err));
+      return null;
     }
   }
 

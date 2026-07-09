@@ -114,7 +114,10 @@ interface BuildCommandRegistryDeps {
   capActions: CapabilityActions;
   sessionActions: SessionActions;
   taskActions: Pick<TaskActions, "openActivity">;
-  workflowActions: Pick<WorkflowActions, "listWorkflows" | "attachWorkflow">;
+  workflowActions: Pick<
+    WorkflowActions,
+    "listWorkflows" | "attachWorkflow" | "startWorkflow"
+  >;
   projectCommands: ProjectCommandDescriptor[];
   runProjectCommand: (
     descriptor: ProjectCommandDescriptor,
@@ -164,10 +167,15 @@ export function buildCommandRegistry(
         void workflowActions.attachWorkflow(args.join(" "));
         return;
       }
+      if (subcommand === "start") {
+        void workflowActions.startWorkflow([subcommand, ...args].join(" "));
+        return;
+      }
       toasts.push({
         variant: "info",
         title: "workflow",
-        message: "usage: /workflow list | /workflow attach <id>",
+        message:
+          "usage: /workflow list | /workflow attach <id> | /workflow start <name> <goal...>",
       });
     },
   });

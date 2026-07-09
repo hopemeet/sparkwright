@@ -24,8 +24,8 @@ Owns:
 
 - command parsing and text/JSON formatting
 - CLI approval defaults and non-interactive behavior
-- workflow inspection/control commands: `workflow list`, `workflow inspect`,
-  and `workflow resume`
+- workflow inspection/control commands: `workflow list`, `workflow start`,
+  `workflow inspect`, and `workflow resume`
 - trace commands: `summary`, `events`, `timeline`, `report`, `verify`
 - session commands: `summary`, `inspect`, `check`, `repair`, `compact`,
   `resume`
@@ -66,6 +66,10 @@ Does not own:
   the session root and host-owned workflow assets. JSON output preserves the old
   top-level asset report fields and adds `workflowRuns` /
   `invalidWorkflowRunEntries`.
+- `sparkwright workflow start <name> <goal...>` is a runbook-style alias for
+  `sparkwright run <goal...> --workflow <name>`. It routes through the same
+  host run lifecycle and `run.start { workflow, goal }` request path; it does
+  not add background/daemon semantics.
 - `sparkwright workflow inspect` is an inspection-only view over host-owned
   workflow assets. It may display parse errors and layer shadows, but must not
   instantiate workflows or start run-loop state.
@@ -288,6 +292,19 @@ Does not own:
 - The direct-core deterministic model is a diagnostics harness; it should keep exercising real catalog tools (`read_file`, `read_anchored_text`, `write_file`, `edit_anchored_text`/`apply_patch`) rather than reintroducing test-only write tools.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T21:18:00+0800
+- Scope: Workflow Job Session Stage B added `sparkwright workflow start
+  <name> <goal...>` as a CLI alias for the existing host `run --workflow` path.
+  No `workflow stop`, background/daemon flag, or new host payload path was
+  added.
+- Read: `packages/cli/src/cli.ts`,
+  `packages/cli/src/runners/host-runner.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "workflow start alias|starts workflow runs through the workflow start
+  alias"`; `npm --workspace @sparkwright/cli run typecheck`.
 
 - Status: Verified
 - Date: 2026-07-07T00:55:52+0800

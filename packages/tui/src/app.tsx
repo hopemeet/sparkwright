@@ -851,6 +851,8 @@ function AppReady(
     workflows: workflowActions.workflows,
     loadingWorkflows: workflowActions.loadingWorkflows,
     selectedWorkflowId: workflowActions.selectedWorkflowId,
+    ownedWorkflowRunIds: workflowActions.ownedWorkflowRunIds,
+    ownedRunIds: workflowActions.ownedRunIds,
     labels: sessionActions.labels,
     renameTarget: sessionActions.renameTarget,
     effModel,

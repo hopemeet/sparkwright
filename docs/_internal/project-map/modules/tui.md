@@ -262,6 +262,22 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:18:00+0800
+- Scope: Workflow Job Session Stage B added TUI `/workflow start <name>
+  <goal...>` using one host client connection per TUI-owned job. Focus policy
+  opens the workflow snapshot view by default; `--stay` / `--no-focus` only
+  keep focus on the main prompt and do not promise daemon/background process
+  survival. TUI-owned rows are distinguished from store-only/cross-process
+  records.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/state/build-command-registry.ts`,
+  `packages/tui/src/components/workflow-panel.tsx`,
+  `packages/tui/src/app.tsx`.
+- Tests: `npm --workspace @sparkwright/tui run typecheck`; PTY/pyte probes for
+  `/workflow start` waiting, completed, and missing-workflow failure branches.
+
+- Status: Verified
 - Date: 2026-07-09T21:10:00+0800
 - Scope: Workflow Job Session Stage A added read-only `/workflow list` and
   `/workflow attach <id>` TUI surfaces through `useWorkflowActions`, command

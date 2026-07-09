@@ -11,6 +11,8 @@ export function WorkflowPanel(props: {
   workflows: readonly WorkflowRunSnapshot[];
   selectedWorkflowId?: string;
   loading: boolean;
+  ownedWorkflowRunIds?: ReadonlySet<string>;
+  ownedRunIds?: ReadonlySet<string>;
   onClose: () => void;
   onSelect: (id: string) => void;
   onRefresh: () => void;
@@ -62,6 +64,12 @@ export function WorkflowPanel(props: {
               key={item.id}
               workflow={item}
               selected={index === effectiveCursor}
+              owned={
+                Boolean(props.ownedWorkflowRunIds?.has(item.id)) ||
+                Boolean(
+                  item.activeRunId && props.ownedRunIds?.has(item.activeRunId),
+                )
+              }
             />
           ))
         )}
@@ -112,11 +120,13 @@ export function WorkflowPanel(props: {
 function WorkflowRow(props: {
   workflow: WorkflowRunSnapshot;
   selected: boolean;
+  owned: boolean;
 }): React.ReactElement {
   const workflow = props.workflow;
   const wait = workflow.wait ? ` · wait:${workflow.wait.kind}` : "";
   const node = workflow.currentNodeId ? ` · ${workflow.currentNodeId}` : "";
   const failure = workflow.failure ? ` · ${workflow.failure.code}` : "";
+  const ownership = props.owned ? " · owned" : " · store";
   const marker = props.selected ? "›" : " ";
   const color =
     workflow.status === "failed" || workflow.status === "cancelled"
@@ -137,6 +147,7 @@ function WorkflowRow(props: {
         {node}
         {wait}
         {failure}
+        {ownership}
       </Text>
     </Box>
   );
