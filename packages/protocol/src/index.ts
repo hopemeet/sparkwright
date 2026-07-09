@@ -731,6 +731,12 @@ export interface WorkflowRunSnapshot {
   runIds: string[];
   currentNodeId?: string;
   attempts: Record<string, number>;
+  latestVerdict?: {
+    nodeId: string;
+    attempt: number;
+    verdict: Record<string, unknown>;
+    at?: string;
+  };
   wait?: {
     kind: "input" | "task" | "approval";
     reason?: string;

@@ -573,13 +573,23 @@ describe("host protocol", () => {
           "workflow-runs",
         ),
       });
-      store.create({
+      const created = store.create({
         id: workflowRunId,
         sessionId,
         assetName: "bugfix",
         contentHash: "hash-protocol",
         currentNodeId: "main",
         attempts: { main: 1 },
+      });
+      store.update(created.id, {
+        verdictLog: [
+          {
+            at: "2026-07-09T00:00:00.000Z",
+            nodeId: "main",
+            attempt: 1,
+            verdict: { status: "passed", reason: "command_passed" },
+          },
+        ],
       });
       serveConnection(pair.hostSide, {
         workspaceRoot: workspace,
@@ -619,6 +629,12 @@ describe("host protocol", () => {
               assetName: "bugfix",
               status: "running",
               currentNodeId: "main",
+              latestVerdict: {
+                nodeId: "main",
+                attempt: 1,
+                verdict: { status: "passed", reason: "command_passed" },
+                at: "2026-07-09T00:00:00.000Z",
+              },
             }),
           ],
         },

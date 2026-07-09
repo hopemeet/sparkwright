@@ -18,6 +18,7 @@ export function LiveFrame(props: {
   runningTaskCount: number;
   unreadTaskCount: number;
   unreadFailedTaskCount: number;
+  waitingWorkflowCount: number;
   streamingMax: number;
   sidebarWidth: number;
   columns: number;
@@ -34,10 +35,11 @@ export function LiveFrame(props: {
     props.state.status === "awaiting-approval" ||
     props.runningTaskCount > 0 ||
     props.unreadTaskCount > 0;
+  const showWorkflowStatus = props.waitingWorkflowCount > 0;
 
   return (
     <>
-      {showStatus ? (
+      {showStatus || showWorkflowStatus ? (
         <StatusBar
           state={props.state}
           modelLabel={props.modelLabel}
@@ -48,6 +50,7 @@ export function LiveFrame(props: {
             props.unreadTaskCount - props.unreadFailedTaskCount,
           )}
           unreadFailedTasks={props.unreadFailedTaskCount}
+          waitingWorkflowCount={props.waitingWorkflowCount}
         />
       ) : null}
 

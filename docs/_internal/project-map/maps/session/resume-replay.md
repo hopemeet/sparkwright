@@ -100,6 +100,18 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-09T21:10:00+0800
+- Scope: Workflow Job Session Stage A only reads durable workflow snapshots and
+  adds a TUI attach view. Workflow resume/adoption semantics, terminal rejection,
+  and checkpoint/session replay behavior are unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/components/workflow-panel.tsx`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: no resume-specific tests were run for Stage A; focused TUI/host
+  snapshot gates passed.
+
+- Status: Read-only
 - Date: 2026-07-09T10:08:47+0800
 - Scope: route check for TUI input P0-P2 work. Prompt draft preservation,
   printable hotkey arbitration, Esc cancel dispatch, InputBox hook extraction,

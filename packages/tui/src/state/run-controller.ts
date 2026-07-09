@@ -24,6 +24,8 @@ import type {
   TaskOutputChunkSnapshot,
   TaskRecordSnapshot,
   TraceLevel,
+  WorkflowListRequestPayload,
+  WorkflowRunSnapshot,
 } from "@sparkwright/protocol";
 import { runFailureMessage } from "@sparkwright/protocol";
 import type { EventStore } from "./event-store.js";
@@ -451,6 +453,19 @@ export class RunController {
       const client = await this.ensureClient();
       const result = await client.listTasks(payload);
       return result.tasks;
+    } catch (err) {
+      this.store.setError(formatError(err));
+      return [];
+    }
+  }
+
+  async listWorkflowRuns(
+    payload: WorkflowListRequestPayload = { limit: 100 },
+  ): Promise<WorkflowRunSnapshot[]> {
+    try {
+      const client = await this.ensureClient();
+      const result = await client.listWorkflowRuns(payload);
+      return result.workflows;
     } catch (err) {
       this.store.setError(formatError(err));
       return [];

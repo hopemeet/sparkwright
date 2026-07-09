@@ -262,6 +262,27 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:10:00+0800
+- Scope: Workflow Job Session Stage A added read-only `/workflow list` and
+  `/workflow attach <id>` TUI surfaces through `useWorkflowActions`, command
+  registry injection, a workflow snapshot panel, and a status-bar waiting badge.
+  TUI remains a presentation client over host `workflow.list`; it does not own
+  workflow durable state or stop/resume semantics.
+- Read: `packages/tui/src/app.tsx`,
+  `packages/tui/src/state/build-command-registry.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/components/workflow-panel.tsx`,
+  `packages/tui/src/components/status-bar.tsx`,
+  `packages/tui/src/components/live-frame.tsx`,
+  `packages/tui/src/components/layer-renderer.tsx`,
+  `packages/tui/src/lib/workflow-display.ts`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/workflow-display.test.ts`; `npm --workspace @sparkwright/tui run
+  typecheck`; PTY/pyte probes for empty workflow list and CLI-created waiting
+  workflow list/attach.
+
+- Status: Verified
 - Date: 2026-07-09T10:08:47+0800
 - Scope: TUI input P0-P2 sequence: printable single-character global hotkeys
   yield to non-empty prompt drafts, short drafts survive layer unmount/remount,

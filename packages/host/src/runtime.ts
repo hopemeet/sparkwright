@@ -8734,6 +8734,22 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
     runIds: record.runIds.map(String),
     ...(record.currentNodeId ? { currentNodeId: record.currentNodeId } : {}),
     attempts: { ...record.attempts },
+    ...(record.verdictLog.length > 0
+      ? {
+          latestVerdict: (() => {
+            const latest = record.verdictLog[record.verdictLog.length - 1]!;
+            return {
+              nodeId: latest.nodeId,
+              attempt: latest.attempt,
+              verdict: cloneJsonLike(latest.verdict) as Record<
+                string,
+                unknown
+              >,
+              ...(latest.at ? { at: latest.at } : {}),
+            };
+          })(),
+        }
+      : {}),
     ...(record.wait
       ? {
           wait: {

@@ -305,6 +305,12 @@ workflow storage is available.
       "runIds": ["run_456"],
       "currentNodeId": "reproduce",
       "attempts": { "reproduce": 1 },
+      "latestVerdict": {
+        "nodeId": "reproduce",
+        "attempt": 1,
+        "verdict": { "status": "passed", "reason": "command_passed" },
+        "at": "2026-07-04T00:00:01.000Z"
+      },
       "resume": { "verifyOnResume": true },
       "createdAt": "2026-07-04T00:00:00.000Z",
       "updatedAt": "2026-07-04T00:00:01.000Z"
@@ -319,6 +325,10 @@ workflow storage is available.
   ]
 }
 ```
+
+`latestVerdict` is a bounded presentation projection of the newest durable
+workflow verdict log entry. Clients use it for job/session status views; the
+full verdict history remains in the workflow-run record.
 
 `waiting` is a terminal-resistant status value with an inline `wait` object
 whose `kind` is one of `input`, `task`, or `approval`. P3 human nodes are the

@@ -17,6 +17,7 @@ export type LayerName =
   | "model"
   | "fork"
   | "help"
+  | "workflow"
   | "config"
   | "capabilities"
   | "create"
@@ -49,6 +50,7 @@ const PRIORITY: Record<LayerName, number> = {
   "skill-update": 57,
   "skill-review": 57,
   help: 50,
+  workflow: 56,
   config: 50,
 };
 

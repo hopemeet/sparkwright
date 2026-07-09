@@ -742,6 +742,18 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:10:00+0800
+- Scope: Workflow Job Session Stage A kept host workflow control semantics
+  unchanged while projecting the latest durable workflow verdict into
+  `workflow.list` snapshots for TUI read-only attach/status views.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/protocol/src/index.ts`,
+  `packages/host/test/protocol.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/protocol.test.ts -t
+  "workflow.list|durable workflow list"`; `npm --workspace @sparkwright/host
+  run typecheck`.
+
+- Status: Verified
 - Date: 2026-07-08T23:46:48+0800
 - Scope: post-review hardening for host access/grant plumbing: legacy
   `permissionMode:"dont_ask"` is clamped by `accessModeCeiling` for effective

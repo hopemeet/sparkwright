@@ -186,6 +186,20 @@ Does not own:
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-09T21:10:00+0800
+- Scope: Workflow Job Session Stage A extended `WorkflowRunSnapshot` with a
+  bounded `latestVerdict` projection for read-only TUI attach/status views.
+  Request methods remain `workflow.list` / `workflow.resume`; no new protocol
+  method was added.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/host/src/runtime.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: `npm --workspace @sparkwright/protocol run build`; `npm --workspace
+  @sparkwright/host test -- test/protocol.test.ts -t "workflow.list|durable
+  workflow list"`.
+
 - Status: Read-only
 - Date: 2026-07-07T00:55:52+0800
 - Scope: workflow distill/shadow observation now filters failed or hook-blocked

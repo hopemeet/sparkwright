@@ -12,6 +12,7 @@ import type { CapabilityActions } from "./use-capability-actions.js";
 import type { SessionActions } from "./use-session-actions.js";
 import type { SkillActions } from "./use-skill-actions.js";
 import type { TaskActions } from "./use-task-actions.js";
+import type { WorkflowActions } from "./use-workflow-actions.js";
 
 /**
  * The capability browser is one panel (`openCapabilities`) reached through
@@ -113,6 +114,7 @@ interface BuildCommandRegistryDeps {
   capActions: CapabilityActions;
   sessionActions: SessionActions;
   taskActions: Pick<TaskActions, "openActivity">;
+  workflowActions: Pick<WorkflowActions, "listWorkflows" | "attachWorkflow">;
   projectCommands: ProjectCommandDescriptor[];
   runProjectCommand: (
     descriptor: ProjectCommandDescriptor,
@@ -140,10 +142,48 @@ export function buildCommandRegistry(
     capActions,
     sessionActions,
     taskActions,
+    workflowActions,
     projectCommands,
     runProjectCommand,
   } = deps;
   const reg = new CommandRegistry();
+  reg.register({
+    name: "workflow",
+    title: "List workflow jobs",
+    description: "Show durable workflow jobs in this workspace.",
+    category: "workflow",
+    aliases: ["workflows"],
+    run: () => void workflowActions.listWorkflows(),
+    runRaw: (rest) => {
+      const [subcommand, ...args] = rest.trim().split(/\s+/).filter(Boolean);
+      if (!subcommand || subcommand === "list") {
+        void workflowActions.listWorkflows();
+        return;
+      }
+      if (subcommand === "attach") {
+        void workflowActions.attachWorkflow(args.join(" "));
+        return;
+      }
+      toasts.push({
+        variant: "info",
+        title: "workflow",
+        message: "usage: /workflow list | /workflow attach <id>",
+      });
+    },
+  });
+  reg.register({
+    name: "workflow-attach",
+    title: "Attach workflow view",
+    description: "Open a durable workflow snapshot view.",
+    category: "workflow",
+    hiddenByDefault: true,
+    run: () =>
+      toasts.push({
+        variant: "info",
+        message: "usage: /workflow attach <id>",
+      }),
+    runRaw: (rest) => void workflowActions.attachWorkflow(rest),
+  });
   reg.register({
     name: "help",
     title: "Show keyboard help",
