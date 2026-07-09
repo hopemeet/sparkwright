@@ -615,9 +615,7 @@ function isWorkflowBackgroundTaskPolicy(
   WorkflowRunRecord["authorizationSnapshot"]
 >["backgroundTasks"] {
   return (
-    value === "disabled" ||
-    value === "foreground-only" ||
-    value === "enabled"
+    value === "disabled" || value === "foreground-only" || value === "enabled"
   );
 }
 

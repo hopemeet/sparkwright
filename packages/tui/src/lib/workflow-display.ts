@@ -42,6 +42,8 @@ export function formatWorkflowListNotice(
   if (workflows.length === 0) return "workflow list: no workflow jobs found";
   const rows = workflows.slice(0, 20).map(formatWorkflowSummary);
   const more =
-    workflows.length > rows.length ? `\n... ${workflows.length - rows.length} more` : "";
+    workflows.length > rows.length
+      ? `\n... ${workflows.length - rows.length} more`
+      : "";
   return `workflow list:\n${rows.join("\n")}${more}`;
 }

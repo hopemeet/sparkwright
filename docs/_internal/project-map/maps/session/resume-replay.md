@@ -100,6 +100,18 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:28:00+0800
+- Scope: Workflow Job Session Stage D confirmed stop is terminal cancellation:
+  TUI-owned live stop drives host `run.cancel`, the workflow record becomes
+  `cancelled`, and later workflow resume is rejected. Waiting/cross-process
+  records are not stopped from the current TUI.
+- Read: `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: PTY/pyte owned stop probe; `sparkwright workflow resume
+  <cancelled-id>` returned `already cancelled`.
+
+- Status: Verified
 - Date: 2026-07-09T21:22:00+0800
 - Scope: Workflow Job Session Stage C keeps workflow resume as adoption of a
   non-terminal durable record, adds record authorization snapshots for resume

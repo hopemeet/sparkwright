@@ -262,6 +262,20 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:28:00+0800
+- Scope: Workflow Job Session Stage D added `/workflow stop [id]` for
+  TUI-owned live workflow jobs only. Stop uses that job connection's
+  `run.cancel`, tells users stop is terminal/non-resumable, and returns clear
+  notices for waiting/cross-process/non-owned records. No CLI workflow stop or
+  SIGINT behavior was added.
+- Read: `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/state/build-command-registry.ts`,
+  `packages/tui/src/components/workflow-panel.tsx`.
+- Tests: `npm --workspace @sparkwright/tui run typecheck`; PTY/pyte owned
+  live stop probe with record `cancelled`; CLI resume-after-stop rejection;
+  PTY/pyte non-owned waiting stop prompt.
+
+- Status: Verified
 - Date: 2026-07-09T21:22:00+0800
 - Scope: Workflow Job Session Stage C added `/workflow resume <id>` as a
   TUI-owned job start path. TUI refuses records without authorization snapshots

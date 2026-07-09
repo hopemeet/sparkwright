@@ -116,7 +116,11 @@ interface BuildCommandRegistryDeps {
   taskActions: Pick<TaskActions, "openActivity">;
   workflowActions: Pick<
     WorkflowActions,
-    "listWorkflows" | "attachWorkflow" | "startWorkflow" | "resumeWorkflow"
+    | "listWorkflows"
+    | "attachWorkflow"
+    | "startWorkflow"
+    | "resumeWorkflow"
+    | "stopWorkflow"
   >;
   projectCommands: ProjectCommandDescriptor[];
   runProjectCommand: (
@@ -175,11 +179,15 @@ export function buildCommandRegistry(
         void workflowActions.resumeWorkflow(args.join(" "));
         return;
       }
+      if (subcommand === "stop") {
+        void workflowActions.stopWorkflow(args.join(" "));
+        return;
+      }
       toasts.push({
         variant: "info",
         title: "workflow",
         message:
-          "usage: /workflow list | /workflow attach <id> | /workflow start <name> <goal...> | /workflow resume <id>",
+          "usage: /workflow list | /workflow attach <id> | /workflow start <name> <goal...> | /workflow resume <id> | /workflow stop <id>",
       });
     },
   });

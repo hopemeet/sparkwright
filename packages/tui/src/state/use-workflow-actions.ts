@@ -22,6 +22,7 @@ export interface WorkflowActions {
   selectWorkflow: (id: string) => void;
   startWorkflow: (rest: string) => Promise<void>;
   resumeWorkflow: (id: string) => Promise<void>;
+  stopWorkflow: (id: string) => Promise<void>;
 }
 
 export function useWorkflowActions(deps: {
@@ -74,8 +75,7 @@ export function useWorkflowActions(deps: {
     }
     const next = await refreshWorkflows();
     const match = next.find(
-      (workflow) =>
-        workflow.id === trimmed || workflow.id.endsWith(trimmed),
+      (workflow) => workflow.id === trimmed || workflow.id.endsWith(trimmed),
     );
     if (!match) {
       toasts.push({
@@ -142,7 +142,11 @@ export function useWorkflowActions(deps: {
     }
     const next = await refreshWorkflows();
     const workflow = next.find(
-      (item) => item.id === trimmed || item.id.endsWith(trimmed),
+      (item) =>
+        item.id === trimmed ||
+        item.id.endsWith(trimmed) ||
+        item.activeRunId === trimmed ||
+        item.runIds.includes(trimmed),
     );
     if (!workflow) {
       toasts.push({
@@ -189,6 +193,68 @@ export function useWorkflowActions(deps: {
     });
     setSelectedWorkflowId(workflow.id);
     layers.push("workflow", { workflowId: workflow.id });
+  }
+
+  async function stopWorkflow(id: string): Promise<void> {
+    const onlyLiveOwned = Object.values(ownedJobs).filter(
+      (job) => job.status === "connecting" || job.status === "running",
+    );
+    const trimmed =
+      id.trim() ||
+      selectedWorkflowId ||
+      (onlyLiveOwned.length === 1
+        ? (onlyLiveOwned[0]?.workflowRunId ?? onlyLiveOwned[0]?.runId ?? "")
+        : "");
+    if (!trimmed) {
+      toasts.push({
+        variant: "info",
+        message: "usage: /workflow stop [id]",
+      });
+      return;
+    }
+    const next = await refreshWorkflows();
+    const workflow = next.find(
+      (item) => item.id === trimmed || item.id.endsWith(trimmed),
+    );
+    if (!workflow) {
+      toasts.push({
+        variant: "warning",
+        title: "workflow not found",
+        message: trimmed,
+      });
+      return;
+    }
+    const liveJob = Object.values(ownedJobs).find(
+      (job) =>
+        job.workflowRunId === workflow.id ||
+        (workflow.activeRunId && job.runId === workflow.activeRunId),
+    );
+    if (
+      !liveJob ||
+      workflow.status === "waiting" ||
+      liveJob.status === "waiting" ||
+      liveJob.status === "completed" ||
+      liveJob.status === "failed" ||
+      liveJob.status === "cancelled"
+    ) {
+      store.appendNotice(
+        `workflow stop not available for ${workflow.id}: not in the current live connection; resume it or stop it from the owner`,
+      );
+      return;
+    }
+    try {
+      await liveJob.handle.client.cancelRun({
+        runId: liveJob.runId,
+        reason: "workflow stop",
+      });
+      store.appendNotice(
+        `workflow stop requested: ${workflow.id} (stopping is terminal and cannot be resumed)`,
+      );
+    } catch (error) {
+      store.appendNotice(
+        `workflow stop failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   function selectWorkflow(id: string): void {
@@ -242,6 +308,7 @@ export function useWorkflowActions(deps: {
     selectWorkflow,
     startWorkflow,
     resumeWorkflow,
+    stopWorkflow,
   };
 }
 
@@ -379,7 +446,9 @@ function wireWorkflowJob(
     if (closing) return;
     update({ status: "disconnected" });
     if (reason) {
-      deps.store.appendNotice(`workflow ${deps.workflowName} disconnected: ${reason}`);
+      deps.store.appendNotice(
+        `workflow ${deps.workflowName} disconnected: ${reason}`,
+      );
     }
   });
 }

@@ -8768,10 +8768,7 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
             return {
               nodeId: latest.nodeId,
               attempt: latest.attempt,
-              verdict: cloneJsonLike(latest.verdict) as Record<
-                string,
-                unknown
-              >,
+              verdict: cloneJsonLike(latest.verdict) as Record<string, unknown>,
               ...(latest.at ? { at: latest.at } : {}),
             };
           })(),
