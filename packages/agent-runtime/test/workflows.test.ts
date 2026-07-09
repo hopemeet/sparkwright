@@ -264,6 +264,14 @@ describe("FileWorkflowStore", () => {
       contentHash: definition.contentHash,
       currentNodeId: "plan",
       attempts: { plan: 1 },
+      authorizationSnapshot: {
+        targetPath: "README.md",
+        confidentialPaths: [".env"],
+        confidentialDefaults: false,
+        shouldWrite: true,
+        accessMode: "ask",
+        backgroundTasks: "foreground-only",
+      },
       definitionSnapshot: definition,
       now: () => "2026-07-04T00:00:00.000Z",
     });
@@ -275,6 +283,14 @@ describe("FileWorkflowStore", () => {
       activeRunId: "run_first",
       runIds: ["run_first"],
       resume: { verifyOnResume: true },
+      authorizationSnapshot: {
+        targetPath: "README.md",
+        confidentialPaths: [".env"],
+        confidentialDefaults: false,
+        shouldWrite: true,
+        accessMode: "ask",
+        backgroundTasks: "foreground-only",
+      },
       definitionSnapshot: {
         assetName: "test-workflow",
         nodes: [{ id: "plan" }, { id: "patch" }],
@@ -327,6 +343,14 @@ describe("FileWorkflowStore", () => {
     expect(reopened.get(id)).toMatchObject({
       status: "completed",
       completedAt: "2026-07-04T00:02:00.000Z",
+      authorizationSnapshot: {
+        targetPath: "README.md",
+        confidentialPaths: [".env"],
+        confidentialDefaults: false,
+        shouldWrite: true,
+        accessMode: "ask",
+        backgroundTasks: "foreground-only",
+      },
       definitionSnapshot: { contentHash: "hash" },
       parallelBranches: {
         "unit-a": {
@@ -348,6 +372,46 @@ describe("FileWorkflowStore", () => {
       schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
       id,
     });
+  });
+
+  it("reads legacy workflow records without authorization snapshots", async () => {
+    const root = await tempDir();
+    await writeFile(
+      join(root, "workflow_legacy.json"),
+      JSON.stringify(
+        {
+          schemaVersion: WORKFLOW_RUN_RECORD_SCHEMA_VERSION,
+          id: "workflow_legacy",
+          assetName: "legacy",
+          contentHash: "hash",
+          runIds: [],
+          status: "running",
+          attempts: {},
+          evidenceRefs: [],
+          verdictLog: [],
+          transitionLog: [],
+          resume: { verifyOnResume: true },
+          createdAt: "2026-07-04T00:00:00.000Z",
+          metadata: {},
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const reopened = new FileWorkflowStore({
+      rootDir: root,
+      createRoot: false,
+    });
+
+    expect(reopened.get("workflow_legacy" as WorkflowRunId)).toMatchObject({
+      id: "workflow_legacy",
+      status: "running",
+    });
+    expect(
+      reopened.get("workflow_legacy" as WorkflowRunId)?.authorizationSnapshot,
+    ).toBeUndefined();
   });
 
   it("lists valid records while reporting corrupt entries", async () => {

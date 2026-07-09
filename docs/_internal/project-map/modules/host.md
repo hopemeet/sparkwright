@@ -742,6 +742,24 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:22:00+0800
+- Scope: Workflow Job Session Stage C persists resolved workflow
+  `authorizationSnapshot` fields in `WorkflowRunRecord`, exposes them through
+  `workflow.list`, and lets `workflow.resume` use the record snapshot as
+  fallback defaults when payload fields are omitted. Existing terminal
+  rejection and verify-on-resume semantics remain unchanged.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/types.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/host/test/protocol.test.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/protocol.test.ts -t
+  "workflow.list|durable workflow list"`; `npm --workspace @sparkwright/host
+  test -- test/workflows.test.ts -t "verifyOnResume|resumes workflow
+  records|pinned definition|terminal workflow"`; `npm --workspace
+  @sparkwright/host run typecheck`.
+
+- Status: Verified
 - Date: 2026-07-09T21:10:00+0800
 - Scope: Workflow Job Session Stage A kept host workflow control semantics
   unchanged while projecting the latest durable workflow verdict into

@@ -187,6 +187,17 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:22:00+0800
+- Scope: Workflow Job Session Stage C extended `WorkflowRunSnapshot` with
+  `authorizationSnapshot` so clients can prefill explicit workflow resume
+  authorization fields without adding a new protocol method.
+- Read: `packages/protocol/src/index.ts`,
+  `packages/host/src/runtime.ts`,
+  `docs/reference/HOST_PROTOCOL.md`.
+- Tests: `npm --workspace @sparkwright/protocol run build`; `npm run
+  schema:check`; host workflow list focused protocol test.
+
+- Status: Verified
 - Date: 2026-07-09T21:10:00+0800
 - Scope: Workflow Job Session Stage A extended `WorkflowRunSnapshot` with a
   bounded `latestVerdict` projection for read-only TUI attach/status views.

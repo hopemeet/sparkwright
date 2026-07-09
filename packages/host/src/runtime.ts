@@ -2155,6 +2155,19 @@ export class HostRuntime {
             currentNodeId: projectedState.currentNodeId,
             attempts: projectedState.attempts,
             transitionLog: projectedState.transitionLog,
+            authorizationSnapshot: {
+              ...(input.targetPath ? { targetPath: input.targetPath } : {}),
+              confidentialPaths: [...(confidentialPaths ?? [])],
+              confidentialDefaults: confidentialDefaults ?? true,
+              shouldWrite: input.shouldWrite,
+              accessMode:
+                input.access?.accessMode ??
+                accessModeFromResolvedFields(
+                  input.permissionMode,
+                  input.shouldWrite,
+                ),
+              backgroundTasks: input.backgroundTasks,
+            },
             definitionSnapshot: workflowDefinition,
             metadata: {
               goal: input.goal,
@@ -3057,8 +3070,22 @@ export class HostRuntime {
       }
     }
 
+    const authorizationSnapshot = record.authorizationSnapshot;
+    const effectiveResumePayload: WorkflowResumeRequestPayload = {
+      ...payload,
+      targetPath: payload.targetPath ?? authorizationSnapshot?.targetPath,
+      confidentialPaths:
+        payload.confidentialPaths ?? authorizationSnapshot?.confidentialPaths,
+      confidentialDefaults:
+        payload.confidentialDefaults ??
+        authorizationSnapshot?.confidentialDefaults,
+      shouldWrite: payload.shouldWrite ?? authorizationSnapshot?.shouldWrite,
+      accessMode: payload.accessMode ?? authorizationSnapshot?.accessMode,
+      backgroundTasks:
+        payload.backgroundTasks ?? authorizationSnapshot?.backgroundTasks,
+    };
     const access = resolveRunAccessFields(
-      payload as unknown as RunStartRequestPayload,
+      effectiveResumePayload as unknown as RunStartRequestPayload,
       {
         defaultAccessMode: this.opts.defaultAccessMode,
         accessModeCeiling: this.opts.accessModeCeiling,
@@ -3081,11 +3108,11 @@ export class HostRuntime {
       shouldWrite,
       backgroundTasks: access.backgroundTasks,
       sessionId,
-      targetPath: payload.targetPath,
-      confidentialPaths: payload.confidentialPaths,
-      confidentialDefaults: payload.confidentialDefaults,
+      targetPath: effectiveResumePayload.targetPath,
+      confidentialPaths: effectiveResumePayload.confidentialPaths,
+      confidentialDefaults: effectiveResumePayload.confidentialDefaults,
       traceLevel: resolveTraceLevel({
-        ...payload,
+        ...effectiveResumePayload,
         defaultTraceLevel: this.opts.defaultTraceLevel,
       }),
       workflowStore: store,
@@ -3136,7 +3163,7 @@ export class HostRuntime {
         policy: createHostRunPolicy({
           permissionMode,
           shouldWrite,
-          targetPath: payload.targetPath,
+          targetPath: effectiveResumePayload.targetPath,
           confidentialPaths: env.confidentialPaths,
           confidentialDefaults: env.confidentialDefaults,
           writeGuardrails: env.writeGuardrails,
@@ -8771,11 +8798,31 @@ function workflowRunSnapshot(record: WorkflowRunRecord): WorkflowRunSnapshot {
         }
       : {}),
     resume: { ...record.resume },
+    ...(record.authorizationSnapshot
+      ? {
+          authorizationSnapshot: {
+            ...record.authorizationSnapshot,
+            confidentialPaths: [
+              ...record.authorizationSnapshot.confidentialPaths,
+            ],
+          },
+        }
+      : {}),
     createdAt: record.createdAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
     ...(record.completedAt ? { completedAt: record.completedAt } : {}),
     metadata: { ...record.metadata },
   };
+}
+
+function accessModeFromResolvedFields(
+  permissionMode: PermissionMode,
+  shouldWrite: boolean,
+): RunAccessMode {
+  if (!shouldWrite) return "read-only";
+  if (permissionMode === "accept_edits") return "accept-edits";
+  if (permissionMode === "bypass_permissions") return "bypass";
+  return "ask";
 }
 
 function persistWorkflowProjectionSnapshot(

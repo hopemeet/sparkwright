@@ -1,6 +1,10 @@
 import { existsSync } from "node:fs";
 import type { ApprovalResolver, SparkwrightEvent } from "@sparkwright/core";
-import type { RunInputPayload, TraceLevel } from "@sparkwright/protocol";
+import type {
+  RunInputPayload,
+  TraceLevel,
+  WorkflowRunSnapshot,
+} from "@sparkwright/protocol";
 import { getRunFailure, runFailureMessage } from "@sparkwright/protocol";
 import { createClient, type Client } from "@sparkwright/sdk-node";
 import {
@@ -91,6 +95,8 @@ export interface HostRunResult {
   runState?: string;
   stopReason?: string;
 }
+
+export const CLI_WORKFLOW_WAITING_EXIT_CODE = 42;
 
 export async function startHostRun(
   input: HostRunInput,
@@ -408,6 +414,32 @@ async function runHostLifecycle(
 
   try {
     await terminal;
+    const waitingWorkflow = await findWaitingWorkflowForRun({
+      client,
+      runId,
+      sessionId,
+      workflowName,
+      workflowRunId: "workflowRunId" in input ? input.workflowRunId : undefined,
+    });
+    if (waitingWorkflow) {
+      const wait = waitingWorkflow.wait;
+      const reason = wait?.reason ? `: ${wait.reason}` : "";
+      writeLine(
+        io.stderr,
+        `Workflow ${waitingWorkflow.id} is waiting (${wait?.kind ?? "input"}${reason}).`,
+      );
+      writeLine(
+        io.stderr,
+        `Resume with: sparkwright workflow resume ${waitingWorkflow.id}`,
+      );
+      return {
+        exitCode: CLI_WORKFLOW_WAITING_EXIT_CODE,
+        tracePath,
+        sessionId,
+        runState: "waiting",
+        stopReason: wait?.kind ?? "workflow_waiting",
+      };
+    }
     const skillLoadFailureSummary = summarizeSkillLoadFailures(eventSummary);
     if (skillLoadFailureSummary) writeLine(io.stderr, skillLoadFailureSummary);
     const verificationSummary =
@@ -467,6 +499,37 @@ async function runHostLifecycle(
     if (tracePath && existsSync(tracePath))
       writeLine(io.stdout, `Trace written to ${tracePath}`);
     await closeClient(client);
+  }
+}
+
+async function findWaitingWorkflowForRun(input: {
+  client?: Client;
+  runId?: string;
+  sessionId?: string;
+  workflowName?: string;
+  workflowRunId?: string;
+}): Promise<WorkflowRunSnapshot | undefined> {
+  if (!input.client) return undefined;
+  if (!input.runId && !input.workflowRunId && !input.workflowName) {
+    return undefined;
+  }
+  try {
+    const result = await input.client.listWorkflowRuns({
+      sessionId: input.sessionId,
+      status: "waiting",
+      limit: 50,
+    });
+    return result.workflows.find((workflow) => {
+      if (input.workflowRunId && workflow.id === input.workflowRunId) {
+        return true;
+      }
+      if (input.runId && workflow.runIds.includes(input.runId)) return true;
+      return Boolean(
+        input.workflowName && workflow.assetName === input.workflowName,
+      );
+    });
+  } catch {
+    return undefined;
   }
 }
 

@@ -99,6 +99,19 @@ Future run in compacted session
 
 ## Last Verified
 
+- Status: Verified
+- Date: 2026-07-09T21:22:00+0800
+- Scope: Workflow Job Session Stage C keeps workflow resume as adoption of a
+  non-terminal durable record, adds record authorization snapshots for resume
+  prefill, and verifies terminal workflow records remain rejected.
+- Read: `packages/host/src/runtime.ts`,
+  `packages/agent-runtime/src/workflows/store.ts`,
+  `packages/tui/src/state/run-controller.ts`,
+  `packages/host/test/workflows.test.ts`.
+- Tests: `npm --workspace @sparkwright/host test -- test/workflows.test.ts -t
+  "verifyOnResume|resumes workflow records|pinned definition|terminal
+  workflow"`; TUI resume PTY probe.
+
 - Status: Read-only
 - Date: 2026-07-09T21:10:00+0800
 - Scope: Workflow Job Session Stage A only reads durable workflow snapshots and

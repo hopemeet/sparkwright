@@ -6,6 +6,7 @@ import {
   createHostCapabilityInspectRequest,
   createHostClientRunMetadata,
   createHostStartRunRequest,
+  createHostWorkflowResumeRequest,
   createRunInputPayloadFromParts,
   imageMediaTypeForPath,
   recordHostClientStartFailure,
@@ -507,6 +508,57 @@ export class RunController {
           metadata: {
             ...this.runRequestMetadata({ traceLevel }),
             workflowStartSource: "tui",
+          },
+        }),
+      );
+      return {
+        runId,
+        client,
+        close: () => client.close(),
+      };
+    } catch (err) {
+      client.close();
+      this.store.setError(formatError(err));
+      return null;
+    }
+  }
+
+  async resumeWorkflowJob(input: {
+    workflow: WorkflowRunSnapshot;
+  }): Promise<WorkflowJobHandle | null> {
+    const authorization = input.workflow.authorizationSnapshot;
+    if (!authorization) {
+      this.store.setError(
+        "workflow resume requires an authorization snapshot; older records must be resumed from the CLI with explicit options",
+      );
+      return null;
+    }
+    const client = await createClient({
+      spawn: resolveHostStdioSpawn({
+        workspaceRoot: this.opts.workspaceRoot,
+        sessionRootDir: this.sessionRootDir(),
+        permissionMode: this.coreRunFields().permissionMode,
+      }),
+      client: { name: "sparkwright-tui-workflow", version: "0.1.0" },
+    });
+    try {
+      const traceLevel = this.opts.traceLevel ?? "standard";
+      const { runId } = await client.resumeWorkflowRun(
+        createHostWorkflowResumeRequest({
+          workflowRunId: input.workflow.id,
+          sessionId: input.workflow.sessionId,
+          modelName: this.opts.modelName,
+          modelNameSource: this.opts.modelNameSource,
+          accessMode: authorization.accessMode,
+          backgroundTasks: authorization.backgroundTasks,
+          traceLevel,
+          targetPath: authorization.targetPath,
+          confidentialPaths: authorization.confidentialPaths,
+          confidentialDefaults: authorization.confidentialDefaults,
+          shouldWrite: authorization.shouldWrite,
+          metadata: {
+            ...this.runRequestMetadata({ traceLevel }),
+            workflowResumeSource: "tui",
           },
         }),
       );

@@ -311,6 +311,14 @@ workflow storage is available.
         "verdict": { "status": "passed", "reason": "command_passed" },
         "at": "2026-07-04T00:00:01.000Z"
       },
+      "authorizationSnapshot": {
+        "targetPath": "README.md",
+        "confidentialPaths": [],
+        "confidentialDefaults": true,
+        "shouldWrite": true,
+        "accessMode": "ask",
+        "backgroundTasks": "enabled"
+      },
       "resume": { "verifyOnResume": true },
       "createdAt": "2026-07-04T00:00:00.000Z",
       "updatedAt": "2026-07-04T00:00:01.000Z"
@@ -329,6 +337,11 @@ workflow storage is available.
 `latestVerdict` is a bounded presentation projection of the newest durable
 workflow verdict log entry. Clients use it for job/session status views; the
 full verdict history remains in the workflow-run record.
+
+`authorizationSnapshot` records the resolved run-boundary authorization values
+used when the workflow was instantiated. Resume clients can prefill the next
+resume request from this snapshot while still sending explicit authorization
+fields for that new run boundary.
 
 `waiting` is a terminal-resistant status value with an inline `wait` object
 whose `kind` is one of `input`, `task`, or `approval`. P3 human nodes are the

@@ -262,6 +262,19 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:22:00+0800
+- Scope: Workflow Job Session Stage C added `/workflow resume <id>` as a
+  TUI-owned job start path. TUI refuses records without authorization snapshots
+  and sends `workflow.resume` through `createHostWorkflowResumeRequest` with
+  explicit snapshot-prefilled target/confidential/write/access/background
+  fields.
+- Read: `packages/tui/src/state/run-controller.ts`,
+  `packages/tui/src/state/use-workflow-actions.ts`,
+  `packages/tui/src/state/build-command-registry.ts`.
+- Tests: `npm --workspace @sparkwright/tui run typecheck`; PTY/pyte TUI resume
+  probe from a CLI-created waiting workflow.
+
+- Status: Verified
 - Date: 2026-07-09T21:18:00+0800
 - Scope: Workflow Job Session Stage B added TUI `/workflow start <name>
   <goal...>` using one host client connection per TUI-owned job. Focus policy

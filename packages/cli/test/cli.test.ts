@@ -2713,7 +2713,12 @@ describe("runCli", () => {
       { io: { stdout: output.stdout, stderr: output.stderr } },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(42);
+    expect(output.stderrText()).toContain("Workflow ");
+    expect(output.stderrText()).toContain(
+      "is waiting (input: Need human review.)",
+    );
+    expect(output.stderrText()).toContain("sparkwright workflow resume");
     const store = new FileWorkflowStore({
       rootDir: join(workspace, ".sparkwright", "workflow-runs"),
       createRoot: false,

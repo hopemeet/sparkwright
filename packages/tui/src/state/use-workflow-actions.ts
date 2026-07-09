@@ -21,6 +21,7 @@ export interface WorkflowActions {
   attachWorkflow: (id: string) => Promise<void>;
   selectWorkflow: (id: string) => void;
   startWorkflow: (rest: string) => Promise<void>;
+  resumeWorkflow: (id: string) => Promise<void>;
 }
 
 export function useWorkflowActions(deps: {
@@ -130,6 +131,66 @@ export function useWorkflowActions(deps: {
     });
   }
 
+  async function resumeWorkflow(id: string): Promise<void> {
+    const trimmed = id.trim();
+    if (!trimmed) {
+      toasts.push({
+        variant: "info",
+        message: "usage: /workflow resume <id>",
+      });
+      return;
+    }
+    const next = await refreshWorkflows();
+    const workflow = next.find(
+      (item) => item.id === trimmed || item.id.endsWith(trimmed),
+    );
+    if (!workflow) {
+      toasts.push({
+        variant: "warning",
+        title: "workflow not found",
+        message: trimmed,
+      });
+      return;
+    }
+    if (!workflow.authorizationSnapshot) {
+      toasts.push({
+        variant: "warning",
+        title: "resume blocked",
+        message: "record has no authorization snapshot",
+      });
+      return;
+    }
+    const handle = await controller.resumeWorkflowJob({ workflow });
+    if (!handle) return;
+    setOwnedJobs((current) => ({
+      ...current,
+      [handle.runId]: {
+        runId: handle.runId,
+        workflowRunId: workflow.id,
+        workflowName: workflow.assetName,
+        goal: `Resume workflow ${workflow.assetName}`,
+        status: "running",
+        handle,
+        startedAt: Date.now(),
+      },
+    }));
+    store.appendNotice(
+      `workflow resume: ${workflow.assetName} · ${workflow.id}`,
+    );
+    wireWorkflowJob(handle, {
+      workflowName: workflow.assetName,
+      store,
+      toasts,
+      setOwnedJobs,
+      refreshWorkflows,
+      focus: true,
+      layers,
+      setSelectedWorkflowId,
+    });
+    setSelectedWorkflowId(workflow.id);
+    layers.push("workflow", { workflowId: workflow.id });
+  }
+
   function selectWorkflow(id: string): void {
     setSelectedWorkflowId(id);
   }
@@ -180,6 +241,7 @@ export function useWorkflowActions(deps: {
     attachWorkflow,
     selectWorkflow,
     startWorkflow,
+    resumeWorkflow,
   };
 }
 

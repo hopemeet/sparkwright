@@ -294,6 +294,19 @@ Does not own:
 ## Last Verified
 
 - Status: Verified
+- Date: 2026-07-09T21:22:00+0800
+- Scope: Workflow Job Session Stage C makes host-mode CLI workflow runs that
+  reach durable `status:"waiting"` print the waiting reason plus
+  `sparkwright workflow resume <id>` and exit with the dedicated waiting code
+  42, projected from `workflow.list` snapshots after the terminal host run.
+- Read: `packages/cli/src/runners/host-runner.ts`,
+  `packages/cli/src/cli.ts`,
+  `packages/cli/test/cli.test.ts`.
+- Tests: `npm --workspace @sparkwright/cli test -- test/cli.test.ts -t
+  "starts workflow runs through the workflow start alias"`; `npm --workspace
+  @sparkwright/cli run typecheck`; manual CLI waiting probe.
+
+- Status: Verified
 - Date: 2026-07-09T21:18:00+0800
 - Scope: Workflow Job Session Stage B added `sparkwright workflow start
   <name> <goal...>` as a CLI alias for the existing host `run --workflow` path.

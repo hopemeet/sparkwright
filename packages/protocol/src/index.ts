@@ -752,6 +752,14 @@ export interface WorkflowRunSnapshot {
     metadata?: Record<string, unknown>;
   };
   resume: { verifyOnResume: boolean };
+  authorizationSnapshot?: {
+    targetPath?: string;
+    confidentialPaths: string[];
+    confidentialDefaults: boolean;
+    shouldWrite: boolean;
+    accessMode?: RunAccessMode;
+    backgroundTasks: BackgroundTaskPolicy;
+  };
   createdAt: string;
   updatedAt?: string;
   completedAt?: string;

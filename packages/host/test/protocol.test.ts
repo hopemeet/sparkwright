@@ -580,6 +580,14 @@ describe("host protocol", () => {
         contentHash: "hash-protocol",
         currentNodeId: "main",
         attempts: { main: 1 },
+        authorizationSnapshot: {
+          targetPath: "README.md",
+          confidentialPaths: [".env"],
+          confidentialDefaults: false,
+          shouldWrite: true,
+          accessMode: "ask",
+          backgroundTasks: "enabled",
+        },
       });
       store.update(created.id, {
         verdictLog: [
@@ -634,6 +642,14 @@ describe("host protocol", () => {
                 attempt: 1,
                 verdict: { status: "passed", reason: "command_passed" },
                 at: "2026-07-09T00:00:00.000Z",
+              },
+              authorizationSnapshot: {
+                targetPath: "README.md",
+                confidentialPaths: [".env"],
+                confidentialDefaults: false,
+                shouldWrite: true,
+                accessMode: "ask",
+                backgroundTasks: "enabled",
               },
             }),
           ],
