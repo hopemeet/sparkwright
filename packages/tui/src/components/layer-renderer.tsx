@@ -13,7 +13,6 @@ import { ApprovalPrompt } from "./approval-prompt.js";
 import { CapabilitiesPanel } from "./capabilities-panel.js";
 import { ConfigPanel, type ConfigPanelResolved } from "./config-panel.js";
 import { CreateCapabilityDialog } from "./create-capability-dialog.js";
-import { EventDetailPanel } from "./event-detail.js";
 import { HelpPanel } from "./help-panel.js";
 import { ModelDialog } from "./model-dialog.js";
 import { SessionListDialog } from "./session-list-dialog.js";
@@ -116,10 +115,6 @@ export function LayerRenderer(props: {
           onCancel={props.onCloseTop}
           onCommit={(label) => props.onCommitRename(props.renameTarget!, label)}
         />
-      );
-    case "events":
-      return (
-        <EventDetailPanel events={props.events} onClose={props.onCloseTop} />
       );
     case "activity":
       return (

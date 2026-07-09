@@ -1,6 +1,5 @@
 import React, {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -46,6 +45,9 @@ import {
   chordMatches,
   ctrlCPressCount,
   DEFAULTS as DEFAULT_BINDINGS,
+  isPlainEscapeChord,
+  isPlainPrintableChord,
+  shouldDeferPrintableChordToInput,
   type Bindings,
 } from "./lib/keybindings.js";
 import type { PermissionMode, TraceLevel } from "@sparkwright/protocol";
@@ -280,6 +282,7 @@ function AppReady(
   const [todoExpanded, setTodoExpanded] = useState(false);
   // Prompt stash bridge — the InputBox reads/writes through this ref.
   const stashRef = useRef<StashFile>({ current: null, list: [] });
+  const inputDraftRef = useRef("");
   const inputHandleRef = useRef<InputBoxHandle | null>(null);
   // Runtime model-ref override from /model; falls back to config.
   const [modelOverride, setModelOverride] = useState<{
@@ -382,19 +385,6 @@ function AppReady(
     lastClearGen.current = state.clearGeneration;
     writeToStdout("\x1b[2J\x1b[3J\x1b[H");
   }, [state.clearGeneration, writeToStdout]);
-
-  const writeToStdoutRef = useRef(writeToStdout);
-  useEffect(() => {
-    writeToStdoutRef.current = writeToStdout;
-  }, [writeToStdout]);
-
-  useLayoutEffect(() => {
-    if (topLayer?.name !== "events") return;
-    writeToStdoutRef.current("\x1b[?1049h\x1b[2J\x1b[H");
-    return () => {
-      writeToStdoutRef.current("\x1b[?1049l");
-    };
-  }, [topLayer?.name]);
 
   // Notify on approval requests and run failures.
   const lastApprovalId = useRef<string | null>(null);
@@ -716,56 +706,84 @@ function AppReady(
   // identity stable across renders is deliberate — a component defined inline
   // in App is a fresh type each render, so Ink unmounts/remounts it every time
   // and its `useInput` can drop a keystroke mid-stream.
+  function requestCancelRun(): void {
+    if (controller.cancel())
+      toasts.push({ variant: "info", message: "cancelling…" });
+  }
+
   function handleHotkey(input: string, key: Key): void {
     const b = resolved.bindings;
     const top = layers.top();
-    if (b["quit.app"].some((c) => chordMatches(c, key, input))) {
+    const matchesChords = (chords: Bindings[keyof Bindings]): boolean => {
+      const draft = inputHandleRef.current?.getValue() ?? "";
+      if (shouldDeferPrintableChordToInput(chords, key, input, draft)) {
+        return false;
+      }
+      return chords.some((c) => chordMatches(c, key, input));
+    };
+    const matchesGlobal = (name: keyof Bindings): boolean =>
+      matchesChords(b[name]);
+    if (matchesGlobal("quit.app")) {
       if (!top) return;
       requestQuit(Math.max(1, ctrlCPressCount(input)));
       return;
     }
-    if (
-      top?.name !== "approval" &&
-      b["activity.open"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (top?.name !== "approval" && matchesGlobal("activity.open")) {
       taskActions.openActivity();
       return;
     }
-    if (!top && b["events.open"].some((c) => chordMatches(c, key, input))) {
+    if (!top && matchesGlobal("events.open")) {
       taskActions.openActivity("events");
       return;
     }
-    if (
-      !top &&
-      state.status !== "running" &&
-      b["help.open"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (!top && state.status !== "running" && matchesGlobal("help.open")) {
       layers.toggle("help");
       return;
     }
-    if (
-      !top &&
-      b["cycle-permission-mode"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (!top && matchesGlobal("cycle-permission-mode")) {
       cyclePermissionMode();
       return;
     }
-    if (
-      !top &&
-      state.todoItems.length > 0 &&
-      b["todo.toggle"].some((c) => chordMatches(c, key, input))
-    ) {
+    if (!top && state.todoItems.length > 0 && matchesGlobal("todo.toggle")) {
       setTodoExpanded((v) => !v);
       return;
     }
     if (
       !top &&
       state.status === "running" &&
-      b["cancel.run"].some((c) => chordMatches(c, key, input))
+      matchesChords(b["cancel.run"].filter((c) => !isPlainEscapeChord(c)))
     ) {
-      if (controller.cancel())
-        toasts.push({ variant: "info", message: "cancelling…" });
+      requestCancelRun();
     }
+  }
+
+  function shouldInputBoxIgnoreInput(
+    input: string,
+    key: Key,
+    draft: string,
+  ): boolean {
+    if (draft.length > 0 || input.length !== 1) return false;
+    const b = resolved.bindings;
+    const matchesPlainPrintable = (chords: Bindings[keyof Bindings]): boolean =>
+      chords.some(
+        (chord) =>
+          isPlainPrintableChord(chord) && chordMatches(chord, key, input),
+      );
+    if (matchesPlainPrintable(b["activity.open"])) return true;
+    if (matchesPlainPrintable(b["events.open"])) return true;
+    if (state.status !== "running" && matchesPlainPrintable(b["help.open"])) {
+      return true;
+    }
+    if (matchesPlainPrintable(b["cycle-permission-mode"])) return true;
+    if (state.todoItems.length > 0 && matchesPlainPrintable(b["todo.toggle"])) {
+      return true;
+    }
+    return (
+      state.status === "running" &&
+      matchesPlainPrintable(
+        b["cancel.run"].filter((chord) => !isPlainEscapeChord(chord)),
+      )
+    );
   }
 
   const modelLabel = effModel ?? "deterministic";
@@ -809,17 +827,11 @@ function AppReady(
   function closeTopLayer(): void {
     if (!topLayer) return;
     layers.pop(topLayer.name);
-    if (topLayer.name === "events") {
-      toasts.push({ variant: "info", message: "closed events" });
-    }
     if (topLayer.name === "session-rename")
       sessionActions.setRenameTarget(null);
   }
 
-  // Props shared by both LayerRenderer mount points — the full-screen `events`
-  // drawer (early return below) and the inline layer above the input. Assembled
-  // once so the two call sites can't drift apart. `entry` is supplied per call
-  // site (both currently pass `topLayer`).
+  // Props shared by layer renderers, assembled once so call sites do not drift.
   const layerProps = {
     registry,
     bindings: resolved.bindings,
@@ -860,16 +872,6 @@ function AppReady(
     onApplySkillReviewProposal: skillActions.applySkillReviewProposal,
     onRejectSkillReviewProposal: skillActions.rejectSkillReviewProposal,
   } satisfies Omit<React.ComponentProps<typeof LayerRenderer>, "entry">;
-
-  if (topLayer?.name === "events") {
-    return (
-      <ThemeProvider theme={theme}>
-        <Box flexDirection="column">
-          <LayerRenderer entry={topLayer} {...layerProps} />
-        </Box>
-      </ThemeProvider>
-    );
-  }
 
   return (
     <ThemeProvider theme={theme}>
@@ -1011,13 +1013,13 @@ function AppReady(
               void (cmd.runRaw ? cmd.runRaw(rest) : cmd.run())
             }
             onEscape={() => {
-              // Esc cancels an in-flight run (the placeholder promises this). The
-              // App-level hotkey loop also binds cancel.run→esc, but it lives in a
-              // remounted inline component whose useInput drops the key mid-stream;
-              // InputBox is stable, so this is the reliable path.
-              if (state.status === "running") {
-                if (controller.cancel())
-                  toasts.push({ variant: "info", message: "cancelling…" });
+              // Plain Esc is editor-owned; only treat it as run cancellation when
+              // the user has kept cancel.run bound to esc.
+              if (
+                state.status === "running" &&
+                resolved.bindings["cancel.run"].some(isPlainEscapeChord)
+              ) {
+                requestCancelRun();
               }
             }}
             onQuit={requestQuit}
@@ -1026,6 +1028,11 @@ function AppReady(
             onStashChange={(next) => {
               stashRef.current = next;
             }}
+            initialDraft={inputDraftRef.current}
+            onDraftChange={(next) => {
+              inputDraftRef.current = next;
+            }}
+            shouldIgnoreInput={shouldInputBoxIgnoreInput}
             handleRef={inputHandleRef}
           />
         ) : (

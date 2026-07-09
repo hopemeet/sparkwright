@@ -26,7 +26,7 @@ const GLOBAL_KEYS: ReadonlyArray<{ binding: keyof Bindings; what: string }> = [
     what: "cycle permission mode (next run)",
   },
   { binding: "activity.open", what: "background tasks / activity drawer" },
-  { binding: "events.open", what: "event inspector" },
+  { binding: "events.open", what: "activity events tab" },
   { binding: "todo.toggle", what: "expand / collapse the todo band" },
   { binding: "cancel.run", what: "cancel the running goal" },
   { binding: "quit.app", what: "back out · press twice to quit" },

@@ -182,6 +182,32 @@ export function chordMatches(
   }
 }
 
+export function isPlainPrintableChord(chord: Chord): boolean {
+  return (
+    !chord.ctrl &&
+    !chord.meta &&
+    !chord.shift &&
+    (chord.key.length === 1 || chord.key === "space")
+  );
+}
+
+export function isPlainEscapeChord(chord: Chord): boolean {
+  return !chord.ctrl && !chord.meta && !chord.shift && chord.key === "esc";
+}
+
+export function shouldDeferPrintableChordToInput(
+  chords: readonly Chord[],
+  inkKey: Parameters<typeof chordMatches>[1],
+  inkInput: string,
+  draft: string,
+): boolean {
+  if (draft.length === 0) return false;
+  return chords.some(
+    (chord) =>
+      isPlainPrintableChord(chord) && chordMatches(chord, inkKey, inkInput),
+  );
+}
+
 export function ctrlCPressCount(inkInput: string): number {
   let count = 0;
   for (const char of inkInput) {

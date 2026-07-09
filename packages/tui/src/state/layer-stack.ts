@@ -14,7 +14,6 @@ export type LayerName =
   | "approval"
   | "sessions"
   | "activity"
-  | "events"
   | "model"
   | "fork"
   | "help"
@@ -41,7 +40,6 @@ const PRIORITY: Record<LayerName, number> = {
   approval: 100,
   "session-rename": 70, // above sessions so it can stack
   activity: 65,
-  events: 65,
   sessions: 60,
   model: 58,
   fork: 62,

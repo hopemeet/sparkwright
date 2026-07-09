@@ -100,6 +100,21 @@ Future run in compacted session
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-09T08:56:34+0800
+- Scope: route check for TUI input/layer cleanup. Prompt draft preservation,
+  printable hotkey arbitration, Esc cancel dispatch, and standalone events layer
+  deletion do not change session switch replay, persisted session traces,
+  checkpoint resume, or workflow resume semantics.
+- Read: `packages/tui/src/app.tsx`,
+  `packages/tui/src/components/input-box.tsx`,
+  `packages/tui/src/lib/keybindings.ts`,
+  `packages/tui/src/components/activity-panel.tsx`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: TUI-focused validation ran via `npm --workspace @sparkwright/tui
+  test`; `npm --workspace @sparkwright/tui run typecheck`. No resume/replay
+  contract change was made.
+
+- Status: Read-only
 - Date: 2026-07-07T00:55:52+0800
 - Scope: workflow nested help exits before workflow resume adoption, host run
   setup, checkpoint lookup, or session replay. Resume/replay storage and

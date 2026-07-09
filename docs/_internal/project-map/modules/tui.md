@@ -95,10 +95,21 @@ Does not own:
   `tool.requested.payload.preview` produced by the tool definition; the local
   name-based formatter is fallback for older traces.
 - Ctrl+O uses the `activity.open` binding and opens the Activity Drawer on the
-  Tasks tab by default. `events.open` remains a configurable action for users
-  who want a direct event-inspector key, but it has no default binding; `/events`
-  opens the same drawer on the Events tab. In common PTYs Ctrl+I arrives as the
-  Tab control byte, so it is not used as a default.
+  Tasks tab by default. `events.open` remains a configurable action with no
+  default binding; `/events` and `events.open` both open the Activity Drawer on
+  the Events tab. There is no separate standalone events layer. In common PTYs
+  Ctrl+I arrives as the Tab control byte, so it is not used as a default.
+- App-level global hotkeys defer unmodified printable-character bindings to the
+  input editor while a prompt draft is non-empty. This keeps `?` available as
+  empty-prompt help while allowing normal questions ending in `?`; `/help`
+  remains the command path.
+- Prompt drafts are mirrored in App memory while `InputBox` is mounted, so
+  opening and closing layers preserves short and fast-typed drafts without
+  relying on the persisted stash debounce. The persisted stash remains the
+  process-restart recovery path.
+- Plain Esc run cancellation is owned by the input editor when `cancel.run`
+  includes an unmodified `esc`; App-level cancel handling covers non-Esc
+  configured chords so the default Esc path does not double-dispatch.
 - The Activity Drawer derives background task state from live TUI events and
   durable host snapshots via `RunController` `task.list` / `task.output`
   requests. `lib/task-activity.ts` merges those presentation inputs; canonical
@@ -228,6 +239,29 @@ Does not own:
 - TUI display summaries are presentation-only; raw trace/session diagnostics remain the source of truth for complete payloads.
 
 ## Last Verified
+
+- Status: Verified
+- Date: 2026-07-09T08:56:34+0800
+- Scope: TUI input-layer cleanup: printable single-character global hotkeys now
+  yield to non-empty prompt drafts, short drafts survive layer unmount/remount
+  through an App-owned in-memory snapshot, default Esc run cancellation no
+  longer double-dispatches, and the dead standalone `events` layer was removed
+  while `/events` continues to open the Activity Drawer Events tab.
+- Read: `packages/tui/src/app.tsx`,
+  `packages/tui/src/components/input-box.tsx`,
+  `packages/tui/src/lib/keybindings.ts`,
+  `packages/tui/src/lib/event-inspector.ts`,
+  `packages/tui/src/components/activity-panel.tsx`,
+  `packages/tui/src/components/layer-renderer.tsx`,
+  `packages/tui/src/state/layer-stack.ts`,
+  `docs/_internal/project-map/maps/trace/export-diagnostics.md`,
+  `docs/_internal/project-map/maps/session/resume-replay.md`.
+- Tests: `npm --workspace @sparkwright/tui test --
+  test/keybindings.test.ts`; `npm --workspace @sparkwright/tui test --
+  test/input-box.test.ts`; `npm --workspace @sparkwright/tui test --
+  test/event-detail.test.ts test/activity-panel-render.test.tsx
+  test/layer-stack.test.ts`; `npm --workspace @sparkwright/tui run
+  typecheck`; final full `npm --workspace @sparkwright/tui test`.
 
 - Status: Read-only
 - Date: 2026-07-06T20:47:10+0800

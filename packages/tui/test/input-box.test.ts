@@ -1,11 +1,90 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+import React from "react";
+import { render } from "ink";
 import { describe, expect, it } from "vitest";
+import { CommandRegistry } from "../src/lib/commands.js";
 import {
+  InputBox,
+  type InputBoxHandle,
   inputBoxWidth,
   inputLineViewport,
   inputMaxVisibleLines,
   inputVisualLines,
   suggestionWindow,
 } from "../src/components/input-box.js";
+import type { StashFile } from "../src/lib/stash.js";
+
+function stripAnsi(text: string): string {
+  return text.replace(
+    new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[a-zA-Z]`, "g"),
+    "",
+  );
+}
+
+async function renderInputBox(
+  props: Partial<React.ComponentProps<typeof InputBox>> = {},
+): Promise<{
+  text: () => string;
+  input: (value: string) => Promise<void>;
+  unmount: () => void;
+}> {
+  const writes: string[] = [];
+  const fakeStdout = {
+    columns: 90,
+    rows: 24,
+    isTTY: true,
+    write: (s: string) => {
+      writes.push(s);
+      return true;
+    },
+    on() {},
+    off() {},
+    removeListener() {},
+  } as unknown as NodeJS.WriteStream;
+  const fakeStdin = new PassThrough() as unknown as NodeJS.ReadStream & {
+    isTTY: boolean;
+  };
+  fakeStdin.isTTY = true;
+  fakeStdin.setRawMode = () => fakeStdin;
+  fakeStdin.ref = () => fakeStdin;
+  fakeStdin.unref = () => fakeStdin;
+  const registry = new CommandRegistry();
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "sparkwright-input-"));
+  const stashRef: { current: StashFile } = {
+    current: { current: null, list: [] },
+  };
+  const instance = render(
+    React.createElement(InputBox, {
+      disabled: false,
+      workspaceRoot,
+      registry,
+      onSubmit: () => {},
+      onCommand: () => {},
+      stashRef,
+      onStashChange: (next) => {
+        stashRef.current = next;
+      },
+      ...props,
+    }),
+    { stdout: fakeStdout, stdin: fakeStdin, patchConsole: false },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  return {
+    text: () => stripAnsi(writes.join("")),
+    input: async (value: string) => {
+      fakeStdin.write(value);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    },
+    unmount: () => {
+      instance.unmount();
+      fakeStdin.destroy();
+      void rm(workspaceRoot, { recursive: true, force: true });
+    },
+  };
+}
 
 describe("inputBoxWidth", () => {
   it("fits inside the terminal with a small margin", () => {
@@ -120,5 +199,54 @@ describe("suggestionWindow", () => {
       "cmd-11",
       "cmd-12",
     ]);
+  });
+});
+
+describe("InputBox draft restore", () => {
+  it("restores a short in-memory draft after remount", async () => {
+    let draft = "";
+    const handleRef: React.MutableRefObject<InputBoxHandle | null> = {
+      current: null,
+    };
+
+    const first = await renderInputBox({
+      handleRef,
+      onDraftChange: (next) => {
+        draft = next;
+      },
+    });
+
+    handleRef.current?.setValue("hi");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    first.unmount();
+
+    expect(draft).toBe("hi");
+
+    const secondHandleRef: React.MutableRefObject<InputBoxHandle | null> = {
+      current: null,
+    };
+    const second = await renderInputBox({
+      handleRef: secondHandleRef,
+      initialDraft: draft,
+    });
+
+    expect(secondHandleRef.current?.getValue()).toBe("hi");
+    second.unmount();
+  });
+
+  it("can ignore an empty-draft printable global hotkey", async () => {
+    let draft = "";
+    const rendered = await renderInputBox({
+      onDraftChange: (next) => {
+        draft = next;
+      },
+      shouldIgnoreInput: (input) => input === "?",
+    });
+
+    await rendered.input("?");
+
+    expect(draft).toBe("");
+    expect(rendered.text()).not.toContain("?");
+    rendered.unmount();
   });
 });

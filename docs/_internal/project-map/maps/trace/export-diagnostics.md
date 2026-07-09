@@ -91,6 +91,21 @@ session trace.jsonl
 ## Last Verified
 
 - Status: Read-only
+- Date: 2026-07-09T08:56:34+0800
+- Scope: route check for TUI input/layer cleanup. App/input/keybinding changes
+  and removal of the dead standalone events layer do not change `/export`,
+  transcript rendering, TUI event replay, or trace diagnostic boundaries.
+- Read: `packages/tui/src/app.tsx`,
+  `packages/tui/src/components/input-box.tsx`,
+  `packages/tui/src/lib/keybindings.ts`,
+  `packages/tui/src/lib/event-inspector.ts`,
+  `packages/tui/src/components/activity-panel.tsx`,
+  `docs/_internal/project-map/maps/trace/export-diagnostics.md`.
+- Tests: TUI-focused validation ran via `npm --workspace @sparkwright/tui
+  test`; `npm --workspace @sparkwright/tui run typecheck`. No export contract
+  change was made.
+
+- Status: Read-only
 - Date: 2026-07-06T20:12:52+0800
 - Scope: C10 route check for TUI `/skill-learn` target-detector deletion.
   Transcript export rendering, event-store replay, tool display, and trace

@@ -286,6 +286,20 @@ true` records a mutation index for its target (`mutatedByTarget`). A
 
 ## Last Verified
 
+- Status: Read-only
+- Date: 2026-07-09T08:56:34+0800
+- Scope: route check for TUI input/layer cleanup. Activity panel now imports
+  event filtering/search/fact helpers from `lib/event-inspector.ts`, but tool
+  request/result orchestration, tool display summaries, approval policy, and
+  task tool contracts are unchanged.
+- Read: `packages/tui/src/components/activity-panel.tsx`,
+  `packages/tui/src/lib/event-inspector.ts`,
+  `packages/tui/src/lib/tool-display.ts`,
+  `docs/_internal/project-map/maps/runtime/tool-orchestration.md`.
+- Tests: TUI-focused validation ran via `npm --workspace @sparkwright/tui
+  test`; `npm --workspace @sparkwright/tui run typecheck`. No tool
+  orchestration contract change was made.
+
 - Status: Verified
 - Date: 2026-07-08T23:46:48+0800
 - Scope: post-review grant orchestration hardening: per-argument grant policy

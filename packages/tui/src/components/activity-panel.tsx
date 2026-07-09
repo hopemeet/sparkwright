@@ -24,7 +24,7 @@ import {
   eventMatchesSearch,
   summarizeRunInspectorFacts,
   type EventDetailFilter,
-} from "./event-detail.js";
+} from "../lib/event-inspector.js";
 
 export type { ActivityTab } from "../lib/task-activity.js";
 

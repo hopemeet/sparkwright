@@ -5,6 +5,8 @@ import {
   chordMatches,
   ctrlCPressCount,
   formatBinding,
+  isPlainEscapeChord,
+  shouldDeferPrintableChordToInput,
   mergeBindings,
   DEFAULTS,
 } from "../src/lib/keybindings.js";
@@ -84,6 +86,47 @@ describe("ctrlCPressCount", () => {
     expect(ctrlCPressCount("")).toBe(0);
     expect(ctrlCPressCount("\x03")).toBe(1);
     expect(ctrlCPressCount("\x03\x03")).toBe(2);
+  });
+});
+
+describe("shouldDeferPrintableChordToInput", () => {
+  it("lets a plain printable hotkey become text when a draft is active", () => {
+    expect(
+      shouldDeferPrintableChordToInput([parseChord("?")!], {}, "?", "what"),
+    ).toBe(true);
+  });
+
+  it("keeps plain printable hotkeys active on an empty draft", () => {
+    expect(
+      shouldDeferPrintableChordToInput([parseChord("?")!], {}, "?", ""),
+    ).toBe(false);
+  });
+
+  it("does not defer modified or special-key bindings", () => {
+    expect(
+      shouldDeferPrintableChordToInput(
+        [parseChord("ctrl+o")!],
+        { ctrl: true },
+        "o",
+        "what",
+      ),
+    ).toBe(false);
+    expect(
+      shouldDeferPrintableChordToInput(
+        [parseChord("esc")!],
+        { escape: true },
+        "",
+        "what",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("isPlainEscapeChord", () => {
+  it("identifies only unmodified esc", () => {
+    expect(isPlainEscapeChord(parseChord("esc")!)).toBe(true);
+    expect(isPlainEscapeChord(parseChord("ctrl+esc")!)).toBe(false);
+    expect(isPlainEscapeChord(parseChord("?")!)).toBe(false);
   });
 });
 

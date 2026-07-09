@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useInput, useStdout } from "ink";
+import { Box, Text, useInput, useStdout, type Key } from "ink";
 import type { CommandRegistry, Command } from "../lib/commands.js";
 import { ctrlCPressCount } from "../lib/keybindings.js";
 import {
@@ -60,6 +60,8 @@ export function inputMaxVisibleLines(rows: number | undefined): number {
 export interface InputBoxHandle {
   /** Imperative: replace the current value (used by the stash picker). */
   setValue: (text: string) => void;
+  /** Imperative: synchronously read the current draft. */
+  getValue: () => string;
 }
 
 export function InputBox(props: {
@@ -73,11 +75,7 @@ export function InputBox(props: {
   onCommand: (cmd: Command, rest: string) => void;
   /**
    * Pressed Esc with nothing else to dismiss (no dropdown / overlay open).
-   * The parent uses this to cancel an in-flight run. Wired here — rather than
-   * in the App-level global hotkey loop — because that loop lives in an inline
-   * component that React remounts on every render, so its `useInput` churns
-   * and drops the lone Esc during streaming. InputBox is a stable component, so
-   * its handler reliably receives the key.
+   * The parent decides whether plain Esc is currently bound to run cancel.
    */
   onEscape?: () => void;
   onQuit?: (presses?: number) => void;
@@ -85,6 +83,9 @@ export function InputBox(props: {
   /** Stash snapshot bridge — parent owns the latest StashFile. */
   stashRef: { current: StashFile };
   onStashChange: (next: StashFile) => void;
+  initialDraft?: string;
+  onDraftChange?: (value: string) => void;
+  shouldIgnoreInput?: (input: string, key: Key, value: string) => boolean;
   /** Imperative handle for the parent (used to inject restored drafts). */
   handleRef?: React.MutableRefObject<InputBoxHandle | null>;
 }): React.ReactElement {
@@ -136,12 +137,19 @@ export function InputBox(props: {
 
   useEffect(() => {
     void loadHistory(props.workspaceRoot).then(setHistory);
-    // On mount, if the stash has a current draft and the input is empty,
-    // restore it. We don't auto-restore over an existing user-typed value.
+    // On mount, restore the in-memory draft first (survives layer toggles),
+    // then fall back to the persisted stash (survives process restarts).
+    // We don't auto-restore over an existing user-typed value.
+    const initial = props.initialDraft;
     const current = props.stashRef.current.current;
-    if (current && current.text.length > 0 && value.length === 0) {
-      setValue(current.text);
-      setCursor(current.text.length);
+    const text =
+      initial && initial.length > 0
+        ? initial
+        : current && current.text.length > 0
+          ? current.text
+          : "";
+    if (text.length > 0 && valueRef.current.length === 0) {
+      setDraftValue(text);
     }
   }, [props.workspaceRoot]);
 
@@ -151,11 +159,11 @@ export function InputBox(props: {
     if (!props.handleRef) return;
     props.handleRef.current = {
       setValue: (text: string) => {
-        setValue(text);
-        setCursor(text.length);
+        setDraftValue(text);
         setHistoryIdx(null);
         setSugCursor(0);
       },
+      getValue: () => valueRef.current,
     };
     return () => {
       if (props.handleRef) props.handleRef.current = null;
@@ -228,11 +236,16 @@ export function InputBox(props: {
     return "";
   }, [slash, slashSuggestions, safeSugCursor, cursor, value]);
 
-  function update(next: string, nextCursor?: number): void {
+  function setDraftValue(next: string, nextCursor?: number): void {
     valueRef.current = next;
     cursorRef.current = nextCursor ?? next.length;
     setValue(next);
     setCursor(nextCursor ?? next.length);
+    props.onDraftChange?.(next);
+  }
+
+  function update(next: string, nextCursor?: number): void {
+    setDraftValue(next, nextCursor);
     setHistoryIdx(null);
     setSugCursor(0);
   }
@@ -280,8 +293,7 @@ export function InputBox(props: {
       setDraft(value);
       const idx = history.length - 1;
       setHistoryIdx(idx);
-      setValue(history[idx].text);
-      setCursor(history[idx].text.length);
+      setDraftValue(history[idx].text);
       return;
     }
     const next = historyIdx + direction;
@@ -291,13 +303,11 @@ export function InputBox(props: {
     }
     if (next >= history.length) {
       setHistoryIdx(null);
-      setValue(draft);
-      setCursor(draft.length);
+      setDraftValue(draft);
       return;
     }
     setHistoryIdx(next);
-    setValue(history[next].text);
-    setCursor(history[next].text.length);
+    setDraftValue(history[next].text);
   }
 
   function applySlashPick(cmd: Command): void {
@@ -308,8 +318,7 @@ export function InputBox(props: {
     const space = query.indexOf(" ");
     const rest = space === -1 ? "" : query.slice(space + 1).trim();
     props.onCommand(cmd, rest);
-    setValue("");
-    setCursor(0);
+    setDraftValue("", 0);
   }
 
   function applyMentionPick(file: IndexedFile): void {
@@ -353,6 +362,8 @@ export function InputBox(props: {
     // macOS spaces/apps is what makes the terminal fire these.)
     if (input === "[I" || input === "[O") return;
 
+    if (props.shouldIgnoreInput?.(input, key, valueRef.current)) return;
+
     // Bracketed paste can arrive split across several Ink events. Handle this
     // before Enter/submission logic so pasted newlines stay in the draft.
     const paste = normalizeBracketedPasteChunk(
@@ -375,8 +386,7 @@ export function InputBox(props: {
       if (key.return) {
         const pick = searchMatches[safeSearchCursor];
         if (pick) {
-          setValue(pick.text);
-          setCursor(pick.text.length);
+          setDraftValue(pick.text);
         }
         setSearchQuery(null);
         return;
@@ -559,8 +569,7 @@ export function InputBox(props: {
         const cmd = props.registry.resolve(parsed.name);
         if (cmd) {
           props.onCommand(cmd, parsed.rest);
-          setValue("");
-          setCursor(0);
+          setDraftValue("", 0);
           return;
         }
       }
@@ -571,8 +580,7 @@ export function InputBox(props: {
       void clearDraftOnSubmit(props.workspaceRoot, props.stashRef.current).then(
         props.onStashChange,
       );
-      setValue("");
-      setCursor(0);
+      setDraftValue("", 0);
       setHistoryIdx(null);
       setDraft("");
       // Next prompt starts fresh in insert mode so typing works immediately.

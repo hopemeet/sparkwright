@@ -5,7 +5,7 @@ import {
   eventMatchesFilter,
   eventMatchesSearch,
   summarizeRunInspectorFacts,
-} from "../src/components/event-detail.js";
+} from "../src/lib/event-inspector.js";
 import type { FormattedEvent } from "../src/lib/format-event.js";
 
 function event(type: string, payload?: unknown): RunEvent {
